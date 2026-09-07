@@ -177,7 +177,7 @@ def test_a_recorded_identity_is_read_back_through_the_same_validation(
     ("document", "expected"),
     [
         ("not json", "is not JSON"),
-        ('["a"]', "must be a mapping"),
+        ('["a"]', "must record an identity as a mapping"),
         ('{"version": "3.0.0a1"}', "does not record a version"),
     ],
 )

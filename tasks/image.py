@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from invoke import Context, task
 
-from .release import ReleaseIdentity, read_release_identity
+from .release import DISTRIBUTION_FILE, ReleaseIdentity, identity_from, read_release_identity, record_gate
 from .utils import ESCAPED_REPO_PATH, REPO_BASE
 
 if TYPE_CHECKING:
@@ -59,6 +59,7 @@ GRYPE_IMAGE = "anchore/grype:v0.101.0@sha256:66a63cacdfeed19c7c9cbad9a841cd538b2
 SKOPEO_IMAGE = "quay.io/skopeo/stable:v1.20.0@sha256:47853bb9fb24202af9110531ebd6e43c5f97701254ca290596640290d17942f4"
 
 CANARY_ENV = "INFRAHUB_SYNC_IMAGE_CANARY"
+SMOKE_COMMAND = "pytest -m docker tests/image"
 DIGESTS_SCHEMA_VERSION = 1
 WAIVER_SCHEMA_VERSION = 1
 WAIVER_FIELDS = ("vulnerability", "owner", "reason", "expires")
@@ -396,14 +397,23 @@ def archive_configuration(archive: Path) -> str:
     return f"sha256:{configuration.removesuffix('.json')}"
 
 
-def sbom_file(platform: str) -> Path:
+def recorded_identity(record: dict) -> ReleaseIdentity:
+    """Return the release identity the build recorded beside its digests.
+
+    Everything the scanners write is named from it, so a report downloaded on its
+    own says which release and which platform it describes.
+    """
+    return identity_from(record.get("provenance"), str(DIGESTS_FILE))
+
+
+def sbom_file(identity: ReleaseIdentity, platform: str) -> Path:
     """Return where one platform image's SPDX bill of materials is written."""
-    return BUILD_DIR / f"sbom-{platform_slug(platform)}.spdx.json"
+    return BUILD_DIR / f"{DISTRIBUTION_FILE}-{identity.version}-sbom-{platform_slug(platform)}.spdx.json"
 
 
-def scan_file(platform: str) -> Path:
+def scan_file(identity: ReleaseIdentity, platform: str) -> Path:
     """Return where one platform image's vulnerability report is written."""
-    return BUILD_DIR / f"vulnerabilities-{platform_slug(platform)}.json"
+    return BUILD_DIR / f"{DISTRIBUTION_FILE}-{identity.version}-vulnerabilities-{platform_slug(platform)}.json"
 
 
 def _run(context: Context, argv: tuple[str, ...], *, hide: bool = False) -> str:
@@ -567,13 +577,14 @@ def smoke(context: Context, platform: str = "") -> None:
         print(f" - [{NAMESPACE}] Smoking {name}")
         with context.cd(ESCAPED_REPO_PATH):
             context.run(
-                "pytest -m docker tests/image",
+                SMOKE_COMMAND,
                 env={
                     "INFRAHUB_SYNC_IMAGE_REF": reference,
                     "INFRAHUB_SYNC_IMAGE_LAYOUT": str(LAYOUT_DIR),
                 },
                 pty=True,
             )
+        record_gate("image-smoke", platform=name, image=record["platforms"][name]["config"], command=SMOKE_COMMAND)
     print(f" - [{NAMESPACE}] Smoked {', '.join(requested)}")
 
 
@@ -581,6 +592,7 @@ def smoke(context: Context, platform: str = "") -> None:
 def sbom(context: Context, platform: str = "") -> None:
     """Write an SPDX JSON SBOM for each built platform image with the pinned Syft."""
     record = read_digests()
+    identity = recorded_identity(record)
     for name in _requested_platforms(record, platform):
         archive = _export_platform(context, record, name)
         # The scanner reads the exported archive and writes nothing: its output
@@ -602,19 +614,20 @@ def sbom(context: Context, platform: str = "") -> None:
             ),
             hide=True,
         )
-        sbom_file(name).write_text(document, encoding="utf-8")
-        print(f" - [{NAMESPACE}] {name} SBOM written to {sbom_file(name)}")
+        sbom_file(identity, name).write_text(document, encoding="utf-8")
+        print(f" - [{NAMESPACE}] {name} SBOM written to {sbom_file(identity, name)}")
 
 
 @task(name="scan")
 def scan(context: Context, platform: str = "") -> None:
     """Fail on fixable high or critical vulnerabilities with the pinned Grype."""
     record = read_digests()
+    identity = recorded_identity(record)
     waivers = read_waivers(today=date.today())  # noqa: DTZ011 -- a waiver expiry is a calendar date
     blocking: list[tuple[str, Finding]] = []
 
     for name in _requested_platforms(record, platform):
-        document = sbom_file(name)
+        document = sbom_file(identity, name)
         if not document.is_file():
             msg = f"{document} is missing; run `uv run invoke image.sbom` first"
             raise ImageTaskError(msg)
@@ -633,7 +646,7 @@ def scan(context: Context, platform: str = "") -> None:
             ),
             hide=True,
         )
-        scan_file(name).write_text(report, encoding="utf-8")
+        scan_file(identity, name).write_text(report, encoding="utf-8")
         findings = blocking_findings(json.loads(report), waivers=waivers)
         blocking.extend((name, finding) for finding in findings)
         print(f" - [{NAMESPACE}] {name}: {len(findings)} fixable high or critical findings")

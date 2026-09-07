@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from invoke import Context, task
 
 from .image import ARCHIVE_DIR, ImageTaskError, read_digests
+from .release import record_gate
 from .utils import ESCAPED_REPO_PATH
 
 NAMESPACE = "INFRAHUB-SYNC-COMPOSE"
@@ -103,6 +104,7 @@ def lifecycle(context: Context, platform: str = QUALIFIED_PLATFORM) -> None:
             env={"INFRAHUB_SYNC_IMAGE": reference},
             pty=True,
         )
+    record_gate("compose-lifecycle", platform=platform, image=reference, command=qualification_command())
     print(f" - [{NAMESPACE}] Lifecycle matrix passed against {reference}")
 
 

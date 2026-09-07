@@ -135,6 +135,37 @@ Pass `--version` to have the source contradict a version you already hold:
 uv run invoke release.identity --version 3.0.0a1
 ```
 
+## Candidate kit
+
+A candidate is the image, the two distributions, the deployment bundle, the
+bills of materials, and one record tying them together. `release.kit` produces
+the bundle; `release.qualify` writes the record after the gates have run:
+
+```bash
+uv run invoke release.kit
+uv run invoke release.qualify
+```
+
+The bundle archive is deterministic. Two runs from one tree produce the same
+bytes, because every field a tar entry or a gzip stream carries beside the file's
+content is fixed rather than taken from the machine: entries are sorted, the
+owner is numeric and unnamed, the mode is the one Git records rather than
+whatever the checkout shows, and both the entry and the gzip header carry the
+source commit's own time. `release.kit` refuses to run while `deploy/compose/`
+differs from `HEAD`, so the revision the record names is the content it archived.
+
+The archive holds the five files a deployment needs and nothing else. What a
+deployment generates on its host — `operator.env`, `secrets/`, and `.instance` —
+is never in it, and neither is the clean-host gate's fixture, which goes into a
+separate qualification kit instead.
+
+`release.qualify` refuses a candidate that qualified nothing: it requires an
+image smoke result for every built platform and a Compose lifecycle result, and
+each of those records the exact image digest it ran against. It also requires
+`.release/artifacts.json`, which the candidate workflow writes from what each
+upload returned, so the record carries the artifact identifiers and digests an
+approval is later bound to, and the retention that has to outlast it.
+
 ## Publication
 
 Publication is a separate, dispatch-only workflow. It is bound to one candidate

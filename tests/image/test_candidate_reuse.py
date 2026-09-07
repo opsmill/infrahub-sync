@@ -28,7 +28,7 @@ from pathlib import Path
 import pytest
 from invoke import Context, Result
 
-from tasks import compose, image
+from tasks import compose, image, release
 from tasks.release import release_identity
 
 PLATFORMS = ("linux/amd64", "linux/arm64")
@@ -43,6 +43,7 @@ MANIFESTS = {
 }
 REVISION = "9" * 40
 CREATED = "2026-09-06T00:00:00+00:00"
+VERSION = "3.0.0a1"
 
 CLEAN_SCAN = json.dumps({"matches": []})
 
@@ -135,7 +136,7 @@ def candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Recorder:
         json.dumps(
             {
                 "schema_version": image.DIGESTS_SCHEMA_VERSION,
-                "provenance": {"version": "3.0.0a1", "revision": REVISION, "created": CREATED},
+                "provenance": {"version": VERSION, "revision": REVISION, "created": CREATED},
                 "index_digest": INDEX_DIGEST,
                 "platforms": {
                     name: {"manifest": MANIFESTS[name], "config": CONFIGURATIONS[name]} for name in PLATFORMS
@@ -145,8 +146,9 @@ def candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Recorder:
         ),
         encoding="utf-8",
     )
+    identity = release_identity(version=VERSION, revision=REVISION, created=CREATED)
     for name in PLATFORMS:
-        (build_dir / f"sbom-{image.platform_slug(name)}.spdx.json").write_text("{}", encoding="utf-8")
+        (build_dir / image.sbom_file(identity, name).name).write_text("{}", encoding="utf-8")
         # `image.inspect` reads each platform's configuration out of the layout.
         blob = layout / "blobs" / "sha256" / CONFIGURATIONS[name].removeprefix("sha256:")
         blob.parent.mkdir(parents=True, exist_ok=True)
@@ -157,6 +159,9 @@ def candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Recorder:
     monkeypatch.setattr(image, "LAYOUT_DIR", layout)
     monkeypatch.setattr(image, "DIGESTS_FILE", digests)
     monkeypatch.setattr(compose, "ARCHIVE_DIR", archives)
+    # The gates record what they ran against. Without this they would write that
+    # into the repository, where the qualification record reads it.
+    monkeypatch.setattr(release, "RESULTS_DIR", build_dir / "results")
     monkeypatch.setenv(image.CANARY_ENV, "recorder-canary")
 
     return Recorder(archives)
@@ -183,7 +188,7 @@ def test_no_candidate_consumer_runs_a_build_command(name: str, candidate: Record
 
 def test_the_recorder_names_a_build_command_when_one_runs() -> None:
     """Without this the assertion above would pass on a recorder that sees nothing."""
-    identity = release_identity(version="3.0.0a1", revision=REVISION, created=CREATED)
+    identity = release_identity(version=VERSION, revision=REVISION, created=CREATED)
     build = " ".join(
         shlex.quote(word) for word in image.build_command(identity, platforms=PLATFORMS, destination=Path("/layout"))
     )

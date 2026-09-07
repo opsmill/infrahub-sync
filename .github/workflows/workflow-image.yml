@@ -24,6 +24,11 @@ permissions:
   contents: read
   packages: read
 
+# How long the service holds a candidate's artifacts. An approval is bound to
+# exactly these bytes, so the window has to outlast the decision to take them.
+env:
+  CANDIDATE_RETENTION_DAYS: 90
+
 jobs:
   files-changed:
     name: Detect which file has changed
@@ -83,6 +88,9 @@ jobs:
       - name: "Build the distributions an approval would publish"
         run: uv run --no-sync invoke release.build
 
+      - name: "Produce the deployment bundle and the qualification kit"
+        run: uv run --no-sync invoke release.kit
+
       - name: "Build both platforms"
         run: uv run --no-sync invoke image.build
 
@@ -105,10 +113,23 @@ jobs:
       - name: "Smoke both platforms"
         run: uv run --no-sync invoke image.smoke
 
+      # The qualified architecture, taken before the archives are reclaimed. A
+      # clean host loads this exact file, so it is the one that has to survive
+      # the run; arm64's copy is gate input and stays behind.
+      - name: "Publish the qualified platform image as a candidate artifact"
+        id: candidate-image
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-candidate-image
+          path: .image/archives/image-linux-amd64.tar
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
       # Each archive is one platform image copied out of the retained layout, and
       # those copies are the largest thing the build leaves behind. Nothing reads
-      # them after the scan and the smoke, the layout they came from stays, and
-      # the lifecycle phase starts two container stacks.
+      # them after the scan, the smoke, and the upload above; the layout they came
+      # from stays, and the lifecycle phase starts two container stacks.
       - name: "Reclaim the exported archives"
         run: uv run --no-sync invoke compose.reclaim
 
@@ -119,15 +140,18 @@ jobs:
         timeout-minutes: 45
         run: uv run --no-sync invoke compose.lifecycle
 
-      - name: "Publish the recorded identity as candidate evidence"
+      - name: "Publish the recorded identity as a candidate artifact"
+        id: candidate-identity
         uses: actions/upload-artifact@v4
         with:
           name: infrahub-sync-candidate-identity
           path: .release/identity.json
           include-hidden-files: true
           if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
 
-      - name: "Publish the built distributions as candidate artifacts"
+      - name: "Publish the built distributions as a candidate artifact"
+        id: candidate-distributions
         uses: actions/upload-artifact@v4
         with:
           name: infrahub-sync-candidate-distributions
@@ -136,15 +160,91 @@ jobs:
             .release/dist/*.tar.gz
           include-hidden-files: true
           if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
 
-      - name: "Publish the digests and SBOM as build evidence"
+      - name: "Publish the deployment bundle and its checksum"
+        id: candidate-bundle
         uses: actions/upload-artifact@v4
         with:
-          name: infrahub-sync-image-evidence
+          name: infrahub-sync-candidate-bundle
+          path: .release/bundle/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
+      - name: "Publish the bills of materials and the vulnerability reports"
+        id: candidate-sboms
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-candidate-sboms
           path: |
             .image/digests.json
-            .image/sbom-*.spdx.json
+            .image/*-sbom-*.spdx.json
+            .image/*-vulnerabilities-*.json
           # The build writes its evidence under a hidden directory, which the
           # upload skips by default and then reports as no files found.
           include-hidden-files: true
           if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
+      # Evidence, not bundle: what the clean-host gate needs and an operator
+      # never sees.
+      - name: "Publish the clean-host qualification kit"
+        id: qualification-kit
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-qualification-kit
+          path: .release/qualification/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
+      # What the service is holding and for how long. The record below is bound
+      # to these identifiers, so it is written after the uploads that produce
+      # them and published last.
+      - name: "Record what the service is holding"
+        run: |
+          set -euo pipefail
+          cat > .release/artifacts.json <<JSON
+          {
+            "retention_days": ${{ env.CANDIDATE_RETENTION_DAYS }},
+            "artifacts": {
+              "infrahub-sync-candidate-identity": {
+                "id": "${{ steps.candidate-identity.outputs.artifact-id }}",
+                "digest": "${{ steps.candidate-identity.outputs.artifact-digest }}"
+              },
+              "infrahub-sync-candidate-distributions": {
+                "id": "${{ steps.candidate-distributions.outputs.artifact-id }}",
+                "digest": "${{ steps.candidate-distributions.outputs.artifact-digest }}"
+              },
+              "infrahub-sync-candidate-bundle": {
+                "id": "${{ steps.candidate-bundle.outputs.artifact-id }}",
+                "digest": "${{ steps.candidate-bundle.outputs.artifact-digest }}"
+              },
+              "infrahub-sync-candidate-image": {
+                "id": "${{ steps.candidate-image.outputs.artifact-id }}",
+                "digest": "${{ steps.candidate-image.outputs.artifact-digest }}"
+              },
+              "infrahub-sync-candidate-sboms": {
+                "id": "${{ steps.candidate-sboms.outputs.artifact-id }}",
+                "digest": "${{ steps.candidate-sboms.outputs.artifact-digest }}"
+              },
+              "infrahub-sync-qualification-kit": {
+                "id": "${{ steps.qualification-kit.outputs.artifact-id }}",
+                "digest": "${{ steps.qualification-kit.outputs.artifact-digest }}"
+              }
+            }
+          }
+          JSON
+
+      - name: "Write the qualification record"
+        run: uv run --no-sync invoke release.qualify
+
+      - name: "Publish the qualification record"
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-qualification-record
+          path: .release/qualification.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}

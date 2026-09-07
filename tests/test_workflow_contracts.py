@@ -32,6 +32,9 @@ CALLERS = tuple(sorted(path.name for path in WORKFLOWS.glob("trigger-*.yml")))
 ACCESS = {"none": 0, "read": 1, "write": 2}
 
 UPLOAD_ACTION = "actions/upload-artifact"
+# The artifacts an approval is later bound to, as opposed to evidence a run
+# leaves for whoever reads it that day.
+CANDIDATE_ARTIFACTS = ("infrahub-sync-candidate", "infrahub-sync-qualification")
 # `invoke` as the command being run, optionally through `uv run`, so that naming
 # it as an argument — installing it, say — is not read as running a task.
 INVOKE_TASK = re.compile(
@@ -535,3 +538,21 @@ def test_the_two_line_release_automation_is_what_the_case_above_would_otherwise_
     assert [step for path in drafter for step in identity_rewriting_steps(path)]
     assert excluded not in v3_reachable()
     assert not (drafter & v3_reachable())
+
+
+def test_every_candidate_artifact_is_kept_long_enough_to_be_approved() -> None:
+    """An approval is bound to exact bytes, so the service has to still hold them.
+
+    A default retention is whatever the repository is configured for that week,
+    which is not something a release record can name.
+    """
+    kept = {
+        str(declared.get("name")): declared.get("retention-days")
+        for _workflow, _step, declared in uploads()
+        if str(declared.get("name", "")).startswith(CANDIDATE_ARTIFACTS)
+    }
+
+    assert kept
+    assert all(kept.values()), (
+        f"{sorted(name for name, held in kept.items() if not held)} are kept for a default window"
+    )
