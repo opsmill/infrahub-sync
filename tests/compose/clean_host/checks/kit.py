@@ -20,12 +20,16 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Literal
 
 import httpx
 from infrahub_sdk import Config, InfrahubClientSync
 
 from infrahub_sync.client import SyncClient
 from infrahub_sync.client.models import CreateRunRequest, RunResource
+
+# The two operations a run request may name, as the model declares them.
+Operation = Literal["plan", "sync"]
 
 # A run crosses two services and a queue, so the bound is generous. It is a
 # bound rather than a wait: a run that never arrives is a failure with a name.
@@ -79,15 +83,14 @@ def bundled(client: SyncClient) -> tuple[str, int]:
     raise AssertionError
 
 
-def run_request(client: SyncClient, operation: str, reason: str, **extra: object) -> CreateRunRequest:
+def run_request(client: SyncClient, operation: Operation, reason: str) -> CreateRunRequest:
     """Return a request for one run against the configuration bootstrap registered."""
     config_id, registry_version = bundled(client)
     return CreateRunRequest(
-        operation=operation,  # ty: ignore[invalid-argument-type] -- the literal is checked by the model
+        operation=operation,
         config_id=config_id,
         registry_version=registry_version,
         reason=reason,
-        **extra,  # ty: ignore[invalid-argument-type] -- optional request fields
     )
 
 

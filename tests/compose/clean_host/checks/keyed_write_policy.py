@@ -17,11 +17,15 @@ from __future__ import annotations
 
 import os
 import pathlib
+from typing import TYPE_CHECKING
 
 import yaml
-from kit import deployment, destination, follow, key, refuse
+from kit import Operation, deployment, destination, follow, key, refuse
 
 from infrahub_sync.client.models import ConfigMutationRequest, CreateRunRequest
+
+if TYPE_CHECKING:
+    from infrahub_sync.client import SyncClient
 
 KEYLESS_KIND = "CleanKeyless"
 # The typed refusal the adapter raises immediately before the SDK write.
@@ -37,7 +41,7 @@ def keyless_objects() -> int:
         return int(answer.json()["data"][KEYLESS_KIND]["count"])
 
 
-def registered_keyless(client: object) -> tuple[str, int]:
+def registered_keyless(client: SyncClient) -> tuple[str, int]:
     """Register this row's own configuration and return the version to run.
 
     Its own, because the bundled configuration maps a kind with a renderable
@@ -47,7 +51,7 @@ def registered_keyless(client: object) -> tuple[str, int]:
     address = os.environ["INFRAHUB_DESTINATION_URL"]
     for side in ("source", "destination"):
         package["configuration"][side]["settings"]["url"] = address
-    answer = client.register_config(  # ty: ignore[unresolved-attribute]
+    answer = client.register_config(
         ConfigMutationRequest(package=package, reason="clean-host: register the keyed-write configuration"),
         key("register-keyless"),
     )
@@ -58,9 +62,9 @@ with deployment() as client:
     before = keyless_objects()
     config_id, registry_version = registered_keyless(client)
 
-    def request(operation: str, reason: str) -> CreateRunRequest:
+    def request(operation: Operation, reason: str) -> CreateRunRequest:
         return CreateRunRequest(
-            operation=operation,  # ty: ignore[invalid-argument-type] -- the model checks the literal
+            operation=operation,
             config_id=config_id,
             registry_version=registry_version,
             reason=reason,
