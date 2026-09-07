@@ -9,17 +9,22 @@ says.
 
 from __future__ import annotations
 
+import ast
 import re
 from inspect import signature
 from pathlib import Path
 
 import pytest
+import yaml
 
 from infrahub_sync.client import RunTerminalError, RunWaitTimeoutError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DRIVER = REPO_ROOT / "tests" / "compose" / "clean_host" / "clean-host.sh"
 CHECKS = REPO_ROOT / "tests" / "compose" / "clean_host" / "checks"
+# The declared configuration the deployment's own bootstrap registers. What its
+# destination side names is what every managed row plans against.
+BUNDLED_CONFIGURATION = REPO_ROOT / "deploy" / "compose" / "configuration" / "qualification.yaml"
 
 # Every row the accepted matrix requires. Written out rather than read from the
 # driver, so a row deleted from the driver fails here instead of narrowing the
@@ -44,6 +49,45 @@ REFUSED_HOST_TOOLS = ("python", "python3", "uv", "uvx", "pip", "pytest", "infrah
 
 def driver() -> str:
     return DRIVER.read_text(encoding="utf-8")
+
+
+# A docstring or a comment can satisfy a substring assertion, and this suite has
+# been caught by exactly that. Every claim about a check's behaviour is made
+# against its code with its prose removed.
+_DOCSTRING_HOLDERS = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def code_of(path: Path) -> str:
+    """Return one module's source with its comments and docstrings gone."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    holders = [node for node in ast.walk(tree) if isinstance(node, _DOCSTRING_HOLDERS)]
+    for node in holders:
+        first = node.body[0] if node.body else None
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+            and len(node.body) > 1
+        ):
+            node.body.pop(0)
+    return ast.unparse(tree)
+
+
+def attribute_calls(source: str) -> set[str]:
+    """Return every dotted call a module makes, as written."""
+    found = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        target: ast.expr = node.func
+        parts: list[str] = []
+        while isinstance(target, ast.Attribute):
+            parts.append(target.attr)
+            target = target.value
+        if isinstance(target, ast.Name):
+            parts.append(target.id)
+            found.add(".".join(reversed(parts)))
+    return found
 
 
 def test_the_driver_is_executable() -> None:
@@ -494,7 +538,7 @@ def test_the_kit_renders_every_field_the_clients_run_errors_carry() -> None:
     traceback would print the category -- a run ended without success -- and
     nothing about which terminal state it reached or why.
     """
-    source = (CHECKS / "kit.py").read_text(encoding="utf-8")
+    source = code_of(CHECKS / "kit.py")
 
     for error in (RunTerminalError, RunWaitTimeoutError):
         for field in list(signature(error.__init__).parameters)[1:]:
@@ -503,7 +547,7 @@ def test_the_kit_renders_every_field_the_clients_run_errors_carry() -> None:
 
 def test_the_recorded_run_state_is_read_from_the_store_and_not_from_the_client() -> None:
     """The verdict under diagnosis is one the client reported, so it is not the witness."""
-    source = (CHECKS / "diagnostics.py").read_text(encoding="utf-8")
+    source = code_of(CHECKS / "diagnostics.py")
 
     assert "psycopg.connect" in source
     assert "product_runs" in source
@@ -515,8 +559,80 @@ def test_the_recorded_run_state_prints_no_column_that_holds_destination_data() -
 
     What may print is the class name a stage recorded, and only while it is one.
     """
-    source = (CHECKS / "diagnostics.py").read_text(encoding="utf-8")
+    source = code_of(CHECKS / "diagnostics.py")
 
     assert "{summary}" not in source
     assert "{results}" not in source
     assert "printable_type_name(evidence.get('error_type'))" in source
+
+
+def seeding() -> str:
+    return code_of(CHECKS / "seed_destination.py")
+
+
+def configured_branches() -> dict[str, str]:
+    """Return the branch each side of the bundled configuration names."""
+    declared = yaml.safe_load(BUNDLED_CONFIGURATION.read_text(encoding="utf-8"))["configuration"]
+    return {side: declared[side]["settings"]["branch"] for side in ("source", "destination")}
+
+
+def test_the_destination_branch_a_managed_row_plans_against_is_one_the_kit_creates() -> None:
+    """The Compose fixtures create it in `conftest.py`, so porting the rows carried none of it.
+
+    A row that plans against a branch nobody created fails inside the worker with
+    a destination-schema refusal, and the row then reports the wrong thing about
+    the candidate.
+    """
+    named = set(configured_branches().values())
+
+    assert named - {"main"}, "the bundled configuration plans against no branch but main"
+    assert "client.branch.create" in attribute_calls(seeding()), (
+        "nothing in the kit creates the branch the configuration names"
+    )
+
+
+def test_the_branch_the_kit_creates_is_read_from_the_configuration_that_names_it() -> None:
+    """A branch named twice can be renamed once, and the row fails where nobody looks."""
+    source = seeding()
+
+    # Rendered from the parsed module, so the quoting is the unparser's.
+    assert "declared['destination']['settings']['branch']" in source
+    for branch in set(configured_branches().values()) - {"main"}:
+        assert branch not in source, f"{branch} is written into the kit as well as into the configuration"
+
+
+def test_the_seeding_check_is_given_the_configuration_whose_branch_it_creates() -> None:
+    """The document lives in the extracted bundle, so the check has to be handed it."""
+    helper = function_body("destination_check")
+
+    assert '"$BUNDLE/configuration:/configuration:ro"' in helper
+    assert "/configuration/qualification.yaml" in seeding()
+
+
+def test_the_seeding_refuses_a_configuration_that_reads_and_writes_one_branch() -> None:
+    """Two sides on one branch read identically, so every plan against them is empty.
+
+    A row asserting its plan proposed something would then refuse for emptiness
+    rather than for the property it exists to test, which is the failure this
+    sweep found in the first place.
+    """
+    source = seeding()
+
+    assert "if branch == source:" in source
+    assert "no plan against it can propose anything" in source
+
+
+def test_the_destination_is_prepared_in_the_order_a_branch_inherits_from() -> None:
+    """Schema, then the fork, then the object -- and each position means something.
+
+    A branch forked before the schema load carries no schema, and a row planning
+    against it is refused for the schema rather than judged. An object seeded
+    before the fork reaches both sides, and the first plan then has nothing to
+    propose.
+    """
+    source = seeding()
+    loaded = source.index("for schema in SCHEMAS:")
+    forked = source.index("ensure_branch(planned_branch())")
+    seeded = source.index("CREATE_DEVICE.replace")
+
+    assert loaded < forked < seeded

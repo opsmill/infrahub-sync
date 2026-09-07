@@ -150,11 +150,17 @@ check() {
 
 # The destination is reached at a host address, so a check that only talks to it
 # needs no deployment network -- and runs before one exists.
+#
+# The extracted bundle's declared configuration comes with it, read-only. The
+# branch a managed run writes to is named in that document and nowhere else, and
+# the destination has to be prepared for the branch this deployment will actually
+# use rather than for one the kit names on its own.
 destination_check() {
     name=$1
     shift
     docker run --rm \
         --volume "$CHECKS:/checks:ro" \
+        --volume "$BUNDLE/configuration:/configuration:ro" \
         --env-file "$WORK/check.env" \
         "$IMAGE" python "/checks/$name.py" "$@"
 }
