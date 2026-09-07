@@ -409,6 +409,7 @@ INFRAHUB_SYNC_API_TOKEN=$(bearer_token)
 INFRAHUB_SYNC_DATABASE_URL=$(setting INFRAHUB_SYNC_DATABASE_URL)
 INFRAHUB_SYNC_S3_ENDPOINT_URL=http://object-store:9000
 INFRAHUB_SYNC_S3_BUCKET=$(sed -n 's/^INFRAHUB_SYNC_S3_BUCKET=//p' "$BUNDLE/defaults.conf")
+INFRAHUB_SYNC_WORK_POOL=$(sed -n 's/^INFRAHUB_SYNC_WORK_POOL=//p' "$BUNDLE/defaults.conf")
 AWS_ACCESS_KEY_ID=$(setting INFRAHUB_SYNC_S3_ACCESS_KEY)
 AWS_SECRET_ACCESS_KEY=$(setting INFRAHUB_SYNC_S3_SECRET_KEY)
 PREFECT_API_URL=http://prefect-server:4200/api
@@ -548,19 +549,47 @@ wait_for_state() {
 # ---------------------------------------------------------------------------
 # Row 7 — restart
 # ---------------------------------------------------------------------------
+# How long a replacement worker is given to register under a name of its own. The
+# figure the Compose lifecycle gate proved: the departing worker's record lingers
+# ONLINE for a while, so what is waited for is a name that was not there before
+# rather than a change in how many there are.
+WORKER_REPLACEMENT_SECONDS=180
+
+# The identity a restart replaces is the Prefect worker name, not the container.
+# `restart` runs `docker compose restart sync-api sync-worker`, which restarts the
+# process inside the container it already has -- so a container identity that
+# changed would mean the product had stopped doing what `restart` means.
+wait_for_replacement_worker() {
+    # wait_for_replacement_worker <file holding the names seen before>
+    waited=0
+    while [ "$waited" -lt "$WORKER_REPLACEMENT_SECONDS" ]; do
+        check worker_identity > "$WORK/workers-after" 2>/dev/null || : > "$WORK/workers-after"
+        if grep -vxF -f "$1" "$WORK/workers-after" | grep -q .; then
+            return 0
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    return 1
+}
+
 row_restart() {
-    before_worker=$(deployment_container sync-worker)
+    check worker_identity > "$WORK/workers-before" \
+        || fail "the deployment's own Prefect server could not be asked which workers are online"
+    # A restart replacing nothing would demonstrate nothing, and an empty set
+    # before it makes any name afterwards look like a replacement.
+    [ -s "$WORK/workers-before" ] \
+        || fail "the deployment reported no online worker before a restart, so there was none to replace"
     before_state=$(durable_snapshot)
     require_snapshot_holds "$before_state" product_runs "a restart preserving it would demonstrate nothing"
 
     compose_bundle restart >/dev/null || fail "the deployment could not be restarted"
     require "the deployment did not return to READY after a restart" READY "$(deployment_status)"
 
-    after_worker=$(deployment_container sync-worker)
-    [ "$before_worker" != "$after_worker" ] \
-        || fail "a restart left the same worker container, so nothing was replaced"
+    wait_for_replacement_worker "$WORK/workers-before" \
+        || fail "no worker registered under a new identity after a restart; see $WORK/workers-before and $WORK/workers-after"
     require "a restart changed a durable record" "$before_state" "$(durable_snapshot)"
-    report "the worker was replaced while every durable record stayed equal"
+    report "the worker returned under a new identity while every durable record stayed equal"
 }
 
 # ---------------------------------------------------------------------------

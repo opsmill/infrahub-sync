@@ -1399,3 +1399,64 @@ def test_the_drift_row_waits_for_the_schema_it_loaded_to_converge() -> None:
 
     assert "wait_until_converged=True" in source
     assert "if attribute_kind(branch) != kind:" in source
+
+
+def test_the_restart_row_reads_the_identity_a_restart_actually_replaces() -> None:
+    """`restart` restarts the process inside the container it already has.
+
+    `deploy/compose/infrahub-sync-compose`'s `command_restart` runs
+    `docker compose restart sync-api sync-worker` and says so: "Containers and
+    data survive; the processes inside them do not. The worker that comes back
+    registers under a new Prefect identity." So a container identity that changed
+    would mean the product had stopped doing what `restart` means, and a row
+    asserting it can only pass against incorrect behaviour.
+    """
+    entry_point = (REPO_ROOT / "deploy" / "compose" / "infrahub-sync-compose").read_text(encoding="utf-8")
+    opened = entry_point.index("command_restart() {")
+    assert "compose restart" in entry_point[opened : entry_point.index("\n}", opened)]
+
+    row = function_body("row_restart")
+    assert "deployment_container" not in row, "the row compares a container identity a restart does not change"
+    assert "check worker_identity" in row
+
+
+def test_the_restart_row_proves_there_was_a_worker_to_replace() -> None:
+    """An empty set before makes any name afterwards look like a replacement."""
+    row = function_body("row_restart")
+
+    assert '[ -s "$WORK/workers-before" ]' in row
+    assert row.index("workers-before") < row.index("compose_bundle restart")
+
+
+def test_the_replacement_wait_looks_for_a_name_it_has_not_seen() -> None:
+    """The departing worker lingers ONLINE, so the count is not the signal.
+
+    Bounded at the figure the Compose lifecycle gate proved, and expiring is a
+    failure of the row rather than a verdict about the deployment.
+    """
+    helper = function_body("wait_for_replacement_worker")
+
+    assert "grep -vxF -f" in helper, "the wait compares sets by size rather than by name"
+    assert "WORKER_REPLACEMENT_SECONDS" in helper
+    assert re.search(r"^WORKER_REPLACEMENT_SECONDS=180$", driver(), re.MULTILINE)
+
+
+def test_the_worker_probe_asks_the_pool_the_deployment_uses() -> None:
+    """The pool is a configurable setting, and a probe naming another reports nothing.
+
+    An empty answer for a healthy deployment reads exactly like a deployment with
+    no worker, which is the shape the row's own precondition exists to refuse.
+    """
+    source = code_of(CHECKS / "worker_identity.py")
+
+    assert "os.environ['INFRAHUB_SYNC_WORK_POOL']" in source
+    assert "infrahub-sync'" not in source, "the probe names a pool of its own"
+    assert "INFRAHUB_SYNC_WORK_POOL=$(sed -n 's/^INFRAHUB_SYNC_WORK_POOL=//p'" in driver()
+
+
+def test_the_worker_probe_refuses_an_answer_it_cannot_read() -> None:
+    """A Prefect server that answered something else would raise where a sentence belongs."""
+    source = code_of(CHECKS / "worker_identity.py")
+
+    assert "if answer.status_code != 200:" in source
+    assert "if not isinstance(reported, list):" in source
