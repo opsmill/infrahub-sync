@@ -1162,7 +1162,7 @@ def test_the_busy_worker_row_establishes_busy_before_it_asserts_anything() -> No
     assert "BUSY_TIMEOUT_SECONDS" in source, "an unbounded wait for a worker that may never take the run"
 
 
-@pytest.mark.parametrize("row", ["row_restart", "row_alpha_replacement"])
+@pytest.mark.parametrize("row", ["row_cold_start_and_idempotence", "row_restart", "row_alpha_replacement"])
 def test_every_row_comparing_durable_state_first_proves_there_is_some(row: str) -> None:
     """The snapshot carries one line per table, so its non-emptiness proves nothing.
 
@@ -1171,15 +1171,88 @@ def test_every_row_comparing_durable_state_first_proves_there_is_some(row: str) 
     """
     body = function_body(row)
 
-    assert "require_durable_state" in body, f"{row} compares a snapshot it never proved holds anything"
+    assert "require_snapshot_holds" in body, f"{row} compares a snapshot it never proved holds anything"
 
 
 def test_the_durable_state_precondition_reads_a_count_and_not_a_string() -> None:
     """`[ -n "$snapshot" ]` is true for a snapshot of an entirely empty deployment."""
-    helper = function_body("require_durable_state")
+    helper = function_body("require_snapshot_holds")
 
-    assert "recorded_runs" in helper
+    assert "snapshot_count" in helper
     assert "0) fail" in helper
+
+
+def test_every_row_that_compares_snapshots_names_what_it_expects_to_survive() -> None:
+    """Enumerated from the driver, not remembered: `grep durable_snapshot` is the list.
+
+    A generic "some table is non-zero" drifts back to the same weakness the
+    moment the schema gains a table populated for an unrelated reason, so each
+    row names the thing whose survival it is about -- and row 2 runs before any
+    run exists, so what it names is what bootstrap made rather than a run count.
+    """
+    body = executable_lines()
+    comparing = {
+        name
+        for name in ("row_cold_start_and_idempotence", "row_restart", "row_alpha_replacement", "row_status")
+        if "durable_snapshot" in function_body(name)
+    }
+    assert comparing == {"row_cold_start_and_idempotence", "row_restart", "row_alpha_replacement"}
+
+    named = set(re.findall(r"require_snapshot_holds \"\$\w+\" (\w+)", body))
+    assert named == {"configuration_versions", "product_runs"}, f"the rows expect {sorted(named)} to survive"
+
+
+def test_no_equality_in_the_driver_can_hold_because_neither_side_exists() -> None:
+    """Enumerated from the driver: every `require` goes through one comparison.
+
+    Two values that both failed to be produced compare equal, and the row then
+    reports a property it never observed. Closed once, at the choke point, rather
+    than at each of the sites `grep '    require '` returns.
+    """
+    helper = function_body("require")
+
+    assert '[ -n "$2" ]' in helper, "an empty expectation is accepted as an expectation"
+    assert "nothing was produced to compare it against" in helper
+
+
+def test_the_record_reader_refuses_a_value_that_is_present_and_empty() -> None:
+    """An absent key already exits non-zero; an empty one printed nothing and exited 0.
+
+    That is the case that reached a comparison as a value equal to any other
+    missing one.
+    """
+    helper = function_body("record")
+
+    assert "str(held) == ''" in helper
+    assert "holds an empty value where one is required" in helper
+
+
+def test_the_managed_row_fetches_the_review_artifact_by_kind() -> None:
+    """Whichever artifact came back first satisfies a check that only requires one."""
+    source = code_of(CHECKS / "managed_execution.py")
+
+    assert "entry.kind == REVIEW_ARTIFACT" in source
+    assert "artifacts[0]" not in source
+
+
+def test_every_row_that_plans_states_the_count_it_planted_for() -> None:
+    """One planted difference is one proposed operation, and that is knowable.
+
+    `>= 1` accepts a plan proposing operations nobody planted, which is what a
+    qualification gate exists to catch.
+    """
+    for module in ROWS_THAT_PLAN:
+        source = code_of(CHECKS / module)
+        assert "expected=PLANTED_OPERATIONS" in source, f"{module} bounds its plan below instead of stating it"
+    assert "if total != expected:" in kit_source()
+
+
+def test_the_unkeyed_rows_count_survives_an_answer_it_cannot_read() -> None:
+    """A GraphQL refusal is a 200 carrying `errors`, and indexing it raises."""
+    source = code_of(CHECKS / "unkeyed_write_policy.py")
+
+    assert "without a count" in source
+    assert "answer.json()['data'][UNKEYED_KIND]['count']" not in source
 
 
 def test_the_secret_row_sweeps_every_deployment_this_run_started() -> None:

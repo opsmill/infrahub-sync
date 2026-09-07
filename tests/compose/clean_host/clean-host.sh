@@ -69,6 +69,13 @@ report() {
 
 require() {
     # require <sentence> <expected> <actual>
+    #
+    # An empty expectation is not an expectation. Two values that both failed to
+    # be produced compare equal, and the row then reports a property it never
+    # observed -- so the comparison refuses before it is made. Every caller's
+    # expected side is a literal or a value some helper produced, and an empty one
+    # is a failure upstream of here.
+    [ -n "$2" ] || fail "$1, and nothing was produced to compare it against"
     if [ "$2" != "$3" ]; then
         fail "$1"
     fi
@@ -130,9 +137,17 @@ require_no_foreign_mount() {
 # own exit status, so a failed read would reach a message as an empty string.
 record() {
     [ -n "$IMAGE" ] || fail "the candidate record was read before the image that reads it was loaded"
+    # An absent key already exits non-zero, and a key whose value is empty prints
+    # nothing and exits 0 -- which reaches a comparison as a value that equals any
+    # other missing one. Both are refusals here, told apart by their messages.
     docker run --rm --network=none \
         --volume "$CANDIDATE:/candidate:ro" \
-        "$IMAGE" python -c "import json;print(json.load(open('/candidate/qualification.json'))$1)"
+        "$IMAGE" python -c "$(printf '%s\n' \
+            "import json, sys" \
+            "held = json.load(open('/candidate/qualification.json'))$1" \
+            "if held is None or str(held) == '':" \
+            "    sys.exit('the candidate record holds an empty value where one is required')" \
+            "print(held)")"
 }
 
 # The checks are this gate's code, mounted read-only into a throwaway container
@@ -239,20 +254,24 @@ durable_snapshot() {
     check durable_state
 }
 
-# How many runs the snapshot says the deployment holds. The snapshot is never
-# empty -- it carries one line per table, count and all -- so its non-emptiness
-# says nothing about there being state to preserve, and two empty deployments
-# compare equal just as happily as two identical full ones.
-recorded_runs() {
-    printf '%s\n' "$1" | sed -n 's/^table product_runs //p' | tail -1
+# What the snapshot says one table holds. The snapshot is never empty -- it
+# carries one line per table, count and all -- so its non-emptiness says nothing
+# about there being state to preserve, and two empty deployments compare equal
+# just as happily as two identical full ones.
+snapshot_count() {
+    # snapshot_count <snapshot> <table>
+    printf '%s\n' "$1" | sed -n "s/^table $2 //p" | tail -1
 }
 
-require_durable_state() {
-    # require_durable_state <snapshot> <sentence>
-    runs=$(recorded_runs "$1")
-    case ${runs:-0} in
-        ''|*[!0-9]*) fail "the deployment reported no run count at all, so $2" ;;
-        0) fail "the deployment holds no run, so $2" ;;
+# Named per row rather than generic: "some table is non-zero" drifts back to the
+# same weakness the moment the schema gains a table populated for an unrelated
+# reason. Each row names the thing whose survival it is actually about.
+require_snapshot_holds() {
+    # require_snapshot_holds <snapshot> <table> <sentence>
+    held=$(snapshot_count "$1" "$2")
+    case ${held:-} in
+        ''|*[!0-9]*) fail "the deployment reported no $2 count at all, so $3" ;;
+        0) fail "the deployment holds no $2, so $3" ;;
     esac
 }
 
@@ -291,7 +310,8 @@ row_artifact_identity() {
     # load produces is the configuration digest, which is what the record names.
     loaded=$(docker load --input "$IMAGE_ARCHIVE" | sed -n 's/^Loaded image: //p')
     [ -n "$loaded" ] || fail "the candidate image archive loaded no image"
-    IMAGE=$(docker image inspect --format '{{.Id}}' "$loaded")
+    IMAGE=$(docker image inspect --format '{{.Id}}' "$loaded") \
+        || fail "this host could not be asked what the loaded image is"
     recorded=$(record "['image']['platforms']['linux/amd64']['config']") \
         || fail "the candidate record does not name a linux/amd64 configuration digest"
     require "the loaded image is not the linux/amd64 candidate the record names" "$recorded" "$IMAGE"
@@ -308,7 +328,8 @@ row_artifact_identity() {
     # directory is not part of what the record promises, so it is found rather
     # than derived from a filename.
     mkdir -p "$EXTRACTED"
-    tar -xzf "$CANDIDATE/$bundle_name" -C "$EXTRACTED"
+    tar -xzf "$CANDIDATE/$bundle_name" -C "$EXTRACTED" \
+        || fail "the deployment bundle archive could not be extracted"
     entry=$(find "$EXTRACTED" -type f -name infrahub-sync-compose | head -1)
     [ -n "$entry" ] || fail "the bundle archive holds no lifecycle entry point"
     [ -x "$entry" ] || fail "the bundle's lifecycle entry point is present but not executable"
@@ -445,6 +466,11 @@ row_cold_start_and_idempotence() {
     report "empty state reached READY, with nothing mounted from outside the bundle"
 
     before=$(durable_snapshot)
+    # No run has happened yet, so `product_runs` is legitimately zero here. What
+    # bootstrap did create is a registered configuration, and that is what a
+    # repeat start has to leave alone -- without this the equality below is
+    # satisfied by there having been no durable object at all.
+    require_snapshot_holds "$before" configuration_versions "a repeat start changing nothing would demonstrate nothing"
     compose_bundle start >"$WORK/second-start" 2>&1 \
         || fail "a second start of the same deployment did not succeed"
     require "a second start changed a durable object" "$before" "$(durable_snapshot)"
@@ -525,7 +551,7 @@ wait_for_state() {
 row_restart() {
     before_worker=$(deployment_container sync-worker)
     before_state=$(durable_snapshot)
-    require_durable_state "$before_state" "a restart preserving it would demonstrate nothing"
+    require_snapshot_holds "$before_state" product_runs "a restart preserving it would demonstrate nothing"
 
     compose_bundle restart >/dev/null || fail "the deployment could not be restarted"
     require "the deployment did not return to READY after a restart" READY "$(deployment_status)"
@@ -599,7 +625,7 @@ row_alpha_replacement() {
     # again. Nothing here upgrades anything, and that is the claim being made.
     check seed_disposable_state || fail "disposable state could not be created before replacement"
     before=$(durable_snapshot)
-    require_durable_state "$before" "there is nothing for a replacement to replace"
+    require_snapshot_holds "$before" product_runs "there is nothing for a replacement to replace"
 
     capture_deployment_log before-replacement
     compose_bundle reset "$INSTANCE" >/dev/null || fail "the documented replacement could not reset"

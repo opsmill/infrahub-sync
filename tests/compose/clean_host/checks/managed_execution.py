@@ -8,9 +8,22 @@ to — the transport that exists so the two never share a filesystem.
 
 from __future__ import annotations
 
-from kit import deployment, follow, key, plant, refuse, require_planned_work, run_request, wrote
+from kit import (
+    PLANTED_OPERATIONS,
+    deployment,
+    follow,
+    key,
+    plant,
+    refuse,
+    require_planned_work,
+    run_request,
+    wrote,
+)
 
 from infrahub_sync.client.models import ApplyRunRequest, VerifyRunRequest
+
+# The kind the service publishes a reviewed plan under (`service/flow.py`).
+REVIEW_ARTIFACT = "saved-plan-review"
 
 with deployment() as client:
     planned = follow(client, client.plan(run_request(client, "plan", "clean-host: plan"), key("plan")))
@@ -19,14 +32,17 @@ with deployment() as client:
     plan = client.get_plan(run_id)
     if not plan.checksum_ok:
         refuse("the saved plan did not verify against its own checksum")
-    require_planned_work(client, run_id)
+    require_planned_work(client, run_id, expected=PLANTED_OPERATIONS)
 
-    artifacts = client.list_artifacts(run_id)
-    if not artifacts.artifacts:
-        refuse("the worker published no review artifact for the plan")
-    retrieved = client.get_artifact(run_id, artifacts.artifacts[0].artifact_id)
+    # By kind, not by position: whichever artifact came back first satisfies a
+    # check that only requires one to exist, under a message claiming the review
+    # artifact. The kind is the one `_publish_plan` publishes the review under.
+    published = [entry for entry in client.list_artifacts(run_id).artifacts if entry.kind == REVIEW_ARTIFACT]
+    if not published:
+        refuse(f"the worker published no {REVIEW_ARTIFACT} artifact for the plan")
+    retrieved = client.get_artifact(run_id, published[0].artifact_id)
     if not retrieved.data:
-        refuse("the published review artifact came back empty")
+        refuse(f"the published {REVIEW_ARTIFACT} artifact came back empty")
 
     # The apply names the checksum the review verified, so a plan that changed
     # between the two is refused rather than applied.

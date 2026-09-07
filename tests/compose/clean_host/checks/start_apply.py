@@ -13,6 +13,7 @@ import sys
 import time
 
 from kit import (
+    PLANTED_OPERATIONS,
     POLL_SECONDS,
     RUN_TIMEOUT_SECONDS,
     deployment,
@@ -31,7 +32,7 @@ with deployment() as client:
     # of its own, that there is one operation to interrupt before it starts one.
     plant("interrupt")
     proved = follow(client, client.plan(run_request(client, "plan", "clean-host: work to interrupt"), key("probe")))
-    require_planned_work(client, proved.run.run_id)
+    require_planned_work(client, proved.run.run_id, expected=PLANTED_OPERATIONS)
 
     accepted = client.sync(run_request(client, "sync", "clean-host: interrupt mid-apply"), key("interrupt"))
     run_id = accepted.run.run_id

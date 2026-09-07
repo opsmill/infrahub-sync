@@ -69,7 +69,14 @@ def unkeyed_objects(branch: str) -> int:
         answer = infrahub.post(f"/graphql/{branch}", json={"query": f"{{ {UNKEYED_KIND} {{ count }} }}"})
         if answer.status_code != 200:
             refuse(f"the destination did not answer for {UNKEYED_KIND}'s object count on {branch}")
-        return int(answer.json()["data"][UNKEYED_KIND]["count"])
+        # A GraphQL refusal arrives as a 200 carrying `errors` and no `data`, and
+        # indexing it raises where a sentence belongs -- the row would die with a
+        # traceback about a key rather than say what it could not read.
+        held = answer.json().get("data") or {}
+        counted = held.get(UNKEYED_KIND, {}).get("count") if isinstance(held.get(UNKEYED_KIND), dict) else None
+        if not isinstance(counted, int):
+            refuse(f"the destination answered for {UNKEYED_KIND} on {branch} without a count")
+        return counted
 
 
 def registered_unkeyed(client: SyncClient) -> tuple[str, int]:

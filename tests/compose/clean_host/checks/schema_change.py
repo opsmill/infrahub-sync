@@ -28,6 +28,7 @@ import pathlib
 
 import yaml
 from kit import (
+    PLANTED_OPERATIONS,
     deployment,
     follow,
     key,
@@ -113,7 +114,7 @@ with deployment() as client:
     planned = follow(client, client.plan(run_request(client, "plan", "clean-host: drift plan"), key("drift")))
     run_id = planned.run.run_id
     plan = client.get_plan(run_id)
-    require_planned_work(client, run_id)
+    require_planned_work(client, run_id, expected=PLANTED_OPERATIONS)
 
     load_attribute_kind(REVERSIBLE_KINDS[original], BRANCH)
     try:

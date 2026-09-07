@@ -239,6 +239,11 @@ PLANTED_ATTRIBUTE = "type"
 # What a completed run reports having written, as the execution surface names it.
 ACTIONS = ("create", "update", "delete")
 
+# `plant` changes one attribute of one object, so a plan taken after it proposes
+# exactly one operation. Rows state this rather than requiring "at least one":
+# a plan proposing more is proposing something nobody planted.
+PLANTED_OPERATIONS = 1
+
 
 def declared(configuration: str = CONFIGURATION) -> dict:
     """Return one declared configuration's `configuration` section."""
@@ -303,16 +308,19 @@ def plant(purpose: str) -> str:
     return value
 
 
-def require_planned_work(client: SyncClient, run_id: str) -> int:
-    """Refuse a plan with nothing in it, and return how much it proposed.
+def require_planned_work(client: SyncClient, run_id: str, *, expected: int) -> int:
+    """Refuse a plan that proposed anything other than what the row planted for.
 
     Every negative claim below a plan -- refused before any write, interrupted
     mid-write, wrote nothing it should not have -- is satisfied by a plan that
-    proposed nothing. So no row reads its own plan without this.
+    proposed nothing, so no row reads its own plan without this. And the count is
+    stated rather than bounded below: each row plants exactly one difference, so a
+    plan proposing more is proposing something nobody asked for, which is a thing
+    a qualification gate should catch rather than tolerate.
     """
     total = client.get_plan(run_id).summary.total
-    if total < 1:
-        refuse("the plan proposed nothing, so anything asserted about applying it would mean nothing")
+    if total != expected:
+        refuse(f"the plan proposed {total} operations where this row planted {expected}")
     return total
 
 
