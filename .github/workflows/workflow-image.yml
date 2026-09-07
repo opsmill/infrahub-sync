@@ -240,6 +240,18 @@ jobs:
       - name: "Write the qualification record"
         run: uv run --no-sync invoke release.qualify
 
+      # Only when the job has already failed, and only what the suite's own
+      # capture boundary produced. A run that passes uploads nothing new.
+      - name: "Publish what a failed lifecycle run saw"
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-lifecycle-diagnostic
+          path: .diagnostics/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
       - name: "Publish the qualification record"
         uses: actions/upload-artifact@v4
         with:

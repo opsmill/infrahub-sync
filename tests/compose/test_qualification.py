@@ -39,13 +39,19 @@ class _Config:
 
 
 class _Item:
-    """The two questions the hook asks of a test item, and nothing else."""
+    """What the hook asks of a test item, and nothing else.
+
+    The stash is real rather than a stand-in: the hook records the call phase's
+    outcome there for a teardown to read, and a double that could not hold it
+    would pass a hook that never wrote one.
+    """
 
     nodeid = NODE_ID
 
     def __init__(self, *, marked: bool, zero_skip: bool) -> None:
         self._marked = marked
         self.config = _Config(zero_skip=zero_skip)
+        self.stash = pytest.Stash()
 
     def get_closest_marker(self, name: str) -> object | None:
         # The hook only asks whether there is one, so a stand-in is enough.
@@ -127,3 +133,13 @@ def test_a_complete_candidate_record_returns_its_configuration_digest(monkeypatc
     monkeypatch.setattr(compose, "read_digests", lambda: {"platforms": {"linux/amd64": {"config": digest}}})
 
     assert compose.candidate_reference() == digest
+
+
+def test_the_hook_records_whether_the_call_phase_failed() -> None:
+    """A failed run's diagnostic is written in teardown, which reads what this leaves."""
+    from tests.compose.conftest import FAILED
+
+    item = _Item(marked=True, zero_skip=False)
+    report_for("failed", item)
+
+    assert item.stash[FAILED] is True

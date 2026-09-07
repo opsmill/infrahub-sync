@@ -222,18 +222,76 @@ def register(client: httpx.Client, package: Mapping[str, Any], reason: str) -> t
 
 
 def await_phase(client: httpx.Client, run_id: str, phase: str, *, timeout: int = RUN_TIMEOUT_SECONDS) -> dict[str, Any]:
-    """Poll one durable run until it reaches a phase, failing loudly when it fails."""
+    """Poll one durable run until it reaches a phase, failing loudly when it fails.
+
+    The phase each poll read is kept. A run that never arrives is diagnosed by
+    what it was instead, and `wait_for` reports the probe's own answer -- which
+    for an unmatched phase is the `None` that means "not yet", carrying nothing.
+    """
+    observed: list[str] = []
 
     def probe() -> dict[str, Any] | None:
         response = client.get(f"/runs/{run_id}")
         assert response.status_code == 200, response.text
         payload = response.json()
         current = payload["run"]["phase"]
+        observed.append(current)
         if "failed" in current:
             pytest.fail(f"run {run_id} failed while waiting for {phase!r}: {payload['run']}")
         return payload if current == phase else None
 
-    return cast("dict[str, Any]", wait_for(f"run {run_id} reaching {phase!r}", probe, timeout=timeout))
+    try:
+        return cast("dict[str, Any]", wait_for(f"run {run_id} reaching {phase!r}", probe, timeout=timeout))
+    except pytest.fail.Exception:
+        # Both outcomes arrive here: `wait_for` catches transport and assertion
+        # errors, not what `pytest.fail` raises, so the probe's own failure
+        # passes straight through. That one already carries the run payload,
+        # which is the best evidence a failure produces, so only a run that never
+        # arrived is described by the phase it last held.
+        if observed and "failed" in observed[-1]:
+            raise
+        last = observed[-1] if observed else "no phase read"
+        pytest.fail(
+            f"run {run_id} reaching {phase!r} did not happen within {timeout}s "
+            f"(last observed phase: {last!r}, polls: {len(observed)})"
+        )
+
+
+# What a failed run needs answered, and nothing else. Every part comes back from
+# `Deployment.logs`, which is `--tail`-bounded and redacted at capture, so the
+# artifact is built from output that already passed the boundary.
+DIAGNOSTIC_SERVICES = ("sync-api", "sync-worker")
+DIAGNOSTIC_TAIL = 200
+
+
+def diagnostic_report(deployment: Deployment) -> str:
+    """Return a bounded, redacted account of what the deployment's services said."""
+    sections = [f"instance {deployment.instance}", f"project {deployment.project}"]
+    sections.extend(
+        f"--- {service} (last {DIAGNOSTIC_TAIL} lines) ---\n{deployment.logs(service, tail=DIAGNOSTIC_TAIL).output}"
+        for service in DIAGNOSTIC_SERVICES
+    )
+    return "\n\n".join(sections)
+
+
+def write_diagnostic(deployment: Deployment, destination: Path, *, named: Mapping[str, str]) -> str:
+    """Write the diagnostic report, or withhold it, and return what happened.
+
+    The sweep reads the bytes that would be retained rather than the parts they
+    were assembled from: redacting each part and trusting the whole is how a
+    concatenation boundary leaks. A registered value in those bytes withholds the
+    file entirely -- an artifact nobody has is a result, and one that has left is
+    not recoverable.
+    """
+    report = diagnostic_report(deployment)
+    names = SECRETS.leaked(report, named)
+    registered = any(value in report for value in SECRETS.values())
+    if names or registered:
+        found = ", ".join(names) if names else "a registered value this sweep cannot name"
+        return f"diagnostic withheld: its bytes carry {found}"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(report, encoding="utf-8")
+    return f"diagnostic written to {destination}"
 
 
 def owned_volumes(deployment: Deployment) -> dict[str, str]:
