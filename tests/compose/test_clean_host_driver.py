@@ -73,6 +73,46 @@ def code_of(path: Path) -> str:
     return ast.unparse(tree)
 
 
+def keyword_of(source: str, *, assigned_to: str, keyword: str) -> str | None:
+    """Return one keyword argument of the call whose result is assigned to a variable.
+
+    Anchored to the call rather than to the module: the same keyword appears on
+    more than one call here, and a claim about one of them is satisfied by any.
+    """
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
+            continue
+        if assigned_to not in [target.id for target in node.targets if isinstance(target, ast.Name)]:
+            continue
+        for entry in node.value.keywords:
+            if entry.arg == keyword:
+                return ast.unparse(entry.value)
+    return None
+
+
+def attributes_of(source: str, variable: str) -> set[str]:
+    """Return the attributes read from one variable, excluding the methods called on it.
+
+    Read from the parsed module rather than matched as text: `infra_device.yml`
+    contains `device.yml`, and a pattern looking for `device.<something>` finds it.
+    """
+    tree = ast.parse(source)
+    called = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == variable
+    }
+    read = {
+        node.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == variable
+    }
+    return read - called
+
+
 def attribute_calls(source: str) -> set[str]:
     """Return every dotted call a module makes, as written."""
     found = set()
@@ -663,16 +703,70 @@ def test_the_seeding_refuses_a_configuration_that_reads_and_writes_one_branch() 
 
 
 def test_the_destination_is_prepared_in_the_order_a_branch_inherits_from() -> None:
-    """Schema, then the fork, then the object -- and each position means something.
+    """Schema, object, fork, difference -- and every position was learned from a failure.
 
-    A branch forked before the schema load carries no schema, and a row planning
-    against it is refused for the schema rather than judged. An object seeded
-    before the fork reaches both sides, and the first plan then has nothing to
-    propose.
+    A branch forked before the schema load carries no schema. A branch forked
+    before the object does not hold it, while its human-friendly ID is registered
+    across the whole destination -- so a convergent upsert can neither find the
+    node on that branch nor create one under an identifier already taken. And two
+    sides holding an identical object give a plan nothing to propose, which is
+    what the change on `main` is for.
     """
     source = seeding()
-    loaded = source.index("for schema in SCHEMAS:")
-    forked = source.index("ensure_branch(planned_branch())")
-    seeded = source.index("CREATE_DEVICE.replace")
+    steps = (
+        "for schema in SCHEMAS:",
+        "seed_object()\n",
+        "ensure_branch(planned_branch())",
+        "planted = plant_pending_update()",
+    )
+    missing = [step.strip() for step in steps if step not in source]
+    assert not missing, f"the seeding never performs {missing}"
 
-    assert loaded < forked < seeded
+    positions = [source.index(step) for step in steps]
+    assert positions == sorted(positions), "the destination is not prepared in the order a branch inherits from"
+
+
+def mapped_fields() -> set[str]:
+    """Return every field the bundled configuration maps, which is what a plan reads."""
+    declared = yaml.safe_load(BUNDLED_CONFIGURATION.read_text(encoding="utf-8"))["configuration"]
+    return {field["name"] for mapping in declared["schema_mapping"] for field in mapping["fields"]}
+
+
+def test_the_planted_difference_changes_an_attribute_the_configuration_maps() -> None:
+    """A change to anything else leaves the two sides equal as far as a plan is concerned."""
+    changed = attributes_of(seeding(), "device")
+
+    assert changed, "nothing in the seeding changes the seeded object"
+    assert changed <= mapped_fields(), f"{sorted(changed - mapped_fields())} is not a field any plan reads"
+
+
+def test_the_planted_difference_is_written_to_the_side_a_plan_reads_from() -> None:
+    """Written to the destination branch it would converge the two sides, not separate them."""
+    written = keyword_of(seeding(), assigned_to="device", keyword="branch")
+
+    assert written == repr(configured_branches()["source"]), f"the difference is planted on {written}"
+
+
+def test_the_attribute_the_seeding_writes_is_established_rather_than_assumed() -> None:
+    """A fetched node types every member three ways, so which one this is has to be checked.
+
+    Suppressing the union instead would leave a destination that models `type`
+    differently to fail inside the SDK, with nothing said about what it declared.
+    """
+    source = seeding()
+
+    assert "isinstance(attribute, Attribute)" in source
+    assert "not as an attribute" in source
+
+
+def test_the_planted_value_is_fresh_on_every_run() -> None:
+    """A fixed value converges: the first apply writes it, and the next plan is empty again."""
+    assert "uuid.uuid4" in attribute_calls(seeding())
+
+
+def test_the_planted_difference_is_read_back_from_the_destination() -> None:
+    """A save that persisted nothing leaves an empty plan, and the row reports that instead."""
+    source = seeding()
+
+    assert source.count("sdk().get(") == 2
+    assert "did not keep the change" in source
