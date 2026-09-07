@@ -25,12 +25,12 @@ permissions:
   packages: read
 
 # How long the service holds what a failed run leaves behind, which is the only
-# thing this workflow retains. A pull-request run keeps no candidate image,
-# layout, distribution or bundle: it describes a merge result nobody will ship,
-# and the candidate that gets qualified is built by a manual run against the
-# exact merged commit.
+# thing this workflow retains. A diagnostic is read while the failure it explains
+# is being worked, so it is kept days rather than months: a pull-request run
+# keeps no candidate image, layout, distribution or bundle, and the window a
+# candidate needs belongs to the manual run that builds one.
 env:
-  CANDIDATE_RETENTION_DAYS: 90
+  DIAGNOSTIC_RETENTION_DAYS: 7
 
 jobs:
   files-changed:
@@ -132,4 +132,4 @@ jobs:
           path: .diagnostics/
           include-hidden-files: true
           if-no-files-found: ignore
-          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+          retention-days: ${{ env.DIAGNOSTIC_RETENTION_DAYS }}

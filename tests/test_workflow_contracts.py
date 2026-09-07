@@ -35,13 +35,6 @@ UPLOAD_ACTION = "actions/upload-artifact"
 # The artifacts an approval is later bound to, as opposed to evidence a run
 # leaves for whoever reads it that day.
 CANDIDATE_ARTIFACTS = ("infrahub-sync-candidate", "infrahub-sync-qualification")
-# The window an approval may take. A candidate's bytes have to still be there
-# when someone reaches it, and a record naming a shorter window would describe
-# artifacts the service is already free to drop.
-APPROVAL_WINDOW_DAYS = 90
-# Every candidate upload names the workflow's own declaration rather than a
-# number of its own, so one edit moves all of them together.
-RETENTION_EXPRESSION = "${{ env.CANDIDATE_RETENTION_DAYS }}"
 # `invoke` as the command being run, optionally through `uv run`, so that naming
 # it as an argument — installing it, say — is not read as running a task.
 INVOKE_TASK = re.compile(
