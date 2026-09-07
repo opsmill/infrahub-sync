@@ -25,7 +25,18 @@ import os
 import pathlib
 
 import yaml
-from kit import deployment, destination, follow, key, plant, refuse, require_planned_work, run_request, sdk
+from kit import (
+    deployment,
+    destination,
+    follow,
+    key,
+    plant,
+    recorded_failure,
+    refuse,
+    require_planned_work,
+    run_request,
+    sdk,
+)
 
 from infrahub_sync.client.errors import APIError
 from infrahub_sync.client.models import ApplyRunRequest
@@ -105,7 +116,10 @@ with deployment() as client:
             )
         # The reason, not merely a failure: an apply that failed for anything else
         # would satisfy a check that only required it to fail.
-        failure = client.get_results(run_id).results.get("apply_failure", {})
+        # Through the kit rather than by stage name: which key holds the evidence
+        # depends on the operation that failed, and a row reading one name observes
+        # nothing at all about a run that failed in another.
+        failure = recorded_failure(client, run_id)
         if failure.get("error_type") != REFUSAL:
             refuse(f"the apply reported {failure.get('error_type')!r} rather than {REFUSAL}")
         if failure.get("may_have_partially_written"):

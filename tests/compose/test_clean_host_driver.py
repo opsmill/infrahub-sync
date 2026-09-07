@@ -25,6 +25,8 @@ CHECKS = REPO_ROOT / "tests" / "compose" / "clean_host" / "checks"
 # The declared configuration the deployment's own bootstrap registers. What its
 # destination side names is what every managed row plans against.
 BUNDLED_CONFIGURATION = REPO_ROOT / "deploy" / "compose" / "configuration" / "qualification.yaml"
+# Every stage that can record a failure, as the service names the result key.
+FAILURE_STAGES = ("plan", "verify", "apply", "sync")
 # The one configuration a row registers for itself, carried in the kit.
 UNKEYED_CONFIGURATION = REPO_ROOT / "tests" / "compose" / "clean_host" / "destination" / "unkeyed-configuration.yaml"
 UNKEYED_SCHEMA = REPO_ROOT / "tests" / "compose" / "clean_host" / "destination" / "unkeyed.yml"
@@ -1058,3 +1060,59 @@ def test_the_kit_derives_the_confirmation_from_the_operation() -> None:
 
     assert "confirm_writes=operation == 'sync'" in source
     assert source.count("confirm_writes") == 1
+
+
+def test_the_unkeyed_row_settles_its_run_rather_than_awaiting_success() -> None:
+    """A refused operation cannot produce a successful run, so awaiting one never passes.
+
+    For this row the terminal failure is the expected outcome, and the check has
+    to read the verdict instead of reporting it.
+    """
+    source = code_of(CHECKS / "unkeyed_write_policy.py")
+    settled = [line for line in source.splitlines() if "client.sync(" in line]
+
+    assert settled, "the row runs no sync"
+    for line in settled:
+        assert "settle(" in line, f"the row awaits success from a run that cannot succeed: {line.strip()}"
+
+
+def test_the_unkeyed_row_reads_the_recorded_cause_and_not_the_wrapper() -> None:
+    """Every designed apply failure is reported as one wrapper class.
+
+    An assertion on the wrapper would be satisfied by an unresolvable peer, an
+    unaccounted identity component, or the destination's own rejection.
+    """
+    source = code_of(CHECKS / "unkeyed_write_policy.py")
+
+    assert "failure.get('cause_type') != UNKEYED_REFUSAL" in source
+    assert "OperationApplyFailedError" not in source, "the row names the wrapper, which says only that something failed"
+
+
+def test_the_recovery_row_cannot_pass_on_the_refusal_the_unkeyed_row_induces() -> None:
+    """The two rows would otherwise assert the same state for opposite situations.
+
+    `reconciliation_required` derives from a dispatch having been proven rather
+    than from bytes having been sent, so a refusal that sent nothing raises it as
+    well -- and row 8's property could never fail for the reason it is about.
+    """
+    source = code_of(CHECKS / "recovery.py")
+
+    # Anchored to the comparison, not to the import that makes the name available.
+    compared = "recorded_failure(client, run_id).get('cause_type') == UNKEYED_REFUSAL"
+    assert compared in source, "the row does not separate an interruption from a refusal"
+    assert source.index("reconciliation_required") < source.index(compared)
+
+
+def test_no_check_reads_one_stages_failure_evidence_by_name() -> None:
+    """A `sync` records `sync_failure` where an `apply` records `apply_failure`.
+
+    A row reading one name observes nothing about a run that failed in the other,
+    and reports that as the property having held.
+    """
+    naming = {
+        module.name
+        for module in sorted(CHECKS.glob("*.py"))
+        if module.name != "kit.py" and any(f"'{stage}_failure'" in code_of(module) for stage in FAILURE_STAGES)
+    }
+
+    assert not naming, f"{sorted(naming)} read one stage's evidence by name instead of asking the kit"

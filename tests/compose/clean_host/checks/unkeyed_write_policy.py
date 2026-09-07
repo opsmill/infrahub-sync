@@ -28,17 +28,26 @@ import pathlib
 from typing import TYPE_CHECKING
 
 import yaml
-from kit import Operation, create_run, deployment, destination, follow, key, refuse
+from kit import (
+    UNKEYED_REFUSAL,
+    Operation,
+    create_run,
+    deployment,
+    destination,
+    follow,
+    key,
+    recorded_failure,
+    refuse,
+    settle,
+)
 
 from infrahub_sync.client.models import ConfigMutationRequest, CreateRunRequest
 
 if TYPE_CHECKING:
     from infrahub_sync.client import SyncClient
 
-# The kind whose convergent write cannot be keyed, and the typed refusal the
-# adapter raises immediately before the SDK write.
+# The kind whose convergent write cannot be keyed.
 UNKEYED_KIND = "CleanDevice"
-REFUSAL = "UnkeyedWriteRefusedError"
 CONFIGURATION = "/checks/unkeyed-configuration.yaml"
 
 
@@ -108,17 +117,22 @@ with deployment() as client:
     if {operation.action for operation in proposed} != {"create"}:
         refuse(f"planning proposed {sorted({operation.action for operation in proposed})} rather than a create")
 
-    applied = follow(
-        client,
-        client.sync(request("sync", "clean-host: unkeyed apply"), key("unkeyed-apply")),
-    )
+    # Settled rather than followed: a refused operation cannot produce a
+    # successful run, so awaiting success here could never pass. For this row the
+    # terminal failure is the expected outcome and the verdict is what it reads.
+    applied = settle(client, client.sync(request("sync", "clean-host: unkeyed apply"), key("unkeyed-apply")))
 
     # Property: the run was refused for being unkeyed, and the branch it writes to
-    # is unchanged. A run that failed for anything else would satisfy a check that
-    # only required it to fail.
-    failure = client.get_results(applied.run.run_id).results.get("apply_failure", {})
-    if failure.get("error_type") != REFUSAL:
-        refuse(f"the run reported {failure.get('error_type')!r} rather than {REFUSAL}")
+    # is unchanged. The wrapper is the same class for every designed apply failure
+    # -- an unresolvable peer, an unaccounted identity component, a destination's
+    # own rejection -- so the recorded cause is what makes this a statement about
+    # this refusal rather than about any failure at all.
+    failure = recorded_failure(client, applied.run.run_id)
+    if failure.get("cause_type") != UNKEYED_REFUSAL:
+        refuse(
+            f"the run recorded {failure.get('error_type')!r} raised from"
+            f" {failure.get('cause_type')!r}, rather than a {UNKEYED_REFUSAL}"
+        )
     after = unkeyed_objects(written_branch)
     if after != before:
         refuse(f"a refused unkeyed operation changed {written_branch} from {before} to {after} objects")

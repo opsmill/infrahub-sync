@@ -7,13 +7,18 @@ it completes normally.
 
 Nothing here retries the interrupted run. That is the property — a write whose
 outcome is unknown is not repeated on the chance that it failed.
+
+The reconciliation flag alone does not say a write was uncertain: it derives from
+a dispatch having been proven, not from bytes having reached the destination, so
+a refusal that sent nothing raises it as well. What separates the two is the
+recorded cause, and this row requires the interruption not to be one.
 """
 
 from __future__ import annotations
 
 import sys
 
-from kit import deployment, follow, key, refuse, run_request
+from kit import UNKEYED_REFUSAL, deployment, follow, key, recorded_failure, refuse, run_request
 
 run_id = sys.argv[1]
 
@@ -26,6 +31,16 @@ with deployment() as client:
 
     if not interrupted.reconciliation_required:
         refuse("an interrupted write left no durable reconciliation state for an operator to act on")
+
+    # And it is not a refusal. Every apply or sync failure after the first
+    # operation sets `reconciliation_required`, because the flag derives from a
+    # dispatch having been proven rather than from bytes having been sent -- so an
+    # operation the write surface refused before sending anything sets it too.
+    # Without this the row passes on a run that provably wrote nothing, which is
+    # the opposite of the state it exists to observe, and its property could never
+    # fail for the reason it is about.
+    if recorded_failure(client, run_id).get("cause_type") == UNKEYED_REFUSAL:
+        refuse("the interrupted run was refused before its write, so there is nothing ambiguous about it")
 
     fresh = follow(client, client.plan(run_request(client, "plan", "clean-host: plan after recovery"), key("after")))
     if "failed" in fresh.run.phase:

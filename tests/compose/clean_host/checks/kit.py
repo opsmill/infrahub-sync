@@ -115,6 +115,12 @@ def run_request(client: SyncClient, operation: Operation, reason: str) -> Create
 # destination, which is not this gate's to report.
 FAILURE_STAGES = ("plan", "verify", "apply", "sync")
 
+# The typed refusal the write surface raises immediately before an SDK write, as
+# the run record now names it. Every designed apply failure is reported as one
+# `OperationApplyFailedError`, so the wrapper says only that an operation failed;
+# the recorded cause is what says which refusal it was.
+UNKEYED_REFUSAL = "UnkeyedWriteRefusedError"
+
 # The bound the CLI already applies to the one recorded field that is free-form
 # in principle: a class name, or nothing.
 MAX_TYPE_NAME = 128
@@ -127,6 +133,22 @@ def printable_type_name(value: object) -> str:
     return "an unprintable error type"
 
 
+def recorded_failure(client: SyncClient, run_id: str) -> dict:
+    """Return the stage-failure evidence one run recorded, whichever stage wrote it.
+
+    The key is named for the stage that failed, and which stage that is depends on
+    the operation: a `sync` records `sync_failure` where an `apply` records
+    `apply_failure`. A row reading one name observes nothing at all about a run
+    that failed in the other.
+    """
+    results = client.get_results(run_id).results
+    for stage in FAILURE_STAGES:
+        evidence = results.get(f"{stage}_failure")
+        if isinstance(evidence, dict):
+            return dict(evidence)
+    return {}
+
+
 def reported_reason(client: SyncClient, run_id: str) -> str:
     """Return what the deployment says it recorded about a failure, or that it says nothing.
 
@@ -135,14 +157,14 @@ def reported_reason(client: SyncClient, run_id: str) -> str:
     teardown: if the two disagree, that disagreement is the finding.
     """
     try:
-        results = client.get_results(run_id).results
+        evidence = recorded_failure(client, run_id)
     except SyncClientError:
         return "the deployment could not be asked which stage failed"
-    for stage in FAILURE_STAGES:
-        evidence = results.get(f"{stage}_failure")
-        if isinstance(evidence, dict):
-            return f"{stage} failed with {printable_type_name(evidence.get('error_type'))}"
-    return "the deployment recorded no stage failure"
+    if not evidence:
+        return "the deployment recorded no stage failure"
+    named = printable_type_name(evidence.get("error_type"))
+    caused = printable_type_name(evidence.get("cause_type"))
+    return f"{evidence.get('stage')} failed with {named}, raised from {caused}"
 
 
 def follow(client: SyncClient, accepted: RunResource) -> RunResource:
@@ -163,6 +185,29 @@ def follow(client: SyncClient, accepted: RunResource) -> RunResource:
             f" at phase {error.phase} with outcome {error.outcome};"
             f" {reported_reason(client, error.run_id)}"
         )
+    except RunWaitTimeoutError as error:
+        refuse(
+            f"run {error.run_id} did not finish within {RUN_TIMEOUT_SECONDS:.0f}s"
+            f" at phase {error.phase} with outcome {error.outcome},"
+            f" its execution last seen {error.execution_state}"
+        )
+
+
+def settle(client: SyncClient, accepted: RunResource) -> RunResource:
+    """Follow one accepted run to its terminal verdict, successful or not.
+
+    `follow` reports an unsuccessful verdict as the check's own failure, which is
+    right for every row whose run is meant to succeed. A row whose subject *is* a
+    refusal needs the verdict rather than an exception -- there, the terminal
+    failure is the expected outcome and awaiting success could never pass.
+
+    A timeout is still a failure: a run that never finished proves nothing in
+    either direction.
+    """
+    try:
+        return client.wait_for_run(accepted, timeout=RUN_TIMEOUT_SECONDS, poll_interval=POLL_SECONDS)
+    except RunTerminalError as error:
+        return client.get_run(error.run_id)
     except RunWaitTimeoutError as error:
         refuse(
             f"run {error.run_id} did not finish within {RUN_TIMEOUT_SECONDS:.0f}s"
