@@ -437,13 +437,39 @@ def test_the_diagnostic_carries_none_of_the_raw_state_the_boundary_forbids(forbi
 
 
 def test_the_diagnostic_carries_a_bounded_tail_of_each_log_rather_than_a_stream() -> None:
-    """Bounded means bounded, and the entry point's own default is not this file's bound."""
-    capture = function_body("capture_diagnostic").replace("\\\n", " ")
-    logged = [line for line in capture.splitlines() if "compose_bundle logs" in line]
+    """Bounded means bounded, whichever side of the exchange the log comes from.
 
-    assert logged
+    The deployment's entry point and the destination fixture are asked in
+    different ways -- an environment variable and a `--tail` -- and neither
+    default is this file's bound.
+    """
+    capture = function_body("capture_diagnostic").replace("\\\n", " ")
+    logged = [line for line in capture.splitlines() if " logs" in line]
+
+    assert len(logged) == 2, "the account reads the deployment's logs and the destination's"
     for line in logged:
-        assert "INFRAHUB_SYNC_LOG_LINES=$DIAGNOSTIC_LINES" in line, f"an unbounded log reaches the file: {line.strip()}"
+        assert "$DIAGNOSTIC_LINES" in line, f"an unbounded log reaches the file: {line.strip()}"
+
+
+def test_the_diagnostic_reads_the_destination_side_of_a_destination_rejection() -> None:
+    """A rejection is reported to the deployment as whatever the destination chose to say.
+
+    Infrahub's GraphQL wrapper chooses to say almost nothing, so the only account
+    of why a mutation was refused is on the destination's side -- and it goes away
+    with the fixture.
+    """
+    capture = function_body("capture_diagnostic").replace("\\\n", " ")
+
+    named = re.search(r"^DIAGNOSTIC_DESTINATION_SERVICE=(\S+)$", driver(), re.MULTILINE)
+    assert named is not None, "the driver names no destination service to read"
+
+    # The command, not the heading above it: a section label naming the service
+    # satisfies nothing about what was actually asked for.
+    reading = [line for line in capture.splitlines() if "destination_compose logs" in line]
+    assert len(reading) == 1, "the destination's log is read once or not at all"
+    assert '"$DIAGNOSTIC_DESTINATION_SERVICE"' in reading[0], (
+        f"the destination's whole stack is read, not one service: {reading[0].strip()}"
+    )
 
 
 def test_every_sweep_looks_for_the_credentials_this_run_generated() -> None:
@@ -552,6 +578,20 @@ def test_the_recorded_run_state_is_read_from_the_store_and_not_from_the_client()
     assert "psycopg.connect" in source
     assert "product_runs" in source
     assert "deployment()" not in source
+
+
+def test_the_diagnostic_check_still_runs_when_it_is_executed_as_a_script() -> None:
+    """The driver runs it with `python /checks/diagnostics.py`, and nothing imports it.
+
+    Its rendering is importable so a test can drive it with rows the store would
+    hand over. The price of that is an entry point which can be removed without
+    anything else noticing: the check would exit 0 having read nothing, and the
+    account would lose the one section it exists for.
+    """
+    source = code_of(CHECKS / "diagnostics.py")
+
+    assert "if __name__ == '__main__':" in source
+    assert "main" in attribute_calls(source)
 
 
 def test_the_recorded_run_state_prints_no_column_that_holds_destination_data() -> None:

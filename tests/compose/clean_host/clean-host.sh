@@ -667,6 +667,12 @@ row_secrets() {
 DIAGNOSTIC=$WORK/diagnostic.txt
 DIAGNOSTIC_LINES=200
 DIAGNOSTIC_SERVICES='sync-api sync-worker'
+# The destination's own service, because a destination rejection is reported to
+# the deployment as whatever the destination chose to say -- and Infrahub's
+# GraphQL wrapper chooses to say almost nothing. Its side of the exchange is on
+# its side. Only the server: the fixture's database, cache and task worker have
+# no part in answering a mutation this gate sent.
+DIAGNOSTIC_DESTINATION_SERVICE=infrahub-server
 
 # Assemble, then sweep the exact bytes that would be kept: redacting each part
 # and trusting the whole is how a concatenation leaks. Anything found withholds
@@ -695,6 +701,15 @@ capture_diagnostic() {
             INFRAHUB_SYNC_LOG_LINES=$DIAGNOSTIC_LINES compose_bundle logs "$service" 2>&1 \
                 || echo "this service reported no log"
         done
+        printf '\n--- destination %s (last %s lines) ---\n' \
+            "$DIAGNOSTIC_DESTINATION_SERVICE" "$DIAGNOSTIC_LINES"
+        # The fixture is this gate's own evidence, so its log is read the same
+        # way and swept with everything else below. No generated credential of
+        # this deployment ever reaches it: the destination is given the published
+        # development token and nothing else this run made.
+        destination_compose logs --no-color --tail "$DIAGNOSTIC_LINES" \
+            "$DIAGNOSTIC_DESTINATION_SERVICE" 2>&1 \
+            || echo "the destination fixture reported no log"
     } > "$assembled" 2>/dev/null || true
     if ! write_canaries "$WORK/diagnostic.canaries"; then
         rm -f "$assembled"
