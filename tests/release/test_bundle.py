@@ -64,6 +64,7 @@ USTAR_MAGIC = b"ustar\x0000"
 
 @pytest.fixture(scope="module")
 def identity() -> release.ReleaseIdentity:
+    """The one release every archive in this module is built for and named after."""
     return release.release_identity(version=VERSION, revision=COMMIT, created=COMMIT_TIME)
 
 
@@ -100,15 +101,28 @@ def tracked(source: Path) -> dict[str, int]:
 
 @pytest.fixture
 def archive(identity: release.ReleaseIdentity, tracked: dict[str, int], tmp_path: Path) -> Path:
+    """One built archive, from the copied tree and the modes Git records for it."""
     return release.write_bundle(identity, tracked, tmp_path / "out")
 
 
 def members(archive: Path) -> list[tarfile.TarInfo]:
+    """Return every entry of one archive, headers included.
+
+    The headers are the subject: sorted order, the commit's time, an unnamed
+    numeric owner and the mode Git records are each read from a `TarInfo` here
+    rather than from an extracted tree, which would have lost all four.
+    """
     with tarfile.open(archive) as opened:
         return opened.getmembers()
 
 
 def gzip_header(archive: Path) -> bytes:
+    """Return the ten bytes of one archive's gzip header.
+
+    Read raw rather than through `gzip`, because what is asserted about them --
+    the stamped time, the absent original filename, the compression level -- is
+    exactly what decompressing discards.
+    """
     return archive.read_bytes()[:10]
 
 
