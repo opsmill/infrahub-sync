@@ -202,10 +202,15 @@ ROW6_CHECK_CONTAINER=
 # clocks are running, so it may be generous. Everything after it happens while
 # the check holds the write guard and three thirty-second clocks are counting
 # from that claim -- the guard's own lock_timeout, the liveness stall threshold,
-# and the live-worker freshness window. This bound has to expire and resume the
-# parent well before the earliest of them, so it is nowhere near thirty.
+# and the live-worker freshness window.
+#
+# The check bounds that whole stretch with one budget of its own, and this is
+# deliberately shorter than it. Giving up first means this driver resumes the
+# parent and answers while the check still has budget left to notice, so a
+# driver-side stall ends as this row's named timeout rather than as both sides
+# expiring at once. A bound at or above the check's budget would invert that.
 ROW6_SETUP_TIMEOUT=180
-ROW6_HELD_TIMEOUT=20
+ROW6_HELD_TIMEOUT=12
 
 coordinated_check() {
     # `check` mounts everything read-only, and row 2 asserts that the deployment

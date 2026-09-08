@@ -1210,10 +1210,13 @@ def test_the_busy_worker_row_proves_the_whole_queue_from_one_snapshot() -> None:
     source = code_of(CHECKS / "busy_worker_stays_ready.py")
     tree = ast.parse(source)
 
+    # Call sites may exceed two -- the recovery replays the second run's key on
+    # the failure path -- but the distinct keys may not, because a run is one key.
     submitted = [node for node in ast.walk(tree) if submitted_stage(node) is not None]
-    assert len(submitted) == 2, "the row does not submit exactly the two accepted runs the evidence needs"
+    assert len(submitted) >= 2, "the row does not submit the two runs the evidence needs"
     keys = {ast.unparse(node.args[1]) for node in submitted if isinstance(node, ast.Call) and len(node.args) > 1}
-    assert len(keys) == 2, f"both submissions carry one mutation key, so the second replays the first: {sorted(keys)}"
+    assert len(keys) == 2, f"the row does not accept exactly two distinct runs: {sorted(keys)}"
+    assert source.count("accepted.append(") == 2, "the row records a number of handles other than the two it accepts"
 
     snapshots = [
         node
@@ -1270,6 +1273,268 @@ def test_the_busy_worker_row_states_the_one_write_it_converges() -> None:
         assert forbidden in source, f"the row permits a write it never planted: {forbidden}"
 
 
+def test_one_absolute_budget_covers_everything_after_the_first_run_is_claimed() -> None:
+    """Three sequential twenty-second waits are a sixty-second row, not a twenty-second one.
+
+    The product's clocks start at the claim and run once: the guard's
+    `lock_timeout`, the liveness stall threshold and the live-worker freshness
+    window, thirty seconds each. A row whose waits each restart a deadline can
+    spend far longer than any of them while still obeying every individual
+    bound, and the first clock to expire replaces the coordination failure with
+    a stalled or contended run.
+
+    So there is one budget, started the moment the claim is proven and covering
+    every step to the last handshake. It is a real timer rather than a checked
+    deadline because most of that time is spent inside blocking client calls,
+    which a loop condition never gets to re-examine.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+
+    budget = re.search(r"POST_CLAIM_BUDGET_SECONDS = ([0-9.]+)", source)
+    assert budget, "the row names no single budget for everything after the claim"
+    assert float(budget.group(1)) <= 15, "the budget leaves the product's thirty-second clocks no room"
+
+    for mechanism in ("signal.setitimer", "signal.SIGALRM", "signal.ITIMER_REAL"):
+        assert mechanism in source, f"the budget cannot interrupt a blocking client call without {mechanism}"
+
+    assert "HELD_TIMEOUT_SECONDS" not in source, "a per-wait deadline survives and can still extend the total"
+
+    # Anchored to where the budget is entered, not to where it is defined: the
+    # definition necessarily precedes everything and would satisfy any ordering.
+    tree = ast.parse(source)
+    entered = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.With)
+        for item in node.items
+        if isinstance(item.context_expr, ast.Call)
+        and getattr(item.context_expr.func, "id", None) == "post_claim_budget"
+    ]
+    assert len(entered) == 1, "the row does not enter one budget covering everything after the claim"
+    proven = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and ast.unparse(node) == "await_execution(client, executing_run)"
+    )
+    guarded = ast.unparse(entered[0])
+    assert proven.lineno < entered[0].lineno, "the budget starts before the claim it is meant to follow"
+    for covered in ("signal_driver('executing')", "client.plan(", "await_qualifying_snapshot(", "worker.state not in"):
+        assert covered in guarded, f"{covered} happens outside the one budget"
+
+    driver_bound = re.search(r"ROW6_HELD_TIMEOUT=([0-9]+)", executable_lines())
+    assert driver_bound, "the driver does not bound its wait while the worker parent is stopped"
+    # Strictly shorter, so the driver gives up and resumes while the check still
+    # has budget left to be told. Equal bounds would have both sides expire at
+    # once and the row would report neither side's reason clearly.
+    assert int(driver_bound.group(1)) < float(budget.group(1)), (
+        "the shell bound leaves the check no budget to hear the driver give up"
+    )
+
+
+def test_the_budget_is_translated_at_the_block_it_bounds_not_only_in_its_waits() -> None:
+    """The alarm can land anywhere inside, and most of the inside is a blocking call.
+
+    `client.plan`, a reproof's `get_run`, a control write and the property
+    evaluation are all reached with the timer armed and none of them is a loop
+    whose condition could notice. Translated only inside the two wait helpers,
+    the row would end in a raw traceback for every other step -- which is the
+    one outcome a qualification gate must never produce.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+    tree = ast.parse(source)
+
+    entered = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.With)
+        and any(
+            isinstance(item.context_expr, ast.Call)
+            and getattr(item.context_expr.func, "id", None) == "post_claim_budget"
+            for item in node.items
+        )
+    )
+    guarding = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+        and any(
+            handler.type is not None and "BudgetExpiredError" in ast.unparse(handler.type) for handler in node.handlers
+        )
+        and any(step is entered for step in node.body)
+    ]
+    assert guarding, "the budget's own expiry escapes every step that is not one of the two waits"
+    assert "refuse(" in ast.unparse(guarding[0].handlers[0]), "the escape is caught but never reported as a refusal"
+
+
+def test_an_interrupted_second_submission_cannot_leave_an_untracked_accepted_run() -> None:
+    """The alarm can land inside `client.plan` after the service admitted the run.
+
+    Between the service's acceptance and this row recording the handle there is a
+    window in which a run exists that nothing will settle -- and the next row
+    waits for a READY that run holds open. Replaying the same mutation key
+    recovers it, because the service answers a known key with the run it already
+    admitted rather than admitting another. One key, one run, never a third.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+    tree = ast.parse(source)
+
+    assert "EXPECTED_ACCEPTED = 2" in source, "the row does not state how many runs it should be holding"
+    assert "recover_queued(" in source, "an interrupted second submission is never recovered"
+    assert "if attempted and len(handles) < EXPECTED_ACCEPTED:" in source, (
+        "recovery does not distinguish an ambiguous submission from one that never began"
+    )
+
+    # A missing handle means two different things, and only one is ambiguous. A
+    # row that failed before it ever reached the second submission must not have
+    # one admitted for it during cleanup.
+    assert "queued_attempted = False" in source, "the row cannot tell an ambiguous submission from an absent one"
+
+    # Adjacent statements, read from the tree rather than from offsets: the mark
+    # has to be the statement immediately before the submission, or the window it
+    # describes is wider than the call it is about.
+    adjacent = any(
+        ast.unparse(body[index]) == "queued_attempted = True"
+        and "client.plan(read, key(QUEUED_PURPOSE))" in ast.unparse(body[index + 1])
+        for node in ast.walk(tree)
+        for body in (getattr(node, "body", None), getattr(node, "orelse", None), getattr(node, "finalbody", None))
+        if isinstance(body, list)
+        for index in range(len(body) - 1)
+    )
+    assert adjacent, "the attempt is not recorded immediately before the submission it is about"
+
+    # The replay must use the submission's own key, or it creates a third run
+    # rather than returning the accepted second one.
+    keys = {
+        ast.unparse(node.args[0])
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "key"
+    }
+    assert "QUEUED_PURPOSE" in keys, "the second run's key is not named, so the replay cannot reuse it"
+    assert "'busy-queued'" not in keys, "the second run's key is written out twice and the two can drift apart"
+
+
+def test_cleanup_cannot_speak_over_the_refusal_it_is_cleaning_up_after() -> None:
+    """`settle_accepted` suppresses the client's taxonomy and nothing else.
+
+    A settlement that failed some other way -- a transport error, the recovery
+    replay refused -- would then leave this check reporting that instead of the
+    property that actually failed. So while something is already propagating,
+    every exception out of cleanup is swallowed, and the original is re-raised
+    unchanged. On the success path the same cleanup speaks normally, because
+    there is nothing for it to speak over.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+    tree = ast.parse(source)
+
+    guarding = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+        and any(handler.type is not None and ast.unparse(handler.type) == "BaseException" for handler in node.handlers)
+    ]
+    assert guarding, "nothing preserves a primary failure across this row's cleanup"
+    handler = next(one for one in guarding[0].handlers if ast.unparse(one.type or ast.Constant("")) == "BaseException")
+    body = "\n".join(ast.unparse(step) for step in handler.body)
+
+    assert "suppress(Exception)" in body, "a cleanup failure replaces the refusal being reported"
+    assert "release_and_settle" in body, "the failure path never releases the driver or settles what it accepted"
+    assert body.rstrip().endswith("raise"), "the primary failure is not re-raised unchanged"
+    assert guarding[0].orelse, "the success path does not settle at all"
+    assert "release_and_settle" in "\n".join(ast.unparse(step) for step in guarding[0].orelse), (
+        "the success path does not release and settle through the same cleanup"
+    )
+
+
+def test_the_driver_is_released_before_the_failure_path_waits_on_anything() -> None:
+    """After a refusal the parent is still stopped, so settlement cannot go first.
+
+    Nothing this row accepted can reach a verdict while the worker's parent is
+    stopped, and on the refusal path it still is: the driver is waiting to hear
+    from this check before it resumes. Settling first would block until the
+    driver's own bound expired. So the driver is released first -- the key is
+    already gone by then, because the hold closed above it -- and settlement
+    follows.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+    tree = ast.parse(source)
+
+    cleanup = next(
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "release_and_settle"
+    )
+    ordered = "\n".join(ast.unparse(step) for step in cleanup.body)
+
+    assert "signal_driver('done')" in ordered, "cleanup settles without ever releasing the driver"
+    assert "settle_accepted" in ordered, "cleanup never settles what the row accepted"
+    assert ordered.index("signal_driver('done')") < ordered.index("recover_queued"), (
+        "the recovery replay is attempted while the worker parent is still stopped"
+    )
+    assert ordered.index("recover_queued") < ordered.index("settle_accepted"), (
+        "settlement runs before the interrupted acceptance is recovered, so it could never settle it"
+    )
+
+
+def test_the_rows_alarm_is_restored_so_nothing_after_it_inherits_one() -> None:
+    """An interval timer and a handler are process state, not block state."""
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+    tree = ast.parse(source)
+
+    finals = [node for node in ast.walk(tree) if isinstance(node, ast.Try) and node.finalbody]
+    unwinds = ["\n".join(ast.unparse(step) for step in node.finalbody) for node in finals]
+    restoring = [unwound for unwound in unwinds if "setitimer" in unwound]
+    assert restoring, "the row arms an interval timer it never disarms"
+    assert "signal.signal(" in restoring[0], "the row leaves its own SIGALRM handler installed"
+
+
+def test_the_first_runs_settled_result_is_what_the_write_assertion_reads() -> None:
+    """A write count read from the acceptance says nothing: acceptance writes nothing.
+
+    `sync` returns on 202 with an empty summary, so an assertion fed the accepted
+    resource passes over a run that never wrote and over one that wrote
+    everything. What the row is about is the verdict, which is what `follow`
+    returns.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+    tree = ast.parse(source)
+
+    consuming = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "require_converged_drift"
+    ]
+    assert len(consuming) == 1, "the row does not assert its first run's write exactly once"
+    assert "follow(client, executing_run)" in ast.unparse(consuming[0]), (
+        "the write assertion reads something other than the settled first run"
+    )
+
+
+def test_every_accepted_run_is_settled_even_when_the_row_refuses() -> None:
+    """A refusal after the second acceptance still leaves two runs in flight.
+
+    The rows after this one wait for READY, which a run of this row's making
+    holds open, so settlement cannot be something only the success path does.
+    And it cannot speak over the refusal that is already being reported: a
+    settlement that fails says nothing about the property.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+    tree = ast.parse(source)
+
+    assert source.count("accepted.append(") == 2, "the row does not retain both accepted handles"
+
+    guarding = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Try)
+        and any(handler.type is not None and ast.unparse(handler.type) == "BaseException" for handler in node.handlers)
+    )
+    failing = "\n".join(ast.unparse(step) for handler in guarding.handlers for step in handler.body)
+    succeeding = "\n".join(ast.unparse(step) for step in guarding.orelse)
+    assert "release_and_settle" in failing, "a refusing row leaves its accepted runs in flight"
+    assert "release_and_settle" in succeeding, "a succeeding row leaves its accepted runs in flight"
+    assert "suppress(SyncClientError)" in source, (
+        "settlement either swallows everything or replaces the refusal being reported"
+    )
+
+
 def test_only_the_busy_worker_row_is_given_a_writable_control_mount() -> None:
     """The gate's one writable channel into a check belongs to the row that needs it.
 
@@ -1305,29 +1570,6 @@ def test_the_driver_stops_only_the_worker_parent_and_only_once_it_is_executing()
     assert body.index("docker kill --signal STOP") < body.index("stopped"), (
         "the driver answers the check before it has stopped anything"
     )
-
-
-def test_every_wait_taken_while_the_guard_is_held_expires_before_the_products_own_clocks() -> None:
-    """Three thirty-second clocks start when the first run is claimed.
-
-    The guard's `lock_timeout` (`apply_guard.py` DEFAULT_DEADLINE_SECONDS = 30),
-    the liveness stall threshold (`liveness.py` `max(3 * query, 30)` = 30) and the
-    live-worker freshness window (`service.py` `max(3 * heartbeat, 30)` = 30) each
-    end the state this row observes, and the first ends it by failing the run. A
-    wait that outlives them would turn a coordination failure into a product
-    verdict -- the row would report a stalled or contended run instead of the
-    driver never having answered.
-    """
-    source = code_of(CHECKS / "busy_worker_stays_ready.py")
-    held = re.search(r"HELD_TIMEOUT_SECONDS = ([0-9.]+)", source)
-    assert held, "the row does not name the bound it waits under while holding the key"
-    assert float(held.group(1)) < 30, "the row waits past the product clocks that end the state it is observing"
-
-    body = executable_lines()
-    driver_bound = re.search(r"ROW6_HELD_TIMEOUT=([0-9]+)", body)
-    assert driver_bound, "the driver does not bound its wait while the worker parent is stopped"
-    assert int(driver_bound.group(1)) < 30, "the driver waits past the clocks that end the state it stopped for"
-    assert 'await_control observed "$ROW6_HELD_TIMEOUT"' in body, "the held wait does not use the held bound"
 
 
 def test_the_backgrounded_row_six_check_is_tracked_by_its_exact_identity() -> None:
