@@ -289,9 +289,15 @@ owned_fixture_container() {
         # One fact, spelled differently by different daemons: Docker Desktop wrote
         # `error: no such object` where another writes `No such object`, and
         # matching one of them exactly made a clean host report residue it did not
-        # have. Widened to the case and no further: `no such` is what a daemon says
-        # when the name holds nothing, and every other sentence stays fatal.
-        if grep -qi "no such" "$WORK/fixture-inspect" 2>/dev/null; then
+        # have. So the case is ignored -- and only the case.
+        #
+        # The two objects a daemon names when a container is not there, and no
+        # wider phrase. `no such host` is a name the daemon's own host could not
+        # resolve: it reads as "no such" too and says nothing whatever about
+        # whether a container is there, so matching that phrase alone would turn a
+        # DNS failure into a clean teardown and give up custody of whatever is
+        # still running. Every other sentence a host can produce stays fatal.
+        if grep -qiE "no such (object|container)" "$WORK/fixture-inspect" 2>/dev/null; then
             return 1
         fi
         return 2

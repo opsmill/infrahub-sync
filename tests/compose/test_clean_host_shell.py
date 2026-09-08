@@ -682,8 +682,9 @@ def test_a_group_that_could_not_be_established_is_not_answered_with_world_access
         "error: no such object: clean-host-proxy-e14f105768ec743d",
         "Error: No such object: clean-host-proxy-e14f105768ec743d",
         "Error response from daemon: No such container: clean-host-row8-x",
+        "error: no such container: clean-host-row6-x",
     ],
-    ids=["docker-desktop-lowercase", "capitalised", "daemon-response"],
+    ids=["docker-desktop-lowercase", "capitalised", "daemon-response", "lowercase-container"],
 )
 def test_every_way_a_host_says_there_is_no_such_container_is_a_clean_teardown(tmp_path: Path, absence: str) -> None:
     """One fact, spelled differently by different daemons. All of them are absence.
@@ -707,8 +708,14 @@ def test_every_way_a_host_says_there_is_no_such_container_is_a_clean_teardown(tm
         "permission denied while trying to connect to the Docker daemon socket",
         "error during connect: Get http://docker/v1.47/containers/x/json: EOF",
         "template parsing error: at <.Config.Labels>: nil pointer evaluating",
+        # A name the daemon's own host could not resolve. It says "no such" too,
+        # and it says nothing whatever about whether a container is there -- so a
+        # match on that phrase alone reads a DNS failure as a clean teardown and
+        # gives up custody of whatever is still running.
+        "error during connect: dial tcp: lookup docker.invalid: no such host",
+        "Get https://registry.invalid/v2/: dial tcp: lookup registry.invalid: no such host",
     ],
-    ids=["unreachable", "denied", "connect-failed", "template-error"],
+    ids=["unreachable", "denied", "connect-failed", "template-error", "no-such-host", "no-such-host-registry"],
 )
 def test_every_other_question_this_host_declined_stays_fail_closed(tmp_path: Path, declined: str) -> None:
     """Widening the absence match must not turn every failure into a clean host.

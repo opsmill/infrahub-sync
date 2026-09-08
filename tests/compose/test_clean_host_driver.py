@@ -3203,7 +3203,9 @@ def test_an_unreadable_or_unowned_name_preserves_the_container_and_reports_it() 
 
     # Matched case-insensitively, because daemons differ on the capitalisation
     # and matching one exactly made a clean host report residue it did not have.
-    assert 'grep -qi "no such"' in checking, "an absent name and an unanswered question are not told apart"
+    assert 'grep -qiE "no such (object|container)"' in checking, (
+        "an absent name and an unanswered question are not told apart"
+    )
     assert checking.count("return 2") >= 2, "an unowned name and an unreadable one are not both preserved"
     assert "return 1" in checking
     # Absence returns clean from the removal; anything unaccounted for does not.
@@ -3387,5 +3389,11 @@ def test_the_absence_a_host_reports_is_recognised_however_it_is_spelled() -> Non
 
     assert "grep -qi" in checking, "the absence a host reports is matched case-sensitively"
     assert "grep -q " not in checking, "one spelling of absence is still matched exactly"
-    assert "no such" in checking.lower(), "the sentence a host uses for absence is not the one looked for"
+    # The two things a daemon says when a *container* is not there, and nothing
+    # wider. `no such host` is a name the daemon could not resolve: it says "no
+    # such" too, and nothing at all about whether a container is there.
+    assert 'grep -qiE "no such (object|container)"' in checking, (
+        "the match reaches sentences that are not about a container being absent"
+    )
+    assert 'grep -qi "no such"' not in checking, "a DNS failure would read as a clean teardown"
     assert checking.count("return 2") >= 2, "widening the match turned another failure into a clean host"
