@@ -257,6 +257,65 @@ CANDIDATE_UID=10001
 ROW8_ACK_TIMEOUT=30
 PROXY_READY_TIMEOUT=60
 
+# The one identity the three containers this gate runs with `docker run` carry.
+#
+# They are not services of the deployment, so none of them holds its instance
+# labels, and a name was all that identified them. A name is not an identity here:
+# two of the three use `--rm`, which frees the name the instant the container
+# exits, and the third's name is free from the moment its `docker run` fails.
+# Anything on this host may then take it -- so removing by name would delete state
+# this run never made, while reporting that it left the host as it found it.
+FIXTURE_LABEL=io.infrahub-sync.clean-host-fixture
+
+owned_fixture_container() {
+    # owned_fixture_container <name>
+    #
+    # One question, answering both halves at once: which container the name holds
+    # now, and whose it is. Asked separately, the name could move between the two
+    # answers -- so what this prints is the immutable identifier the same look
+    # established ownership for, and the removal below names that.
+    #
+    #   0  it is this run's, and its identifier is on stdout
+    #   1  the name holds nothing, so there is nothing to remove
+    #   2  it holds something this run cannot account for, or could not be read
+    [ -n "$RUN_IDENTITY" ] || return 2
+    read_back=$(docker inspect \
+        --format "{{.Id}} {{index .Config.Labels \"$FIXTURE_LABEL\"}}" "$1" 2>"$WORK/fixture-inspect") || {
+        # An absent name is a clean teardown. Anything else is a question this
+        # host declined, and an unanswered question is not an absent container --
+        # it is the case where something of this run's is most likely still there.
+        if grep -q "No such object" "$WORK/fixture-inspect" 2>/dev/null; then
+            return 1
+        fi
+        return 2
+    }
+    identifier=${read_back% *}
+    owner=${read_back#* }
+    [ -n "$identifier" ] || return 2
+    [ "$owner" = "$RUN_IDENTITY" ] || return 2
+    printf '%s\n' "$identifier"
+    return 0
+}
+
+remove_owned_fixture_container() {
+    # remove_owned_fixture_container <name>
+    #
+    # Absence is clean; presence has to prove itself. A name this run used that
+    # now holds something else is preserved and reported: this gate cannot prove
+    # it left the host as it found it, and it may not settle that by deleting the
+    # evidence of the doubt.
+    verdict=0
+    identifier=$(owned_fixture_container "$1") || verdict=$?
+    case $verdict in
+        1) return 0 ;;
+        2) return 1 ;;
+    esac
+    # By identifier, never by the name it was found under: between the look above
+    # and this line, the name can move again. The identifier cannot.
+    docker rm --force "$identifier" >/dev/null 2>&1 || return 1
+    return 0
+}
+
 container_name_taken() {
     # container_name_taken <name>
     #
@@ -332,6 +391,7 @@ start_destination_proxy() {
     printf '%s\n' "$PROXY_CONTAINER" >> "$WORK/created"
     docker run --detach \
         --name "$PROXY_CONTAINER" \
+        --label "$FIXTURE_LABEL=$RUN_IDENTITY" \
         --publish "$PROXY_CONTAINER_PORT" \
         --volume "$CHECKS:/checks:ro" \
         --volume "$PROXY_CONTROL:/control" \
@@ -378,12 +438,19 @@ release_proxy_hold() {
 }
 
 stop_row8_containers() {
-    # By exact name, because neither carries an instance label and `owned_resources`
-    # therefore cannot see either. Nothing broader: a sweep of unlabelled containers
-    # would reach containers this gate does not own.
+    # Found by exact name, because neither carries an instance label and
+    # `remaining_resources` cannot see either that way. Removed by the identifier
+    # the name turned out to hold, and only once that container proved to carry
+    # this run's own label: row 8's check runs with `--rm`, so by the time this
+    # runs its name may belong to something this gate never created.
+    #
+    # Reports what it could not account for. Nothing broader is ever touched.
+    kept=
     for named in $ROW8_CHECK_CONTAINER $PROXY_CONTAINER; do
-        docker rm --force "$named" >/dev/null 2>&1 || true
+        remove_owned_fixture_container "$named" || kept="$kept $named"
     done
+    [ -z "$kept" ] || return 1
+    return 0
 }
 
 discard_control_state() {
@@ -423,6 +490,7 @@ row8_check() {
     printf '%s\n' "$ROW8_CHECK_CONTAINER" >> "$WORK/created"
     docker run --rm \
         --name "$ROW8_CHECK_CONTAINER" \
+        --label "$FIXTURE_LABEL=$RUN_IDENTITY" \
         --network "$NETWORK" \
         --volume "$CHECKS:/checks:ro" \
         --volume "$BUNDLE/configuration:/configuration:ro" \
@@ -492,6 +560,7 @@ coordinated_check() {
     printf '%s\n' "$ROW6_CHECK_CONTAINER" >> "$WORK/created"
     docker run --rm \
         --name "$ROW6_CHECK_CONTAINER" \
+        --label "$FIXTURE_LABEL=$RUN_IDENTITY" \
         --network "$NETWORK" \
         --volume "$CHECKS:/checks:ro" \
         --volume "$BUNDLE/configuration:/configuration:ro" \
@@ -506,13 +575,25 @@ stop_row6_check() {
     # PostgreSQL session is what releases the write guard if the check never got
     # to. Reached from the teardown trap, so a row that failed anywhere cannot
     # leave a container running against a deployment that is about to be removed.
+    # Only what carries this run's own label. This check runs with `--rm`, so its
+    # name is free the instant it exits and anything on the host may take it --
+    # removing by name would delete state this run never made.
+    #
+    # Custody is kept when it could not be accounted for, so the teardown can say
+    # so rather than discarding the only identity anything holds for it.
     [ -n "$ROW6_CHECK_CONTAINER" ] || return 0
-    docker rm --force "$ROW6_CHECK_CONTAINER" >/dev/null 2>&1 || true
-    ROW6_CHECK_CONTAINER=
+    kept=0
+    remove_owned_fixture_container "$ROW6_CHECK_CONTAINER" || kept=1
+    # Custody only given up when the container was accounted for, so the teardown
+    # can report it rather than discarding the one identity anything holds for it.
+    [ "$kept" -ne 0 ] || ROW6_CHECK_CONTAINER=
+    # Reaped either way. A name this run cannot account for is one `--rm` already
+    # freed, which means the process behind it has already ended.
     if [ -n "$ROW6_CHECK_PID" ]; then
         wait "$ROW6_CHECK_PID" >/dev/null 2>&1 || true
         ROW6_CHECK_PID=
     fi
+    return "$kept"
 }
 
 await_control() {
@@ -1017,7 +1098,8 @@ row_status() {
         row6_verdict=1
     fi
     ROW6_CHECK_PID=
-    stop_row6_check
+    stop_row6_check \
+        || fail "the name this row gave its check holds something this run cannot account for"
     # The check's own sentence has already reached the log, so the row reports the
     # row. A driver-side timeout is named only when the check did not fail, which
     # is the one case its stderr says nothing about.
@@ -1528,11 +1610,17 @@ remaining_resources() {
     if [ -f "$WORK/created" ]; then
         while read -r named; do
             [ -n "$named" ] || continue
-            docker ps --all --format '{{.Names}}' --filter "name=$named" > "$WORK/tracked-containers" \
-                || echo "this host could not be asked whether $named is still present"
-            if grep -qxF -- "$named" "$WORK/tracked-containers" 2>/dev/null; then
-                echo "the container $named this run created is still present"
-            fi
+            # Reported either way, but never as the same thing. A container of
+            # this run's still running is residue. A name of this run's that now
+            # holds something else is a question this gate cannot answer, and the
+            # contract for this list is that an unanswered question reads as
+            # something still being there.
+            verdict=0
+            owned_fixture_container "$named" >/dev/null || verdict=$?
+            case $verdict in
+                0) echo "the container $named this run created is still present" ;;
+                2) echo "the name $named this run used holds something this run cannot account for" ;;
+            esac
         done < "$WORK/created"
     fi
     # Licensed the same way the removal is: by the identity on the volume rather
@@ -1605,7 +1693,10 @@ cleanup() {
     # Neither is destructive, so both come before the account is taken.
     release_proxy_hold
     resume_worker || true
-    stop_row6_check
+    if ! stop_row6_check; then
+        echo "clean-host: teardown: the name row 6's check used holds something this run cannot account for" >&2
+        [ "$status" -ne 0 ] || status=1
+    fi
     # Before anything is removed, because after it there is nothing to read.
     if [ "$status" -ne 0 ]; then
         capture_diagnostic "$failed_row"
@@ -1626,7 +1717,10 @@ cleanup() {
     # mount that outlives the removal. Both by exact name: neither container
     # carries an instance label, so nothing below can see them and a host with
     # them still running is not the host this gate found.
-    stop_row8_containers
+    if ! stop_row8_containers; then
+        echo "clean-host: teardown: a name row 8 used holds something this run cannot account for" >&2
+        [ "$status" -ne 0 ] || status=1
+    fi
     if ! discard_control_state; then
         echo "clean-host: teardown: a private control directory this run created is still on this host" >&2
         [ "$status" -ne 0 ] || status=1

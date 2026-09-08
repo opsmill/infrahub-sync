@@ -294,3 +294,173 @@ def test_each_signal_has_a_handler_of_its_own_rather_than_the_exit_trap(handled:
     assert re.search(rf"^\s*trap 'on_signal \d+' {handled}$", driver_source(), re.MULTILINE), (
         f"{handled} is not given a handler that ends the run with a status of its own"
     )
+
+
+# ---------------------------------------------------------------------------
+# A name is not an identity: `--rm` frees these three the moment they exit
+# ---------------------------------------------------------------------------
+# Two of this gate's three `docker run` containers use `--rm`, so their names
+# stop belonging to this run as soon as they finish — and the third's name is
+# free from the moment a `docker run` fails. Anything on the host may then take
+# the name, and a teardown that removed it by name would delete state this run
+# never made while reporting that it left the host as it found it.
+FOREIGN_RUN = "another-runs-identity"
+OWNED_RUN = "this-runs-identity"
+OWNED_ID = "sha256:0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+
+
+def docker_stub(work: Path, *, inspect: str, status: int = 0, error: str = "") -> Path:
+    """A `docker` that answers one inspect the way a host would, and records every call."""
+    stub = work / "bin"
+    stub.mkdir(exist_ok=True)
+    executable = stub / "docker"
+    executable.write_text(
+        "\n".join(
+            [
+                "#!/bin/sh",
+                f'printf "%s\\n" "$*" >> "{work}/calls"',
+                'if [ "$1" = "inspect" ]; then',
+                f'    printf "%s" "{error}" >&2',
+                f'    printf "%s" "{inspect}"',
+                f"    exit {status}",
+                "fi",
+                "exit 0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    return stub
+
+
+def ownership_harness(work: Path, *, run_identity: str = OWNED_RUN) -> str:
+    """The driver's own ownership check and removal, with a `docker` to ask."""
+    return "\n".join(
+        [
+            "set -eu",
+            f"WORK={work}",
+            f'PATH="{work}/bin:$PATH"',
+            f"RUN_IDENTITY={run_identity}",
+            driver_assignment("FIXTURE_LABEL"),
+            shell_function("owned_fixture_container"),
+            shell_function("remove_owned_fixture_container"),
+        ]
+    )
+
+
+def calls_made(work: Path) -> list[str]:
+    """Every `docker` invocation the script made, in order."""
+    recorded = work / "calls"
+    return recorded.read_text(encoding="utf-8").splitlines() if recorded.exists() else []
+
+
+def test_a_name_that_holds_nothing_is_a_clean_teardown(tmp_path: Path) -> None:
+    """The usual case for two of the three: the container exited and `--rm` took it.
+
+    Nothing to remove is not a failure to remove, and a teardown that reported
+    one would fail every passing run.
+    """
+    docker_stub(tmp_path, inspect="", status=1, error="Error: No such object: clean-host-row8-x")
+    script = f'{ownership_harness(tmp_path)}\nremove_owned_fixture_container clean-host-row8-x && echo "clean"'
+
+    answered = run_shell(script, work=tmp_path)
+
+    assert "clean" in answered.stdout, answered.stderr
+    assert not [call for call in calls_made(tmp_path) if call.startswith("rm ")], (
+        "a name that holds nothing was still removed"
+    )
+
+
+def test_a_name_another_container_has_taken_is_preserved_and_reported(tmp_path: Path) -> None:
+    """This is the whole finding: `--rm` freed the name and something else took it.
+
+    Removing it would be this gate destroying state it did not create — the exact
+    thing rows 9 and 11 exist to say it does not do.
+    """
+    docker_stub(tmp_path, inspect=f"{OWNED_ID} {FOREIGN_RUN}")
+    script = f'{ownership_harness(tmp_path)}\nremove_owned_fixture_container clean-host-row8-x || echo "reported"'
+
+    answered = run_shell(script, work=tmp_path)
+
+    assert "reported" in answered.stdout, "a recycled name reads as removed"
+    assert not [call for call in calls_made(tmp_path) if call.startswith("rm ")], (
+        "a container this run did not create was removed"
+    )
+
+
+def test_a_name_holding_a_container_with_no_label_at_all_is_preserved(tmp_path: Path) -> None:
+    """An unlabelled container is every container on the host that predates this run."""
+    docker_stub(tmp_path, inspect=f"{OWNED_ID} ")
+    script = f'{ownership_harness(tmp_path)}\nremove_owned_fixture_container clean-host-row8-x || echo "reported"'
+
+    answered = run_shell(script, work=tmp_path)
+
+    assert "reported" in answered.stdout, "an unlabelled container reads as this run's"
+    assert not [call for call in calls_made(tmp_path) if call.startswith("rm ")]
+
+
+def test_a_container_this_run_labelled_is_removed_by_its_own_identifier(tmp_path: Path) -> None:
+    """Removed by the identifier the ownership check read, never by the name.
+
+    Between reading the name and removing it the name can move again. The
+    identifier cannot: it is the container the check actually looked at.
+    """
+    docker_stub(tmp_path, inspect=f"{OWNED_ID} {OWNED_RUN}")
+    script = f'{ownership_harness(tmp_path)}\nremove_owned_fixture_container clean-host-row8-x && echo "removed"'
+
+    answered = run_shell(script, work=tmp_path)
+
+    assert "removed" in answered.stdout, answered.stderr
+    removals = [call for call in calls_made(tmp_path) if call.startswith("rm ")]
+    assert removals, "the container this run created was not removed"
+    assert OWNED_ID in removals[0], f"the removal named something other than the identifier: {removals[0]}"
+    assert "clean-host-row8-x" not in removals[0], "the removal named the container by a name that can move"
+
+
+def test_a_host_that_could_not_answer_is_not_an_absent_container(tmp_path: Path) -> None:
+    """`docker inspect` exits non-zero for an absent name and for a daemon it cannot reach.
+
+    Read as absence, the second one reports a clean host nobody measured — and it
+    is the case where something of this run's is most likely still running.
+    """
+    docker_stub(tmp_path, inspect="", status=1, error="Cannot connect to the Docker daemon")
+    script = f'{ownership_harness(tmp_path)}\nremove_owned_fixture_container clean-host-row8-x || echo "reported"'
+
+    answered = run_shell(script, work=tmp_path)
+
+    assert "reported" in answered.stdout, "a question this host declined reads as nothing being there"
+    assert not [call for call in calls_made(tmp_path) if call.startswith("rm ")]
+
+
+def test_a_run_with_no_identity_of_its_own_owns_nothing(tmp_path: Path) -> None:
+    """A run that failed before it took an identity cannot match any label.
+
+    Without this, an empty identity would match an empty label and the teardown
+    would remove whichever unlabelled container happened to hold the name.
+    """
+    docker_stub(tmp_path, inspect=f"{OWNED_ID} ")
+    script = "\n".join(
+        [
+            ownership_harness(tmp_path, run_identity=""),
+            'remove_owned_fixture_container clean-host-row8-x || echo "reported"',
+        ]
+    )
+
+    answered = run_shell(script, work=tmp_path)
+
+    assert "reported" in answered.stdout, "a run with no identity claimed a container anyway"
+    assert not [call for call in calls_made(tmp_path) if call.startswith("rm ")]
+
+
+def test_ownership_and_identity_are_read_in_one_question(tmp_path: Path) -> None:
+    """Two questions leave a window between them, and the name can move inside it."""
+    docker_stub(tmp_path, inspect=f"{OWNED_ID} {OWNED_RUN}")
+    script = f"{ownership_harness(tmp_path)}\nremove_owned_fixture_container clean-host-row8-x"
+
+    run_shell(script, work=tmp_path)
+
+    asked = [call for call in calls_made(tmp_path) if call.startswith("inspect ")]
+    assert len(asked) == 1, f"the name is inspected {len(asked)} times, and it can move between them"
+    assert ".Id" in asked[0], "the one question does not ask what the name holds"
+    assert "FIXTURE_LABEL" not in asked[0], "the label is asked for by name rather than expanded"
+    assert "io.infrahub-sync.clean-host-fixture" in asked[0], "the one question does not ask whose it is"

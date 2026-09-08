@@ -1608,7 +1608,12 @@ def test_the_backgrounded_row_six_check_is_tracked_by_its_exact_identity() -> No
     assert "ROW6_CHECK_CONTAINER=clean-host-row6-$INSTANCE" in body, "its name is not tied to this deployment"
 
     stopper = function_body("stop_row6_check")
-    assert 'docker rm --force "$ROW6_CHECK_CONTAINER"' in stopper, "nothing removes the backgrounded container"
+    # Found by that name and removed by what it turned out to hold: `--rm` frees
+    # the name as the container exits, so a removal by name would reach whatever
+    # took it. The label this run wrote is what makes the removal this run's.
+    assert 'remove_owned_fixture_container "$ROW6_CHECK_CONTAINER"' in stopper, (
+        "nothing removes the backgrounded container"
+    )
     assert 'wait "$ROW6_CHECK_PID"' in stopper, "the backgrounded process is never reaped"
     assert "stop_row6_check" in function_body("cleanup"), "teardown does not stop a check its row may have left"
 
@@ -2566,7 +2571,7 @@ def test_row_eights_containers_and_control_state_are_removed_on_every_path() -> 
     for step in ("release_proxy_hold", "stop_row8_containers", "discard_control_state"):
         assert step in cleanup, f"the teardown does not reach {step}"
     stopper = function_body("stop_row8_containers")
-    assert 'docker rm --force "$named"' in stopper, "nothing removes either container"
+    assert 'remove_owned_fixture_container "$named"' in stopper, "nothing removes either container"
     for name in ("$ROW8_CHECK_CONTAINER", "$PROXY_CONTAINER"):
         assert name in stopper, f"nothing removes {name}"
 
@@ -3114,3 +3119,130 @@ def test_neither_credential_list_survives_the_final_teardown() -> None:
     assert "discard_canaries" in cleanup, "a run that failed before row 11 leaves its credential list on the host"
     for named in ("$CANARIES", "$DIAGNOSTIC_CANARIES"):
         assert named in remaining, f"{named} is never checked for absence"
+
+
+# ---------------------------------------------------------------------------
+# B7 — a name is not an identity once `--rm` has freed it
+# ---------------------------------------------------------------------------
+# The three containers this gate creates with `docker run` carry none of the
+# deployment's instance labels, so a name was the only thing that identified
+# them. Two of the three use `--rm`, which frees the name as the container exits;
+# the third's name is free from the moment its `docker run` fails. Anything on
+# the host may take it, and the old teardown removed it by name.
+NAMED_FIXTURE_CREATORS = ("start_destination_proxy", "row8_check", "coordinated_check")
+
+
+@pytest.mark.parametrize("creator", NAMED_FIXTURE_CREATORS)
+def test_every_named_fixture_container_carries_this_runs_ownership_label(creator: str) -> None:
+    """A label this run wrote is the only thing that outlives the name it was under.
+
+    None of these three carries the deployment's instance labels -- they are not
+    services of the deployment -- so this is the one identity a teardown can read
+    back and the one thing that distinguishes them from whatever takes their name.
+    """
+    body = executable_lines()
+    created = function_body(creator)
+
+    assert re.search(r"^FIXTURE_LABEL=\S+$", body, re.MULTILINE), (
+        "the containers this gate runs carry no ownership label of their own"
+    )
+    assert '--label "$FIXTURE_LABEL=$RUN_IDENTITY"' in created, (
+        f"{creator} creates a container nothing can later prove is this run's"
+    )
+
+
+@pytest.mark.parametrize("stopper", ["stop_row8_containers", "stop_row6_check"])
+def test_no_fixture_container_is_removed_by_a_name_that_may_have_moved(stopper: str) -> None:
+    """`docker rm --force <name>` deletes whatever holds the name now.
+
+    That is the whole defect: by teardown the name may belong to a container this
+    run never made, and removing it would be this gate destroying foreign state
+    while reporting that it left the host as it found it.
+    """
+    stopping = function_body(stopper)
+
+    assert "docker rm" not in stopping, f"{stopper} removes a container by a name that can move"
+    assert "remove_owned_fixture_container" in stopping, f"{stopper} does not establish ownership before removing"
+
+
+def test_the_removal_proves_ownership_and_then_removes_what_it_proved() -> None:
+    """Absence is clean, presence has to prove itself, and the proof names the container.
+
+    Read in one question, because two would leave a window the name can move
+    inside -- and the removal then names the identifier that question returned
+    rather than the name it was asked about.
+    """
+    checking = function_body("owned_fixture_container").replace("\\\n", " ")
+    removing = function_body("remove_owned_fixture_container")
+
+    inspected = [line for line in checking.splitlines() if "docker inspect" in line]
+    assert len(inspected) == 1, "ownership and identity are not read in one question"
+    assert "{{.Id}}" in inspected[0], "the question does not ask which container the name holds"
+    assert "$FIXTURE_LABEL" in inspected[0], "the question does not ask whose the container is"
+    assert '"$RUN_IDENTITY"' in checking, "any labelled container would satisfy this, including another run's"
+
+    assert 'docker rm --force "$identifier"' in removing, (
+        "the removal names something other than the identifier ownership was proven for"
+    )
+    assert "$1" not in removing.split("docker rm")[1], "the removal falls back to the name it was given"
+
+
+def test_an_unreadable_or_unowned_name_preserves_the_container_and_reports_it() -> None:
+    """Three answers, and only one of them removes anything.
+
+    A name that holds nothing is a clean teardown. A name holding something this
+    run cannot account for is preserved and reported -- the gate cannot prove it
+    left the host as it found it, and it must not resolve that by deleting the
+    evidence.
+    """
+    checking = function_body("owned_fixture_container")
+    removing = function_body("remove_owned_fixture_container")
+
+    assert "No such object" in checking, "an absent name and an unanswered question are not told apart"
+    assert checking.count("return 2") >= 2, "an unowned name and an unreadable one are not both preserved"
+    assert "return 1" in checking
+    # Absence returns clean from the removal; anything unaccounted for does not.
+    assert re.search(r"1\)\s*return 0", removing), "a name that holds nothing is reported as a failed removal"
+    assert re.search(r"2\)\s*return 1", removing), "a name this run cannot account for reads as removed"
+
+
+@pytest.mark.parametrize("stopper", ["stop_row8_containers", "stop_row6_check"])
+def test_a_preserved_container_turns_only_a_passing_run_into_a_failure(stopper: str) -> None:
+    """A teardown defect may never replace the diagnosis that caused the teardown."""
+    cleanup = function_body("cleanup")
+
+    assert f"if ! {stopper}" in cleanup, f"{stopper} reports success whatever it could not remove"
+    following = cleanup[cleanup.index(f"if ! {stopper}") :].split("fi")[0]
+    assert '[ "$status" -ne 0 ] || status=1' in following, (
+        f"a container {stopper} preserved replaces the original failure instead of only failing a passing run"
+    )
+
+
+@pytest.mark.parametrize("creator", NAMED_FIXTURE_CREATORS)
+def test_a_name_already_taken_at_creation_is_recorded_for_nobody_to_remove(creator: str) -> None:
+    """The other window: the precheck refuses, and the competitor must stay untouched.
+
+    Custody is given up and nothing is written to the record the teardown reads,
+    so the removal never even asks about a name this run did not take.
+    """
+    created = function_body(creator)
+
+    assert created.index("container_name_taken") < created.index("$WORK/created"), (
+        f"{creator} records a name it has not established it may use"
+    )
+    refusing = created[created.index("container_name_taken") : created.index("$WORK/created")]
+    assert re.search(r"CONTAINER=\n", refusing + "\n"), f"{creator} keeps custody of a name it refused to take"
+
+
+def test_the_residue_report_tells_this_runs_containers_from_a_recycled_name() -> None:
+    """Reported either way, but not as the same thing.
+
+    A container of this run's still running is residue. A name of this run's held
+    by something else is a question this gate cannot answer, and the contract for
+    this list is that an unanswered question reads as something still being there.
+    """
+    remaining = function_body("remaining_resources")
+
+    assert "owned_fixture_container" in remaining, "the residue list identifies containers by a name that can move"
+    assert "this run created is still present" in remaining
+    assert "cannot account for" in remaining, "a recycled name is reported as this run's own container"
