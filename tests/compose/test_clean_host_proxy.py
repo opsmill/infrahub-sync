@@ -199,8 +199,119 @@ def test_nothing_is_claimed_when_the_row_never_armed(
 
 
 # ---------------------------------------------------------------------------
-# The one budget
+# The one budget, as an absolute deadline over every step inside it
 # ---------------------------------------------------------------------------
+@pytest.fixture
+def control(proxy: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The private control directory, pointed at a temporary one for this test.
+
+    Every handshake state below is a file in here, so a test that records one is
+    recording it where this test can read it and nowhere near a real run.
+    """
+    monkeypatch.setattr(proxy, "CONTROL", tmp_path)
+    return tmp_path
+
+
+def expired(proxy: ModuleType) -> float:
+    """An accept instant whose budget has already run out."""
+    return time.time() - proxy.PROXY_BUDGET_SECONDS - 1
+
+
+def test_an_upstream_exchange_is_bounded_as_a_whole_and_not_phase_by_phase(
+    proxy: ModuleType, control: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scalar httpx timeout is applied to connect, read, write and pool separately.
+
+    Twenty seconds each is eighty seconds of exchange obeying a twenty-second
+    timeout. The budget is one absolute deadline over the whole exchange, so the
+    forwarding has to be bounded as a unit rather than per phase — and by then the
+    worker's own sixty-second SDK timeout would have fired first, which is the
+    failure this row must not be reporting.
+    """
+    monkeypatch.setattr(proxy, "PROXY_BUDGET_SECONDS", 0.5)
+
+    def slowly(_timeout: float) -> object:
+        """A destination that answers, but later than the whole budget allows."""
+        time.sleep(30)
+        return pytest.fail("the exchange was waited out rather than bounded")
+
+    started = time.monotonic()
+    answered = proxy.forward_within_budget(slowly, time.time())
+    spent = time.monotonic() - started
+
+    assert answered is None, "an exchange the budget ended is reported as an answer"
+    assert spent < 5, f"the exchange was bounded phase by phase rather than as a whole: {spent:.1f}s"
+    assert not (control / proxy.UPSTREAM_COMPLETED).exists(), "an exchange the budget ended recorded a completion"
+
+
+def test_a_forward_that_succeeds_after_the_budget_ended_is_only_ever_an_expiry(
+    proxy: ModuleType, control: Path
+) -> None:
+    """The destination completed it, but too late for anything to be arranged around.
+
+    Recording completion here would tell row 8's check to go and prove a write
+    while the driver had already given up, and the two would then be coordinating
+    over a budget that no longer existed. A late success is the budget expiring.
+    """
+    outcome = proxy.record_upstream_completed(expired(proxy))
+
+    assert outcome == proxy.HELD_EXPIRED
+    assert (control / proxy.EXPIRED).exists(), "a late forward is not recorded as the budget running out"
+    assert not (control / proxy.UPSTREAM_COMPLETED).exists(), "a late forward is recorded as a completed write"
+    assert not (control / proxy.ACKNOWLEDGED).exists()
+
+
+def test_a_forward_that_succeeds_inside_the_budget_is_recorded_as_completed(proxy: ModuleType, control: Path) -> None:
+    """What makes the case above mean anything: on time, this is the durable signal."""
+    outcome = proxy.record_upstream_completed(time.time())
+
+    assert outcome == proxy.HELD_COMPLETED
+    assert (control / proxy.UPSTREAM_COMPLETED).exists()
+    assert not (control / proxy.EXPIRED).exists()
+
+
+def test_a_release_already_waiting_is_still_refused_once_the_budget_has_ended(proxy: ModuleType, control: Path) -> None:
+    """The driver released it, but the release arrived after the budget was gone.
+
+    Read without a recheck, the file's mere presence acknowledges a coordination
+    that did not happen in time — and the driver would take that acknowledgement
+    as licence to carry on into row 8's recovery checks.
+    """
+    (control / proxy.RELEASE).write_text("", encoding="utf-8")
+
+    outcome = proxy.await_release(expired(proxy))
+
+    assert outcome == proxy.HELD_EXPIRED
+    assert (control / proxy.EXPIRED).exists(), "a late release is not recorded as the budget running out"
+    assert not (control / proxy.ACKNOWLEDGED).exists(), "a late release is acknowledged as though it were on time"
+
+
+def test_a_release_waiting_inside_the_budget_is_acknowledged(proxy: ModuleType, control: Path) -> None:
+    """What makes the case above mean anything: on time, this is the acknowledgement."""
+    (control / proxy.RELEASE).write_text("", encoding="utf-8")
+
+    outcome = proxy.await_release(time.time())
+
+    assert outcome == proxy.HELD_ACKNOWLEDGED
+    assert (control / proxy.ACKNOWLEDGED).exists()
+    assert not (control / proxy.EXPIRED).exists()
+
+
+def test_a_release_that_never_comes_ends_as_an_expiry(proxy: ModuleType, control: Path) -> None:
+    """The hold is a share of the budget, not a wait of its own."""
+    assert proxy.await_release(expired(proxy)) == proxy.HELD_EXPIRED
+    assert (control / proxy.EXPIRED).exists()
+
+
+def test_an_expiry_always_disarms_so_nothing_after_it_is_held(proxy: ModuleType, control: Path) -> None:
+    """The proxy serves the whole matrix, and the rows after this one must pass through."""
+    (control / proxy.ARMED).write_text("", encoding="utf-8")
+
+    proxy.record_upstream_completed(expired(proxy))
+
+    assert not (control / proxy.ARMED).exists(), "an expiry leaves the proxy armed for whatever comes next"
+
+
 def test_what_is_left_of_the_budget_is_measured_from_the_accepted_instant(proxy: ModuleType) -> None:
     """Every share of the budget reads the same clock, so nothing gets an allowance.
 
@@ -219,9 +330,18 @@ def test_what_is_left_of_the_budget_is_measured_from_the_accepted_instant(proxy:
 
 
 def test_a_forwarding_that_begins_with_no_budget_left_is_never_attempted(proxy: ModuleType) -> None:
-    """Zero remaining is the budget already gone, and a request sent then cannot be inside it."""
+    """Zero remaining is the budget already gone, and a request sent then is outside it.
+
+    Driven rather than read: what matters is that the destination is not reached,
+    not that some particular line guards it.
+    """
+
+    def unreachable(_timeout: float) -> object:
+        """A destination that must not be asked for anything."""
+        return pytest.fail("the write was forwarded after the budget covering it had ended")
+
     assert proxy.remaining_budget(time.time() - proxy.PROXY_BUDGET_SECONDS - 1) <= 0
-    assert "if timeout <= 0:" in (CHECKS / "destination_proxy.py").read_text(encoding="utf-8"), (
+    assert proxy.forward_within_budget(unreachable, expired(proxy)) is None, (
         "a claimed request is forwarded even when the budget covering it is already gone"
     )
 

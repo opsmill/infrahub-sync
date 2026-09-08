@@ -66,11 +66,13 @@ RUN_IDENTITY=
 PRIOR_INSTANCES=
 FIXTURE_PROJECT=
 
-# Row 9's foreign volume, and whether this run is the thing that created it.
-# Removing a name this run did not create would be this gate destroying state it
-# came to prove it leaves alone.
+# Row 9's foreign volume. Two separate things: whether this run set out to create
+# one, recorded before the creation so a signal cannot open a gap; and whether the
+# volume itself carries this run's identity, which is read back from the volume
+# and is the only thing that licenses removing it.
 FOREIGN_VOLUME=
-FOREIGN_VOLUME_CREATED=
+FOREIGN_VOLUME_INTENDED=
+FOREIGN_VOLUME_LABEL=io.infrahub-sync.clean-host-foreign
 
 # ---------------------------------------------------------------------------
 # Reporting. Every refusal is a row name and a fixed sentence. No value read out
@@ -282,10 +284,18 @@ create_proxy_control() {
     PROXY_CONTROL=$WORK/row8-control
     rm -rf "$PROXY_CONTROL"
     mkdir -p "$PROXY_CONTROL" || fail "this host could not create the directory row 8 coordinates through"
-    chmod 0700 "$PROXY_CONTROL" || fail "row 8's control directory could not be given a mode of its own"
-    chown "$CANDIDATE_UID:$CANDIDATE_UID" "$PROXY_CONTROL" 2>/dev/null \
-        || chmod 0777 "$PROXY_CONTROL" \
-        || fail "row 8's control directory could not be made writable by the candidate image's user"
+    narrow_control_access "$PROXY_CONTROL" "row 8"
+}
+
+# Exactly two parties may write a control directory: this driver, and the
+# candidate image's user. Nobody else, and no fallback that widens it -- a 0777
+# directory is every account on the host, which is not a private channel however
+# it is described. A host that cannot grant those two is a host this gate refuses.
+narrow_control_access() {
+    # narrow_control_access <directory> <whose it is>
+    chown "$CANDIDATE_UID:$CANDIDATE_UID" "$1" \
+        || fail "$2's control directory could not be given to the candidate image's user, and this gate widens it for nobody"
+    chmod 0770 "$1" || fail "$2's control directory could not be narrowed to its two writers"
 }
 
 proxy_host_port() {
@@ -377,11 +387,23 @@ stop_row8_containers() {
 }
 
 discard_control_state() {
-    # The handshake's files, and the private directory they were the only content
-    # of. Nothing in them is evidence: each one is a state that has already been
-    # read by whichever side was waiting for it.
-    [ -n "$PROXY_CONTROL" ] || return 0
-    rm -rf "$PROXY_CONTROL" 2>/dev/null || true
+    # Both private writable directories, and the handshake files that were their
+    # only content. Nothing in them is evidence: each file is a state that has
+    # already been read by whichever side was waiting for it.
+    #
+    # Checked, because `rm -rf` reports success for a great many things it did not
+    # remove -- and what would be left is a writable channel this gate created on
+    # a host it promised to leave as it found it. The containers that write these
+    # are stopped before this runs, so a removal that fails here is a real one.
+    left=
+    for control in $PROXY_CONTROL $ROW6_CONTROL; do
+        rm -rf "$control" 2>/dev/null || true
+        if [ -d "$control" ]; then
+            left="$left $control"
+        fi
+    done
+    [ -z "$left" ] || return 1
+    return 0
 }
 
 row8_check() {
@@ -451,10 +473,7 @@ coordinated_check() {
     # host created is not. Row 6 is a precondition path to rows 8 to 11: a check
     # that cannot record a state the driver waits for takes the whole matrix down
     # with it, and the failure would be a filesystem error about this harness.
-    chmod 0700 "$ROW6_CONTROL" || fail "row 6's control directory could not be given a mode of its own"
-    chown "$CANDIDATE_UID:$CANDIDATE_UID" "$ROW6_CONTROL" 2>/dev/null \
-        || chmod 0777 "$ROW6_CONTROL" \
-        || fail "row 6's control directory could not be made writable by the candidate image's user"
+    narrow_control_access "$ROW6_CONTROL" "row 6"
     # Named, because this is the only check this gate backgrounds and therefore
     # the only one that could outlive its row. A `docker run` check carries none
     # of the deployment's instance labels, so `owned_resources` cannot see it and
@@ -1149,21 +1168,51 @@ create_foreign_volume() {
         FOREIGN_VOLUME=
         fail "a volume already carries the name this row would create, so surviving a reset would prove nothing"
     fi
-    docker volume create "$FOREIGN_VOLUME" >/dev/null \
+    # Intent before the creation, never after it. `docker volume create` returning
+    # and this shell recording that it returned are two steps, and a signal
+    # between them would leave a volume this run made that nothing has licence to
+    # remove -- the exact residue this row exists to say the gate does not leave.
+    #
+    # Intent is not ownership, and it is not what licenses the removal. It only
+    # says the removal has a question to ask.
+    FOREIGN_VOLUME_INTENDED=yes
+    docker volume create --label "$FOREIGN_VOLUME_LABEL=$RUN_IDENTITY" "$FOREIGN_VOLUME" >/dev/null \
         || fail "the foreign volume this row proves a reset leaves alone could not be created"
-    # Recorded, because it is what licenses the removal. Nothing removes this name
-    # without this run having been the thing that created it.
-    FOREIGN_VOLUME_CREATED=yes
     docker volume inspect "$FOREIGN_VOLUME" >/dev/null || fail "the foreign volume was not created"
+    foreign_volume_is_ours \
+        || fail "the foreign volume was created without the identity that licenses removing it again"
+}
+
+foreign_volume_is_ours() {
+    # Read from the volume, not asserted by this shell. A name can be intended and
+    # belong to something else by the time teardown reads it; a label this run
+    # wrote and reads back cannot. An absent volume and a volume labelled for
+    # another run both answer no, which is the right answer to "may this be
+    # removed" in each case.
+    [ -n "$FOREIGN_VOLUME" ] || return 1
+    [ -n "$RUN_IDENTITY" ] || return 1
+    owner=$(docker volume inspect \
+        --format "{{index .Labels \"$FOREIGN_VOLUME_LABEL\"}}" "$FOREIGN_VOLUME" 2>/dev/null) || return 1
+    [ "$owner" = "$RUN_IDENTITY" ] || return 1
+    return 0
 }
 
 remove_foreign_volume() {
-    # Only what this run created, and reached from the teardown as well as from
-    # the row. Removing a name this run did not create would be this gate
+    # Reached from the row and from the teardown. Only a volume carrying this
+    # run's own identity is removed: removing anything else would be this gate
     # destroying the very kind of foreign state it came to prove it preserves.
-    [ -n "$FOREIGN_VOLUME_CREATED" ] || return 0
+    [ -n "$FOREIGN_VOLUME_INTENDED" ] || return 0
+    if ! docker volume inspect "$FOREIGN_VOLUME" >/dev/null 2>&1; then
+        # Intended and absent: the creation never landed, so there is nothing to
+        # remove and nothing was left behind either.
+        FOREIGN_VOLUME_INTENDED=
+        return 0
+    fi
+    # Present, but not answering with this run's identity. Reported, never
+    # removed: whatever it is, this run did not make it.
+    foreign_volume_is_ours || return 1
     docker volume rm "$FOREIGN_VOLUME" >/dev/null 2>&1 || return 1
-    FOREIGN_VOLUME_CREATED=
+    FOREIGN_VOLUME_INTENDED=
     return 0
 }
 
@@ -1242,6 +1291,29 @@ INFRAHUB_SYNC_S3_ACCESS_KEY
 INFRAHUB_SYNC_S3_SECRET_KEY
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS'
 
+# The two files that hold, in plaintext and unredacted, every credential this run
+# generated. Named once each, because a second spelling of either path is a file
+# the removal below never reaches.
+#
+# They exist to be searched for and for nothing else. The contract this gate
+# enforces forbids a generated credential in retained evidence, and it makes no
+# exception for the list of them: these are work artifacts on the host after the
+# run, in the one directory the kit sweep deliberately does not look in. So each
+# one is removed immediately after its last read, on every path.
+CANARIES=$WORK/canaries
+DIAGNOSTIC_CANARIES=$WORK/diagnostic.canaries
+
+discard_canaries() {
+    # Both lists, and only these two files -- nothing broader. Checked, because
+    # `rm -f` reports success for a great many things it did not remove, and a
+    # survivor here is not a lapse in tidiness but the disclosure itself.
+    rm -f "$CANARIES" "$DIAGNOSTIC_CANARIES" 2>/dev/null || true
+    if [ -e "$CANARIES" ] || [ -e "$DIAGNOSTIC_CANARIES" ]; then
+        return 1
+    fi
+    return 0
+}
+
 # A value that holds no generated credential is not a value to sweep for, and a
 # sweep that cannot name what it looks for clears nothing -- so the failure to
 # record one ends the attempt rather than shortening the list.
@@ -1279,9 +1351,30 @@ carries_a_canary() {
     return 1
 }
 
+# Everything the sweep needed and nothing that may outlive it: the raw failure
+# documents, and the plaintext list of the credentials they were searched for.
+# Reported, because a list still on the host is the leak this row came to exclude.
+end_of_sweep() {
+    discard_raw_evidence
+    discard_canaries
+}
+
+# Every refusal from the moment the list exists, so no path out of this row can
+# leave it behind. Its own failure is swallowed here and only here: the sentence
+# being reported is about the deployment, and a removal that could not happen is
+# reported by the teardown's own check instead of replacing that sentence.
+fail_after_sweep() {
+    end_of_sweep || true
+    fail "$1"
+}
+
 row_secrets() {
-    write_canaries "$WORK/canaries" \
-        || fail "$(sed -n 1p "$WORK/canary-missing") holds no generated value for this run to sweep for"
+    # A partial list is still a list: `write_canaries` truncates before it appends,
+    # so a failure part way through leaves credentials in the file it was building.
+    if ! write_canaries "$CANARIES"; then
+        unnamed=$(sed -n 1p "$WORK/canary-missing")
+        fail_after_sweep "$unnamed holds no generated value for this run to sweep for"
+    fi
 
     # The deployment that is still running, read the same way the destroyed ones
     # were: its whole log, its own failure evidence, and what its Prefect server
@@ -1289,22 +1382,20 @@ row_secrets() {
     capture_deployment_evidence final
     docker image history --no-trunc --format '{{.CreatedBy}}' "$IMAGE" > "$WORK/image.history"
 
-    bundle_name=$(record "['bundle']['name']") || fail "the candidate record names no bundle to sweep"
+    bundle_name=$(record "['bundle']['name']") || fail_after_sweep "the candidate record names no bundle to sweep"
     # The shipped bytes, not the compressed container of them: a plaintext search
     # of a gzip stream cannot match, so it would report success without looking.
     gzip -dc "$CANDIDATE/$bundle_name" > "$WORK/bundle.tar" \
-        || fail "the deployment bundle could not be decompressed to be swept"
+        || fail_after_sweep "the deployment bundle could not be decompressed to be swept"
     # A glob that matched nothing expands to itself, and a file that is not there
     # clears exactly as much as a clean one: nothing. So each target has to be
     # there before it can be read, and an absent one ends the row.
     for target in "$WORK/image.history" "$WORK/bundle.tar" "$LOG_DIR"/*.log "$EVIDENCE_DIR"/*.failures; do
         if [ ! -f "$target" ]; then
-            discard_raw_evidence
-            fail "this run collected no $(basename "$target") to sweep, so the claim would cover bytes nobody read"
+            fail_after_sweep "this run collected no $(basename "$target") to sweep, so the claim would cover bytes nobody read"
         fi
-        if carries_a_canary "$target" "$WORK/canaries"; then
-            discard_raw_evidence
-            fail "a credential this run generated reached $(basename "$target")"
+        if carries_a_canary "$target" "$CANARIES"; then
+            fail_after_sweep "a credential this run generated reached $(basename "$target")"
         fi
     done
     # The kit is evidence, and evidence is named by the contract too. Its own
@@ -1312,14 +1403,15 @@ row_secrets() {
     while read -r canary; do
         [ -n "$canary" ] || continue
         if grep -rqF --exclude-dir=work -- "$canary" "$KIT" 2>/dev/null; then
-            discard_raw_evidence
-            fail "a credential this run generated reached the qualification kit"
+            fail_after_sweep "a credential this run generated reached the qualification kit"
         fi
-    done < "$WORK/canaries"
-    # Swept, and now gone. These are the unredacted failure documents and the
-    # orchestration logs behind them; they existed to be searched and a retained
-    # copy of them would be the artifact this row says the gate does not leave.
-    discard_raw_evidence
+    done < "$CANARIES"
+    # The list's last read is the line above, so this is where it goes -- together
+    # with the unredacted failure documents it was searched against. Both existed
+    # to be swept, and a retained copy of either would be the artifact this row
+    # says the gate does not leave behind.
+    end_of_sweep \
+        || fail "the plaintext list of the credentials this run swept for could not be removed from this host"
     report "no credential this run generated reached the bundle, image history, any deployment's whole log, its recorded failures, what its orchestration shows, or the kit"
 }
 
@@ -1381,16 +1473,24 @@ capture_diagnostic() {
             "$DIAGNOSTIC_DESTINATION_SERVICE" 2>&1 \
             || echo "the destination fixture reported no log"
     } > "$assembled" 2>/dev/null || true
-    if ! write_canaries "$WORK/diagnostic.canaries"; then
+    # Each of the three ways out of here removes the list, immediately after that
+    # path's last read of it. The withholding paths matter most: the account is
+    # deleted there precisely because it carried a credential, and leaving the
+    # list of what it carried beside its absence is the same disclosure by a
+    # shorter route.
+    if ! write_canaries "$DIAGNOSTIC_CANARIES"; then
         rm -f "$assembled"
+        discard_canaries || echo "clean-host: teardown: a credential list could not be removed" >&2
         echo "clean-host: teardown: diagnostic withheld: this run named no credential to sweep its bytes for" >&2
         return 0
     fi
-    if carries_a_canary "$assembled" "$WORK/diagnostic.canaries"; then
+    if carries_a_canary "$assembled" "$DIAGNOSTIC_CANARIES"; then
         rm -f "$assembled"
+        discard_canaries || echo "clean-host: teardown: a credential list could not be removed" >&2
         echo "clean-host: teardown: diagnostic withheld: its bytes carry a credential this run generated" >&2
         return 0
     fi
+    discard_canaries || echo "clean-host: teardown: a credential list could not be removed" >&2
     mv "$assembled" "$DIAGNOSTIC"
     echo "clean-host: teardown: diagnostic written to $DIAGNOSTIC" >&2
 }
@@ -1435,9 +1535,25 @@ remaining_resources() {
             fi
         done < "$WORK/created"
     fi
-    if [ -n "$FOREIGN_VOLUME_CREATED" ]; then
+    # Licensed the same way the removal is: by the identity on the volume rather
+    # than by a variable. A volume answering with this run's own label after
+    # teardown is residue; one that does not was never this run's to account for.
+    if foreign_volume_is_ours; then
         echo "the volume $FOREIGN_VOLUME this run created is still present"
     fi
+    # The private writable channels, and the plaintext credential lists. Not
+    # Docker resources, but this run made all four on a host it promised to leave
+    # as it found it -- and two of them hold every credential it generated.
+    for owned in $PROXY_CONTROL $ROW6_CONTROL; do
+        if [ -d "$owned" ]; then
+            echo "the private control directory $owned this run created is still present"
+        fi
+    done
+    for owned in $CANARIES $DIAGNOSTIC_CANARIES; do
+        if [ -e "$owned" ]; then
+            echo "the credential list $owned is still present"
+        fi
+    done
     if [ -n "$PROXY_HOST_PORT" ]; then
         docker ps --all --quiet --filter "publish=$PROXY_HOST_PORT" > "$WORK/tracked-port" \
             || echo "this host could not be asked whether the proxy's published port was given back"
@@ -1467,6 +1583,16 @@ CLEANED=
 
 cleanup() {
     status=$?
+    # The diagnosis is now in hand, and from here nothing may exit over it. A
+    # signal handler is right before the teardown -- there is no verdict yet, and a
+    # gate killed part of the way through its matrix must not report a pass -- and
+    # wrong inside it: an interrupt arriving now would end the run with its own
+    # number and discard the failure this teardown exists to report.
+    #
+    # Dropped rather than re-pointed, and after `$?` has been read: the handlers
+    # are what could replace it, and re-entry through them is what the guard below
+    # would otherwise have to catch.
+    trap '' INT TERM
     [ -z "$CLEANED" ] || exit "$status"
     CLEANED=1
     failed_row=$ROW
@@ -1487,12 +1613,24 @@ cleanup() {
     # The raw failure documents, whether or not row 11 reached them. Unswept they
     # are the artifact that row exists to say this gate does not leave behind.
     discard_raw_evidence
+    # And the plaintext credential lists. Row 11 removes its own on every path and
+    # the diagnostic above removes the other on all three of its; this is the
+    # backstop for a run that failed before either got that far.
+    if ! discard_canaries; then
+        echo "clean-host: teardown: a list of the credentials this run generated is still on this host" >&2
+        [ "$status" -ne 0 ] || status=1
+    fi
     held=$(remaining_resources | wc -w | tr -d ' ')
-    # Row 8's two containers, and then the handshake's own files. Both by exact
-    # name: neither container carries an instance label, so nothing below can see
-    # them and a host with them still running is not the host this gate found.
+    # Row 8's two containers, and then both private directories. The containers
+    # first, because a directory removed under a container still writing it is a
+    # mount that outlives the removal. Both by exact name: neither container
+    # carries an instance label, so nothing below can see them and a host with
+    # them still running is not the host this gate found.
     stop_row8_containers
-    discard_control_state
+    if ! discard_control_state; then
+        echo "clean-host: teardown: a private control directory this run created is still on this host" >&2
+        [ "$status" -ne 0 ] || status=1
+    fi
     if [ -n "$INSTANCE" ]; then
         # The entry point first, because it is the operator path. Its own project,
         # by exact identity, is the fallback for a reset it refuses -- after a row

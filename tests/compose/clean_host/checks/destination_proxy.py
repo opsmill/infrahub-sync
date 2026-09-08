@@ -39,13 +39,15 @@ import os
 import pathlib
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, ClassVar
 
 import httpx
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
 # The private directory the driver creates for row 8 and mounts into this
 # container and row 8's check container, and into nothing else.
@@ -123,6 +125,13 @@ HOP_BY_HOP = frozenset(
 WITHHELD_STATUS = 504
 UNREACHABLE_STATUS = 502
 
+# What one held write ends as. Three outcomes and no fourth: an expiry is the one
+# name for every late step, so the two sides of the handshake cannot end up with
+# two accounts of one budget running out.
+HELD_COMPLETED = "completed"
+HELD_ACKNOWLEDGED = "acknowledged"
+HELD_EXPIRED = "expired"
+
 
 def control_path(name: str) -> pathlib.Path:
     """Return where one handshake state is recorded."""
@@ -174,6 +183,93 @@ def remaining_budget(accepted_at: float) -> float:
     their own. A non-positive answer is the budget already gone.
     """
     return accepted_at + PROXY_BUDGET_SECONDS - time.time()
+
+
+def record_expiry() -> None:
+    """Record the one budget running out, and leave nothing armed behind it.
+
+    The single name for every late event. A forwarding that returned too late, a
+    release that arrived too late and a hold that was never released are one fact
+    -- the budget ended -- and the driver reads this rather than timing the same
+    interval a second time and reporting a different reason for it.
+    """
+    signal_proxy(EXPIRED, "")
+    disarm()
+
+
+def forward_within_budget(send: Callable[[float], httpx.Response], accepted_at: float) -> httpx.Response | None:
+    """Forward one request under one deadline over the whole exchange, or nothing.
+
+    Not the client's own timeout. `httpx` applies a scalar `timeout` separately to
+    connecting, writing, reading and waiting for a pooled connection, so four
+    phases each obeying a twenty-second timeout are an eighty-second exchange --
+    by which point the worker's own sixty-second SDK timeout has fired and the run
+    records a transport failure instead of the interruption this row arranges.
+
+    So the exchange is bounded as a unit. In a threaded handler that cannot be an
+    interval timer: Python delivers signals only to the main thread, and this runs
+    on one of `ThreadingHTTPServer`'s. Waiting on a future with a deadline is the
+    signal-safe equivalent -- the request may carry on in its own thread, but this
+    proxy has stopped treating it as part of the coordination, which is what the
+    budget is about.
+    """
+    remaining = remaining_budget(accepted_at)
+    if remaining <= 0:
+        return None
+    exchange = ThreadPoolExecutor(max_workers=1)
+    try:
+        # The client is still given a timeout, because a phase that hangs should
+        # not hold a thread past the run. It is a floor, not the bound: the bound
+        # is the deadline this waits under.
+        sent = exchange.submit(send, remaining)
+        try:
+            return sent.result(timeout=remaining_budget(accepted_at))
+        except FuturesTimeout:
+            return None
+    finally:
+        # Never waited on: the whole point is that this proxy stops waiting when
+        # the budget ends, and a shutdown that joined the thread would wait again.
+        exchange.shutdown(wait=False, cancel_futures=True)
+
+
+def record_upstream_completed(accepted_at: float) -> str:
+    """Record that the destination completed the held write, unless it did so too late.
+
+    This state is a licence: row 8's check reads it and goes on to prove the write
+    landed, then names the run for the driver to interrupt. Recorded after the
+    budget ended, it would send the check off to coordinate with a driver that had
+    already given up -- so the budget is rechecked here, with the answer in hand,
+    and a late success is the budget expiring and nothing else.
+    """
+    if remaining_budget(accepted_at) <= 0:
+        record_expiry()
+        return HELD_EXPIRED
+    signal_proxy(UPSTREAM_COMPLETED, "")
+    return HELD_COMPLETED
+
+
+def await_release(accepted_at: float) -> str:
+    """Wait out the rest of the budget for the driver's release, and say what happened.
+
+    The acknowledgement is the other licence: the driver reads it as the
+    coordination having completed and carries on into row 8's recovery checks. So
+    the budget is rechecked with the release in hand -- a release that was already
+    waiting when this looked, but arrived after the budget ended, is a late
+    release, and a late release is an expiry rather than something to acknowledge.
+    """
+    while not held(RELEASE):
+        if remaining_budget(accepted_at) <= 0:
+            record_expiry()
+            return HELD_EXPIRED
+        time.sleep(HOLD_POLL_SECONDS)
+    if remaining_budget(accepted_at) <= 0:
+        record_expiry()
+        return HELD_EXPIRED
+    # Disarmed before the acknowledgement, so the driver cannot restart the
+    # deployment into a proxy that would hold the recovery checks' own traffic.
+    disarm()
+    signal_proxy(ACKNOWLEDGED, "")
+    return HELD_ACKNOWLEDGED
 
 
 def is_target_mutation(method: str, path: str, body: bytes) -> bool:
@@ -288,28 +384,36 @@ class Proxy(BaseHTTPRequestHandler):
         a reason the budget never gave.
         """
         client = self.upstream
-        timeout = remaining_budget(accepted_at)
         if client is None:
             signal_proxy(UPSTREAM_FAILED, "this proxy had no route to the destination to forward the write over\n")
             disarm()
             self._answer(UNREACHABLE_STATUS, b"", ())
             return
-        if timeout <= 0:
-            self._expire()
-            return
         try:
-            answer = client.request(method, self.path, content=body, headers=self._forwarded(), timeout=timeout)
+            answer = forward_within_budget(
+                lambda timeout: client.request(
+                    method, self.path, content=body, headers=self._forwarded(), timeout=timeout
+                ),
+                accepted_at,
+            )
         except httpx.HTTPError as error:
             # A forwarding the budget ended is the budget expiring, not a
             # destination that could not be reached. Told apart here, so both sides
             # report the one sentence they share rather than two different reasons
             # for the same event.
             if remaining_budget(accepted_at) <= 0:
-                self._expire()
+                record_expiry()
+                self._answer(WITHHELD_STATUS, b"", ())
                 return
             signal_proxy(UPSTREAM_FAILED, f"the destination could not be reached: {type(error).__name__}\n")
             disarm()
             self._answer(UNREACHABLE_STATUS, b"", ())
+            return
+        if answer is None:
+            # The one deadline over the whole exchange ended it. Nothing else could
+            # have: a client-side phase timeout arrives as an `HTTPError` above.
+            record_expiry()
+            self._answer(WITHHELD_STATUS, b"", ())
             return
         reason = upstream_verdict(answer.status_code, answer.content)
         if reason is not None:
@@ -317,39 +421,12 @@ class Proxy(BaseHTTPRequestHandler):
             disarm()
             self._answer(answer.status_code, answer.content, answer.headers.items())
             return
-        # Durable, and recorded before the answer is withheld: row 8's check reads
-        # this to know the destination completed the write it is about to prove.
-        signal_proxy(UPSTREAM_COMPLETED, "")
-        self._withhold(accepted_at)
-
-    def _withhold(self, accepted_at: float) -> None:
-        """Keep the completed answer from the worker until the driver releases it.
-
-        Bounded by the one budget, absolutely, from the instant the mutation was
-        accepted. Expiring is recorded rather than merely happening: the driver
-        reads that record instead of timing the same budget a second time.
-        """
-        while not held(RELEASE):
-            if remaining_budget(accepted_at) <= 0:
-                self._expire()
-                return
-            time.sleep(HOLD_POLL_SECONDS)
-        # Disarmed before the acknowledgement, so the driver cannot restart the
-        # deployment into a proxy that would hold the recovery checks' own traffic.
-        disarm()
-        signal_proxy(ACKNOWLEDGED, "")
-        self._answer(WITHHELD_STATUS, b"", ())
-
-    def _expire(self) -> None:
-        """Record the one budget running out, and close without an answer saying otherwise.
-
-        Recorded, because the driver reads this rather than timing the same budget
-        a second time. Never acknowledged and never a success status: an expiry
-        that answered like a release would be this proxy reporting a coordination
-        it did not complete.
-        """
-        signal_proxy(EXPIRED, "")
-        disarm()
+        # The licence row 8's check acts on, and it is only a licence while the
+        # budget it was earned inside is still running.
+        if record_upstream_completed(accepted_at) == HELD_EXPIRED:
+            self._answer(WITHHELD_STATUS, b"", ())
+            return
+        await_release(accepted_at)
         self._answer(WITHHELD_STATUS, b"", ())
 
     def _forwarded(self) -> dict[str, str]:

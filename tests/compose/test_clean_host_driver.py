@@ -2284,12 +2284,13 @@ def test_the_forwarding_the_budget_covers_is_bounded_by_the_budget_and_not_by_a_
             next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == name)
         )
 
-    claimed = body_of("_hold_claimed")
-    assert "timeout = remaining_budget(accepted_at)" in claimed, (
+    claimed = body_of("forward_within_budget")
+    assert "remaining_budget(accepted_at)" in claimed, (
         "the claimed request is forwarded under a clock that is not the one budget"
     )
-    assert "timeout=timeout" in claimed, "the forwarding ignores whatever the budget left it"
+    assert "timeout=remaining" in claimed, "the forwarding ignores whatever the budget left it"
     assert "UNCLAIMED_TIMEOUT_SECONDS" not in claimed, "the claimed forwarding takes a timeout of its own"
+    assert "forward_within_budget(" in body_of("_hold_claimed"), "the held write is not forwarded under the budget"
     # And the request nobody armed for is bounded, but by the ordinary bound: it
     # is not part of the coordination and must not consume the budget either.
     assert "timeout=UNCLAIMED_TIMEOUT_SECONDS" in body_of("_pass_through")
@@ -2335,19 +2336,27 @@ def test_the_budget_running_out_during_the_forwarding_is_recorded_as_the_budget_
     source = code_of(PROXY)
     tree = ast.parse(source)
 
-    assert "def _expire" in source, "there is no single place the budget running out is recorded"
-    expire = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_expire")
+    assert "def record_expiry" in source, "there is no single place the budget running out is recorded"
+    expire = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "record_expiry")
     body = ast.unparse(expire)
     assert "signal_proxy(EXPIRED" in body, "an expiry is not recorded, so the driver cannot read it"
     assert "disarm()" in body, "an expiry leaves the proxy armed for whatever comes next"
     assert "ACKNOWLEDGED" not in body, "an expiry answers as though the coordination completed"
-    assert "WITHHELD_STATUS" in body, "an expiry answers with something other than a withheld response"
+    assert "UPSTREAM_COMPLETED" not in body, "an expiry is recorded as a completed write"
+    # The answer is the handler's, because recording an expiry and answering the
+    # request are different concerns -- but it may never be a success.
+    forwarding = ast.unparse(
+        next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_hold_claimed")
+    )
+    for answered in re.findall(r"self\._answer\((\w+)", forwarding):
+        assert answered != "HELD_ACKNOWLEDGED", "a held write is answered as though it completed"
+    assert "self._answer(WITHHELD_STATUS" in forwarding, "an expiry leaves the held request without an answer"
 
     # Both places the budget can run out, and each anchored to where it runs out.
     # "the function mentions an expiry somewhere" is satisfied by the pre-check
     # alone, which is a different moment from a forwarding cut short by the clock.
-    held = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_withhold")
-    assert "self._expire()" in ast.unparse(held), "a budget that ran out while holding is reported as something else"
+    held = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "await_release")
+    assert "record_expiry()" in ast.unparse(held), "a budget that ran out while holding is reported as something else"
 
     forwarding = next(
         node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_hold_claimed"
@@ -2360,7 +2369,7 @@ def test_the_budget_running_out_during_the_forwarding_is_recorded_as_the_budget_
         if handler.type is not None and "HTTPError" in ast.unparse(handler.type)
     ]
     assert handlers, "nothing catches a forwarding that could not complete"
-    assert "self._expire()" in ast.unparse(handlers[0]), (
+    assert "record_expiry()" in ast.unparse(handlers[0]), (
         "a forwarding the budget cut short is reported as a destination that could not be reached"
     )
 
@@ -2510,14 +2519,19 @@ def test_a_control_directory_is_writable_by_the_candidates_user_and_nothing_else
     applied further up would widen what this gate hands a container.
     """
     prepared = function_body(preparer)
+    narrowing = function_body("narrow_control_access")
 
-    assert "CANDIDATE_UID" in prepared, f"{preparer} leaves its control directory unwritable by the candidate's user"
+    assert f'narrow_control_access "{directory}"' in prepared, (
+        f"{preparer} leaves its control directory unwritable by the candidate's user"
+    )
     assert "CANDIDATE_UID=10001" in driver(), "the driver does not name the user the candidate image runs as"
-    assert f'chown "$CANDIDATE_UID:$CANDIDATE_UID" "{directory}"' in prepared
-    assert "|| fail" in prepared, "a control directory that could not be prepared is not reported"
-    for line in prepared.splitlines():
+    assert 'chown "$CANDIDATE_UID:$CANDIDATE_UID" "$1"' in narrowing
+    assert "|| fail" in narrowing, "a control directory that could not be prepared is used anyway"
+    # One directory per call, named by the caller: a mode applied to anything but
+    # the argument would widen what this gate hands a container.
+    for line in narrowing.splitlines():
         if "chmod" in line or "chown" in line:
-            assert directory in line, f"a mode reaches beyond {preparer}'s own directory: {line.strip()}"
+            assert '"$1"' in line, f"a mode reaches beyond the directory it was given: {line.strip()}"
 
 
 def test_the_proxy_is_published_on_a_port_the_engine_chose_and_exactly_one_mapping_is_taken() -> None:
@@ -2594,11 +2608,11 @@ def test_the_foreign_volume_is_removed_only_when_this_run_created_it() -> None:
 
     # The guard, not the name: the removal also clears this variable, and that
     # clearing alone satisfies any claim about the name appearing in the body.
-    assert '[ -n "$FOREIGN_VOLUME_CREATED" ] || return 0' in remover, (
-        "removal is not gated on this run having created it"
+    assert '[ -n "$FOREIGN_VOLUME_INTENDED" ] || return 0' in remover, (
+        "removal is not gated on this run having set out to create it"
     )
-    assert "FOREIGN_VOLUME_CREATED=yes" in function_body("create_foreign_volume"), (
-        "the row never records that the creation succeeded"
+    assert "FOREIGN_VOLUME_INTENDED=yes" in function_body("create_foreign_volume"), (
+        "the row never records that it set out to create anything"
     )
     assert "remove_foreign_volume" in teardown_body(), "the teardown does not remove the volume the row created"
     assert 'docker volume rm "$FOREIGN_VOLUME"' not in teardown_body(), (
@@ -2750,8 +2764,8 @@ def test_the_failure_evidence_collection_is_bounded() -> None:
     """A stream is not evidence a row can sweep before the deployment is destroyed."""
     source = code_of(CHECKS / "reported_failures.py")
 
-    assert re.search(r"RUNS = \d+", source), "the collection is unbounded"
-    assert re.search(r"LOG_LIMIT = \d+", source), "the Prefect log collection is unbounded"
+    assert re.search(r"MAX_RUNS = \d+", source), "the run collection is unbounded"
+    assert re.search(r"MAX_LOG_ENTRIES = \d+", source), "the Prefect log collection is unbounded"
 
 
 def test_a_failure_evidence_collection_that_did_not_complete_is_not_a_shorter_sweep() -> None:
@@ -2780,11 +2794,12 @@ def test_the_raw_failure_evidence_is_swept_and_then_kept_by_nobody() -> None:
     # discards on each refusing path too, so "some discard follows some sweep"
     # holds even when the passing path keeps the bytes. What has to be true is
     # that nothing survives a sweep that found nothing.
-    statements = [line.strip() for line in row.splitlines() if line.strip()]
-    assert statements[-2] == "discard_raw_evidence", (
+    statements = [line.strip() for line in row.replace("\\\n", " ").splitlines() if line.strip()]
+    assert statements[-2].startswith("end_of_sweep"), (
         "the raw evidence outlives the sweep that was the only reason to have it"
     )
     assert statements[-1].startswith("report "), "the row reports before it has discarded what it swept"
+    assert "discard_raw_evidence" in function_body("end_of_sweep")
     assert "discard_raw_evidence" in function_body("cleanup"), (
         "a row that failed before the sweep leaves the raw evidence on the host"
     )
@@ -2806,3 +2821,296 @@ def test_the_failure_evidence_never_reaches_the_terminal() -> None:
         if "reported_failures" in line:
             assert ">" in line, f"the collected evidence is printed rather than captured: {line.strip()}"
             assert "2>" in line, f"whatever the collection said reaches the terminal: {line.strip()}"
+
+
+# ---------------------------------------------------------------------------
+# B2 — the budget as an absolute deadline, not a scalar handed to a client
+# ---------------------------------------------------------------------------
+def test_the_upstream_exchange_is_bounded_as_a_whole_rather_than_per_phase() -> None:
+    """`httpx` applies a scalar timeout to connect, read, write and pool separately.
+
+    Four phases of twenty seconds each obey a twenty-second timeout and take
+    eighty. The budget is one absolute deadline, so the exchange is bounded as a
+    unit — and in a threaded handler that cannot be an interval timer, because
+    Python delivers signals only to the main thread.
+    """
+    source = code_of(PROXY)
+    tree = ast.parse(source)
+
+    assert "def forward_within_budget" in source, "nothing bounds the exchange as a whole"
+    bounded = next(
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "forward_within_budget"
+    )
+    body = ast.unparse(bounded)
+    assert "result(timeout=" in body, "the exchange is bounded by whatever the client does with a scalar"
+    assert "remaining_budget(accepted_at)" in body, "the outer deadline is not the one budget"
+    assert "signal.setitimer" not in body, "a handler thread cannot be reached by an interval timer"
+
+
+def test_the_budget_is_rechecked_at_each_state_it_licenses() -> None:
+    """A step that passed the check on entry may finish after the budget ended.
+
+    Both durable states are licences: `proxy-upstream-completed` tells the check
+    to go and prove a write, and `proxy-acknowledged` tells the driver the
+    coordination completed. Either recorded late is a claim about a budget that
+    no longer existed.
+    """
+    source = code_of(PROXY)
+    tree = ast.parse(source)
+
+    for recorder, licensed in (
+        ("record_upstream_completed", "UPSTREAM_COMPLETED"),
+        ("await_release", "ACKNOWLEDGED"),
+    ):
+        node = next(found for found in ast.walk(tree) if isinstance(found, ast.FunctionDef) and found.name == recorder)
+        body = ast.unparse(node)
+        assert "remaining_budget(accepted_at) <= 0" in body, f"{recorder} records {licensed} without rechecking"
+        assert "record_expiry()" in body, f"{recorder} has no way to classify a late step as an expiry"
+        # The recheck immediately before the state it licenses, with the answer or
+        # the release already in hand. Anchored to the last one, because a wait
+        # that polls the budget while it waits satisfies "somewhere before" on its
+        # own -- and then the step it licenses is recorded without a recheck at all.
+        assert body.rindex("remaining_budget(accepted_at) <= 0") < body.index(licensed), (
+            f"{recorder} records {licensed} before its last look at the budget"
+        )
+
+
+def test_a_late_step_is_classified_only_as_an_expiry() -> None:
+    """One late event, one name for it. Two names would be two findings for one fact."""
+    source = code_of(PROXY)
+
+    for outcome in ("HELD_EXPIRED", "HELD_COMPLETED", "HELD_ACKNOWLEDGED"):
+        assert outcome in source, f"the hold has no {outcome} outcome to report"
+    expiry = code_of(PROXY)[code_of(PROXY).index("def record_expiry") :]
+    assert "signal_proxy(EXPIRED" in expiry.split("def ")[1] if "def " in expiry[4:] else True
+    recorded = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and node.name == "record_expiry"
+    )
+    body = ast.unparse(recorded)
+    assert "signal_proxy(EXPIRED" in body
+    assert "disarm()" in body, "an expiry leaves the proxy armed"
+    assert "ACKNOWLEDGED" not in body, "an expiry is recorded as an acknowledgement"
+    assert "UPSTREAM_COMPLETED" not in body, "an expiry is recorded as a completed write"
+
+
+# ---------------------------------------------------------------------------
+# B3 — narrow access, and control state removed with checked failures
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("preparer", ["create_proxy_control", "coordinated_check"])
+def test_no_control_directory_falls_back_to_being_world_writable(preparer: str) -> None:
+    """0777 on a host directory is every account on the host, which is not narrow.
+
+    Two parties need it and only two: this driver, and the candidate image's
+    user. A host that cannot grant exactly that is a host this gate refuses,
+    because the alternative is handing a writable channel to everyone.
+    """
+    prepared = function_body(preparer) + function_body("narrow_control_access")
+
+    assert "0777" not in prepared, "the control directory falls back to being writable by every account"
+    assert '"$CANDIDATE_UID:$CANDIDATE_UID"' in prepared, "the candidate's user is not given access"
+    assert "|| fail" in prepared, "a directory that could not be narrowed is used anyway"
+    assert "2>/dev/null" not in function_body("narrow_control_access"), (
+        "the grant's own failure is hidden, which is how a fallback creeps back in"
+    )
+
+
+def test_the_control_directories_are_removed_only_after_the_containers_writing_them_stop() -> None:
+    """A removed directory under a running container is a mount that still exists.
+
+    Both writers are `docker run` containers of this gate's own, so both are
+    stopped first and the removal is then a removal rather than a race.
+    """
+    cleanup = function_body("cleanup")
+
+    for stopper in ("stop_row6_check", "stop_row8_containers"):
+        assert cleanup.index(stopper) < cleanup.index("discard_control_state"), (
+            f"{stopper} runs after the directory it writes is removed"
+        )
+
+
+def test_both_control_directories_are_removed_and_their_removal_is_checked() -> None:
+    """`rm -rf` reports success for a great many things it did not remove."""
+    discard = function_body("discard_control_state")
+
+    for directory in ("$PROXY_CONTROL", "$ROW6_CONTROL"):
+        assert directory in discard, f"{directory} is left on the host"
+    # The verdict comes from the directory being gone, not from `rm`'s status:
+    # `rm -rf` exits zero for a great many things it did not remove.
+    assert '[ -d "$control" ]' in discard, "a directory is removed without checking that it went"
+    assert "return 1" in discard, "a removal that did not happen reports success"
+
+
+def test_a_control_directory_left_behind_is_reported_as_a_resource_still_present() -> None:
+    """It is private, writable, and this run made it. That is a resource."""
+    remaining = function_body("remaining_resources")
+
+    for directory in ("$PROXY_CONTROL", "$ROW6_CONTROL"):
+        assert directory in remaining, f"{directory} is never checked for absence"
+
+
+def test_a_control_state_removal_that_failed_can_only_turn_a_pass_into_a_failure() -> None:
+    """A teardown defect must never replace the diagnosis that caused the teardown."""
+    cleanup = function_body("cleanup")
+
+    guarded = [line for line in cleanup.splitlines() if "discard_control_state" in line and "if !" in line]
+    assert guarded, "the control-state removal's own failure is not noticed"
+    following = cleanup[cleanup.index("if ! discard_control_state") :]
+    assert '[ "$status" -ne 0 ] || status=1' in following.split("fi")[0], (
+        "a failed removal replaces the original failure instead of only failing a passing run"
+    )
+
+
+# ---------------------------------------------------------------------------
+# B4 — custody of the foreign volume across a signal
+# ---------------------------------------------------------------------------
+def test_custody_of_the_foreign_volume_is_intended_before_it_is_created() -> None:
+    """A signal between the creation and a variable set after it loses the volume.
+
+    `docker volume create` returns, the run is interrupted before the shell
+    records that it succeeded, and the teardown then has no licence to remove a
+    volume this run made. Intent is recorded first, so the window holds nothing.
+    """
+    created = function_body("create_foreign_volume")
+
+    assert "FOREIGN_VOLUME_INTENDED=yes" in created, "the row records no intent to create anything"
+    assert created.index("FOREIGN_VOLUME_INTENDED=yes") < created.index("docker volume create"), (
+        "custody is taken after the creation, so a signal in between loses the volume"
+    )
+
+
+def test_the_removal_is_licensed_by_a_label_this_run_wrote_and_not_by_a_variable() -> None:
+    """Intent is not ownership. What is on the volume decides whether it is ours.
+
+    A name can be intended and belong to something else by the time teardown
+    reads it; a label this run wrote and reads back cannot. So the removal asks
+    the volume, and a volume that does not answer with this run's identity is
+    reported rather than removed.
+    """
+    body = executable_lines()
+    remover = function_body("remove_foreign_volume")
+
+    assert "FOREIGN_VOLUME_LABEL=" in body, "the volume carries no identity this run can read back"
+    assert '--label "$FOREIGN_VOLUME_LABEL=$RUN_IDENTITY"' in function_body("create_foreign_volume"), (
+        "the volume is created without the identity that licenses removing it"
+    )
+    assert "foreign_volume_is_ours" in remover, "the removal is licensed by a shell variable"
+    licensed = function_body("foreign_volume_is_ours")
+    assert "docker volume inspect" in licensed, "ownership is asserted rather than read from the volume"
+    assert "$FOREIGN_VOLUME_LABEL" in licensed
+    # The comparison, not the name: the helper also refuses when this run has no
+    # identity at all, and that guard alone satisfies any claim about the name
+    # appearing. What has to hold is that the label *equals* this run's identity.
+    assert '[ "$owner" = "$RUN_IDENTITY" ]' in licensed, (
+        "any labelled volume would satisfy this, including another run's"
+    )
+
+
+def test_a_volume_that_is_not_this_runs_is_reported_and_never_removed() -> None:
+    """This row exists to prove the gate leaves foreign state alone. Including here."""
+    remover = function_body("remove_foreign_volume")
+
+    intended = remover.index("FOREIGN_VOLUME_INTENDED")
+    assert intended < remover.index("docker volume rm"), "the removal runs before custody is established"
+    assert "return 1" in remover, "a volume this run could not account for reads as removed"
+
+
+# ---------------------------------------------------------------------------
+# B5 — a signal during the teardown
+# ---------------------------------------------------------------------------
+def test_a_signal_arriving_during_the_teardown_cannot_replace_the_original_status() -> None:
+    """The exit trap has already read `$?`; a signal handler would then exit over it.
+
+    `on_signal` ends the run with a status of its own, which is right before the
+    teardown and wrong inside it: the diagnosis is already in hand and a late
+    interrupt would discard it. So the handlers are dropped for the duration.
+    """
+    cleanup = function_body("cleanup")
+
+    assert "trap '' INT TERM" in cleanup, "a signal during the teardown still reaches a handler that exits"
+    assert cleanup.index("status=$?") < cleanup.index("trap '' INT TERM"), (
+        "the handlers are dropped before the status they protect has been read"
+    )
+    ignored = cleanup.index("trap '' INT TERM")
+    for destructive in ("capture_diagnostic", "stop_row8_containers", "stop_destination"):
+        assert ignored < cleanup.index(destructive), f"{destructive} runs while a signal can still end the run"
+
+
+# ---------------------------------------------------------------------------
+# B6 — the plaintext list of credentials is evidence too
+# ---------------------------------------------------------------------------
+def test_the_credential_lists_are_named_once_so_both_sweeps_and_the_removal_agree() -> None:
+    """Two spellings of one path is a file the removal never reaches."""
+    body = executable_lines()
+
+    assert re.search(r"^CANARIES=\S+$", body, re.MULTILINE), "the row's credential list has no name of its own"
+    assert re.search(r"^DIAGNOSTIC_CANARIES=\S+$", body, re.MULTILINE), (
+        "the diagnostic's credential list has no name of its own"
+    )
+    assert '"$WORK/canaries"' not in body, "the row's credential list is written out beside its own name"
+    assert '"$WORK/diagnostic.canaries"' not in body, (
+        "the diagnostic's credential list is written out beside its own name"
+    )
+
+
+def test_the_rows_credential_list_is_removed_on_every_path_out_of_the_sweep() -> None:
+    """It holds every credential this run generated, in plaintext, and the run keeps it.
+
+    The contract forbids a generated credential in retained evidence. The list of
+    them is not an exception: it exists to be searched and for nothing else, and
+    the kit's own working directory is exactly where the sweep does not look.
+    """
+    row = function_body("row_secrets")
+
+    assert "discard_canaries" in function_body("end_of_sweep"), (
+        "the end of the sweep keeps the list of credentials it swept for"
+    )
+    assert "end_of_sweep" in function_body("fail_after_sweep"), "a refusal after the list exists does not remove it"
+    # Every way out from the moment the list exists, and there is no other kind:
+    # each refusal goes through the one that removes it first, and the passing
+    # path ends the sweep itself. A bare `fail` here would leave the list behind.
+    bare = [
+        line.strip()
+        for line in row.replace("\\\n", " ").splitlines()
+        # The passing path's own refusal is the exception, and the only one: the
+        # sweep has already ended there, and what it reports is that ending it
+        # could not remove the list.
+        if re.search(r"(^|\|\| )fail \"", line.strip()) and not line.strip().startswith("end_of_sweep")
+    ]
+    assert bare == [], f"a refusal leaves the credential list on the host: {bare}"
+    assert row.count("fail_after_sweep") >= 4, "the row has fewer refusing paths than it did"
+    # And the list's last read is the kit sweep, so the removal follows it.
+    assert row.rindex("end_of_sweep") > row.rindex('done < "$CANARIES"'), (
+        "the list is removed before the sweep that reads it last"
+    )
+
+
+def test_the_diagnostics_credential_list_is_removed_on_both_of_its_paths() -> None:
+    """Withheld or written, the account is finished with and the list is not evidence.
+
+    Two paths, and the leaking one matters most: the diagnostic itself is deleted
+    there, and leaving the list of what leaked beside its absence would be the
+    same disclosure by a shorter route.
+    """
+    capture = function_body("capture_diagnostic")
+
+    assert "discard_canaries" in capture, "the diagnostic keeps the list of credentials it swept for"
+    withheld = [line for line in capture.splitlines() if "withheld" in line]
+    assert len(withheld) == 2, "the diagnostic no longer has two withholding paths"
+    assert capture.count("discard_canaries") >= 3, (
+        "the diagnostic removes its credential list on some of its paths but not all three"
+    )
+    assert capture.index("carries_a_canary") < capture.rindex("discard_canaries"), (
+        "the list is removed before the sweep that needed it"
+    )
+
+
+def test_neither_credential_list_survives_the_final_teardown() -> None:
+    """The backstop for a run that failed before the row that removes its own list."""
+    cleanup = function_body("cleanup")
+    remaining = function_body("remaining_resources")
+
+    assert "discard_canaries" in cleanup, "a run that failed before row 11 leaves its credential list on the host"
+    for named in ("$CANARIES", "$DIAGNOSTIC_CANARIES"):
+        assert named in remaining, f"{named} is never checked for absence"
