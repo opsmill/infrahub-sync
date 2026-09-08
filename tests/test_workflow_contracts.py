@@ -49,12 +49,7 @@ TASK_TREE = "tasks/**"
 QUALIFIED_TREES = ("infrahub_sync/**", "deploy/compose/**", "tests/compose/**")
 
 PUBLISH_WORKFLOW = WORKFLOWS / "workflow-publish.yml"
-IMAGE_WORKFLOW = WORKFLOWS / "workflow-image.yml"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
-# The input one approval turns on, and the protected environment that approval is
-# taken in. A step reachable without both is a publication nobody approved.
-PUBLICATION_INPUT = "inputs.publish"
-RELEASE_ENVIRONMENT = "release"
 
 # What sends a built artifact somewhere this repository cannot take it back from:
 # a package index, a registry, or a published release.
@@ -378,25 +373,6 @@ def _step_name(step: dict) -> str:
     return str(step.get("name", step.get("uses", step.get("run"))))
 
 
-def _step(path: Path, job_name: str, step_name: str) -> tuple[dict, dict]:
-    job = load(path)["jobs"][job_name]
-    return job, next(step for step in job["steps"] if _step_name(step) == step_name)
-
-
-def _guarded(job: dict, step: dict) -> bool:
-    """Report whether the publication input decides that step's existence.
-
-    The condition has to be on the **job**, and accepting a step-level one would
-    permit exactly what this argues against: a guarded step inside an unguarded
-    job still starts the runner, sets up the interpreter, and downloads the
-    candidate's artifacts, and only then declines to upload. The job condition
-    covers every step inside it and covers them earlier — the job never starts,
-    so nothing it would have installed is installed either.
-    """
-    del step
-    return PUBLICATION_INPUT in str(job.get("if", ""))
-
-
 def triggers(path: Path) -> set[str]:
     """Return the events a workflow answers.
 
@@ -583,9 +559,9 @@ def test_nothing_the_v3_line_reaches_retains_a_candidate_artifact() -> None:
     published, and retaining them put gigabytes of pre-release bytes behind
     public download links.
 
-    Failure-only diagnostics are deliberately not caught by this: they carry
-    neither prefix, they are absent on success, and their bytes pass the F16
-    sweep before they are written at all.
+    The workflow declares no upload at all today, so this holds by there being
+    nothing to retain. It stays an equality over every reachable upload, which is
+    what makes the first one added later fail here.
     """
     reachable = v3_reachable()
     retained = sorted(

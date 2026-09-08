@@ -19,18 +19,13 @@ concurrency:
   cancel-in-progress: true
 
 # Read-only throughout. This gate builds and tests an image; it never logs in,
-# tags for a registry, pushes, or promotes a digest.
+# tags for a registry, pushes, or promotes a digest. It also uploads nothing, so
+# a pull-request run retains no image, layout, distribution or bundle: it
+# describes a merge result nobody will ship, and the candidate that gets
+# qualified is built by a later manual run against the exact merged commit.
 permissions:
   contents: read
   packages: read
-
-# How long the service holds what a failed run leaves behind, which is the only
-# thing this workflow retains. A diagnostic is read while the failure it explains
-# is being worked, so it is kept days rather than months: a pull-request run
-# keeps no candidate image, layout, distribution or bundle, and the window a
-# candidate needs belongs to the manual run that builds one.
-env:
-  DIAGNOSTIC_RETENTION_DAYS: 7
 
 jobs:
   files-changed:
@@ -124,12 +119,3 @@ jobs:
       - name: "Qualify the Compose lifecycle on linux/amd64"
         timeout-minutes: 45
         run: uv run --no-sync invoke compose.lifecycle
-      - name: "Publish what a failed lifecycle run saw"
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: infrahub-sync-lifecycle-diagnostic
-          path: .diagnostics/
-          include-hidden-files: true
-          if-no-files-found: ignore
-          retention-days: ${{ env.DIAGNOSTIC_RETENTION_DAYS }}

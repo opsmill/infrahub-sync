@@ -4,9 +4,8 @@ every artifact name from it — the image's `version` label, the wheel and sourc
 distribution, the Compose bundle archive, the Git tag, and the release title — and
 refuses a version that is not its own normalized form.
 
-Publication is now a dispatch-only workflow bound to one qualified candidate run. It
-refuses an approval naming a version that candidate did not record, never checks out
-source, and uploads only the distributions the candidate already built. With its
-`publish` input off, the job that would upload does not exist. The `release.published`
-route that rebuilt from source and uploaded unconditionally is removed; the approved
-candidate workflow is the only publisher.
+Publication is not part of this change. The existing release route is unchanged and
+remains the only publisher: a push to `stable` drafts a release, and publishing that
+release runs the dispatch-only publish workflow. `invoke release.build` produces the
+two distributions a publication would upload; binding an upload to a qualified
+candidate is a later, separately approved change.

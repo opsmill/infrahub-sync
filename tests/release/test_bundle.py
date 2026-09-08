@@ -36,6 +36,10 @@ COMMIT_SECONDS = 1788509700
 
 ROOT = f"infrahub-sync-compose-{VERSION}"
 
+# The real bundle directory, held before the `source` fixture points the module
+# at a copy. The content comparison below is against what the repository ships.
+BUNDLE_SOURCE = release.BUNDLE_SOURCE
+
 # Everything the bundle ships, as an equality: a file newly reaching it fails
 # here rather than shipping unnoticed.
 SHIPPED = {
@@ -126,6 +130,21 @@ def gzip_header(archive: Path) -> bytes:
     return archive.read_bytes()[:10]
 
 
+def contents(archive: Path) -> dict[str, bytes]:
+    """Return each regular entry's bytes, keyed by its path inside the bundle."""
+    held: dict[str, bytes] = {}
+    with tarfile.open(archive) as opened:
+        for member in opened.getmembers():
+            if not member.isfile():
+                continue
+            stream = opened.extractfile(member)
+            if stream is None:
+                msg = f"{member.name} is a regular entry that would not open"
+                raise AssertionError(msg)
+            held[member.name.removeprefix(f"{ROOT}/")] = stream.read()
+    return held
+
+
 def test_the_bundle_ships_exactly_the_files_the_deployment_needs(tracked: dict[str, int]) -> None:
     """Read from Git, so an untracked file beside them cannot become bundle content."""
     assert set(tracked) == SHIPPED
@@ -136,6 +155,16 @@ def test_the_archive_holds_the_shipped_files_and_nothing_a_deployment_generates(
     held = {member.name for member in members(archive) if member.isfile()}
 
     assert held == {f"{ROOT}/{name}" for name in SHIPPED}
+
+
+def test_every_file_in_the_archive_carries_the_bytes_of_its_source(archive: Path, tracked: dict[str, int]) -> None:
+    """Every property above holds just as well over an archive of empty entries.
+
+    Names, modes, order, owners and stamps are each asserted apart from content,
+    and two runs agreeing on their bytes agrees just as readily on the wrong
+    ones. This is the one case that reads what a deployment would actually run.
+    """
+    assert contents(archive) == {name: (BUNDLE_SOURCE / name).read_bytes() for name in tracked}
 
 
 def test_two_runs_from_one_tree_produce_the_same_bytes(

@@ -159,20 +159,34 @@ deployment generates on its host — `operator.env`, `secrets/`, and `.instance`
 is never in it, and neither is the clean-host gate's fixture, which goes into a
 separate qualification kit instead.
 
-`release.qualify` refuses a candidate that qualified nothing: it requires an
-image smoke result for every built platform and a Compose lifecycle result, and
-each of those records the exact image digest it ran against. It also requires
-`.release/artifacts.json`, which the candidate workflow writes from what each
-upload returned, so the record carries the artifact identifiers and digests an
-approval is later bound to, and the retention that has to outlast it.
+`release.qualify` is the validation and recording task prepared for a candidate
+workflow, and no workflow in this repository calls it yet. It refuses a candidate
+that qualified nothing: it requires an image smoke result for every built
+platform and a Compose lifecycle result, and each of those records the exact
+image digest it ran against.
 
-## Publication
+It also requires `.release/artifacts.json` — the artifact record its caller
+writes from what the service returned for each upload — so the record carries the
+identifiers, digests, and retention an approval is later bound to. Nothing writes
+that file on this branch, so running `release.qualify` locally refuses until you
+supply one. The manual run that produces it is a later unit.
 
-Publication is a separate, dispatch-only workflow. It is bound to one candidate
-run, refuses a run that did not qualify, refuses an approval naming a version that
-candidate did not record, and never checks out source — the distributions it
-uploads are the ones the candidate already built. With its `publish` input off,
-the job that would upload does not exist, so nothing it needs is ever installed.
+## What publishes today
+
+No workflow promotes what these tasks produce. The pull-request workflow that
+runs them retains nothing at all: it declares no artifact upload, so a run keeps
+no image, layout, distribution or bundle.
+
+The repository's existing release route is unchanged and remains its only
+publisher: a push to `stable` retypes that line's version and drafts a release,
+and publishing that release runs the dispatch-only publish workflow. Neither
+reads anything on this page. This branch adds no second publisher.
+
+Two things are deliberately absent. The manual run that builds a retained
+candidate and writes `.release/artifacts.json` is a later unit, and a publication
+bound to such a candidate is a later unit again, separately approved. Until then
+`release.build` produces the two distributions a publication would upload, and
+nothing uploads them.
 
 ## Recorded digests
 
