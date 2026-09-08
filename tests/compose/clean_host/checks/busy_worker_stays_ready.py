@@ -97,6 +97,14 @@ SETTLE_POLL_SECONDS = 3.0
 CLAIM_TIMEOUT_SECONDS = 180.0
 CLAIM_POLL_SECONDS = 2.0
 
+# Whether a worker able to claim at all exists, asked before the claim is waited
+# for and bounded separately from it. A worker whose exact pool identity the
+# service cannot resolve does not poll -- `worker.py` skips submission entirely
+# while it is unavailable -- so a row that only waited for the claim would spend
+# that whole budget on a deployment which was never going to take its run, and
+# then refuse in the words of the queue property. Two bounds, two sentences.
+CLAIMABLE_TIMEOUT_SECONDS = 60.0
+
 # What the deployment's own lifecycle command treats as a live worker, and
 # therefore as READY. `busy` belonging to this set is the property.
 LIVE = {"ready", "busy"}
@@ -234,6 +242,30 @@ def claimed_and_running(attempt: OrchestrationSummary) -> bool:
     return attempt.claimed_at is not None and attempt.terminal_at is None
 
 
+def await_claimable_worker(client: SyncClient) -> None:
+    """Block until the deployment reports a worker that could claim anything.
+
+    A precondition of this row, not its property: expiring here says the
+    deployment had no live worker to queue work behind, which is a statement
+    about the setup rather than about what a working deployment reports. The
+    claim below keeps its own bound, so a live worker that does not take the run
+    is still that refusal and not this one.
+    """
+    deadline = time.monotonic() + CLAIMABLE_TIMEOUT_SECONDS
+    reported = "nothing"
+    while True:
+        worker = client.get_status().worker
+        reported = repr(worker.state)
+        if worker.detail_available and worker.live_workers is not None and worker.live_workers >= 1:
+            return
+        if time.monotonic() >= deadline:
+            refuse(
+                f"the deployment reported no live worker within {CLAIMABLE_TIMEOUT_SECONDS:.0f}s of this row"
+                f" starting -- the last reading was {reported} -- so nothing could have claimed its first run"
+            )
+        time.sleep(CLAIM_POLL_SECONDS)
+
+
 def await_execution(client: SyncClient, accepted: RunResource) -> None:
     """Block until a worker is executing one accepted run.
 
@@ -313,6 +345,10 @@ queued_attempted = False
 try:
     with deployment() as client:
         config_id, registry_version = bundled(client)
+        # Before anything is submitted, and before the guard is held: this row
+        # needs a worker that can claim, and asking first is what keeps a
+        # deployment without one from being reported as a queue that failed.
+        await_claimable_worker(client)
         write = create_run("sync", config_id=config_id, registry_version=registry_version, reason="clean-host: busy")
         read = create_run("plan", config_id=config_id, registry_version=registry_version, reason="clean-host: queued")
 

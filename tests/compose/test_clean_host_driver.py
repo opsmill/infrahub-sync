@@ -1281,6 +1281,35 @@ def test_the_busy_worker_row_holds_the_guard_its_first_run_will_contend_on() -> 
     assert entered[0].lineno < submitted[0].lineno, "the first run is submitted before the guard is held"
 
 
+def test_the_busy_worker_row_asks_for_a_claimable_worker_before_it_waits_for_a_claim() -> None:
+    """A deployment with no live worker is a setup finding, not a queue finding.
+
+    `worker.py` skips submission entirely while it cannot resolve its exact pool
+    identity, so a run can sit unclaimed for reasons this row is not about. Asked
+    first and bounded separately, the row that runs out of claim budget is one a
+    live worker declined to serve -- which is the only version of that refusal
+    worth reading.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+
+    assert "await_claimable_worker(client)" in source, "the row waits for a claim it never checked was possible"
+    assert source.index("await_claimable_worker(client)") < source.index("await_execution(client, executing_run)")
+
+    # Its own bound, read off the wait itself: a precondition that borrowed the
+    # claim budget would still spend the row's whole claim allowance on a
+    # deployment that had no worker, which is the failure this separates.
+    waits = {
+        node.name: ast.unparse(node)
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and node.name in {"await_claimable_worker", "await_execution"}
+    }
+    assert set(waits) == {"await_claimable_worker", "await_execution"}, waits
+    assert "CLAIMABLE_TIMEOUT_SECONDS" in waits["await_claimable_worker"]
+    assert "CLAIM_TIMEOUT_SECONDS" not in waits["await_claimable_worker"], "the precondition spends the claim budget"
+    assert "CLAIM_TIMEOUT_SECONDS" in waits["await_execution"]
+    assert "CLAIMABLE_TIMEOUT_SECONDS" not in waits["await_execution"], "the claim spends the precondition's budget"
+
+
 def test_the_busy_worker_row_hands_the_driver_a_durable_executing_state() -> None:
     """The handshake carries states, not moments.
 
@@ -1316,9 +1345,18 @@ def test_the_busy_worker_row_proves_the_whole_queue_from_one_snapshot() -> None:
     assert len(keys) == 2, f"the row does not accept exactly two distinct runs: {sorted(keys)}"
     assert source.count("accepted.append(") == 2, "the row records a number of handles other than the two it accepts"
 
-    snapshots = [
+    # Scoped to the wait that proves the property. The row also reads a status
+    # before it submits anything, to establish that a worker able to claim
+    # exists at all, and that reading is not part of the evidence: it is taken
+    # before either run and cannot be mistaken for a queue this row created.
+    proof = next(
         node
         for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "await_qualifying_snapshot"
+    )
+    snapshots = [
+        node
+        for node in ast.walk(proof)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get_status"
     ]
     assert len(snapshots) == 1, "the queue depth and the live worker are read from separate snapshots"
