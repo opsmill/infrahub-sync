@@ -39,7 +39,7 @@ import subprocess  # noqa: S404 -- fixed argv, the product CLI the image ships
 import sys
 import time
 
-from kit import SEEDED_DEVICE, destination, planned_branch, plant, refuse, sdk
+from kit import SEEDED_DEVICE, SEEDED_KIND, destination, planned_branch, plant, refuse, sdk
 
 # The bound on a client's view catching up with a load it has already accepted.
 SCHEMA_TIMEOUT_SECONDS = 120.0
@@ -131,7 +131,12 @@ def seed_unkeyed_subject(site_id: str) -> None:
 
 for schema in SCHEMAS:
     load(schema)
-await_kinds(UNKEYED_KINDS)
+# Every kind the loads above declare and anything below writes, in one wait. The
+# managed kind is named through the kit's own constant rather than a second
+# spelling, and waiting for it is not optional: acceptance of a load precedes
+# resolvability, so the `InfraDevice` create that follows would otherwise fail as
+# a missing schema rather than as whatever a row is testing.
+await_kinds((*UNKEYED_KINDS, SEEDED_KIND))
 
 # The managed rows: the object first, then the branch that inherits it, then the
 # difference. Every position is explained above.

@@ -51,6 +51,17 @@ MANDATORY_ROWS = (
 # The host tools the gate refuses to reach, and the guards it cannot run without.
 REFUSED_HOST_TOOLS = ("python", "python3", "uv", "uvx", "pip", "pytest", "infrahubctl")
 
+# The one wait the seeding performs, named once because two cases read it: one for
+# what it covers, one for what it precedes.
+SEEDING_WAIT = "await_kinds((*UNKEYED_KINDS, SEEDED_KIND))"
+
+# What the drift row may report of a recorded failure, and the sentence that
+# report opens with. Everything else the stage recorded stays out of the line:
+# the kit prints no value read out of the deployment, because some of them are
+# credentials and a destination's own text can carry anything.
+DRIFT_SENTENCE = "clean-host: drift: the settled apply recorded"
+PERMITTED_FAILURE_FIELDS = {"stage", "outcome", "error_type"}
+
 
 def driver() -> str:
     return DRIVER.read_text(encoding="utf-8")
@@ -869,7 +880,7 @@ def test_the_seeding_waits_for_the_view_a_client_reads_before_it_writes() -> Non
     is the view the deployment's own worker will read too.
     """
     source = seeding()
-    steps = ("await_kinds(UNKEYED_KINDS)", "site_id = seed_unkeyed_peer()")
+    steps = (SEEDING_WAIT, "site_id = seed_unkeyed_peer()")
     missing = [step for step in steps if step not in source]
     assert not missing, f"the seeding never performs {missing}"
 
@@ -1152,6 +1163,72 @@ def test_the_drift_row_reads_and_writes_the_branch_its_plan_is_computed_against(
     for call in ("attribute_kind(BRANCH)", "schema.all(branch=branch, refresh=True)", "branch=branch"):
         assert call in source, f"the drift row does not reach its branch through {call}"
     assert "'/api/schema'" not in source, "the row reads the unbranched schema endpoint, which answers for main"
+
+
+def drift_report() -> ast.Call:
+    """Return the one `print` the drift row reports a settled apply's failure through."""
+    tree = ast.parse((CHECKS / "schema_change.py").read_text(encoding="utf-8"))
+    reporting = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "print"
+        and DRIFT_SENTENCE in ast.unparse(node)
+    ]
+    assert len(reporting) == 1, f"{len(reporting)} steps report what the settled apply recorded"
+    return reporting[0]
+
+
+def reported_failure_fields(report: ast.Call) -> set[str]:
+    """Return every `failure` field that one report reads, wrapped or not."""
+    return {
+        argument.value
+        for read in ast.walk(report)
+        if isinstance(read, ast.Call)
+        and isinstance(read.func, ast.Attribute)
+        and read.func.attr == "get"
+        and isinstance(read.func.value, ast.Name)
+        and read.func.value.id == "failure"
+        for argument in read.args
+        if isinstance(argument, ast.Constant) and isinstance(argument.value, str)
+    }
+
+
+def test_the_drift_row_prints_only_the_bounded_fields_of_a_recorded_failure() -> None:
+    """The kit's boundary is stage, outcome and the error class, each bounded.
+
+    Read off the report itself rather than the module, so the set is exact: a
+    fourth field added to the line fails here. Interpolating the mapping would
+    print whatever else that stage recorded, and a stage is free to record a
+    field this row has never seen -- a destination's own text can carry anything,
+    which is the reason only a class name is safe to print.
+    """
+    report = drift_report()
+    rendered = ast.unparse(report)
+
+    assert reported_failure_fields(report) == PERMITTED_FAILURE_FIELDS
+    for whole in ("{failure}", "{failure or"):
+        assert whole not in rendered, "the row prints the whole failure mapping"
+    for field in sorted(PERMITTED_FAILURE_FIELDS):
+        assert f"printable_type_name(failure.get('{field}'))" in rendered, f"{field} reaches the line unbounded"
+    # Read for the assertion beside it, and deliberately never reported.
+    assert "failure.get('may_have_partially_written')" in code_of(CHECKS / "schema_change.py")
+
+
+def test_the_seed_waits_for_every_kind_it_then_writes() -> None:
+    """A load is accepted before the kinds it declares resolve, so the write races it.
+
+    The managed kind is created immediately after this wait. Waiting only for the
+    unkeyed pair leaves that create failing as a missing schema rather than as
+    whatever the row it seeds is testing.
+    """
+    source = code_of(CHECKS / "seed_destination.py")
+
+    assert SEEDING_WAIT in source, "the seed writes a kind it never waited for"
+    # Through the kit's constant, so the managed kind has one spelling.
+    assert "SEEDED_KIND" in source.split("await_kinds")[0], "the managed kind is named again instead of imported"
+    assert source.index(SEEDING_WAIT) < source.index("seed_object(CREATE_DEVICE")
 
 
 def test_the_recovery_row_waits_for_the_interruption_to_be_recorded() -> None:

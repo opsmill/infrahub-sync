@@ -35,6 +35,7 @@ from kit import (
     key,
     planned_branch,
     plant,
+    printable_type_name,
     recorded_failure,
     refuse,
     require_planned_work,
@@ -167,7 +168,18 @@ with deployment() as client:
         # depends on the operation that failed, and a row reading one name observes
         # nothing at all about a run that failed in another.
         failure = recorded_failure(client, run_id)
-        print(f"clean-host: drift: the settled apply recorded {failure or 'nothing'}", file=sys.stderr)
+        # Stage, outcome and the error class, each bounded. Never the mapping: it
+        # is read out of the deployment and carries whatever that stage recorded,
+        # and this stream is the sentence the driver shows.
+        print(
+            "clean-host: drift: the settled apply recorded"
+            f" {printable_type_name(failure.get('stage'))}"
+            f"/{printable_type_name(failure.get('outcome'))}"
+            f"/{printable_type_name(failure.get('error_type'))}"
+            if failure
+            else "clean-host: drift: the settled apply recorded nothing",
+            file=sys.stderr,
+        )
         if failure.get("error_type") != REFUSAL:
             refuse(f"the apply reported {failure.get('error_type')!r} rather than {REFUSAL}")
         if failure.get("may_have_partially_written"):

@@ -234,19 +234,28 @@ def test_an_upstream_exchange_is_bounded_as_a_whole_and_not_phase_by_phase(
     failure this row must not be reporting.
     """
     monkeypatch.setattr(proxy, "PROXY_BUDGET_SECONDS", 0.5)
+    # Released in the `finally` below rather than slept through. `cancel_futures`
+    # cannot cancel a call that is already running, and an executor's threads are
+    # not daemons, so a fixed sleep here leaves the interpreter joining this worker
+    # for the rest of that sleep after the case has already reported. The ceiling
+    # is a backstop for a release that never arrives, not the wait itself.
+    released = threading.Event()
 
     def slowly(_timeout: float) -> object:
-        """A destination that answers, but later than the whole budget allows."""
-        time.sleep(30)
-        return pytest.fail("the exchange was waited out rather than bounded")
+        """A destination that has not answered by the time the whole budget is out."""
+        released.wait(30)
+        return None
 
     started = time.monotonic()
-    answered = proxy.forward_within_budget(slowly, time.time())
-    spent = time.monotonic() - started
+    try:
+        answered = proxy.forward_within_budget(slowly, time.time())
+        spent = time.monotonic() - started
 
-    assert answered is None, "an exchange the budget ended is reported as an answer"
-    assert spent < 5, f"the exchange was bounded phase by phase rather than as a whole: {spent:.1f}s"
-    assert not (control / proxy.UPSTREAM_COMPLETED).exists(), "an exchange the budget ended recorded a completion"
+        assert answered is None, "an exchange the budget ended is reported as an answer"
+        assert spent < 5, f"the exchange was bounded phase by phase rather than as a whole: {spent:.1f}s"
+        assert not (control / proxy.UPSTREAM_COMPLETED).exists(), "an exchange the budget ended recorded a completion"
+    finally:
+        released.set()
 
 
 def test_a_forward_that_succeeds_after_the_budget_ended_is_only_ever_an_expiry(
