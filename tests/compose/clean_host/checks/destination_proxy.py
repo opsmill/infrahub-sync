@@ -119,6 +119,20 @@ HOP_BY_HOP = frozenset(
     }
 )
 
+# Headers that described the *encoded* form of a body this proxy now writes
+# decoded. `httpx` decompresses a response according to its own
+# `Content-Encoding`, so `answer.content` is plain bytes -- and forwarding the
+# header that described the compressed form tells the worker's own client to
+# decompress plain JSON. It reports a decoding error, and the run records that
+# instead of whatever the destination said. Every row's traffic passes through
+# here, so this broke a row that had nothing to do with row 8.
+#
+# Kept apart from the hop-by-hop set on purpose: that set is applied to requests
+# too, and a request body is forwarded exactly as it arrived, so its own
+# `Content-Encoding` still describes it. `Content-Length` is in both, and is
+# regenerated from the bytes actually written.
+STALE_ON_DECODED = frozenset({"content-encoding", "content-length"})
+
 # What a held request is finally answered with, if the socket is still there at
 # all. By then the worker that sent it has been killed; this exists so a request
 # is never left without an answer on any path.
@@ -436,13 +450,18 @@ class Proxy(BaseHTTPRequestHandler):
     def _answer(self, status: int, body: bytes, headers: Iterable[tuple[str, str]]) -> None:
         """Answer one request, or give up quietly when the party that sent it has gone.
 
+        The body written here is the decoded one, so the headers that described
+        its encoded form are dropped and its length is regenerated. Everything
+        else the destination said about its answer is passed on: the content type
+        a GraphQL client reads, and whatever else it chose to send.
+
         A held request's sender has been killed by the time this runs, so a dead
         socket is the expected case rather than a failure of this proxy.
         """
         try:
             self.send_response(status)
             for name, value in headers:
-                if str(name).lower() not in HOP_BY_HOP:
+                if str(name).lower() not in HOP_BY_HOP and str(name).lower() not in STALE_ON_DECODED:
                     self.send_header(str(name), str(value))
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()

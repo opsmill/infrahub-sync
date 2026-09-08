@@ -14,15 +14,20 @@ those are exactly the places a held write turns into a vacuous pass.
 
 from __future__ import annotations
 
+import gzip
 import importlib.util
 import json
 import re
 import sys
+import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
 
+import httpx
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -362,3 +367,155 @@ def test_the_one_budget_is_comfortably_below_the_timeout_the_adapter_gives_the_s
     assert float(declared.group(1)) <= float(given.group(1)) / 2, (
         "the budget is not comfortably below the timeout the adapter gives one destination call"
     )
+
+
+# ---------------------------------------------------------------------------
+# What reaches the worker has to describe itself correctly
+# ---------------------------------------------------------------------------
+# `httpx` decodes a response body according to its own `Content-Encoding`, so
+# `answer.content` is plain bytes. Forwarded with the header that described the
+# compressed form, the worker's own client tries to decompress plain JSON and
+# reports a decoding error — which is what ended the live matrix, in a row that
+# had nothing to do with this proxy's own behaviour.
+GRAPHQL_ANSWER = {"data": {"InfraDevice": {"edges": [{"node": {"id": "x"}}]}}}
+GRAPHQL_REJECTION = {"data": None, "errors": [{"message": "no"}]}
+
+
+def gzipping_upstream(
+    document: Mapping[str, object], seen: list[dict[str, str]] | None = None
+) -> type[BaseHTTPRequestHandler]:
+    """A destination that answers one GraphQL document, gzipped, and says so.
+
+    Records the headers each request arrived with, so a test can say what the
+    proxy passed on as well as what it sent back.
+    """
+    packed = gzip.compress(json.dumps(document).encode("utf-8"))
+    recorded = seen if seen is not None else []
+
+    class Upstream(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - the base handler's signature
+            """Say nothing: this is a test fixture, not a log."""
+
+        def do_POST(self) -> None:
+            """Answer with a gzipped document, exactly as Infrahub's server would."""
+            recorded.append({name.lower(): value for name, value in self.headers.items()})
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Content-Length", str(len(packed)))
+            self.end_headers()
+            self.wfile.write(packed)
+
+    return Upstream
+
+
+@contextmanager
+def serving(handler: type[BaseHTTPRequestHandler]) -> Iterator[int]:
+    """Run one handler on a loopback port for as long as the block needs it."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield server.server_port
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@contextmanager
+def proxy_in_front_of(
+    proxy: ModuleType, document: Mapping[str, object], seen: list[dict[str, str]] | None = None
+) -> Iterator[int]:
+    """The real proxy handler, forwarding to a real gzipping destination."""
+    with serving(gzipping_upstream(document, seen)) as upstream:
+        client = httpx.Client(base_url=f"http://127.0.0.1:{upstream}", timeout=10)
+        previous = proxy.Proxy.upstream
+        proxy.Proxy.upstream = client
+        try:
+            with serving(proxy.Proxy) as front:
+                yield front
+        finally:
+            proxy.Proxy.upstream = previous
+            client.close()
+
+
+def test_a_gzipped_answer_reaches_the_worker_as_one_valid_json_document(proxy: ModuleType, control: Path) -> None:
+    """The live failure: a plan that reached the destination and could not read it.
+
+    Every row's traffic goes through this proxy, so a body that describes itself
+    wrongly breaks rows that have nothing to do with row 8 — and it did.
+    """
+    del control
+    with proxy_in_front_of(proxy, GRAPHQL_ANSWER) as front:
+        answered = httpx.post(
+            f"http://127.0.0.1:{front}/graphql/qualification",
+            json={"query": "query InfraDevice { InfraDevice { edges { node { id } } } }"},
+            timeout=10,
+        )
+
+    assert answered.status_code == httpx.codes.OK
+    assert answered.json() == GRAPHQL_ANSWER, "the document that arrived is not the one the destination sent"
+    assert "content-encoding" not in answered.headers, "the answer still claims an encoding its bytes no longer have"
+    assert int(answered.headers["content-length"]) == len(answered.content), (
+        "the length does not describe the bytes that arrived"
+    )
+
+
+def test_a_rejected_claimed_answer_also_reaches_the_worker_readable(proxy: ModuleType, control: Path) -> None:
+    """The claimed path answers the worker too, and shares the same normalisation.
+
+    A mutation the destination rejected is forwarded back so the run records what
+    the destination said. Unreadable, it would record a decoding error instead.
+    """
+    (control / proxy.ARM).write_text("", encoding="utf-8")
+
+    with proxy_in_front_of(proxy, GRAPHQL_REJECTION) as front:
+        answered = httpx.post(
+            f"http://127.0.0.1:{front}/graphql/qualification",
+            json={"query": "mutation InfraDeviceUpdate { InfraDeviceUpdate { ok } }"},
+            timeout=10,
+        )
+
+    assert answered.json() == GRAPHQL_REJECTION, "the rejection that arrived is not the one the destination sent"
+    assert "content-encoding" not in answered.headers
+    assert (control / proxy.UPSTREAM_FAILED).exists(), "the claimed mutation's rejection was not recorded"
+    assert not (control / proxy.ARMED).exists(), "a rejected claim left the proxy armed"
+
+
+def test_the_headers_a_graphql_answer_needs_are_kept(proxy: ModuleType, control: Path) -> None:
+    """Only what stopped describing the bytes is dropped. The rest is the answer."""
+    del control
+    with proxy_in_front_of(proxy, GRAPHQL_ANSWER) as front:
+        answered = httpx.post(
+            f"http://127.0.0.1:{front}/graphql/qualification", json={"query": "query X { a }"}, timeout=10
+        )
+
+    assert answered.headers["content-type"] == "application/json", "the answer no longer says what it is"
+
+
+def test_a_forwarded_request_keeps_the_headers_that_still_describe_it(proxy: ModuleType, control: Path) -> None:
+    """The other direction, and the reason the two header sets are kept apart.
+
+    A request body is forwarded exactly as it arrived, so whatever described it
+    still does — including its own encoding. And the destination's credential is
+    in a header: dropped, nothing this gate does would reach the destination.
+    """
+    del control
+    seen: list[dict[str, str]] = []
+    with proxy_in_front_of(proxy, GRAPHQL_ANSWER, seen) as front:
+        httpx.post(
+            f"http://127.0.0.1:{front}/graphql/qualification",
+            headers={"X-INFRAHUB-KEY": "a-destination-token", "Content-Encoding": "identity"},
+            json={"query": "query X { a }"},
+            timeout=10,
+        )
+
+    assert seen, "the request never reached the destination"
+    assert seen[0].get("x-infrahub-key") == "a-destination-token", "the destination's credential did not reach it"
+    assert seen[0].get("content-encoding") == "identity", (
+        "a request body's own encoding was stripped, though the body was forwarded unchanged"
+    )
+    assert "127.0.0.1" in seen[0].get("host", ""), "the destination was addressed as something other than itself"

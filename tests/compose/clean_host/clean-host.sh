@@ -285,7 +285,13 @@ owned_fixture_container() {
         # An absent name is a clean teardown. Anything else is a question this
         # host declined, and an unanswered question is not an absent container --
         # it is the case where something of this run's is most likely still there.
-        if grep -q "No such object" "$WORK/fixture-inspect" 2>/dev/null; then
+        #
+        # One fact, spelled differently by different daemons: Docker Desktop wrote
+        # `error: no such object` where another writes `No such object`, and
+        # matching one of them exactly made a clean host report residue it did not
+        # have. Widened to the case and no further: `no such` is what a daemon says
+        # when the name holds nothing, and every other sentence stays fatal.
+        if grep -qi "no such" "$WORK/fixture-inspect" 2>/dev/null; then
             return 1
         fi
         return 2

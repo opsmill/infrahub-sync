@@ -3201,7 +3201,9 @@ def test_an_unreadable_or_unowned_name_preserves_the_container_and_reports_it() 
     checking = function_body("owned_fixture_container")
     removing = function_body("remove_owned_fixture_container")
 
-    assert "No such object" in checking, "an absent name and an unanswered question are not told apart"
+    # Matched case-insensitively, because daemons differ on the capitalisation
+    # and matching one exactly made a clean host report residue it did not have.
+    assert 'grep -qi "no such"' in checking, "an absent name and an unanswered question are not told apart"
     assert checking.count("return 2") >= 2, "an unowned name and an unreadable one are not both preserved"
     assert "return 1" in checking
     # Absence returns clean from the removal; anything unaccounted for does not.
@@ -3372,3 +3374,18 @@ def test_no_container_is_run_under_an_identity_the_image_did_not_ship() -> None:
 
     assert "--user" not in body, "this gate overrides the identity the candidate image runs as"
     assert "CANDIDATE_UID=10001" in body, "the driver no longer records the identity those containers keep"
+
+
+def test_the_absence_a_host_reports_is_recognised_however_it_is_spelled() -> None:
+    """Docker Desktop writes `error: no such object`; other daemons capitalise it.
+
+    The live matrix reported an incomplete teardown over a clean host because the
+    match was exact. Widened to the case, and no further: every other thing a
+    host can say is still a question it declined.
+    """
+    checking = function_body("owned_fixture_container")
+
+    assert "grep -qi" in checking, "the absence a host reports is matched case-sensitively"
+    assert "grep -q " not in checking, "one spelling of absence is still matched exactly"
+    assert "no such" in checking.lower(), "the sentence a host uses for absence is not the one looked for"
+    assert checking.count("return 2") >= 2, "widening the match turned another failure into a clean host"

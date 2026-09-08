@@ -667,3 +667,60 @@ def test_a_group_that_could_not_be_established_is_not_answered_with_world_access
 
     assert answered.returncode != 0, "a directory that could not be shared was used anyway"
     assert stat.S_IMODE(directory.stat().st_mode) != 0o777, "the narrowing fell back to world access"
+
+
+# ---------------------------------------------------------------------------
+# What "there is no such container" actually looks like on a real host
+# ---------------------------------------------------------------------------
+# The live matrix reported an incomplete teardown over a host that was clean:
+# Docker Desktop wrote `error: no such object: …` and the absence check looked
+# for `No such object`. The name read as unaccountable, and the run said it had
+# left resources behind that it had not.
+@pytest.mark.parametrize(
+    "absence",
+    [
+        "error: no such object: clean-host-proxy-e14f105768ec743d",
+        "Error: No such object: clean-host-proxy-e14f105768ec743d",
+        "Error response from daemon: No such container: clean-host-row8-x",
+    ],
+    ids=["docker-desktop-lowercase", "capitalised", "daemon-response"],
+)
+def test_every_way_a_host_says_there_is_no_such_container_is_a_clean_teardown(tmp_path: Path, absence: str) -> None:
+    """One fact, spelled differently by different daemons. All of them are absence.
+
+    The first of these is the exact sentence the live run got, and reading it as
+    anything else made a clean host report residue it did not have.
+    """
+    docker_stub(tmp_path, inspect="", status=1, error=absence)
+    script = f'{ownership_harness(tmp_path)}\nremove_owned_fixture_container clean-host-row8-x && echo "clean"'
+
+    answered = run_shell(script, work=tmp_path)
+
+    assert "clean" in answered.stdout, f"a host saying {absence!r} was read as holding something"
+    assert not [call for call in calls_made(tmp_path) if call.startswith("rm ")]
+
+
+@pytest.mark.parametrize(
+    "declined",
+    [
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock",
+        "permission denied while trying to connect to the Docker daemon socket",
+        "error during connect: Get http://docker/v1.47/containers/x/json: EOF",
+        "template parsing error: at <.Config.Labels>: nil pointer evaluating",
+    ],
+    ids=["unreachable", "denied", "connect-failed", "template-error"],
+)
+def test_every_other_question_this_host_declined_stays_fail_closed(tmp_path: Path, declined: str) -> None:
+    """Widening the absence match must not turn every failure into a clean host.
+
+    These are the cases where something of this run's is most likely still
+    running, and each of them has to be preserved and reported rather than
+    quietly counted as gone.
+    """
+    docker_stub(tmp_path, inspect="", status=1, error=declined)
+    script = f'{ownership_harness(tmp_path)}\nremove_owned_fixture_container clean-host-row8-x || echo "reported"'
+
+    answered = run_shell(script, work=tmp_path)
+
+    assert "reported" in answered.stdout, f"a host saying {declined!r} was read as a clean teardown"
+    assert not [call for call in calls_made(tmp_path) if call.startswith("rm ")]
