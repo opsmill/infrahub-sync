@@ -222,11 +222,23 @@ def test_the_driver_verifies_the_bundle_before_it_extracts_or_edits_it() -> None
 
 
 def test_every_check_the_driver_runs_is_in_the_kit() -> None:
-    """A named check that does not exist fails the row at the host, not here."""
-    named = set(re.findall(r"^\s*check ([a-z_]+)", driver(), re.MULTILINE))
-    named |= set(re.findall(r"\$\(check ([a-z_]+)", driver()))
+    """A named check that does not exist fails the row at the host, not here.
+
+    Every runner, not only the generic one. Two rows coordinate through a writable
+    directory and each has a runner of its own, so a check reached only through
+    one of those would be verified by nobody.
+    """
+    runners = ("check", "coordinated_check", "row8_check")
+    named = set()
+    for runner in runners:
+        named |= set(re.findall(rf"^\s*{runner} ([a-z_]+)", driver(), re.MULTILINE))
+        named |= set(re.findall(rf"\$\({runner} ([a-z_]+)", driver()))
 
     assert named, "the driver runs no checks"
+    for runner in runners:
+        assert f"{runner}() {{" in driver(), f"the driver has no {runner}"
+    for reached in ("busy_worker_stays_ready", "start_apply", "reported_failures"):
+        assert reached in named, f"{reached} is run through a path this check does not read"
     for name in sorted(named):
         assert (CHECKS / f"{name}.py").is_file(), f"the driver runs {name}, which the kit does not carry"
 
@@ -392,7 +404,9 @@ def test_the_driver_creates_no_resource_its_teardown_does_not_know_about() -> No
     for verb, removal in (
         ("compose_bundle start", 'compose_bundle reset "$INSTANCE"'),
         ("destination_compose up", "stop_destination"),
-        ("docker volume create", 'docker volume rm "$FOREIGN_VOLUME"'),
+        # Gated on this run having created it: teardown removing a volume it did
+        # not create is this gate destroying the state row 9 came to preserve.
+        ("docker volume create", "remove_foreign_volume"),
     ):
         assert verb in body
         assert removal in teardown_body(), f"{verb} has no matching removal in teardown"
@@ -423,7 +437,7 @@ def test_the_teardown_preserves_the_failure_that_caused_it() -> None:
 
 def test_the_teardown_reports_what_it_could_not_remove() -> None:
     """Silence is how a stale deployment becomes the next run's empty state."""
-    assert "owned_resources" in teardown_body()
+    assert "remaining_resources" in teardown_body()
     assert "resources this run owns are still present" in driver()
 
 
@@ -434,17 +448,18 @@ def function_body(name: str) -> str:
     return body[opened : body.index("\n}", opened)]
 
 
-def test_a_query_this_host_refused_to_answer_is_not_read_as_an_empty_answer() -> None:
+@pytest.mark.parametrize("helper", ["remaining_resources", "instance_resources"])
+def test_a_query_this_host_refused_to_answer_is_not_read_as_an_empty_answer(helper: str) -> None:
     """Teardown's own verdict rests on this list, so a failed query cannot read as none.
 
     Every removal is judged complete by this list being empty. A host that
     refused the question would produce the same emptiness as a host with nothing
     left on it, and the run would report a teardown it never measured.
     """
-    helper = function_body("owned_resources").replace("\\\n", " ")
+    body = function_body(helper).replace("\\\n", " ")
 
-    queried = [line for line in helper.splitlines() if re.match(r"\s*docker\s", line)]
-    assert len(queried) == 2, "the owned-resource list is built from two queries"
+    queried = [line for line in body.splitlines() if re.match(r"\s*docker\s", line)]
+    assert queried, f"{helper} asks this host nothing"
     for line in queried:
         assert "|| echo" in line, f"a refused query reads as an empty answer: {line.strip()}"
 
@@ -459,7 +474,13 @@ def test_the_diagnostic_is_taken_before_anything_is_removed() -> None:
     body = teardown_body()
     captured = body.index("capture_diagnostic")
 
-    for removal in ('compose_bundle reset "$INSTANCE"', "stop_destination", 'docker volume rm "$FOREIGN_VOLUME"'):
+    for removal in (
+        'compose_bundle reset "$INSTANCE"',
+        "stop_destination",
+        "remove_foreign_volume",
+        "stop_row8_containers",
+        "discard_control_state",
+    ):
         assert captured < body.index(removal), f"{removal} runs before the diagnostic is taken"
 
 
@@ -1807,15 +1828,17 @@ def test_the_secret_row_sweeps_every_deployment_this_run_started() -> None:
     deployment's whole log is taken before the thing that destroys it.
     """
     body = executable_lines()
-    captured = [line for line in body.splitlines() if "capture_deployment_log" in line and "()" not in line]
+    captured = [line for line in body.splitlines() if "capture_deployment_evidence" in line and "()" not in line]
 
     assert "INFRAHUB_SYNC_LOG_LINES=all" in body, "the sweep reads a bounded tail of what it claims to have read"
     assert len(captured) >= 3, "a deployment is destroyed with its log unread"
     for destroying in ("row_ownership_and_reset", "row_alpha_replacement"):
         row = function_body(destroying)
-        assert row.index("capture_deployment_log") < row.index('compose_bundle reset "$INSTANCE"'), (
+        assert row.index("capture_deployment_evidence") < row.index('compose_bundle reset "$INSTANCE"'), (
             f"{destroying} destroys its deployment before its log is taken"
         )
+    # And the deployment that is still standing, which no row destroys.
+    assert "capture_deployment_evidence final" in function_body("row_secrets")
     assert '"$LOG_DIR"/*.log' in function_body("row_secrets")
 
 
@@ -2061,3 +2084,725 @@ def test_a_refused_request_says_what_it_was_refused_with() -> None:
     # Status and code only: a refusal's detail can quote declared configuration.
     for leaked in ("error.reason", "error.family", ".text", ".json()"):
         assert leaked not in source, f"a refusal's {leaked} reaches the sentence a driver shows"
+
+
+# ---------------------------------------------------------------------------
+# Row 8 — an actual held destination write, not a phase this driver watched go by
+# ---------------------------------------------------------------------------
+PROXY = CHECKS / "destination_proxy.py"
+
+
+def proxy_constant(name: str) -> str:
+    """Return one control-file name the proxy declares, so the driver cannot name its own."""
+    found = re.search(rf"^{name} = \"([^\"]+)\"$", PROXY.read_text(encoding="utf-8"), re.MULTILINE)
+    assert found is not None, f"the proxy declares no {name}"
+    return found.group(1)
+
+
+def test_the_deployments_destination_traffic_is_routed_through_the_fixture_proxy() -> None:
+    """Nothing else can hold a write between the destination completing it and the worker.
+
+    A response delay, a phase poll, or a log all depend on timing or on reading
+    something that happens either side of the write. The only place a write is
+    genuinely in flight is on the wire, so the gate puts its own proxy there and
+    the deployment's registered configuration names it.
+    """
+    body = executable_lines()
+
+    assert 'point_configuration_at_destination "$PROXY_URL"' in body, (
+        "the registered configuration does not name the proxy, so no destination write goes through it"
+    )
+    assert "start_destination_proxy" in function_body("row_cold_start_and_idempotence"), (
+        "the proxy is not started before the deployment is pointed at it"
+    )
+    row = function_body("row_cold_start_and_idempotence")
+    assert row.index("start_destination_proxy") < row.index("configure_deployment"), (
+        "the deployment is pointed at a proxy that does not exist yet"
+    )
+    assert "$PROXY_URL" in function_body("configure_deployment"), (
+        "the deployment is configured without the proxy it routes through"
+    )
+
+
+def test_the_checks_own_view_of_the_destination_bypasses_the_proxy() -> None:
+    """Row 8 proves the write landed by reading the destination itself.
+
+    Read through the proxy, that proof would be a statement about the thing whose
+    behaviour is being arranged. Every negative destination assertion in the
+    matrix is read the same way and for the same reason.
+    """
+    configure = function_body("configure_deployment")
+
+    assert "INFRAHUB_DESTINATION_URL=$DESTINATION_URL" in configure
+    assert "INFRAHUB_ADDRESS=$DESTINATION_URL" in configure
+    assert "INFRAHUB_DESTINATION_URL=$PROXY_URL" not in configure, (
+        "the checks read the destination through the proxy whose behaviour row 8 arranges"
+    )
+
+
+def test_row_eight_no_longer_watches_a_phase_go_by() -> None:
+    """A phase past planning is not a write in flight, and reading one is a sample.
+
+    `accepted`/`planned` leaves the moment the run starts applying, which is
+    before any byte reaches the destination and long before the destination has
+    completed anything. The row that killed a worker on that reading interrupted
+    whatever the run happened to be doing.
+    """
+    source = code_of(CHECKS / "start_apply.py")
+
+    assert "phase" not in source, "the row still reads a run phase to decide it has reached its write"
+    # Read from the kit's import list rather than as a substring: this row has
+    # polling intervals of its own for the handshake, and what may not come back
+    # is the deployment-polling the old precondition was built out of.
+    imported = re.search(r"from kit import \(([^)]*)\)", (CHECKS / "start_apply.py").read_text(encoding="utf-8"))
+    assert imported is not None, "the row no longer imports the kit"
+    taken = {name.strip().rstrip(",") for name in imported.group(1).split()}
+    assert "POLL_SECONDS" not in taken, "the row still polls the deployment for its own precondition"
+    assert "RUN_TIMEOUT_SECONDS" not in taken, "the row still bounds a wait for a run it does not wait for"
+
+
+def test_row_eight_arms_the_proxy_and_proves_the_write_upstream_before_it_names_the_run() -> None:
+    """The run id is the driver's licence to kill a worker. It is issued last.
+
+    Between arming and that licence: the proxy claimed a mutation, forwarded it,
+    the destination completed it, and this check read the planted value out of
+    the destination directly. A run named before any of that is a run the driver
+    would interrupt for nothing.
+    """
+    source = code_of(CHECKS / "start_apply.py")
+    tree = ast.parse(source)
+
+    for step in ("signal_proxy(ARM)", "await_acceptance(", "await_upstream(", "require_planted_value_reached("):
+        assert step in source, f"row 8 never reaches {step}"
+    assert source.index("signal_proxy(ARM)") < source.index("client.sync("), (
+        "the proxy is armed after the run that produces the mutation was submitted"
+    )
+
+    def calls(name: str) -> list[ast.Call]:
+        return [
+            node for node in ast.walk(tree) if isinstance(node, ast.Call) and getattr(node.func, "id", None) == name
+        ]
+
+    named = calls("print")
+    proven = calls("require_planted_value_reached")
+    assert len(named) == 1, "the row does not name the run exactly once"
+    assert len(proven) == 1, "the row does not prove the held write landed exactly once"
+    assert proven[0].lineno < named[0].lineno, "the run is named before the write it names was proven to have landed"
+
+
+def test_row_eights_proof_reads_the_destination_itself_on_the_branch_the_plan_writes() -> None:
+    """A value on another branch says nothing about the write this row held.
+
+    The apply writes to the branch the declared configuration names, and that is
+    the only side where the held mutation can have landed.
+    """
+    source = code_of(CHECKS / "start_apply.py")
+
+    assert "planned_branch()" in source, "the proof does not read the branch the plan writes to"
+    assert "sdk()" in source, "the proof does not read the destination itself"
+    assert "planted_attribute(" in source, "the proof does not read the attribute the row planted"
+
+
+def test_row_eight_gives_up_on_a_run_that_finished_without_reaching_the_proxy() -> None:
+    """A sync that never issued a mutation leaves this check waiting out its whole bound.
+
+    And the reason is worth saying: a run that finished without any write is a
+    finding about the deployment, not a slow host.
+    """
+    source = code_of(CHECKS / "start_apply.py")
+
+    assert "finished_at" in source, "a run that ended without writing is waited out rather than reported"
+
+
+# ---------------------------------------------------------------------------
+# B2 — one absolute budget from the accepted mutation to the acknowledgement
+# ---------------------------------------------------------------------------
+def test_one_absolute_budget_covers_everything_after_the_proxy_accepted_the_mutation() -> None:
+    """Everything from the accept to the acknowledgement runs against one clock.
+
+    The clock that matters is the worker's own: the SDK gives one destination
+    call sixty seconds, and a hold that outlived it would be recorded as a
+    transport timeout rather than as the interruption this row induces. A
+    sequence of resettable waits obeys every individual bound and still outlives
+    that one.
+
+    The instant is recorded by the proxy, because the proxy is the only party
+    that knows when it accepted the mutation. The check and this driver both read
+    their remaining time from that one instant.
+    """
+    source = code_of(CHECKS / "start_apply.py")
+
+    assert "PROXY_BUDGET_SECONDS" in source, "the row names no budget"
+    assert not re.search(r"^PROXY_BUDGET_SECONDS = ", source, re.MULTILINE), (
+        "the row declares a budget of its own, which can drift from the one the proxy holds"
+    )
+    assert "from destination_proxy import" in (CHECKS / "start_apply.py").read_text(encoding="utf-8"), (
+        "the check does not take the budget from the proxy that holds it"
+    )
+    for mechanism in ("signal.SIGALRM", "signal.ITIMER_REAL"):
+        assert mechanism in source, f"the budget cannot interrupt a blocking destination read without {mechanism}"
+    # The arming call, not merely the name: the timer is put back in a `finally`,
+    # and that restoration alone satisfies any claim about the name appearing.
+    assert "signal.setitimer(signal.ITIMER_REAL, remaining)" in source, (
+        "nothing arms an interval timer for what is left of the budget"
+    )
+
+    tree = ast.parse(source)
+    entered = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.With)
+        for item in node.items
+        if isinstance(item.context_expr, ast.Call)
+        and getattr(item.context_expr.func, "id", None) == "coordination_budget"
+    ]
+    assert len(entered) == 1, "the row does not enter one budget covering everything after the accept"
+    guarded = ast.unparse(entered[0])
+    for covered in ("await_upstream(", "require_planted_value_reached("):
+        assert covered in guarded, f"{covered} happens outside the one budget"
+
+    # Derived from the recorded instant rather than started where it is entered:
+    # a budget armed on entry would begin after the forwarding it is meant to cover.
+    assert "accepted_at" in ast.unparse(entered[0].items[0].context_expr), (
+        "the budget does not begin at the instant the proxy recorded accepting the mutation"
+    )
+
+
+def test_the_forwarding_the_budget_covers_is_bounded_by_the_budget_and_not_by_a_clock_of_its_own() -> None:
+    """A thirty-second forwarding inside a twenty-second budget is not inside it.
+
+    The budget starts when the mutation is accepted and the forwarding is the
+    first thing it covers. Given a timeout of its own that is longer, the
+    forwarding alone can outlast the whole coordination -- and the row then
+    reports a stalled destination instead of the interruption it arranged.
+    """
+    source = code_of(PROXY)
+    tree = ast.parse(source)
+
+    def body_of(name: str) -> str:
+        return ast.unparse(
+            next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == name)
+        )
+
+    claimed = body_of("_hold_claimed")
+    assert "timeout = remaining_budget(accepted_at)" in claimed, (
+        "the claimed request is forwarded under a clock that is not the one budget"
+    )
+    assert "timeout=timeout" in claimed, "the forwarding ignores whatever the budget left it"
+    assert "UNCLAIMED_TIMEOUT_SECONDS" not in claimed, "the claimed forwarding takes a timeout of its own"
+    # And the request nobody armed for is bounded, but by the ordinary bound: it
+    # is not part of the coordination and must not consume the budget either.
+    assert "timeout=UNCLAIMED_TIMEOUT_SECONDS" in body_of("_pass_through")
+    assert "remaining_budget" not in body_of("_pass_through")
+
+    # And nothing that is not the budget may be as long as the budget: a constant
+    # at or above it is a second clock over the same interval whatever it is named.
+    declared = PROXY.read_text(encoding="utf-8")
+    stated = re.search(r"^PROXY_BUDGET_SECONDS = ([0-9.]+)$", declared, re.MULTILINE)
+    assert stated is not None, "the proxy names no single coordination budget"
+    budget = float(stated.group(1))
+    for name, value in re.findall(r"^([A-Z_]+_SECONDS) = ([0-9.]+)$", declared, re.MULTILINE):
+        if name in {"PROXY_BUDGET_SECONDS", "UNCLAIMED_TIMEOUT_SECONDS"}:
+            continue
+        assert float(value) < budget, f"{name} is another clock as long as the budget it sits inside"
+
+
+def test_an_unclaimed_forwarding_stays_under_the_bound_its_own_caller_allows() -> None:
+    """It is not part of row 8's budget, so what bounds it is the caller's SDK timeout.
+
+    Longer than that and the deployment reports its own client timing out for a
+    forwarding this proxy could still have finished, which would make every row
+    that writes depend on this fixture's patience rather than on the product's.
+    """
+    source = PROXY.read_text(encoding="utf-8")
+    declared = re.search(r"^UNCLAIMED_TIMEOUT_SECONDS = ([0-9.]+)$", source, re.MULTILINE)
+    assert declared is not None, "an unclaimed request is forwarded under no bound at all"
+
+    given = re.search(r'"timeout": (\d+)', (REPO_ROOT / "infrahub_sync" / "adapters" / "infrahub.py").read_text())
+    assert given is not None
+    assert float(declared.group(1)) < float(given.group(1)), (
+        "an unclaimed forwarding may outlive the caller waiting on it"
+    )
+
+
+def test_the_budget_running_out_during_the_forwarding_is_recorded_as_the_budget_running_out() -> None:
+    """A timeout mid-forward and an unreachable destination are different findings.
+
+    Only one of them is the budget, and only the budget has a sentence both sides
+    of the handshake share. Reported as the other, the driver would wait out its
+    whole backstop for an acknowledgement that was never coming.
+    """
+    source = code_of(PROXY)
+    tree = ast.parse(source)
+
+    assert "def _expire" in source, "there is no single place the budget running out is recorded"
+    expire = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_expire")
+    body = ast.unparse(expire)
+    assert "signal_proxy(EXPIRED" in body, "an expiry is not recorded, so the driver cannot read it"
+    assert "disarm()" in body, "an expiry leaves the proxy armed for whatever comes next"
+    assert "ACKNOWLEDGED" not in body, "an expiry answers as though the coordination completed"
+    assert "WITHHELD_STATUS" in body, "an expiry answers with something other than a withheld response"
+
+    # Both places the budget can run out, and each anchored to where it runs out.
+    # "the function mentions an expiry somewhere" is satisfied by the pre-check
+    # alone, which is a different moment from a forwarding cut short by the clock.
+    held = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_withhold")
+    assert "self._expire()" in ast.unparse(held), "a budget that ran out while holding is reported as something else"
+
+    forwarding = next(
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "_hold_claimed"
+    )
+    handlers = [
+        handler
+        for node in ast.walk(forwarding)
+        if isinstance(node, ast.Try)
+        for handler in node.handlers
+        if handler.type is not None and "HTTPError" in ast.unparse(handler.type)
+    ]
+    assert handlers, "nothing catches a forwarding that could not complete"
+    assert "self._expire()" in ast.unparse(handlers[0]), (
+        "a forwarding the budget cut short is reported as a destination that could not be reached"
+    )
+
+
+def test_the_budget_expiry_is_reported_as_one_fixed_sentence_by_both_sides() -> None:
+    """Two sides of one budget must not have two accounts of it running out.
+
+    The check refuses with it; this driver fails with it when the proxy records
+    that the same budget expired while the driver was waiting. One sentence,
+    declared once, so neither can drift into claiming something else happened.
+    """
+    sentence = re.search(r'^BUDGET_SENTENCE = \(?\s*"([^"]+)"', PROXY.read_text(encoding="utf-8"), re.MULTILINE)
+    assert sentence is not None, "the proxy declares no fixed sentence for its budget running out"
+
+    assert "BUDGET_SENTENCE" in code_of(CHECKS / "start_apply.py"), "the check does not refuse with that sentence"
+    assert sentence.group(1) in executable_lines(), "the driver does not fail with the sentence the budget declares"
+
+
+def test_the_driver_waits_once_for_the_acknowledgement_and_never_resets_that_wait() -> None:
+    """A loop that restarts its bound is how a twenty-second budget becomes a minute."""
+    row = function_body("row_recovery").replace("\\\n", " ")
+
+    waits = [line for line in row.splitlines() if "await_proxy" in line]
+    assert len(waits) == 1, f"row 8 waits on the proxy {len(waits)} times, so its budget can be spent twice"
+    assert "$ROW8_ACK_TIMEOUT" in waits[0], "the one wait is unbounded"
+
+    backstop = re.search(r"^ROW8_ACK_TIMEOUT=([0-9]+)$", driver(), re.MULTILINE)
+    assert backstop is not None, "the driver bounds nothing while the proxy holds a write"
+    budget = re.search(r"^PROXY_BUDGET_SECONDS = ([0-9.]+)$", PROXY.read_text(encoding="utf-8"), re.MULTILINE)
+    assert budget is not None
+    # Longer than the budget, and only as a backstop for a proxy that died without
+    # recording anything: the proxy's own expiry marker is what this row reports.
+    assert int(backstop.group(1)) > float(budget.group(1)), (
+        "the driver gives up before the proxy can record the budget expiring, so the row reports the wrong reason"
+    )
+
+
+def test_the_driver_reads_the_proxys_own_expiry_rather_than_timing_the_budget_again() -> None:
+    """One budget means one holder of it. The driver reads the holder's answer."""
+    helper = function_body("await_proxy")
+
+    assert "$PROXY_EXPIRED" in helper, "the driver cannot tell an expired budget from a slow one"
+    assert "PROXY_EXPIRED=" in driver()
+    assert proxy_constant("EXPIRED") in driver(), "the driver names an expiry file the proxy does not write"
+
+
+def test_the_driver_names_the_control_files_the_proxy_actually_writes() -> None:
+    """Two names for one handshake is a handshake that never completes."""
+    body = driver()
+
+    for declared in ("READY", "ACCEPTED_AT", "RELEASE", "ACKNOWLEDGED", "EXPIRED"):
+        assert proxy_constant(declared) in body, f"the driver does not name the proxy's {declared} file"
+
+
+# ---------------------------------------------------------------------------
+# B3 — row 8's own containers, its own writable directory, and nothing broader
+# ---------------------------------------------------------------------------
+def test_the_generic_check_is_still_given_nothing_writable() -> None:
+    """`check` mounts everything read-only, and row 2 asserts the deployment does too."""
+    body = executable_lines()
+    generic = body[body.index("check() {") : body.index("destination_check() {")]
+
+    assert "/control" not in generic, "every check is given a writable control mount"
+
+
+@pytest.mark.parametrize("owner", ["coordinated_check", "row8_check"])
+def test_only_a_row_that_owns_a_control_directory_receives_one(owner: str) -> None:
+    """Two rows coordinate with this gate, and each gets the directory of its own row."""
+    body = executable_lines()
+
+    assert f"{owner}() {{" in body, f"there is no row-owned {owner}"
+    assert "/control" in function_body(owner), f"{owner} coordinates through no writable channel"
+
+
+def test_row_eights_check_and_proxy_are_named_exactly_and_recorded_before_creation() -> None:
+    """A `docker run` container carries no instance label, so nothing else can find it.
+
+    An interrupted creation is the case this is for: the identity has to be
+    written down before the container can exist, or a container this run made is
+    one no teardown will ever name.
+    """
+    body = executable_lines()
+
+    assert "PROXY_CONTAINER=clean-host-proxy-$RUN_IDENTITY" in body, "the proxy has no exact name of its own"
+    assert "ROW8_CHECK_CONTAINER=clean-host-row8-$RUN_IDENTITY" in body, "row 8's check has no exact name of its own"
+    for creator, name in (("start_destination_proxy", "$PROXY_CONTAINER"), ("row8_check", "$ROW8_CHECK_CONTAINER")):
+        created = function_body(creator)
+        assert f'--name "{name}"' in created, f"{creator} creates a container with no identity to remove"
+        assert created.index("$WORK/created") < created.index("docker run"), (
+            f"{creator} creates before it records what it is about to create"
+        )
+
+
+@pytest.mark.parametrize(
+    ("creator", "name"),
+    [
+        ("start_destination_proxy", "$PROXY_CONTAINER"),
+        ("row8_check", "$ROW8_CHECK_CONTAINER"),
+        # Row 6's too. It is a precondition path to rows 8 to 11 and its container
+        # is part of the same global cleanup proof, so the same rule holds for it.
+        ("coordinated_check", "$ROW6_CHECK_CONTAINER"),
+    ],
+)
+def test_a_name_this_run_derived_is_proven_free_rather_than_cleared_by_force(creator: str, name: str) -> None:
+    """`docker rm --force` on a derived name deletes a container this run did not create.
+
+    The name is derived from an identity this run owns, so a collision is
+    unlikely — and a gate whose every claim rests on reaching nothing it did not
+    make cannot answer an unlikely collision by destroying the evidence of it.
+    Proven free, and refused when it is not.
+
+    Custody is given up again on that refusal, so the teardown does not go on to
+    reach a container this run never created either.
+    """
+    created = function_body(creator)
+
+    assert "docker rm --force" not in created, f"{creator} clears a name it does not own by force"
+    assert f'container_name_taken "{name}"' in created, f"{creator} does not prove the name was free"
+    assert f"{name.lstrip('$')}=\n" in created + "\n", f"{creator} keeps custody of a name it refused to take"
+    assert created.index("container_name_taken") < created.index("docker run"), (
+        f"{creator} creates the container before it establishes the name was free"
+    )
+
+
+def test_a_host_that_could_not_say_whether_a_name_is_free_ends_the_run() -> None:
+    """A refused query and a free name read the same, and one of them destroys state."""
+    helper = function_body("container_name_taken").replace("\\\n", " ")
+
+    assert "|| fail" in helper, "a host that could not answer reads as a free name"
+    assert "grep -qxF" in helper, "the name filter is a substring, so a partial match reads as this run's container"
+
+
+@pytest.mark.parametrize(
+    ("preparer", "directory"),
+    [("create_proxy_control", "$PROXY_CONTROL"), ("coordinated_check", "$ROW6_CONTROL")],
+)
+def test_a_control_directory_is_writable_by_the_candidates_user_and_nothing_else_is(
+    preparer: str, directory: str
+) -> None:
+    """The image runs as 10001, so a directory this host made is not writable by it.
+
+    Both control directories, because a container running as that user writes each
+    of them, and a check that cannot record a state the driver waits for takes the
+    matrix down with a filesystem error about this harness rather than a finding.
+
+    Made writable for that user explicitly, and for that one directory: a mode
+    applied further up would widen what this gate hands a container.
+    """
+    prepared = function_body(preparer)
+
+    assert "CANDIDATE_UID" in prepared, f"{preparer} leaves its control directory unwritable by the candidate's user"
+    assert "CANDIDATE_UID=10001" in driver(), "the driver does not name the user the candidate image runs as"
+    assert f'chown "$CANDIDATE_UID:$CANDIDATE_UID" "{directory}"' in prepared
+    assert "|| fail" in prepared, "a control directory that could not be prepared is not reported"
+    for line in prepared.splitlines():
+        if "chmod" in line or "chown" in line:
+            assert directory in line, f"a mode reaches beyond {preparer}'s own directory: {line.strip()}"
+
+
+def test_the_proxy_is_published_on_a_port_the_engine_chose_and_exactly_one_mapping_is_taken() -> None:
+    """A fixed port is a collision with whatever else this host publishes.
+
+    And a mapping read without being counted is a host address assembled from
+    whichever line came back first — the IPv4 and IPv6 publications of one
+    container are two lines for one port, and two ports would be two answers.
+    """
+    started = function_body("start_destination_proxy")
+    discovered = function_body("proxy_host_port")
+
+    assert '--publish "$PROXY_CONTAINER_PORT"' in started, "the proxy is published on a port this gate chose"
+    assert "docker port" in discovered, "the published port is assumed rather than discovered"
+    assert "sort -u" in discovered, "one container's two publications are read as two ports"
+    assert "-eq 1" in discovered, "the number of mappings is never checked"
+    assert "|| fail" in discovered, "a host that could not answer reads as no mapping"
+
+
+def test_the_proxy_records_nothing_about_the_requests_it_forwards() -> None:
+    """Every request through it carries the destination token, and one carries a write."""
+    source = code_of(PROXY)
+
+    assert "def log_message" in source, "the request logger the base handler installs is left in place"
+    assert "print(" not in source, "the proxy prints something, and everything through it is credentialed"
+
+
+def test_row_eights_containers_and_control_state_are_removed_on_every_path() -> None:
+    """Success, refusal, a signal, and the global teardown are four different paths out."""
+    cleanup = function_body("cleanup")
+
+    for step in ("release_proxy_hold", "stop_row8_containers", "discard_control_state"):
+        assert step in cleanup, f"the teardown does not reach {step}"
+    stopper = function_body("stop_row8_containers")
+    assert 'docker rm --force "$named"' in stopper, "nothing removes either container"
+    for name in ("$ROW8_CHECK_CONTAINER", "$PROXY_CONTAINER"):
+        assert name in stopper, f"nothing removes {name}"
+
+
+# ---------------------------------------------------------------------------
+# B4 — row 9's foreign volume, and the identity a reset replaces
+# ---------------------------------------------------------------------------
+def test_the_foreign_volume_is_named_for_an_identity_this_run_owns() -> None:
+    """A fixed name is some other run's volume, or an operator's.
+
+    Row 9's claim is that a reset leaves what it does not own alone. A volume
+    that was already on this host proves that of a volume this run never made,
+    and teardown would then remove foreign state.
+    """
+    body = executable_lines()
+
+    assert not re.search(r"^FOREIGN_VOLUME=infrahub-sync-clean-host-foreign$", body, re.MULTILINE), (
+        "the foreign volume carries a fixed name any other run would collide with"
+    )
+    assert "FOREIGN_VOLUME=infrahub-sync-clean-host-foreign-$INSTANCE" in body, (
+        "the foreign volume is not named for an identity this run owns"
+    )
+
+
+def test_the_foreign_volumes_absence_is_proven_before_it_is_created() -> None:
+    """A name already taken makes its survival a statement about someone else's volume."""
+    created = function_body("create_foreign_volume")
+
+    assert created.index("docker volume inspect") < created.index("docker volume create"), (
+        "the row creates the volume before it has established that the name was free"
+    )
+    assert "|| fail" in created or "fail " in created
+
+
+def test_the_foreign_volume_is_removed_only_when_this_run_created_it() -> None:
+    """Teardown removing a volume it did not create is this gate destroying foreign state."""
+    body = executable_lines()
+    remover = function_body("remove_foreign_volume")
+
+    # The guard, not the name: the removal also clears this variable, and that
+    # clearing alone satisfies any claim about the name appearing in the body.
+    assert '[ -n "$FOREIGN_VOLUME_CREATED" ] || return 0' in remover, (
+        "removal is not gated on this run having created it"
+    )
+    assert "FOREIGN_VOLUME_CREATED=yes" in function_body("create_foreign_volume"), (
+        "the row never records that the creation succeeded"
+    )
+    assert "remove_foreign_volume" in teardown_body(), "the teardown does not remove the volume the row created"
+    assert 'docker volume rm "$FOREIGN_VOLUME"' not in teardown_body(), (
+        "the teardown removes the name directly, without knowing whether this run created it"
+    )
+    assert body.count("remove_foreign_volume") >= 3, "the row and the teardown do not share one gated removal"
+
+
+def test_the_old_instance_is_proven_gone_before_a_new_identity_replaces_it() -> None:
+    """After the identity is replaced nothing can ask the question again.
+
+    Whatever the old identity still owned is then a resource no teardown will
+    ever name, because every removal this gate makes is keyed on an identity it
+    is holding.
+    """
+    reinitialise = function_body("reinitialise_deployment")
+
+    assert reinitialise.index("require_instance_gone") < reinitialise.index("INSTANCE="), (
+        "the identity is replaced before what it owned was proven gone"
+    )
+    proof = function_body("instance_resources").replace("\\\n", " ")
+    queried = [line for line in proof.splitlines() if re.match(r"\s*docker\s", line)]
+    assert len(queried) == 3, "containers, volumes and networks are not all asked about"
+    for asked in ("docker ps", "docker volume ls", "docker network ls"):
+        assert any(asked in line for line in queried), f"{asked} is never asked, so that kind is never checked"
+
+
+def test_the_destination_fixture_project_is_named_for_an_identity_this_run_owns() -> None:
+    """A fixed project name is a collision, and `down --volumes` on it is destructive."""
+    body = executable_lines()
+
+    assert not re.search(r"^FIXTURE_PROJECT=infrahub-sync-clean-host-destination$", body, re.MULTILINE), (
+        "the fixture project carries a fixed name another run would tear down"
+    )
+    assert "FIXTURE_PROJECT=infrahub-sync-clean-host-destination-$RUN_IDENTITY" in body, (
+        "the fixture project is not named for an identity this run owns"
+    )
+    assert "RUN_IDENTITY=$INSTANCE" in function_body("row_artifact_identity"), (
+        "this run takes no stable identity of its own to name what it creates"
+    )
+
+
+# ---------------------------------------------------------------------------
+# B5 — one teardown, and a signal that cannot become a pass
+# ---------------------------------------------------------------------------
+def test_a_signal_cannot_leave_this_gate_reporting_success() -> None:
+    """`trap cleanup EXIT INT TERM` reads `$?` from whatever ran last.
+
+    On an interrupt that is routinely zero, and the teardown then exits zero: the
+    gate reports a pass for a matrix it did not finish.
+    """
+    body = executable_lines()
+
+    assert "trap cleanup EXIT INT TERM" not in body, "a signal is handled by the same trap that reads the exit status"
+    assert re.search(r"^\s*trap cleanup EXIT$", body, re.MULTILINE), "the exit trap is not separated from the signals"
+    assert "on_signal" in body, "there is no signal handler"
+    handler = function_body("on_signal")
+    assert re.search(r"exit \d+", handler) or 'exit "$1"' in handler, "the signal handler leaves the status alone"
+    assert "exit 0" not in handler
+
+
+def test_the_teardown_runs_once_however_it_is_reached() -> None:
+    """The signal handler exits, which runs the exit trap: cleanup can be re-entered."""
+    cleanup = function_body("cleanup")
+
+    assert "CLEANED" in cleanup, "cleanup can run twice and report the second run's verdict"
+
+
+def test_the_teardown_releases_the_held_write_before_it_waits_on_the_deployment() -> None:
+    """A worker blocked on a held response answers nothing, including a diagnostic."""
+    cleanup = function_body("cleanup")
+
+    assert cleanup.index("release_proxy_hold") < cleanup.index("capture_diagnostic"), (
+        "the teardown reads a deployment whose write it is still holding"
+    )
+
+
+def test_the_destination_teardown_no_longer_swallows_its_own_failure() -> None:
+    """A fixture left running is the next run's destination, seeded by someone else."""
+    stopper = function_body("stop_destination")
+    cleanup = function_body("cleanup")
+
+    assert "|| true" not in stopper, "the destination teardown reports success whatever happened"
+    assert "if ! stop_destination" in cleanup, "the teardown does not notice a destination it could not stop"
+    # A cleanup defect may turn a passing run into a failure. It may never replace
+    # the failure that caused the cleanup.
+    assert cleanup.count('[ "$status" -ne 0 ] || status=1') >= 3
+
+
+def test_the_teardown_verifies_the_absence_of_everything_this_run_tracked() -> None:
+    """Containers and volumes were the list. A network, a port and a fixture project are not."""
+    remaining = function_body("remaining_resources")
+
+    assert "remaining_resources" in teardown_body(), "the teardown judges completeness by an older list"
+    for tracked in ("publish=$PROXY_HOST_PORT", "com.docker.compose.project=$FIXTURE_PROJECT"):
+        assert tracked in remaining, f"{tracked} is created by this run and never checked for absence"
+    assert "network ls" in function_body("instance_resources"), "a network this run created is never checked"
+    assert "PRIOR_INSTANCES" in remaining, "the identities earlier rows discarded are never checked again"
+
+    # The record each creator wrote before it created anything, not the variables
+    # holding those names: a removal that could not land clears its variable, and
+    # the identity would then be checked for absence by nobody.
+    assert '< "$WORK/created"' in remaining, "the unlabelled containers are checked through clearable variables"
+    for creator in ("start_destination_proxy", "row8_check", "coordinated_check"):
+        assert "$WORK/created" in function_body(creator), f"{creator} records no identity teardown can check"
+
+
+def test_the_teardown_reaches_only_identities_this_run_holds() -> None:
+    """Every filter names something this run generated, not a prefix of what it looks like."""
+    owned = (
+        "$1",
+        "$INSTANCE",
+        "$RUN_IDENTITY",
+        "$FIXTURE_PROJECT",
+        "$PROXY_CONTAINER",
+        "$ROW8_CHECK_CONTAINER",
+        "$ROW6_CHECK_CONTAINER",
+        "$PROXY_HOST_PORT",
+        "$FOREIGN_VOLUME",
+        "$identity",
+        "$named",
+    )
+    for helper in ("cleanup", "remaining_resources", "instance_resources", "stop_row8_containers"):
+        for line in function_body(helper).replace("\\\n", " ").splitlines():
+            if "--filter" in line or "--project-name" in line:
+                assert any(name in line for name in owned), f"{helper} reaches beyond this run: {line.strip()}"
+
+
+# ---------------------------------------------------------------------------
+# B6 — what row 11 actually sweeps
+# ---------------------------------------------------------------------------
+def test_the_failure_evidence_row_eleven_sweeps_is_actually_collected() -> None:
+    """Configurations and a status line are not failures, and row 11 claims failures.
+
+    Its acceptance names the product's own failure evidence and what an
+    orchestration console shows. A check that printed neither swept bytes that
+    could not have carried a credential from either.
+    """
+    source = code_of(CHECKS / "reported_failures.py")
+
+    assert "get_results(" in source, "no product failure evidence is read"
+    assert "prefect_executions" in source, "nothing links a run to the orchestration that ran it"
+    assert "flow_runs" in source, "no Prefect-visible state is read"
+    assert "logs" in source, "no Prefect-visible log is read"
+    assert "list_configs()" not in source or "get_results(" in source
+
+
+def test_the_failure_evidence_collection_is_bounded() -> None:
+    """A stream is not evidence a row can sweep before the deployment is destroyed."""
+    source = code_of(CHECKS / "reported_failures.py")
+
+    assert re.search(r"RUNS = \d+", source), "the collection is unbounded"
+    assert re.search(r"LOG_LIMIT = \d+", source), "the Prefect log collection is unbounded"
+
+
+def test_a_failure_evidence_collection_that_did_not_complete_is_not_a_shorter_sweep() -> None:
+    """A refused collection and a deployment that reported nothing read the same otherwise."""
+    body = executable_lines()
+
+    assert "check reported_failures > " not in body or "|| true" not in body.split("reported_failures")[1][:80], (
+        "the collection's own failure is swallowed and the sweep proceeds over what it happened to get"
+    )
+    capture = function_body("capture_deployment_evidence")
+    assert "reported_failures" in capture, "the failure evidence is not collected beside the log"
+    assert capture.count("|| fail") == 2, "a capture that could not be taken does not end the run"
+    assert "|| true" not in capture, "a capture that could not be taken is read as nothing to sweep"
+
+
+def test_the_raw_failure_evidence_is_swept_and_then_kept_by_nobody() -> None:
+    """These bytes are the product's own failure documents and an orchestration log.
+
+    They exist to be swept and for nothing else. Retained, they would be exactly
+    the artifact row 11 exists to say the gate does not leave behind.
+    """
+    row = function_body("row_secrets")
+
+    assert '"$EVIDENCE_DIR"/*.failures' in row, "the collected failure evidence is never swept"
+    # Anchored to the row's own last two statements, not to an ordering: the row
+    # discards on each refusing path too, so "some discard follows some sweep"
+    # holds even when the passing path keeps the bytes. What has to be true is
+    # that nothing survives a sweep that found nothing.
+    statements = [line.strip() for line in row.splitlines() if line.strip()]
+    assert statements[-2] == "discard_raw_evidence", (
+        "the raw evidence outlives the sweep that was the only reason to have it"
+    )
+    assert statements[-1].startswith("report "), "the row reports before it has discarded what it swept"
+    assert "discard_raw_evidence" in function_body("cleanup"), (
+        "a row that failed before the sweep leaves the raw evidence on the host"
+    )
+
+
+def test_a_sweep_target_that_is_missing_ends_the_row_rather_than_narrowing_it() -> None:
+    """An unmatched glob clears nothing and reads exactly like a clean file."""
+    row = function_body("row_secrets")
+
+    assert '[ ! -f "$target" ]' in row, "the sweep reads whatever targets happened to exist"
+    assert "bytes nobody read" in row, "a missing target is skipped rather than reported"
+
+
+def test_the_failure_evidence_never_reaches_the_terminal() -> None:
+    """Raw product evidence is what the sweep is for; a terminal is not swept."""
+    capture = function_body("capture_deployment_evidence")
+
+    for line in capture.splitlines():
+        if "reported_failures" in line:
+            assert ">" in line, f"the collected evidence is printed rather than captured: {line.strip()}"
+            assert "2>" in line, f"whatever the collection said reaches the terminal: {line.strip()}"
