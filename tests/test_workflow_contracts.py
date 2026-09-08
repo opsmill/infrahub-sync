@@ -50,10 +50,7 @@ QUALIFIED_TREES = ("infrahub_sync/**", "deploy/compose/**", "tests/compose/**")
 
 PUBLISH_WORKFLOW = WORKFLOWS / "workflow-publish.yml"
 IMAGE_WORKFLOW = WORKFLOWS / "workflow-image.yml"
-# The input one approval turns on, and the protected environment that approval is
-# taken in. A step reachable without both is a publication nobody approved.
-PUBLICATION_INPUT = "inputs.publish"
-RELEASE_ENVIRONMENT = "release"
+DOCKERFILE = REPO_ROOT / "Dockerfile"
 
 # What sends a built artifact somewhere this repository cannot take it back from:
 # a package index, a registry, or a published release.
@@ -146,6 +143,12 @@ UNGUARDED_TASKS = ("release.kit", "image.build", "image.scan", "image.smoke", "c
 # rather than evaluated: this suite reads declarations, and a workflow-expression
 # evaluator is a second implementation of GitHub.
 TRUST_COMPARISON = "github.event.pull_request.head.repo.full_name == github.repository"
+# The artifact record `release.qualify` reads, and the one document the candidate
+# it names may come from. `read_artifacts` refuses a record naming any other
+# candidate, so a writer that retyped the identity would pass on the run that
+# wrote it and refuse the next rebuild of the same version.
+ARTIFACT_RECORD = ".release/artifacts.json"
+RECORDED_IDENTITY = ".release/identity.json"
 
 
 def load(path: Path) -> dict:
@@ -349,6 +352,47 @@ def image_filter_patterns() -> list[str]:
     return [pattern for entry in declared for pattern in (entry if isinstance(entry, list) else [entry])]
 
 
+def build_context_inputs() -> set[str]:
+    """Return every path the Dockerfile copies out of the build context.
+
+    Read from the Dockerfile rather than listed here: a file joining the build
+    context changes the wheel and the image, and a hand-written list is one edit
+    behind the moment someone adds one. `--from=` copies are excluded because
+    they come from another stage or another image, not from this tree.
+    """
+    found: set[str] = set()
+    # A `COPY` may continue across physical lines. Joining them first is what
+    # keeps every source after the first one from being read as a line that does
+    # not begin with `COPY`, and so silently left out of the comparison below.
+    joined = re.sub(r"\\[ \t]*\n", " ", DOCKERFILE.read_text(encoding="utf-8"))
+    for line in joined.splitlines():
+        parts = line.split()
+        if not parts or parts[0].upper() != "COPY":
+            continue
+        arguments = [part for part in parts[1:] if not part.startswith("--")]
+        if any(part.startswith("--from=") for part in parts[1:]) or len(arguments) < 2:
+            continue
+        # `COPY dir/ ./` and `COPY dir ./` copy the same tree, so both have to
+        # produce the one name the filter's patterns are written against.
+        found.update(argument.rstrip("/") for argument in arguments[:-1])
+    return found
+
+
+def test_the_image_filter_covers_every_input_the_dockerfile_copies() -> None:
+    """A file the image is built from, that the filter does not name, skips the gate.
+
+    `README.md` was exactly that: copied at `COPY pyproject.toml uv.lock
+    README.md LICENSE.txt ./`, absent from the filter, so a pull request touching
+    only it changed the wheel and the image and never re-ran the gate.
+    """
+    patterns = set(image_filter_patterns())
+    inputs = build_context_inputs()
+
+    assert inputs, "no COPY line in the Dockerfile reads from the build context"
+    uncovered = sorted(name for name in inputs if name not in patterns and f"{name}/**" not in patterns)
+    assert not uncovered, f"the image is built from {uncovered}, which image_all does not name"
+
+
 @pytest.mark.parametrize("tree", QUALIFIED_TREES)
 def test_the_image_filter_covers_every_tree_its_gate_qualifies(tree: str) -> None:
     """The gate builds an image and then runs it; both depend on more than the Dockerfile.
@@ -394,25 +438,6 @@ def publishing_steps() -> list[tuple[Path, str, str]]:
 
 def _step_name(step: dict) -> str:
     return str(step.get("name", step.get("uses", step.get("run"))))
-
-
-def _step(path: Path, job_name: str, step_name: str) -> tuple[dict, dict]:
-    job = load(path)["jobs"][job_name]
-    return job, next(step for step in job["steps"] if _step_name(step) == step_name)
-
-
-def _guarded(job: dict, step: dict) -> bool:
-    """Report whether the publication input decides that step's existence.
-
-    The condition has to be on the **job**, and accepting a step-level one would
-    permit exactly what this argues against: a guarded step inside an unguarded
-    job still starts the runner, sets up the interpreter, and downloads the
-    candidate's artifacts, and only then declines to upload. The job condition
-    covers every step inside it and covers them earlier — the job never starts,
-    so nothing it would have installed is installed either.
-    """
-    del step
-    return PUBLICATION_INPUT in str(job.get("if", ""))
 
 
 def triggers(path: Path) -> set[str]:
@@ -835,3 +860,18 @@ def test_the_caller_derives_the_route_from_the_head_repository() -> None:
     for job in calling:
         passed = str((job.get("with") or {}).get(HANDOFF_INPUT, ""))
         assert TRUST_COMPARISON in passed, f"the image call derives {HANDOFF_INPUT} from {passed!r}"
+
+
+def test_the_artifact_record_names_the_candidate_from_the_one_document_that_holds_it() -> None:
+    """`release.qualify` refuses a record describing another candidate's uploads.
+
+    So the writer copies the identity out of the document `release.identity`
+    wrote rather than retyping it. A retyped version would pass on the run that
+    wrote it and refuse a rebuild of that version at a new revision.
+    """
+    writers = [step for step in image_job("image")["steps"] if ARTIFACT_RECORD in str(step.get("run", ""))]
+
+    assert len(writers) == 1, f"{len(writers)} steps write {ARTIFACT_RECORD}"
+    script = str(writers[0]["run"])
+    assert RECORDED_IDENTITY in script, f"the writer does not read the candidate from {RECORDED_IDENTITY}"
+    assert "identity:" in script, f"the writer records no identity in {ARTIFACT_RECORD}"

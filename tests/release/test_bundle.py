@@ -36,6 +36,10 @@ COMMIT_SECONDS = 1788509700
 
 ROOT = f"infrahub-sync-compose-{VERSION}"
 
+# The real bundle directory, held before the `source` fixture points the module
+# at a copy. The content comparison below is against what the repository ships.
+BUNDLE_SOURCE = release.BUNDLE_SOURCE
+
 # Everything the bundle ships, as an equality: a file newly reaching it fails
 # here rather than shipping unnoticed.
 SHIPPED = {
@@ -64,6 +68,7 @@ USTAR_MAGIC = b"ustar\x0000"
 
 @pytest.fixture(scope="module")
 def identity() -> release.ReleaseIdentity:
+    """The one release every archive in this module is built for and named after."""
     return release.release_identity(version=VERSION, revision=COMMIT, created=COMMIT_TIME)
 
 
@@ -100,16 +105,44 @@ def tracked(source: Path) -> dict[str, int]:
 
 @pytest.fixture
 def archive(identity: release.ReleaseIdentity, tracked: dict[str, int], tmp_path: Path) -> Path:
+    """One built archive, from the copied tree and the modes Git records for it."""
     return release.write_bundle(identity, tracked, tmp_path / "out")
 
 
 def members(archive: Path) -> list[tarfile.TarInfo]:
+    """Return every entry of one archive, headers included.
+
+    The headers are the subject: sorted order, the commit's time, an unnamed
+    numeric owner and the mode Git records are each read from a `TarInfo` here
+    rather than from an extracted tree, which would have lost all four.
+    """
     with tarfile.open(archive) as opened:
         return opened.getmembers()
 
 
 def gzip_header(archive: Path) -> bytes:
+    """Return the ten bytes of one archive's gzip header.
+
+    Read raw rather than through `gzip`, because what is asserted about them --
+    the stamped time, the absent original filename, the compression level -- is
+    exactly what decompressing discards.
+    """
     return archive.read_bytes()[:10]
+
+
+def contents(archive: Path) -> dict[str, bytes]:
+    """Return each regular entry's bytes, keyed by its path inside the bundle."""
+    held: dict[str, bytes] = {}
+    with tarfile.open(archive) as opened:
+        for member in opened.getmembers():
+            if not member.isfile():
+                continue
+            stream = opened.extractfile(member)
+            if stream is None:
+                msg = f"{member.name} is a regular entry that would not open"
+                raise AssertionError(msg)
+            held[member.name.removeprefix(f"{ROOT}/")] = stream.read()
+    return held
 
 
 def test_the_bundle_ships_exactly_the_files_the_deployment_needs(tracked: dict[str, int]) -> None:
@@ -122,6 +155,16 @@ def test_the_archive_holds_the_shipped_files_and_nothing_a_deployment_generates(
     held = {member.name for member in members(archive) if member.isfile()}
 
     assert held == {f"{ROOT}/{name}" for name in SHIPPED}
+
+
+def test_every_file_in_the_archive_carries_the_bytes_of_its_source(archive: Path, tracked: dict[str, int]) -> None:
+    """Every property above holds just as well over an archive of empty entries.
+
+    Names, modes, order, owners and stamps are each asserted apart from content,
+    and two runs agreeing on their bytes agrees just as readily on the wrong
+    ones. This is the one case that reads what a deployment would actually run.
+    """
+    assert contents(archive) == {name: (BUNDLE_SOURCE / name).read_bytes() for name in tracked}
 
 
 def test_two_runs_from_one_tree_produce_the_same_bytes(

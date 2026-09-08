@@ -31,7 +31,11 @@ concurrency:
   cancel-in-progress: true
 
 # Read-only throughout. This gate builds and tests an image; it never logs in,
-# tags for a registry, pushes, or promotes a digest.
+# tags for a registry, pushes, or promotes a digest. What it uploads it also
+# deletes: a pull-request run keeps no image, layout, distribution or bundle,
+# because it describes a merge result nobody will ship and the candidate that
+# gets qualified is built by a later manual run against the exact merged commit.
+# The one job that deletes states its own `actions: write` below.
 permissions:
   contents: read
   packages: read
@@ -181,25 +185,30 @@ jobs:
       # What `release.qualify` reads to name what the service is holding. After
       # the two uploads, because it names what they returned; the window is the
       # fail-safe floor and not a period an approval may be taken against.
+      #
+      # The identity is copied out of `.release/identity.json` rather than retyped
+      # here, so this document and the candidate it describes have one source. A
+      # record naming any other candidate is refused, and retyping the version
+      # alone would pass a rebuild of that version at a different revision.
       - name: "Record what the service is holding"
         if: ${{ inputs.same-repository }}
         run: |
           set -euo pipefail
-          cat > .release/artifacts.json <<JSON
-          {
-            "retention_days": ${{ env.HANDOFF_RETENTION_DAYS }},
-            "artifacts": {
-              "infrahub-sync-candidate-handoff": {
-                "id": "${{ steps.candidate-handoff.outputs.artifact-id }}",
-                "digest": "${{ steps.candidate-handoff.outputs.artifact-digest }}"
-              },
-              "infrahub-sync-qualification-kit": {
-                "id": "${{ steps.qualification-kit.outputs.artifact-id }}",
-                "digest": "${{ steps.qualification-kit.outputs.artifact-digest }}"
-              }
-            }
-          }
-          JSON
+          jq -n \
+            --slurpfile identity .release/identity.json \
+            --argjson retention_days ${{ env.HANDOFF_RETENTION_DAYS }} \
+            --arg handoff_id "${{ steps.candidate-handoff.outputs.artifact-id }}" \
+            --arg handoff_digest "${{ steps.candidate-handoff.outputs.artifact-digest }}" \
+            --arg kit_id "${{ steps.qualification-kit.outputs.artifact-id }}" \
+            --arg kit_digest "${{ steps.qualification-kit.outputs.artifact-digest }}" \
+            '{
+               identity: $identity[0],
+               retention_days: $retention_days,
+               artifacts: {
+                 "infrahub-sync-candidate-handoff": {id: $handoff_id, digest: $handoff_digest},
+                 "infrahub-sync-qualification-kit": {id: $kit_id, digest: $kit_digest}
+               }
+             }' > .release/artifacts.json
 
       # What the driver reads its expectations out of: this candidate's tag and
       # version, its bundle, and the configuration digest it has to find loaded.

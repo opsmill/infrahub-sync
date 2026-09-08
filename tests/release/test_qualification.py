@@ -37,6 +37,7 @@ def identity() -> release.ReleaseIdentity:
 
 def artifacts_document() -> dict[str, object]:
     return {
+        "identity": identity().record(),
         "retention_days": RETENTION_DAYS,
         "artifacts": {
             name: {"id": str(1000 + offset), "digest": f"sha256:{offset}"} for offset, name in enumerate(ARTIFACT_NAMES)
@@ -187,10 +188,65 @@ def test_a_record_that_cannot_name_the_uploaded_bytes_is_refused(
 ) -> None:
     """Promotion has nothing to check an artifact against without an identifier and a digest."""
     del candidate
-    release.ARTIFACTS_FILE.write_text(json.dumps(document), encoding="utf-8")
+    named = {"identity": identity().record(), **document}
+    release.ARTIFACTS_FILE.write_text(json.dumps(named), encoding="utf-8")
 
     with pytest.raises(release.ReleaseTaskError, match=expected):
         release.qualify(Context())
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("version", "3.0.0a2"), ("revision", "9" * 40), ("created", "2026-09-05T10:15:00+02:00")],
+)
+def test_an_artifact_record_describing_another_candidates_uploads_is_refused(
+    candidate: Path, field: str, value: str
+) -> None:
+    """A second candidate in one workspace reads the first one's identifiers otherwise.
+
+    Nothing rewrites this file between candidates, and every other input is bound
+    to the release already: the image by its recorded provenance, the bundle and
+    the reports by the names derived from the version, each gate result by the
+    configuration digest it ran against. The uploads were the one part a record
+    could take from another release.
+
+    Each of the three source values is enough on its own, so a rebuild of one
+    version at a new revision is refused as well as a new version.
+    """
+    del candidate
+    document = artifacts_document()
+    document["identity"] = {**identity().record(), field: value}
+    release.ARTIFACTS_FILE.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(release.ReleaseTaskError, match="not of this candidate"):
+        release.qualify(Context())
+
+
+def test_an_artifact_record_naming_no_candidate_at_all_is_refused(candidate: Path) -> None:
+    """Its uploads would belong to whichever candidate happened to read it."""
+    del candidate
+    document = artifacts_document()
+    del document["identity"]
+    release.ARTIFACTS_FILE.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(release.ReleaseTaskError, match="must record an identity as a mapping"):
+        release.qualify(Context())
+
+
+def test_the_uploads_of_this_candidate_are_reused_across_two_qualifying_runs(candidate: Path) -> None:
+    """Binding the record must refuse another release's uploads, not this one's own.
+
+    Qualification is re-run after a gate is re-run, and the uploads it names have
+    not moved, so a second run has to reach the same identifiers rather than ask
+    for them again.
+    """
+    del candidate
+    release.qualify(Context())
+    first = written()
+    release.qualify(Context())
+
+    assert written()["artifacts"] == first["artifacts"]
+    assert written()["retention_days"] == RETENTION_DAYS
 
 
 def test_a_record_written_before_the_uploads_it_names_is_refused(candidate: Path) -> None:

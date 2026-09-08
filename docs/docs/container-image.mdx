@@ -96,7 +96,7 @@ owned by `10001:10001` before the container starts.
 ## Bill of materials and vulnerability policy
 
 `image.sbom` runs a pinned Syft against the archive exported from the layout and writes
-SPDX JSON to `.image/sbom-linux-amd64.spdx.json`. `image.scan` runs a pinned Grype
+SPDX JSON named for the release it describes — `.image/infrahub_sync-<version>-sbom-linux-amd64.spdx.json`. `image.scan` runs a pinned Grype
 against that document.
 
 The policy fails the build on a high or critical finding that has a fix available. A
@@ -162,15 +162,23 @@ separate qualification kit instead.
 `release.qualify` refuses a candidate that qualified nothing: it requires an
 image smoke result for every built platform and a Compose lifecycle result, and
 each of those records the exact image digest it ran against. It also requires
-`.release/artifacts.json`, which the workflow writes from what each upload
-returned.
+`.release/artifacts.json` — the artifact record its caller writes from what the
+service returned for each upload — so the record carries the identifiers,
+digests, and retention an approval would be bound to.
 
-On a pull request both that file and the record are transient. They exist so the
-clean-host gate below can be handed this candidate's bytes and told what to
-expect of them, and the run deletes the candidate, the kit and the record before
-it completes. Retaining a candidate, and binding an approval to the identifiers
-such a record carries, belong to a manual run against an exact merged commit and
-are not part of this workflow.
+That document names the candidate whose uploads it describes, and one naming a
+different version, revision, or creation time is refused rather than reused.
+Nothing rewrites the file when a second candidate starts in the same workspace,
+so its identifiers would otherwise bind an approval of these bytes to bytes the
+service is holding under another release.
+
+The image gate is that caller on a run whose head is in this repository, and both
+documents are transient there. They exist so the clean-host gate below can be
+handed this candidate's bytes and told what to expect of them, and the run
+deletes the candidate, the kit and the record before it completes. Running
+`release.qualify` anywhere else refuses until you supply an artifact record of
+your own, and retaining a candidate for approval belongs to a manual run against
+an exact merged commit.
 
 ## Clean-host qualification
 
@@ -215,17 +223,24 @@ idempotency, managed execution, keyed write policy, schema change, status,
 restart, recovery, ownership and reset, alpha replacement, and secrets. The driver
 expresses no way to skip one: each row either returns or ends the run.
 
-## Publication
+## What publishes today
 
-Nothing on this page publishes, and this line has no publication workflow yet.
-The legacy route is unchanged: a published release still uploads the
-distributions it builds, and no workflow a pull request can start uploads
-anything at all.
+No workflow promotes what these tasks produce. What the pull-request workflow
+uploads it also deletes, inside the run that uploaded it, so a completed run
+keeps no image, layout, distribution, bundle or record. Only a failure's own
+diagnostics stay, and for seven days: what a failed lifecycle case captured from
+the services it deployed, and the one pre-teardown file a failed clean-host row
+left behind.
 
-Retaining a candidate, and approving one for publication, are later units of
-work. Until they land, `release.identity`, `release.build`, `release.kit` and
-`release.qualify` produce and describe a candidate that the clean-host gate
-qualifies and the run then discards.
+The repository's existing release route is unchanged and remains its only
+publisher: a push to `stable` retypes that line's version and drafts a release,
+and publishing that release runs the dispatch-only publish workflow. Neither
+reads anything on this page. This branch adds no second publisher.
+
+Two things are deliberately absent. The manual run that builds a candidate the
+service keeps is a later unit, and a publication bound to such a candidate is a
+later unit again, separately approved. Until then `release.build` produces the
+two distributions a publication would upload, and nothing uploads them.
 
 ## Recorded digests
 
