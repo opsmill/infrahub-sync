@@ -566,7 +566,12 @@ def qualify(context: Context) -> None:
             for name in platforms
         },
         "scan": {"waivers_in_force": len(waivers), "platforms": scanned},
-        "tests": [results[key] for key in sorted(results)],
+        # The refusal above reads only the results a required gate leaves. This is
+        # every result in the directory, so one on a key nothing required reads --
+        # a platform this candidate did not build, a second lifecycle run -- is
+        # dropped rather than recorded as a gate that faced these bytes. By gate
+        # and platform, so a record does not depend on directory order.
+        "tests": [result for _, result in sorted(results.items()) if result.get("image") in qualified],
         **read_artifacts(identity),
     }
     QUALIFICATION_FILE.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
