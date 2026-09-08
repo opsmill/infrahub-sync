@@ -48,6 +48,12 @@ image_files: &image_files
   - "LICENSE.txt"
   - "tests/image/**"
   - ".github/workflows/workflow-image.yml"
+  # And this document, because `image_all` below is what selects the image job
+  # and the checkout-free clean-host job. Re-aiming that selection is the one
+  # change most able to hide a regression, so it has to face the gate it aims.
+  # The exact path only: `.github/workflows/**` would rebuild and rescan the
+  # image for an edit to an unrelated workflow.
+  - ".github/file-filters.yml"
 
 # The Compose bundle is qualified in the image gate's own job, against the image
 # that job just built, so a change to the bundle or its suites re-runs the gate.

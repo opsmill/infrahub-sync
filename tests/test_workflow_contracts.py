@@ -921,3 +921,15 @@ def test_the_filter_runs_this_suite_when_a_declaration_it_reads_changes(declarat
     assert routed(probe, filter_patterns("sync_all")), (
         f"this suite reads {declaration.relative_to(REPO_ROOT)}, which sync_all does not name"
     )
+
+
+def test_the_image_filter_routes_the_document_that_declares_it() -> None:
+    """A selector that does not name itself can be re-aimed without facing the gate it aims.
+
+    `image_all` is what decides whether the image job and the checkout-free
+    clean-host job run at a head. Editing that decision is the one change most
+    able to hide a regression, so the edit has to run the gate it re-routes.
+    """
+    assert routed(FILE_FILTERS, image_filter_patterns()), (
+        f"{FILE_FILTERS.name} selects the image and clean-host jobs, and image_all does not name it"
+    )
