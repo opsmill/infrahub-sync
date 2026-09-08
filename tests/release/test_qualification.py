@@ -165,6 +165,35 @@ def test_a_gate_result_from_other_bytes_is_refused(candidate: Path, gate: str) -
         release.qualify(Context())
 
 
+@pytest.mark.parametrize(
+    ("gate", "platform"),
+    [("image-smoke", "linux/s390x"), ("compose-lifecycle", "linux/arm64")],
+)
+def test_a_result_from_other_bytes_beside_a_complete_set_is_left_out_of_the_record(
+    candidate: Path, gate: str, platform: str
+) -> None:
+    """Every required gate is satisfied here, so nothing refuses, and the record still has to be true.
+
+    A stale result on a key no required check reads -- a platform this candidate
+    did not build, or a second lifecycle run -- would otherwise be copied in and
+    read as a gate that faced these bytes.
+    """
+    del candidate
+    foreign = "sha256:" + "e" * 64
+    release.record_gate(gate, platform=platform, image=foreign, command="pytest")
+
+    release.qualify(Context())
+    recorded = written()["tests"]
+
+    assert foreign not in {result["image"] for result in recorded}
+    # The three the required gates left, in gate-then-platform order.
+    assert [(result["gate"], result["platform"]) for result in recorded] == [
+        ("compose-lifecycle", "linux/amd64"),
+        ("image-smoke", "linux/amd64"),
+        ("image-smoke", "linux/arm64"),
+    ]
+
+
 def test_a_candidate_without_a_vulnerability_report_is_refused(candidate: Path) -> None:
     del candidate
     image.scan_file(identity(), "linux/amd64").unlink()

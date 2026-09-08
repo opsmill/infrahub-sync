@@ -15,6 +15,7 @@ strings, is left to GitHub.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -451,13 +452,19 @@ def triggers(path: Path) -> set[str]:
     return {declared} if isinstance(declared, str) else set(declared or ())
 
 
-def reachable_from_an_event() -> set[Path]:
-    """Return every workflow a run can reach without anyone choosing what it acts on."""
+def reachable(starts: Callable[[Path], bool]) -> set[Path]:
+    """Return every workflow reachable from the ones `starts` answers for, calls included.
+
+    The three cases below differ only in which workflows a run can begin at. What
+    follows from there is the same question each time -- a workflow another one
+    calls is a workflow whoever started the caller can run -- so it is asked in
+    one place, and each case states its own starting point and nothing else.
+    """
     called = {
         path: {target for job in load(path).get("jobs", {}).values() if (target := called_workflow(job)) is not None}
         for path in sorted(WORKFLOWS.glob("*.yml"))
     }
-    pending = [path for path in called if triggers(path) - APPROVED_EVENTS]
+    pending = [path for path in called if starts(path)]
     reached: set[Path] = set()
     while pending:
         current = pending.pop()
@@ -466,23 +473,16 @@ def reachable_from_an_event() -> set[Path]:
         reached.add(current)
         pending.extend(called.get(current, ()))
     return reached
+
+
+def reachable_from_an_event() -> set[Path]:
+    """Return every workflow a run can reach without anyone choosing what it acts on."""
+    return reachable(lambda path: bool(triggers(path) - APPROVED_EVENTS))
 
 
 def pull_request_reachable() -> set[Path]:
     """Return every workflow a pull request can reach, through calls included."""
-    called = {
-        path: {target for job in load(path).get("jobs", {}).values() if (target := called_workflow(job)) is not None}
-        for path in sorted(WORKFLOWS.glob("*.yml"))
-    }
-    pending = [path for path in called if "pull_request" in triggers(path)]
-    reached: set[Path] = set()
-    while pending:
-        current = pending.pop()
-        if current in reached:
-            continue
-        reached.add(current)
-        pending.extend(called.get(current, ()))
-    return reached
+    return reachable(lambda path: "pull_request" in triggers(path))
 
 
 def test_nothing_a_pull_request_reaches_publishes_anything() -> None:
@@ -579,19 +579,7 @@ def _selects_v3(path: Path) -> bool:
 
 def v3_reachable() -> set[Path]:
     """Return every workflow a run on the V3 branch can reach, through calls included."""
-    called = {
-        path: {target for job in load(path).get("jobs", {}).values() if (target := called_workflow(job)) is not None}
-        for path in sorted(WORKFLOWS.glob("*.yml"))
-    }
-    pending = [path for path in called if _selects_v3(path)]
-    reached: set[Path] = set()
-    while pending:
-        current = pending.pop()
-        if current in reached:
-            continue
-        reached.add(current)
-        pending.extend(called.get(current, ()))
-    return reached
+    return reachable(_selects_v3)
 
 
 def test_nothing_the_v3_line_reaches_retypes_its_version_or_creates_its_tag() -> None:
