@@ -134,17 +134,9 @@ def get_attribute_type_annotation(item: _AttributeLike) -> str:
     """Return type annotation of schema attribute for Diffsync model."""
     annotation = ATTRIBUTE_KIND_MAP.get(item.kind, "str")
     if item.optional:
-        annotation = f"{annotation} | None"
-        if item.default_value is not None:
-            # Format the default value based on its type
-            if isinstance(item.default_value, str):
-                annotation += f' = "{item.default_value}"'
-            elif isinstance(item.default_value, (int, float, bool)):
-                annotation += f" = {item.default_value}"
-            else:
-                annotation += f" = {item.default_value!r}"
-        else:
-            annotation += " = None"
+        # repr() emits a Python literal that reproduces the schema value exactly, so string
+        # defaults containing quotes, newlines or backslashes stay valid and unchanged.
+        annotation = f"{annotation} | None = {item.default_value!r}"
 
     return annotation
 
