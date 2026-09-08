@@ -1146,20 +1146,78 @@ def test_the_recovery_row_waits_for_the_interruption_to_be_recorded() -> None:
     assert "RECONCILE_TIMEOUT_SECONDS = 8 * STALL_THRESHOLD_SECONDS" in source
 
 
-def test_the_busy_worker_row_establishes_busy_before_it_asserts_anything() -> None:
-    """`plan` returns on acceptance and says nothing about what claimed the run.
+def test_the_busy_worker_row_establishes_a_queue_before_it_asserts_anything() -> None:
+    """`busy` is a positive scheduled queue depth, not a worker mid-execution.
 
-    Accepting `ready` without that precondition passes a deployment whose worker
-    sat idle; demanding it instead of accepting it fails a healthy one. The row
-    has been wrong in both directions, and both come from asserting the worker's
-    state rather than establishing it and then asserting the deployment's.
+    `service.py` derives it as `"busy" if snapshot.queue_depth > 0`, and
+    `queue_depth` counts the runs still scheduled. So one submission establishes
+    a queue only for however long it takes the single worker to claim it, which
+    is sub-second: a row polling for `busy` after one `plan` is polling for a
+    race. Two submissions make the queue real -- one run is claimed while the
+    other stays scheduled -- and both halves of that state have to come from one
+    snapshot, because a `queue_depth` read before the claim and a `live_workers`
+    read after it are two deployments as far as the evidence goes.
     """
     source = code_of(CHECKS / "busy_worker_stays_ready.py")
-    established = source.index("while observed != 'busy':")
-    asserted = source.index("status.worker.state not in LIVE")
+    tree = ast.parse(source)
 
-    assert established < asserted
-    assert "BUSY_TIMEOUT_SECONDS" in source, "an unbounded wait for a worker that may never take the run"
+    submitted = [node for node in ast.walk(tree) if submitted_stage(node) is not None]
+    assert len(submitted) == 2, "one submitted run is claimed within a poll, so the queue it establishes is a race"
+    keys = {ast.unparse(node.args[1]) for node in submitted if isinstance(node, ast.Call) and len(node.args) > 1}
+    assert len(keys) == 2, f"both submissions carry one mutation key, so the second replays the first: {sorted(keys)}"
+
+    snapshots = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get_status"
+    ]
+    assert len(snapshots) == 1, "the queue depth and the live worker are read from separate snapshots"
+
+    asserted = source.index("worker.state not in LIVE")
+    for proven in ("worker.queue_depth >= 1", "worker.live_workers >= 1"):
+        assert proven in source, f"the precondition never proves {proven}"
+        assert source.index(proven) < asserted, f"{proven} is read after the property it is a precondition for"
+
+    settled = [
+        node for node in ast.walk(tree) if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "follow"
+    ]
+    assert len(settled) == 2, "the row leaves an accepted run in flight, and the rows after it wait for READY"
+    assert "QUEUE_TIMEOUT_SECONDS" in source, "an unbounded wait for a queue that may never form"
+
+
+def test_the_busy_worker_row_queues_its_second_run_behind_an_executing_first() -> None:
+    """Two runs submitted back to back can both be scheduled and neither running.
+
+    `live_workers` counts heartbeats, not work, so a deployment whose worker has
+    claimed nothing still reports a live worker and a queue two deep -- which
+    satisfies "queued work behind a live worker" with nothing executing. What
+    separates the two is the claim the flow itself records: `claim_execution`
+    runs inside the worker's own process before any configuration or adapter
+    work begins, so `claimed_at` is a worker running the run rather than a
+    scheduler having handed it out.
+
+    The first run is therefore proven claimed and unfinished before the second
+    is submitted at all, and proven still so while the queue is read -- and the
+    second proven still waiting, so the depth being read is this row's.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+
+    assert "client.get_run(accepted.run.run_id).orchestration" in source, (
+        "the row never reads the orchestration record a claim is written to"
+    )
+    assert "attempt.claimed_at is not None and attempt.terminal_at is None" in source, (
+        "the row does not define execution as a claim that has not ended"
+    )
+
+    ordered = ("await_execution(client, claimed)", "queued = client.plan(")
+    for step in ordered:
+        assert step in source, f"the row never reaches `{step}`, so it proves no order between its two runs"
+    assert source.index(ordered[0]) < source.index(ordered[1]), "the second run is submitted before the first executes"
+
+    for reproven in ("if not executing(attempt_of(client, running)):", "if attempt_of(client, waiting).claimed_at"):
+        assert reproven in source, f"the queued observation never re-proves `{reproven}`"
+
+    assert "CLAIM_TIMEOUT_SECONDS" in source, "an unbounded wait for a claim that may never be recorded"
 
 
 @pytest.mark.parametrize("row", ["row_cold_start_and_idempotence", "row_restart", "row_alpha_replacement"])
@@ -1369,9 +1427,10 @@ def test_no_check_reads_a_verdict_from_a_run_it_never_waited_for() -> None:
     reported `None` where the refusal belongs. Third occurrence of this class:
     row 4 needed `settle`, row 8 needed a bounded wait for reconciliation.
 
-    Two submissions are deliberately unwaited and neither reads a verdict: the
-    busy-worker row keeps a run in flight on purpose, and the interrupt row hands
-    its run to the driver to kill mid-write.
+    One submission is deliberately unwaited and reads no verdict: the interrupt
+    row hands its run to the driver to kill mid-write. The busy-worker row used
+    to be the second, and settles both of its runs now, because the row after it
+    waits for a READY a queue of its making would hold open.
     """
     offenders = {}
     for module in sorted(CHECKS.glob("*.py")):
