@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from infrahub_sdk.schema import AttributeSchema, RelationshipSchema
+from infrahub_sdk.schema import AttributeSchema, RelationshipCardinality, RelationshipSchema
 from infrahub_sdk.schema.main import (
     AttributeKind,
     AttributeSchemaAPI,
@@ -94,7 +94,7 @@ def test_fake_schema_objects_do_not_subclass_sdk_schema_classes() -> None:
     decoupled-class scenario and no longer guard the regression.
     """
     assert not isinstance(_FakeAttribute(kind="Text"), AttributeSchema)
-    assert not isinstance(_FakeRelationship(cardinality="one"), RelationshipSchema)
+    assert not isinstance(_FakeRelationship(cardinality=RelationshipCardinality.ONE), RelationshipSchema)
 
 
 @pytest.mark.parametrize(
@@ -118,10 +118,10 @@ def test_get_attribute_type_annotation_for_attribute_shaped_objects(attribute: _
 @pytest.mark.parametrize(
     ("relationship", "expected"),
     [
-        (_FakeRelationship(cardinality="one"), "str"),
-        (_FakeRelationship(cardinality="one", optional=True), "str | None = None"),
-        (_FakeRelationship(cardinality="many"), "list[str] = []"),
-        (_FakeRelationship(cardinality="many", optional=True), "list[str] | None = []"),
+        (_FakeRelationship(cardinality=RelationshipCardinality.ONE), "str"),
+        (_FakeRelationship(cardinality=RelationshipCardinality.ONE, optional=True), "str | None = None"),
+        (_FakeRelationship(cardinality=RelationshipCardinality.MANY), "list[str] = []"),
+        (_FakeRelationship(cardinality=RelationshipCardinality.MANY, optional=True), "list[str] | None = []"),
     ],
 )
 def test_get_relationship_type_annotation_for_relationship_shaped_objects(
@@ -148,10 +148,14 @@ def test_get_attribute_type_annotation_against_real_sdk_read_side_schema_classes
 
 def test_get_relationship_type_annotation_against_real_sdk_read_side_schema_classes() -> None:
     """Sanity check against the actual classes `client.schema.all()` returns."""
-    many_rel = RelationshipSchemaAPI(id="3", name="tags", peer="BuiltinTag", cardinality="many", optional=True)
+    many_rel = RelationshipSchemaAPI(
+        id="3", name="tags", peer="BuiltinTag", cardinality=RelationshipCardinality.MANY, optional=True
+    )
     assert get_relationship_type_annotation(many_rel) == "list[str] | None = []"
 
-    one_rel = RelationshipSchemaAPI(id="4", name="status", peer="StatusGeneric", cardinality="one", optional=False)
+    one_rel = RelationshipSchemaAPI(
+        id="4", name="status", peer="StatusGeneric", cardinality=RelationshipCardinality.ONE, optional=False
+    )
     assert get_relationship_type_annotation(one_rel) == "str"
 
 
@@ -167,8 +171,12 @@ def test_rendered_model_preserves_read_side_schema_semantics(tmp_path: Path) -> 
             AttributeSchemaAPI(id="a4", name="enabled", kind=AttributeKind.BOOLEAN, optional=True, default_value=False),
         ],
         relationships=[
-            RelationshipSchemaAPI(id="r1", name="tags", peer="BuiltinTag", cardinality="many", optional=True),
-            RelationshipSchemaAPI(id="r2", name="status", peer="StatusGeneric", cardinality="one", optional=True),
+            RelationshipSchemaAPI(
+                id="r1", name="tags", peer="BuiltinTag", cardinality=RelationshipCardinality.MANY, optional=True
+            ),
+            RelationshipSchemaAPI(
+                id="r2", name="status", peer="StatusGeneric", cardinality=RelationshipCardinality.ONE, optional=True
+            ),
         ],
     )
 
