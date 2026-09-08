@@ -359,6 +359,12 @@ def write_checksum(archive: Path) -> Path:
     return checksum
 
 
+# The whole of what a result document says, in the order `record_gate` writes it.
+# Named once because the reader checks each field and returns nothing else: the
+# directory is persisted input, and a document is only usable if it says all four.
+RESULT_FIELDS = ("gate", "platform", "image", "command")
+
+
 def record_gate(gate: str, *, platform: str, image: str, command: str) -> Path:
     """Record that one qualification gate ran, against which bytes, and how.
 
@@ -374,15 +380,27 @@ def record_gate(gate: str, *, platform: str, image: str, command: str) -> Path:
 
 
 def read_results() -> dict[tuple[str, str], dict[str, str]]:
-    """Return every gate result this candidate's runs left behind, keyed by gate and platform."""
+    """Return every gate result this candidate's runs left behind, keyed by gate and platform.
+
+    This directory is persisted input rather than something one run hands the
+    next, so what a document says is settled here instead of wherever a field is
+    read. A document that does not say all four things `record_gate` writes -- an
+    earlier schema, an interrupted write, a file this module did not write -- is
+    the module's own refusal, not a `KeyError` from whichever line reached for the
+    field first. Only the four are returned, so nothing else a document carries
+    reaches the record.
+    """
     results = {}
     for path in sorted(RESULTS_DIR.glob("*.json")) if RESULTS_DIR.is_dir() else ():
         recorded = identity_document(path)
-        gate, platform = recorded.get("gate"), recorded.get("platform")
-        if not isinstance(gate, str) or not isinstance(platform, str):
-            msg = f"{path} names no gate and platform"
-            raise ReleaseTaskError(msg)
-        results[gate, platform] = {str(key): str(value) for key, value in recorded.items()}
+        described: dict[str, str] = {}
+        for field in RESULT_FIELDS:
+            value = recorded.get(field)
+            if not isinstance(value, str) or not value:
+                msg = f"{path} records no {field}, so it describes no gate that ran"
+                raise ReleaseTaskError(msg)
+            described[field] = value
+        results[described["gate"], described["platform"]] = described
     return results
 
 
@@ -601,7 +619,7 @@ def qualify(context: Context) -> None:
         # a platform this candidate did not build, a second lifecycle run -- is
         # dropped rather than recorded as a gate that faced these bytes. By gate
         # and platform, so a record does not depend on directory order.
-        "tests": [result for _, result in sorted(results.items()) if result.get("image") in qualified],
+        "tests": [result for _, result in sorted(results.items()) if result["image"] in qualified],
         **read_artifacts(identity),
     }
     QUALIFICATION_FILE.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")

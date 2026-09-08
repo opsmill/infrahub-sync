@@ -85,10 +85,17 @@ def tags() -> Iterator[tuple[str, str]]:
 
 
 def write_sentinel(context: Path, value: str) -> None:
+    """Put one Python-only edit into the build context, and nothing else."""
     (context / SENTINEL_MODULE).write_text(f'VALUE = "{value}"\n', encoding="utf-8")
 
 
 def build(context: Path, builder: str, *, revision: str, tag: str) -> None:
+    """Build the image from that context on the shared builder, pinning everything but the source.
+
+    Both builds declare the same version and creation time so the revision is the
+    only label that moves, and provenance and SBOM attestations are off because a
+    second build of one source would otherwise differ by attestation alone.
+    """
     result = docker(
         [
             "buildx",
@@ -123,6 +130,7 @@ def installed_sentinel(tag: str) -> str:
 
 
 def inspected(tag: str, template: str) -> str:
+    """Return what the daemon reports about a loaded image, rendered by one Go template."""
     result = docker(["image", "inspect", "--format", template, tag])
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()
