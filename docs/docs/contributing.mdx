@@ -44,6 +44,20 @@ uv run infrahub-sync --help
 uv run infrahub-sync list --directory examples/
 ```
 
+### Install the Git hooks
+
+`prek.toml` defines the commit hooks: Ruff formatting and lint for Python, `rumdl` for Markdown
+and MDX, and checks for whitespace, YAML, TOML, large files, and private keys. Install them with:
+
+```bash
+uv run --frozen --extra dev prek install --force
+```
+
+Run the same command in an existing checkout. This project used pre-commit before, and
+`uv sync` removes that package, so the `.git/hooks/pre-commit` file it generated stops working
+and blocks every commit. `--force` replaces that file. It also overwrites any other script at
+that path, so copy your own hook elsewhere first if you keep one there.
+
 ## Development workflow
 
 Before committing any changes, run the following commands in order:
