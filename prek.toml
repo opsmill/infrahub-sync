@@ -29,6 +29,11 @@ hooks = [
 [[repos]]
 repo = "https://github.com/rvben/rumdl-pre-commit"
 rev = "v0.2.27"
-hooks = [
-  { id = "rumdl" }
-]
+
+# Check all Markdown and MDX files when either changes; the hook's default
+# `markdown` type omits `.mdx`.
+[[repos.hooks]]
+id = "rumdl"
+types = ["file"]
+files = '\.(md|mdx)$'
+pass_filenames = false
