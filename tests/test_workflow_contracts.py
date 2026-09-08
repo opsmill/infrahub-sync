@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tasks import ns
+from tasks import ns, release
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -346,11 +346,26 @@ def test_every_invoke_task_a_workflow_runs_is_registered(workflow: Path, task: s
     assert task in ns.task_names, f"{workflow.name} runs `invoke {task}`, which the task namespace does not define"
 
 
-def image_filter_patterns() -> list[str]:
-    """Return every path pattern the image gate's own filter expands to."""
-    declared = yaml.safe_load(FILE_FILTERS.read_text(encoding="utf-8"))["image_all"]
+def filter_patterns(name: str) -> list[str]:
+    """Return every path pattern one named filter expands to."""
+    declared = yaml.safe_load(FILE_FILTERS.read_text(encoding="utf-8"))[name]
     # Each entry is either a pattern or an expanded anchor holding several.
     return [pattern for entry in declared for pattern in (entry if isinstance(entry, list) else [entry])]
+
+
+def image_filter_patterns() -> list[str]:
+    """Return every path pattern the image gate's own filter expands to."""
+    return filter_patterns("image_all")
+
+
+def routed(path: Path, patterns: list[str]) -> bool:
+    """Report whether one repository path is named by any of these filter patterns.
+
+    `**` is compared with `fnmatch`, whose `*` already crosses a slash, so a tree
+    pattern matches everything under it and a file pattern matches only itself.
+    """
+    relative = str(path.relative_to(REPO_ROOT))
+    return any(fnmatch(relative, pattern) for pattern in patterns)
 
 
 def build_context_inputs() -> set[str]:
@@ -863,3 +878,46 @@ def test_the_artifact_record_names_the_candidate_from_the_one_document_that_hold
     script = str(writers[0]["run"])
     assert RECORDED_IDENTITY in script, f"the writer does not read the candidate from {RECORDED_IDENTITY}"
     assert "identity:" in script, f"the writer records no identity in {ARTIFACT_RECORD}"
+
+
+def kit_inputs() -> list[Path]:
+    """Return every repository file `build_qualification_kit()` copies into the kit.
+
+    Read off that function's own declarations rather than listed here, so a
+    renamed or repointed source follows automatically. What it cannot see is a
+    brand-new source constant; the case below is the reason to add one here too.
+    """
+    return [
+        release.QUALIFICATION_SOURCE / "clean-host.sh",
+        *sorted((release.QUALIFICATION_SOURCE / "checks").glob("*.py")),
+        *(release.DESTINATION_SOURCE / name for name in release.DESTINATION_FILES),
+        release.EXAMPLE_SCHEMA,
+    ]
+
+
+@pytest.mark.parametrize("source", kit_inputs(), ids=lambda path: path.name)
+def test_the_image_filter_covers_every_input_the_qualification_kit_carries(source: Path) -> None:
+    """The clean-host gate runs the kit, so a change to what goes in it re-runs the gate.
+
+    An input the filter does not name leaves the clean-host matrix qualifying
+    the previous commit's fixture — the row passes, and it passed against the
+    wrong bytes.
+    """
+    assert routed(source, image_filter_patterns()), (
+        f"the qualification kit carries {source.relative_to(REPO_ROOT)}, which image_all does not name"
+    )
+
+
+@pytest.mark.parametrize("declaration", [WORKFLOWS, FILE_FILTERS, DOCKERFILE], ids=lambda path: path.name)
+def test_the_filter_runs_this_suite_when_a_declaration_it_reads_changes(declaration: Path) -> None:
+    """Every case here reads one of these, so a change to one changes what this suite asserts.
+
+    Taken from this module's own constants, so a case that starts reading
+    something new is covered by naming it there. `sync_all` is the filter that
+    routes the unit suites, and this file is one of them.
+    """
+    probe = declaration / "probe.yml" if declaration.is_dir() else declaration
+
+    assert routed(probe, filter_patterns("sync_all")), (
+        f"this suite reads {declaration.relative_to(REPO_ROOT)}, which sync_all does not name"
+    )

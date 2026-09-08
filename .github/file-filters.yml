@@ -24,6 +24,14 @@ development_files: &development_files
 github_workflows: &github_workflows
   - ".github/workflows/*.yml"
 
+# What `tests/test_workflow_contracts.py` reads: every workflow declaration, this
+# document, and the Dockerfile whose COPY lines one of its cases expands. A change
+# to any of them changes what that suite asserts, so the suite has to re-run.
+contract_declarations: &contract_declarations
+  - ".github/workflows/**"
+  - ".github/file-filters.yml"
+  - "Dockerfile"
+
 uv_files: &uv_files
   - "pyproject.toml"
   - "uv.lock"
@@ -47,11 +55,23 @@ compose_files: &compose_files
   - "deploy/compose/**"
   - "tests/compose/**"
 
+# The clean-host kit's inputs that live outside the trees above. `release.kit`
+# copies these exact files into the kit a bare host runs, so a change to one
+# changes what the clean-host matrix qualifies against. Named file by file
+# rather than by directory, because the rest of `development/` and `examples/`
+# is not image-gate input and must not be routed into it.
+qualification_kit_files: &qualification_kit_files
+  - "development/docker-compose.infrahub.yml"
+  - "development/docker-compose.preview.yml"
+  - "development/preview.env"
+  - "examples/prefect_remote_run/schemas/infra_device.yml"
+
 sync_all:
   - *sync_files
   - *test_files
   - *development_files
   - *uv_files
+  - *contract_declarations
 
 documentation_all:
   - *doc_files
@@ -65,6 +85,7 @@ documentation_all:
 image_all:
   - *image_files
   - *compose_files
+  - *qualification_kit_files
   - *sync_files
   - *development_files
   - *uv_files
