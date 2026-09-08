@@ -6,9 +6,11 @@ model field. They must work on whatever object `client.schema.all()` hands back
 RelationshipSchemaAPI) -- not just on the write-side AttributeSchema /
 RelationshipSchema classes used to build schema payloads.
 
-The read-side and write-side SDK schema hierarchies are independent: AttributeSchemaAPI
-is not a subclass of AttributeSchema (see #187), so these filters must rely on the
-attribute/relationship shape alone and never on isinstance() against either hierarchy.
+SDK read-side classes need not inherit from the write-side ones: a newer infrahub-sdk
+detached AttributeSchemaAPI from AttributeSchema (see #187), while older versions -- including
+the one currently pinned -- still share that inheritance. These filters must therefore rely on
+the attribute/relationship shape alone and never on isinstance() against either hierarchy, and
+the fakes below keep the detached case covered even where the SDK still shares it.
 """
 
 from __future__ import annotations
