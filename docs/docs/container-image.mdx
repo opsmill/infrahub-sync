@@ -162,9 +162,15 @@ separate qualification kit instead.
 `release.qualify` refuses a candidate that qualified nothing: it requires an
 image smoke result for every built platform and a Compose lifecycle result, and
 each of those records the exact image digest it ran against. It also requires
-`.release/artifacts.json`, which the candidate workflow writes from what each
-upload returned, so the record carries the artifact identifiers and digests an
-approval is later bound to, and the retention that has to outlast it.
+`.release/artifacts.json`, which the workflow writes from what each upload
+returned.
+
+On a pull request both that file and the record are transient. They exist so the
+clean-host gate below can be handed this candidate's bytes and told what to
+expect of them, and the run deletes the candidate, the kit and the record before
+it completes. Retaining a candidate, and binding an approval to the identifiers
+such a record carries, belong to a manual run against an exact merged commit and
+are not part of this workflow.
 
 ## Clean-host qualification
 
@@ -174,6 +180,13 @@ published; what it runs is the released artifact rather than the tree that produ
 it. The host needs Docker Engine, Docker Compose, a POSIX shell, and ordinary
 checksum and archive tools — every command that needs Python or the product CLI
 runs inside the candidate image.
+
+The transfer is an artifact because that is the only one GitHub offers between
+two jobs, and it is not retention. Three artifacts are uploaded for the shortest
+window the service accepts, downloaded once, and deleted by name inside the same
+run; a last job then reads the run back and fails it if any candidate, kit or
+record is still held. A completed run that succeeded holds none of them. Only a
+failed row's swept diagnostic stays, and for seven days.
 
 The driver and its checks travel in the qualification kit, beside the pinned
 destination the managed rows converge against. None of that is bundle content: an
@@ -192,11 +205,15 @@ expresses no way to skip one: each row either returns or ends the run.
 
 ## Publication
 
-Publication is a separate, dispatch-only workflow. It is bound to one candidate
-run, refuses a run that did not qualify, refuses an approval naming a version that
-candidate did not record, and never checks out source — the distributions it
-uploads are the ones the candidate already built. With its `publish` input off,
-the job that would upload does not exist, so nothing it needs is ever installed.
+Nothing on this page publishes, and this line has no publication workflow yet.
+The legacy route is unchanged: a published release still uploads the
+distributions it builds, and no workflow a pull request can start uploads
+anything at all.
+
+Retaining a candidate, and approving one for publication, are later units of
+work. Until they land, `release.identity`, `release.build`, `release.kit` and
+`release.qualify` produce and describe a candidate that the clean-host gate
+qualifies and the run then discards.
 
 ## Recorded digests
 

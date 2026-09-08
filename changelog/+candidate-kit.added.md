@@ -11,8 +11,10 @@ its host — no credential, no operator environment, no instance identity, and n
 fixture. `invoke release.qualify` then writes one record linking the version, the source
 revision, the OCI index, each platform's manifest and configuration, the bundle checksum,
 the bills of materials, the vulnerability decision, and the gates that ran, together with
-the identifiers and digests the artifact service returned and how long it keeps them. It
-refuses a candidate that qualified nothing.
+the identifiers and digests the artifact service returned. It refuses a candidate that
+qualified nothing. On a pull request that record and the `.release/artifacts.json` it
+reads are transient: they exist for the clean-host handoff, and the run deletes them with
+the artifacts they describe.
 
 Bills of materials and vulnerability reports are now named from the release identity, so
 a report downloaded on its own says which release and which platform it describes.

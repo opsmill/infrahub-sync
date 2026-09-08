@@ -5,6 +5,11 @@ through its own lifecycle entry point. The job checks nothing out and installs n
 interpreter; every command needing Python or the product CLI runs inside the candidate
 image.
 
+The handoff is an artifact because that is the only transfer GitHub offers between two
+jobs, and it is not retention. The run deletes the candidate, the kit and the record by
+name before it completes, and a final job fails the run if any of them is still held.
+Only a failed row's swept diagnostic remains, for seven days.
+
 The driver states the host's shape rather than assuming it: refusing shims for `python`,
 `uv`, `pip`, `pytest`, and the product CLI sit ahead of `PATH` and record any invocation,
 and every container carrying the deployment's instance label is inspected for a bind source
