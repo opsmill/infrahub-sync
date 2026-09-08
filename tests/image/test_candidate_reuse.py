@@ -47,6 +47,7 @@ BUILD_PATH = {
 }
 TASK_TREE = Path(image.__file__).resolve().parent
 
+
 PLATFORMS = ("linux/amd64", "linux/arm64")
 INDEX_DIGEST = "sha256:" + "1" * 64
 CONFIGURATIONS = {

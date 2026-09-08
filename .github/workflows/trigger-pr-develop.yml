@@ -13,8 +13,10 @@ on:
       - feature/v3-develop
 
 # A called workflow can only keep or reduce these, never raise them, so every
-# permission any workflow below requests has to be granted here. The image gate
-# reads packages to pull the bases it builds and scans from; nothing writes.
+# permission any workflow below requests has to be granted at or above it. These
+# are the defaults every call gets: read the source, read packages to pull the
+# bases the image gate builds and scans from, and write nothing. The one call
+# that needs more states it on itself.
 permissions:
   contents: read
   packages: read
@@ -32,4 +34,12 @@ jobs:
 
   image:
     needs: ["linter", "uv-checker"]
+    # That gate deletes its own handoff artifacts inside the run that created
+    # them, which is an `actions: write` this call has to grant. Granted here
+    # rather than at the top of this file so no other call carries it, and the
+    # gate narrows it again to the single job that deletes.
+    permissions:
+      contents: read
+      packages: read
+      actions: write
     uses: ./.github/workflows/workflow-image.yml

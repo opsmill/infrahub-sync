@@ -24,13 +24,15 @@ permissions:
   contents: read
   packages: read
 
-# How long the service holds what a failed run leaves behind, which is the only
-# thing this workflow retains. A diagnostic is read while the failure it explains
-# is being worked, so it is kept days rather than months: a pull-request run
-# keeps no candidate image, layout, distribution or bundle, and the window a
-# candidate needs belongs to the manual run that builds one.
+# Two different kinds of thing. A diagnostic is what a failed run leaves for
+# whoever reads it that day. A handoff is not retention: an artifact is the only
+# transfer GitHub offers between two jobs, so these bytes are downloaded once and
+# deleted by `handoff-cleanup` inside this run. One day is the shortest window the
+# service accepts and the fail-safe for a run that lost its cleanup; nothing may
+# rely on it.
 env:
   DIAGNOSTIC_RETENTION_DAYS: 7
+  HANDOFF_RETENTION_DAYS: 1
 
 jobs:
   files-changed:
@@ -115,6 +117,31 @@ jobs:
 
       - name: "Smoke both platforms"
         run: uv run --no-sync invoke image.smoke
+
+      # Flattened, because a flat directory is what the driver reads out of
+      # `CLEAN_HOST_CANDIDATE`: the qualified platform's image, the bundle, and
+      # the checksum it verifies the bundle against before extracting it.
+      - name: "Stage the exact bytes a clean host consumes"
+        run: |
+          set -euo pipefail
+          mkdir -p .release/handoff
+          cp .image/archives/image-linux-amd64.tar .release/handoff/
+          cp .release/bundle/* .release/handoff/
+
+      # Before the reclaim below, which is what removes the file being staged.
+      # arm64's copy is gate input and stays behind.
+      - name: "Hand the candidate bytes to the clean-host gate"
+        id: candidate-handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-candidate-handoff
+          path: .release/handoff/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.HANDOFF_RETENTION_DAYS }}
+
+      # The largest thing the build leaves behind, and nothing reads it after the
+      # scan, the smoke and the handoff above.
       - name: "Reclaim the exported archives"
         run: uv run --no-sync invoke compose.reclaim
 
@@ -124,6 +151,56 @@ jobs:
       - name: "Qualify the Compose lifecycle on linux/amd64"
         timeout-minutes: 45
         run: uv run --no-sync invoke compose.lifecycle
+
+      # Evidence, not bundle: what the gate needs and an operator never sees.
+      - name: "Hand the qualification kit to the clean-host gate"
+        id: qualification-kit
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-qualification-kit
+          path: .release/qualification/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.HANDOFF_RETENTION_DAYS }}
+
+      # What `release.qualify` reads to name what the service is holding. After
+      # the two uploads, because it names what they returned; the window is the
+      # fail-safe floor and not a period an approval may be taken against.
+      - name: "Record what the service is holding"
+        run: |
+          set -euo pipefail
+          cat > .release/artifacts.json <<JSON
+          {
+            "retention_days": ${{ env.HANDOFF_RETENTION_DAYS }},
+            "artifacts": {
+              "infrahub-sync-candidate-handoff": {
+                "id": "${{ steps.candidate-handoff.outputs.artifact-id }}",
+                "digest": "${{ steps.candidate-handoff.outputs.artifact-digest }}"
+              },
+              "infrahub-sync-qualification-kit": {
+                "id": "${{ steps.qualification-kit.outputs.artifact-id }}",
+                "digest": "${{ steps.qualification-kit.outputs.artifact-digest }}"
+              }
+            }
+          }
+          JSON
+
+      # What the driver reads its expectations out of: this candidate's tag and
+      # version, its bundle, and the configuration digest it has to find loaded.
+      - name: "Write the qualification record"
+        run: uv run --no-sync invoke release.qualify
+
+      - name: "Hand the qualification record to the clean-host gate"
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-qualification-record
+          path: .release/qualification.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.HANDOFF_RETENTION_DAYS }}
+
+      # Only when the job has already failed, and only what the suite's own
+      # capture boundary produced. A run that passes uploads nothing new.
       - name: "Publish what a failed lifecycle run saw"
         if: failure()
         uses: actions/upload-artifact@v4
@@ -133,3 +210,112 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: ${{ env.DIAGNOSTIC_RETENTION_DAYS }}
+
+  # A host that has never seen this repository: no checkout, no interpreter, and
+  # nothing but what the job above handed it. Every download is of this run's own
+  # artifacts, because naming another run's would qualify a candidate some other
+  # commit built and report the result against this head.
+  clean-host:
+    name: "Clean-host qualification (linux/amd64, no checkout)"
+    needs: ["image"]
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 90
+    steps:
+      - name: "Download the candidate bytes this run produced"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-candidate-handoff
+          path: candidate
+
+      - name: "Download the record this run wrote for them"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-qualification-record
+          path: candidate
+
+      - name: "Download the qualification kit"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-qualification-kit
+          path: kit
+
+      # Inside the job's bound, so the phase reports which row was running rather
+      # than being cut off by the runner. An artifact carries no mode, so the one
+      # thing restored here is the bit the upload dropped.
+      - name: "Run the mandatory matrix"
+        timeout-minutes: 75
+        env:
+          CLEAN_HOST_CANDIDATE: ${{ github.workspace }}/candidate
+        run: |
+          set -eu
+          chmod 0755 kit/clean-host.sh
+          kit/clean-host.sh
+
+      # The one file the driver swept and chose to keep, named exactly: the
+      # working directory beside it holds the list of this run's own credentials.
+      # A withheld diagnostic is an absent file, and the log says why.
+      - name: "Publish the pre-teardown diagnostic of a failed row"
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-clean-host-diagnostic
+          path: kit/work/diagnostic.txt
+          if-no-files-found: ignore
+          retention-days: ${{ env.DIAGNOSTIC_RETENTION_DAYS }}
+
+  # Where the handoff stops existing. It runs whatever the two jobs above
+  # concluded, because a failed row, a skipped gate and a cancelled run leave the
+  # same bytes behind as a passing one.
+  handoff-cleanup:
+    name: "Delete this run's handoff and prove the run holds none of it"
+    needs: ["image", "clean-host"]
+    if: always()
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 10
+    # Scoped here: at the workflow level every step of the build, of the gate and
+    # of their third-party actions would carry a token that can delete this
+    # repository's artifacts, runs and caches.
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      RUN_ID: ${{ github.run_id }}
+    steps:
+      # The exact names, and only this run's own artifacts. Never a pattern: a
+      # glob deletes whatever else matches and stops matching a renamed artifact.
+      - name: "Delete the handoff artifacts this run created"
+        run: |
+          set -euo pipefail
+          for name in \
+            infrahub-sync-candidate-handoff \
+            infrahub-sync-qualification-kit \
+            infrahub-sync-qualification-record
+          do
+            for id in $(gh api --paginate \
+              "repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
+              --jq ".artifacts[] | select(.name == \"${name}\") | .id")
+            do
+              gh api --method DELETE "repos/${REPOSITORY}/actions/artifacts/${id}"
+              echo "deleted ${name} (${id})"
+            done
+          done
+
+      # Having issued the deletions is not the claim; holding nothing is. A
+      # non-2xx delete, an upload nobody added above, and a partial upload a
+      # cancelled job left behind all end with bytes still held.
+      - name: "Refuse a run that still holds a candidate or a kit"
+        run: |
+          set -euo pipefail
+          held=$(gh api --paginate \
+            "repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
+            --jq '.artifacts[]
+                  | select(.expired == false)
+                  | select((.name | startswith("infrahub-sync-candidate"))
+                        or (.name | startswith("infrahub-sync-qualification")))
+                  | .name')
+          if [ -n "${held}" ]; then
+            echo "this run still holds $(echo "${held}" | tr "\n" " ")" >&2
+            exit 1
+          fi
+          echo "this run holds no candidate, kit or qualification record"
