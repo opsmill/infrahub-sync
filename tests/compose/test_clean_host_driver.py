@@ -3246,3 +3246,42 @@ def test_the_residue_report_tells_this_runs_containers_from_a_recycled_name() ->
     assert "owned_fixture_container" in remaining, "the residue list identifies containers by a name that can move"
     assert "this run created is still present" in remaining
     assert "cannot account for" in remaining, "a recycled name is reported as this run's own container"
+
+
+def test_row_six_weighs_its_acceptance_results_before_its_housekeeping() -> None:
+    """Two things can be wrong at the same instant, and only one is this row's finding.
+
+    `--rm` frees the check's name as the check exits, which is exactly when the
+    row reads its verdict. A refusal about that name placed before the verdict
+    replaces the diagnosis: the run then says nothing about whether a busy worker
+    leaves the deployment READY.
+    """
+    row = function_body("row_status").replace("\\\n", " ")
+
+    assert "row6_kept=0" in row, "the row acts on its housekeeping result instead of recording it"
+    for line in row.splitlines():
+        if "stop_row6_check" in line:
+            assert "fail" not in line, f"the row reports a container name before its own verdict: {line.strip()}"
+
+    verdict = row.index('[ "$row6_verdict" -eq 0 ]')
+    observed = row.index('[ "$row6_observed" -eq 0 ]')
+    kept = row.index('[ "$row6_kept" -eq 0 ]')
+    assert verdict < kept, "the housekeeping is reported before the property that failed"
+    assert observed < kept, "the housekeeping is reported before the queue this row never observed"
+
+
+def test_row_six_keeps_the_container_and_its_name_for_the_global_teardown() -> None:
+    """A foreign container is preserved, and the identity of the name it holds is kept.
+
+    The row reports what it could not account for and stops; removing it is never
+    an option, and discarding the name would leave the teardown with nothing to
+    ask about.
+    """
+    row = function_body("row_status")
+    stopper = function_body("stop_row6_check")
+
+    assert "ROW6_CHECK_CONTAINER=" not in row, "the row discards the only identity anything holds for its container"
+    assert '[ "$kept" -ne 0 ] || ROW6_CHECK_CONTAINER=' in stopper, (
+        "custody is given up for a container that was never accounted for"
+    )
+    assert "stop_row6_check" in function_body("cleanup"), "the teardown does not ask again about what the row kept"

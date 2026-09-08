@@ -464,3 +464,88 @@ def test_ownership_and_identity_are_read_in_one_question(tmp_path: Path) -> None
     assert ".Id" in asked[0], "the one question does not ask what the name holds"
     assert "FIXTURE_LABEL" not in asked[0], "the label is asked for by name rather than expanded"
     assert "io.infrahub-sync.clean-host-fixture" in asked[0], "the one question does not ask whose it is"
+
+
+# ---------------------------------------------------------------------------
+# Two things wrong at once, and only one of them is row 6's finding
+# ---------------------------------------------------------------------------
+# Row 6's check can fail at the same moment its released name turns out to hold
+# a foreign container: `--rm` frees the name as the check exits, which is exactly
+# when the row reads its verdict. Reported in the wrong order, the housekeeping
+# concern speaks over the acceptance diagnosis and the run says nothing about the
+# property it was there to observe.
+def shell_fragment(opening: str, closing: str) -> str:
+    """Return the driver's own text from one exact line through another, inclusive."""
+    source = driver_source()
+    start = source.index(opening)
+    end = source.index(closing, start) + len(closing)
+    return source[start:end]
+
+
+def row_six_verdict_harness(*, verdict: int, observed: int, kept: int) -> str:
+    """Row 6's own verdict block, with the three results it weighs supplied."""
+    return "\n".join(
+        [
+            "set -eu",
+            "ROW=status",
+            'fail() { echo "clean-host: $ROW: $1" >&2; exit 1; }',
+            'report() { echo "clean-host: $ROW: $1"; }',
+            f"stop_row6_check() {{ return {kept}; }}",
+            f"row6_verdict={verdict}",
+            f"row6_observed={observed}",
+            "ROW6_CHECK_PID=",
+            # From the driver's own initialiser through its own report, so what
+            # runs here is its ordering rather than this harness's idea of it.
+            shell_fragment("    row6_kept=0", '    report "a busy worker leaves the deployment READY"'),
+        ]
+    )
+
+
+def test_a_failed_row_six_check_is_still_the_diagnosis_when_its_name_was_recycled(tmp_path: Path) -> None:
+    """The regression: both are wrong, and the wrong one was being reported.
+
+    The check failed — that is the property row 6 exists to observe. The released
+    name holding a foreign container is a teardown concern about the same moment.
+    Reported first, it replaced the diagnosis, and the run said nothing at all
+    about whether a busy worker leaves the deployment READY.
+    """
+    answered = run_shell(row_six_verdict_harness(verdict=1, observed=1, kept=1), work=tmp_path)
+
+    assert answered.returncode != 0
+    assert "a busy worker did not leave the deployment READY" in answered.stderr, (
+        "the acceptance diagnosis was replaced by a concern about a container name"
+    )
+    assert "cannot account for" not in answered.stderr, (
+        "the housekeeping concern is reported instead of the property that failed"
+    )
+
+
+def test_an_unobserved_queue_is_still_the_diagnosis_when_the_name_was_recycled(tmp_path: Path) -> None:
+    """The row's other acceptance result comes before the housekeeping too."""
+    answered = run_shell(row_six_verdict_harness(verdict=0, observed=1, kept=1), work=tmp_path)
+
+    assert answered.returncode != 0
+    assert "never reported reading the deployment's status" in answered.stderr, (
+        "the acceptance diagnosis was replaced by a concern about a container name"
+    )
+    assert "cannot account for" not in answered.stderr
+
+
+def test_a_recycled_name_is_reported_once_both_acceptance_results_have_passed(tmp_path: Path) -> None:
+    """Not swallowed either. With the property established, this is what is left to say."""
+    answered = run_shell(row_six_verdict_harness(verdict=0, observed=0, kept=1), work=tmp_path)
+
+    assert answered.returncode != 0
+    assert "cannot account for" in answered.stderr, "a name this run cannot account for goes unreported"
+    assert "a busy worker leaves the deployment READY" not in answered.stdout, (
+        "the row reported its property having failed to account for its own container"
+    )
+
+
+def test_a_clean_row_six_reports_its_property(tmp_path: Path) -> None:
+    """What makes the three cases above mean anything: nothing wrong, nothing reported."""
+    answered = run_shell(row_six_verdict_harness(verdict=0, observed=0, kept=0), work=tmp_path)
+
+    assert answered.returncode == 0, answered.stderr
+    assert "a busy worker leaves the deployment READY" in answered.stdout
+    assert not answered.stderr

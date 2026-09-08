@@ -1098,14 +1098,25 @@ row_status() {
         row6_verdict=1
     fi
     ROW6_CHECK_PID=
-    stop_row6_check \
-        || fail "the name this row gave its check holds something this run cannot account for"
+    # Recorded, not acted on. Two things can be wrong at this exact instant and
+    # only one of them is this row's finding: the check's verdict is the property,
+    # while its released name holding a foreign container is housekeeping about
+    # the same moment -- `--rm` frees that name as the check exits, which is when
+    # this verdict is read. Refusing on the housekeeping first replaced the
+    # diagnosis, and the run then said nothing about the property at all.
+    row6_kept=0
+    stop_row6_check || row6_kept=1
     # The check's own sentence has already reached the log, so the row reports the
     # row. A driver-side timeout is named only when the check did not fail, which
     # is the one case its stderr says nothing about.
     [ "$row6_verdict" -eq 0 ] || fail "a busy worker did not leave the deployment READY"
     [ "$row6_observed" -eq 0 ] \
         || fail "the check never reported reading the deployment's status while its worker parent was stopped"
+    # Last, and only once the property has been established. Not swallowed either:
+    # the container is preserved and the custody of its name is kept, so the
+    # global teardown asks again and reports it whatever happens here.
+    [ "$row6_kept" -eq 0 ] \
+        || fail "the name this row gave its check holds something this run cannot account for"
     report "a busy worker leaves the deployment READY"
 
     worker=$(deployment_container sync-worker)
