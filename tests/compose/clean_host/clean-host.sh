@@ -184,6 +184,109 @@ destination_check() {
         "$IMAGE" python "/checks/$name.py" "$@"
 }
 
+# ---------------------------------------------------------------------------
+# Row 6's coordination, and the only writable channel this gate gives a check
+# ---------------------------------------------------------------------------
+# `busy` is a positive scheduled queue depth, and one worker with no concurrency
+# limit claims everything it sees, so both halves of "a run executing with
+# another queued behind it" are intervals that no poll can be relied on to catch.
+# Neither is sampled. The check holds the deployment's own configuration write
+# guard, which keeps its first run claimed and blocked; this driver stops the
+# worker's parent process, which keeps the second run scheduled. Each side then
+# waits for a file the other writes, and a written file stays written.
+ROW6_CONTROL=
+ROW6_WORKER=
+ROW6_CHECK_PID=
+ROW6_CHECK_CONTAINER=
+# Waiting for the first run to be claimed happens before any of the product's
+# clocks are running, so it may be generous. Everything after it happens while
+# the check holds the write guard and three thirty-second clocks are counting
+# from that claim -- the guard's own lock_timeout, the liveness stall threshold,
+# and the live-worker freshness window. This bound has to expire and resume the
+# parent well before the earliest of them, so it is nowhere near thirty.
+ROW6_SETUP_TIMEOUT=180
+ROW6_HELD_TIMEOUT=20
+
+coordinated_check() {
+    # `check` mounts everything read-only, and row 2 asserts that the deployment
+    # has nothing mounted from outside its bundle. This row needs a channel back,
+    # so it gets one of its own -- created here, removed with the row, and handed
+    # to no other check.
+    name=$1
+    [ -n "$NETWORK" ] || fail "the check $name was run before the deployment network it needs existed"
+    ROW6_CONTROL=$WORK/row6-control
+    rm -rf "$ROW6_CONTROL"
+    mkdir -p "$ROW6_CONTROL" || fail "this host could not create the control directory row 6 coordinates through"
+    # Named, because this is the only check this gate backgrounds and therefore
+    # the only one that could outlive its row. A `docker run` check carries none
+    # of the deployment's instance labels, so `owned_resources` cannot see it and
+    # teardown would report a clean host with this still running. The name is the
+    # exact identity teardown removes -- nothing broader is touched.
+    ROW6_CHECK_CONTAINER=clean-host-row6-$INSTANCE
+    docker rm --force "$ROW6_CHECK_CONTAINER" >/dev/null 2>&1 || true
+    docker run --rm \
+        --name "$ROW6_CHECK_CONTAINER" \
+        --network "$NETWORK" \
+        --volume "$CHECKS:/checks:ro" \
+        --volume "$BUNDLE/configuration:/configuration:ro" \
+        --volume "$ROW6_CONTROL:/control" \
+        --env-file "$WORK/check.env" \
+        "$IMAGE" python "/checks/$name.py" &
+    ROW6_CHECK_PID=$!
+}
+
+stop_row6_check() {
+    # Removing the container is what ends the process, and dropping its
+    # PostgreSQL session is what releases the write guard if the check never got
+    # to. Reached from the teardown trap, so a row that failed anywhere cannot
+    # leave a container running against a deployment that is about to be removed.
+    [ -n "$ROW6_CHECK_CONTAINER" ] || return 0
+    docker rm --force "$ROW6_CHECK_CONTAINER" >/dev/null 2>&1 || true
+    ROW6_CHECK_CONTAINER=
+    if [ -n "$ROW6_CHECK_PID" ]; then
+        wait "$ROW6_CHECK_PID" >/dev/null 2>&1 || true
+        ROW6_CHECK_PID=
+    fi
+}
+
+await_control() {
+    # await_control <state> <seconds>. Waits for one state the check records, and
+    # gives up when the check has finished without reaching it -- a refusing check
+    # must not cost this driver its whole bound before it resumes a worker it
+    # stopped.
+    waited=0
+    while [ ! -f "$ROW6_CONTROL/$1" ]; do
+        if [ -f "$ROW6_CONTROL/done" ]; then
+            return 1
+        fi
+        if [ "$waited" -ge "$2" ]; then
+            return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    return 0
+}
+
+resume_worker() {
+    # Idempotent, and reached from the teardown trap as well as from the row. Row
+    # 7 restarts this deployment and row 8 kills a worker mid-write; both begin by
+    # expecting one that answers, so a parent left stopped would turn one row's
+    # failure into every later row's.
+    #
+    # Reports whether the parent is actually running again, and keeps custody of
+    # it when it is not. Clearing on a failed signal would discard the only
+    # identity anything holds for that container, so the trap could not try again
+    # -- and the row would go on to tell the check the parent had resumed while it
+    # was still stopped.
+    [ -n "$ROW6_WORKER" ] || return 0
+    if docker kill --signal CONT "$ROW6_WORKER" >/dev/null 2>&1; then
+        ROW6_WORKER=
+        return 0
+    fi
+    return 1
+}
+
 compose_bundle() {
     "$BUNDLE/infrahub-sync-compose" "$@"
 }
@@ -509,7 +612,60 @@ row_schema_change() {
 # Row 6 — status
 # ---------------------------------------------------------------------------
 row_status() {
-    check busy_worker_stays_ready || fail "a busy worker did not leave the deployment READY"
+    ROW6_WORKER=$(deployment_container sync-worker)
+    coordinated_check busy_worker_stays_ready
+
+    row6_observed=1
+    if await_control executing "$ROW6_SETUP_TIMEOUT"; then
+        # PID 1 only, so the flow keeps running while its parent stops claiming.
+        # `docker pause` would freeze the child with the parent, and a frozen run
+        # is not an executing one: the property would then hold over a deployment
+        # doing nothing, which is the failure this row exists to exclude.
+        #
+        # Not best-effort. A signal that did not land would leave the parent
+        # claiming, and the check would then submit its second run and assert the
+        # property against a deployment nothing was holding open. Only the resume
+        # in the trap may be best-effort, because there the alternative is worse.
+        docker kill --signal STOP "$ROW6_WORKER" >/dev/null 2>&1 \
+            || fail "the deployment's worker parent could not be stopped, so no queue could form behind it"
+        : > "$ROW6_CONTROL/stopped"
+        if await_control observed "$ROW6_HELD_TIMEOUT"; then
+            row6_observed=0
+        else
+            row6_observed=1
+        fi
+        # Whatever happened above, in this order. A check still waiting on this
+        # state would spend its own bound holding the write guard, and the
+        # product's thirty-second clocks would reach its first run and replace a
+        # coordination failure with a stalled or contended run.
+        #
+        # Required, and required before the answer. Telling the check the parent
+        # resumed when it did not would release its guard against a deployment
+        # that can still not finish either run, and it would then hang in
+        # settlement rather than report anything.
+        resume_worker \
+            || fail "the deployment's worker parent could not be resumed, so neither of this row's runs could finish"
+        if [ -d "$ROW6_CONTROL" ]; then
+            : > "$ROW6_CONTROL/resumed"
+        fi
+    fi
+    # Before the verdict is read: the check cannot finish while the parent it is
+    # waiting on is stopped. Best-effort here only because the check's own
+    # sentence is about to be read and the trap still holds custody to retry.
+    resume_worker || true
+    if wait "$ROW6_CHECK_PID"; then
+        row6_verdict=0
+    else
+        row6_verdict=1
+    fi
+    ROW6_CHECK_PID=
+    stop_row6_check
+    # The check's own sentence has already reached the log, so the row reports the
+    # row. A driver-side timeout is named only when the check did not fail, which
+    # is the one case its stderr says nothing about.
+    [ "$row6_verdict" -eq 0 ] || fail "a busy worker did not leave the deployment READY"
+    [ "$row6_observed" -eq 0 ] \
+        || fail "the check never reported reading the deployment's status while its worker parent was stopped"
     report "a busy worker leaves the deployment READY"
 
     worker=$(deployment_container sync-worker)
@@ -857,6 +1013,15 @@ cleanup() {
     status=$?
     failed_row=$ROW
     ROW=teardown
+    # First, because a worker whose parent is stopped answers nothing -- not the
+    # diagnostic below, and not the teardown after it. Then the row's own
+    # backgrounded check, which no label makes visible to `owned_resources`.
+    #
+    # Best-effort here and nowhere else: this is the last caller, and a resume
+    # that cannot land must not stop the removal below from reaching the exact
+    # deployment. `resume_worker` keeps custody on failure, so nothing is lost.
+    resume_worker || true
+    stop_row6_check
     # Before anything is removed, because after it there is nothing to read.
     if [ "$status" -ne 0 ]; then
         capture_diagnostic "$failed_row"

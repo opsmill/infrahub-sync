@@ -1146,23 +1146,72 @@ def test_the_recovery_row_waits_for_the_interruption_to_be_recorded() -> None:
     assert "RECONCILE_TIMEOUT_SECONDS = 8 * STALL_THRESHOLD_SECONDS" in source
 
 
-def test_the_busy_worker_row_establishes_a_queue_before_it_asserts_anything() -> None:
-    """`busy` is a positive scheduled queue depth, not a worker mid-execution.
+def test_the_busy_worker_row_holds_the_guard_its_first_run_will_contend_on() -> None:
+    """A run that finishes cannot be observed executing; one that blocks can.
 
-    `service.py` derives it as `"busy" if snapshot.queue_depth > 0`, and
-    `queue_depth` counts the runs still scheduled. So one submission establishes
-    a queue only for however long it takes the single worker to claim it, which
-    is sub-second: a row polling for `busy` after one `plan` is polling for a
-    race. Two submissions make the queue real -- one run is claimed while the
-    other stays scheduled -- and both halves of that state have to come from one
-    snapshot, because a `queue_depth` read before the claim and a `live_workers`
-    read after it are two deployments as far as the evidence goes.
+    `busy` is a positive scheduled queue depth (`service.py` derives it as
+    `"busy" if snapshot.queue_depth > 0`), and the deployment runs one worker
+    that claims everything it sees, so nothing about this row is observable by
+    catching an interval. The row instead holds the deployment's own
+    configuration write guard, which `flow.py` enters for a `sync` *after*
+    `_claim_current_execution`, so the first run is claimed and then blocks for
+    exactly as long as the row keeps the key. The state is durable because the
+    row owns it, not because the workload happens to be slow.
+
+    The guard is taken through the product's own `hold_apply_guard`, so the row
+    provably contends on the same advisory key the flow will, rather than on a
+    reconstruction of it that could drift.
     """
     source = code_of(CHECKS / "busy_worker_stays_ready.py")
     tree = ast.parse(source)
 
+    # The import alone is not the claim: a row that imported the guard and never
+    # entered it would read identically. What matters is a call used as a context.
+    entered = [
+        item.context_expr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.With)
+        for item in node.items
+        if isinstance(item.context_expr, ast.Call) and getattr(item.context_expr.func, "id", None) == "hold_apply_guard"
+    ]
+    assert len(entered) == 1, "the row never enters the write guard its first run blocks on"
+
+    # `isinstance` first, so the line number the ordering rests on is reachable:
+    # `submitted_stage` narrows nothing for the caller, it only answers.
+    submitted = [node for node in ast.walk(tree) if isinstance(node, ast.Call) and submitted_stage(node) == "sync"]
+    assert len(submitted) == 1, "the first run is not a write, so it never reaches the guard"
+    assert entered[0].lineno < submitted[0].lineno, "the first run is submitted before the guard is held"
+
+
+def test_the_busy_worker_row_hands_the_driver_a_durable_executing_state() -> None:
+    """The handshake carries states, not moments.
+
+    Each side waits for a file that, once written, stays written, so neither is
+    sampling for a transient. The check proves the first run claimed and
+    unfinished before it says so, and does not submit the second until the
+    driver has answered that the worker's parent is stopped.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+
+    assert "attempt.claimed_at is not None and attempt.terminal_at is None" in source, (
+        "the row does not define execution as a claim that has not ended"
+    )
+    proven = source.index("await_execution(client, executing_run)")
+    signalled = source.index("signal_driver('executing')")
+    awaited = source.index("await_driver('stopped'")
+    submitted = source.index("queued_run = client.plan(")
+
+    assert proven < signalled, "the row tells the driver it is executing before it has proven it"
+    assert signalled < awaited < submitted, "the second run is submitted before the worker parent is stopped"
+
+
+def test_the_busy_worker_row_proves_the_whole_queue_from_one_snapshot() -> None:
+    """A queue depth read before the claim and a live worker read after it are two deployments."""
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+    tree = ast.parse(source)
+
     submitted = [node for node in ast.walk(tree) if submitted_stage(node) is not None]
-    assert len(submitted) == 2, "one submitted run is claimed within a poll, so the queue it establishes is a race"
+    assert len(submitted) == 2, "the row does not submit exactly the two accepted runs the evidence needs"
     keys = {ast.unparse(node.args[1]) for node in submitted if isinstance(node, ast.Call) and len(node.args) > 1}
     assert len(keys) == 2, f"both submissions carry one mutation key, so the second replays the first: {sorted(keys)}"
 
@@ -1178,46 +1227,240 @@ def test_the_busy_worker_row_establishes_a_queue_before_it_asserts_anything() ->
         assert proven in source, f"the precondition never proves {proven}"
         assert source.index(proven) < asserted, f"{proven} is read after the property it is a precondition for"
 
+    for reproven in ("claimed_and_running(attempt_of(client, running))", "attempt_of(client, waiting).claimed_at"):
+        assert reproven in source, f"the qualifying snapshot never re-proves `{reproven}`"
+
+
+def test_the_busy_worker_row_releases_its_guard_and_settles_both_runs() -> None:
+    """A held advisory key blocks every later write; an unsettled run holds READY open.
+
+    The release is a `with`, so it happens on the exception path too, and the
+    driver is told the check is finished from a `finally` -- otherwise a refusing
+    check would leave the driver waiting out its whole bound before resuming a
+    worker it stopped.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+    tree = ast.parse(source)
+
+    assert "signal_driver('done')" in source, "a refusing check never tells the driver it has finished"
+    finals = [node for node in ast.walk(tree) if isinstance(node, ast.Try) and node.finalbody]
+    assert finals, "nothing in the row runs on the exception path"
+    assert any("signal_driver('done')" in ast.unparse(node) for final in finals for node in final.finalbody), (
+        "the driver is only told the check finished when it finishes successfully"
+    )
+
     settled = [
         node for node in ast.walk(tree) if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "follow"
     ]
     assert len(settled) == 2, "the row leaves an accepted run in flight, and the rows after it wait for READY"
-    assert "QUEUE_TIMEOUT_SECONDS" in source, "an unbounded wait for a queue that may never form"
 
 
-def test_the_busy_worker_row_queues_its_second_run_behind_an_executing_first() -> None:
-    """Two runs submitted back to back can both be scheduled and neither running.
+def test_the_busy_worker_row_states_the_one_write_it_converges() -> None:
+    """Row 5 plants a drift and reverts only the schema, so this row's sync writes.
 
-    `live_workers` counts heartbeats, not work, so a deployment whose worker has
-    claimed nothing still reports a live worker and a queue two deep -- which
-    satisfies "queued work behind a live worker" with nothing executing. What
-    separates the two is the claim the flow itself records: `claim_execution`
-    runs inside the worker's own process before any configuration or adapter
-    work begins, so `claimed_at` is a worker running the run rather than a
-    scheduler having handed it out.
-
-    The first run is therefore proven claimed and unfinished before the second
-    is submitted at all, and proven still so while the queue is read -- and the
-    second proven still waiting, so the depth being read is this row's.
+    `schema_change.py` calls `plant("drift")` and restores the attribute kind,
+    never the planted value, so the two sides still differ when this row runs. A
+    real `sync` therefore converges exactly that one update. Asserting it is what
+    separates an intended row transition from an incidental write.
     """
     source = code_of(CHECKS / "busy_worker_stays_ready.py")
 
-    assert "client.get_run(accepted.run.run_id).orchestration" in source, (
-        "the row never reads the orchestration record a claim is written to"
+    assert "EXPECTED_UPDATES = 1" in source, "the row does not state how much its sync is allowed to write"
+    for forbidden in ("'create': 0", "'delete': 0"):
+        assert forbidden in source, f"the row permits a write it never planted: {forbidden}"
+
+
+def test_only_the_busy_worker_row_is_given_a_writable_control_mount() -> None:
+    """The gate's one writable channel into a check belongs to the row that needs it.
+
+    `check` mounts everything read-only. A control directory handed to every
+    check would be a writable mount this gate could no longer argue about, and
+    row 2 asserts that nothing is mounted from outside the bundle.
+    """
+    body = executable_lines()
+
+    assert "coordinated_check()" in body, "there is no row-owned coordinated check"
+    generic = body[body.index("check() {") : body.index("destination_check() {")]
+    assert "/control" not in generic, "every check is given the row's writable control mount"
+
+
+def test_the_driver_stops_only_the_worker_parent_and_only_once_it_is_executing() -> None:
+    """`docker pause` freezes the child too, and a frozen child is not executing.
+
+    The property is that a worker with work *in hand* stays live, so the run has
+    to keep running while its parent cannot claim another. `docker kill --signal
+    STOP` reaches PID 1 only, which is the worker parent; the flow runs as a
+    separate child process (`ProcessWorker`: "Execute flow runs as subprocesses
+    on a worker"), so it keeps running and keeps its claim.
+    """
+    body = function_body("row_status")
+
+    assert "docker kill --signal STOP" in body, "the driver does not stop the worker parent"
+    assert "docker pause" not in body.split("busy worker leaves the deployment READY")[0], (
+        "the row freezes the child with the parent, so nothing is executing when the queue is read"
     )
-    assert "attempt.claimed_at is not None and attempt.terminal_at is None" in source, (
-        "the row does not define execution as a claim that has not ended"
+    assert body.index("await_control executing") < body.index("docker kill --signal STOP"), (
+        "the worker parent is stopped before the check has proven a run is executing"
+    )
+    assert body.index("docker kill --signal STOP") < body.index("stopped"), (
+        "the driver answers the check before it has stopped anything"
     )
 
-    ordered = ("await_execution(client, claimed)", "queued = client.plan(")
-    for step in ordered:
-        assert step in source, f"the row never reaches `{step}`, so it proves no order between its two runs"
-    assert source.index(ordered[0]) < source.index(ordered[1]), "the second run is submitted before the first executes"
 
-    for reproven in ("if not executing(attempt_of(client, running)):", "if attempt_of(client, waiting).claimed_at"):
-        assert reproven in source, f"the queued observation never re-proves `{reproven}`"
+def test_every_wait_taken_while_the_guard_is_held_expires_before_the_products_own_clocks() -> None:
+    """Three thirty-second clocks start when the first run is claimed.
 
-    assert "CLAIM_TIMEOUT_SECONDS" in source, "an unbounded wait for a claim that may never be recorded"
+    The guard's `lock_timeout` (`apply_guard.py` DEFAULT_DEADLINE_SECONDS = 30),
+    the liveness stall threshold (`liveness.py` `max(3 * query, 30)` = 30) and the
+    live-worker freshness window (`service.py` `max(3 * heartbeat, 30)` = 30) each
+    end the state this row observes, and the first ends it by failing the run. A
+    wait that outlives them would turn a coordination failure into a product
+    verdict -- the row would report a stalled or contended run instead of the
+    driver never having answered.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+    held = re.search(r"HELD_TIMEOUT_SECONDS = ([0-9.]+)", source)
+    assert held, "the row does not name the bound it waits under while holding the key"
+    assert float(held.group(1)) < 30, "the row waits past the product clocks that end the state it is observing"
+
+    body = executable_lines()
+    driver_bound = re.search(r"ROW6_HELD_TIMEOUT=([0-9]+)", body)
+    assert driver_bound, "the driver does not bound its wait while the worker parent is stopped"
+    assert int(driver_bound.group(1)) < 30, "the driver waits past the clocks that end the state it stopped for"
+    assert 'await_control observed "$ROW6_HELD_TIMEOUT"' in body, "the held wait does not use the held bound"
+
+
+def test_the_backgrounded_row_six_check_is_tracked_by_its_exact_identity() -> None:
+    """`owned_resources` cannot see it, so teardown would call a host clean that is not.
+
+    This is the only check the gate backgrounds, so it is the only one that can
+    outlive its row. A `docker run` check carries none of the deployment's
+    instance labels, which is what every other removal is keyed on -- so this one
+    is named, and the name is what teardown removes. Nothing broader: an
+    unlabelled-container sweep would reach containers this gate does not own.
+    """
+    body = executable_lines()
+
+    assert '--name "$ROW6_CHECK_CONTAINER"' in body, "the backgrounded check container has no identity to remove"
+    assert "ROW6_CHECK_CONTAINER=clean-host-row6-$INSTANCE" in body, "its name is not tied to this deployment"
+
+    stopper = function_body("stop_row6_check")
+    assert 'docker rm --force "$ROW6_CHECK_CONTAINER"' in stopper, "nothing removes the backgrounded container"
+    assert 'wait "$ROW6_CHECK_PID"' in stopper, "the backgrounded process is never reaped"
+    assert "stop_row6_check" in function_body("cleanup"), "teardown does not stop a check its row may have left"
+
+
+def test_the_busy_worker_rows_finally_cannot_replace_the_refusal_it_is_reporting() -> None:
+    """A control directory that cannot be written is not this row's verdict to give.
+
+    The refusal already raised is. An exception out of the last handshake would
+    replace a sentence about the deployment with one about the harness, and the
+    driver's own bound already covers the state never arriving.
+    """
+    source = code_of(CHECKS / "busy_worker_stays_ready.py")
+    tree = ast.parse(source)
+
+    final = next(node for node in ast.walk(tree) if isinstance(node, ast.Try) and node.finalbody)
+    unparsed = "\n".join(ast.unparse(node) for node in final.finalbody)
+    assert "suppress(OSError)" in unparsed, "a failed control write would replace the refusal being reported"
+    assert "signal_driver('done')" in unparsed
+
+
+def test_the_row_six_stop_is_required_rather_than_best_effort() -> None:
+    """A signal that did not land leaves the parent claiming, and the row asserts anyway.
+
+    The check submits its second run as soon as the driver says the parent is
+    stopped. If that answer can be given after a failed signal, the property is
+    asserted against a deployment nothing was holding open -- the exact vacuous
+    pass this row exists to exclude. Only the resume in the trap may be
+    best-effort, because there the alternative is a worker left stopped.
+    """
+    row = function_body("row_status").replace("\\\n", " ")
+    stopping = next(line for line in row.splitlines() if "docker kill --signal STOP" in line)
+
+    assert "|| true" not in stopping, "a failed stop is swallowed and the row asserts against a claiming parent"
+    assert "|| fail" in stopping, "a failed stop has no named refusal"
+    assert row.index("docker kill --signal STOP") < row.index("$ROW6_CONTROL/stopped"), (
+        "the driver answers the check before it has stopped anything"
+    )
+
+
+def test_row_six_resumes_and_answers_the_check_whatever_the_observation_did() -> None:
+    """A timed-out observation must not leave the check holding the key for its own bound.
+
+    If the driver resumes but never answers, the check waits its whole bound
+    while the guard is still held, and the product's thirty-second clocks reach
+    its first run first -- so the run is reported stalled or contended and the
+    coordination failure is never the diagnosis. The resume and the answer
+    therefore sit outside the branch, and the timeout gets its own sentence.
+    """
+    row = function_body("row_status")
+    conditional = row[row.index('if await_control observed "$ROW6_HELD_TIMEOUT"; then') :]
+    branch = conditional[: conditional.index("fi")]
+
+    assert "resume_worker" not in branch, "the worker is resumed only when the observation arrived"
+    assert "resumed" not in branch, "the check is answered only when the observation arrived"
+    assert branch.count("row6_observed=") == 2, "the branch does not record both outcomes"
+
+    after = conditional[conditional.index("fi") :]
+    assert after.index("resume_worker") < after.index("$ROW6_CONTROL/resumed"), (
+        "the check is answered before the resume"
+    )
+    assert "row6_observed" in row[row.index("$ROW6_CONTROL/resumed") :], "a timed-out observation is never reported"
+    assert "the check never reported reading the deployment's status" in row, "the driver timeout has no sentence"
+
+
+def test_a_resume_that_did_not_land_is_reported_and_keeps_custody_of_the_parent() -> None:
+    """Answering the check on a failed resume is worse than failing the row.
+
+    The check is waiting on that answer to release its write guard. Told the
+    parent resumed when it did not, it drops the key against a deployment that
+    still cannot finish either run, and then hangs in settlement instead of
+    reporting anything. And clearing the container out of `ROW6_WORKER` on a
+    failed signal discards the only identity anything holds for it, so the trap
+    could no longer try again.
+    """
+    resumer = function_body("resume_worker")
+
+    assert "|| true" not in resumer, "the resume swallows its own failure"
+    assert "return 1" in resumer, "the resume cannot report that the parent is still stopped"
+    lines = [line.strip() for line in resumer.splitlines()]
+    guarded = lines.index('if docker kill --signal CONT "$ROW6_WORKER" >/dev/null 2>&1; then')
+    closed = lines.index("fi", guarded)
+    cleared = [index for index, line in enumerate(lines) if line == "ROW6_WORKER="]
+    assert cleared, "the resume never releases custody, so it can never succeed"
+    # Inside the branch the signal succeeded in, not merely after it: a clear
+    # anywhere below the `fi` runs on the failure path too.
+    assert all(guarded < index < closed for index in cleared), "custody is dropped even when the parent stayed stopped"
+
+    row = function_body("row_status").replace("\\\n", " ")
+    answered = row.index("$ROW6_CONTROL/resumed")
+    before = [line for line in row[:answered].splitlines() if "resume_worker" in line]
+    assert before, "nothing resumes the parent before the check is told it resumed"
+    assert "|| fail" in before[-1], "the check is told the parent resumed without proving that it did"
+
+    assert "resume_worker || true" in function_body("cleanup"), (
+        "a resume that cannot land stops teardown from reaching the deployment it must remove"
+    )
+
+
+def test_the_driver_resumes_the_worker_parent_on_every_path_out_of_row_six() -> None:
+    """A worker left stopped makes every later row wait on a deployment that cannot answer.
+
+    Including the trap: row 7 restarts this deployment and row 8 kills a worker
+    mid-write, and both begin by expecting one that answers. A resume that only
+    runs on the happy path would turn one row's failure into every later row's.
+    """
+    body = executable_lines()
+
+    assert "resume_worker()" in body, "the driver has no way to resume the parent it stopped"
+    assert "docker kill --signal CONT" in function_body("resume_worker"), "resume_worker does not resume anything"
+
+    cleanup = function_body("cleanup")
+    assert "resume_worker" in cleanup, "the teardown trap does not resume a worker the row may have stopped"
+
+    row = function_body("row_status")
+    assert row.count("resume_worker") >= 2, "row 6 resumes the parent on one path only"
 
 
 @pytest.mark.parametrize("row", ["row_cold_start_and_idempotence", "row_restart", "row_alpha_replacement"])

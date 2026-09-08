@@ -4,76 +4,117 @@ Deployment-level readiness is about whether the worker is answering, so a run in
 flight must not move it: an operator who saw a deployment reported unhealthy here
 would restart a healthy one in the middle of its own work.
 
-The precondition and the property are asserted apart, and this row has been wrong
-in both directions for the same reason. Demanding `ready` would fail a deployment
-that is working; accepting `ready` passes one whose worker never took the run at
-all, because `plan` returns on acceptance and says nothing about what claimed it.
-
 What the deployment calls `busy` is a positive scheduled queue depth --
 `service.py` derives the state as `"busy" if snapshot.queue_depth > 0` over the
-runs Prefect still reports as scheduled -- and not a worker mid-execution. So one
-submitted run is off that queue as soon as the single worker claims it, and a row
-that submits one and polls for `busy` is polling for a sub-second interval.
+runs Prefect still reports as scheduled -- and not a worker mid-execution. The
+shipped bundle runs one worker with no concurrency limit, so it claims every run
+it sees on its next poll. Both halves of "a run executing with another queued
+behind it" are therefore intervals, and an earlier version of this row lost that
+race by two tenths of a second.
 
-Two runs submitted together do not fix that on their own: both can sit scheduled
-with nothing executing, and `live_workers` would not say otherwise, because it
-counts heartbeats rather than work. What separates a queue behind a working
-deployment from a queue behind an idle one is the claim the flow records for
-itself. `claim_execution` is called from inside the worker's own process, before
-any configuration or adapter work begins, so a recorded `claimed_at` is a worker
-running that run.
+Neither half is sampled here. Both are held open, by this row, for exactly as
+long as it needs them:
 
-The order is therefore the evidence. One run is submitted and proven claimed and
-unfinished; only then is a second submitted, which has nowhere to go but the
-queue; and the deployment's own account of itself is read while the first is
-re-proven still executing and the second re-proven still waiting.
+* The first run is a real `sync`, and this row takes the deployment's own
+  configuration write guard before submitting it. `flow.py` claims the execution
+  (`_claim_current_execution`) and only then enters `_configuration_write_guard`,
+  so the run is claimed and then blocks on a key this row holds. It is executing
+  because nothing lets it finish, not because the workload is slow. The guard is
+  taken through the product's own `hold_apply_guard`, so the key contended on is
+  the same one the flow derives rather than a copy that could drift.
 
-Both halves of the queue reading come from one snapshot. A `queue_depth` taken
-before the claim and a `live_workers` taken after it describe two different
-moments, and no single moment they jointly describe need ever have existed.
+* The second run stays scheduled because the driver stops the worker's parent
+  process while this row waits. `docker kill --signal STOP` reaches PID 1 only;
+  the flow runs as a separate child process, so the first run keeps running and
+  keeps its claim while the parent can no longer claim anything.
+
+The two sides meet through a control directory this row alone is given. Every
+handshake waits for a state that stays true once it is true, so no step samples
+for a moment it could miss.
+
+The `sync` writes. Row 5 plants a difference and reverts only the schema it
+drifted, so the two sides still differ when this row runs, and this run converges
+exactly that one update. The count is asserted rather than tolerated: an
+unasserted write is the thing this gate exists to catch.
 """
 
 from __future__ import annotations
 
+import pathlib
 import time
+from contextlib import suppress
 from typing import TYPE_CHECKING
 
-from kit import deployment, follow, key, refuse, run_request
+from kit import ACTIONS, bundled, create_run, deployment, follow, key, refuse
+
+from infrahub_sync.service.apply_guard import hold_apply_guard
+from infrahub_sync.service.storage import service_guard_secrets, service_guard_session
 
 if TYPE_CHECKING:
     from infrahub_sync.client import SyncClient
-    from infrahub_sync.client.models import OrchestrationSummary, RunResource, WorkerStatusResource
+    from infrahub_sync.client.models import OrchestrationSummary, PublicRunResource, RunResource, WorkerStatusResource
 
-# A claim crosses the worker's own scheduled-run poll, which the deployment sets
-# with `PREFECT_WORKER_QUERY_SECONDS`, and then a process start. A bound rather
-# than a wait: a run nothing ever claims is a failure of this row's setup.
+# The only writable path this check is given. The driver creates it for this row
+# and removes it with the row; no other check receives one.
+CONTROL = pathlib.Path("/control")
+
+# Each wait is for a file that stays written once written, so these bound a
+# partner that has died rather than an interval that might be missed.
+#
+# Every one of them runs while the first run is blocked on the key this row
+# holds, and three product clocks are already running from the moment that run
+# was claimed: the guard's own `lock_timeout` (`apply_guard.py`
+# DEFAULT_DEADLINE_SECONDS = 30), the liveness stall threshold
+# (`max(3 * worker query, 30)` = 30), and the live-worker freshness window
+# (`max(3 * heartbeat, 30)` = 30). Each one ends the state this row exists to
+# observe, and the first of them ends it by failing the run. So this bound is not
+# a comfort margin -- it has to expire, release the key and let the driver resume
+# the parent with time to spare, which is why it is well under thirty rather than
+# near it. Nothing product-side is tuned to accommodate it.
+HELD_TIMEOUT_SECONDS = 20.0
+HELD_POLL_SECONDS = 1.0
+
+# A claim crosses the worker's scheduled-run poll and a process start.
 CLAIM_TIMEOUT_SECONDS = 180.0
 CLAIM_POLL_SECONDS = 2.0
-
-# The second run is queued from the moment it is accepted, and stays queued until
-# the same poll comes round again. Bounded for the same reason.
-QUEUE_TIMEOUT_SECONDS = 120.0
-QUEUE_POLL_SECONDS = 2.0
 
 # What the deployment's own lifecycle command treats as a live worker, and
 # therefore as READY. `busy` belonging to this set is the property.
 LIVE = {"ready", "busy"}
 
+# What row 5 left behind: one planted attribute value on the source branch, whose
+# schema it reverted and whose value it did not.
+EXPECTED_UPDATES = 1
+
+
+def signal_driver(name: str) -> None:
+    """Record one state for the driver, which is watching for exactly this name."""
+    (CONTROL / name).write_text("", encoding="utf-8")
+
+
+def await_driver(name: str, sentence: str) -> None:
+    """Block until the driver records one state, or refuse with what did not happen.
+
+    Expiring here is a statement about the driver, not about the deployment, and
+    it has to happen early enough that the key is released and the worker parent
+    resumed before the product's own thirty-second clocks reach the first run.
+    """
+    deadline = time.monotonic() + HELD_TIMEOUT_SECONDS
+    while not (CONTROL / name).exists():
+        if time.monotonic() >= deadline:
+            refuse(f"{sentence} within {HELD_TIMEOUT_SECONDS:.0f}s, so this row released the key and gave up")
+        time.sleep(HELD_POLL_SECONDS)
+
 
 def attempt_of(client: SyncClient, accepted: RunResource) -> OrchestrationSummary:
-    """Return the newest orchestration attempt the deployment records for one run.
-
-    Newest by the attempt number the record carries, rather than by position: a
-    reconciled or resubmitted run has more than one, and the older ones describe
-    an execution that is over.
-    """
+    """Return the newest orchestration attempt the deployment records for one run."""
     recorded = client.get_run(accepted.run.run_id).orchestration
     if not recorded:
         refuse(f"the deployment records no orchestration attempt for run {accepted.run.run_id}")
     return max(recorded, key=lambda attempt: attempt.attempt)
 
 
-def executing(attempt: OrchestrationSummary) -> bool:
+def claimed_and_running(attempt: OrchestrationSummary) -> bool:
     """Answer whether a worker holds one attempt and has not finished it."""
     return attempt.claimed_at is not None and attempt.terminal_at is None
 
@@ -81,19 +122,18 @@ def executing(attempt: OrchestrationSummary) -> bool:
 def await_execution(client: SyncClient, accepted: RunResource) -> None:
     """Block until a worker is executing one accepted run.
 
-    A precondition, not the property: expiring here says no worker ever took the
-    run, which is a statement about this row's setup rather than about what a
-    deployment reports while its worker works.
+    Bounded, but not a race: the guard this row holds is what the run blocks on,
+    so once the state is reached it lasts until this row gives the key up.
     """
     deadline = time.monotonic() + CLAIM_TIMEOUT_SECONDS
     while True:
         attempt = attempt_of(client, accepted)
-        if executing(attempt):
+        if claimed_and_running(attempt):
             return
         if attempt.terminal_at is not None:
             refuse(
-                f"the first run ended {attempt.terminal_state}/{attempt.terminal_outcome} before a second"
-                " was submitted, so nothing was ever queued behind a worker that was executing"
+                f"the first run ended {attempt.terminal_state}/{attempt.terminal_outcome} without ever blocking"
+                " on the write guard this row holds, so nothing was executing to queue anything behind"
             )
         if time.monotonic() >= deadline:
             refuse(
@@ -103,14 +143,14 @@ def await_execution(client: SyncClient, accepted: RunResource) -> None:
         time.sleep(CLAIM_POLL_SECONDS)
 
 
-def await_queued_work(client: SyncClient, running: RunResource, waiting: RunResource) -> WorkerStatusResource:
-    """Return the one snapshot reporting queued work behind a still-executing run.
+def await_qualifying_snapshot(client: SyncClient, running: RunResource, waiting: RunResource) -> WorkerStatusResource:
+    """Return the one snapshot proving queued work behind a still-executing run.
 
-    The two re-proofs are taken at the reading, not before it: a first run that
-    finished, or a second that was claimed, in the interval before the snapshot
-    would leave a queue depth this row had nothing to do with.
+    Both re-proofs are taken at the qualifying reading rather than before it: a
+    first run that ended, or a second that was claimed, in the interval before the
+    snapshot would leave a queue depth this row had nothing to do with.
     """
-    deadline = time.monotonic() + QUEUE_TIMEOUT_SECONDS
+    deadline = time.monotonic() + HELD_TIMEOUT_SECONDS
     while True:
         worker = client.get_status().worker
         if (
@@ -120,41 +160,72 @@ def await_queued_work(client: SyncClient, running: RunResource, waiting: RunReso
             and worker.queue_depth >= 1
             and worker.live_workers >= 1
         ):
-            if not executing(attempt_of(client, running)):
+            if not claimed_and_running(attempt_of(client, running)):
                 refuse("the first run stopped executing as the queue was read, so nothing was queued behind work")
             if attempt_of(client, waiting).claimed_at is not None:
                 refuse("the second run was claimed as the queue was read, so neither of this row's runs was waiting")
             return worker
         if time.monotonic() >= deadline:
             refuse(
-                f"no snapshot within {QUEUE_TIMEOUT_SECONDS:.0f}s reported queued work and a live worker together"
-                f" -- the last one reported {worker.state!r}, so nothing here was observed about a working deployment"
+                f"no snapshot within {HELD_TIMEOUT_SECONDS:.0f}s reported queued work and a live worker"
+                f" together -- the last one reported {worker.state!r}, so nothing was observed about a working"
+                " deployment"
             )
-        time.sleep(QUEUE_POLL_SECONDS)
+        time.sleep(HELD_POLL_SECONDS)
 
 
-with deployment() as client:
-    # Two runs, and two mutation keys: one key submitted twice is a replay of the
-    # first run, which would leave the queue exactly as short as one submission.
-    request = run_request(client, "plan", "clean-host: keep a worker busy")
+def require_converged_drift(settled: PublicRunResource) -> None:
+    """Refuse a first run that wrote anything other than the drift row 5 left.
 
-    # Precondition, first half: a worker really is executing this run. Submitting
-    # both at once would leave the queue satisfiable by two runs nothing claimed.
-    claimed = client.plan(request, key("busy-claimed"))
-    await_execution(client, claimed)
+    Stated rather than bounded below. This row is the transition that converges
+    the difference row 5 planted, and a run that wrote more than that is writing
+    something nobody planted -- which a qualification gate should catch.
+    """
+    written = {action: int(settled.summary.get(action, 0)) for action in ACTIONS}
+    if written != {"create": 0, "update": EXPECTED_UPDATES, "delete": 0}:
+        refuse(f"the first sync wrote {written}, not the single update row 5 left for it to converge")
 
-    # Second half: a run behind the one being executed. With a single worker
-    # already occupied, this is what the deployment's queue depth is counting.
-    queued = client.plan(request, key("busy-queued"))
-    worker = await_queued_work(client, claimed, queued)
 
-    # Property: with that work in hand, the deployment still reports a live
-    # worker. `no-live-worker` is what an operator would act on.
-    if worker.state not in LIVE:
-        refuse(f"a worker with a run in hand left the deployment reporting {worker.state!r}")
+try:
+    with deployment() as client:
+        config_id, registry_version = bundled(client)
+        write = create_run("sync", config_id=config_id, registry_version=registry_version, reason="clean-host: busy")
+        read = create_run("plan", config_id=config_id, registry_version=registry_version, reason="clean-host: queued")
 
-    # Settled here, so this row hands the rows after it a deployment with nothing
-    # in flight: the next one waits for READY, which a queue of this row's making
-    # would hold open.
-    follow(client, claimed)
-    follow(client, queued)
+        # The key the flow will contend on, taken through the product's own hold so
+        # it is derived once. Released by the `with`, on the exception path too.
+        with hold_apply_guard(config_id, connect=service_guard_session, secrets=service_guard_secrets()):
+            executing_run = client.sync(write, key("busy-executing"))
+            await_execution(client, executing_run)
+
+            # Only now: the driver stops the worker's parent so the next run has
+            # nowhere to go but the queue. Announced after the proof, not before.
+            signal_driver("executing")
+            await_driver("stopped", "the driver never reported stopping the worker parent")
+
+            queued_run = client.plan(read, key("busy-queued"))
+            worker = await_qualifying_snapshot(client, executing_run, queued_run)
+
+            # Property: with that work in hand, the deployment still reports a live
+            # worker. `no-live-worker` is what an operator would act on.
+            if worker.state not in LIVE:
+                refuse(f"a worker with a run in hand left the deployment reporting {worker.state!r}")
+
+            signal_driver("observed")
+            await_driver("resumed", "the driver never reported resuming the worker parent")
+
+        # Outside the hold, because both runs need the key this row was holding.
+        require_converged_drift(follow(client, executing_run).run)
+        follow(client, queued_run)
+finally:
+    # Said on every path, including a refusal: a driver still waiting for a state
+    # this check will never reach would wait out its whole bound before resuming
+    # a worker it stopped.
+    #
+    # Suppressed on failure, and only here. A control directory that cannot be
+    # written is not this row's verdict to give -- the refusal already raised is,
+    # and an exception from this line would replace it with a filesystem error
+    # about the harness. The driver's own bound is what covers the state never
+    # arriving, which is exactly the case this cannot report.
+    with suppress(OSError):
+        signal_driver("done")
