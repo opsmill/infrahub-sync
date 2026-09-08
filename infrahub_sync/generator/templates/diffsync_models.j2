@@ -35,12 +35,12 @@ class {{ nodekind }}(_ModelBaseClass):
 
 {%-      for attr in node.attributes -%}
 {%-          if config | has_field(node.kind, attr.name) %}
-    {{ attr.name }}: {{ attr | get_kind }}
+    {{ attr.name }}: {{ attr | get_attribute_type_annotation }}
 {%-          endif -%}
 {%-      endfor -%}
 {%-      for rel in node.relationships -%}
 {%-          if config | has_field(node.kind, rel.name) %}
-    {{ rel.name }}: {{ rel | get_kind }}
+    {{ rel.name }}: {{ rel | get_relationship_type_annotation }}
 {%-          endif -%}
 {%-      endfor %}
 
