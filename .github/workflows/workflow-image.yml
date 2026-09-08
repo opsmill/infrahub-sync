@@ -9,6 +9,18 @@ on:
         required: false
         default: "ubuntu-22.04"
         type: string
+      # Which route a run takes. A pull request from a fork gets a read-only
+      # token whatever this workflow asks for, so a fork run that uploaded the
+      # handoff could not delete it and would fail its own cleanup on a 403. It
+      # therefore produces no handoff at all: it still builds both platforms,
+      # scans, smokes, and qualifies the Compose lifecycle from the source tree.
+      # False by default, because that is the route a caller who says nothing
+      # should inherit.
+      same-repository:
+        description: "Whether the head being built lives in this repository"
+        required: false
+        default: false
+        type: boolean
 
 # `github.workflow` is the caller's name inside a reusable workflow, so a group
 # built from it alone is shared with every sibling the same caller starts and
@@ -122,6 +134,7 @@ jobs:
       # `CLEAN_HOST_CANDIDATE`: the qualified platform's image, the bundle, and
       # the checksum it verifies the bundle against before extracting it.
       - name: "Stage the exact bytes a clean host consumes"
+        if: ${{ inputs.same-repository }}
         run: |
           set -euo pipefail
           mkdir -p .release/handoff
@@ -131,6 +144,7 @@ jobs:
       # Before the reclaim below, which is what removes the file being staged.
       # arm64's copy is gate input and stays behind.
       - name: "Hand the candidate bytes to the clean-host gate"
+        if: ${{ inputs.same-repository }}
         id: candidate-handoff
         uses: actions/upload-artifact@v4
         with:
@@ -154,6 +168,7 @@ jobs:
 
       # Evidence, not bundle: what the gate needs and an operator never sees.
       - name: "Hand the qualification kit to the clean-host gate"
+        if: ${{ inputs.same-repository }}
         id: qualification-kit
         uses: actions/upload-artifact@v4
         with:
@@ -167,6 +182,7 @@ jobs:
       # the two uploads, because it names what they returned; the window is the
       # fail-safe floor and not a period an approval may be taken against.
       - name: "Record what the service is holding"
+        if: ${{ inputs.same-repository }}
         run: |
           set -euo pipefail
           cat > .release/artifacts.json <<JSON
@@ -188,9 +204,11 @@ jobs:
       # What the driver reads its expectations out of: this candidate's tag and
       # version, its bundle, and the configuration digest it has to find loaded.
       - name: "Write the qualification record"
+        if: ${{ inputs.same-repository }}
         run: uv run --no-sync invoke release.qualify
 
       - name: "Hand the qualification record to the clean-host gate"
+        if: ${{ inputs.same-repository }}
         uses: actions/upload-artifact@v4
         with:
           name: infrahub-sync-qualification-record
@@ -218,6 +236,9 @@ jobs:
   clean-host:
     name: "Clean-host qualification (linux/amd64, no checkout)"
     needs: ["image"]
+    # Nothing was handed to it on a fork route, so there is nothing to qualify
+    # here. What a fork run qualified is the lifecycle in the job above.
+    if: ${{ inputs.same-repository }}
     runs-on: "ubuntu-22.04"
     timeout-minutes: 90
     steps:
@@ -263,13 +284,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: ${{ env.DIAGNOSTIC_RETENTION_DAYS }}
 
-  # Where the handoff stops existing. It runs whatever the two jobs above
-  # concluded, because a failed row, a skipped gate and a cancelled run leave the
-  # same bytes behind as a passing one.
+  # Where the handoff stops existing.
   handoff-cleanup:
     name: "Delete this run's handoff and prove the run holds none of it"
     needs: ["image", "clean-host"]
-    if: always()
+    # `always()` because a failed row, a skipped gate and a cancelled run leave
+    # the same bytes behind as a passing one; and the guard because a fork route
+    # created none of them and holds no token that could delete one.
+    if: ${{ always() && inputs.same-repository }}
     runs-on: "ubuntu-22.04"
     timeout-minutes: 10
     # Scoped here: at the workflow level every step of the build, of the gate and

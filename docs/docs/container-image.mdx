@@ -188,6 +188,18 @@ run; a last job then reads the run back and fails it if any candidate, kit or
 record is still held. A completed run that succeeded holds none of them. Only a
 failed row's swept diagnostic stays, and for seven days.
 
+This gate runs on a head in a fork too, and there it takes a different route.
+GitHub gives a pull request from a fork a read-only token whatever a workflow
+asks for, so such a run could upload the three artifacts and then be unable to
+delete them. It therefore produces no handoff at all: it still builds both
+platforms, records the digests, generates the bills of materials, enforces the
+vulnerability policy, smokes both images, and qualifies the Compose lifecycle
+from the tree it checked out — and the checkout-free matrix below, which needs a
+candidate handed to it, runs for a head in this repository. The route is one
+boolean the calling workflow derives from whether the head's repository is this
+one; nothing is reported as skipped, because the jobs that would do the handing
+do not exist on that route.
+
 The driver and its checks travel in the qualification kit, beside the pinned
 destination the managed rows converge against. None of that is bundle content: an
 operator receives the deployment bundle and nothing from the kit.

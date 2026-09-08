@@ -43,3 +43,12 @@ jobs:
       packages: read
       actions: write
     uses: ./.github/workflows/workflow-image.yml
+    # A pull request whose head lives in a fork gets a read-only token whatever
+    # the gate asks for, so it takes the route that produces no handoff. Every
+    # other way in here — a dispatch, and a push to a `renovate/**` branch — is
+    # this repository's own head by construction, which is why the comparison is
+    # only made for a pull request rather than assumed to be false without one.
+    with:
+      same-repository: >-
+        ${{ github.event_name != 'pull_request'
+            || github.event.pull_request.head.repo.full_name == github.repository }}

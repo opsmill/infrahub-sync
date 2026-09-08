@@ -129,6 +129,24 @@ DIAGNOSTIC_WINDOW = "${{ env.DIAGNOSTIC_RETENTION_DAYS }}"
 ARTIFACT_ENDPOINT = "actions/artifacts"
 RUN_ENDPOINT = "actions/runs"
 
+# The one input that decides whether this run may hand bytes between two jobs at
+# all, and the token every stage and job that does so has to name in its `if`.
+# A fork's token is read-only whatever a workflow asks for, so a fork run
+# produces no handoff rather than producing one it cannot delete.
+HANDOFF_INPUT = "same-repository"
+HANDOFF_GUARD = f"inputs.{HANDOFF_INPUT}"
+# What marks a step as producing or describing the handoff: it stages the bytes,
+# writes what the service is holding, writes the record read from them, or
+# uploads one of the three artifacts.
+HANDOFF_MARKERS = (".release/handoff", ".release/artifacts.json", "invoke release.qualify")
+# The qualification a fork keeps. None of these may be behind the guard, or a
+# fork pull request stops building, scanning, smoking and running the lifecycle.
+UNGUARDED_TASKS = ("release.kit", "image.build", "image.scan", "image.smoke", "compose.lifecycle")
+# How the caller tells this gate which route a run takes. Compared as text
+# rather than evaluated: this suite reads declarations, and a workflow-expression
+# evaluator is a second implementation of GitHub.
+TRUST_COMPARISON = "github.event.pull_request.head.repo.full_name == github.repository"
+
 
 def load(path: Path) -> dict:
     """Return one parsed workflow document."""
@@ -681,7 +699,7 @@ def test_the_cleanup_job_follows_every_job_that_uploads_or_reads_a_handoff() -> 
 
     assert uploading, f"{IMAGE_WORKFLOW.name} uploads no handoff, so this proves nothing"
     assert uploading | {CLEAN_HOST_JOB} <= set(_needs(job)), f"{CLEANUP_JOB} waits for {sorted(_needs(job))}"
-    assert str(job.get("if", "")).strip() == "always()"
+    assert "always()" in str(job.get("if", ""))
 
 
 def test_the_cleanup_job_deletes_each_named_artifact_and_never_the_run() -> None:
@@ -743,9 +761,77 @@ def test_no_candidate_artifact_outlives_a_completed_run_on_the_v3_line() -> None
         and not [
             name
             for name, definition in jobs(workflow).items()
-            if job in _needs(definition) and str(definition.get("if", "")).strip() == "always()"
+            if job in _needs(definition) and "always()" in str(definition.get("if", ""))
         ]
     ]
 
     assert candidates(), WORKFLOWS
     assert uncovered == [], f"{len(uncovered)} candidate uploads outlive their run: {uncovered}"
+
+
+def handoff_steps(job: str) -> list[dict]:
+    """Return every step of one job that produces or describes the handoff."""
+    return [
+        step
+        for step in image_job(job)["steps"]
+        if any(marker in str(step.get("run", "")) for marker in HANDOFF_MARKERS)
+        or str((step.get("with") or {}).get("name", "")).startswith(CANDIDATE_ARTIFACTS)
+    ]
+
+
+def test_the_gate_takes_one_input_and_assumes_the_untrusted_route_without_it() -> None:
+    """A caller that says nothing gets the route that produces no handoff.
+
+    The default is what a new caller inherits, so it is the fork route: a run
+    that builds, scans, smokes and qualifies the lifecycle, and hands nothing to
+    a second job it could not then delete.
+    """
+    declared = triggers_of(IMAGE_WORKFLOW)["workflow_call"]["inputs"][HANDOFF_INPUT]
+
+    assert declared["type"] == "boolean"
+    assert declared["default"] is False
+
+
+def test_every_stage_that_produces_the_handoff_is_behind_the_trust_guard() -> None:
+    """A fork's token is read-only, so a fork that uploads a handoff cannot delete it."""
+    producers = handoff_steps("image")
+
+    assert len(producers) == len(HANDOFF_MARKERS) + len(CANDIDATE_ARTIFACTS) + 1, producers
+    for step in producers:
+        assert HANDOFF_GUARD in str(step.get("if", "")), f"{_step_name(step)!r} runs on a fork"
+
+
+@pytest.mark.parametrize("job", [CLEAN_HOST_JOB, CLEANUP_JOB])
+def test_both_jobs_that_consume_or_delete_the_handoff_are_behind_the_guard(job: str) -> None:
+    """Neither has anything to do on a fork, and the second would fail on a 403."""
+    assert HANDOFF_GUARD in str(image_job(job).get("if", "")), f"{job} runs on a fork"
+
+
+@pytest.mark.parametrize("task", UNGUARDED_TASKS)
+def test_the_qualification_a_fork_still_runs_is_not_behind_the_guard(task: str) -> None:
+    """Routing the handoff by trust is not permission to stop qualifying a fork.
+
+    Without this the guard could be moved up the job and satisfy every case
+    above while a fork pull request built nothing and ran no lifecycle.
+    """
+    running = [step for step in image_job("image")["steps"] if task in str(step.get("run", ""))]
+
+    assert running, f"no step of the image job runs {task}"
+    for step in running:
+        assert HANDOFF_GUARD not in str(step.get("if", "")), f"a fork no longer runs {task}"
+
+
+def test_the_caller_derives_the_route_from_the_head_repository() -> None:
+    """The input is only as good as what the caller puts in it.
+
+    Read as text, deliberately: evaluating the expression would mean
+    reimplementing GitHub's own context resolution inside this suite.
+    """
+    calling = [
+        job for caller in CALLERS for job in jobs(WORKFLOWS / caller).values() if called_workflow(job) == IMAGE_WORKFLOW
+    ]
+
+    assert calling, f"no caller reaches {IMAGE_WORKFLOW.name}"
+    for job in calling:
+        passed = str((job.get("with") or {}).get(HANDOFF_INPUT, ""))
+        assert TRUST_COMPARISON in passed, f"the image call derives {HANDOFF_INPUT} from {passed!r}"

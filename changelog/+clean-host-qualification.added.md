@@ -10,6 +10,12 @@ jobs, and it is not retention. The run deletes the candidate, the kit and the re
 name before it completes, and a final job fails the run if any of them is still held.
 Only a failed row's swept diagnostic remains, for seven days.
 
+A pull request from a fork takes a route that produces no handoff, because GitHub gives it
+a read-only token whatever the workflow asks for and it could not delete what it uploaded.
+Such a run still builds both platforms, records the digests, generates the bills of
+materials, enforces the vulnerability policy, smokes both images, and qualifies the Compose
+lifecycle from its checkout; the checkout-free matrix runs for a head in this repository.
+
 The driver states the host's shape rather than assuming it: refusing shims for `python`,
 `uv`, `pip`, `pytest`, and the product CLI sit ahead of `PATH` and record any invocation,
 and every container carrying the deployment's instance label is inspected for a bind source
