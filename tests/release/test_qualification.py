@@ -30,6 +30,9 @@ DIGESTS = {
 ARTIFACT_NAMES = ("infrahub-sync-candidate-bundle", "infrahub-sync-candidate-distributions")
 RETENTION_DAYS = 90
 
+# A configuration digest no candidate in this module was built for.
+FOREIGN = "sha256:" + "e" * 64
+
 
 def identity() -> release.ReleaseIdentity:
     return release.release_identity(version=VERSION, revision=COMMIT, created=COMMIT_TIME)
@@ -158,7 +161,7 @@ def test_a_gate_result_from_other_bytes_is_refused(candidate: Path, gate: str) -
     del candidate
     result = release.RESULTS_DIR / gate
     recorded = json.loads(result.read_text(encoding="utf-8"))
-    recorded["image"] = "sha256:" + "e" * 64
+    recorded["image"] = FOREIGN
     result.write_text(json.dumps(recorded), encoding="utf-8")
 
     with pytest.raises(release.ReleaseTaskError, match="qualified nothing"):
@@ -179,19 +182,56 @@ def test_a_result_from_other_bytes_beside_a_complete_set_is_left_out_of_the_reco
     read as a gate that faced these bytes.
     """
     del candidate
-    foreign = "sha256:" + "e" * 64
-    release.record_gate(gate, platform=platform, image=foreign, command="pytest")
+    release.record_gate(gate, platform=platform, image=FOREIGN, command="pytest")
 
     release.qualify(Context())
     recorded = written()["tests"]
 
-    assert foreign not in {result["image"] for result in recorded}
+    assert FOREIGN not in {result["image"] for result in recorded}
     # The three the required gates left, in gate-then-platform order.
     assert [(result["gate"], result["platform"]) for result in recorded] == [
         ("compose-lifecycle", "linux/amd64"),
         ("image-smoke", "linux/amd64"),
         ("image-smoke", "linux/arm64"),
     ]
+
+
+@pytest.mark.parametrize("field", release.RESULT_FIELDS)
+@pytest.mark.parametrize("value", [None, ""], ids=["absent", "empty"])
+def test_a_result_document_missing_any_field_is_refused_where_it_is_read(
+    candidate: Path, field: str, value: str | None
+) -> None:
+    """The refusal belongs to the reader, so no later line has to reach for a field.
+
+    `compose-lifecycle` on the platform that sorts first, because that is the one
+    document `qualify` used to index directly: without a rule here, a partial
+    write of it raised `KeyError: 'image'` from the completeness check instead of
+    this module's own refusal, and the other three fields had no rule at all.
+    """
+    del candidate
+    document = {"gate": "compose-lifecycle", "platform": "linux/amd64", "image": FOREIGN, "command": "pytest"}
+    if value is None:
+        del document[field]
+    else:
+        document[field] = value
+    (release.RESULTS_DIR / "compose-lifecycle-linux-amd64.json").write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(release.ReleaseTaskError, match=f"records no {field}"):
+        release.qualify(Context())
+
+
+def test_a_result_document_carries_nothing_into_the_record_beyond_what_it_is(candidate: Path) -> None:
+    """A field nobody wrote would otherwise be copied through into the record."""
+    del candidate
+    path = release.RESULTS_DIR / "compose-lifecycle-linux-amd64.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**document, "smuggled": "a value no record may carry"}), encoding="utf-8")
+
+    release.qualify(Context())
+    recorded = written()["tests"]
+
+    assert recorded, "no result reached the record at all"
+    assert {tuple(sorted(result)) for result in recorded} == {tuple(sorted(release.RESULT_FIELDS))}
 
 
 def test_a_candidate_without_a_vulnerability_report_is_refused(candidate: Path) -> None:
