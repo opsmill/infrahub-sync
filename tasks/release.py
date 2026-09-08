@@ -381,17 +381,30 @@ def read_results() -> dict[tuple[str, str], dict[str, str]]:
     return results
 
 
-def read_artifacts() -> dict[str, Any]:
-    """Return the identifiers the service gave the uploaded candidate artifacts.
+def read_artifacts(candidate: ReleaseIdentity) -> dict[str, Any]:
+    """Return the identifiers the service gave this candidate's uploaded artifacts.
 
     An approval is bound to bytes a service still holds, so the record carries
     what names them there and how long they last. A missing or partial entry is
     a refusal: promotion has nothing to check an artifact against without it.
+
+    The document names the candidate whose uploads it describes, and one naming
+    another candidate is refused rather than reused. Nothing rewrites this file
+    when a second candidate starts in the same workspace, so the identifiers the
+    first one uploaded stay readable — and merging those would bind an approval
+    of these bytes to bytes a service is holding under another release.
     """
     if not ARTIFACTS_FILE.is_file():
         msg = f"{ARTIFACTS_FILE} is missing; the candidate workflow writes it from what each upload returned"
         raise ReleaseTaskError(msg)
     document = identity_document(ARTIFACTS_FILE)
+    uploaded_for = identity_from(document.get("identity"), f"the identity in {ARTIFACTS_FILE}")
+    if uploaded_for != candidate:
+        msg = (
+            f"{ARTIFACTS_FILE} describes uploads of {uploaded_for.version} at {uploaded_for.revision}, "
+            f"not of this candidate; upload this candidate's artifacts and record what the service returned"
+        )
+        raise ReleaseTaskError(msg)
     retention = document.get("retention_days")
     if not isinstance(retention, int) or retention <= 0:
         msg = f"{ARTIFACTS_FILE} must record a positive retention_days covering the approval window"
@@ -554,7 +567,7 @@ def qualify(context: Context) -> None:
         },
         "scan": {"waivers_in_force": len(waivers), "platforms": scanned},
         "tests": [results[key] for key in sorted(results)],
-        **read_artifacts(),
+        **read_artifacts(identity),
     }
     QUALIFICATION_FILE.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f" - [{NAMESPACE}] Qualification record written to {QUALIFICATION_FILE}")

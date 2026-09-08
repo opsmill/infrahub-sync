@@ -13,8 +13,9 @@ candidate workflow, and nothing in the repository calls it yet. It writes one re
 linking the version, the source revision, the OCI index, each platform's manifest and
 configuration, the bundle checksum, the bills of materials, the vulnerability decision,
 and the gates that ran. It requires the service artifact record its caller writes — the
-identifiers, digests, and retention the artifact service returned for each upload — and
-refuses a candidate that qualified nothing. The pull-request workflow retains no
+identifiers, digests, and retention the artifact service returned for each upload, and
+the candidate those uploads describe — and refuses a candidate that qualified nothing or
+an artifact record naming a different candidate. The pull-request workflow retains no
 candidate, so the manual run that writes that record is a later change.
 
 Bills of materials and vulnerability reports are now named from the release identity, so

@@ -167,9 +167,15 @@ image digest it ran against.
 
 It also requires `.release/artifacts.json` — the artifact record its caller
 writes from what the service returned for each upload — so the record carries the
-identifiers, digests, and retention an approval is later bound to. Nothing writes
-that file on this branch, so running `release.qualify` locally refuses until you
-supply one. The manual run that produces it is a later unit.
+identifiers, digests, and retention an approval is later bound to.
+
+That document names the candidate whose uploads it describes, and one naming a
+different version, revision, or creation time is refused rather than reused.
+Nothing rewrites the file when a second candidate starts in the same workspace,
+so its identifiers would otherwise bind an approval of these bytes to bytes the
+service is holding under another release. Nothing writes that file on this
+branch, so running `release.qualify` locally refuses until you supply one. The
+manual run that produces it is a later unit.
 
 ## What publishes today
 
