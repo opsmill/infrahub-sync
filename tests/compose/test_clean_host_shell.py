@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import re
 import signal
+import stat
 import subprocess  # noqa: S404 - this suite exists to run the driver's own shell
 import time
 from pathlib import Path
@@ -549,3 +550,120 @@ def test_a_clean_row_six_reports_its_property(tmp_path: Path) -> None:
     assert answered.returncode == 0, answered.stderr
     assert "a busy worker leaves the deployment READY" in answered.stdout
     assert not answered.stderr
+
+
+# ---------------------------------------------------------------------------
+# Sharing a private directory with a container, on a host with no privileges
+# ---------------------------------------------------------------------------
+# A host directory cannot be given away to the candidate image's user: `chown`
+# needs privileges an ordinary account does not have, and the live matrix refused
+# exactly there — on a host doing precisely what a clean host does. So the
+# sharing goes the other way round, and this suite runs the driver's own code for
+# it against a `chown` that fails the way that host's did.
+def control_access_harness(work: Path, *, stubs: dict[str, str] | None = None) -> str:
+    """The driver's own control-directory narrowing, with whichever tools stubbed."""
+    stub = work / "bin"
+    stub.mkdir(exist_ok=True)
+    for name, body in (stubs or {}).items():
+        executable = stub / name
+        executable.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        executable.chmod(0o755)
+    return "\n".join(
+        [
+            "set -eu",
+            f"WORK={work}",
+            f'PATH="{stub}:$PATH"',
+            'fail() { echo "clean-host: $1" >&2; exit 1; }',
+            "CONTROL_GROUP=",
+            shell_function("establish_control_group"),
+            shell_function("narrow_control_access"),
+        ]
+    )
+
+
+def test_a_host_that_cannot_give_the_directory_away_can_still_share_it(tmp_path: Path) -> None:
+    """The live failure, run here: `chown` refused and the whole matrix ended in row 2.
+
+    An ordinary account cannot hand a directory to another user, and this gate
+    must not require one that can. What it can do is open the directory to a group
+    it is already a member of, and give that group to the containers that need it.
+    """
+    directory = tmp_path / "row8-control"
+    directory.mkdir()
+    script = "\n".join(
+        [
+            control_access_harness(
+                tmp_path,
+                stubs={"chown": 'echo "chown: $*: Operation not permitted" >&2\nexit 1'},
+            ),
+            f'narrow_control_access "{directory}" "row 8"',
+            'echo "narrowed"',
+        ]
+    )
+
+    answered = run_shell(script, work=tmp_path)
+
+    assert answered.returncode == 0, (
+        f"a host that cannot change ownership cannot share its own directory: {answered.stderr}"
+    )
+    assert "narrowed" in answered.stdout
+    assert "Operation not permitted" not in answered.stderr, (
+        "the narrowing still asks this host to give the directory away"
+    )
+
+    held = directory.stat()
+    assert stat.S_IMODE(held.st_mode) == 0o770, f"the directory is {stat.S_IMODE(held.st_mode):04o}, not 0770"
+    assert held.st_gid == os.getgid(), "the directory is not shared through a group this host is a member of"
+
+
+def test_the_directory_is_opened_to_one_group_and_to_nobody_else(tmp_path: Path) -> None:
+    """0770 is the point: the two writers, and no other account on the host."""
+    directory = tmp_path / "row6-control"
+    directory.mkdir(mode=0o700)
+    script = f'{control_access_harness(tmp_path)}\nnarrow_control_access "{directory}" "row 6"'
+
+    answered = run_shell(script, work=tmp_path)
+
+    assert answered.returncode == 0, answered.stderr
+    mode = stat.S_IMODE(directory.stat().st_mode)
+    assert mode & 0o007 == 0, f"the directory is open to every account on the host: {mode:04o}"
+    assert mode & 0o070 == 0o070, f"the directory is not writable by the group it is shared through: {mode:04o}"
+
+
+def test_a_group_this_host_cannot_name_ends_the_run(tmp_path: Path) -> None:
+    """A group that cannot be named numerically cannot be given to a container.
+
+    And the alternative -- opening the directory to everybody -- is not one this
+    gate takes. So it refuses, and says which of its two directories it was.
+    """
+    directory = tmp_path / "row8-control"
+    directory.mkdir()
+    script = "\n".join(
+        [
+            control_access_harness(tmp_path, stubs={"id": 'echo "staff"'}),
+            f'narrow_control_access "{directory}" "row 8"',
+        ]
+    )
+
+    answered = run_shell(script, work=tmp_path)
+
+    assert answered.returncode != 0, "a group this host could not name was used anyway"
+    assert "numeric primary group" in answered.stderr, answered.stderr
+    assert stat.S_IMODE(directory.stat().st_mode) != 0o777
+
+
+def test_a_group_that_could_not_be_established_is_not_answered_with_world_access(tmp_path: Path) -> None:
+    """The failure this gate will not resolve by widening: it refuses instead."""
+    directory = tmp_path / "row8-control"
+    directory.mkdir(mode=0o700)
+    script = "\n".join(
+        [
+            control_access_harness(tmp_path, stubs={"chgrp": "exit 1"}),
+            f'narrow_control_access "{directory}" "row 8"',
+        ]
+    )
+
+    answered = run_shell(script, work=tmp_path)
+
+    assert answered.returncode != 0, "a directory that could not be shared was used anyway"
+    assert stat.S_IMODE(directory.stat().st_mode) != 0o777, "the narrowing fell back to world access"

@@ -2529,13 +2529,16 @@ def test_a_control_directory_is_writable_by_the_candidates_user_and_nothing_else
     assert f'narrow_control_access "{directory}"' in prepared, (
         f"{preparer} leaves its control directory unwritable by the candidate's user"
     )
-    assert "CANDIDATE_UID=10001" in driver(), "the driver does not name the user the candidate image runs as"
-    assert 'chown "$CANDIDATE_UID:$CANDIDATE_UID" "$1"' in narrowing
+    assert "CANDIDATE_UID=10001" in driver(), "the driver does not name the identity those containers keep"
+    # Shared through a group rather than handed over: `chown` to another user needs
+    # privileges an ordinary account does not have, and the live matrix refused
+    # exactly there.
+    assert 'chgrp "$CONTROL_GROUP" "$1"' in narrowing
     assert "|| fail" in narrowing, "a control directory that could not be prepared is used anyway"
     # One directory per call, named by the caller: a mode applied to anything but
     # the argument would widen what this gate hands a container.
     for line in narrowing.splitlines():
-        if "chmod" in line or "chown" in line:
+        if "chmod" in line or "chgrp" in line:
             assert '"$1"' in line, f"a mode reaches beyond the directory it was given: {line.strip()}"
 
 
@@ -2914,7 +2917,7 @@ def test_no_control_directory_falls_back_to_being_world_writable(preparer: str) 
     prepared = function_body(preparer) + function_body("narrow_control_access")
 
     assert "0777" not in prepared, "the control directory falls back to being writable by every account"
-    assert '"$CANDIDATE_UID:$CANDIDATE_UID"' in prepared, "the candidate's user is not given access"
+    assert '"$CONTROL_GROUP"' in prepared, "the group the candidate's containers reach it through is not established"
     assert "|| fail" in prepared, "a directory that could not be narrowed is used anyway"
     assert "2>/dev/null" not in function_body("narrow_control_access"), (
         "the grant's own failure is hidden, which is how a fallback creeps back in"
@@ -3285,3 +3288,87 @@ def test_row_six_keeps_the_container_and_its_name_for_the_global_teardown() -> N
         "custody is given up for a container that was never accounted for"
     )
     assert "stop_row6_check" in function_body("cleanup"), "the teardown does not ask again about what the row kept"
+
+
+# ---------------------------------------------------------------------------
+# B8 — sharing the private directories without privileges this gate may not have
+# ---------------------------------------------------------------------------
+# The live matrix ended in row 2: `chown 10001:10001` on row 8's control
+# directory returned `Operation not permitted`, on a host doing exactly what a
+# clean host does. A gate that requires a privileged runner is a gate that
+# qualifies a deployment no clean host could reproduce.
+CONTROL_OWNERS = (("create_proxy_control", "$PROXY_CONTROL"), ("coordinated_check", "$ROW6_CONTROL"))
+# Every container this gate gives a control directory to, and therefore the only
+# ones that may be given the group it is shared through.
+CONTROL_READERS = ("start_destination_proxy", "row8_check", "coordinated_check")
+
+
+def test_no_control_directory_asks_this_host_to_give_it_away() -> None:
+    """`chown` to another user needs privileges an ordinary account does not have.
+
+    The sharing goes the other way instead: the directory stays with whoever
+    invoked this driver and is opened to that user's own group, and the
+    containers that must reach it are given that group.
+    """
+    body = executable_lines()
+    narrowing = function_body("narrow_control_access")
+
+    assert "chown" not in body, "this gate still requires a runner that can hand a directory to another user"
+    assert 'chgrp "$CONTROL_GROUP"' in narrowing, "the directory is not shared through a group"
+    assert "chmod 0770" in narrowing, "the directory is not opened to that group"
+    assert "0777" not in body, "a directory falls back to being writable by every account on the host"
+
+
+def test_the_group_the_directories_are_shared_through_is_this_hosts_own() -> None:
+    """Numeric, because the container has no idea what this host calls its groups.
+
+    And established once rather than per directory, so both are shared through
+    the same group and the containers need one supplementary group between them.
+    """
+    establishing = function_body("establish_control_group")
+
+    assert "id -g" in establishing, "the group is not the invoking user's own"
+    assert "*[!0-9]*" in establishing, "a group name that is not a number is used as though it were one"
+    assert "|| fail" in establishing or "fail " in establishing, "a group this host could not name is used anyway"
+    assert "numeric primary group" in establishing
+
+
+@pytest.mark.parametrize(("owner", "directory"), CONTROL_OWNERS)
+def test_each_control_directory_is_narrowed_through_the_one_helper(owner: str, directory: str) -> None:
+    """Two directories, one rule. A second spelling of it is a second thing to get wrong."""
+    prepared = function_body(owner)
+
+    assert f'narrow_control_access "{directory}"' in prepared, f"{owner} does not narrow its control directory"
+
+
+@pytest.mark.parametrize("creator", CONTROL_READERS)
+def test_a_container_that_reaches_a_control_directory_is_given_that_group(creator: str) -> None:
+    """A supplementary group, and exactly one: the directory's.
+
+    Its primary identity stays as the image ships it -- this gate does not decide
+    who the candidate runs as, and a run under another identity would be
+    qualifying something else.
+    """
+    created = function_body(creator)
+
+    assert '--group-add "$CONTROL_GROUP"' in created, f"{creator} cannot reach the directory it is given"
+    assert created.count("--group-add") == 1, f"{creator} is given more than the one group it needs"
+    assert '[ -n "$CONTROL_GROUP" ]' in created, f"{creator} runs before the group it needs was established"
+
+
+@pytest.mark.parametrize("runner", ["check", "destination_check"])
+def test_a_container_that_reaches_no_control_directory_is_given_no_group(runner: str) -> None:
+    """These two mount nothing writable, so there is nothing for a group to open."""
+    body = executable_lines()
+    opened = body.index(f"\n{runner}() {{")
+    generic = body[opened : body.index("\n}", opened)]
+
+    assert "--group-add" not in generic, f"{runner} is given a group it has no directory to use it on"
+
+
+def test_no_container_is_run_under_an_identity_the_image_did_not_ship() -> None:
+    """The candidate decides who it runs as. This gate adds a group and nothing more."""
+    body = executable_lines()
+
+    assert "--user" not in body, "this gate overrides the identity the candidate image runs as"
+    assert "CANDIDATE_UID=10001" in body, "the driver no longer records the identity those containers keep"

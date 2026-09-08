@@ -244,9 +244,10 @@ DESTINATION_URL=
 # The proxy's own port inside its container. The host port is the engine's to
 # choose: a fixed one is a collision with whatever else this host publishes.
 PROXY_CONTAINER_PORT=8080
-# The user the candidate image runs as (`Dockerfile`: `USER 10001:10001`). A
-# directory this host created is not writable by it, and the two containers that
-# coordinate through row 8's control directory both run as that user.
+# The identity the candidate image runs its containers as (`Dockerfile`:
+# `USER 10001:10001`). Recorded because it is the reason a directory this host
+# created is not writable by them, and never overridden: this gate adds a group
+# so they can reach one directory, and decides nothing else about who they are.
 CANDIDATE_UID=10001
 
 # The one budget for row 8's coordination is `PROXY_BUDGET_SECONDS` in
@@ -349,11 +350,49 @@ create_proxy_control() {
 # Exactly two parties may write a control directory: this driver, and the
 # candidate image's user. Nobody else, and no fallback that widens it -- a 0777
 # directory is every account on the host, which is not a private channel however
-# it is described. A host that cannot grant those two is a host this gate refuses.
+# it is described.
+#
+# The sharing cannot go by handing the directory over. `chown` to another user
+# needs privileges an ordinary account does not have, and requiring a runner that
+# has them would be qualifying a deployment no clean host could reproduce: the
+# live matrix ended in row 2 on exactly that, with `Operation not permitted`.
+#
+# So it goes the other way. Each directory stays with whoever invoked this driver
+# and is opened to that user's own primary group; the containers that must reach
+# it are given that group as a supplementary one. Their primary identity is left
+# as the image ships it -- this gate does not decide who the candidate runs as,
+# and a run under another identity would be qualifying something else.
+CONTROL_GROUP=
+
+establish_control_group() {
+    # The invoking user's primary group, as a number, because the container has no
+    # idea what this host calls it. Established once, so both directories are
+    # shared through the same group and the containers need one between them.
+    #
+    # Checked, and fatal when it cannot be established: a group this gate cannot
+    # name is one it cannot give a container, and the only way to share the
+    # directory without one is to open it to every account on this host.
+    if [ -n "$CONTROL_GROUP" ]; then
+        return 0
+    fi
+    CONTROL_GROUP=$(id -g 2>/dev/null) || CONTROL_GROUP=
+    case ${CONTROL_GROUP:-} in
+        ''|*[!0-9]*)
+            CONTROL_GROUP=
+            fail "this host reported no numeric primary group to share row 6's and row 8's control directories through"
+            ;;
+    esac
+}
+
 narrow_control_access() {
     # narrow_control_access <directory> <whose it is>
-    chown "$CANDIDATE_UID:$CANDIDATE_UID" "$1" \
-        || fail "$2's control directory could not be given to the candidate image's user, and this gate widens it for nobody"
+    #
+    # Explicit rather than inherited: a directory created under a set-group-id
+    # parent takes that parent's group, which is not necessarily the group this
+    # gate is about to give its containers.
+    establish_control_group
+    chgrp "$CONTROL_GROUP" "$1" \
+        || fail "$2's control directory could not be given the group its two writers share, and this gate widens it for nobody"
     chmod 0770 "$1" || fail "$2's control directory could not be narrowed to its two writers"
 }
 
@@ -389,9 +428,11 @@ start_destination_proxy() {
     # case this is for: a `docker run` container carries none of the deployment's
     # instance labels, so an unrecorded identity is one no teardown will ever name.
     printf '%s\n' "$PROXY_CONTAINER" >> "$WORK/created"
+    [ -n "$CONTROL_GROUP" ] || fail "the destination proxy was started before the group its control directory is shared through existed"
     docker run --detach \
         --name "$PROXY_CONTAINER" \
         --label "$FIXTURE_LABEL=$RUN_IDENTITY" \
+        --group-add "$CONTROL_GROUP" \
         --publish "$PROXY_CONTAINER_PORT" \
         --volume "$CHECKS:/checks:ro" \
         --volume "$PROXY_CONTROL:/control" \
@@ -488,9 +529,11 @@ row8_check() {
         fail "a container already carries the name this row would give its check"
     fi
     printf '%s\n' "$ROW8_CHECK_CONTAINER" >> "$WORK/created"
+    [ -n "$CONTROL_GROUP" ] || fail "the check $name was run before the group its control directory is shared through existed"
     docker run --rm \
         --name "$ROW8_CHECK_CONTAINER" \
         --label "$FIXTURE_LABEL=$RUN_IDENTITY" \
+        --group-add "$CONTROL_GROUP" \
         --network "$NETWORK" \
         --volume "$CHECKS:/checks:ro" \
         --volume "$BUNDLE/configuration:/configuration:ro" \
@@ -558,9 +601,11 @@ coordinated_check() {
     # Written down before it can exist, so teardown checks this identity for
     # absence even after a removal that could not land cleared the variable.
     printf '%s\n' "$ROW6_CHECK_CONTAINER" >> "$WORK/created"
+    [ -n "$CONTROL_GROUP" ] || fail "the check $name was run before the group its control directory is shared through existed"
     docker run --rm \
         --name "$ROW6_CHECK_CONTAINER" \
         --label "$FIXTURE_LABEL=$RUN_IDENTITY" \
+        --group-add "$CONTROL_GROUP" \
         --network "$NETWORK" \
         --volume "$CHECKS:/checks:ro" \
         --volume "$BUNDLE/configuration:/configuration:ro" \
