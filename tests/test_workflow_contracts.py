@@ -299,14 +299,20 @@ def build_context_inputs() -> set[str]:
     they come from another stage or another image, not from this tree.
     """
     found: set[str] = set()
-    for line in DOCKERFILE.read_text(encoding="utf-8").splitlines():
+    # A `COPY` may continue across physical lines. Joining them first is what
+    # keeps every source after the first one from being read as a line that does
+    # not begin with `COPY`, and so silently left out of the comparison below.
+    joined = re.sub(r"\\[ \t]*\n", " ", DOCKERFILE.read_text(encoding="utf-8"))
+    for line in joined.splitlines():
         parts = line.split()
         if not parts or parts[0].upper() != "COPY":
             continue
         arguments = [part for part in parts[1:] if not part.startswith("--")]
         if any(part.startswith("--from=") for part in parts[1:]) or len(arguments) < 2:
             continue
-        found.update(arguments[:-1])
+        # `COPY dir/ ./` and `COPY dir ./` copy the same tree, so both have to
+        # produce the one name the filter's patterns are written against.
+        found.update(argument.rstrip("/") for argument in arguments[:-1])
     return found
 
 
@@ -494,9 +500,9 @@ def triggers_of(path: Path) -> dict:
 
 def _retypes_identity(step: dict) -> bool:
     """Report whether one step names a release something the source did not."""
-    run = str(step.get("run", ""))
-    if TAG_READ.search(run):
-        return False
+    # The reads are dropped from the script rather than excusing it: a step that
+    # lists the tags and then creates one still creates one.
+    run = TAG_READ.sub("", str(step.get("run", "")))
     return any(command in run for command in IDENTITY_REWRITING)
 
 
