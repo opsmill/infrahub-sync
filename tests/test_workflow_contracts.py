@@ -386,10 +386,15 @@ def _step(path: Path, job_name: str, step_name: str) -> tuple[dict, dict]:
 def _guarded(job: dict, step: dict) -> bool:
     """Report whether the publication input decides that step's existence.
 
-    A condition on the job covers every step inside it, and covers them earlier:
-    the job never starts, so nothing it would have installed is installed either.
+    The condition has to be on the **job**, and accepting a step-level one would
+    permit exactly what this argues against: a guarded step inside an unguarded
+    job still starts the runner, sets up the interpreter, and downloads the
+    candidate's artifacts, and only then declines to upload. The job condition
+    covers every step inside it and covers them earlier — the job never starts,
+    so nothing it would have installed is installed either.
     """
-    return PUBLICATION_INPUT in str(job.get("if", "")) or PUBLICATION_INPUT in str(step.get("if", ""))
+    del step
+    return PUBLICATION_INPUT in str(job.get("if", ""))
 
 
 def triggers(path: Path) -> set[str]:
