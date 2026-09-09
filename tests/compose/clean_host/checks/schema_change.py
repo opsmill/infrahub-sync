@@ -13,8 +13,12 @@ The attribute has to be one the plan consumes. Changing any other leaves the
 fingerprint where it was, and the row would report success having drifted nothing.
 
 The original kind is read from the running destination rather than assumed, and
-the change is reversed afterwards, so a failure here cannot leave the destination
-on a schema the rows after it do not expect.
+the kind change is reversed afterwards, so a failure here cannot leave the
+destination serving consumed semantics the rows after it do not expect.
+
+The additive attribute remains. It is optional and no registered configuration
+consumes it, so the rows after this one keep running against a destination that
+carries a compatible change.
 
 Negative destination-state assertions are read from the destination, independently
 of the deployment client -- and on the branch the plan is computed against. A
@@ -89,6 +93,21 @@ def attribute_kind(branch: str, attribute: str = DRIFTED_ATTRIBUTE) -> str:
     return str(declared[0])
 
 
+def smoke_node(schema: dict) -> dict:
+    """The one node in the seeded schema both halves are about.
+
+    Matched on the kind Infrahub composes from a node's namespace and its name,
+    rather than on either half: a namespace reused by a second node would
+    otherwise be enough to pick the wrong one. Exactly one, because a document
+    that stops declaring this node has to refuse here -- the alternative is
+    loading a change to nothing and reporting a passing gate for it.
+    """
+    declared = [node for node in schema["nodes"] if f"{node['namespace']}{node['name']}" == SMOKE_KIND]
+    if len(declared) != 1:
+        refuse(f"the seeded schema declares {len(declared)} {SMOKE_KIND} nodes, so there is no one node to change")
+    return declared[0]
+
+
 def load_attribute_kind(kind: str, branch: str) -> None:
     """Load the seeded schema with one attribute kind set and the additive one added, and prove both landed.
 
@@ -97,17 +116,21 @@ def load_attribute_kind(kind: str, branch: str) -> None:
     reads the old semantics -- and this row would then report success having
     drifted nothing.
 
+    Both edits land on the one node both halves are about, and on no other. The
+    same edits written across every node the document declares would change
+    nodes this row makes no claim about.
+
     The additive attribute travels with every load, including the revert. A load
     states the node it declares, so one that omitted the attribute could take it
     back -- and the halves after it would then run against a schema this row had
     silently undone.
     """
     schema = yaml.safe_load(pathlib.Path(SCHEMA_FILE).read_text(encoding="utf-8"))
-    for node in schema["nodes"]:
-        for attribute in node["attributes"]:
-            if attribute["name"] == DRIFTED_ATTRIBUTE:
-                attribute["kind"] = kind
-        node["attributes"].append({"name": ADDITIVE_ATTRIBUTE, "kind": ADDITIVE_KIND, "optional": True})
+    node = smoke_node(schema)
+    for attribute in node["attributes"]:
+        if attribute["name"] == DRIFTED_ATTRIBUTE:
+            attribute["kind"] = kind
+    node["attributes"].append({"name": ADDITIVE_ATTRIBUTE, "kind": ADDITIVE_KIND, "optional": True})
     sdk().schema.load(schemas=[schema], branch=branch, wait_until_converged=True)
     if attribute_kind(branch) != kind:
         refuse(f"the destination did not converge on {DRIFTED_ATTRIBUTE} kind {kind} on {branch}")

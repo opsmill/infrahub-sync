@@ -269,7 +269,7 @@ PRESERVING_CHANGES: dict[str, tuple[dict[str, list[tuple[object, ...]]], dict[st
         ROWS,
         {**OBJECTS, "runs/20260907T1401-b1740c33/manifest.json": [b'{"checksum": "beef"}']},
     ),
-    "an object body chunked the same way but shorter": (
+    "an object body replaced with the same number of bytes": (
         ROWS,
         {**OBJECTS, "runs/20260907T1307-a09b8278/plan.json": [b'{"operations": [', b'{"kind": "delete"}]}']},
     ),
@@ -293,6 +293,52 @@ def test_state_a_weaker_snapshot_would_call_equal_moves_the_snapshot(durable_sta
     assert snapshot(durable_state, rows, objects) != snapshot(durable_state, ROWS, OBJECTS), (
         f"{change} leaves the snapshot equal"
     )
+
+
+# The bytes of one object, and every way a store's stream might hand them over.
+# `StreamingBody.read(n)` returns *at most* n bytes: urllib3 reads what the
+# socket and the decoder give it, so the boundaries belong to the transfer and
+# not to the object.
+BODY = b'{"checksum": "abcd", "operations": 3}'
+CHUNKINGS: dict[str, list[bytes]] = {
+    "one read": [BODY],
+    "two reads": [BODY[:9], BODY[9:]],
+    "an empty read in the middle": [BODY[:9], b"", BODY[9:]],
+    "many uneven reads": [BODY[:1], BODY[1:17], BODY[17:18], BODY[18:]],
+    "a byte at a time": [BODY[index : index + 1] for index in range(len(BODY))],
+}
+
+
+@pytest.mark.parametrize("chunking", sorted(CHUNKINGS))
+def test_one_body_digests_the_same_however_the_read_was_chunked(durable_state: ModuleType, chunking: str) -> None:
+    """The chunking is the transfer's, so it must not reach the snapshot.
+
+    Two reads of one unchanged object can be split differently, and a digest
+    that framed those lengths would move -- so every row comparing a snapshot
+    would fail for a deployment that had changed nothing. A body is one value,
+    so unlike a record it has no boundary between values to lose by hashing it
+    raw.
+    """
+    whole = durable_state.object_line("runs/r-1/manifest.json", [BODY])
+
+    assert durable_state.object_line("runs/r-1/manifest.json", CHUNKINGS[chunking]) == whole
+
+
+def test_a_records_digest_still_frames_the_values_it_covers(durable_state: ModuleType) -> None:
+    """The two digests answer different questions, so relaxing one must not relax the other.
+
+    A record is a sequence of values and a body is one value. Framing is what
+    keeps a value from moving between columns unseen, and the object digest is
+    not entitled to relax it on a record's behalf.
+
+    The case is a value and a null trading places, because that is the one
+    framing catches and the tag does not: a null renders to nothing, so both
+    records concatenate to the same bytes.
+    """
+    holding = durable_state.table_lines("product_runs", [("a", None)])
+    swapped = durable_state.table_lines("product_runs", [(None, "a")])
+
+    assert holding != swapped
 
 
 def test_the_same_durable_state_read_twice_is_the_same_snapshot(durable_state: ModuleType) -> None:

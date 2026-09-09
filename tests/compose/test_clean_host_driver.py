@@ -2147,6 +2147,40 @@ def test_the_compatible_half_runs_against_a_schema_change_it_loaded() -> None:
     )
 
 
+def test_the_schema_change_targets_only_the_node_both_halves_are_about() -> None:
+    """A change written into every node the file declares changes nodes no half is about.
+
+    Both halves are about one kind: the drifted attribute is the one the plan
+    consumes on it, and the additive attribute is the compatible change to it.
+    Applied across `schema["nodes"]`, the same edits would land on whatever else
+    the seeded document grows -- and the row would be changing a schema it makes
+    no claim about.
+    """
+    source = code_of(CHECKS / "schema_change.py")
+    loader = source.index("def load_attribute_kind")
+    loaded = source.index("sdk().schema.load", loader)
+    body = source[loader:loaded]
+
+    assert "smoke_node(schema)" in body, "the loader does not select the one node it changes"
+    assert "for node in schema['nodes']" not in body, "the loader changes every node the file declares"
+
+
+def test_the_targeted_node_is_matched_by_kind_and_refused_unless_there_is_exactly_one() -> None:
+    """Infrahub composes a kind from a node's namespace and its name.
+
+    Matched on that composition rather than on either half, so a namespace
+    reused by a second node cannot be picked instead. Exactly one, so a seeded
+    document that stops declaring this node refuses here rather than loading a
+    change to nothing.
+    """
+    source = code_of(CHECKS / "schema_change.py")
+
+    matcher = "f\"{node['namespace']}{node['name']}\" == SMOKE_KIND"
+
+    assert matcher in source, "the node is not matched by the kind Infrahub composes"
+    assert "if len(declared) != 1:" in source, "a document declaring none or several is accepted"
+
+
 def test_the_additive_attribute_travels_with_every_load_of_the_seeded_schema() -> None:
     """A load states the node it declares, so one omitting it could take it back.
 

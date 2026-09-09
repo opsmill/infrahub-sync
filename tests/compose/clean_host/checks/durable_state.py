@@ -12,6 +12,13 @@ bug is most likely to preserve. Each table contributes a digest over its rows an
 each object a digest over its body, so a value that moved is a snapshot that
 moved.
 
+Two digests, because a record and a body are different shapes. A record is a
+sequence of values, so its digest frames each value's length: without that, a
+value moved across a column boundary would hash the same. A body is one value
+arriving in however many pieces the transfer chose, so its digest is raw --
+framing the read's own boundaries would move the snapshot for an object nobody
+touched.
+
 Nothing read is printed. A digest is not the value it covers, and these records
 hold a registered package's declared content while the objects hold what a run
 planned against a destination. What reaches the driver is the deployment's own
@@ -58,6 +65,9 @@ def digest(parts: Iterable[bytes]) -> str:
     it, a character moved from the end of one part to the start of the next
     digests equal -- and a record rewritten that way is exactly what this
     snapshot exists to see.
+
+    For a sequence of values only. An object's body is one value that arrives in
+    however many pieces the transfer chose, and `body_digest` covers that.
     """
     running = hashlib.sha256()
     for part in parts:
@@ -92,9 +102,28 @@ def table_lines(table: str, rows: Sequence[Sequence[object]]) -> list[str]:
     return [f"table {table} {len(digests)}", f"contents {table} {digest(item.encode() for item in digests)}"]
 
 
+def body_digest(chunks: Iterable[bytes]) -> str:
+    """A digest over an object's bytes, indifferent to how the read was chunked.
+
+    Raw rather than length-delimited. `StreamingBody.read(n)` returns *at most*
+    n bytes -- urllib3 hands over what the socket and the decoder gave it -- so
+    the boundaries belong to the transfer and not to the object, and two reads
+    of one unchanged body can be split differently. Framing those lengths would
+    move the snapshot for a deployment that changed nothing, and every row
+    comparing one would fail.
+
+    Safe to hash raw for the same reason it would be unsafe for a record: a body
+    is one value, so there is no boundary between values to lose.
+    """
+    running = hashlib.sha256()
+    for chunk in chunks:
+        running.update(chunk)
+    return running.hexdigest()
+
+
 def object_line(key: str, body: Iterable[bytes]) -> str:
     """The one line one stored object contributes: its key and the digest of its body."""
-    return f"object {key} {digest(body)}"
+    return f"object {key} {body_digest(body)}"
 
 
 def main() -> None:
