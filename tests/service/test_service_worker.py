@@ -158,6 +158,16 @@ def _stub_submission(worker: ServiceProcessWorker) -> _Runner:
     ],
 )
 async def test_unresolved_identity_refuses_before_polling(records: list[object]) -> None:
+    """Every unusable record leaves the worker without an identity and unable to poll.
+
+    Deliberately changed from asserting a raise. Raising here escaped Prefect's
+    `critical_service_loop` and ended the worker process, so a momentary window
+    became a deployment that never recovered. What has to hold is that nothing
+    executes and nothing is polled; staying alive to resolve on a later
+    heartbeat is the point, and
+    `tests/service/test_service_worker_identity_recovery.py` proves it against a
+    real server.
+    """
     worker = _worker("service-a", records)
     polled: list[bool] = []
 
@@ -166,8 +176,7 @@ async def test_unresolved_identity_refuses_before_polling(records: list[object])
         AsyncMock(side_effect=lambda: polled.append(True) or []),
     )
 
-    with pytest.raises(ServiceWorkerIdentityError, match="service worker identity is unavailable"):
-        await worker._initialize_after_sync()
+    await worker._initialize_after_sync()
 
     assert worker.backend_id is None
     assert not worker._has_successfully_synced

@@ -51,6 +51,7 @@ QUALIFIED_TREES = ("infrahub_sync/**", "deploy/compose/**", "tests/compose/**")
 
 PUBLISH_WORKFLOW = WORKFLOWS / "workflow-publish.yml"
 IMAGE_WORKFLOW = WORKFLOWS / "workflow-image.yml"
+CANDIDATE_WORKFLOW = WORKFLOWS / "workflow-candidate.yml"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 
 # What sends a built artifact somewhere this repository cannot take it back from:
@@ -109,9 +110,61 @@ APPROVED_EVENTS = frozenset({"workflow_dispatch", "workflow_call"})
 CLEAN_HOST_JOB = "clean-host"
 CHECKOUT_ACTION = "actions/checkout"
 INTERPRETER_ACTIONS = ("astral-sh/setup-uv", "actions/setup-python")
-HOST_TOOLS = ("uv ", "uvx ", "pipx ", "poetry ", "pytest ")
+# `python` and `python3` among them: an interpreter the runner happens to ship
+# is still an interpreter, and a job that reaches for one is no longer showing
+# that the released artifact runs on a host holding nothing but the artifact.
+HOST_TOOLS = ("uv ", "uvx ", "pipx ", "poetry ", "pytest ", "python ", "python3 ")
 DRIVER_ENTRYPOINT = "clean-host.sh"
 DOWNLOAD_ACTION = "actions/download-artifact"
+# The two routes to that job. Pull-request validation qualifies bytes that exist
+# for one download and are deleted inside the run; the manual candidate route
+# qualifies the retained bytes an approval is later bound to. Both run the same
+# driver on the same kind of host, so every property of the job holds on both.
+CLEAN_HOST_ROUTES = (IMAGE_WORKFLOW, CANDIDATE_WORKFLOW)
+
+# The manual candidate route. The commit to build is an input rather than the
+# ref's tip: `workflow_dispatch` runs against a ref, so a branch that moved
+# between the merge and the dispatch would build different source.
+SHA_INPUT = "sha"
+# Passed through an environment value rather than interpolated into the script,
+# which is also what makes the refusals runnable outside a workflow.
+SHA_ENVIRONMENT = "CANDIDATE_SHA"
+HEAD_READBACK = "git rev-parse HEAD"
+ANCESTRY_CHECK = "git merge-base --is-ancestor"
+# What a step that has started building looks like: it runs an Invoke task, or it
+# sets up one of the build actions. Both refusals precede every one of them.
+BUILD_ACTIONS = ("docker/setup-qemu-action", "docker/setup-buildx-action", "astral-sh/setup-uv")
+# The window this route names, and the seven groups it is asked for. Exactly 30:
+# a floor is the wrong end to check on a public repository, where `>= 30` is what
+# let a 90-day pull-request candidate sit behind public download links.
+CANDIDATE_WINDOW_NAME = "CANDIDATE_RETENTION_DAYS"
+CANDIDATE_WINDOW = "${{ env.CANDIDATE_RETENTION_DAYS }}"
+CANDIDATE_WINDOW_DAYS = 30
+CANDIDATE_GROUPS = frozenset(
+    {
+        "infrahub-sync-candidate-image",
+        "infrahub-sync-candidate-identity",
+        "infrahub-sync-candidate-distributions",
+        "infrahub-sync-candidate-bundle",
+        "infrahub-sync-candidate-sboms",
+        "infrahub-sync-qualification-kit",
+        "infrahub-sync-qualification-record",
+    }
+)
+# Asking for a window is not being granted one, so the run reads its own
+# artifacts back. `expires_at` is the field that says what it really got.
+RETENTION_READBACK = ("actions/runs", "expires_at")
+# A run's title is the one place a dispatched run states the commit it was told
+# to build: `head_sha` is the tip of the ref it started against.
+RUN_TITLE = "run-name"
+# What `actions/checkout` does with the run's token unless told otherwise. Left
+# on, it writes the token into `.git/config` of the tree every later step runs
+# third-party code against.
+PERSISTED_CREDENTIALS = "persist-credentials"
+# The two shapes publication would arrive in even with no publishing command
+# present: a switch that turns one on, and the protected environment it runs in.
+PUBLICATION_INPUT = "publish"
+RELEASE_ENVIRONMENT = "environment"
 
 # The job that deletes the handoff inside the run that created it. A handoff is
 # not retention: an artifact is the only transfer GitHub offers between two
@@ -150,6 +203,41 @@ TRUST_COMPARISON = "github.event.pull_request.head.repo.full_name == github.repo
 # wrote it and refuse the next rebuild of the same version.
 ARTIFACT_RECORD = ".release/artifacts.json"
 RECORDED_IDENTITY = ".release/identity.json"
+
+# The order the merged image gate proved, which the candidate route reuses. The
+# archive upload is in the sequence rather than beside it: `compose.reclaim`
+# deletes the files it uploads, so uploading after the reclaim uploads nothing,
+# and `release.qualify` reads the record, so writing it after would read a
+# record for the previous candidate or none at all.
+ARCHIVE_UPLOAD = "infrahub-sync-candidate-image"
+APPROVED_ORDER = (
+    "release.identity",
+    "release.build",
+    "release.kit",
+    "image.build",
+    "image.inspect",
+    "image.freshness",
+    "image.sbom",
+    "image.scan",
+    "image.smoke",
+    ARCHIVE_UPLOAD,
+    "compose.reclaim",
+    "compose.lifecycle",
+    ARTIFACT_RECORD,
+    "release.qualify",
+)
+
+# How the writer names one upload's outputs, and how the record keys them. Both
+# sides of every entry are resolved, not just the identifier: a digest hardcoded
+# to a literal, or read from a different upload, leaves an entry that still
+# names the right group and describes bytes the service holds under another one.
+#
+# The output kind is captured separately from the variable's own suffix, so
+# `--arg x_digest "…outputs.artifact-id"` is a mismatch rather than a match.
+WRITER_BINDING = re.compile(
+    r"--arg\s+(\w+)_(id|digest)\s+\"\$\{\{\s*steps\.([\w-]+)\.outputs\.artifact-(id|digest)\s*\}\}\""
+)
+WRITER_ENTRY = re.compile(r"\"(infrahub-sync-[\w-]+)\":\s*\{id:\s*\$(\w+)_id,\s*digest:\s*\$(\w+)_digest\}")
 
 
 def load(path: Path) -> dict:
@@ -619,11 +707,36 @@ def test_the_two_line_release_automation_is_what_the_case_above_would_otherwise_
     assert not (drafter & v3_reachable())
 
 
+def job_of(workflow: Path, name: str) -> dict:
+    """Return one named job of one workflow, refusing a workflow that no longer defines it."""
+    defined = jobs(workflow)
+    assert name in defined, f"{workflow.name} defines no {name} job"
+    return defined[name]
+
+
 def image_job(name: str) -> dict:
     """Return one job of the image workflow, refusing a workflow that no longer defines it."""
-    defined = jobs(IMAGE_WORKFLOW)
-    assert name in defined, f"{IMAGE_WORKFLOW.name} defines no {name} job"
-    return defined[name]
+    return job_of(IMAGE_WORKFLOW, name)
+
+
+def candidate_steps(name: str) -> list[dict]:
+    """Return the steps of one job of the manual candidate workflow."""
+    return list(job_of(CANDIDATE_WORKFLOW, name)["steps"])
+
+
+def refusal_script() -> str:
+    """Return the one script that refuses a wrong checkout or an unmerged commit.
+
+    Found by what it runs rather than by step name, and required to be single:
+    two scripts each checking one thing is two places for the order to be wrong.
+    """
+    refusing = [
+        step
+        for step in candidate_steps("candidate")
+        if HEAD_READBACK in str(step.get("run", "")) or ANCESTRY_CHECK in str(step.get("run", ""))
+    ]
+    assert len(refusing) == 1, f"{len(refusing)} steps of the candidate job refuse a commit"
+    return str(refusing[0]["run"])
 
 
 def cleanup_script() -> str:
@@ -631,72 +744,296 @@ def cleanup_script() -> str:
     return "\n".join(str(step.get("run", "")) for step in image_job(CLEANUP_JOB)["steps"])
 
 
-def test_the_clean_host_gate_runs_the_shipped_driver_bounded_inside_its_job() -> None:
+@pytest.mark.parametrize("workflow", CLEAN_HOST_ROUTES, ids=_identify)
+def test_the_clean_host_gate_runs_the_shipped_driver_bounded_inside_its_job(workflow: Path) -> None:
     """A gate wired to an event this line never raises, or running nothing, has never run.
 
     The eleven rows and their refusal to be skipped are the driver's own; what is
     checked here is that this line reaches a job that runs it and is bounded.
+    Which job it depends on is a separate case, derived from what really uploads.
     """
-    job = image_job(CLEAN_HOST_JOB)
+    job = job_of(workflow, CLEAN_HOST_JOB)
     bounded = [step for step in job["steps"] if "timeout-minutes" in step]
 
-    assert IMAGE_WORKFLOW in v3_reachable()
-    assert job["needs"] == ["image"]
+    assert workflow in v3_reachable()
     assert [step for step in job["steps"] if DRIVER_ENTRYPOINT in str(step.get("run", ""))], (
-        f"the {CLEAN_HOST_JOB} job runs no {DRIVER_ENTRYPOINT}"
+        f"{workflow.name}'s {CLEAN_HOST_JOB} job runs no {DRIVER_ENTRYPOINT}"
     )
-    assert bounded, f"no step of the {CLEAN_HOST_JOB} job states a timeout"
+    assert bounded, f"no step of {workflow.name}'s {CLEAN_HOST_JOB} job states a timeout"
     for step in bounded:
         assert step["timeout-minutes"] < job["timeout-minutes"], (
             f"the step {step.get('name')!r} is not bounded inside its job"
         )
 
 
-def test_the_clean_host_job_checks_nothing_out_and_installs_no_interpreter() -> None:
+@pytest.mark.parametrize("workflow", CLEAN_HOST_ROUTES, ids=_identify)
+def test_the_clean_host_job_checks_nothing_out_and_installs_no_interpreter(workflow: Path) -> None:
     """The subject is the released artifact, so the tree that produced it is not present.
 
     Read off the job, because one that happens to omit a checkout today is one
     edit from having one.
     """
-    job = image_job(CLEAN_HOST_JOB)
+    job = job_of(workflow, CLEAN_HOST_JOB)
     rendered = yaml.safe_dump(job)
 
     assert CHECKOUT_ACTION not in rendered
     for action in INTERPRETER_ACTIONS:
-        assert action not in rendered, f"the {CLEAN_HOST_JOB} job sets up an interpreter with {action}"
+        assert action not in rendered, f"{workflow.name}'s {CLEAN_HOST_JOB} job sets up an interpreter with {action}"
     for step in job["steps"]:
         for tool in HOST_TOOLS:
-            assert tool not in str(step.get("run", "")), f"the {CLEAN_HOST_JOB} job runs {tool.strip()} on the host"
+            assert tool not in str(step.get("run", "")), (
+                f"{workflow.name}'s {CLEAN_HOST_JOB} job runs {tool.strip()} on the host"
+            )
 
 
-def test_the_clean_host_job_takes_this_runs_artifacts_and_never_another_runs() -> None:
+@pytest.mark.parametrize("workflow", CLEAN_HOST_ROUTES, ids=_identify)
+def test_the_clean_host_job_takes_this_runs_artifacts_and_never_another_runs(workflow: Path) -> None:
     """Naming a `run-id` is the one edit that would qualify a candidate some other commit built."""
     downloads = [
         step
-        for step in image_job(CLEAN_HOST_JOB)["steps"]
+        for step in job_of(workflow, CLEAN_HOST_JOB)["steps"]
         if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
     ]
 
-    assert downloads, f"the {CLEAN_HOST_JOB} job downloads nothing, so it qualifies nothing this run produced"
+    assert downloads, f"{workflow.name}'s {CLEAN_HOST_JOB} job downloads nothing, so it qualifies nothing"
     for step in downloads:
         assert "run-id" not in (step.get("with") or {}), f"{_step_name(step)!r} downloads from another run"
 
 
-def test_the_clean_host_diagnostic_is_published_by_name_for_a_failure_only() -> None:
+@pytest.mark.parametrize("workflow", CLEAN_HOST_ROUTES, ids=_identify)
+def test_the_clean_host_diagnostic_is_published_by_name_for_a_failure_only(workflow: Path) -> None:
     """The working directory beside the swept file holds the list of this run's own credentials.
 
     Uploading the directory would publish both. A withheld diagnostic is an
-    absent file, so the step tolerates finding nothing.
+    absent file, so the step tolerates finding nothing. Every upload of this job
+    is checked, not merely one: the job publishes the diagnostic and nothing else.
     """
     published = [
-        step for step in image_job(CLEAN_HOST_JOB)["steps"] if str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@")
+        step
+        for step in job_of(workflow, CLEAN_HOST_JOB)["steps"]
+        if str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@")
     ]
 
-    assert published, f"the {CLEAN_HOST_JOB} job publishes nothing a failed row leaves behind"
+    assert published, f"{workflow.name}'s {CLEAN_HOST_JOB} job publishes nothing a failed row leaves behind"
     for step in published:
         assert step.get("if") == "failure()"
         assert str(step["with"]["path"]).endswith("diagnostic.txt"), "a directory of the driver's working files"
         assert step["with"]["if-no-files-found"] == "ignore"
+
+
+@pytest.mark.parametrize("workflow", CLEAN_HOST_ROUTES, ids=_identify)
+def test_the_clean_host_job_needs_the_job_that_really_produces_what_it_downloads(workflow: Path) -> None:
+    """A literal job name is not evidence that the dependency still produces the artifacts.
+
+    Derived from which job holds the candidate uploads, so renaming or splitting
+    the producer leaves the gate needing something that builds nothing, and fails
+    here rather than at the download step of a run.
+    """
+    producing = {job for path, job, _step, _declared in candidates() if path == workflow}
+    needed = set(_needs(job_of(workflow, CLEAN_HOST_JOB)))
+
+    assert producing, f"{workflow.name} uploads no candidate artifact, so this proves nothing"
+    assert producing <= needed, (
+        f"{workflow.name}'s {CLEAN_HOST_JOB} job needs {sorted(needed)}, "
+        f"which does not cover the producer {sorted(producing)}"
+    )
+
+
+def test_the_candidate_route_answers_no_event_and_is_the_only_manual_one() -> None:
+    """The inverse of the pull-request case: this route runs when a person names a commit.
+
+    A trigger here would build and retain a candidate nobody asked for, from
+    whatever the ref pointed at, which is the mistake the exact-commit input
+    exists to prevent.
+    """
+    assert triggers(CANDIDATE_WORKFLOW) == {"workflow_dispatch"}, (
+        f"{CANDIDATE_WORKFLOW.name} answers {sorted(triggers(CANDIDATE_WORKFLOW))}"
+    )
+    assert CANDIDATE_WORKFLOW not in reachable_from_an_event()
+    assert CLEAN_HOST_JOB in jobs(CANDIDATE_WORKFLOW), (
+        f"{CANDIDATE_WORKFLOW.name} holds no {CLEAN_HOST_JOB} job, so this route qualifies nothing"
+    )
+
+
+def test_the_candidate_workflow_takes_the_commit_to_build_as_a_required_input() -> None:
+    """`github.sha` is the ref's tip when the run starts, which is not the merge that landed."""
+    declared = triggers_of(CANDIDATE_WORKFLOW)["workflow_dispatch"]["inputs"]
+
+    assert SHA_INPUT in declared, f"{CANDIDATE_WORKFLOW.name} declares {sorted(declared)} and no commit to build"
+    assert declared[SHA_INPUT]["required"] is True
+    assert declared[SHA_INPUT]["type"] == "string"
+
+
+def test_the_candidate_run_states_the_commit_it_built_in_its_own_title() -> None:
+    """A dispatched run's `head_sha` is the ref's tip, not the commit it was told to build.
+
+    The two are equal only while the branch has not moved, which is exactly the
+    case this route exists to stop anyone relying on: the same commit is
+    rebuilt from a much later tip when a window lapses. So the run states the
+    input itself, and nothing downstream has to infer the built commit from the
+    revision of the workflow definition that ran.
+    """
+    document = load(CANDIDATE_WORKFLOW)
+
+    assert RUN_TITLE in document, f"{CANDIDATE_WORKFLOW.name} does not name the commit it builds in its run title"
+    assert f"inputs.{SHA_INPUT}" in str(document[RUN_TITLE]), (
+        f"the run title is {document[RUN_TITLE]!r}, which does not carry the commit to build"
+    )
+    assert "github.sha" not in str(document[RUN_TITLE]), "the run title names the ref's tip, not the input"
+
+
+def test_the_candidate_run_checks_out_the_named_commit_and_reads_the_whole_history() -> None:
+    """Ancestry cannot be proved against a shallow clone, and a ref is not a commit."""
+    checkouts = [step for step in candidate_steps("candidate") if str(step.get("uses", "")).startswith(CHECKOUT_ACTION)]
+
+    assert len(checkouts) == 1, f"{len(checkouts)} steps of the candidate job check something out"
+    declared = checkouts[0]["with"]
+    assert declared["ref"] == f"${{{{ inputs.{SHA_INPUT} }}}}", f"the checkout takes {declared.get('ref')!r}"
+    assert declared["fetch-depth"] == 0
+
+
+def test_the_candidate_checkout_leaves_no_token_behind_for_the_build_to_read() -> None:
+    """Everything after the checkout runs third-party code against the tree it produced.
+
+    `uv sync` resolves a lock file, the image build runs a Dockerfile, and the
+    lifecycle phase starts two container stacks. The default leaves this run's
+    token in `.git/config` for all of them, and nothing on this route pushes, so
+    nothing needs it kept.
+    """
+    checkouts = [step for step in candidate_steps("candidate") if str(step.get("uses", "")).startswith(CHECKOUT_ACTION)]
+
+    assert checkouts, "the candidate job checks nothing out"
+    for step in checkouts:
+        assert (step.get("with") or {}).get(PERSISTED_CREDENTIALS) is False, (
+            f"{_step_name(step)!r} keeps the run's token in the checkout it hands to the build"
+        )
+
+
+def test_the_candidate_run_refuses_a_checkout_that_did_not_land_where_it_was_told() -> None:
+    """Compared, not merely set: `actions/checkout` reports success for a ref it resolved.
+
+    The commit arrives through an environment value rather than interpolated into
+    the script, so the script is the same text a test can run against a real
+    repository and watch refuse.
+    """
+    script = refusal_script()
+    refusing = [step for step in candidate_steps("candidate") if str(step.get("run", "")) == script]
+
+    assert HEAD_READBACK in script, f"the candidate run never reads back what it checked out: {script}"
+    assert SHA_ENVIRONMENT in script, "the refusal does not read the commit from an environment value"
+    assert (refusing[0].get("env") or {}).get(SHA_ENVIRONMENT) == f"${{{{ inputs.{SHA_INPUT} }}}}"
+    assert re.search(r"exit\s+1", script), "the refusal cannot fail the run"
+
+
+def test_the_candidate_run_refuses_a_commit_that_never_merged() -> None:
+    """Building an unmerged commit and calling the result a candidate approves the wrong bytes.
+
+    Against a freshly fetched remote branch rather than whatever the checkout
+    left behind, because a stale local ref would admit a commit merged nowhere.
+    """
+    script = refusal_script()
+
+    assert ANCESTRY_CHECK in script, f"the candidate run proves no ancestry: {script}"
+    assert V3_BRANCH in script, f"the ancestry check names no branch: {script}"
+    assert "git fetch" in script, "the ancestry check reads a ref this run did not refresh"
+
+
+def test_both_refusals_precede_everything_the_candidate_run_builds() -> None:
+    """A refusal after the build has already spent the run and produced the bytes it rejects."""
+    steps = candidate_steps("candidate")
+    script = refusal_script()
+    refusal = next(index for index, step in enumerate(steps) if str(step.get("run", "")) == script)
+    building = [
+        index
+        for index, step in enumerate(steps)
+        if INVOKE_TASK.search(str(step.get("run", "")))
+        or any(str(step.get("uses", "")).startswith(action) for action in BUILD_ACTIONS)
+    ]
+
+    assert building, "the candidate job builds nothing, so this proves nothing"
+    assert refusal < min(building), (
+        f"the refusal is step {refusal} and the candidate job starts building at step {min(building)}"
+    )
+
+
+def test_the_candidate_route_retains_every_group_for_exactly_the_window_it_names() -> None:
+    """Exactly 30, and the seven groups an approval needs to exist without a rebuild.
+
+    A floor is the wrong end to check on a public repository: `>= 30` is what let
+    a 90-day pull-request candidate sit behind public download links until an
+    external reviewer found it. Each upload references the window named once at
+    the top of the workflow rather than a number of its own.
+    """
+    retained = [(step, declared) for path, _job, step, declared in candidates() if path == CANDIDATE_WORKFLOW]
+
+    assert {str(declared["name"]) for _step, declared in retained} == CANDIDATE_GROUPS
+    for step, declared in retained:
+        assert declared.get("retention-days") == CANDIDATE_WINDOW, (
+            f"{step!r} keeps {declared['name']} for {declared.get('retention-days')!r}"
+        )
+    assert load(CANDIDATE_WORKFLOW)["env"][CANDIDATE_WINDOW_NAME] == CANDIDATE_WINDOW_DAYS
+
+
+def test_the_candidate_run_reads_back_the_window_the_service_actually_granted() -> None:
+    """Requesting 30 days is not being given 30 days, and the difference is only visible after upload.
+
+    Every group the workflow uploads is named in the read-back, derived from the
+    uploads themselves: a group added without being read back would be retained
+    on a promise instead of on the expiry the service returned.
+    """
+    reading = [
+        step
+        for step in candidate_steps("candidate")
+        if all(marker in str(step.get("run", "")) for marker in RETENTION_READBACK)
+    ]
+
+    assert len(reading) == 1, f"{len(reading)} steps read the granted retention back"
+    script = str(reading[0]["run"])
+    for path, _job, _step, declared in candidates():
+        if path == CANDIDATE_WORKFLOW:
+            assert str(declared["name"]) in script, f"the read-back never names {declared['name']}"
+    assert CANDIDATE_WINDOW_NAME in script, "the read-back compares the expiry against no window"
+    assert re.search(r"exit\s+1", script), "the read-back cannot fail a run whose bytes will not survive"
+    # How wide the tolerance is, and whether it is a tolerance at all, is proved
+    # by running this script in `tests/release/test_candidate_retention_readback.py`.
+    # Pinning the arithmetic here as text would fix the spelling of a bound
+    # rather than the bound, so what is asserted is only that the comparison is
+    # made in seconds against the declared window.
+    assert "86400" in script, "the read-back does not compare against the window in seconds"
+
+
+def test_the_candidate_route_reaches_no_publication_of_any_kind() -> None:
+    """Publication is PR-D's, after team testing and non-author tutorial acceptance.
+
+    Followed through calls, and read off the shared constants rather than a list
+    written here, so a capability this suite already knows how to name cannot
+    arrive on this route by being spelled differently.
+    """
+    publishing = {path for path, _job, _step in publishing_steps()}
+    reached = reachable(lambda path: path == CANDIDATE_WORKFLOW)
+    rendered = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
+
+    assert publishing, WORKFLOWS
+    assert not (reached & publishing), f"{sorted(path.name for path in reached & publishing)} publishes"
+    for command in (*PUBLISHING_COMMANDS, *PUBLISHING_ACTIONS, *PACKAGE_UPLOAD, *IDENTITY_REWRITING):
+        assert command not in rendered, f"{CANDIDATE_WORKFLOW.name} can reach {command!r}"
+    assert PUBLICATION_INPUT not in triggers_of(CANDIDATE_WORKFLOW)["workflow_dispatch"]["inputs"]
+    for name, definition in jobs(CANDIDATE_WORKFLOW).items():
+        assert RELEASE_ENVIRONMENT not in definition, f"{name} runs in a deployment environment"
+
+
+def test_the_candidate_route_holds_no_permission_that_could_change_anything() -> None:
+    """Read-only throughout, including the token the retention read-back needs.
+
+    A candidate build that could write would be a publication route with no
+    publishing command in it yet.
+    """
+    for declared in (
+        permissions(CANDIDATE_WORKFLOW),
+        *(job_permissions(CANDIDATE_WORKFLOW, job) or {} for job in jobs(CANDIDATE_WORKFLOW)),
+    ):
+        for scope, level in declared.items():
+            assert ACCESS[level] < ACCESS["write"], f"the candidate route asks for {scope}: {level}"
 
 
 def test_every_upload_states_the_window_its_kind_of_artifact_is_kept_for() -> None:
@@ -706,14 +1043,22 @@ def test_every_upload_states_the_window_its_kind_of_artifact_is_kept_for() -> No
     that each upload references the one for what it is and that those two
     references resolve to the two numbers below.
     """
+    retained = {
+        IMAGE_WORKFLOW: HANDOFF_WINDOW,
+        CANDIDATE_WORKFLOW: CANDIDATE_WINDOW,
+    }
     handoffs = {str(declared["name"]) for _w, _j, _s, declared in candidates()}
     for workflow, _job, step, declared in uploads():
-        if workflow != IMAGE_WORKFLOW:
+        if workflow not in retained:
             continue
-        expected = HANDOFF_WINDOW if str(declared["name"]) in handoffs else DIAGNOSTIC_WINDOW
+        expected = retained[workflow] if str(declared["name"]) in handoffs else DIAGNOSTIC_WINDOW
         assert declared.get("retention-days") == expected, f"{step!r} keeps {declared['name']} for the wrong window"
 
     assert load(IMAGE_WORKFLOW)["env"] == WINDOWS
+    assert load(CANDIDATE_WORKFLOW)["env"] == {
+        CANDIDATE_WINDOW_NAME: CANDIDATE_WINDOW_DAYS,
+        "DIAGNOSTIC_RETENTION_DAYS": WINDOWS["DIAGNOSTIC_RETENTION_DAYS"],
+    }
 
 
 def test_the_cleanup_job_follows_every_job_that_uploads_or_reads_a_handoff() -> None:
@@ -735,11 +1080,19 @@ def test_the_cleanup_job_deletes_each_named_artifact_and_never_the_run() -> None
 
     A glob deletes whatever else matches and stops matching a renamed artifact.
     The run is not this job's to delete: it is the evidence the gate ran.
+
+    Scoped to the uploads of the workflow this job belongs to. It deletes its own
+    workflow's handoff, and a handoff is what a pull-request run makes; the
+    manual candidate route retains its uploads deliberately and has no cleanup
+    job for this one to inventory. An added handoff upload on *this* workflow is
+    still uncovered and still fails.
     """
     script = cleanup_script()
+    inventoried = [declared for path, _job, _step, declared in candidates() if path == IMAGE_WORKFLOW]
 
     assert f"{ARTIFACT_ENDPOINT}/" in script, f"{CLEANUP_JOB} deletes no artifact"
-    for _workflow, _job, _step, declared in candidates():
+    assert inventoried, f"{IMAGE_WORKFLOW.name} uploads no handoff, so this proves nothing"
+    for declared in inventoried:
         assert str(declared["name"]) in script, f"{CLEANUP_JOB} never names {declared['name']}"
     assert not re.search(rf"--method\s+DELETE\s+\S*{re.escape(RUN_ENDPOINT)}/\$?\{{?[A-Za-z_]", script), (
         f"{CLEANUP_JOB} deletes a workflow run"
@@ -762,26 +1115,32 @@ def test_only_the_cleanup_job_can_delete_anything() -> None:
             assert ACCESS[declared.get("actions", "none")] < ACCESS["write"], f"{job} can delete an artifact"
 
 
-def test_no_candidate_artifact_outlives_a_completed_run_on_the_v3_line() -> None:
-    """A pull-request run describes bytes nobody will ship, so it ends holding none of them.
+def test_no_candidate_artifact_outlives_a_run_something_started_on_its_own() -> None:
+    """A run nobody chose describes bytes nobody will ship, so it ends holding none of them.
 
     What such a run produces is a handoff: one job builds the bytes, a host that
     has never seen this repository qualifies them, and the run deletes them
     before it finishes. Keeping them put gigabytes of pre-release bytes behind
-    public download links; the candidate an approval is bound to is built by a
-    manual run against an exact merged commit.
+    public download links.
+
+    Scoped to the V3 workflows an *event* reaches, which is the set whose bytes
+    nobody chose. Retention is the whole point of the manual candidate route: a
+    person names an exact merged commit and the run keeps what it built for the
+    approval window. Giving that route any automatic trigger puts it back in
+    scope here, and its retained uploads then fail this case rather than quietly
+    becoming a candidate no one asked for.
 
     Two claims, because issuing deletions and holding nothing are different: the
     job reads the run back and fails on anything remaining, and every candidate
-    upload a pull request can reach is covered by a cleanup that waits for the
-    job holding it. Failure-only diagnostics carry neither prefix and are absent
-    on success, so they are deliberately not caught here.
+    upload such a run can reach is covered by a cleanup that waits for the job
+    holding it. Failure-only diagnostics carry neither prefix and are absent on
+    success, so they are deliberately not caught here.
     """
     script = cleanup_script()
     assert "expired" in script, f"{CLEANUP_JOB} does not read back what the run still holds"
     assert re.search(r"exit\s+1", script), f"{CLEANUP_JOB} cannot fail a run that still holds a handoff"
 
-    reachable = v3_reachable()
+    reachable = v3_reachable() & reachable_from_an_event()
     uncovered = [
         f"{workflow.name}: {job}: {step}"
         for workflow, job, step, _declared in candidates()
@@ -793,7 +1152,11 @@ def test_no_candidate_artifact_outlives_a_completed_run_on_the_v3_line() -> None
         ]
     ]
 
-    assert candidates(), WORKFLOWS
+    # The narrowed scope has to still contain something, or an exclusion that
+    # emptied it would satisfy the case below by covering nothing at all.
+    assert [entry for entry in candidates() if entry[0] in reachable], (
+        f"no candidate upload is reachable from an event on the V3 line, so this proves nothing: {WORKFLOWS}"
+    )
     assert uncovered == [], f"{len(uncovered)} candidate uploads outlive their run: {uncovered}"
 
 
@@ -865,19 +1228,115 @@ def test_the_caller_derives_the_route_from_the_head_repository() -> None:
         assert TRUST_COMPARISON in passed, f"the image call derives {HANDOFF_INPUT} from {passed!r}"
 
 
-def test_the_artifact_record_names_the_candidate_from_the_one_document_that_holds_it() -> None:
+@pytest.mark.parametrize(
+    ("workflow", "job"), [(IMAGE_WORKFLOW, "image"), (CANDIDATE_WORKFLOW, "candidate")], ids=_identify
+)
+def test_the_artifact_record_names_the_candidate_from_the_one_document_that_holds_it(workflow: Path, job: str) -> None:
     """`release.qualify` refuses a record describing another candidate's uploads.
 
     So the writer copies the identity out of the document `release.identity`
     wrote rather than retyping it. A retyped version would pass on the run that
     wrote it and refuse a rebuild of that version at a new revision.
-    """
-    writers = [step for step in image_job("image")["steps"] if ARTIFACT_RECORD in str(step.get("run", ""))]
 
-    assert len(writers) == 1, f"{len(writers)} steps write {ARTIFACT_RECORD}"
+    The identifiers come from the uploads themselves, derived from which steps
+    the workflow gave an `id` and then uploaded under: a record naming a group
+    the run never uploaded, or omitting one it did, describes bytes the service
+    is not holding under that name.
+    """
+    writers = [step for step in job_of(workflow, job)["steps"] if ARTIFACT_RECORD in str(step.get("run", ""))]
+
+    assert len(writers) == 1, f"{len(writers)} steps of {workflow.name} write {ARTIFACT_RECORD}"
     script = str(writers[0]["run"])
     assert RECORDED_IDENTITY in script, f"the writer does not read the candidate from {RECORDED_IDENTITY}"
     assert "identity:" in script, f"the writer records no identity in {ARTIFACT_RECORD}"
+
+    # Which upload each `--arg` reads from, and what it reads. Keyed by the
+    # variable *and* its kind, so the identifier and the digest of one group are
+    # resolved separately and neither is taken on the strength of the other.
+    bound = {
+        (variable, kind): (producer, output) for variable, kind, producer, output in WRITER_BINDING.findall(script)
+    }
+    recorded = {
+        name: (id_variable, digest_variable) for name, id_variable, digest_variable in WRITER_ENTRY.findall(script)
+    }
+
+    # A document cannot carry its own upload digest, so the record's own group is
+    # the one exception; everything else the run retained has to be named.
+    #
+    # Compared by value: `candidates()` builds a fresh `Path` per call, so an
+    # identity test here silently skips every group and asserts nothing.
+    checked = [
+        str(declared["name"])
+        for path, _job, _step, declared in candidates()
+        if path == workflow and not str(declared["name"]).endswith("qualification-record")
+    ]
+
+    assert checked, f"{workflow.name} retains no group whose identifiers the record could bind"
+    for name in checked:
+        producing = str(step_of(workflow, job, name).get("id", ""))
+
+        assert producing, f"the step uploading {name} declares no id, so nothing can read its outputs"
+        assert name in recorded, f"{ARTIFACT_RECORD} records no entry for {name}"
+
+        # Both sides, each against the upload that really produced this group.
+        for kind, variable in zip(("id", "digest"), recorded[name], strict=True):
+            assert (variable, kind) in bound, (
+                f"{ARTIFACT_RECORD} records {name}'s {kind} from ${variable}_{kind}, which no upload output is bound to"
+            )
+            producer, output = bound[variable, kind]
+            assert output == kind, f"{name}'s {kind} is read from an upload's artifact-{output}"
+            assert producer == producing, (
+                f"{ARTIFACT_RECORD} records {name}'s {kind} from step {producer!r}, "
+                f"but {producing!r} is what uploads it"
+            )
+
+
+def step_of(workflow: Path, job: str, artifact: str) -> dict:
+    """Return the step of one job that uploads one named artifact."""
+    uploading = [
+        step
+        for step in job_of(workflow, job)["steps"]
+        if str((step.get("with") or {}).get("name", "")) == artifact
+        and str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@")
+    ]
+    assert len(uploading) == 1, f"{len(uploading)} steps of {workflow.name} upload {artifact}"
+    return uploading[0]
+
+
+def candidate_sequence() -> list[str]:
+    """Return what the candidate job does, in order, as the names the plan uses.
+
+    An Invoke task is named by the task; an upload is named by the artifact it
+    creates; the record is named by the file it writes. Everything else is
+    dropped, so adding a step between two of these does not move them.
+    """
+    ordered = []
+    for step in candidate_steps("candidate"):
+        run = str(step.get("run", ""))
+        declared = str((step.get("with") or {}).get("name", ""))
+        if ARTIFACT_RECORD in run:
+            ordered.append(ARTIFACT_RECORD)
+        ordered.extend(INVOKE_TASK.findall(run))
+        if declared in CANDIDATE_GROUPS and str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@"):
+            ordered.append(declared)
+    return ordered
+
+
+def test_the_candidate_run_does_the_approved_steps_in_the_approved_order() -> None:
+    """Three of these orderings are load-bearing and none of them is visible from one step.
+
+    `compose.reclaim` deletes the archives the image upload publishes, so an
+    upload after it publishes nothing. `release.qualify` reads the artifact
+    record, so a record written after it describes the previous candidate or
+    nothing. And the lifecycle has to run against the image the reclaim left
+    behind rather than before it was built.
+
+    Compared as the whole sequence rather than as pairs, because a pairwise
+    check passes on a permutation that satisfies every pair it names.
+    """
+    sequence = [entry for entry in candidate_sequence() if entry in APPROVED_ORDER]
+
+    assert sequence == list(APPROVED_ORDER), f"the candidate job runs {sequence}"
 
 
 def kit_inputs() -> list[Path]:

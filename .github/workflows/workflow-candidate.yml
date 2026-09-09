@@ -1,0 +1,441 @@
+---
+# yamllint disable rule:truthy
+name: "Build an internal candidate from an exact merged commit"
+
+# The run's own title carries the commit it was told to build. A dispatched run's
+# `head_sha` is the tip of the *ref* it was started against, which is the
+# revision of the workflow definition and not the revision of the source: the
+# branch moves on, and the same commit can be rebuilt from a much later tip. So
+# `head_sha` answers "which workflow ran" and this answers "what did it build",
+# and nothing downstream has to infer the second from the first.
+run-name: "Candidate ${{ inputs.sha }}"
+
+# Manual only, and bound to a commit rather than to a ref. A pull-request run
+# builds the pull request's head while GitHub tests the merge commit, so a run
+# on the branch describes bytes nobody will ship. The candidate an approval is
+# later bound to is built from the commit that really landed, which is why the
+# commit is an input and not `github.sha`.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "The full 40-character merged commit on feature/v3-develop to build"
+        required: true
+        type: string
+
+# By commit, so two dispatches of different commits do not cancel each other,
+# and never cancelled: a half-built candidate leaves uploads a record cannot
+# describe.
+concurrency:
+  group: ${{ github.workflow }}-candidate-${{ inputs.sha }}
+  cancel-in-progress: false
+
+# Read-only throughout. This workflow builds and qualifies a candidate; it never
+# logs in, tags for a registry, pushes, or promotes a digest.
+permissions:
+  contents: read
+  packages: read
+
+# How long the service holds this candidate. An approval is bound to exactly
+# these bytes, so the window has to outlast the decision to take them, and a
+# diagnostic is a different kind of thing kept for a different reason.
+env:
+  CANDIDATE_RETENTION_DAYS: 30
+  DIAGNOSTIC_RETENTION_DAYS: 7
+
+jobs:
+  candidate:
+    name: "Candidate build and qualification (build amd64 + arm64, qualify amd64)"
+    runs-on: "ubuntu-22.04"
+    # One build, then everything qualified against it. The bound covers both
+    # phases; the freshness and lifecycle phases carry their own, tighter ones.
+    timeout-minutes: 120
+    # `actions: read` is what lets the last step read the run's own artifacts
+    # back and see the window the service actually granted.
+    permissions:
+      contents: read
+      packages: read
+      actions: read
+    steps:
+      # `persist-credentials: false` because everything after this step runs
+      # third-party code against the checkout: `uv sync` resolves a lock file, the
+      # image build runs a Dockerfile, and the lifecycle phase starts two
+      # container stacks. The default leaves this run's token in `.git/config`,
+      # where any of them can read it. Nothing here pushes, so nothing needs it.
+      #
+      # The refusal below then fetches the branch anonymously, which works
+      # because this repository is public. On a private one that fetch would need
+      # a credential scoped to the single command rather than left in the config.
+      - name: "Check out the exact commit this run was told to build"
+        uses: "actions/checkout@v5"
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Both refusals, before anything is built. The input arrives through an
+      # environment value rather than being interpolated into the script, and the
+      # script compares what the checkout actually produced: `workflow_dispatch`
+      # runs against a ref, so a branch that moved between the merge and the
+      # dispatch would otherwise build different source under the right name.
+      - name: "Refuse a checkout that did not land where it was told, or a commit that never merged"
+        env:
+          CANDIDATE_SHA: ${{ inputs.sha }}
+        run: |
+          set -eu
+          expected=${CANDIDATE_SHA:?the commit to build is required}
+          case $expected in
+            *[!0-9a-f]*)
+              echo "the requested commit $expected is not a hexadecimal object name" >&2
+              exit 1
+              ;;
+          esac
+          if [ ${#expected} -ne 40 ]; then
+            echo "the requested commit $expected is abbreviated; name the full 40-character commit" >&2
+            exit 1
+          fi
+          actual=$(git rev-parse HEAD)
+          if [ "$actual" != "$expected" ]; then
+            echo "the checkout landed on $actual, not the $expected it was told to build" >&2
+            exit 1
+          fi
+          git fetch --no-tags --quiet origin feature/v3-develop
+          if ! git merge-base --is-ancestor "$expected" FETCH_HEAD; then
+            echo "$expected is not merged into feature/v3-develop, so calling it a candidate is a lie" >&2
+            exit 1
+          fi
+          echo "building $expected, which is merged into feature/v3-develop"
+
+      - name: "Install uv"
+        uses: "astral-sh/setup-uv@v4"
+        with:
+          version: "latest"
+
+      - name: "Install dependencies"
+        run: uv sync --frozen --extra dev --extra prefect --extra service
+
+      # arm64 is built and smoked under emulation on the amd64 runner. That is
+      # build and smoke evidence; it is not a clean-host qualification claim.
+      - name: "Set up QEMU for the non-native platform"
+        uses: docker/setup-qemu-action@v3
+
+      - name: "Set up Buildx"
+        uses: docker/setup-buildx-action@v3
+
+      # A throwaway value, generated per run and never stored, so the canary
+      # checks measure this build rather than a constant somebody could special-case.
+      - name: "Seed the build environment canary"
+        run: echo "INFRAHUB_SYNC_IMAGE_CANARY=canary-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+
+      # The one step that reads package metadata. Every artifact name a later
+      # phase uses is derived from what it records, so an approval can be checked
+      # against the candidate rather than against whatever the source says then.
+      - name: "Record the release identity every artifact is named from"
+        run: uv run --no-sync invoke release.identity
+
+      - name: "Build the distributions an approval would publish"
+        run: uv run --no-sync invoke release.build
+
+      - name: "Produce the deployment bundle and the qualification kit"
+        run: uv run --no-sync invoke release.kit
+
+      - name: "Build both platforms"
+        run: uv run --no-sync invoke image.build
+
+      - name: "Record the index and platform digests"
+        run: uv run --no-sync invoke image.inspect
+
+      # Two further builds on the builder the candidate build just warmed. They
+      # prove a Python-only edit reaches the next image rather than resolving to
+      # a cached wheel of the source before it, and they leave the retained
+      # candidate bytes untouched.
+      - name: "Prove the warm builder installs the source it copied"
+        timeout-minutes: 45
+        run: uv run --no-sync invoke image.freshness
+
+      - name: "Generate the SPDX SBOM"
+        run: uv run --no-sync invoke image.sbom
+
+      - name: "Enforce the vulnerability policy"
+        run: uv run --no-sync invoke image.scan
+
+      - name: "Smoke both platforms"
+        run: uv run --no-sync invoke image.smoke
+
+      # Before the reclaim below, which is what removes the archives. The layout
+      # and the digests travel with them: a clean host loads the archive, and
+      # anything later re-exporting a platform needs the layout it came from.
+      - name: "Publish the image layout, both platform archives, and the digests"
+        id: candidate-image
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-candidate-image
+          path: |
+            .image/oci/
+            .image/archives/image-linux-*.tar
+            .image/digests.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
+      # Each archive is one platform image copied out of the retained layout, and
+      # those copies are the largest thing the build leaves behind. Nothing reads
+      # them after the scan, the smoke and the upload above; the lifecycle phase
+      # that follows starts a second container stack beside the first.
+      - name: "Reclaim the exported archives"
+        run: uv run --no-sync invoke compose.reclaim
+
+      # The same job, the same layout, the same loaded amd64 image. The bundle is
+      # handed that image's recorded configuration digest, so the lifecycle
+      # evidence and the image evidence cannot describe separate builds.
+      - name: "Qualify the Compose lifecycle on linux/amd64"
+        timeout-minutes: 45
+        run: uv run --no-sync invoke compose.lifecycle
+
+      - name: "Publish the recorded identity as a candidate artifact"
+        id: candidate-identity
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-candidate-identity
+          path: .release/identity.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
+      - name: "Publish the built distributions as a candidate artifact"
+        id: candidate-distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-candidate-distributions
+          path: |
+            .release/dist/*.whl
+            .release/dist/*.tar.gz
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
+      - name: "Publish the deployment bundle and its checksum"
+        id: candidate-bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-candidate-bundle
+          path: .release/bundle/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
+      - name: "Publish the bills of materials and the vulnerability reports"
+        id: candidate-sboms
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-candidate-sboms
+          path: |
+            .image/*-sbom-*.spdx.json
+            .image/*-vulnerabilities-*.json
+          # The build writes its evidence under a hidden directory, which the
+          # upload skips by default and then reports as no files found.
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
+      # Evidence, not bundle: what the clean-host gate needs and an operator
+      # never sees.
+      - name: "Publish the clean-host qualification kit"
+        id: qualification-kit
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-qualification-kit
+          path: .release/qualification/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
+      # What `release.qualify` reads to name what the service is holding. After
+      # the six uploads, because it names what they returned.
+      #
+      # The identity is copied out of `.release/identity.json` rather than retyped
+      # here, so this document and the candidate it describes have one source. A
+      # record naming any other candidate is refused, and retyping the version
+      # alone would pass a rebuild of that version at a different revision. The
+      # qualification record is absent: a document cannot carry its own upload
+      # digest, so its identifiers go in the acceptance receipt instead.
+      - name: "Record what the service is holding"
+        run: |
+          set -euo pipefail
+          jq -n \
+            --slurpfile identity .release/identity.json \
+            --argjson retention_days ${{ env.CANDIDATE_RETENTION_DAYS }} \
+            --arg image_id "${{ steps.candidate-image.outputs.artifact-id }}" \
+            --arg image_digest "${{ steps.candidate-image.outputs.artifact-digest }}" \
+            --arg identity_id "${{ steps.candidate-identity.outputs.artifact-id }}" \
+            --arg identity_digest "${{ steps.candidate-identity.outputs.artifact-digest }}" \
+            --arg distributions_id "${{ steps.candidate-distributions.outputs.artifact-id }}" \
+            --arg distributions_digest "${{ steps.candidate-distributions.outputs.artifact-digest }}" \
+            --arg bundle_id "${{ steps.candidate-bundle.outputs.artifact-id }}" \
+            --arg bundle_digest "${{ steps.candidate-bundle.outputs.artifact-digest }}" \
+            --arg sboms_id "${{ steps.candidate-sboms.outputs.artifact-id }}" \
+            --arg sboms_digest "${{ steps.candidate-sboms.outputs.artifact-digest }}" \
+            --arg kit_id "${{ steps.qualification-kit.outputs.artifact-id }}" \
+            --arg kit_digest "${{ steps.qualification-kit.outputs.artifact-digest }}" \
+            '{
+               identity: $identity[0],
+               retention_days: $retention_days,
+               artifacts: {
+                 "infrahub-sync-candidate-image": {id: $image_id, digest: $image_digest},
+                 "infrahub-sync-candidate-identity": {id: $identity_id, digest: $identity_digest},
+                 "infrahub-sync-candidate-distributions": {id: $distributions_id, digest: $distributions_digest},
+                 "infrahub-sync-candidate-bundle": {id: $bundle_id, digest: $bundle_digest},
+                 "infrahub-sync-candidate-sboms": {id: $sboms_id, digest: $sboms_digest},
+                 "infrahub-sync-qualification-kit": {id: $kit_id, digest: $kit_digest}
+               }
+             }' > .release/artifacts.json
+
+      # What the driver reads its expectations out of: this candidate's tag and
+      # version, its bundle, and the configuration digest it has to find loaded.
+      - name: "Write the qualification record"
+        run: uv run --no-sync invoke release.qualify
+
+      - name: "Publish the qualification record"
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-qualification-record
+          path: .release/qualification.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
+      # Asking for a window is not being granted one. This reads the run's own
+      # artifacts back and compares each expiry against the upload it belongs to,
+      # so a candidate whose bytes will not survive the approval window fails the
+      # run that built it rather than the approval that needed them.
+      - name: "Prove the service granted the window this candidate asked for"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
+            --jq '.artifacts[] | [.name, .created_at, .expires_at] | @tsv' > "${RUNNER_TEMP}/retention.tsv"
+          missing=""
+          for name in \
+            infrahub-sync-candidate-image \
+            infrahub-sync-candidate-identity \
+            infrahub-sync-candidate-distributions \
+            infrahub-sync-candidate-bundle \
+            infrahub-sync-candidate-sboms \
+            infrahub-sync-qualification-kit \
+            infrahub-sync-qualification-record
+          do
+            entry=$(awk -F'\t' -v wanted="$name" '$1 == wanted {print $2 "\t" $3; exit}' "${RUNNER_TEMP}/retention.tsv")
+            if [ -z "$entry" ]; then
+              missing="$missing $name"
+              continue
+            fi
+            created=$(printf '%s' "$entry" | cut -f1)
+            expires=$(printf '%s' "$entry" | cut -f2)
+            # Compared in seconds against the exact window, with one second of
+            # slack and no more. The API reports both instants at second
+            # resolution and records them independently, so the pair can differ
+            # by a second without the window differing at all -- but nothing
+            # wider than that is drift. Rounding to the nearest day would accept
+            # anything within twelve hours, which is most of a day short of the
+            # window an approval is bound to.
+            expected=$(( CANDIDATE_RETENTION_DAYS * 86400 ))
+            elapsed=$(( $(date -u -d "$expires" +%s) - $(date -u -d "$created" +%s) ))
+            drift=$(( elapsed - expected ))
+            if [ "$drift" -lt 0 ]; then
+              drift=$(( -drift ))
+            fi
+            if [ "$drift" -gt 1 ]; then
+              echo "$name was granted ${elapsed}s, not the ${expected}s" \
+                "(${CANDIDATE_RETENTION_DAYS} days) an approval needs" >&2
+              exit 1
+            fi
+            echo "$name expires $expires, ${elapsed}s after its upload"
+          done
+          if [ -n "$missing" ]; then
+            echo "this run is holding no artifact named:$missing" >&2
+            exit 1
+          fi
+
+      # Only when the job has already failed, and only what the suite's own
+      # capture boundary produced. A run that passes uploads nothing new.
+      - name: "Publish what a failed lifecycle run saw"
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-lifecycle-diagnostic
+          path: .diagnostics/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: ${{ env.DIAGNOSTIC_RETENTION_DAYS }}
+
+  # A host that has never seen this repository: no checkout, no interpreter, and
+  # nothing but what the job above retained. Every download is of this run's own
+  # artifacts, because naming another run's would qualify a candidate some other
+  # commit built and report the result against this one.
+  clean-host:
+    name: "Clean-host qualification (linux/amd64, no checkout)"
+    needs: ["candidate"]
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 90
+    steps:
+      # The image artifact keeps the build's own layout, so the archive arrives
+      # under `archives/` and is copied flat below rather than downloaded flat:
+      # merging it into the candidate directory would put the whole OCI layout
+      # there too.
+      - name: "Download the image this run built"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-candidate-image
+          path: image
+
+      - name: "Download the bundle and checksum this run built"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-candidate-bundle
+          path: candidate
+
+      - name: "Download the record this run wrote for them"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-qualification-record
+          path: candidate
+
+      - name: "Download the qualification kit"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-qualification-kit
+          path: kit
+
+      # A flat directory is what the driver reads out of `CLEAN_HOST_CANDIDATE`:
+      # the qualified platform's archive, the bundle, the checksum it verifies the
+      # bundle against before extracting it, and the record it reads its
+      # expectations out of.
+      - name: "Stage the exact bytes a clean host consumes"
+        run: cp image/archives/image-linux-amd64.tar candidate/
+
+      # Inside the job's bound, so the phase reports which row was running rather
+      # than being cut off by the runner. An artifact carries no mode, so the one
+      # thing restored here is the bit the upload dropped.
+      - name: "Run the mandatory matrix"
+        timeout-minutes: 75
+        env:
+          CLEAN_HOST_CANDIDATE: ${{ github.workspace }}/candidate
+        run: |
+          set -eu
+          chmod 0755 kit/clean-host.sh
+          kit/clean-host.sh
+
+      # The one file the driver swept and chose to keep, named exactly: the
+      # working directory beside it holds the list of this run's own credentials.
+      # A withheld diagnostic is an absent file, and the log says why.
+      - name: "Publish the pre-teardown diagnostic of a failed row"
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-clean-host-diagnostic
+          path: kit/work/diagnostic.txt
+          if-no-files-found: ignore
+          retention-days: ${{ env.DIAGNOSTIC_RETENTION_DAYS }}

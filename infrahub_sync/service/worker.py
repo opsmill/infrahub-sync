@@ -163,9 +163,10 @@ class ServiceProcessWorker(ProcessWorker):
         try:
             async with self._identity_lock:
                 self._identity_refresh_active = True
+                previous_identity = self.backend_id
+                previous_generation = self._identity_generation
                 self._identity_generation += 1
                 self._has_successfully_synced = False
-                previous_identity = self.backend_id
                 self.backend_id = None
                 if previous_identity is not None and os.environ.get("PREFECT__WORKER_ID") == str(previous_identity):
                     os.environ.pop("PREFECT__WORKER_ID", None)
@@ -173,6 +174,16 @@ class ServiceProcessWorker(ProcessWorker):
                     await super().sync_with_backend()
                 finally:
                     self._identity_refresh_active = False
+                # A heartbeat that re-resolved the same record changed nothing
+                # about this worker's identity, so the generation goes back to
+                # what it was and configurations prepared against it stay valid.
+                # Without this, every periodic sync refused whatever submission
+                # was in flight, and Prefect had already proposed Submitting by
+                # then -- so the run was marked Crashed for a replacement that
+                # never happened. A genuinely different record keeps the
+                # increment, which is what makes a stale child refusable.
+                if self.backend_id is not None and self.backend_id == previous_identity:
+                    self._identity_generation = previous_generation
         finally:
             self._identity_refresh_requests -= 1
 
@@ -180,8 +191,24 @@ class ServiceProcessWorker(ProcessWorker):
         if self._work_pool is None:
             await super()._initialize_after_sync()
             return
-        await self._refresh_worker_identity()
+        if not await self._resolve_worker_identity():
+            # No identity, so nothing may run: `_submission_generation` refuses
+            # every submission while `backend_id` is None, and readiness stays
+            # false. Raising instead would leave the sync loop, and Prefect
+            # terminates the worker on anything it does not recognise as
+            # intermittent -- which turned a momentary window into a deployment
+            # that never came back. The next heartbeat resolves it.
+            return
         await super()._initialize_after_sync()
+
+    async def _resolve_worker_identity(self) -> bool:
+        """Install this worker's server UUID, or report that it is not available yet."""
+        try:
+            await self._refresh_worker_identity()
+        except ServiceWorkerIdentityError:
+            self._logger.debug("Service worker identity is unavailable; deferring to the next heartbeat.")
+            return False
+        return True
 
     async def _refresh_worker_identity(self) -> None:
         """Resolve exactly one online, pool-scoped record and install its UUID."""
