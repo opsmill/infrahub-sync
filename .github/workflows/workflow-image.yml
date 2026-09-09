@@ -19,7 +19,10 @@ concurrency:
   cancel-in-progress: true
 
 # Read-only throughout. This gate builds and tests an image; it never logs in,
-# tags for a registry, pushes, or promotes a digest.
+# tags for a registry, pushes, or promotes a digest. It also uploads nothing, so
+# a pull-request run retains no image, layout, distribution or bundle: it
+# describes a merge result nobody will ship, and the candidate that gets
+# qualified is built by a later manual run against the exact merged commit.
 permissions:
   contents: read
   packages: read
@@ -74,11 +77,30 @@ jobs:
       - name: "Seed the build environment canary"
         run: echo "INFRAHUB_SYNC_IMAGE_CANARY=canary-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
 
+      # The one step that reads package metadata. Every artifact name a later
+      # phase uses is derived from what it records, so an approval can be checked
+      # against the candidate rather than against whatever the source says then.
+      - name: "Record the release identity every artifact is named from"
+        run: uv run --no-sync invoke release.identity
+
+      - name: "Build the distributions an approval would publish"
+        run: uv run --no-sync invoke release.build
+
+      - name: "Produce the deployment bundle and the qualification kit"
+        run: uv run --no-sync invoke release.kit
+
       - name: "Build both platforms"
         run: uv run --no-sync invoke image.build
 
       - name: "Record the index and platform digests"
         run: uv run --no-sync invoke image.inspect
+
+      # Two further builds on the builder the candidate build just warmed. They
+      # prove a Python-only edit reaches the next image rather than resolving to
+      # a cached wheel of the source before it.
+      - name: "Prove the warm builder installs the source it copied"
+        timeout-minutes: 45
+        run: uv run --no-sync invoke image.freshness
 
       - name: "Generate the SPDX SBOM"
         run: uv run --no-sync invoke image.sbom
@@ -88,11 +110,7 @@ jobs:
 
       - name: "Smoke both platforms"
         run: uv run --no-sync invoke image.smoke
-
-      # The scanners read a saved copy of each platform image, and those copies
-      # are the largest thing the build leaves behind. Nothing reads them after
-      # the scan, and the lifecycle phase starts two container stacks.
-      - name: "Reclaim the scanner inputs"
+      - name: "Reclaim the exported archives"
         run: uv run --no-sync invoke compose.reclaim
 
       # The same job, the same layout, the same loaded amd64 image. The bundle is
@@ -101,15 +119,3 @@ jobs:
       - name: "Qualify the Compose lifecycle on linux/amd64"
         timeout-minutes: 45
         run: uv run --no-sync invoke compose.lifecycle
-
-      - name: "Publish the digests and SBOM as build evidence"
-        uses: actions/upload-artifact@v4
-        with:
-          name: infrahub-sync-image-evidence
-          path: |
-            .image/digests.json
-            .image/sbom-*.spdx.json
-          # The build writes its evidence under a hidden directory, which the
-          # upload skips by default and then reports as no files found.
-          include-hidden-files: true
-          if-no-files-found: error

@@ -12,17 +12,16 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shlex
+import tarfile
 from dataclasses import dataclass
-from datetime import date, datetime
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as installed_version
+from datetime import date
 from typing import TYPE_CHECKING, Any
 
 import yaml
 from invoke import Context, task
 
+from .release import DISTRIBUTION_FILE, ReleaseIdentity, identity_from, read_release_identity, record_gate
 from .utils import ESCAPED_REPO_PATH, REPO_BASE
 
 if TYPE_CHECKING:
@@ -34,6 +33,9 @@ REPO_ROOT = REPO_BASE
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 BUILD_DIR = REPO_ROOT / ".image"
 LAYOUT_DIR = BUILD_DIR / "oci"
+# Its own directory so the transfer step can be given write access to the
+# archives without also being able to write into the layout it reads.
+ARCHIVE_DIR = BUILD_DIR / "archives"
 DIGESTS_FILE = BUILD_DIR / "digests.json"
 WAIVER_FILE = REPO_ROOT / "vulnerability-waivers.yml"
 
@@ -51,15 +53,19 @@ PLATFORMS = ("linux/amd64", "linux/arm64")
 SYFT_IMAGE = "anchore/syft:v1.33.0@sha256:f94e5d9fce1f2278491a8e3a63bd5f6ddb81fdfdbb8bf7a1637565c1d5344357"
 GRYPE_IMAGE = "anchore/grype:v0.101.0@sha256:66a63cacdfeed19c7c9cbad9a841cd538b28055bb0e207013d27a12585a39063"
 
+# Skopeo moves a built platform image out of the retained layout, so it stands
+# between the one build and everything that judges its output. It is pinned by
+# digest for the same reason the scanners are.
+SKOPEO_IMAGE = "quay.io/skopeo/stable:v1.20.0@sha256:47853bb9fb24202af9110531ebd6e43c5f97701254ca290596640290d17942f4"
+
 CANARY_ENV = "INFRAHUB_SYNC_IMAGE_CANARY"
+SMOKE_COMMAND = "pytest -m docker tests/image"
 DIGESTS_SCHEMA_VERSION = 1
 WAIVER_SCHEMA_VERSION = 1
 WAIVER_FIELDS = ("vulnerability", "owner", "reason", "expires")
 BLOCKING_SEVERITIES = frozenset({"high", "critical"})
 FIXED_STATE = "fixed"
 
-_REVISION = re.compile(r"[0-9a-f]{40}")
-_VERSION = re.compile(r"[0-9][0-9A-Za-z.!+-]*")
 # Attestation manifests are recorded against this placeholder platform. The build
 # asks for none, so one appearing means the exporter added something the recorded
 # digests would otherwise silently describe as an image.
@@ -70,71 +76,15 @@ class ImageTaskError(RuntimeError):
     """Raised when an image build input or output does not meet the artifact contract."""
 
 
-@dataclass(frozen=True)
-class SourceProvenance:
-    """The three provenance values a build is allowed to take from its source."""
-
-    version: str
-    revision: str
-    created: str
-
-
-def source_provenance(*, version: str, revision: str, created: str) -> SourceProvenance:
-    """Validate the release identity a build may record, and refuse anything else.
-
-    These three values are the only build inputs that reach image metadata, so
-    they are checked here rather than trusted: an abbreviated revision or a local
-    timestamp would leave an image nobody can trace back to one commit.
-    """
-    if not _VERSION.fullmatch(version):
-        msg = f"version {version!r} is not a release identifier"
-        raise ImageTaskError(msg)
-    if not _REVISION.fullmatch(revision):
-        msg = f"revision {revision!r} is not a full commit identifier"
-        raise ImageTaskError(msg)
-    # Git writes a terminal `Z` for a commit made at UTC, and `fromisoformat` does
-    # not read it before Python 3.11. Rewriting that one designator is what lets
-    # this run on every supported interpreter; it is done for parsing alone, so a
-    # timestamp no commit carried cannot reach image metadata.
-    parsable = f"{created[:-1]}+00:00" if created.endswith("Z") else created
-    try:
-        parsed = datetime.fromisoformat(parsable)
-    except ValueError:
-        msg = f"created {created!r} is not an ISO 8601 timestamp"
-        raise ImageTaskError(msg) from None
-    if parsed.utcoffset() is None:
-        msg = f"created {created!r} has no UTC offset, so it names no absolute instant"
-        raise ImageTaskError(msg)
-    return SourceProvenance(version=version, revision=revision, created=created)
-
-
-def read_source_provenance(context: Context) -> SourceProvenance:
-    """Derive the release identity from the installed distribution and the source commit.
-
-    `created` comes from the commit, never the build clock, so two builds of one
-    revision record the same creation time.
-    """
-    try:
-        version = installed_version(DISTRIBUTION)
-    except PackageNotFoundError:
-        msg = f"{DISTRIBUTION} is not installed; run `uv sync --extra dev --extra prefect --extra service`"
-        raise ImageTaskError(msg) from None
-    return source_provenance(
-        version=version,
-        revision=_git(context, "rev-parse HEAD"),
-        created=_git(context, "show -s --format=%cI HEAD"),
-    )
-
-
 def build_command(
-    provenance: SourceProvenance,
+    identity: ReleaseIdentity,
     *,
     platforms: tuple[str, ...],
     destination: Path,
 ) -> tuple[str, ...]:
     """Return the fixed buildx argv for one OCI layout export.
 
-    Only the three provenance values are passed as build arguments. Nothing else
+    Only the three identity values are passed as build arguments. Nothing else
     from the caller's environment or command line reaches the image, so image
     history cannot become a place a secret is accidentally recorded.
     """
@@ -151,41 +101,45 @@ def build_command(
         "--provenance=false",
         "--sbom=false",
         "--build-arg",
-        f"VERSION={provenance.version}",
+        f"VERSION={identity.version}",
         "--build-arg",
-        f"REVISION={provenance.revision}",
+        f"REVISION={identity.revision}",
         "--build-arg",
-        f"CREATED={provenance.created}",
+        f"CREATED={identity.created}",
         "--output",
         f"type=oci,tar=false,dest={destination}",
         str(REPO_ROOT),
     )
 
 
-def load_command(provenance: SourceProvenance, *, platform: str, reference: str) -> tuple[str, ...]:
-    """Return the fixed buildx argv that puts one platform image in the local daemon."""
+def export_command(*, platform: str, archive: str, reference: str) -> tuple[str, ...]:
+    """Return the fixed argv that copies one recorded platform out of the layout.
+
+    The conversion runs in a pinned container with no network, reads the layout
+    through a read-only mount, and can write only into the archive directory, so
+    the step that transfers a candidate cannot alter the candidate. The platform
+    is selected explicitly rather than left to the host's own architecture.
+    """
+    operating_system, _, architecture = platform.partition("/")
     return (
         "docker",
-        "buildx",
-        "build",
-        "--builder",
-        BUILDER_NAME,
-        "--file",
-        str(DOCKERFILE),
-        "--platform",
-        platform,
-        "--provenance=false",
-        "--sbom=false",
-        "--build-arg",
-        f"VERSION={provenance.version}",
-        "--build-arg",
-        f"REVISION={provenance.revision}",
-        "--build-arg",
-        f"CREATED={provenance.created}",
-        "--tag",
-        reference,
-        "--load",
-        str(REPO_ROOT),
+        "run",
+        "--rm",
+        "--network=none",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        "--volume",
+        f"{LAYOUT_DIR}:/layout:ro",
+        "--volume",
+        f"{ARCHIVE_DIR}:/archives",
+        SKOPEO_IMAGE,
+        "--override-os",
+        operating_system,
+        "--override-arch",
+        architecture,
+        "copy",
+        "oci:/layout",
+        f"docker-archive:/archives/{archive}:{reference}",
     )
 
 
@@ -414,27 +368,52 @@ def platform_slug(platform: str) -> str:
 
 
 def archive_file(platform: str) -> Path:
-    """Return where one platform image is saved for the scanners to read."""
-    return BUILD_DIR / f"image-{platform_slug(platform)}.tar"
+    """Return where one platform image is exported for transfer and for the scanners."""
+    return ARCHIVE_DIR / f"image-{platform_slug(platform)}.tar"
 
 
-def sbom_file(platform: str) -> Path:
-    """Return where one platform image's SPDX bill of materials is written."""
-    return BUILD_DIR / f"sbom-{platform_slug(platform)}.spdx.json"
+def archive_configuration(archive: Path) -> str:
+    """Return the configuration digest a Docker-load archive names.
 
-
-def scan_file(platform: str) -> Path:
-    """Return where one platform image's vulnerability report is written."""
-    return BUILD_DIR / f"vulnerabilities-{platform_slug(platform)}.json"
-
-
-def _git(context: Context, arguments: str) -> str:
-    with context.cd(ESCAPED_REPO_PATH):
-        result = context.run(f"git {arguments}", hide=True, warn=True, pty=False)
-    if result is None or result.exited != 0:
-        msg = f"`git {arguments}` failed in {REPO_ROOT}"
+    That format carries no manifest digest, so this is what proves an export
+    resolved the manifest the record holds: a manifest names exactly one
+    configuration, and the configuration names every layer through its diff
+    identifiers, which the copy verified on the way out.
+    """
+    try:
+        with tarfile.open(archive) as opened:
+            entry = opened.extractfile("manifest.json")
+            manifest = json.loads(entry.read()) if entry is not None else None
+    except (tarfile.TarError, KeyError, json.JSONDecodeError):
+        msg = f"{archive} is not a readable Docker-load archive"
+        raise ImageTaskError(msg) from None
+    if not isinstance(manifest, list) or len(manifest) != 1:
+        msg = f"{archive} must hold exactly one image"
         raise ImageTaskError(msg)
-    return result.stdout.strip()
+    configuration = _mapping(manifest[0], f"the {archive.name} manifest").get("Config")
+    if not isinstance(configuration, str):
+        msg = f"{archive} names no image configuration"
+        raise ImageTaskError(msg)
+    return f"sha256:{configuration.removesuffix('.json')}"
+
+
+def recorded_identity(record: dict) -> ReleaseIdentity:
+    """Return the release identity the build recorded beside its digests.
+
+    Everything the scanners write is named from it, so a report downloaded on its
+    own says which release and which platform it describes.
+    """
+    return identity_from(record.get("provenance"), str(DIGESTS_FILE))
+
+
+def sbom_file(identity: ReleaseIdentity, platform: str) -> Path:
+    """Return where one platform image's SPDX bill of materials is written."""
+    return BUILD_DIR / f"{DISTRIBUTION_FILE}-{identity.version}-sbom-{platform_slug(platform)}.spdx.json"
+
+
+def scan_file(identity: ReleaseIdentity, platform: str) -> Path:
+    """Return where one platform image's vulnerability report is written."""
+    return BUILD_DIR / f"{DISTRIBUTION_FILE}-{identity.version}-vulnerabilities-{platform_slug(platform)}.json"
 
 
 def _run(context: Context, argv: tuple[str, ...], *, hide: bool = False) -> str:
@@ -470,25 +449,25 @@ def build(context: Context, platforms: str = ",".join(PLATFORMS)) -> None:
         msg = f"{CANARY_ENV} must hold a throwaway secret value so the build proves it leaks none"
         raise ImageTaskError(msg)
 
-    provenance = read_source_provenance(context)
+    identity = read_release_identity(context)
     _ensure_builder(context)
 
-    print(f" - [{NAMESPACE}] Building {', '.join(requested)} at revision {provenance.revision}")
+    print(f" - [{NAMESPACE}] Building {', '.join(requested)} at revision {identity.revision}")
     # The whole build directory, not only the layout. An SBOM or scanner report
     # left behind describes the artifact of the previous build, which the digest
     # record about to be written no longer names, and `image.scan` would read it
     # as a statement about the new one.
     _remove_tree(BUILD_DIR)
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
-    _run(context, build_command(provenance, platforms=requested, destination=LAYOUT_DIR))
+    _run(context, build_command(identity, platforms=requested, destination=LAYOUT_DIR))
 
     layout = read_layout(LAYOUT_DIR)
     record = {
         "schema_version": DIGESTS_SCHEMA_VERSION,
         "provenance": {
-            "version": provenance.version,
-            "revision": provenance.revision,
-            "created": provenance.created,
+            "version": identity.version,
+            "revision": identity.revision,
+            "created": identity.created,
         },
         "index_digest": layout["index"],
         "platforms": layout["platforms"],
@@ -520,6 +499,21 @@ def inspect(context: Context) -> None:
             print(f" - [{NAMESPACE}]   env      {value}")
 
 
+@task(name="freshness")
+def freshness(context: Context) -> None:
+    """Prove a second build on the warm builder installs the source it copied.
+
+    Its own task rather than a case in the smoke suite: everything under that
+    marker runs against an image the gate has already built and is asked not to
+    build one, and this runs two builds because the builder's cache is what it
+    is about.
+    """
+    _ensure_builder(context)
+    print(f" - [{NAMESPACE}] Checking warm-builder freshness on {BUILDER_NAME}")
+    with context.cd(ESCAPED_REPO_PATH):
+        context.run("pytest tests/image -m builder", env={"INFRAHUB_SYNC_BUILDER": BUILDER_NAME}, pty=True)
+
+
 def _requested_platforms(record: dict, platform: str) -> list[str]:
     requested = [platform] if platform else sorted(record["platforms"])
     missing = [name for name in requested if name not in record["platforms"]]
@@ -529,17 +523,38 @@ def _requested_platforms(record: dict, platform: str) -> list[str]:
     return requested
 
 
-def _load_platform(context: Context, record: dict, platform: str) -> str:
-    """Put one built platform image in the local daemon and prove it is that image.
+def _export_platform(context: Context, record: dict, platform: str) -> Path:
+    """Export one recorded platform out of the retained layout, and prove it is that image.
+
+    Rebuilding to obtain transferable bytes would produce a second artifact and
+    then let every later check describe it as the first, so the candidate is only
+    ever copied. The archive is removed first because the destination format
+    refuses to overwrite, and a stale one would otherwise be read as this export.
+    """
+    expected = record["platforms"][platform]["config"]
+    archive = archive_file(platform)
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    archive.unlink(missing_ok=True)
+    print(f" - [{NAMESPACE}] Exporting {platform} from {LAYOUT_DIR}")
+    _run(context, export_command(platform=platform, archive=archive.name, reference=local_reference(platform)))
+    exported = archive_configuration(archive)
+    if exported != expected:
+        msg = f"{archive} holds {exported}, not the built {platform} image {expected}"
+        raise ImageTaskError(msg)
+    return archive
+
+
+def _import_platform(context: Context, record: dict, platform: str) -> str:
+    """Put one exported platform image in the local daemon and prove it is that image.
 
     The loaded image identifier is the configuration digest, so comparing it to
     the digest recorded from the OCI layout is what makes every later check —
-    smoke, SBOM, scan — a statement about the artifact the index names.
+    smoke, the lifecycle matrix — a statement about the artifact the index names.
     """
-    provenance = source_provenance(**record["provenance"])
+    archive = _export_platform(context, record, platform)
     reference = local_reference(platform)
     print(f" - [{NAMESPACE}] Loading {platform} as {reference}")
-    _run(context, load_command(provenance, platform=platform, reference=reference))
+    _run(context, ("docker", "image", "load", "--input", str(archive)), hide=True)
     loaded = _run(context, ("docker", "image", "inspect", "--format", "{{.Id}}", reference), hide=True).strip()
     expected = record["platforms"][platform]["config"]
     if loaded != expected:
@@ -558,17 +573,18 @@ def smoke(context: Context, platform: str = "") -> None:
 
     requested = _requested_platforms(record, platform)
     for name in requested:
-        reference = _load_platform(context, record, name)
+        reference = _import_platform(context, record, name)
         print(f" - [{NAMESPACE}] Smoking {name}")
         with context.cd(ESCAPED_REPO_PATH):
             context.run(
-                "pytest -m docker tests/image",
+                SMOKE_COMMAND,
                 env={
                     "INFRAHUB_SYNC_IMAGE_REF": reference,
                     "INFRAHUB_SYNC_IMAGE_LAYOUT": str(LAYOUT_DIR),
                 },
                 pty=True,
             )
+        record_gate("image-smoke", platform=name, image=record["platforms"][name]["config"], command=SMOKE_COMMAND)
     print(f" - [{NAMESPACE}] Smoked {', '.join(requested)}")
 
 
@@ -576,13 +592,12 @@ def smoke(context: Context, platform: str = "") -> None:
 def sbom(context: Context, platform: str = "") -> None:
     """Write an SPDX JSON SBOM for each built platform image with the pinned Syft."""
     record = read_digests()
+    identity = recorded_identity(record)
     for name in _requested_platforms(record, platform):
-        reference = _load_platform(context, record, name)
-        archive = archive_file(name)
-        _run(context, ("docker", "image", "save", "--output", str(archive), reference))
-        # The scanner reads the archive and writes nothing: its output comes back
-        # on stdout and this task owns the file, so no container writes into the
-        # build directory as root.
+        archive = _export_platform(context, record, name)
+        # The scanner reads the exported archive and writes nothing: its output
+        # comes back on stdout and this task owns the file, so the bill of
+        # materials describes the candidate's own bytes rather than a rebuild.
         document = _run(
             context,
             (
@@ -591,7 +606,7 @@ def sbom(context: Context, platform: str = "") -> None:
                 "--rm",
                 "--network=none",
                 "--volume",
-                f"{BUILD_DIR}:/work:ro",
+                f"{ARCHIVE_DIR}:/work:ro",
                 SYFT_IMAGE,
                 f"docker-archive:/work/{archive.name}",
                 "--output",
@@ -599,19 +614,20 @@ def sbom(context: Context, platform: str = "") -> None:
             ),
             hide=True,
         )
-        sbom_file(name).write_text(document, encoding="utf-8")
-        print(f" - [{NAMESPACE}] {name} SBOM written to {sbom_file(name)}")
+        sbom_file(identity, name).write_text(document, encoding="utf-8")
+        print(f" - [{NAMESPACE}] {name} SBOM written to {sbom_file(identity, name)}")
 
 
 @task(name="scan")
 def scan(context: Context, platform: str = "") -> None:
     """Fail on fixable high or critical vulnerabilities with the pinned Grype."""
     record = read_digests()
+    identity = recorded_identity(record)
     waivers = read_waivers(today=date.today())  # noqa: DTZ011 -- a waiver expiry is a calendar date
     blocking: list[tuple[str, Finding]] = []
 
     for name in _requested_platforms(record, platform):
-        document = sbom_file(name)
+        document = sbom_file(identity, name)
         if not document.is_file():
             msg = f"{document} is missing; run `uv run invoke image.sbom` first"
             raise ImageTaskError(msg)
@@ -630,7 +646,7 @@ def scan(context: Context, platform: str = "") -> None:
             ),
             hide=True,
         )
-        scan_file(name).write_text(report, encoding="utf-8")
+        scan_file(identity, name).write_text(report, encoding="utf-8")
         findings = blocking_findings(json.loads(report), waivers=waivers)
         blocking.extend((name, finding) for finding in findings)
         print(f" - [{NAMESPACE}] {name}: {len(findings)} fixable high or critical findings")

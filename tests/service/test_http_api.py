@@ -7,6 +7,7 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from importlib.metadata import version as installed_version
 from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace
@@ -1551,8 +1552,10 @@ def test_version_is_unauthenticated_and_declares_the_unstable_api(
     response = client.get("/version")
 
     assert response.status_code == 200
+    # Read from package metadata rather than restated: the property is that the
+    # API serves the version it was installed as, whatever that version is.
     assert response.json() == {
-        "server_version": "2.0.1",
+        "server_version": installed_version("infrahub-sync"),
         "api_versions": ["v3-unstable"],
         "stability": "unstable",
     }

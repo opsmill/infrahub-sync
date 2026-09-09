@@ -15,7 +15,8 @@ from collections.abc import Mapping
 
 from invoke import Context, task
 
-from .image import BUILD_DIR, ImageTaskError, read_digests
+from .image import ARCHIVE_DIR, ImageTaskError, read_digests
+from .release import record_gate
 from .utils import ESCAPED_REPO_PATH
 
 NAMESPACE = "INFRAHUB-SYNC-COMPOSE"
@@ -103,22 +104,24 @@ def lifecycle(context: Context, platform: str = QUALIFIED_PLATFORM) -> None:
             env={"INFRAHUB_SYNC_IMAGE": reference},
             pty=True,
         )
+    record_gate("compose-lifecycle", platform=platform, image=reference, command=qualification_command())
     print(f" - [{NAMESPACE}] Lifecycle matrix passed against {reference}")
 
 
 @task(name="reclaim")
 def reclaim(context: Context) -> None:
-    """Remove the scanner's saved image archives, keeping the layout and digests.
+    """Remove the exported image archives, keeping the layout and digests.
 
-    The bill of materials and the vulnerability report are produced from a saved
-    copy of each platform image, and those copies are the largest thing the build
-    leaves behind. They have no reader once the scan has run, and the lifecycle
-    matrix that follows starts a second container stack beside the first.
+    Each archive is one platform image copied out of the retained layout, and
+    those copies are the largest thing a build leaves behind. They have no reader
+    once the image has been loaded and scanned, and the lifecycle matrix that
+    follows starts a second container stack beside the first. The layout they
+    came from stays, so any of them can be exported again.
     """
     del context
     removed = 0
-    for archive in sorted(BUILD_DIR.glob("image-*.tar")):
+    for archive in sorted(ARCHIVE_DIR.glob("image-*.tar")):
         archive.unlink()
         print(f" - [{NAMESPACE}] Removed {archive}")
         removed += 1
-    print(f" - [{NAMESPACE}] Reclaimed {removed} scanner input(s); the OCI layout is untouched")
+    print(f" - [{NAMESPACE}] Reclaimed {removed} exported archive(s); the OCI layout is untouched")

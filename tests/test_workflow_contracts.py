@@ -15,6 +15,8 @@ strings, is left to GitHub.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
@@ -31,6 +33,9 @@ CALLERS = tuple(sorted(path.name for path in WORKFLOWS.glob("trigger-*.yml")))
 ACCESS = {"none": 0, "read": 1, "write": 2}
 
 UPLOAD_ACTION = "actions/upload-artifact"
+# The artifacts an approval is later bound to, as opposed to evidence a run
+# leaves for whoever reads it that day.
+CANDIDATE_ARTIFACTS = ("infrahub-sync-candidate", "infrahub-sync-qualification")
 # `invoke` as the command being run, optionally through `uv run`, so that naming
 # it as an argument — installing it, say — is not read as running a task.
 INVOKE_TASK = re.compile(
@@ -43,6 +48,60 @@ TASK_TREE = "tasks/**"
 # What the image gate installs into the artifact it builds, and what the Compose
 # phase of that same job then qualifies by running it.
 QUALIFIED_TREES = ("infrahub_sync/**", "deploy/compose/**", "tests/compose/**")
+
+PUBLISH_WORKFLOW = WORKFLOWS / "workflow-publish.yml"
+DOCKERFILE = REPO_ROOT / "Dockerfile"
+
+# What sends a built artifact somewhere this repository cannot take it back from:
+# a package index, a registry, or a published release.
+PUBLISHING_COMMANDS = (
+    "uv publish",
+    "twine upload",
+    "docker push",
+    "docker login",
+    "docker buildx imagetools create",
+    # Anything copied to a registry, whichever tool is holding the credential.
+    "docker://",
+    "gh release create",
+    "gh release edit",
+    "gh release upload",
+    "gh release delete",
+)
+PUBLISHING_ACTIONS = (
+    "pypa/gh-action-pypi-publish",
+    "softprops/action-gh-release",
+    "actions/create-release",
+    "docker/login-action",
+)
+# The subset that puts a distribution on a package index. There is meant to be one
+# route to it, so it is counted separately from the rest.
+PACKAGE_UPLOAD = ("uv publish", "twine upload", "pypa/gh-action-pypi-publish")
+
+# `git push` and `git tag` are not read as publication above. They are governed
+# separately, by branch, because the repository runs two release lines at once and
+# only one of them is bound to a candidate.
+
+# The branch the V3 line is developed on. A workflow a run on that branch can
+# start is one this line's single identity has to survive.
+V3_BRANCH = "feature/v3-develop"
+
+# Steps that give a release a second identity: one retypes the version the source
+# declares, the other creates the tag that version is published under.
+IDENTITY_REWRITING = ("uv version", "poetry version", "hatch version", "git tag ")
+# Reading the tags back is not creating one.
+TAG_READ = re.compile(r"git tag\s+(?:-l\b|--list\b)")
+
+# `trigger-push-stable.yml` runs both, and the case below leaves it alone because
+# its `on` selects `stable` and `main` and nothing else: it is the 2.x line's
+# release automation, and the version it types is the one that line cuts. What
+# keeps it out is that branch filter rather than its name, so adding the V3 branch
+# to its triggers puts it back in scope and fails, instead of quietly retyping
+# this line's version and tagging a release it never qualified.
+TWO_LINE_AUTOMATION = "trigger-push-stable.yml"
+
+# The events a workflow answers without anyone choosing what it acts on. Only a
+# dispatch, and a call from one, carry a person's decision about a candidate.
+APPROVED_EVENTS = frozenset({"workflow_dispatch", "workflow_call"})
 
 
 def load(path: Path) -> dict:
@@ -227,6 +286,47 @@ def image_filter_patterns() -> list[str]:
     return [pattern for entry in declared for pattern in (entry if isinstance(entry, list) else [entry])]
 
 
+def build_context_inputs() -> set[str]:
+    """Return every path the Dockerfile copies out of the build context.
+
+    Read from the Dockerfile rather than listed here: a file joining the build
+    context changes the wheel and the image, and a hand-written list is one edit
+    behind the moment someone adds one. `--from=` copies are excluded because
+    they come from another stage or another image, not from this tree.
+    """
+    found: set[str] = set()
+    # A `COPY` may continue across physical lines. Joining them first is what
+    # keeps every source after the first one from being read as a line that does
+    # not begin with `COPY`, and so silently left out of the comparison below.
+    joined = re.sub(r"\\[ \t]*\n", " ", DOCKERFILE.read_text(encoding="utf-8"))
+    for line in joined.splitlines():
+        parts = line.split()
+        if not parts or parts[0].upper() != "COPY":
+            continue
+        arguments = [part for part in parts[1:] if not part.startswith("--")]
+        if any(part.startswith("--from=") for part in parts[1:]) or len(arguments) < 2:
+            continue
+        # `COPY dir/ ./` and `COPY dir ./` copy the same tree, so both have to
+        # produce the one name the filter's patterns are written against.
+        found.update(argument.rstrip("/") for argument in arguments[:-1])
+    return found
+
+
+def test_the_image_filter_covers_every_input_the_dockerfile_copies() -> None:
+    """A file the image is built from, that the filter does not name, skips the gate.
+
+    `README.md` was exactly that: copied at `COPY pyproject.toml uv.lock
+    README.md LICENSE.txt ./`, absent from the filter, so a pull request touching
+    only it changed the wheel and the image and never re-ran the gate.
+    """
+    patterns = set(image_filter_patterns())
+    inputs = build_context_inputs()
+
+    assert inputs, "no COPY line in the Dockerfile reads from the build context"
+    uncovered = sorted(name for name in inputs if name not in patterns and f"{name}/**" not in patterns)
+    assert not uncovered, f"the image is built from {uncovered}, which image_all does not name"
+
+
 @pytest.mark.parametrize("tree", QUALIFIED_TREES)
 def test_the_image_filter_covers_every_tree_its_gate_qualifies(tree: str) -> None:
     """The gate builds an image and then runs it; both depend on more than the Dockerfile.
@@ -250,3 +350,212 @@ def test_the_image_filter_covers_the_whole_tree_its_gate_runs_from() -> None:
         f"a change under {TASK_TREE} can alter what `invoke image.*` does, "
         f"so image_all has to include it or the gate does not re-run"
     )
+
+
+def _publishes(step: dict) -> bool:
+    """Report whether one step sends an artifact somewhere the run cannot take it back from."""
+    run = str(step.get("run", ""))
+    uses = str(step.get("uses", ""))
+    if any(uses == action or uses.startswith(f"{action}@") for action in PUBLISHING_ACTIONS):
+        return True
+    return any(command in run for command in PUBLISHING_COMMANDS)
+
+
+def publishing_steps() -> list[tuple[Path, str, str]]:
+    """Return every publishing step any workflow declares, with the job that holds it."""
+    found = []
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        for name, job in load(path).get("jobs", {}).items():
+            found.extend((path, name, _step_name(step)) for step in job.get("steps") or [] if _publishes(step))
+    return found
+
+
+def _step_name(step: dict) -> str:
+    return str(step.get("name", step.get("uses", step.get("run"))))
+
+
+def triggers(path: Path) -> set[str]:
+    """Return the events a workflow answers.
+
+    YAML reads a bare `on` as the boolean it also spells, which is why the key is
+    looked up both ways rather than by name alone.
+    """
+    document = load(path)
+    declared = document[True] if True in document else document.get("on")
+    return {declared} if isinstance(declared, str) else set(declared or ())
+
+
+def reachable(starts: Callable[[Path], bool]) -> set[Path]:
+    """Return every workflow reachable from the ones `starts` answers for, calls included.
+
+    The three cases below differ only in which workflows a run can begin at. What
+    follows from there is the same question each time -- a workflow another one
+    calls is a workflow whoever started the caller can run -- so it is asked in
+    one place, and each case states its own starting point and nothing else.
+    """
+    called = {
+        path: {target for job in load(path).get("jobs", {}).values() if (target := called_workflow(job)) is not None}
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+    }
+    pending = [path for path in called if starts(path)]
+    reached: set[Path] = set()
+    while pending:
+        current = pending.pop()
+        if current in reached:
+            continue
+        reached.add(current)
+        pending.extend(called.get(current, ()))
+    return reached
+
+
+def reachable_from_an_event() -> set[Path]:
+    """Return every workflow a run can reach without anyone choosing what it acts on."""
+    return reachable(lambda path: bool(triggers(path) - APPROVED_EVENTS))
+
+
+def pull_request_reachable() -> set[Path]:
+    """Return every workflow a pull request can reach, through calls included."""
+    return reachable(lambda path: "pull_request" in triggers(path))
+
+
+def test_nothing_a_pull_request_reaches_publishes_anything() -> None:
+    """Validation is lint, unit, image, smoke and Compose, and none of that publishes.
+
+    Narrowed to a pull request rather than to every automatic trigger, because the
+    legacy release route really does publish: a published release reaches
+    `uv publish`, deliberately and unchanged. Narrowing it to the V3 *line* is not
+    available -- `release: published` carries no branch filter, so the reachability
+    helper admits that route for every branch, this one included. What is true,
+    and what pull-request validation actually asks for, is that nothing a pull
+    request can start publishes.
+
+    Reachability is followed through calls, so moving a publication into a
+    workflow that a pull request calls does not escape this.
+    """
+    publishing = {workflow for workflow, _job, _step in publishing_steps()}
+    reached = pull_request_reachable()
+
+    assert publishing, WORKFLOWS
+    assert reached, WORKFLOWS
+    assert not (reached & publishing), (
+        f"{sorted(path.name for path in reached & publishing)} can publish from a pull request"
+    )
+
+
+def test_the_legacy_release_route_is_what_the_case_above_would_otherwise_name() -> None:
+    """Without this the case above would pass on a repository that publishes nowhere.
+
+    The same shape the version-retyping pair already uses: the excluded route
+    demonstrably does the thing, and demonstrably is not something a pull request
+    can start.
+    """
+    publishing = {workflow for workflow, _job, _step in publishing_steps()}
+
+    assert publishing & reachable_from_an_event(), "no trigger reaches a publication, so the exclusion proves nothing"
+    assert not (publishing & pull_request_reachable())
+
+
+def test_one_workflow_is_the_only_route_to_a_package_index() -> None:
+    """A second uploader is a second answer to what was published, and to from where."""
+    uploaders = {
+        workflow
+        for workflow in sorted(WORKFLOWS.glob("*.yml"))
+        for job in load(workflow).get("jobs", {}).values()
+        for step in job.get("steps") or []
+        if any(command in f"{step.get('run', '')}{step.get('uses', '')}" for command in PACKAGE_UPLOAD)
+    }
+
+    assert uploaders == {PUBLISH_WORKFLOW}
+
+
+def triggers_of(path: Path) -> dict:
+    """Return one workflow's trigger mapping, however YAML read its `on` key."""
+    document = load(path)
+    return document[True] if True in document else document["on"]
+
+
+def _retypes_identity(step: dict) -> bool:
+    """Report whether one step names a release something the source did not."""
+    # The reads are dropped from the script rather than excusing it: a step that
+    # lists the tags and then creates one still creates one.
+    run = TAG_READ.sub("", str(step.get("run", "")))
+    return any(command in run for command in IDENTITY_REWRITING)
+
+
+def identity_rewriting_steps(path: Path) -> list[str]:
+    """Return every step in one workflow that retypes a version or creates its tag."""
+    return [
+        f"{path.name} job {job} step {_step_name(step)!r}"
+        for job, definition in load(path).get("jobs", {}).items()
+        for step in definition.get("steps") or []
+        if _retypes_identity(step)
+    ]
+
+
+def _selects_v3(path: Path) -> bool:
+    """Report whether a run on the V3 branch can start this workflow directly.
+
+    A workflow that filters no branch answers every branch. One reached only by a
+    call answers none on its own, and is reached below through whoever calls it.
+    """
+    declared = triggers_of(path)
+    if not isinstance(declared, dict):
+        return True
+    for event, definition in declared.items():
+        if event == "workflow_call":
+            continue
+        filters = definition.get("branches") if isinstance(definition, dict) else None
+        if filters is None or any(fnmatch(V3_BRANCH, pattern) for pattern in filters):
+            return True
+    return False
+
+
+def v3_reachable() -> set[Path]:
+    """Return every workflow a run on the V3 branch can reach, through calls included."""
+    return reachable(_selects_v3)
+
+
+def test_nothing_the_v3_line_reaches_retypes_its_version_or_creates_its_tag() -> None:
+    """One recorded identity survives only while nothing else can type a second one.
+
+    A version retyped mid-run, or a tag computed from something other than the
+    candidate, produces a release naming bytes nobody qualified under that name.
+    """
+    offending = sorted(step for path in v3_reachable() for step in identity_rewriting_steps(path))
+
+    assert offending == []
+
+
+def test_the_two_line_release_automation_is_what_the_case_above_would_otherwise_name() -> None:
+    """Without this the case above would pass on a repository that types no version anywhere."""
+    excluded = WORKFLOWS / TWO_LINE_AUTOMATION
+    drafter = {called for job in load(excluded)["jobs"].values() if (called := called_workflow(job))}
+
+    assert identity_rewriting_steps(excluded)
+    assert [step for path in drafter for step in identity_rewriting_steps(path)]
+    assert excluded not in v3_reachable()
+    assert not (drafter & v3_reachable())
+
+
+def test_nothing_the_v3_line_reaches_retains_a_candidate_artifact() -> None:
+    """A pull-request run describes bytes nobody will ship, so it keeps none of them.
+
+    Validation on a pull request is lint, unit, image, smoke and Compose. The
+    candidate that gets qualified and approved is built by a manual run against an
+    exact merged commit, and only that run retains anything -- a PR run's image,
+    layout, distributions and bundle describe a merge result that will never be
+    published, and retaining them put gigabytes of pre-release bytes behind
+    public download links.
+
+    The workflow declares no upload at all today, so this holds by there being
+    nothing to retain. It stays an equality over every reachable upload, which is
+    what makes the first one added later fail here.
+    """
+    reachable = v3_reachable()
+    retained = sorted(
+        f"{path.name}: {step}"
+        for path, step, declared in uploads()
+        if path in reachable and str(declared.get("name", "")).startswith(CANDIDATE_ARTIFACTS)
+    )
+
+    assert retained == [], f"a pull-request run retains {len(retained)} candidate artifacts: {retained}"
