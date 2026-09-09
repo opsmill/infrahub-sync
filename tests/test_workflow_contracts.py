@@ -161,10 +161,6 @@ RUN_TITLE = "run-name"
 # on, it writes the token into `.git/config` of the tree every later step runs
 # third-party code against.
 PERSISTED_CREDENTIALS = "persist-credentials"
-# Truncating the elapsed seconds between two independently recorded timestamps
-# rejects a nominal window that came back a second short. Half a day added
-# before the division is what makes the comparison about the window.
-NEAREST_DAY = "43200"
 # The two shapes publication would arrive in even with no publishing command
 # present: a switch that turns one on, and the protected environment it runs in.
 PUBLICATION_INPUT = "publish"
@@ -998,10 +994,12 @@ def test_the_candidate_run_reads_back_the_window_the_service_actually_granted() 
             assert str(declared["name"]) in script, f"the read-back never names {declared['name']}"
     assert CANDIDATE_WINDOW_NAME in script, "the read-back compares the expiry against no window"
     assert re.search(r"exit\s+1", script), "the read-back cannot fail a run whose bytes will not survive"
-    # Rounded, not truncated. `tests/release/test_candidate_retention_readback.py`
-    # runs this script and proves the difference; this is the declaration that
-    # the rounding is still in it.
-    assert NEAREST_DAY in script, "the read-back truncates the elapsed seconds instead of rounding them"
+    # How wide the tolerance is, and whether it is a tolerance at all, is proved
+    # by running this script in `tests/release/test_candidate_retention_readback.py`.
+    # Pinning the arithmetic here as text would fix the spelling of a bound
+    # rather than the bound, so what is asserted is only that the comparison is
+    # made in seconds against the declared window.
+    assert "86400" in script, "the read-back does not compare against the window in seconds"
 
 
 def test_the_candidate_route_reaches_no_publication_of_any_kind() -> None:

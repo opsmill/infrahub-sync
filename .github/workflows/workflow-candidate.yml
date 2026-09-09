@@ -334,19 +334,25 @@ jobs:
             fi
             created=$(printf '%s' "$entry" | cut -f1)
             expires=$(printf '%s' "$entry" | cut -f2)
-            # Rounded to the nearest day, not truncated. The service records the
-            # two timestamps independently, so a nominal 30-day window can come
-            # back a second short; dividing that by 86400 floors it to 29 and
-            # rejects a candidate the service retained correctly. Adding half a
-            # day before the division is what makes the comparison about the
-            # window rather than about which side of a second it landed on.
+            # Compared in seconds against the exact window, with one second of
+            # slack and no more. The API reports both instants at second
+            # resolution and records them independently, so the pair can differ
+            # by a second without the window differing at all -- but nothing
+            # wider than that is drift. Rounding to the nearest day would accept
+            # anything within twelve hours, which is most of a day short of the
+            # window an approval is bound to.
+            expected=$(( CANDIDATE_RETENTION_DAYS * 86400 ))
             elapsed=$(( $(date -u -d "$expires" +%s) - $(date -u -d "$created" +%s) ))
-            granted=$(( (elapsed + 43200) / 86400 ))
-            if [ "$granted" -ne "${CANDIDATE_RETENTION_DAYS}" ]; then
-              echo "$name was granted $granted days, not the ${CANDIDATE_RETENTION_DAYS} an approval needs" >&2
+            drift=$(( elapsed - expected ))
+            if [ "$drift" -lt 0 ]; then
+              drift=$(( -drift ))
+            fi
+            if [ "$drift" -gt 1 ]; then
+              echo "$name was granted ${elapsed}s, not the ${expected}s" \
+                "(${CANDIDATE_RETENTION_DAYS} days) an approval needs" >&2
               exit 1
             fi
-            echo "$name expires $expires, $granted days after its upload"
+            echo "$name expires $expires, ${elapsed}s after its upload"
           done
           if [ -n "$missing" ]; then
             echo "this run is holding no artifact named:$missing" >&2

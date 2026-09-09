@@ -6,9 +6,11 @@ comparison that only checks the entries it happens to find accepts a record
 describing five groups, or eight, as readily as six.
 
 So these cases run the document's own block against crafted records and
-inventories, and assert the status a reader is told to read. The block is the
-same text the guide shows, extracted from it rather than restated here — a copy
-would keep passing after the document changed.
+inventories and assert the process's own exit status — not a number the block
+printed. A trailing `echo` is enough to make a failed subshell report success,
+and a test that parsed printed output would have gone on passing through exactly
+that. The block is the same text the guide shows, extracted from it rather than
+restated here, so a copy cannot drift from what a reader runs.
 """
 
 from __future__ import annotations
@@ -106,23 +108,11 @@ def compare(tmp_path: Path, *, recorded: str, inventory: str) -> subprocess.Comp
     )
 
 
-def status(finished: subprocess.CompletedProcess[str]) -> int:
-    """Return the status the document tells its reader to read.
-
-    The block ends in a subshell, so the exit code of the whole snippet is that
-    of the `echo` after it. What a reader acts on is the number that `echo`
-    prints, which is what this reads back.
-    """
-    printed = [line for line in finished.stdout.splitlines() if line.startswith("comparison status:")]
-    assert printed, finished.stdout + finished.stderr
-    return int(printed[-1].split(":")[1])
-
-
 def test_it_accepts_exactly_the_six_entries_that_match(tmp_path: Path) -> None:
     """The control. Without it every refusal below is satisfied by a block that always fails."""
     finished = compare(tmp_path, recorded=record(expected_entries()), inventory=service_inventory())
 
-    assert status(finished) == 0, finished.stdout + finished.stderr
+    assert finished.returncode == 0, finished.stdout + finished.stderr
     assert "all six recorded groups match" in finished.stdout
 
 
@@ -132,7 +122,7 @@ def test_it_refuses_a_mismatched_digest(tmp_path: Path) -> None:
     entries["infrahub-sync-candidate-bundle"] = (entries["infrahub-sync-candidate-bundle"][0], digest("f"))
     finished = compare(tmp_path, recorded=record(entries), inventory=service_inventory())
 
-    assert status(finished) != 0, finished.stdout + finished.stderr
+    assert finished.returncode != 0, finished.stdout + finished.stderr
     assert "infrahub-sync-candidate-bundle" in finished.stderr
 
 
@@ -142,7 +132,7 @@ def test_it_refuses_a_mismatched_identifier(tmp_path: Path) -> None:
     entries["infrahub-sync-candidate-image"] = ("999999", entries["infrahub-sync-candidate-image"][1])
     finished = compare(tmp_path, recorded=record(entries), inventory=service_inventory())
 
-    assert status(finished) != 0, finished.stdout + finished.stderr
+    assert finished.returncode != 0, finished.stdout + finished.stderr
     assert "infrahub-sync-candidate-image" in finished.stderr
 
 
@@ -152,7 +142,7 @@ def test_it_refuses_a_record_missing_one_group(tmp_path: Path) -> None:
     del entries["infrahub-sync-candidate-sboms"]
     finished = compare(tmp_path, recorded=record(entries), inventory=service_inventory())
 
-    assert status(finished) != 0, finished.stdout + finished.stderr
+    assert finished.returncode != 0, finished.stdout + finished.stderr
     assert "wrong set of groups" in finished.stderr
 
 
@@ -166,7 +156,7 @@ def test_it_refuses_a_record_that_describes_its_own_upload(tmp_path: Path) -> No
     entries[SELF_EXCLUDED] = ("1006", digest("6"))
     finished = compare(tmp_path, recorded=record(entries), inventory=service_inventory())
 
-    assert status(finished) != 0, finished.stdout + finished.stderr
+    assert finished.returncode != 0, finished.stdout + finished.stderr
     assert "wrong set of groups" in finished.stderr
 
 
@@ -177,7 +167,7 @@ def test_it_refuses_a_recorded_group_the_service_does_not_hold(tmp_path: Path) -
     )
     finished = compare(tmp_path, recorded=record(expected_entries()), inventory=f"{inventory}\n")
 
-    assert status(finished) != 0, finished.stdout + finished.stderr
+    assert finished.returncode != 0, finished.stdout + finished.stderr
     assert "ABSENT" in finished.stderr
 
 
@@ -185,4 +175,4 @@ def test_it_refuses_an_empty_record(tmp_path: Path) -> None:
     """A record with no artifact map at all has to fail rather than pass vacuously."""
     finished = compare(tmp_path, recorded=json.dumps({"artifacts": {}}), inventory=service_inventory())
 
-    assert status(finished) != 0, finished.stdout + finished.stderr
+    assert finished.returncode != 0, finished.stdout + finished.stderr

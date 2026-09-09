@@ -6,6 +6,11 @@ off by one. Truncating the elapsed seconds rejects a nominal thirty-day window
 that came back a second short — a candidate the service retained correctly,
 failed by the step that was meant to confirm it.
 
+The tolerance has to be narrow. Rounding to the nearest day looks reasonable and
+accepts a window almost twelve hours short of the one an approval is bound to,
+so what is allowed here is the second of resolution the API's own timestamps
+carry, and nothing wider.
+
 These cases run the workflow's own script text against a stubbed inventory. The
 step passes everything through the environment rather than interpolating it, so
 the text under test here is the text the runner executes. `gh` and `date` are
@@ -135,16 +140,47 @@ def test_it_accepts_the_window_the_service_nominally_granted(tmp_path: Path, stu
     assert finished.returncode == 0, finished.stdout + finished.stderr
 
 
-@pytest.mark.parametrize("drift", [-1, -60, -3600, 1, 60, 3600], ids=lambda drift: f"{drift:+d}s")
-def test_it_accepts_a_nominal_window_the_service_recorded_slightly_off(tmp_path: Path, stubs: Path, drift: int) -> None:
-    """Two timestamps recorded independently need not differ by a whole number of days.
+@pytest.mark.parametrize("drift", [-1, 1], ids=lambda drift: f"{drift:+d}s")
+def test_it_accepts_one_second_of_timestamp_drift(tmp_path: Path, stubs: Path, drift: int) -> None:
+    """The API reports both instants at second resolution and records them independently.
 
-    Truncating the elapsed seconds turns a window one second short into
-    twenty-nine days and fails the run that built a correctly retained candidate.
+    A pair that differs by a second does not mean the window differed, so the
+    check tolerates exactly that and truncating the elapsed seconds -- which
+    turns one second short into twenty-nine days -- does not.
     """
     finished = read_back(tmp_path, stubs, inventory({GROUPS[0]: WINDOW * DAY + drift}))
 
     assert finished.returncode == 0, finished.stdout + finished.stderr
+
+
+@pytest.mark.parametrize("drift", [-2, 2], ids=lambda drift: f"{drift:+d}s")
+def test_it_refuses_more_than_one_second_of_drift(tmp_path: Path, stubs: Path, drift: int) -> None:
+    """One second is the resolution of the timestamps; two is a different window.
+
+    The bound has to be narrow or it stops being about the window at all. This is
+    the pair that pins it: a second is tolerated and two are not.
+    """
+    finished = read_back(tmp_path, stubs, inventory({GROUPS[0]: WINDOW * DAY + drift}))
+
+    assert finished.returncode != 0, f"a window {drift:+d}s from the one asked for was accepted"
+    assert GROUPS[0] in finished.stdout + finished.stderr
+
+
+@pytest.mark.parametrize(
+    "shortfall",
+    [DAY // 2 - 1, DAY // 2, DAY, 3600],
+    ids=["just-under-half-a-day", "half-a-day", "a-day", "an-hour"],
+)
+def test_it_refuses_a_window_short_of_the_one_asked_for(tmp_path: Path, stubs: Path, shortfall: int) -> None:
+    """Rounding to the nearest day accepted almost twelve hours less than the window.
+
+    That is the defect this bound replaces: an approval bound to thirty days of
+    retention would have been taken against bytes the service was keeping for
+    twenty-nine and a half.
+    """
+    finished = read_back(tmp_path, stubs, inventory({GROUPS[0]: WINDOW * DAY - shortfall}))
+
+    assert finished.returncode != 0, f"a window {shortfall}s short was accepted"
 
 
 @pytest.mark.parametrize("granted", [7, 29, 31, 90], ids=lambda granted: f"{granted}d")
@@ -153,7 +189,7 @@ def test_it_refuses_a_window_that_is_not_the_one_asked_for(tmp_path: Path, stubs
     finished = read_back(tmp_path, stubs, inventory({GROUPS[0]: granted * DAY}))
 
     assert finished.returncode != 0, f"a {granted}-day window was accepted"
-    assert "not the 30" in finished.stdout + finished.stderr
+    assert GROUPS[0] in finished.stdout + finished.stderr
 
 
 def test_it_refuses_a_run_that_is_missing_a_group(tmp_path: Path, stubs: Path) -> None:
@@ -164,28 +200,9 @@ def test_it_refuses_a_run_that_is_missing_a_group(tmp_path: Path, stubs: Path) -
     assert GROUPS[4] in finished.stdout + finished.stderr
 
 
-def test_it_refuses_a_window_more_than_half_a_day_over(tmp_path: Path, stubs: Path) -> None:
-    """Rounding to the nearest day is a tolerance for recording drift, not a free day.
+@pytest.mark.parametrize("excess", [3600, DAY // 2, DAY], ids=["an-hour", "half-a-day", "a-day"])
+def test_it_refuses_a_window_longer_than_the_one_asked_for(tmp_path: Path, stubs: Path, excess: int) -> None:
+    """Longer is not safer. The record binds an approval to a stated window, not a minimum."""
+    finished = read_back(tmp_path, stubs, inventory({GROUPS[0]: WINDOW * DAY + excess}))
 
-    What it accepts is a window within twelve hours of the one asked for; ties
-    round up, so exactly half a day over becomes thirty-one and is refused. That
-    boundary is the whole tolerance, and widening it is what the mutation for
-    this case does.
-    """
-    finished = read_back(tmp_path, stubs, inventory({GROUPS[0]: WINDOW * DAY + DAY // 2}))
-
-    assert finished.returncode != 0, "a window half a day over was accepted"
-
-
-@pytest.mark.parametrize("elapsed", [29 * DAY, 31 * DAY], ids=["a-day-short", "a-day-long"])
-def test_a_widened_comparison_stops_being_about_the_window(tmp_path: Path, stubs: Path, elapsed: int) -> None:
-    """The equality is the claim. A range around it accepts windows nobody asked for.
-
-    Separate from the case above because the two failures are different: one
-    loosens the arithmetic that produces the number, this one loosens the
-    comparison that judges it.
-    """
-    finished = read_back(tmp_path, stubs, inventory({GROUPS[0]: elapsed}))
-
-    assert finished.returncode != 0, f"a {elapsed // DAY}-day window was accepted"
-    assert "not the 30" in finished.stdout + finished.stderr
+    assert finished.returncode != 0, f"a window {excess}s long was accepted"

@@ -207,16 +207,17 @@ Compare the six the record stores against what the service holds. The record's
 digests may or may not carry a `sha256:` prefix depending on which side wrote
 them, so both are normalised before comparison:
 
-The comparison runs in a subshell so it can end with a status. Read that status:
-a mismatch, a missing group, or one the record should not be describing all stop
-the procedure here. Do not go on to step 5 with a nonzero result.
+The comparison is one command that succeeds or fails. A mismatch, a missing
+group, or one the record should not be describing all make it fail, so it can be
+run from a script as well as read: `&&` the next step onto it and nothing
+continues past a disagreement.
 
 ```bash
 jq -r '.artifacts | to_entries[]
        | [.key, (.value.id|tostring), (.value.digest|sub("^sha256:";""))] | @tsv' \
   record/qualification.json | sort > "$RECORDED"
 
-(
+if (
   set -eu
 
   # Exactly these six, no more and no fewer. The record is written before its own
@@ -256,14 +257,18 @@ jq -r '.artifacts | to_entries[]
   done < "$RECORDED"
 
   [ "$wrong" -eq 0 ] || { echo "$wrong recorded group(s) do not match the service" >&2; exit 1; }
-  echo "all six recorded groups match the service inventory"
 )
-echo "comparison status: $?"
+then
+  echo "all six recorded groups match the service inventory"
+else
+  echo "STOP: the record and the service disagree about what this run produced" >&2
+  false
+fi
 ```
 
-A `comparison status` of anything but `0` means the record and the service
-disagree about what this run produced. Stop: an image loaded from bytes the
-record cannot account for qualifies nothing.
+That block exits nonzero when they disagree, and the failure is what stops you:
+an image loaded from bytes the record cannot account for qualifies nothing. Do
+not go on to step 5 until it succeeds.
 
 That covers six groups. The seventh — the qualification record itself — cannot
 appear in its own `artifacts` map, because a document cannot carry the digest of
