@@ -300,29 +300,44 @@ def test_a_started_deployment_reports_ready(started: Deployment) -> None:
 def test_a_busy_worker_is_still_ready_at_the_deployment_level(started: Deployment, principal: str) -> None:
     """A deployment with work in flight is working, not degraded.
 
-    The worker polls its pool on a fixed interval, so a run submitted now sits
-    scheduled for long enough to observe the state it produces. Reporting that
-    as anything but READY would make every submission look like a fault.
+    `busy` is a positive scheduled queue depth -- `service.py` derives the state
+    as `"no-live-worker" if live == 0 else "busy" if snapshot.queue_depth > 0
+    else "ready"` -- so it lasts exactly until a worker claims. Waiting to catch
+    it raced that claim, and a plan taken before the first sample left the run
+    reporting `{'ready'}` and failing for a reason the property is not about.
+
+    The claim is prevented for the observation instead, so the depth this reads
+    is held rather than caught. A paused container is still live to the API for
+    the heartbeat window it derives `live` from, which is what makes `busy` the
+    state under test here and `no-live-worker` the neighbouring case's.
     """
+    worker = started.container("sync-worker")
     with api_client(started, principal) as client:
         config_id, registry_version = register(
             client, smoke_package(started.destination), "compose suite: configuration for the busy check"
         )
-        created = client.post(
-            "/runs",
-            headers=idempotency("compose-busy"),
-            json={
-                "operation": "plan",
-                "config_id": config_id,
-                "registry_version": registry_version,
-                "branch": SMOKE_BRANCH,
-                "reason": "compose suite: occupy the worker",
-            },
-        )
-        assert created.status_code == 202, created.text
-        run_id = created.json()["run"]["run_id"]
+        paused = docker(["pause", worker])
+        assert paused.returncode == 0, paused.stderr
+        try:
+            created = client.post(
+                "/runs",
+                headers=idempotency("compose-busy"),
+                json={
+                    "operation": "plan",
+                    "config_id": config_id,
+                    "registry_version": registry_version,
+                    "branch": SMOKE_BRANCH,
+                    "reason": "compose suite: occupy the worker",
+                },
+            )
+            assert created.status_code == 202, created.text
+            run_id = created.json()["run"]["run_id"]
 
-        observed = observe_worker_states()
+            observed = observe_worker_states()
+        finally:
+            # In `finally` so a failed assertion above cannot leave the
+            # deployment's only worker paused for every case after this one.
+            docker(["unpause", worker])
         await_phase(client, run_id, "planned")
 
     assert "busy" in observed, observed

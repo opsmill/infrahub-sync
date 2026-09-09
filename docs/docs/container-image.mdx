@@ -159,40 +159,88 @@ deployment generates on its host — `operator.env`, `secrets/`, and `.instance`
 is never in it, and neither is the clean-host gate's fixture, which goes into a
 separate qualification kit instead.
 
-`release.qualify` is the validation and recording task prepared for a candidate
-workflow, and no workflow in this repository calls it yet. It refuses a candidate
-that qualified nothing: it requires an image smoke result for every built
-platform and a Compose lifecycle result, and each of those records the exact
-image digest it ran against.
-
-It also requires `.release/artifacts.json` — the artifact record its caller
-writes from what the service returned for each upload — so the record carries the
-identifiers, digests, and retention an approval is later bound to.
+`release.qualify` refuses a candidate that qualified nothing: it requires an
+image smoke result for every built platform and a Compose lifecycle result, and
+each of those records the exact image digest it ran against. It also requires
+`.release/artifacts.json` — the artifact record its caller writes from what the
+service returned for each upload — so the record carries the identifiers,
+digests, and retention an approval would be bound to.
 
 That document names the candidate whose uploads it describes, and one naming a
 different version, revision, or creation time is refused rather than reused.
 Nothing rewrites the file when a second candidate starts in the same workspace,
 so its identifiers would otherwise bind an approval of these bytes to bytes the
-service is holding under another release. Nothing writes that file on this
-branch, so running `release.qualify` locally refuses until you supply one. The
-manual run that produces it is a later unit.
+service is holding under another release.
+
+The image gate is that caller on a run whose head is in this repository, and both
+documents are transient there. They exist so the clean-host gate below can be
+handed this candidate's bytes and told what to expect of them, and the run
+deletes the candidate, the kit and the record before it completes. Running
+`release.qualify` anywhere else refuses until you supply an artifact record of
+your own, and retaining a candidate for approval belongs to a manual run against
+an exact merged commit.
+
+## Clean-host qualification
+
+The candidate is qualified on a host that has never seen this repository. The job
+checks nothing out, installs no interpreter, and downloads the candidate the build
+published; what it runs is the released artifact rather than the tree that produced
+it. The host needs Docker Engine, Docker Compose, a POSIX shell, and ordinary
+checksum and archive tools — every command that needs Python or the product CLI
+runs inside the candidate image.
+
+The transfer is an artifact because that is the only one GitHub offers between
+two jobs, and it is not retention. Three artifacts are uploaded for the shortest
+window the service accepts, downloaded once, and deleted by name inside the same
+run; a last job then reads the run back and fails it if any candidate, kit or
+record is still held. A completed run that succeeded holds none of them. Only a
+failed row's swept diagnostic stays, and for seven days.
+
+This gate runs on a head in a fork too, and there it takes a different route.
+GitHub gives a pull request from a fork a read-only token whatever a workflow
+asks for, so such a run could upload the three artifacts and then be unable to
+delete them. It therefore produces no handoff at all: it still builds both
+platforms, records the digests, generates the bills of materials, enforces the
+vulnerability policy, smokes both images, and qualifies the Compose lifecycle
+from the tree it checked out — and the checkout-free matrix below, which needs a
+candidate handed to it, runs for a head in this repository. The route is one
+boolean the calling workflow derives from whether the head's repository is this
+one; nothing is reported as skipped, because the jobs that would do the handing
+do not exist on that route.
+
+The driver and its checks travel in the qualification kit, beside the pinned
+destination the managed rows converge against. None of that is bundle content: an
+operator receives the deployment bundle and nothing from the kit.
+
+Two guards hold the host's shape rather than assume it. Refusing shims for
+`python`, `uv`, `pip`, `pytest`, and the product CLI sit ahead of `PATH` and record
+any invocation, so the run fails on evidence rather than on absence. Every
+container carrying the deployment's instance label is inspected, and a bind source
+outside the extracted bundle ends the run.
+
+The matrix has eleven required rows — artifact identity, cold start and
+idempotency, managed execution, keyed write policy, schema change, status,
+restart, recovery, ownership and reset, alpha replacement, and secrets. The driver
+expresses no way to skip one: each row either returns or ends the run.
 
 ## What publishes today
 
-No workflow promotes what these tasks produce. The pull-request workflow that
-runs them retains nothing at all: it declares no artifact upload, so a run keeps
-no image, layout, distribution or bundle.
+No workflow promotes what these tasks produce. What the pull-request workflow
+uploads it also deletes, inside the run that uploaded it, so a completed run
+keeps no image, layout, distribution, bundle or record. Only a failure's own
+diagnostics stay, and for seven days: what a failed lifecycle case captured from
+the services it deployed, and the one pre-teardown file a failed clean-host row
+left behind.
 
 The repository's existing release route is unchanged and remains its only
 publisher: a push to `stable` retypes that line's version and drafts a release,
 and publishing that release runs the dispatch-only publish workflow. Neither
 reads anything on this page. This branch adds no second publisher.
 
-Two things are deliberately absent. The manual run that builds a retained
-candidate and writes `.release/artifacts.json` is a later unit, and a publication
-bound to such a candidate is a later unit again, separately approved. Until then
-`release.build` produces the two distributions a publication would upload, and
-nothing uploads them.
+Two things are deliberately absent. The manual run that builds a candidate the
+service keeps is a later unit, and a publication bound to such a candidate is a
+later unit again, separately approved. Until then `release.build` produces the
+two distributions a publication would upload, and nothing uploads them.
 
 ## Recorded digests
 

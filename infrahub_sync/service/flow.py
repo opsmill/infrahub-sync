@@ -686,6 +686,19 @@ def _failure_evidence(
         "stage": stage,
         "outcome": outcome,
         "error_type": type(exc).__name__,
+        # The class the wrapper was raised from, and nothing else about it. Every
+        # designed refusal the apply path recognises is reported as one
+        # `OperationApplyFailedError`, so the wrapper alone cannot tell an unkeyed
+        # render from a peer that matched nothing or from a destination's own
+        # rejection -- and a gate whose whole subject is one of those refusals has
+        # nothing in the record to read. The immediate cause only: the apply path
+        # wraps exactly once, and walking a chain would record whichever link was
+        # deepest rather than the one that decided this failure.
+        #
+        # A class name, never a message. That is the whole reason this is safe to
+        # record: a destination's text can carry anything, and a class name from
+        # this process's own taxonomy carries one identifier.
+        "cause_type": None if exc.__cause__ is None else type(exc.__cause__).__name__,
     }
     carried = getattr(exc, "apply_record", None)
     written = carried if isinstance(carried, ApplyRecord) else record

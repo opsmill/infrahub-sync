@@ -24,6 +24,14 @@ development_files: &development_files
 github_workflows: &github_workflows
   - ".github/workflows/*.yml"
 
+# What `tests/test_workflow_contracts.py` reads: every workflow declaration, this
+# document, and the Dockerfile whose COPY lines one of its cases expands. A change
+# to any of them changes what that suite asserts, so the suite has to re-run.
+contract_declarations: &contract_declarations
+  - ".github/workflows/**"
+  - ".github/file-filters.yml"
+  - "Dockerfile"
+
 uv_files: &uv_files
   - "pyproject.toml"
   - "uv.lock"
@@ -40,6 +48,12 @@ image_files: &image_files
   - "LICENSE.txt"
   - "tests/image/**"
   - ".github/workflows/workflow-image.yml"
+  # And this document, because `image_all` below is what selects the image job
+  # and the checkout-free clean-host job. Re-aiming that selection is the one
+  # change most able to hide a regression, so it has to face the gate it aims.
+  # The exact path only: `.github/workflows/**` would rebuild and rescan the
+  # image for an edit to an unrelated workflow.
+  - ".github/file-filters.yml"
 
 # The Compose bundle is qualified in the image gate's own job, against the image
 # that job just built, so a change to the bundle or its suites re-runs the gate.
@@ -47,11 +61,23 @@ compose_files: &compose_files
   - "deploy/compose/**"
   - "tests/compose/**"
 
+# The clean-host kit's inputs that live outside the trees above. `release.kit`
+# copies these exact files into the kit a bare host runs, so a change to one
+# changes what the clean-host matrix qualifies against. Named file by file
+# rather than by directory, because the rest of `development/` and `examples/`
+# is not image-gate input and must not be routed into it.
+qualification_kit_files: &qualification_kit_files
+  - "development/docker-compose.infrahub.yml"
+  - "development/docker-compose.preview.yml"
+  - "development/preview.env"
+  - "examples/prefect_remote_run/schemas/infra_device.yml"
+
 sync_all:
   - *sync_files
   - *test_files
   - *development_files
   - *uv_files
+  - *contract_declarations
 
 documentation_all:
   - *doc_files
@@ -65,6 +91,7 @@ documentation_all:
 image_all:
   - *image_files
   - *compose_files
+  - *qualification_kit_files
   - *sync_files
   - *development_files
   - *uv_files

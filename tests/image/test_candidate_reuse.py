@@ -9,7 +9,13 @@ So the recorder below stands in for the whole Docker command surface rather than
 for one helper: the property is about the commands that actually run, not about
 the argv any single function returns.
 
-Only the tasks and the helpers they call are spanned. A build a suite launched by
+The recorder watches what the tasks it drives actually run. Beside it, one
+structural case reads the task tree instead: the build-command path has exactly
+one caller, whoever writes the next task. That covers callers nobody thought to
+add to the map below — a convenience that rebuilt a missing layout would produce
+a second artifact and record it under the first one's digests.
+
+Only the tasks and the helpers they call are spanned by the recorder. A build a suite launched by
 one of those tasks runs inside its own process is not: `test_build_context.py`
 builds a throwaway audit image to read the build context back out, and that image
 carries no release identity, is never written to the layout or the digest record,

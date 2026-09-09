@@ -1,0 +1,28 @@
+Added checkout-free clean-host qualification. A separate `linux/amd64` job downloads the
+candidate the build published, verifies the bundle against the checksum the record names,
+loads the exact image by its recorded configuration digest, and runs the extracted bundle
+through its own lifecycle entry point. The job checks nothing out and installs no
+interpreter; every command needing Python or the product CLI runs inside the candidate
+image.
+
+The handoff is an artifact because that is the only transfer GitHub offers between two
+jobs, and it is not retention. The run deletes the candidate, the kit and the record by
+name before it completes, and a final job fails the run if any of them is still held.
+Only a failed row's swept diagnostic remains, for seven days.
+
+A pull request from a fork takes a route that produces no handoff, because GitHub gives it
+a read-only token whatever the workflow asks for and it could not delete what it uploaded.
+Such a run still builds both platforms, records the digests, generates the bills of
+materials, enforces the vulnerability policy, smokes both images, and qualifies the Compose
+lifecycle from its checkout; the checkout-free matrix runs for a head in this repository.
+
+The driver states the host's shape rather than assuming it: refusing shims for `python`,
+`uv`, `pip`, `pytest`, and the product CLI sit ahead of `PATH` and record any invocation,
+and every container carrying the deployment's instance label is inspected for a bind source
+outside the extracted bundle. The mandatory matrix covers artifact identity, cold start and
+idempotence, managed execution, keyed write policy, schema change, status, restart,
+recovery, ownership and reset, alpha replacement, and secrets, and the driver expresses no
+way to skip a row.
+
+The qualification kit now carries the driver, its checks, the schemas they load, and the
+pinned destination they converge against. None of it is bundle content.

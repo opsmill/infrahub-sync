@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from tasks import ns
+from tasks import ns, release
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -50,6 +50,7 @@ TASK_TREE = "tasks/**"
 QUALIFIED_TREES = ("infrahub_sync/**", "deploy/compose/**", "tests/compose/**")
 
 PUBLISH_WORKFLOW = WORKFLOWS / "workflow-publish.yml"
+IMAGE_WORKFLOW = WORKFLOWS / "workflow-image.yml"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 
 # What sends a built artifact somewhere this repository cannot take it back from:
@@ -103,6 +104,53 @@ TWO_LINE_AUTOMATION = "trigger-push-stable.yml"
 # dispatch, and a call from one, carry a person's decision about a candidate.
 APPROVED_EVENTS = frozenset({"workflow_dispatch", "workflow_call"})
 
+# The job that qualifies the candidate on a host that has never seen this
+# repository, and everything it is not allowed to have.
+CLEAN_HOST_JOB = "clean-host"
+CHECKOUT_ACTION = "actions/checkout"
+INTERPRETER_ACTIONS = ("astral-sh/setup-uv", "actions/setup-python")
+HOST_TOOLS = ("uv ", "uvx ", "pipx ", "poetry ", "pytest ")
+DRIVER_ENTRYPOINT = "clean-host.sh"
+DOWNLOAD_ACTION = "actions/download-artifact"
+
+# The job that deletes the handoff inside the run that created it. A handoff is
+# not retention: an artifact is the only transfer GitHub offers between two
+# jobs, so the bytes exist for one download and the run ends holding none.
+CLEANUP_JOB = "handoff-cleanup"
+# The two windows the image workflow names, and what each upload has to
+# reference. One day is the fail-safe for a run that lost its cleanup, never a
+# window anything may rely on; seven is how long a failure is worked in.
+WINDOWS = {"HANDOFF_RETENTION_DAYS": 1, "DIAGNOSTIC_RETENTION_DAYS": 7}
+HANDOFF_WINDOW = "${{ env.HANDOFF_RETENTION_DAYS }}"
+DIAGNOSTIC_WINDOW = "${{ env.DIAGNOSTIC_RETENTION_DAYS }}"
+# Deleting one artifact, and deleting the run that is the evidence the gate ran.
+ARTIFACT_ENDPOINT = "actions/artifacts"
+RUN_ENDPOINT = "actions/runs"
+
+# The one input that decides whether this run may hand bytes between two jobs at
+# all, and the token every stage and job that does so has to name in its `if`.
+# A fork's token is read-only whatever a workflow asks for, so a fork run
+# produces no handoff rather than producing one it cannot delete.
+HANDOFF_INPUT = "same-repository"
+HANDOFF_GUARD = f"inputs.{HANDOFF_INPUT}"
+# What marks a step as producing or describing the handoff: it stages the bytes,
+# writes what the service is holding, writes the record read from them, or
+# uploads one of the three artifacts.
+HANDOFF_MARKERS = (".release/handoff", ".release/artifacts.json", "invoke release.qualify")
+# The qualification a fork keeps. None of these may be behind the guard, or a
+# fork pull request stops building, scanning, smoking and running the lifecycle.
+UNGUARDED_TASKS = ("release.kit", "image.build", "image.scan", "image.smoke", "compose.lifecycle")
+# How the caller tells this gate which route a run takes. Compared as text
+# rather than evaluated: this suite reads declarations, and a workflow-expression
+# evaluator is a second implementation of GitHub.
+TRUST_COMPARISON = "github.event.pull_request.head.repo.full_name == github.repository"
+# The artifact record `release.qualify` reads, and the one document the candidate
+# it names may come from. `read_artifacts` refuses a record naming any other
+# candidate, so a writer that retyped the identity would pass on the run that
+# wrote it and refuse the next rebuild of the same version.
+ARTIFACT_RECORD = ".release/artifacts.json"
+RECORDED_IDENTITY = ".release/identity.json"
+
 
 def load(path: Path) -> dict:
     """Return one parsed workflow document."""
@@ -153,16 +201,22 @@ def _ancestors(name: str, needs: dict[str, tuple[str, ...]]) -> set[str]:
     return seen
 
 
-def calls() -> list[tuple[Path, Path]]:
-    """Return every (caller, called) pair of workflows inside this repository."""
-    pairs = []
+def calls() -> list[tuple[Path, str, Path]]:
+    """Return every (caller, calling job, called) call inside this repository."""
+    found = []
     for name in CALLERS:
         caller = WORKFLOWS / name
-        for job in jobs(caller).values():
-            called = called_workflow(job)
+        for job, definition in jobs(caller).items():
+            called = called_workflow(definition)
             if called is not None:
-                pairs.append((caller, called))
-    return pairs
+                found.append((caller, job, called))
+    return found
+
+
+def job_permissions(path: Path, job: str) -> dict[str, str] | None:
+    """Return one job's own permission mapping, which replaces the workflow's rather than adding to it."""
+    declared = jobs(path)[job].get("permissions")
+    return declared if isinstance(declared, dict) else None
 
 
 def concurrent_calls() -> list[tuple[Path, str, str]]:
@@ -182,17 +236,22 @@ def concurrent_calls() -> list[tuple[Path, str, str]]:
     return pairs
 
 
-def uploads() -> list[tuple[Path, str, dict]]:
-    """Return every artifact upload any workflow declares, with its step name."""
+def uploads() -> list[tuple[Path, str, str, dict]]:
+    """Return every artifact upload any workflow declares, with its job and step."""
     steps = []
     for path in sorted(WORKFLOWS.glob("*.yml")):
-        for job in load(path).get("jobs", {}).values():
+        for name, job in load(path).get("jobs", {}).items():
             steps.extend(
-                (path, str(step.get("name", step["uses"])), step.get("with") or {})
+                (path, name, str(step.get("name", step["uses"])), step.get("with") or {})
                 for step in job.get("steps") or []
                 if str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@")
             )
     return steps
+
+
+def candidates() -> list[tuple[Path, str, str, dict]]:
+    """Return every upload of a handoff artifact, as opposed to a run's own evidence."""
+    return [entry for entry in uploads() if str(entry[3].get("name", "")).startswith(CANDIDATE_ARTIFACTS)]
 
 
 def _hidden(path: str) -> bool:
@@ -214,17 +273,24 @@ def _identify(value: object) -> str:
     return value.name if isinstance(value, Path) else str(value)
 
 
-@pytest.mark.parametrize(("caller", "called"), calls(), ids=_identify)
-def test_a_caller_grants_every_permission_the_workflow_it_calls_requests(caller: Path, called: Path) -> None:
-    """A called workflow can keep or reduce the caller's token, never raise it."""
-    granted = permissions(caller)
+@pytest.mark.parametrize(("caller", "job", "called"), calls(), ids=_identify)
+def test_a_caller_grants_every_permission_the_workflow_it_calls_requests(caller: Path, job: str, called: Path) -> None:
+    """A called workflow can keep or reduce the caller's token, never raise it.
+
+    Read per job on both sides. A single job of a called workflow asking for one
+    write is the whole point of scoping a permission, and a comparison that only
+    looked at the two top-level mappings would pass while that job ends the run
+    in `startup_failure` with no jobs at all.
+    """
+    granted = job_permissions(caller, job) or permissions(caller)
     if not granted:
         return
 
-    for scope, level in permissions(called).items():
-        assert ACCESS[level] <= ACCESS[granted.get(scope, "none")], (
-            f"{called.name} requests {scope}: {level}, which {caller.name} does not grant"
-        )
+    for asking in jobs(called):
+        for scope, level in (job_permissions(called, asking) or permissions(called)).items():
+            assert ACCESS[level] <= ACCESS[granted.get(scope, "none")], (
+                f"{called.name} job {asking} requests {scope}: {level}, which {caller.name} job {job} does not grant"
+            )
 
 
 @pytest.mark.parametrize(("caller", "first", "second"), concurrent_calls(), ids=_identify)
@@ -249,15 +315,16 @@ def test_calls_that_can_run_together_do_not_share_a_concurrency_group(caller: Pa
     )
 
 
-@pytest.mark.parametrize(("workflow", "step", "declared"), uploads(), ids=_identify)
+@pytest.mark.parametrize(("workflow", "job", "step", "declared"), uploads(), ids=_identify)
 def test_an_upload_of_evidence_from_a_hidden_directory_asks_for_hidden_files(
-    workflow: Path, step: str, declared: dict
+    workflow: Path, job: str, declared: dict, step: str
 ) -> None:
     """The upload action skips hidden paths unless told not to, and finds nothing.
 
     It reports that at the end of the gate, after everything it was collecting
     evidence about has already run.
     """
+    del job
     hidden = [line for line in str(declared.get("path", "")).splitlines() if _hidden(line)]
     if not hidden:
         return
@@ -279,11 +346,26 @@ def test_every_invoke_task_a_workflow_runs_is_registered(workflow: Path, task: s
     assert task in ns.task_names, f"{workflow.name} runs `invoke {task}`, which the task namespace does not define"
 
 
-def image_filter_patterns() -> list[str]:
-    """Return every path pattern the image gate's own filter expands to."""
-    declared = yaml.safe_load(FILE_FILTERS.read_text(encoding="utf-8"))["image_all"]
+def filter_patterns(name: str) -> list[str]:
+    """Return every path pattern one named filter expands to."""
+    declared = yaml.safe_load(FILE_FILTERS.read_text(encoding="utf-8"))[name]
     # Each entry is either a pattern or an expanded anchor holding several.
     return [pattern for entry in declared for pattern in (entry if isinstance(entry, list) else [entry])]
+
+
+def image_filter_patterns() -> list[str]:
+    """Return every path pattern the image gate's own filter expands to."""
+    return filter_patterns("image_all")
+
+
+def routed(path: Path, patterns: list[str]) -> bool:
+    """Report whether one repository path is named by any of these filter patterns.
+
+    `**` is compared with `fnmatch`, whose `*` already crosses a slash, so a tree
+    pattern matches everything under it and a file pattern matches only itself.
+    """
+    relative = str(path.relative_to(REPO_ROOT))
+    return any(fnmatch(relative, pattern) for pattern in patterns)
 
 
 def build_context_inputs() -> set[str]:
@@ -537,25 +619,317 @@ def test_the_two_line_release_automation_is_what_the_case_above_would_otherwise_
     assert not (drafter & v3_reachable())
 
 
-def test_nothing_the_v3_line_reaches_retains_a_candidate_artifact() -> None:
-    """A pull-request run describes bytes nobody will ship, so it keeps none of them.
+def image_job(name: str) -> dict:
+    """Return one job of the image workflow, refusing a workflow that no longer defines it."""
+    defined = jobs(IMAGE_WORKFLOW)
+    assert name in defined, f"{IMAGE_WORKFLOW.name} defines no {name} job"
+    return defined[name]
 
-    Validation on a pull request is lint, unit, image, smoke and Compose. The
-    candidate that gets qualified and approved is built by a manual run against an
-    exact merged commit, and only that run retains anything -- a PR run's image,
-    layout, distributions and bundle describe a merge result that will never be
-    published, and retaining them put gigabytes of pre-release bytes behind
-    public download links.
 
-    The workflow declares no upload at all today, so this holds by there being
-    nothing to retain. It stays an equality over every reachable upload, which is
-    what makes the first one added later fail here.
+def cleanup_script() -> str:
+    """Return everything the cleanup job runs, as one body to read its claims out of."""
+    return "\n".join(str(step.get("run", "")) for step in image_job(CLEANUP_JOB)["steps"])
+
+
+def test_the_clean_host_gate_runs_the_shipped_driver_bounded_inside_its_job() -> None:
+    """A gate wired to an event this line never raises, or running nothing, has never run.
+
+    The eleven rows and their refusal to be skipped are the driver's own; what is
+    checked here is that this line reaches a job that runs it and is bounded.
     """
-    reachable = v3_reachable()
-    retained = sorted(
-        f"{path.name}: {step}"
-        for path, step, declared in uploads()
-        if path in reachable and str(declared.get("name", "")).startswith(CANDIDATE_ARTIFACTS)
+    job = image_job(CLEAN_HOST_JOB)
+    bounded = [step for step in job["steps"] if "timeout-minutes" in step]
+
+    assert IMAGE_WORKFLOW in v3_reachable()
+    assert job["needs"] == ["image"]
+    assert [step for step in job["steps"] if DRIVER_ENTRYPOINT in str(step.get("run", ""))], (
+        f"the {CLEAN_HOST_JOB} job runs no {DRIVER_ENTRYPOINT}"
+    )
+    assert bounded, f"no step of the {CLEAN_HOST_JOB} job states a timeout"
+    for step in bounded:
+        assert step["timeout-minutes"] < job["timeout-minutes"], (
+            f"the step {step.get('name')!r} is not bounded inside its job"
+        )
+
+
+def test_the_clean_host_job_checks_nothing_out_and_installs_no_interpreter() -> None:
+    """The subject is the released artifact, so the tree that produced it is not present.
+
+    Read off the job, because one that happens to omit a checkout today is one
+    edit from having one.
+    """
+    job = image_job(CLEAN_HOST_JOB)
+    rendered = yaml.safe_dump(job)
+
+    assert CHECKOUT_ACTION not in rendered
+    for action in INTERPRETER_ACTIONS:
+        assert action not in rendered, f"the {CLEAN_HOST_JOB} job sets up an interpreter with {action}"
+    for step in job["steps"]:
+        for tool in HOST_TOOLS:
+            assert tool not in str(step.get("run", "")), f"the {CLEAN_HOST_JOB} job runs {tool.strip()} on the host"
+
+
+def test_the_clean_host_job_takes_this_runs_artifacts_and_never_another_runs() -> None:
+    """Naming a `run-id` is the one edit that would qualify a candidate some other commit built."""
+    downloads = [
+        step
+        for step in image_job(CLEAN_HOST_JOB)["steps"]
+        if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
+    ]
+
+    assert downloads, f"the {CLEAN_HOST_JOB} job downloads nothing, so it qualifies nothing this run produced"
+    for step in downloads:
+        assert "run-id" not in (step.get("with") or {}), f"{_step_name(step)!r} downloads from another run"
+
+
+def test_the_clean_host_diagnostic_is_published_by_name_for_a_failure_only() -> None:
+    """The working directory beside the swept file holds the list of this run's own credentials.
+
+    Uploading the directory would publish both. A withheld diagnostic is an
+    absent file, so the step tolerates finding nothing.
+    """
+    published = [
+        step for step in image_job(CLEAN_HOST_JOB)["steps"] if str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@")
+    ]
+
+    assert published, f"the {CLEAN_HOST_JOB} job publishes nothing a failed row leaves behind"
+    for step in published:
+        assert step.get("if") == "failure()"
+        assert str(step["with"]["path"]).endswith("diagnostic.txt"), "a directory of the driver's working files"
+        assert step["with"]["if-no-files-found"] == "ignore"
+
+
+def test_every_upload_states_the_window_its_kind_of_artifact_is_kept_for() -> None:
+    """A handoff and a diagnostic are different kinds of thing, kept for different reasons.
+
+    Both windows are named once at the top of the workflow, so what is checked is
+    that each upload references the one for what it is and that those two
+    references resolve to the two numbers below.
+    """
+    handoffs = {str(declared["name"]) for _w, _j, _s, declared in candidates()}
+    for workflow, _job, step, declared in uploads():
+        if workflow != IMAGE_WORKFLOW:
+            continue
+        expected = HANDOFF_WINDOW if str(declared["name"]) in handoffs else DIAGNOSTIC_WINDOW
+        assert declared.get("retention-days") == expected, f"{step!r} keeps {declared['name']} for the wrong window"
+
+    assert load(IMAGE_WORKFLOW)["env"] == WINDOWS
+
+
+def test_the_cleanup_job_follows_every_job_that_uploads_or_reads_a_handoff() -> None:
+    """A cleanup that can start early deletes bytes the gate has not read yet.
+
+    `always()` carries it past a dependency that failed, was skipped or was
+    cancelled, which leave the same bytes behind as a passing one.
+    """
+    job = image_job(CLEANUP_JOB)
+    uploading = {name for workflow, name, _step, _declared in candidates() if workflow == IMAGE_WORKFLOW}
+
+    assert uploading, f"{IMAGE_WORKFLOW.name} uploads no handoff, so this proves nothing"
+    assert uploading | {CLEAN_HOST_JOB} <= set(_needs(job)), f"{CLEANUP_JOB} waits for {sorted(_needs(job))}"
+    assert "always()" in str(job.get("if", ""))
+
+
+def test_the_cleanup_job_deletes_each_named_artifact_and_never_the_run() -> None:
+    """Deletion is by the exact names this run uploaded, never by a pattern.
+
+    A glob deletes whatever else matches and stops matching a renamed artifact.
+    The run is not this job's to delete: it is the evidence the gate ran.
+    """
+    script = cleanup_script()
+
+    assert f"{ARTIFACT_ENDPOINT}/" in script, f"{CLEANUP_JOB} deletes no artifact"
+    for _workflow, _job, _step, declared in candidates():
+        assert str(declared["name"]) in script, f"{CLEANUP_JOB} never names {declared['name']}"
+    assert not re.search(rf"--method\s+DELETE\s+\S*{re.escape(RUN_ENDPOINT)}/\$?\{{?[A-Za-z_]", script), (
+        f"{CLEANUP_JOB} deletes a workflow run"
     )
 
-    assert retained == [], f"a pull-request run retains {len(retained)} candidate artifacts: {retained}"
+
+def test_only_the_cleanup_job_can_delete_anything() -> None:
+    """`actions: write` is repository-wide, so exactly one job may hold it.
+
+    At the workflow level every step of the build, of the gate and of their
+    third-party actions would carry it.
+    """
+    assert image_job(CLEANUP_JOB)
+    assert "actions" not in permissions(IMAGE_WORKFLOW)
+    for job in jobs(IMAGE_WORKFLOW):
+        declared = job_permissions(IMAGE_WORKFLOW, job) or {}
+        if job == CLEANUP_JOB:
+            assert declared.get("actions") == "write", f"{CLEANUP_JOB} cannot delete what it is there to delete"
+        else:
+            assert ACCESS[declared.get("actions", "none")] < ACCESS["write"], f"{job} can delete an artifact"
+
+
+def test_no_candidate_artifact_outlives_a_completed_run_on_the_v3_line() -> None:
+    """A pull-request run describes bytes nobody will ship, so it ends holding none of them.
+
+    What such a run produces is a handoff: one job builds the bytes, a host that
+    has never seen this repository qualifies them, and the run deletes them
+    before it finishes. Keeping them put gigabytes of pre-release bytes behind
+    public download links; the candidate an approval is bound to is built by a
+    manual run against an exact merged commit.
+
+    Two claims, because issuing deletions and holding nothing are different: the
+    job reads the run back and fails on anything remaining, and every candidate
+    upload a pull request can reach is covered by a cleanup that waits for the
+    job holding it. Failure-only diagnostics carry neither prefix and are absent
+    on success, so they are deliberately not caught here.
+    """
+    script = cleanup_script()
+    assert "expired" in script, f"{CLEANUP_JOB} does not read back what the run still holds"
+    assert re.search(r"exit\s+1", script), f"{CLEANUP_JOB} cannot fail a run that still holds a handoff"
+
+    reachable = v3_reachable()
+    uncovered = [
+        f"{workflow.name}: {job}: {step}"
+        for workflow, job, step, _declared in candidates()
+        if workflow in reachable
+        and not [
+            name
+            for name, definition in jobs(workflow).items()
+            if job in _needs(definition) and "always()" in str(definition.get("if", ""))
+        ]
+    ]
+
+    assert candidates(), WORKFLOWS
+    assert uncovered == [], f"{len(uncovered)} candidate uploads outlive their run: {uncovered}"
+
+
+def handoff_steps(job: str) -> list[dict]:
+    """Return every step of one job that produces or describes the handoff."""
+    return [
+        step
+        for step in image_job(job)["steps"]
+        if any(marker in str(step.get("run", "")) for marker in HANDOFF_MARKERS)
+        or str((step.get("with") or {}).get("name", "")).startswith(CANDIDATE_ARTIFACTS)
+    ]
+
+
+def test_the_gate_takes_one_input_and_assumes_the_untrusted_route_without_it() -> None:
+    """A caller that says nothing gets the route that produces no handoff.
+
+    The default is what a new caller inherits, so it is the fork route: a run
+    that builds, scans, smokes and qualifies the lifecycle, and hands nothing to
+    a second job it could not then delete.
+    """
+    declared = triggers_of(IMAGE_WORKFLOW)["workflow_call"]["inputs"][HANDOFF_INPUT]
+
+    assert declared["type"] == "boolean"
+    assert declared["default"] is False
+
+
+def test_every_stage_that_produces_the_handoff_is_behind_the_trust_guard() -> None:
+    """A fork's token is read-only, so a fork that uploads a handoff cannot delete it."""
+    producers = handoff_steps("image")
+
+    assert len(producers) == len(HANDOFF_MARKERS) + len(CANDIDATE_ARTIFACTS) + 1, producers
+    for step in producers:
+        assert HANDOFF_GUARD in str(step.get("if", "")), f"{_step_name(step)!r} runs on a fork"
+
+
+@pytest.mark.parametrize("job", [CLEAN_HOST_JOB, CLEANUP_JOB])
+def test_both_jobs_that_consume_or_delete_the_handoff_are_behind_the_guard(job: str) -> None:
+    """Neither has anything to do on a fork, and the second would fail on a 403."""
+    assert HANDOFF_GUARD in str(image_job(job).get("if", "")), f"{job} runs on a fork"
+
+
+@pytest.mark.parametrize("task", UNGUARDED_TASKS)
+def test_the_qualification_a_fork_still_runs_is_not_behind_the_guard(task: str) -> None:
+    """Routing the handoff by trust is not permission to stop qualifying a fork.
+
+    Without this the guard could be moved up the job and satisfy every case
+    above while a fork pull request built nothing and ran no lifecycle.
+    """
+    running = [step for step in image_job("image")["steps"] if task in str(step.get("run", ""))]
+
+    assert running, f"no step of the image job runs {task}"
+    for step in running:
+        assert HANDOFF_GUARD not in str(step.get("if", "")), f"a fork no longer runs {task}"
+
+
+def test_the_caller_derives_the_route_from_the_head_repository() -> None:
+    """The input is only as good as what the caller puts in it.
+
+    Read as text, deliberately: evaluating the expression would mean
+    reimplementing GitHub's own context resolution inside this suite.
+    """
+    calling = [
+        job for caller in CALLERS for job in jobs(WORKFLOWS / caller).values() if called_workflow(job) == IMAGE_WORKFLOW
+    ]
+
+    assert calling, f"no caller reaches {IMAGE_WORKFLOW.name}"
+    for job in calling:
+        passed = str((job.get("with") or {}).get(HANDOFF_INPUT, ""))
+        assert TRUST_COMPARISON in passed, f"the image call derives {HANDOFF_INPUT} from {passed!r}"
+
+
+def test_the_artifact_record_names_the_candidate_from_the_one_document_that_holds_it() -> None:
+    """`release.qualify` refuses a record describing another candidate's uploads.
+
+    So the writer copies the identity out of the document `release.identity`
+    wrote rather than retyping it. A retyped version would pass on the run that
+    wrote it and refuse a rebuild of that version at a new revision.
+    """
+    writers = [step for step in image_job("image")["steps"] if ARTIFACT_RECORD in str(step.get("run", ""))]
+
+    assert len(writers) == 1, f"{len(writers)} steps write {ARTIFACT_RECORD}"
+    script = str(writers[0]["run"])
+    assert RECORDED_IDENTITY in script, f"the writer does not read the candidate from {RECORDED_IDENTITY}"
+    assert "identity:" in script, f"the writer records no identity in {ARTIFACT_RECORD}"
+
+
+def kit_inputs() -> list[Path]:
+    """Return every repository file `build_qualification_kit()` copies into the kit.
+
+    Read off that function's own declarations rather than listed here, so a
+    renamed or repointed source follows automatically. What it cannot see is a
+    brand-new source constant; the case below is the reason to add one here too.
+    """
+    return [
+        release.QUALIFICATION_SOURCE / "clean-host.sh",
+        *sorted((release.QUALIFICATION_SOURCE / "checks").glob("*.py")),
+        *(release.DESTINATION_SOURCE / name for name in release.DESTINATION_FILES),
+        release.EXAMPLE_SCHEMA,
+    ]
+
+
+@pytest.mark.parametrize("source", kit_inputs(), ids=lambda path: path.name)
+def test_the_image_filter_covers_every_input_the_qualification_kit_carries(source: Path) -> None:
+    """The clean-host gate runs the kit, so a change to what goes in it re-runs the gate.
+
+    An input the filter does not name leaves the clean-host matrix qualifying
+    the previous commit's fixture — the row passes, and it passed against the
+    wrong bytes.
+    """
+    assert routed(source, image_filter_patterns()), (
+        f"the qualification kit carries {source.relative_to(REPO_ROOT)}, which image_all does not name"
+    )
+
+
+@pytest.mark.parametrize("declaration", [WORKFLOWS, FILE_FILTERS, DOCKERFILE], ids=lambda path: path.name)
+def test_the_filter_runs_this_suite_when_a_declaration_it_reads_changes(declaration: Path) -> None:
+    """Every case here reads one of these, so a change to one changes what this suite asserts.
+
+    Taken from this module's own constants, so a case that starts reading
+    something new is covered by naming it there. `sync_all` is the filter that
+    routes the unit suites, and this file is one of them.
+    """
+    probe = declaration / "probe.yml" if declaration.is_dir() else declaration
+
+    assert routed(probe, filter_patterns("sync_all")), (
+        f"this suite reads {declaration.relative_to(REPO_ROOT)}, which sync_all does not name"
+    )
+
+
+def test_the_image_filter_routes_the_document_that_declares_it() -> None:
+    """A selector that does not name itself can be re-aimed without facing the gate it aims.
+
+    `image_all` is what decides whether the image job and the checkout-free
+    clean-host job run at a head. Editing that decision is the one change most
+    able to hide a regression, so the edit has to run the gate it re-routes.
+    """
+    assert routed(FILE_FILTERS, image_filter_patterns()), (
+        f"{FILE_FILTERS.name} selects the image and clean-host jobs, and image_all does not name it"
+    )

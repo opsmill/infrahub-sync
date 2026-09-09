@@ -45,3 +45,4 @@ development/preview.local.env
 deploy/compose/operator.env
 deploy/compose/secrets/
 deploy/compose/.instance
+.diagnostics/

@@ -52,6 +52,14 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+# Set for one test when its call phase failed, so a teardown can tell a failure
+# from a pass without re-deriving it from the report.
+FAILED = pytest.StashKey[bool]()
+# Where a failed lifecycle run leaves what it saw. Git ignores it, and the gate
+# uploads it only when a job has already failed.
+DIAGNOSTIC_DIR = REPO_ROOT / ".diagnostics"
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
@@ -69,7 +77,38 @@ def pytest_runtest_makereport(
     if report.skipped and item.get_closest_marker("compose") is not None and item.config.getoption(ZERO_SKIP_OPTION):
         report.outcome = "failed"
         report.longrepr = f"{item.nodeid} skipped under qualification, where every matrix case is required"
+    if report.when == "call":
+        item.stash[FAILED] = report.failed
     return report
+
+
+@pytest.fixture(autouse=True)
+def _diagnostic_on_failure(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Retain what a failed deployment's services said, for the run that failed.
+
+    Only for a test that already built a deployment and already failed: nothing
+    on the passing path changes, and no deployment is created to be diagnosed.
+    """
+    yield
+    if not request.node.stash.get(FAILED, False):
+        return
+    # Imported here: lifecycle imports this module, so the cycle only closes at call time.
+    from tests.compose.lifecycle import write_diagnostic
+
+    for name in ("started", "deployment"):
+        deployment = request.node.funcargs.get(name)
+        if deployment is None:
+            continue
+        named = request.node.funcargs.get("canaries") or {}
+        report = write_diagnostic(
+            deployment,
+            DIAGNOSTIC_DIR / f"{request.node.name}.log",
+            named=dict(named),
+        )
+        # Attached to the teardown report rather than printed: pytest shows it
+        # with the failure it belongs to, and nothing is emitted for a pass.
+        request.node.add_report_section("teardown", "compose diagnostic", report)
+        return
 
 
 # The Sync services, and the two roles whose isolation from each other is the
