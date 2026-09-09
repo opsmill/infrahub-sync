@@ -37,6 +37,11 @@ WITHHELD = ("no in-place state migration", "backup or restore")
 # checksum shipped beside it, and the image against the digest a record names.
 VERIFICATION = ("sha256sum -c", "docker image inspect")
 
+# Replacing this alpha, in the order that makes it a replacement rather than a
+# restart. `init` between them is the step that generates the identity the
+# removed volumes were labelled for.
+REPLACEMENT = ("infrahub-sync-compose reset", "infrahub-sync-compose init", "infrahub-sync-compose start")
+
 # The two records an uncertain write leaves, as the service really writes them.
 # `interrupted`/`ambiguous` is a write execution that ended without reporting;
 # `apply-failed`/`failed` is an apply that began writing and then failed.
@@ -138,15 +143,52 @@ def test_both_documents_withhold_what_this_alpha_does_not_promise(path: Path, wi
     assert withheld in prose(path)
 
 
-@pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
-def test_both_documents_describe_replacement_as_reset_then_redeploy(path: Path) -> None:
-    """The documented procedure is the one the qualification exercises, and it is not an upgrade."""
-    body = documented(path)
-    reset = body.index("infrahub-sync-compose reset <instance identity>")
-    started = body.index("infrahub-sync-compose start", reset)
+def command_blocks(path: Path) -> list[list[str]]:
+    """Return each fenced shell block of one document as its list of lines."""
+    blocks: list[list[str]] = []
+    current: list[str] | None = None
+    for line in documented(path).splitlines():
+        if line.startswith("```"):
+            if current is None:
+                current = [] if line.startswith("```bash") else None
+            else:
+                blocks.append(current)
+                current = None
+        elif current is not None:
+            current.append(line)
+    return blocks
 
-    assert reset < started
-    assert "cold bootstrap" in body
+
+@pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
+def test_both_documents_describe_replacement_as_reset_then_init_then_start(path: Path) -> None:
+    """The documented procedure is the one the qualification exercises, and it is not an upgrade.
+
+    Asserted as one ordered block rather than as two positions in the whole
+    document: `reset` and `start` each appear in the lifecycle section too, so
+    "a reset somewhere above a start" is satisfied by a document that never
+    describes replacement at all. What makes it a replacement is `init` between
+    them, generating the identity the removed volumes were labelled for.
+    """
+    procedure = [
+        block
+        for block in command_blocks(path)
+        if [step for step in REPLACEMENT if any(step in line for line in block)] == list(REPLACEMENT)
+        and _ordered(block, REPLACEMENT)
+    ]
+
+    assert procedure, f"{path.name} has no block running {' then '.join(REPLACEMENT)} in that order"
+    assert "cold bootstrap" in documented(path)
+
+
+def _ordered(block: list[str], steps: tuple[str, ...]) -> bool:
+    """Report whether every step appears in this block in the order given."""
+    offset = 0
+    for step in steps:
+        found = [index for index, line in enumerate(block) if step in line and index >= offset]
+        if not found:
+            return False
+        offset = found[0] + 1
+    return True
 
 
 @pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
