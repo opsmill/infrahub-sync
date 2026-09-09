@@ -36,6 +36,7 @@ import hashlib
 import os
 import sys
 from collections.abc import Iterable, Sequence
+from typing import Any, Protocol
 
 # Columns a live deployment moves on its own, per table, each with the reason it
 # moves them. A column exclusion narrows one value and leaves the rest of the
@@ -127,6 +128,31 @@ def object_line(key: str, body: Iterable[bytes]) -> str:
     return f"object {key} {body_digest(body)}"
 
 
+class ObjectStore(Protocol):
+    """The one thing this check needs of an object-store client.
+
+    Loosely typed on purpose: what this has to accept is the real client, whose
+    keyword names and response shape are its own.
+    """
+
+    def get_object(self, **query: str) -> Any:  # noqa: ANN401 - the client's own shapes
+        """Return one stored object, with its body under `Body`."""
+
+
+def stored_object_line(store: ObjectStore, bucket: str, key: str) -> str:
+    """Read one stored object and return the line it contributes.
+
+    Closed through `closing` rather than through the body's own context manager.
+    `StreamingBody.__enter__` returns the raw urllib3 response it wraps, so
+    entering the body would rebind it to an object with no `iter_chunks` and end
+    the row this snapshot was taken for. `closing` keeps the wrapper and still
+    closes it on every path out.
+
+    """
+    with contextlib.closing(store.get_object(Bucket=bucket, Key=key)["Body"]) as body:
+        return object_line(key, body.iter_chunks(chunk_size=BODY_CHUNK_BYTES))
+
+
 def main() -> None:
     """Read both stores and print the snapshot the driver compares across an operation.
 
@@ -166,14 +192,10 @@ def main() -> None:
     store = boto3.client("s3", endpoint_url=os.environ["INFRAHUB_SYNC_S3_ENDPOINT_URL"])
     bucket = os.environ["INFRAHUB_SYNC_S3_BUCKET"]
     pages = store.get_paginator("list_objects_v2").paginate(Bucket=bucket)
-    for key in sorted(item["Key"] for page in pages for item in page.get("Contents", [])):
-        # Closed through `closing` rather than through the body's own context
-        # manager. `StreamingBody.__enter__` returns the raw urllib3 response it
-        # wraps, so entering the body would rebind it to an object with no
-        # `iter_chunks` and end the row this snapshot was taken for. `closing`
-        # keeps the wrapper and still closes it on every path out.
-        with contextlib.closing(store.get_object(Bucket=bucket, Key=key)["Body"]) as body:
-            lines.append(object_line(key, body.iter_chunks(chunk_size=BODY_CHUNK_BYTES)))
+    lines.extend(
+        stored_object_line(store, bucket, key)
+        for key in sorted(item["Key"] for page in pages for item in page.get("Contents", []))
+    )
 
     print("\n".join(lines))
 

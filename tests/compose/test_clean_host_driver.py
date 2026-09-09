@@ -713,6 +713,21 @@ def test_the_diagnostic_check_still_runs_when_it_is_executed_as_a_script() -> No
     assert "main" in attribute_calls(source)
 
 
+def test_the_snapshot_reads_every_stored_object_through_the_one_boundary() -> None:
+    """The get, the stream and the close are decided in one place, and `main` uses it.
+
+    Extracting that boundary is what lets a test drive it with a body shaped the
+    way botocore's is -- entering one hands back a raw stream that cannot be
+    chunked. The price is a call that can be bypassed without anything else
+    noticing: `main` would go back to composing the read inline, where no test
+    reaches it.
+    """
+    source = code_of(CHECKS / "durable_state.py")
+
+    assert "stored_object_line(store, bucket, key)" in source, "main does not read objects through the boundary"
+    assert source.count("store.get_object(") == 1, "an object is read somewhere other than the boundary"
+
+
 def test_the_durable_state_check_still_runs_when_it_is_executed_as_a_script() -> None:
     """The driver runs it with `python /checks/durable_state.py`, and nothing imports it.
 
