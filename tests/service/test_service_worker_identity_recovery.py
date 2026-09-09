@@ -41,6 +41,8 @@ if TYPE_CHECKING:
 # The worker type this entrypoint registers under, so the real server accepts a
 # pool the real worker will then adopt.
 POOL_TYPE = "infrahub-sync-service-process"
+# What a momentary read failure looks like at the client boundary.
+BLIP = "momentary"
 
 
 @pytest.fixture(scope="module")
@@ -115,7 +117,7 @@ def fail_reads_once(worker: ServiceProcessWorker) -> None:
     async def _read(self: ServiceProcessWorker = worker) -> list[object]:
         attempts["count"] += 1
         if attempts["count"] == 1:
-            raise httpx.ConnectError("not yet")
+            raise httpx.ConnectError(BLIP)
         return cast("list[object]", await real(self))
 
     worker._read_worker_records = cast("Any", _read)  # type: ignore[method-assign]
@@ -247,14 +249,16 @@ async def test_a_transport_blip_is_not_terminal_for_the_worker(worker: ServicePr
         await worker.sync_with_backend()
         assert worker.backend_id is not None
 
-        async def _blip() -> list[object]:
-            raise httpx.ConnectError("momentary")
+        async def _blip(self: ServiceProcessWorker = worker) -> list[object]:  # noqa: RUF029 -- awaited hook
+            del self
+            raise httpx.ConnectError(BLIP)
 
         worker._read_worker_records = cast("Any", _blip)  # type: ignore[method-assign]
 
         await critical_service_loop(workload=worker.sync_with_backend, interval=0, run_once=True)
 
         assert worker.backend_id is None, "an unresolved identity was left installed after a blip"
+
 
 async def test_a_deferred_identity_leaves_the_worker_unready(worker: ServiceProcessWorker) -> None:
     """Surviving an unresolved read must not be reported as a successful sync.
