@@ -13,6 +13,7 @@ Docusaurus site.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -77,6 +78,38 @@ IMAGE_VARIABLE = "INFRAHUB_SYNC_IMAGE"
 # destination. It is a real capability and it is not what this procedure
 # qualifies, because it demonstrates nothing about the admission path.
 DIRECT_WRITE = "sync sync"
+
+# The procedure changes directory twice, so anything one step writes and a later
+# step reads is named by one absolute variable rather than by a relative path
+# that silently means two different files.
+WORK_VARIABLE = "WORK"
+CARRIED_FILES = ("INVENTORY", "RECORDED")
+
+# The file every credential of a deployment lives in. Rendering a line of it puts
+# a destination token in a terminal, a scrollback buffer, and whatever the reader
+# pastes into a report -- which is the one place a tutorial's own output must
+# never reach.
+CREDENTIAL_FILE = "operator.env"
+CREDENTIAL_SETTINGS = ("INFRAHUB_API_TOKEN", "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS")
+# Commands that put what they read on standard output no matter how they are
+# called, and the two that do so only when they are not suppressed: `grep -q`
+# reports a match without showing it, and `sed -i` edits the file in place.
+# Reading those two as unconditional renderers would flag the very commands the
+# document uses to set a value and confirm it without exposing one.
+RENDERING_COMMANDS = ("cat", "head", "tail", "awk", "echo", "printf")
+SUPPRESSED_BY = {"grep": "-q", "sed": "-i"}
+# `cd` wherever it appears, not only at the start of a line: `mkdir -p x && cd x`
+# changes directory too, and a check anchored to the line start misses it.
+CHANGES_DIRECTORY = re.compile(r"(?:^|&&|;|\|)\s*cd\s+(\S+)").search
+# What separates one command from the next, so a rendering command can be judged
+# on its own invocation rather than on whatever else shares its line. Quoted
+# spans are masked before this is applied: an alternation inside a pattern, as in
+# `grep -E '^(A|B)='`, otherwise splits the command away from its own argument.
+SEPARATORS = re.compile(r"&&|\|\||[|;]")
+QUOTED = re.compile(r"'[^']*'|\"[^\"]*\"")
+# Words that stand in front of a command without being one. Skipping them is
+# what keeps `if cat …` from reading as an invocation of `if`.
+SHELL_KEYWORDS = frozenset({"if", "elif", "then", "else", "while", "until", "do", "done", "!", "{", "}", "("})
 
 
 def guide() -> str:
@@ -315,6 +348,129 @@ def test_the_guide_exports_the_verified_configuration_digest_before_it_is_used()
     assert exported is not None, f"{GUIDE.name} never exports {IMAGE_VARIABLE}"
     assert used is not None, f"{GUIDE.name} never runs the CLI under {IMAGE_VARIABLE}"
     assert read_from_record < exported < used, f"{GUIDE.name} uses {IMAGE_VARIABLE} before verifying and exporting it"
+
+
+def test_every_file_carried_across_a_directory_change_is_named_absolutely() -> None:
+    """A relative path written before a `cd` is not the file the later step reads.
+
+    The service inventory is written in step 2 and read again in step 4, with a
+    directory change between them, so a bare `inventory.tsv` names two different
+    files and the second one does not exist. Every carried file is therefore one
+    variable rooted at `$WORK`, and no bare form may survive anywhere.
+    """
+    script = commands(guide())
+    lines = script.splitlines()
+    defined = next((index for index, line in enumerate(lines) if line.startswith(f"{WORK_VARIABLE}=")), None)
+
+    assert defined is not None, f"{GUIDE.name} defines no {WORK_VARIABLE}"
+    assert f'cd "${WORK_VARIABLE}"' in script, f"{GUIDE.name} never enters {WORK_VARIABLE}"
+    for carried in CARRIED_FILES:
+        rooted = [line for line in lines if line.startswith(f"{carried}=")]
+        assert rooted, f"{GUIDE.name} defines no {carried}"
+        assert all(f"${WORK_VARIABLE}/" in line for line in rooted), f"{carried} is not rooted at ${WORK_VARIABLE}"
+        assert min(lines.index(line) for line in rooted) > defined, f"{carried} is set before {WORK_VARIABLE}"
+
+        # Every use of the file, excluding the line that defines where it is.
+        bare = f"{carried.lower()}.tsv"
+        unrooted = [
+            line for line in lines if bare in line and f"${carried}" not in line and not line.startswith(f"{carried}=")
+        ]
+        assert not unrooted, f"{GUIDE.name} still names {bare} relatively: {unrooted}"
+
+
+def test_no_directory_change_precedes_the_first_file_the_procedure_writes() -> None:
+    """Run end to end from a fresh shell, the commands have to agree on where they are.
+
+    A `cd` after something has already been written leaves that file behind, and
+    every relative read after it resolves somewhere else.
+    """
+    lines = commands(guide()).splitlines()
+    # Every `cd`, wherever it sits in the line: `mkdir -p x && cd x` changes
+    # directory just as much as a line that begins with it, and looking only at
+    # the start of a line is how a relative one gets back in.
+    entered = [(index, target.group(1)) for index, line in enumerate(lines) if (target := CHANGES_DIRECTORY(line))]
+    first_write = next((index for index, line in enumerate(lines) if ">" in line and "$" in line), None)
+
+    assert entered, f"{GUIDE.name} never changes directory, so this proves nothing"
+    assert first_write is not None, f"{GUIDE.name} writes no file"
+    assert min(index for index, _target in entered) < first_write, (
+        f"{GUIDE.name} writes a file before it enters a known directory"
+    )
+    relative = [
+        (index, target)
+        for index, target in entered
+        if not target.startswith(('"$', "$")) and not target.startswith("infrahub-sync-compose-")
+    ]
+    assert not relative, f"{GUIDE.name} changes into a relative directory: {relative}"
+
+
+@pytest.mark.parametrize("setting", CREDENTIAL_SETTINGS)
+def test_the_guide_never_renders_a_credential_it_touches(setting: str) -> None:
+    """A tutorial's own output ends up in a terminal, a scrollback, and a pasted report.
+
+    Confirming a setting is present is legitimate; printing the line that holds
+    it is not. `grep -q` is how the document does the first without the second,
+    so what is checked here is that nothing which writes its match to standard
+    output is ever pointed at the credential file.
+    """
+    lines = commands(guide()).splitlines()
+    # Judged per command, not per line. A line-wide exemption for `-q` is
+    # satisfied by any other quiet command sharing the line, which is how
+    # `cat operator.env && ! grep -q …` would otherwise pass.
+    rendering = [
+        segment.strip()
+        for line in lines
+        for segment in segments(line)
+        if CREDENTIAL_FILE in segment and _renders(segment)
+    ]
+
+    assert not rendering, f"{GUIDE.name} renders {CREDENTIAL_FILE}: {rendering}"
+    exposing = [
+        segment.strip()
+        for line in lines
+        for segment in segments(line)
+        if f"${setting}" in segment and _renders(segment)
+    ]
+    assert not exposing, f"{GUIDE.name} renders {setting}: {exposing}"
+
+
+def segments(line: str) -> list[str]:
+    """Return one line's separate commands, without splitting inside a quoted span."""
+    masked = QUOTED.sub(lambda found: "\x00" * len(found.group(0)), line)
+    spans = []
+    start = 0
+    for separator in SEPARATORS.finditer(masked):
+        spans.append(line[start : separator.start()])
+        start = separator.end()
+    spans.append(line[start:])
+    return spans
+
+
+def _renders(segment: str) -> bool:
+    """Report whether one command writes what it reads to standard output.
+
+    A `grep` renders unless it was told not to; everything in the list renders
+    unconditionally. Leading shell keywords are skipped so `if cat …` is read as
+    the `cat` it runs, and the command word is compared rather than the whole
+    segment so a file name containing a command's name is not a match.
+    """
+    words = [word for word in segment.split() if word not in SHELL_KEYWORDS]
+    if not words:
+        return False
+    command = words[0].removeprefix("!").rsplit("/", maxsplit=1)[-1]
+    if command in SUPPRESSED_BY:
+        flag = SUPPRESSED_BY[command]
+        return not any(word.startswith(flag) for word in words[1:])
+    return command in RENDERING_COMMANDS
+
+
+def test_the_guide_confirms_the_settings_are_present_without_showing_them() -> None:
+    """Removing the rendering leaves the reader needing to know it worked."""
+    script = commands(guide())
+
+    assert "grep -q" in script, f"{GUIDE.name} has no non-rendering presence check"
+    assert "is set" in script, f"{GUIDE.name} never confirms the settings are in place"
+    assert "REPLACE-ME" in script, f"{GUIDE.name} accepts a setting still holding its placeholder"
 
 
 def test_the_guide_reads_the_api_token_without_sourcing_the_credential_file() -> None:

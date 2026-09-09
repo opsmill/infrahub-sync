@@ -223,10 +223,16 @@ APPROVED_ORDER = (
     "release.qualify",
 )
 
-# How the writer names one upload's outputs, and how the record keys them. Read
-# as a pair, so each group's own step is the one bound into its own entry: two
-# groups whose identifiers were swapped satisfy any substring search.
-WRITER_ARGUMENT = re.compile(r"--arg\s+(\w+)_id\s+\"\$\{\{\s*steps\.([\w-]+)\.outputs\.artifact-id\s*\}\}\"")
+# How the writer names one upload's outputs, and how the record keys them. Both
+# sides of every entry are resolved, not just the identifier: a digest hardcoded
+# to a literal, or read from a different upload, leaves an entry that still
+# names the right group and describes bytes the service holds under another one.
+#
+# The output kind is captured separately from the variable's own suffix, so
+# `--arg x_digest "…outputs.artifact-id"` is a mismatch rather than a match.
+WRITER_BINDING = re.compile(
+    r"--arg\s+(\w+)_(id|digest)\s+\"\$\{\{\s*steps\.([\w-]+)\.outputs\.artifact-(id|digest)\s*\}\}\""
+)
 WRITER_ENTRY = re.compile(r"\"(infrahub-sync-[\w-]+)\":\s*\{id:\s*\$(\w+)_id,\s*digest:\s*\$(\w+)_digest\}")
 
 
@@ -1217,14 +1223,15 @@ def test_the_artifact_record_names_the_candidate_from_the_one_document_that_hold
     assert RECORDED_IDENTITY in script, f"the writer does not read the candidate from {RECORDED_IDENTITY}"
     assert "identity:" in script, f"the writer records no identity in {ARTIFACT_RECORD}"
 
-    # Which step each `--arg` reads its identifiers from, and which step each
-    # recorded group therefore names. Resolved per group rather than by
-    # searching the whole script: two groups whose identifiers were swapped, or
-    # a group recording a third group's step, satisfies every substring here.
-    from_step = dict(WRITER_ARGUMENT.findall(script))
-    recorded = {name: variable for name, variable, _digest in WRITER_ENTRY.findall(script)}
-    for name, variable, digest_variable in WRITER_ENTRY.findall(script):
-        assert variable == digest_variable, f"{name} takes its id and digest from different uploads"
+    # Which upload each `--arg` reads from, and what it reads. Keyed by the
+    # variable *and* its kind, so the identifier and the digest of one group are
+    # resolved separately and neither is taken on the strength of the other.
+    bound = {
+        (variable, kind): (producer, output) for variable, kind, producer, output in WRITER_BINDING.findall(script)
+    }
+    recorded = {
+        name: (id_variable, digest_variable) for name, id_variable, digest_variable in WRITER_ENTRY.findall(script)
+    }
 
     # A document cannot carry its own upload digest, so the record's own group is
     # the one exception; everything else the run retained has to be named.
@@ -1243,10 +1250,18 @@ def test_the_artifact_record_names_the_candidate_from_the_one_document_that_hold
 
         assert producing, f"the step uploading {name} declares no id, so nothing can read its outputs"
         assert name in recorded, f"{ARTIFACT_RECORD} records no entry for {name}"
-        assert from_step.get(recorded[name]) == producing, (
-            f"{ARTIFACT_RECORD} records {name} from step {from_step.get(recorded[name])!r}, "
-            f"but {producing!r} is what uploads it"
-        )
+
+        # Both sides, each against the upload that really produced this group.
+        for kind, variable in zip(("id", "digest"), recorded[name], strict=True):
+            assert (variable, kind) in bound, (
+                f"{ARTIFACT_RECORD} records {name}'s {kind} from ${variable}_{kind}, which no upload output is bound to"
+            )
+            producer, output = bound[variable, kind]
+            assert output == kind, f"{name}'s {kind} is read from an upload's artifact-{output}"
+            assert producer == producing, (
+                f"{ARTIFACT_RECORD} records {name}'s {kind} from step {producer!r}, "
+                f"but {producing!r} is what uploads it"
+            )
 
 
 def step_of(workflow: Path, job: str, artifact: str) -> dict:

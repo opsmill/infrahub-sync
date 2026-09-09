@@ -22,8 +22,19 @@ Written for someone who did not build this.
 It does **not** need Python, `uv`, or a checkout of this repository. Nothing
 below installs an interpreter; the Sync CLI runs from the candidate image.
 
+Set these once, and run every command below from `$WORK`. The paths are
+absolute deliberately: the procedure changes directory twice — into the
+extracted bundle, and back — and a relative `inventory.tsv` written before the
+first of those is not the file the later steps read.
+
 ```bash
 REPO=opsmill/infrahub-sync
+WORK=$HOME/candidate-qualification
+INVENTORY=$WORK/inventory.tsv
+RECORDED=$WORK/recorded.tsv
+
+mkdir -p "$WORK"
+cd "$WORK"
 ```
 
 Two things are being tested at once. One is the candidate. The other is this
@@ -106,8 +117,8 @@ qualification record cannot contain its own.
 ```bash
 gh api --paginate "repos/$REPO/actions/runs/$RUN/artifacts" \
   --jq '.artifacts[] | [.name, (.id|tostring), .digest, .created_at, .expires_at, (.expired|tostring)] | @tsv' \
-  | sort > inventory.tsv
-cat inventory.tsv
+  | sort > "$INVENTORY"
+cat "$INVENTORY"
 ```
 
 Check that all seven are present, none has expired, and each was granted exactly
@@ -124,7 +135,7 @@ for name in \
   infrahub-sync-qualification-kit \
   infrahub-sync-qualification-record
 do
-  entry=$(awk -F'\t' -v n="$name" '$1 == n {print; exit}' inventory.tsv)
+  entry=$(awk -F'\t' -v n="$name" '$1 == n {print; exit}' "$INVENTORY")
   if [ -z "$entry" ]; then
     printf 'MISSING  %s\n' "$name"
     continue
@@ -149,7 +160,7 @@ candidate. Record what you saw and stop.
 Four of the seven are what a host runs:
 
 ```bash
-mkdir -p candidate && cd candidate
+cd "$WORK"
 
 gh run download "$RUN" --repo "$REPO" --name infrahub-sync-candidate-image      --dir image
 gh run download "$RUN" --repo "$REPO" --name infrahub-sync-candidate-bundle     --dir bundle
@@ -188,7 +199,7 @@ Confusing them is the easiest way to believe a check passed that did not.
 
 | Digest | Names | Read from | Checked with |
 | --- | --- | --- | --- |
-| Service transport digest | the artifact as the Actions service stores it | `inventory.tsv`, and `.artifacts[].digest` in the record | the comparison below |
+| Service transport digest | the artifact as the Actions service stores it | `$INVENTORY`, and `.artifacts[].digest` in the record | the comparison below |
 | Bundle file digest | the bundle archive's own bytes | `.bundle.sha256` in the record | `sha256sum` |
 | Image configuration digest | the loaded image's configuration | `.image.platforms["linux/amd64"].config` in the record | `docker image inspect` |
 
@@ -199,10 +210,10 @@ them, so both are normalised before comparison:
 ```bash
 jq -r '.artifacts | to_entries[]
        | [.key, (.value.id|tostring), (.value.digest|sub("^sha256:";""))] | @tsv' \
-  record/qualification.json | sort > recorded.tsv
+  record/qualification.json | sort > "$RECORDED"
 
 while IFS=$'\t' read -r name id digest; do
-  entry=$(awk -F'\t' -v n="$name" '$1 == n {print; exit}' inventory.tsv)
+  entry=$(awk -F'\t' -v n="$name" '$1 == n {print; exit}' "$INVENTORY")
   held_id=$(printf '%s' "$entry" | cut -f2)
   held_digest=$(printf '%s' "$entry" | cut -f3 | sed 's/^sha256://')
   if [ "$id" = "$held_id" ] && [ "$digest" = "$held_digest" ]; then
@@ -210,7 +221,7 @@ while IFS=$'\t' read -r name id digest; do
   else
     printf 'WRONG  %-42s record %s/%s, service %s/%s\n' "$name" "$id" "$digest" "$held_id" "$held_digest"
   fi
-done < recorded.tsv
+done < "$RECORDED"
 ```
 
 That covers six groups. The seventh — the qualification record itself — cannot
@@ -220,7 +231,7 @@ them by hand:
 
 ```bash
 awk -F'\t' '$1 == "infrahub-sync-qualification-record" {printf "record artifact id %s digest %s\n", $2, $3}' \
-  inventory.tsv
+  "$INVENTORY"
 ```
 
 ### Then the bundle's own bytes
@@ -267,8 +278,9 @@ image and the run that uses it, which is why the bundle refuses one.
 ## 6. Extract the bundle and prepare a deployment
 
 ```bash
+cd "$WORK"
 tar -xzf "bundle/$BUNDLE_NAME"
-cd "${BUNDLE_NAME%.tar.gz}"
+cd "$WORK/${BUNDLE_NAME%.tar.gz}"
 ./infrahub-sync-compose init
 ```
 
@@ -279,7 +291,16 @@ digest you just verified:
 ```bash
 sed -i "s|^INFRAHUB_SYNC_IMAGE=.*|INFRAHUB_SYNC_IMAGE=${INFRAHUB_SYNC_IMAGE}|" operator.env
 sed -i "s|^INFRAHUB_API_TOKEN=.*|INFRAHUB_API_TOKEN=<your Infrahub token>|" operator.env
-grep -E '^(INFRAHUB_SYNC_IMAGE|INFRAHUB_API_TOKEN)=' operator.env
+
+# Confirm both are set without rendering either value. `grep -q` prints nothing,
+# so the only thing that reaches the terminal is the sentence below.
+for setting in INFRAHUB_SYNC_IMAGE INFRAHUB_API_TOKEN; do
+  if grep -q "^${setting}=..*" operator.env && ! grep -q "^${setting}=REPLACE-ME$" operator.env; then
+    printf '%s is set\n' "$setting"
+  else
+    printf '%s is NOT set\n' "$setting"
+  fi
+done
 ```
 
 Use a **disposable** Infrahub you are **authorised to write to**. Step 8 applies
