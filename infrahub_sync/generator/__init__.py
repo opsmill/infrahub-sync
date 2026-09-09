@@ -126,8 +126,11 @@ class _AttributeLike(Protocol):
 class _RelationshipLike(Protocol):
     """Structural shape get_relationship_type_annotation() needs from a relationship-schema object."""
 
-    cardinality: str
-    optional: bool
+    @property
+    def cardinality(self) -> str: ...
+
+    @property
+    def optional(self) -> bool: ...
 
 
 def get_attribute_type_annotation(item: _AttributeLike) -> str:
