@@ -1,0 +1,20 @@
+---
+# yamllint disable rule:truthy
+name: "Build an internal candidate from an exact merged commit"
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "bb/primary-coding-v3-mvp-pr-c-implementation-custod-thr_48tg7zfwgx"
+
+permissions:
+  contents: read
+
+jobs:
+  register:
+    name: "Register this workflow"
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 5
+    steps:
+      - name: "Do nothing"
+        run: echo "registered"
