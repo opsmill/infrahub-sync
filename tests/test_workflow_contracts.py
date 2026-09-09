@@ -157,6 +157,14 @@ RETENTION_READBACK = ("actions/runs", "expires_at")
 # A run's title is the one place a dispatched run states the commit it was told
 # to build: `head_sha` is the tip of the ref it started against.
 RUN_TITLE = "run-name"
+# What `actions/checkout` does with the run's token unless told otherwise. Left
+# on, it writes the token into `.git/config` of the tree every later step runs
+# third-party code against.
+PERSISTED_CREDENTIALS = "persist-credentials"
+# Truncating the elapsed seconds between two independently recorded timestamps
+# rejects a nominal window that came back a second short. Half a day added
+# before the division is what makes the comparison about the window.
+NEAREST_DAY = "43200"
 # The two shapes publication would arrive in even with no publishing command
 # present: a switch that turns one on, and the protected environment it runs in.
 PUBLICATION_INPUT = "publish"
@@ -888,6 +896,23 @@ def test_the_candidate_run_checks_out_the_named_commit_and_reads_the_whole_histo
     assert declared["fetch-depth"] == 0
 
 
+def test_the_candidate_checkout_leaves_no_token_behind_for_the_build_to_read() -> None:
+    """Everything after the checkout runs third-party code against the tree it produced.
+
+    `uv sync` resolves a lock file, the image build runs a Dockerfile, and the
+    lifecycle phase starts two container stacks. The default leaves this run's
+    token in `.git/config` for all of them, and nothing on this route pushes, so
+    nothing needs it kept.
+    """
+    checkouts = [step for step in candidate_steps("candidate") if str(step.get("uses", "")).startswith(CHECKOUT_ACTION)]
+
+    assert checkouts, "the candidate job checks nothing out"
+    for step in checkouts:
+        assert (step.get("with") or {}).get(PERSISTED_CREDENTIALS) is False, (
+            f"{_step_name(step)!r} keeps the run's token in the checkout it hands to the build"
+        )
+
+
 def test_the_candidate_run_refuses_a_checkout_that_did_not_land_where_it_was_told() -> None:
     """Compared, not merely set: `actions/checkout` reports success for a ref it resolved.
 
@@ -973,6 +998,10 @@ def test_the_candidate_run_reads_back_the_window_the_service_actually_granted() 
             assert str(declared["name"]) in script, f"the read-back never names {declared['name']}"
     assert CANDIDATE_WINDOW_NAME in script, "the read-back compares the expiry against no window"
     assert re.search(r"exit\s+1", script), "the read-back cannot fail a run whose bytes will not survive"
+    # Rounded, not truncated. `tests/release/test_candidate_retention_readback.py`
+    # runs this script and proves the difference; this is the declaration that
+    # the rounding is still in it.
+    assert NEAREST_DAY in script, "the read-back truncates the elapsed seconds instead of rounding them"
 
 
 def test_the_candidate_route_reaches_no_publication_of_any_kind() -> None:

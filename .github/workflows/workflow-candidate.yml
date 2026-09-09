@@ -57,11 +57,21 @@ jobs:
       packages: read
       actions: read
     steps:
+      # `persist-credentials: false` because everything after this step runs
+      # third-party code against the checkout: `uv sync` resolves a lock file, the
+      # image build runs a Dockerfile, and the lifecycle phase starts two
+      # container stacks. The default leaves this run's token in `.git/config`,
+      # where any of them can read it. Nothing here pushes, so nothing needs it.
+      #
+      # The refusal below then fetches the branch anonymously, which works
+      # because this repository is public. On a private one that fetch would need
+      # a credential scoped to the single command rather than left in the config.
       - name: "Check out the exact commit this run was told to build"
         uses: "actions/checkout@v5"
         with:
           ref: ${{ inputs.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       # Both refusals, before anything is built. The input arrives through an
       # environment value rather than being interpolated into the script, and the
@@ -324,7 +334,14 @@ jobs:
             fi
             created=$(printf '%s' "$entry" | cut -f1)
             expires=$(printf '%s' "$entry" | cut -f2)
-            granted=$(( ( $(date -u -d "$expires" +%s) - $(date -u -d "$created" +%s) ) / 86400 ))
+            # Rounded to the nearest day, not truncated. The service records the
+            # two timestamps independently, so a nominal 30-day window can come
+            # back a second short; dividing that by 86400 floors it to 29 and
+            # rejects a candidate the service retained correctly. Adding half a
+            # day before the division is what makes the comparison about the
+            # window rather than about which side of a second it landed on.
+            elapsed=$(( $(date -u -d "$expires" +%s) - $(date -u -d "$created" +%s) ))
+            granted=$(( (elapsed + 43200) / 86400 ))
             if [ "$granted" -ne "${CANDIDATE_RETENTION_DAYS}" ]; then
               echo "$name was granted $granted days, not the ${CANDIDATE_RETENTION_DAYS} an approval needs" >&2
               exit 1

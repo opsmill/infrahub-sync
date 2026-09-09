@@ -207,22 +207,63 @@ Compare the six the record stores against what the service holds. The record's
 digests may or may not carry a `sha256:` prefix depending on which side wrote
 them, so both are normalised before comparison:
 
+The comparison runs in a subshell so it can end with a status. Read that status:
+a mismatch, a missing group, or one the record should not be describing all stop
+the procedure here. Do not go on to step 5 with a nonzero result.
+
 ```bash
 jq -r '.artifacts | to_entries[]
        | [.key, (.value.id|tostring), (.value.digest|sub("^sha256:";""))] | @tsv' \
   record/qualification.json | sort > "$RECORDED"
 
-while IFS=$'\t' read -r name id digest; do
-  entry=$(awk -F'\t' -v n="$name" '$1 == n {print; exit}' "$INVENTORY")
-  held_id=$(printf '%s' "$entry" | cut -f2)
-  held_digest=$(printf '%s' "$entry" | cut -f3 | sed 's/^sha256://')
-  if [ "$id" = "$held_id" ] && [ "$digest" = "$held_digest" ]; then
-    printf 'OK     %-42s id %s\n' "$name" "$id"
-  else
-    printf 'WRONG  %-42s record %s/%s, service %s/%s\n' "$name" "$id" "$digest" "$held_id" "$held_digest"
+(
+  set -eu
+
+  # Exactly these six, no more and no fewer. The record is written before its own
+  # upload exists, so a seventh entry means it describes something it cannot have
+  # seen, and a sixth missing means a group it should have named went unrecorded.
+  expected=$(printf '%s\n' \
+    infrahub-sync-candidate-image \
+    infrahub-sync-candidate-identity \
+    infrahub-sync-candidate-distributions \
+    infrahub-sync-candidate-bundle \
+    infrahub-sync-candidate-sboms \
+    infrahub-sync-qualification-kit | sort)
+  present=$(cut -f1 "$RECORDED" | sort)
+
+  if [ "$expected" != "$present" ]; then
+    echo "the record describes the wrong set of groups:" >&2
+    diff <(printf '%s\n' "$expected") <(printf '%s\n' "$present") >&2 || true
+    exit 1
   fi
-done < "$RECORDED"
+
+  wrong=0
+  while IFS=$'\t' read -r name id digest; do
+    entry=$(awk -F'\t' -v n="$name" '$1 == n {print; exit}' "$INVENTORY")
+    if [ -z "$entry" ]; then
+      printf 'ABSENT %-42s the service holds no artifact of this name\n' "$name" >&2
+      wrong=$((wrong + 1))
+      continue
+    fi
+    held_id=$(printf '%s' "$entry" | cut -f2)
+    held_digest=$(printf '%s' "$entry" | cut -f3 | sed 's/^sha256://')
+    if [ "$id" = "$held_id" ] && [ "$digest" = "$held_digest" ]; then
+      printf 'OK     %-42s id %s\n' "$name" "$id"
+    else
+      printf 'WRONG  %-42s record %s/%s, service %s/%s\n' "$name" "$id" "$digest" "$held_id" "$held_digest" >&2
+      wrong=$((wrong + 1))
+    fi
+  done < "$RECORDED"
+
+  [ "$wrong" -eq 0 ] || { echo "$wrong recorded group(s) do not match the service" >&2; exit 1; }
+  echo "all six recorded groups match the service inventory"
+)
+echo "comparison status: $?"
 ```
+
+A `comparison status` of anything but `0` means the record and the service
+disagree about what this run produced. Stop: an image loaded from bytes the
+record cannot account for qualifies nothing.
 
 That covers six groups. The seventh — the qualification record itself — cannot
 appear in its own `artifacts` map, because a document cannot carry the digest of

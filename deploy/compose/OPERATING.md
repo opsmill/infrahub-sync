@@ -158,6 +158,26 @@ Read the run itself first. `reconciliation_required` is on the run, not buried i
 its evidence, so deciding whether a run needs reconciling never requires parsing
 a failure:
 
+Both requests need the API principal `init` generated. It is one field of one
+line of `operator.env`, so read that field out rather than sourcing the file —
+sourcing it would export every other credential in it too. Run this from the
+bundle directory:
+
+```bash
+INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
+INFRAHUB_SYNC_API_TOKEN=$(
+  sed -n 's/^INFRAHUB_SYNC_SERVICE_BEARER_TOKENS=.*"token": "\([^"]*\)".*/\1/p' operator.env
+)
+export INFRAHUB_SYNC_API_URL INFRAHUB_SYNC_API_TOKEN
+
+# Confirms it was found without showing it. Nothing here prints the value.
+[ -n "$INFRAHUB_SYNC_API_TOKEN" ] \
+  && echo "the operator token was read" \
+  || echo "no operator token in operator.env; was this deployment initialised?"
+```
+
+Then:
+
 ```bash
 curl -sS -H "Authorization: Bearer $INFRAHUB_SYNC_API_TOKEN" \
   "$INFRAHUB_SYNC_API_URL/runs/RUN"
