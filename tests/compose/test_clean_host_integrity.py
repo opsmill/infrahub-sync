@@ -22,12 +22,13 @@ import json
 import re
 import subprocess  # noqa: S404 - this suite exists to run the driver's own shell
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from hashlib import sha256
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
+from typing_extensions import Self
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DRIVER = REPO_ROOT / "tests" / "compose" / "clean_host" / "clean-host.sh"
@@ -381,3 +382,228 @@ def test_no_value_either_store_holds_reaches_the_snapshot(durable_state: ModuleT
 
     for held in ("checksum-abcd", "qualification", "operations", "create", "beef", "succeeded", "plan\n"):
         assert held not in printed, f"{held!r} was read out of a store and printed"
+
+
+# ---------------------------------------------------------------------------
+# The snapshot's own reads, driven through clients shaped like the real ones
+# ---------------------------------------------------------------------------
+# `main` reaches two stores this suite has neither of, so the clients are
+# supplied instead. They are not stand-ins for the stores' behaviour -- the
+# renderings above already cover that -- but for their *shapes*, because one of
+# those shapes is where a body stopped being streamable.
+class RawStream:
+    """What botocore hands back from a body's context manager.
+
+    `StreamingBody.__enter__` returns `self._raw_stream`, a urllib3
+    `HTTPResponse`, and that object carries no `iter_chunks`. A fake whose
+    `__enter__` returned the wrapper would be the one shape this defect cannot
+    appear in, so this one does what botocore does.
+    """
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class FakeBody:
+    """One object's body, with botocore's own wrapper and context-manager behaviour."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+        self.raw = RawStream()
+        self.closed = False
+
+    def __enter__(self) -> RawStream:
+        return self.raw
+
+    def __exit__(self, *exception: object) -> None:
+        self.raw.close()
+
+    def iter_chunks(self, chunk_size: int) -> Iterator[bytes]:
+        assert chunk_size > 0, "a body was streamed without a chunk size"
+        yield from self._chunks
+
+    def close(self) -> None:
+        self.closed = True
+        self.raw.close()
+
+
+class FakePaginator:
+    def __init__(self, keys: list[str]) -> None:
+        self._keys = keys
+
+    def paginate(self, **query: str) -> list[dict[str, list[dict[str, str]]]]:
+        assert "Bucket" in query, "the listing named no bucket"
+        return [{"Contents": [{"Key": key} for key in self._keys]}]
+
+
+class FakeStore:
+    def __init__(self, bodies: dict[str, FakeBody]) -> None:
+        self._bodies = bodies
+        self.requested: list[str] = []
+
+    def get_paginator(self, name: str) -> FakePaginator:
+        assert name == "list_objects_v2", f"the snapshot paginated {name}"
+        return FakePaginator(sorted(self._bodies))
+
+    def get_object(self, **query: str) -> dict[str, FakeBody]:
+        self.requested.append(query["Key"])
+        return {"Body": self._bodies[query["Key"]]}
+
+
+class FakeSQL:
+    """Just enough of `psycopg.sql` to compose the one statement the snapshot builds."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def format(self, *parts: FakeSQL) -> FakeSQL:
+        return FakeSQL(self.text.format(*(part.text for part in parts)))
+
+    def join(self, parts: Iterable[FakeSQL]) -> FakeSQL:
+        return FakeSQL(self.text.join(part.text for part in parts))
+
+
+# The one table the driven snapshot holds, the one record in it, and the one
+# object beside it. The record is held by column name so the cursor can return
+# the projection the statement actually asked for.
+FAKE_TABLE = "product_runs"
+FAKE_RECORD = {"phase": "succeeded", "run_id": "r-1"}
+FAKE_KEY = "runs/r-1/manifest.json"
+
+
+class FakeCursor:
+    """Answers the three reads the snapshot makes, told apart by the statement."""
+
+    def __init__(self) -> None:
+        self._rows: list[tuple[object, ...]] = []
+        self.composed: str | None = None
+
+    def execute(self, statement: object, params: tuple[object, ...] | None = None) -> None:
+        if isinstance(statement, str) and "information_schema.tables" in statement:
+            self._rows = [(FAKE_TABLE,)]
+        elif isinstance(statement, str) and "information_schema.columns" in statement:
+            assert params == (FAKE_TABLE,), f"the columns were read for {params}"
+            self._rows = [(column,) for column in sorted(FAKE_RECORD)]
+        else:
+            assert isinstance(statement, FakeSQL), f"the record read is not a composed statement: {statement!r}"
+            self.composed = statement.text
+            # The projection the statement asked for, so an excluded column is
+            # absent from the row as well as from the read.
+            selected = re.findall(r'"(\w+)"', statement.text)
+            assert selected[-1] == FAKE_TABLE, f"the statement does not name {FAKE_TABLE} last"
+            self._rows = [tuple(FAKE_RECORD[name] for name in selected[:-1])]
+
+    def fetchall(self) -> list[tuple[object, ...]]:
+        return self._rows
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        return None
+
+
+class FakeConnection:
+    def __init__(self, cursor: FakeCursor) -> None:
+        self._cursor = cursor
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        return None
+
+    def cursor(self) -> FakeCursor:
+        return self._cursor
+
+
+def install_stores(monkeypatch: pytest.MonkeyPatch, body: FakeBody) -> tuple[FakeStore, FakeCursor]:
+    """Give `main` its settings and both clients, as importable modules.
+
+    Injected through `sys.modules` because `main` imports the drivers itself.
+    That is also what lets this run on an install where neither is present.
+    """
+    for name, value in (
+        ("INFRAHUB_SYNC_DATABASE_URL", "postgresql://product@postgres:5432/infrahub_sync"),
+        ("INFRAHUB_SYNC_S3_ENDPOINT_URL", "http://object-store:9000"),
+        ("INFRAHUB_SYNC_S3_BUCKET", "infrahub-sync"),
+    ):
+        monkeypatch.setenv(name, value)
+
+    store = FakeStore({FAKE_KEY: body})
+    cursor = FakeCursor()
+    monkeypatch.setitem(sys.modules, "boto3", SimpleNamespace(client=lambda *_, **__: store))
+    monkeypatch.setitem(
+        sys.modules,
+        "psycopg",
+        SimpleNamespace(
+            connect=lambda *_, **__: FakeConnection(cursor),
+            sql=SimpleNamespace(SQL=FakeSQL, Identifier=lambda name: FakeSQL(f'"{name}"')),
+        ),
+    )
+    return store, cursor
+
+
+def test_the_snapshot_streams_a_body_through_the_wrapper_that_can_stream_it(
+    durable_state: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A body's context manager hands back the raw stream, which cannot stream chunks.
+
+    So the wrapper is what has to be kept and closed. Entering it rebinds the
+    name to a urllib3 `HTTPResponse`, and the object half of the snapshot then
+    ends the row it was taken for.
+    """
+    chunks = [b'{"checksum": ', b'"abcd"}']
+    body = FakeBody(chunks)
+    store, _ = install_stores(monkeypatch, body)
+
+    durable_state.main()
+
+    printed = capsys.readouterr().out.splitlines()
+    assert printed[0] == f"table {FAKE_TABLE} 1"
+    assert printed[1].startswith(f"contents {FAKE_TABLE} ")
+    assert printed[2] == f"object {FAKE_KEY} {sha256(b''.join(chunks)).hexdigest()}"
+    assert store.requested == [FAKE_KEY], "the snapshot did not read the one object it listed"
+    assert body.closed, "the body wrapper was left open"
+
+
+def test_an_excluded_column_reaches_neither_the_read_nor_the_record(
+    durable_state: ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The composed statement is the one thing the renderings above never see.
+
+    They are handed rows some statement already returned, so whether an
+    exclusion is applied at the boundary that reads them is only observable by
+    driving the read. Both statements are asserted, so an exclusion that
+    narrowed nothing and one that narrowed everything are told apart.
+    """
+    body = FakeBody([b"{}"])
+    _, cursor = install_stores(monkeypatch, body)
+
+    monkeypatch.setattr(durable_state, "VOLATILE_COLUMNS", {})
+    durable_state.main()
+    whole = cursor.composed
+
+    monkeypatch.setattr(durable_state, "VOLATILE_COLUMNS", {FAKE_TABLE: ("phase",)})
+    durable_state.main()
+    narrowed = cursor.composed
+    capsys.readouterr()
+
+    assert whole == 'SELECT "phase", "run_id" FROM "product_runs"'
+    assert narrowed == 'SELECT "run_id" FROM "product_runs"'
+
+
+def test_an_exclusion_that_leaves_a_table_with_nothing_to_compare_ends_the_check(
+    durable_state: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A table with no column left would report equal for every deployment there is."""
+    _, _ = install_stores(monkeypatch, FakeBody([b"{}"]))
+    monkeypatch.setattr(durable_state, "VOLATILE_COLUMNS", {FAKE_TABLE: tuple(FAKE_RECORD)})
+
+    with pytest.raises(SystemExit) as refused:
+        durable_state.main()
+
+    assert f"leave {FAKE_TABLE} with no column to compare" in str(refused.value)

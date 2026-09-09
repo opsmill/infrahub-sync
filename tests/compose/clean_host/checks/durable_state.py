@@ -31,6 +31,7 @@ so a new column is compared without this check being told about it.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import sys
@@ -166,7 +167,12 @@ def main() -> None:
     bucket = os.environ["INFRAHUB_SYNC_S3_BUCKET"]
     pages = store.get_paginator("list_objects_v2").paginate(Bucket=bucket)
     for key in sorted(item["Key"] for page in pages for item in page.get("Contents", [])):
-        with store.get_object(Bucket=bucket, Key=key)["Body"] as body:
+        # Closed through `closing` rather than through the body's own context
+        # manager. `StreamingBody.__enter__` returns the raw urllib3 response it
+        # wraps, so entering the body would rebind it to an object with no
+        # `iter_chunks` and end the row this snapshot was taken for. `closing`
+        # keeps the wrapper and still closes it on every path out.
+        with contextlib.closing(store.get_object(Bucket=bucket, Key=key)["Body"]) as body:
             lines.append(object_line(key, body.iter_chunks(chunk_size=BODY_CHUNK_BYTES)))
 
     print("\n".join(lines))
