@@ -879,6 +879,28 @@ stop_destination() {
 # ---------------------------------------------------------------------------
 # Row 1 — artifact identity
 # ---------------------------------------------------------------------------
+# The archive's own digest against the record, and not only against the checksum
+# file beside it. That file travels with the archive it describes, so an archive
+# swapped together with its checksum satisfies `sha256sum -c` and says nothing
+# about the bundle the record names -- and the record is the document every other
+# claim this row makes is read from. Both comparisons, because they fail for
+# different reasons: a corrupted transfer breaks the first, a bundle that is not
+# the recorded one breaks the second.
+require_recorded_bundle_digest() {
+    # require_recorded_bundle_digest <archive filename, as the record names it>
+    recorded_digest=$(record "['bundle']['sha256']") \
+        || fail "the candidate record names no digest for the deployment bundle"
+    # Not read through a pipeline: a pipeline's status is its last command's, and
+    # a `sha256sum` that failed would reach the comparison as a value rather than
+    # as a refusal. The tool prints "<digest>  <name>", so the digest is the
+    # first field of what it printed.
+    digested=$(sha256sum "$CANDIDATE/$1") \
+        || fail "this host could not digest the deployment bundle archive"
+    require "the deployment bundle's own digest is not the one the record names" \
+        "$recorded_digest" "${digested%% *}"
+    report "the bundle's own digest is the one the record names"
+}
+
 row_artifact_identity() {
     # The image first, because the record is JSON and reading it needs the
     # interpreter the image carries. Loading is not trusting: the identifier a
@@ -898,6 +920,7 @@ row_artifact_identity() {
     ( cd "$CANDIDATE" && sha256sum -c "$bundle_name.sha256" >/dev/null 2>&1 ) \
         || fail "the deployment bundle does not match the checksum the record names"
     report "the bundle matches the checksum the record names"
+    require_recorded_bundle_digest "$bundle_name"
 
     # The bundle root is wherever the entry point is. The archive's own top-level
     # directory is not part of what the record promises, so it is found rather
@@ -1025,6 +1048,23 @@ deployment_container() {
     echo "$container"
 }
 
+# Every container the deployment owns, by the identity a replacement changes.
+# `docker compose up` keeps the container an unchanged service already has, so a
+# moved identifier is a container that was created again -- which is the one
+# thing "this change needed no operator action" cannot survive.
+#
+# Read through the instance label, so a fixture container this gate started is
+# never counted as a service of the deployment, and sorted, so the order the
+# engine happened to list them in cannot be read as a replacement.
+deployment_container_identities() {
+    docker ps --all --filter "label=io.infrahub-sync.instance=$INSTANCE" \
+        --format '{{.Names}} {{.ID}}' > "$WORK/container-identities" \
+        || fail "this host could not be asked which containers the deployment owns"
+    [ -s "$WORK/container-identities" ] \
+        || fail "the deployment owns no containers, so no replacement could have been observed"
+    sort "$WORK/container-identities"
+}
+
 deployment_network() {
     docker inspect --format '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{end}}' \
         "$(deployment_container sync-api)"
@@ -1099,8 +1139,15 @@ row_unkeyed_write_policy() {
 # Row 5 — schema change
 # ---------------------------------------------------------------------------
 row_schema_change() {
+    # Bracketing the whole row rather than only its compatible half: the driver
+    # cannot see inside a check, and "no container was replaced at any point in
+    # this row" is the stronger claim that contains the one the compatible half
+    # needs. A change an operator does nothing for is a change no container was
+    # recreated to pick up, and only this host can answer that.
+    before=$(deployment_container_identities)
     check schema_change \
         || fail "a runtime schema change did not behave as the artifact contract requires"
+    require "a schema change replaced a deployment container" "$before" "$(deployment_container_identities)"
     report "a compatible change needed no restart; an incompatible one refused before any write"
 }
 

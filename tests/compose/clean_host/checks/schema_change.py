@@ -1,7 +1,9 @@
 """A compatible schema change needs no operator action; a drifted one refuses before any write.
 
-Both halves are destination-side. The compatible half loads an additive change and
-runs against it: the deployment picks it up with no container replaced. The
+Both halves are destination-side. The compatible half loads a new optional
+attribute, proves the destination converged on it, and then runs against it: the
+deployment picks the change up with no container replaced, which the driver
+answers by comparing the row's container identities either side of this check. The
 incompatible half changes the kind of an attribute the plan *consumes*, then
 applies the retained plan — the fingerprint the plan recorded no longer matches
 the one a live read produces, and `_require_planned_schema` refuses before any
@@ -52,14 +54,24 @@ from infrahub_sync.client.models import ApplyRunRequest
 # reversible in either direction and no object loses its value.
 DRIFTED_ATTRIBUTE = "type"
 REVERSIBLE_KINDS = {"Text": "TextArea", "TextArea": "Text"}
+# The compatible change: an attribute that is new, optional, and consumed by no
+# configuration this gate registers. Additive on every axis the destination
+# validates, so loading it is the change the contract says needs no operator
+# action -- and it is loaded rather than assumed, so the compatible half below
+# runs against a schema that actually moved.
+ADDITIVE_ATTRIBUTE = "clean_host_compatible_note"
+ADDITIVE_KIND = "Text"
 SCHEMA_FILE = os.environ["CLEAN_HOST_SCHEMA"]
 SMOKE_KIND = "InfraDevice"
 # The typed refusal the pre-write gate raises when a plan's consumed semantics moved.
 REFUSAL = "PlanSchemaChangedError"
 
 
-def attribute_kind(branch: str) -> str:
-    """The destination's kind for the attribute the plan consumes, on one branch.
+def attribute_kind(branch: str, attribute: str = DRIFTED_ATTRIBUTE) -> str:
+    """The destination's kind for one attribute of the smoke kind, on one branch.
+
+    Defaulting to the attribute the plan consumes, because that is what both
+    halves are about; the compatible half names the additive one instead.
 
     On the branch the plan is computed against, and read with the call the
     worker's own schema read makes (`configuration/capabilities.py` ->
@@ -71,28 +83,36 @@ def attribute_kind(branch: str) -> str:
     node = sdk().schema.all(branch=branch, refresh=True).get(SMOKE_KIND)
     if node is None:
         refuse(f"the destination serves no {SMOKE_KIND} on {branch}")
-    declared = [attribute.kind for attribute in node.attributes if attribute.name == DRIFTED_ATTRIBUTE]
+    declared = [declaration.kind for declaration in node.attributes if declaration.name == attribute]
     if not declared:
-        refuse(f"the destination declares no {DRIFTED_ATTRIBUTE} attribute on {SMOKE_KIND} on {branch}")
+        refuse(f"the destination declares no {attribute} attribute on {SMOKE_KIND} on {branch}")
     return str(declared[0])
 
 
 def load_attribute_kind(kind: str, branch: str) -> None:
-    """Load the seeded schema with one attribute kind changed, and prove it landed.
+    """Load the seeded schema with one attribute kind set and the additive one added, and prove both landed.
 
     Loaded onto the same branch, through the SDK the image ships, and waited on:
     Infrahub applies a schema asynchronously, so a plan taken before it converges
     reads the old semantics -- and this row would then report success having
     drifted nothing.
+
+    The additive attribute travels with every load, including the revert. A load
+    states the node it declares, so one that omitted the attribute could take it
+    back -- and the halves after it would then run against a schema this row had
+    silently undone.
     """
     schema = yaml.safe_load(pathlib.Path(SCHEMA_FILE).read_text(encoding="utf-8"))
     for node in schema["nodes"]:
         for attribute in node["attributes"]:
             if attribute["name"] == DRIFTED_ATTRIBUTE:
                 attribute["kind"] = kind
+        node["attributes"].append({"name": ADDITIVE_ATTRIBUTE, "kind": ADDITIVE_KIND, "optional": True})
     sdk().schema.load(schemas=[schema], branch=branch, wait_until_converged=True)
     if attribute_kind(branch) != kind:
         refuse(f"the destination did not converge on {DRIFTED_ATTRIBUTE} kind {kind} on {branch}")
+    if attribute_kind(branch, ADDITIVE_ATTRIBUTE) != ADDITIVE_KIND:
+        refuse(f"the destination did not converge on the additive {ADDITIVE_ATTRIBUTE} on {branch}")
 
 
 # The branch the plan reads and writes, which is the one whose schema the apply
@@ -110,8 +130,15 @@ with deployment() as client:
     # failure says which row is being observed.
     plant("drift")
 
-    # The compatible half: a run against the destination as it stands completes,
-    # and the driver confirms separately that no container was replaced.
+    # The compatible half: the additive change is loaded and proven to have
+    # landed, and then a run goes against the destination as it now stands. A run
+    # against an unchanged schema would exercise nothing this half is about.
+    #
+    # Whether anything was restarted to pick it up is the driver's to answer.
+    # This check runs in a throwaway container on the deployment's network and
+    # cannot see the engine, so the driver brackets the whole row with the
+    # identities of the containers the deployment owns.
+    load_attribute_kind(original, BRANCH)
     follow(client, client.plan(run_request(client, "plan", "clean-host: compatible schema"), key("compatible")))
 
     planned = follow(client, client.plan(run_request(client, "plan", "clean-host: drift plan"), key("drift")))

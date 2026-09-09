@@ -232,6 +232,24 @@ def test_the_driver_verifies_the_bundle_before_it_extracts_or_edits_it() -> None
     assert verified < extracted < edited
 
 
+def test_the_bundle_is_bound_to_the_record_before_it_is_extracted() -> None:
+    """The checksum file beside an archive is not the record's claim about it.
+
+    `sha256sum -c` reads a file the archive travels with, so a swapped pair
+    satisfies it. What binds the archive to the qualification record is the
+    record's own digest, and it has to bind before anything is taken out of the
+    archive: what a test suite proves about the step is proved in
+    `test_clean_host_integrity.py`, which runs it.
+    """
+    body = executable_lines()
+
+    bound = 'require_recorded_bundle_digest "$bundle_name"'
+
+    assert "['bundle']['sha256']" in body, "the driver never reads the digest the record names"
+    assert bound in body, "row 1 never binds the archive to the digest the record names"
+    assert body.index(bound) < body.index("tar -xzf")
+
+
 def test_every_check_the_driver_runs_is_in_the_kit() -> None:
     """A named check that does not exist fails the row at the host, not here.
 
@@ -690,6 +708,20 @@ def test_the_diagnostic_check_still_runs_when_it_is_executed_as_a_script() -> No
     account would lose the one section it exists for.
     """
     source = code_of(CHECKS / "diagnostics.py")
+
+    assert "if __name__ == '__main__':" in source
+    assert "main" in attribute_calls(source)
+
+
+def test_the_durable_state_check_still_runs_when_it_is_executed_as_a_script() -> None:
+    """The driver runs it with `python /checks/durable_state.py`, and nothing imports it.
+
+    Its renderings are importable so a test can drive them with the rows and
+    bodies the stores would hand over. The price of that is an entry point which
+    can be removed without anything else noticing: the check would exit 0 having
+    read nothing, and every row comparing a snapshot would compare two empty ones.
+    """
+    source = code_of(CHECKS / "durable_state.py")
 
     assert "if __name__ == '__main__':" in source
     assert "main" in attribute_calls(source)
@@ -1886,6 +1918,29 @@ def test_every_row_that_compares_snapshots_names_what_it_expects_to_survive() ->
     assert named == {"configuration_versions", "product_runs"}, f"the rows expect {sorted(named)} to survive"
 
 
+def test_the_durable_snapshot_narrows_named_columns_and_says_why_beside_each_one() -> None:
+    """A table excluded stops comparing whole records; a column narrows one value.
+
+    So every exclusion names the table it applies to and the columns within it,
+    and carries its reason where the exclusion is declared -- an exclusion whose
+    reason lives somewhere else is one nobody re-reads when the schema moves.
+    What the snapshot then distinguishes is proved in
+    `test_clean_host_integrity.py`, which runs it.
+    """
+    source = (CHECKS / "durable_state.py").read_text(encoding="utf-8")
+    declared = re.search(r"VOLATILE_COLUMNS: dict\[str, tuple\[str, \.\.\.\]\] = \{(.*?)\n\}", source, re.DOTALL)
+    assert declared is not None, "the snapshot declares no exclusion set this check can read"
+    literal = declared.group(1)
+    narrowed = re.findall(r'^ {4}"(\w+)": \((.*?)\),$', literal, re.MULTILINE)
+
+    assert narrowed, "the snapshot excludes something this check cannot read as named columns of one table"
+    for table, columns in narrowed:
+        assert re.fullmatch(r'(?:"\w+", ?)+', columns.strip() + ", "), f"{table} is not narrowed to named columns"
+        # The split lands mid-line, so the key's own indentation is dropped here.
+        preceding = [line for line in literal.split(f'"{table}":')[0].splitlines() if line.strip()]
+        assert preceding[-1].lstrip().startswith("#"), f"{table} is narrowed without its reason beside it"
+
+
 def test_no_equality_in_the_driver_can_hold_because_neither_side_exists() -> None:
     """Enumerated from the driver: every `require` goes through one comparison.
 
@@ -2072,12 +2127,88 @@ def test_no_check_reads_a_verdict_from_a_run_it_never_waited_for() -> None:
     assert offenders == {}, f"a verdict is read from a run nothing waited for: {offenders}"
 
 
+def test_the_compatible_half_runs_against_a_schema_change_it_loaded() -> None:
+    """A run against the destination as it stands is not a compatible change.
+
+    The contract's compatible half is about a change an operator makes and a
+    running deployment picks up. Planning against an unchanged schema exercises
+    nothing of that: the row has to load an additive attribute, prove the
+    destination converged on it, and only then plan.
+    """
+    source = code_of(CHECKS / "schema_change.py")
+
+    assert "ADDITIVE_ATTRIBUTE" in source, "the row loads no additive change for its compatible half"
+    assert "attribute_kind(branch, ADDITIVE_ATTRIBUTE) != ADDITIVE_KIND" in source, (
+        "the row does not prove the additive change landed"
+    )
+    assert "key('compatible')" in source, "the row runs no compatible half at all"
+    assert source.index("load_attribute_kind(original, BRANCH)") < source.index("key('compatible')"), (
+        "the compatible half plans before the change it is supposed to run against"
+    )
+
+
+def test_the_additive_attribute_travels_with_every_load_of_the_seeded_schema() -> None:
+    """A load states the node it declares, so one omitting it could take it back.
+
+    The drift half and the revert after it load the same document. If either
+    dropped the attribute the compatible half added, the halves after it would
+    run against a schema this row had silently undone -- and the compatible
+    claim would be about a change that no longer existed.
+    """
+    source = code_of(CHECKS / "schema_change.py")
+    loader = source.index("def load_attribute_kind")
+    loaded = source.index("sdk().schema.load", loader)
+
+    assert "ADDITIVE_ATTRIBUTE" in source[loader:loaded], (
+        "the additive attribute is not part of what the seeded schema is loaded as"
+    )
+
+
+def test_the_schema_row_proves_no_container_was_replaced_to_pick_the_change_up() -> None:
+    """ "Needs no operator action" is a claim about containers, which only the host can answer.
+
+    The check runs inside a throwaway container on the deployment's network and
+    cannot see the engine, so it says so and leaves the claim to the driver. The
+    bracket is the whole row rather than its compatible half: the driver cannot
+    see inside a check, and no container replaced at any point in the row is the
+    stronger claim that contains the one the compatible half needs.
+    """
+    body = function_body("row_schema_change")
+
+    assert "before=$(deployment_container_identities)" in body, "the row never reads what it must not change"
+    assert 'require "a schema change replaced a deployment container" "$before"' in body
+    assert body.index("before=") < body.index("check schema_change")
+
+
+def test_the_container_identities_the_schema_row_compares_are_this_deployments_own() -> None:
+    """A container is identified by what a replacement changes, and by nothing else.
+
+    Read through the instance label, so a fixture container this gate started is
+    not mistaken for a service of the deployment, and sorted, so the order the
+    engine happened to list them in cannot be read as a replacement.
+    """
+    assert "deployment_container_identities() {" in executable_lines(), (
+        "the driver has no step reading the identities a replacement changes"
+    )
+    helper = function_body("deployment_container_identities")
+
+    assert "label=io.infrahub-sync.instance=$INSTANCE" in helper
+    assert "{{.ID}}" in helper, "the row compares nothing a replacement changes"
+    assert "sort" in helper, "the engine's own ordering can be read as a replacement"
+    assert "owns no containers" in helper, "an empty answer is compared as if it were an answer"
+
+
 def test_the_drift_rows_apply_is_settled_before_its_evidence_is_read() -> None:
-    """And before the revert, which would otherwise land while the run was queued."""
+    """And before the revert, which would otherwise land while the run was queued.
+
+    The revert is the *last* load of the original kind: the compatible half loads
+    it too, before any apply exists, so the first occurrence is a different step
+    with a different job.
+    """
     source = code_of(CHECKS / "schema_change.py")
 
     assert source.index("settle(client, accepted)") < source.index("failure = recorded_failure(client, run_id)")
-    assert source.index("settle(client, accepted)") < source.index("load_attribute_kind(original, BRANCH)")
+    assert source.index("settle(client, accepted)") < source.rindex("load_attribute_kind(original, BRANCH)")
 
 
 def test_the_drift_row_waits_for_the_schema_it_loaded_to_converge() -> None:
