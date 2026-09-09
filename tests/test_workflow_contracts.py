@@ -110,7 +110,10 @@ APPROVED_EVENTS = frozenset({"workflow_dispatch", "workflow_call"})
 CLEAN_HOST_JOB = "clean-host"
 CHECKOUT_ACTION = "actions/checkout"
 INTERPRETER_ACTIONS = ("astral-sh/setup-uv", "actions/setup-python")
-HOST_TOOLS = ("uv ", "uvx ", "pipx ", "poetry ", "pytest ")
+# `python` and `python3` among them: an interpreter the runner happens to ship
+# is still an interpreter, and a job that reaches for one is no longer showing
+# that the released artifact runs on a host holding nothing but the artifact.
+HOST_TOOLS = ("uv ", "uvx ", "pipx ", "poetry ", "pytest ", "python ", "python3 ")
 DRIVER_ENTRYPOINT = "clean-host.sh"
 DOWNLOAD_ACTION = "actions/download-artifact"
 # The two routes to that job. Pull-request validation qualifies bytes that exist
@@ -151,6 +154,9 @@ CANDIDATE_GROUPS = frozenset(
 # Asking for a window is not being granted one, so the run reads its own
 # artifacts back. `expires_at` is the field that says what it really got.
 RETENTION_READBACK = ("actions/runs", "expires_at")
+# A run's title is the one place a dispatched run states the commit it was told
+# to build: `head_sha` is the tip of the ref it started against.
+RUN_TITLE = "run-name"
 # The two shapes publication would arrive in even with no publishing command
 # present: a switch that turns one on, and the protected environment it runs in.
 PUBLICATION_INPUT = "publish"
@@ -193,6 +199,35 @@ TRUST_COMPARISON = "github.event.pull_request.head.repo.full_name == github.repo
 # wrote it and refuse the next rebuild of the same version.
 ARTIFACT_RECORD = ".release/artifacts.json"
 RECORDED_IDENTITY = ".release/identity.json"
+
+# The order the merged image gate proved, which the candidate route reuses. The
+# archive upload is in the sequence rather than beside it: `compose.reclaim`
+# deletes the files it uploads, so uploading after the reclaim uploads nothing,
+# and `release.qualify` reads the record, so writing it after would read a
+# record for the previous candidate or none at all.
+ARCHIVE_UPLOAD = "infrahub-sync-candidate-image"
+APPROVED_ORDER = (
+    "release.identity",
+    "release.build",
+    "release.kit",
+    "image.build",
+    "image.inspect",
+    "image.freshness",
+    "image.sbom",
+    "image.scan",
+    "image.smoke",
+    ARCHIVE_UPLOAD,
+    "compose.reclaim",
+    "compose.lifecycle",
+    ARTIFACT_RECORD,
+    "release.qualify",
+)
+
+# How the writer names one upload's outputs, and how the record keys them. Read
+# as a pair, so each group's own step is the one bound into its own entry: two
+# groups whose identifiers were swapped satisfy any substring search.
+WRITER_ARGUMENT = re.compile(r"--arg\s+(\w+)_id\s+\"\$\{\{\s*steps\.([\w-]+)\.outputs\.artifact-id\s*\}\}\"")
+WRITER_ENTRY = re.compile(r"\"(infrahub-sync-[\w-]+)\":\s*\{id:\s*\$(\w+)_id,\s*digest:\s*\$(\w+)_digest\}")
 
 
 def load(path: Path) -> dict:
@@ -819,6 +854,24 @@ def test_the_candidate_workflow_takes_the_commit_to_build_as_a_required_input() 
     assert declared[SHA_INPUT]["type"] == "string"
 
 
+def test_the_candidate_run_states_the_commit_it_built_in_its_own_title() -> None:
+    """A dispatched run's `head_sha` is the ref's tip, not the commit it was told to build.
+
+    The two are equal only while the branch has not moved, which is exactly the
+    case this route exists to stop anyone relying on: the same commit is
+    rebuilt from a much later tip when a window lapses. So the run states the
+    input itself, and nothing downstream has to infer the built commit from the
+    revision of the workflow definition that ran.
+    """
+    document = load(CANDIDATE_WORKFLOW)
+
+    assert RUN_TITLE in document, f"{CANDIDATE_WORKFLOW.name} does not name the commit it builds in its run title"
+    assert f"inputs.{SHA_INPUT}" in str(document[RUN_TITLE]), (
+        f"the run title is {document[RUN_TITLE]!r}, which does not carry the commit to build"
+    )
+    assert "github.sha" not in str(document[RUN_TITLE]), "the run title names the ref's tip, not the input"
+
+
 def test_the_candidate_run_checks_out_the_named_commit_and_reads_the_whole_history() -> None:
     """Ancestry cannot be proved against a shallow clone, and a ref is not a commit."""
     checkouts = [step for step in candidate_steps("candidate") if str(step.get("uses", "")).startswith(CHECKOUT_ACTION)]
@@ -1163,14 +1216,85 @@ def test_the_artifact_record_names_the_candidate_from_the_one_document_that_hold
     script = str(writers[0]["run"])
     assert RECORDED_IDENTITY in script, f"the writer does not read the candidate from {RECORDED_IDENTITY}"
     assert "identity:" in script, f"the writer records no identity in {ARTIFACT_RECORD}"
+
+    # Which step each `--arg` reads its identifiers from, and which step each
+    # recorded group therefore names. Resolved per group rather than by
+    # searching the whole script: two groups whose identifiers were swapped, or
+    # a group recording a third group's step, satisfies every substring here.
+    from_step = dict(WRITER_ARGUMENT.findall(script))
+    recorded = {name: variable for name, variable, _digest in WRITER_ENTRY.findall(script)}
+    for name, variable, digest_variable in WRITER_ENTRY.findall(script):
+        assert variable == digest_variable, f"{name} takes its id and digest from different uploads"
+
     # A document cannot carry its own upload digest, so the record's own group is
     # the one exception; everything else the run retained has to be named.
-    for path, _job, _step, declared in candidates():
-        if path is not workflow or str(declared["name"]).endswith("qualification-record"):
-            continue
-        assert str(declared["name"]) in script, f"{ARTIFACT_RECORD} never names {declared['name']}"
-        assert "artifact-id" in script, "the record names no upload identifier"
-        assert "artifact-digest" in script, "the record names no upload digest"
+    #
+    # Compared by value: `candidates()` builds a fresh `Path` per call, so an
+    # identity test here silently skips every group and asserts nothing.
+    checked = [
+        str(declared["name"])
+        for path, _job, _step, declared in candidates()
+        if path == workflow and not str(declared["name"]).endswith("qualification-record")
+    ]
+
+    assert checked, f"{workflow.name} retains no group whose identifiers the record could bind"
+    for name in checked:
+        producing = str(step_of(workflow, job, name).get("id", ""))
+
+        assert producing, f"the step uploading {name} declares no id, so nothing can read its outputs"
+        assert name in recorded, f"{ARTIFACT_RECORD} records no entry for {name}"
+        assert from_step.get(recorded[name]) == producing, (
+            f"{ARTIFACT_RECORD} records {name} from step {from_step.get(recorded[name])!r}, "
+            f"but {producing!r} is what uploads it"
+        )
+
+
+def step_of(workflow: Path, job: str, artifact: str) -> dict:
+    """Return the step of one job that uploads one named artifact."""
+    uploading = [
+        step
+        for step in job_of(workflow, job)["steps"]
+        if str((step.get("with") or {}).get("name", "")) == artifact
+        and str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@")
+    ]
+    assert len(uploading) == 1, f"{len(uploading)} steps of {workflow.name} upload {artifact}"
+    return uploading[0]
+
+
+def candidate_sequence() -> list[str]:
+    """Return what the candidate job does, in order, as the names the plan uses.
+
+    An Invoke task is named by the task; an upload is named by the artifact it
+    creates; the record is named by the file it writes. Everything else is
+    dropped, so adding a step between two of these does not move them.
+    """
+    ordered = []
+    for step in candidate_steps("candidate"):
+        run = str(step.get("run", ""))
+        declared = str((step.get("with") or {}).get("name", ""))
+        if ARTIFACT_RECORD in run:
+            ordered.append(ARTIFACT_RECORD)
+        ordered.extend(INVOKE_TASK.findall(run))
+        if declared in CANDIDATE_GROUPS and str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@"):
+            ordered.append(declared)
+    return ordered
+
+
+def test_the_candidate_run_does_the_approved_steps_in_the_approved_order() -> None:
+    """Three of these orderings are load-bearing and none of them is visible from one step.
+
+    `compose.reclaim` deletes the archives the image upload publishes, so an
+    upload after it publishes nothing. `release.qualify` reads the artifact
+    record, so a record written after it describes the previous candidate or
+    nothing. And the lifecycle has to run against the image the reclaim left
+    behind rather than before it was built.
+
+    Compared as the whole sequence rather than as pairs, because a pairwise
+    check passes on a permutation that satisfies every pair it names.
+    """
+    sequence = [entry for entry in candidate_sequence() if entry in APPROVED_ORDER]
+
+    assert sequence == list(APPROVED_ORDER), f"the candidate job runs {sequence}"
 
 
 def kit_inputs() -> list[Path]:

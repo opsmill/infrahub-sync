@@ -18,10 +18,12 @@ from pathlib import Path
 import pytest
 
 from tests.test_workflow_contracts import (
+    CANDIDATE_GROUPS,
     CANDIDATE_WINDOW_DAYS,
     CANDIDATE_WINDOW_NAME,
     CANDIDATE_WORKFLOW,
     CLEAN_HOST_JOB,
+    RUN_TITLE,
     candidates,
     jobs,
     load,
@@ -42,6 +44,39 @@ LIFECYCLE = ("init", "preflight", "start", "status", "logs", "restart", "stop", 
 # What the reader has to be told they cannot do. An operator who believes the
 # window can be extended will discover otherwise on the day it lapses.
 EXPIRY = ("cannot be extended", "same exact commit")
+
+# An interpreter the runner or the host happens to ship is still an interpreter.
+# The claim is that a host holding the artifact and nothing else can run it, so a
+# procedure reaching for one has stopped demonstrating that.
+FORBIDDEN_TOOLS = ("python ", "python3 ", "uv ", "uvx ", "pip ", "pipx ")
+
+# The tools the procedure really does use, which therefore have to be declared
+# before the reader reaches the first command that needs one.
+DECLARED_TOOLS = ("jq", "sha256sum", "gh", "docker")
+
+# A dispatched run refers to two commits and they are not interchangeable:
+# `head_sha` is the tip of the ref the run started against, so it is the revision
+# of the workflow definition, while the `sha` input is what was built. Equating
+# them fails exactly when the branch has moved -- which is the case the route is
+# built for, because a lapsed window is answered by rebuilding the same commit
+# from a later tip.
+CANDIDATE_COMMIT = "CANDIDATE_SHA"
+WORKFLOW_REVISION = "WORKFLOW_REVISION"
+HEAD_SHA_FIELD = "headSha"
+
+# The identifiers and window the service alone can answer for, and the record's
+# own group, which cannot appear in its own map.
+TRANSPORT_FIELDS = ("expires_at", "created_at", ".digest")
+SELF_EXCLUDED_GROUP = "infrahub-sync-qualification-record"
+
+# The image the deployment and the CLI are both given: the configuration digest
+# read out of the record and exported, never a tag and never an unbound name.
+IMAGE_VARIABLE = "INFRAHUB_SYNC_IMAGE"
+
+# A single confirmed write with no reviewed plan between the request and the
+# destination. It is a real capability and it is not what this procedure
+# qualifies, because it demonstrates nothing about the admission path.
+DIRECT_WRITE = "sync sync"
 
 
 def guide() -> str:
@@ -117,3 +152,176 @@ def test_the_guide_sends_its_reader_to_a_destination_they_may_write_to() -> None
 
     assert "disposable" in body, f"{GUIDE.name} does not say the destination must be disposable"
     assert "authorised to write to" in body, f"{GUIDE.name} does not require an authorised destination"
+
+
+def prose(body: str) -> str:
+    """Return the document with its line breaks collapsed.
+
+    A sentence that wraps is present in the file and absent from any search for
+    the phrase it contains, which would make every claim below depend on where
+    the paragraph happened to break.
+    """
+    return " ".join(body.split())
+
+
+def commands(body: str) -> str:
+    """Return only the fenced shell of a document, so prose about a tool is not a use of it."""
+    blocks: list[str] = []
+    inside = False
+    for line in body.splitlines():
+        if line.startswith("```"):
+            inside = line.startswith("```bash")
+            continue
+        if inside:
+            blocks.append(line)
+    return "\n".join(blocks)
+
+
+def test_the_guide_keeps_the_two_commits_a_dispatched_run_refers_to_apart() -> None:
+    """`head_sha` is the ref's tip, so it is the workflow's revision and not the built commit.
+
+    They coincide only while the branch has not moved, and this route exists for
+    the case where it has. A procedure that reads the built commit out of
+    `head_sha` sends its reader to reject artifacts that are correct, or to
+    accept artifacts built from something else.
+    """
+    body = guide()
+    script = commands(body)
+
+    assert RUN_TITLE in load(CANDIDATE_WORKFLOW), "the workflow states no run title to read the commit from"
+    assert CANDIDATE_COMMIT in script, f"{GUIDE.name} never reads the candidate commit"
+    assert WORKFLOW_REVISION in script, f"{GUIDE.name} never reads the workflow revision separately"
+    assert "displayTitle" in script, f"{GUIDE.name} does not take the candidate commit from the run's title"
+    assert "not interchangeable" in prose(body), f"{GUIDE.name} does not say the two commits are different things"
+
+
+def test_the_guide_binds_the_built_revision_to_the_candidate_commit_not_the_ref() -> None:
+    """`identity.revision` is `git rev-parse HEAD` of what was checked out, so it is the input.
+
+    Comparing it against `head_sha` is the specific mistake: it passes only while
+    the branch has not moved and fails on a legitimate rebuild.
+    """
+    script = commands(guide())
+    # The variable the document reads `identity.revision` into. Named here so the
+    # negative case below can be about the built revision specifically: reading
+    # the *workflow* revision out of `head_sha` is correct and has to stay legal.
+    built = "BUILT_FROM"
+    comparing = [line for line in script.splitlines() if built in line and CANDIDATE_COMMIT in line]
+    confused = [line for line in script.splitlines() if built in line and HEAD_SHA_FIELD in line]
+
+    assert f"{built}=$(jq -r '.revision' identity/identity.json)" in script, (
+        f"{GUIDE.name} does not read the built revision out of the identity the run recorded"
+    )
+    assert comparing, f"{GUIDE.name} never compares the built revision against {CANDIDATE_COMMIT}"
+    assert not confused, f"{GUIDE.name} compares the built revision against {HEAD_SHA_FIELD}: {confused}"
+
+
+def test_the_guide_verifies_the_service_inventory_for_every_retained_group() -> None:
+    """Only the service can answer what it is holding, and for how long.
+
+    The record cannot: it is written before its own upload exists, so its map
+    covers six groups and the seventh has to be read from the service and
+    recorded by hand.
+    """
+    script = commands(guide())
+    body = guide()
+
+    missing = sorted(name for name in CANDIDATE_GROUPS if name not in script)
+    assert not missing, f"{GUIDE.name} never asks the service about {missing}"
+    for field in TRANSPORT_FIELDS:
+        assert field in script, f"{GUIDE.name} never reads {field} from the service"
+    assert f"-eq {CANDIDATE_WINDOW_DAYS}" in script, (
+        f"{GUIDE.name} does not check the granted window is exactly {CANDIDATE_WINDOW_DAYS} days"
+    )
+    assert "cannot appear in its own" in prose(body), (
+        f"{GUIDE.name} does not explain why {SELF_EXCLUDED_GROUP} is verified separately"
+    )
+
+
+def test_the_guide_compares_the_recorded_identifiers_against_what_the_service_holds() -> None:
+    """A record naming identifiers nothing holds describes bytes that are not there."""
+    script = commands(guide())
+
+    assert "recorded.tsv" in script, f"{GUIDE.name} does not extract what the record claims"
+    assert "inventory.tsv" in script, f"{GUIDE.name} does not compare it against the service inventory"
+    assert ".artifacts | to_entries" in script, f"{GUIDE.name} never reads the record's own artifact map"
+
+
+def test_the_guide_keeps_the_kinds_of_digest_apart() -> None:
+    """Three digests over three different things. Confusing them passes a check that did not happen."""
+    body = guide()
+
+    for named in ("Service transport digest", "Bundle file digest", "Image configuration digest"):
+        assert named in body, f"{GUIDE.name} does not name the {named.lower()}"
+    assert "not the same thing" in body, f"{GUIDE.name} does not warn that the digests are distinct"
+
+
+def test_the_guide_qualifies_a_write_only_through_a_reviewed_plan() -> None:
+    """A confirmed write with no reviewed plan between it and the destination proves nothing here.
+
+    `sync sync` is a real capability and is deliberately absent: what is being
+    qualified is the admission path, which is plan, read the saved plan, then
+    apply that plan by its checksum.
+    """
+    script = commands(guide())
+
+    assert DIRECT_WRITE not in script, f"{GUIDE.name} runs `{DIRECT_WRITE}`, which skips the reviewed plan"
+    assert "sync diff" in script, f"{GUIDE.name} never plans"
+    assert "sync runs plan" in script, f"{GUIDE.name} never reads the saved plan"
+    assert "--expected-checksum" in script, f"{GUIDE.name} never binds the reviewed checksum to the apply"
+    plan = script.index("sync runs plan")
+    assert plan < script.index("sync apply"), f"{GUIDE.name} applies before reading the plan"
+
+
+@pytest.mark.parametrize("tool", FORBIDDEN_TOOLS)
+def test_the_guide_needs_no_interpreter_on_the_host(tool: str) -> None:
+    """The claim is that the released artifact runs on a host that holds only the artifact."""
+    assert tool not in commands(guide()), f"{GUIDE.name} runs {tool.strip()} on the host"
+
+
+@pytest.mark.parametrize("tool", DECLARED_TOOLS)
+def test_the_guide_declares_the_tools_it_actually_uses(tool: str) -> None:
+    """A prerequisite discovered halfway through is a prerequisite the reader did not have."""
+    body = guide()
+    script = commands(body)
+    # Everything before the first numbered step, which is all the reader has seen
+    # when they run the first command. Case-insensitive because the table names
+    # some of these as prose ("Docker") and some as literals (`jq`).
+    prerequisites = body[: body.index("## 1.")].lower()
+
+    assert tool in script, f"{GUIDE.name} declares {tool} and never uses it"
+    assert tool in prerequisites, f"{GUIDE.name} uses {tool} without declaring it up front"
+
+
+def test_the_guide_exports_the_verified_configuration_digest_before_it_is_used() -> None:
+    """The CLI wrapper and the deployment are both handed one value, and it has to be the checked one.
+
+    An unbound variable there runs whatever the shell happens to hold, and a tag
+    would be refused by the bundle but not by `docker run`.
+    """
+    script = commands(guide())
+    lines = script.splitlines()
+    exported = next(
+        (index for index, line in enumerate(lines) if line.strip() == f"export {IMAGE_VARIABLE}"),
+        None,
+    )
+    used = next((index for index, line in enumerate(lines) if f'"${IMAGE_VARIABLE}" infrahub-sync' in line), None)
+    read_from_record = next(
+        (index for index, line in enumerate(lines) if IMAGE_VARIABLE in line and "platforms" in line),
+        None,
+    )
+
+    assert read_from_record is not None, f"{GUIDE.name} does not read the image digest out of the record"
+    assert exported is not None, f"{GUIDE.name} never exports {IMAGE_VARIABLE}"
+    assert used is not None, f"{GUIDE.name} never runs the CLI under {IMAGE_VARIABLE}"
+    assert read_from_record < exported < used, f"{GUIDE.name} uses {IMAGE_VARIABLE} before verifying and exporting it"
+
+
+def test_the_guide_reads_the_api_token_without_sourcing_the_credential_file() -> None:
+    """`operator.env` holds every other credential too, so sourcing it exports all of them."""
+    script = commands(guide())
+
+    assert "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" in script, f"{GUIDE.name} does not say where the token is"
+    assert "operator.env" in script, f"{GUIDE.name} does not read the token from the file that holds it"
+    for sourcing in ("source operator.env", ". operator.env", "set -a"):
+        assert sourcing not in script, f"{GUIDE.name} sources the credential file with {sourcing!r}"

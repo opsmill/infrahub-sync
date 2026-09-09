@@ -2,6 +2,14 @@
 # yamllint disable rule:truthy
 name: "Build an internal candidate from an exact merged commit"
 
+# The run's own title carries the commit it was told to build. A dispatched run's
+# `head_sha` is the tip of the *ref* it was started against, which is the
+# revision of the workflow definition and not the revision of the source: the
+# branch moves on, and the same commit can be rebuilt from a much later tip. So
+# `head_sha` answers "which workflow ran" and this answers "what did it build",
+# and nothing downstream has to infer the second from the first.
+run-name: "Candidate ${{ inputs.sha }}"
+
 # Manual only, and bound to a commit rather than to a ref. A pull-request run
 # builds the pull request's head while GitHub tests the merge commit, so a run
 # on the branch describes bytes nobody will ship. The candidate an approval is

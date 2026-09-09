@@ -33,6 +33,9 @@ GIT = shutil.which("git") or "git"
 SHELL = shutil.which("bash") or "bash"
 # A well-formed object name that names nothing in any repository here.
 ABSENT = "0" * 40
+# A branch on the remote pinned behind the V3 tip. Fetching it is what leaves
+# `FETCH_HEAD` stale without removing anything from the local object store.
+STALE_BRANCH = "behind"
 
 
 class Line:
@@ -93,11 +96,18 @@ def commit(repository: Path, name: str) -> str:
 
 @pytest.fixture
 def line(tmp_path: Path) -> Line:
-    """Build a remote with two merged commits, and a clone holding a third that never merged."""
+    """Build a remote with two merged commits, and a clone holding a third that never merged.
+
+    The remote also carries a branch pinned at the earlier commit. It exists so a
+    later case can leave `FETCH_HEAD` pointing at something stale while the
+    commit under test is present locally — which is the only arrangement where
+    fetching, and not fetching, give different answers.
+    """
     origin = tmp_path / "origin"
     origin.mkdir()
     git(origin, "init", "--quiet", f"--initial-branch={V3_BRANCH}")
     earlier = commit(origin, "base.md")
+    git(origin, "branch", STALE_BRANCH, earlier)
     tip = commit(origin, "landed.md")
 
     work = tmp_path / "work"
@@ -173,18 +183,30 @@ def test_it_refuses_anything_that_is_not_an_object_name(line: Line, told: str) -
 def test_it_reads_the_branch_it_compares_against_from_the_remote(line: Line) -> None:
     """A stale local ref would admit a commit merged nowhere but into yesterday's copy.
 
-    The commit is made on the remote after the clone, so only a script that
-    fetches can see that it is merged.
+    Arranged so that fetching and not fetching disagree, which the obvious setup
+    does not do. The commit is made on the remote after the clone and then
+    brought into the local object store, so it can be checked out — and
+    `FETCH_HEAD` is then left pointing at a branch pinned *behind* it. A script
+    that refreshes the remote branch sees the commit merged; one that trusts
+    whatever `FETCH_HEAD` already held sees a commit merged nowhere and refuses
+    a candidate that is real.
+
+    Without the second fetch below, the first one leaves `FETCH_HEAD` already
+    correct and this case passes against a script that never fetches at all.
     """
     origin = line.work.parent / "origin"
     git(origin, "checkout", "--quiet", V3_BRANCH)
     landed = commit(origin, "landed-later.md")
     git(line.work, "fetch", "--quiet", "origin", V3_BRANCH)
-    git(line.work, "checkout", "--quiet", landed)
+    git(line.work, "fetch", "--quiet", "origin", STALE_BRANCH)
+
+    stale = git(line.work, "rev-parse", "FETCH_HEAD")
+    assert stale == line.earlier, f"FETCH_HEAD is {stale}, so this proves nothing about fetching"
 
     accepted = refuse(line, checkout=landed, told=landed)
 
     assert accepted.code == 0, accepted.said
+    assert landed in accepted.said, accepted.said
 
 
 def test_it_refuses_a_commit_no_repository_holds(line: Line) -> None:
