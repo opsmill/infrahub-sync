@@ -255,3 +255,94 @@ async def test_a_transport_blip_is_not_terminal_for_the_worker(worker: ServicePr
         await critical_service_loop(workload=worker.sync_with_backend, interval=0, run_once=True)
 
         assert worker.backend_id is None, "an unresolved identity was left installed after a blip"
+
+async def test_a_deferred_identity_leaves_the_worker_unready(worker: ServiceProcessWorker) -> None:
+    """Surviving an unresolved read must not be reported as a successful sync.
+
+    Readiness is a second, independent gate on submission. Deferring without
+    clearing it would leave the worker announcing that it is ready to take work
+    it has no identity to run.
+    """
+    async with worker:
+        await worker.sync_with_backend()
+        await drop_the_pool(worker)
+
+        await worker.sync_with_backend()
+
+        assert worker.backend_id is None
+        assert not worker._has_successfully_synced, "an unresolved sync reported readiness"
+
+
+async def test_submission_is_refused_while_the_identity_is_unset(worker: ServiceProcessWorker) -> None:
+    """The identity gate stands on its own, not on readiness happening to be false.
+
+    Asserted with readiness forced true so the two gates are separated: without
+    this, removing the identity check would still look correct because the
+    readiness check happens to cover the same case.
+    """
+    async with worker:
+        await worker.sync_with_backend()
+        reached = watch_polling(worker)
+        worker.backend_id = None
+        worker._has_successfully_synced = True
+
+        assert worker._submission_generation() is None, "an unset identity yielded a submission generation"
+        assert await worker.get_and_submit_flow_runs() == []
+        assert reached == [], "the worker polled with no identity installed"
+
+
+async def test_the_generation_moves_when_the_identity_really_changes(worker: ServiceProcessWorker) -> None:
+    """Restoring the generation is only correct for a record that did not change.
+
+    Checked on the generation itself rather than through a refusal, because the
+    prepared worker id would refuse a changed identity anyway and would hide a
+    generation that had stopped moving.
+    """
+    async with worker:
+        await worker.sync_with_backend()
+        before = worker._identity_generation
+
+        reissued = uuid4()
+        real = ServiceProcessWorker._read_worker_records
+
+        async def _rebound(self: ServiceProcessWorker = worker) -> list[Any]:
+            records = await real(self)
+            return [record.model_copy(update={"id": reissued}) for record in records]
+
+        worker._read_worker_records = cast("Any", _rebound)  # type: ignore[method-assign]
+        await worker.sync_with_backend()
+
+        assert worker.backend_id == reissued
+        assert worker._identity_generation != before, "a changed identity left the generation untouched"
+
+
+async def test_a_child_prepared_outside_a_tracked_submission_is_refused(worker: ServiceProcessWorker) -> None:
+    """A configuration nobody stamped is not a configuration this worker prepared.
+
+    Its worker id can be perfectly current, so the generation is the only thing
+    that distinguishes it from one this worker built during a poll it was
+    tracking.
+    """
+    async with worker:
+        await worker.sync_with_backend()
+        untracked = worker.job_configuration()
+        untracked._identity_generation = None
+        untracked.env = {"PREFECT__WORKER_ID": str(worker.backend_id)}
+
+        assert not accepted(worker, untracked), "a child prepared outside a tracked submission was accepted"
+
+
+async def test_a_child_carrying_another_identity_is_refused(worker: ServiceProcessWorker) -> None:
+    """The environment the child would actually run under has to name this worker.
+
+    Stamped with the current generation on purpose: the generation alone would
+    accept it, so what is pinned here is the check on the identifier the child
+    receives.
+    """
+    async with worker:
+        await worker.sync_with_backend()
+        foreign = worker.job_configuration()
+        foreign._identity_generation = worker._identity_generation
+        foreign.env = {"PREFECT__WORKER_ID": str(uuid4())}
+
+        assert not accepted(worker, foreign), "a child carrying another worker's identity was accepted"
