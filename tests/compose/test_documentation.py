@@ -51,6 +51,7 @@ BUNDLE_FILES = (
     "defaults.conf",
     "configuration/qualification.yaml",
     "bootstrap/databases.sh",
+    "OPERATING.md",
     "operator.env",
     "secrets/postgres-admin-password",
     ".instance",
@@ -156,9 +157,27 @@ def test_the_page_documents_both_immutable_image_forms() -> None:
     assert "@sha256:" in text
 
 
-def test_the_page_says_this_is_not_yet_the_clean_host_release_claim() -> None:
-    """The bundle is qualified from a checkout; saying otherwise would overclaim."""
-    assert "clean-host release claim" in page()
+def test_the_page_tells_a_clean_host_how_to_get_the_bundle_and_check_it() -> None:
+    """The subject is an archive on a host that has no copy of this tree.
+
+    This replaced a disclaimer saying the page was not yet that claim. What makes
+    it one is not the absence of the disclaimer but the presence of the
+    procedure: the two files, the checksum, the digest, and the extraction.
+    """
+    text = page()
+
+    for step in ("infrahub-sync-compose-<version>.tar.gz.sha256", "sha256sum -c", "tar -xzf"):
+        assert step in text, f"the page does not tell a host to {step}"
+    assert "cd deploy/compose" not in text, "the page still deploys from a directory in this tree"
+
+
+def test_the_page_still_withholds_the_publication_it_does_not_have() -> None:
+    """Dropping the disclaimer is not permission to imply a published artifact.
+
+    A registry, a package index and a tagged release are all still absent, so a
+    reader has to be told the archive is arranged rather than downloaded.
+    """
+    assert "not part of this lifecycle yet" in page()
 
 
 def test_the_api_reference_marks_the_configuration_directory_as_legacy_only() -> None:

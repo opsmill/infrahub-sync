@@ -9,9 +9,10 @@ every one of those fields were floating together.
 Which files ship is decided by what they are, not by what they are called.
 `configuration/qualification.yaml` is the declared configuration the bootstrap
 job registers and the one filesystem input `compose.yaml` binds, so it ships
-despite reading as a test artifact. What never ships is what a deployment
-generates on its host: the operator environment, the mounted credential, and the
-instance identity.
+despite reading as a test artifact. `OPERATING.md` ships because a host with only
+the archive still has to be told what to do with it. What never ships is what a
+deployment generates on its host: the operator environment, the mounted
+credential, and the instance identity.
 """
 
 from __future__ import annotations
@@ -48,6 +49,9 @@ SHIPPED = {
     "defaults.conf",
     "configuration/qualification.yaml",
     "bootstrap/databases.sh",
+    # The operator's own copy of the procedure. A host that has the archive and
+    # nothing else has to be able to read how to deploy it.
+    "OPERATING.md",
 }
 # What a deployment writes beside them on its own host. None is the repository's
 # to ship, and one of them is a credential.
