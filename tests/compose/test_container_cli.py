@@ -47,8 +47,17 @@ DOCKER_SHIM = r"""#!/bin/sh
 # `cli` command asks -- the Compose version, and the one `compose run` that
 # executes the CLI -- and refuses anything else loudly.
 
+# GNU and BSD `stat` spell a format differently, and only one of the two spells
+# it as a file operand: GNU reads `-f` as --file-system and writes a whole
+# filesystem block to stdout for the operand it can stat. A probe that let that
+# reach the caller had its mode read as the first line of that block, so each
+# attempt is captured and only a successful one is printed.
 mode_of() {
-    stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
+    if mode=$(stat -c '%a' "$1" 2>/dev/null); then
+        printf '%s\n' "$mode"
+    else
+        stat -f '%Lp' "$1"
+    fi
 }
 
 if [ "$1" = "compose" ]; then

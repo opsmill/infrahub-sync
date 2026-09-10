@@ -1472,6 +1472,14 @@ row_ownership_and_reset() {
     check cold_bootstrap || fail "the start after a reset was not a cold bootstrap"
     report "the next start after a reset is cold"
 
+    # The reset took row 2's registration with it, and the cold bootstrap above
+    # is only a proof while it is gone. Every row from here on needs one again --
+    # row 10 asks for disposable state first -- so this row restores at its own
+    # boundary what it destroyed, through the same operator step that made it.
+    check register_configuration \
+        || fail "the qualification configuration could not be registered again after the reset"
+    report "the registration the reset removed was made again through the API"
+
     remove_foreign_volume || fail "the foreign volume this row created could not be removed"
 }
 
