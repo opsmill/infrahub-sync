@@ -59,7 +59,7 @@ if [ "$1" = "compose" ]; then
     sub=""
     for word in "$@"; do
         case "$word" in
-            version | ps | run) sub=$word; break ;;
+            version | ps | run | logs | stop | restart | down) sub=$word; break ;;
         esac
     done
     if [ "$sub" != "version" ] && [ "${SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT:-}" = "1" ]; then
@@ -85,8 +85,15 @@ if [ "$1" = "compose" ]; then
             exit 0
             ;;
         run)
-            # The only `compose run` preflight makes is the destination probe.
+            # Two callers: preflight's destination probe, and the worker-state
+            # query `status` and `restart` read a deployment's readiness from.
+            printf '%s\n' "${SHIM_WORKER_STATE:-}"
             exit "${SHIM_DESTINATION_RC:-0}"
+            ;;
+        logs | stop | restart | down)
+            # The lifecycle calls that resolve no image. Answered rather than
+            # refused so a row can record the argument chain each one carried.
+            exit 0
             ;;
     esac
     printf 'docker shim: unexpected compose call: %s\n' "$*" >&2
@@ -136,6 +143,12 @@ case "$1 $2" in
 esac
 
 case "$1" in
+    inspect)
+        # The health of one named container -- `docker inspect` with no object
+        # noun in front of it -- which is what a required dependency is judged by.
+        printf '%s\n' "${SHIM_HEALTH:-}"
+        exit 0
+        ;;
     ps)
         [ "${SHIM_DOCKER_PS_RC:-97}" = "0" ] || exit "${SHIM_DOCKER_PS_RC:-97}"
         printf '%s\n' "${SHIM_RUNNING_CONTAINERS:-}"
@@ -207,7 +220,9 @@ def shim(tmp_path: Path) -> Path:
     return directory
 
 
-def run(bundle: Path, shim: Path, command: str, *, environment: Mapping[str, str] | None = None) -> Captured:
+def run(
+    bundle: Path, shim: Path, command: str, *arguments: str, environment: Mapping[str, str] | None = None
+) -> Captured:
     """Run one lifecycle command with Docker shimmed out.
 
     Through the redaction boundary, like every other retained stream in this
@@ -215,7 +230,7 @@ def run(bundle: Path, shim: Path, command: str, *, environment: Mapping[str, str
     what gets rendered into a failure message.
     """
     return capture(
-        [str(bundle / ENTRY_POINT), command],
+        [str(bundle / ENTRY_POINT), command, *arguments],
         timeout=120,
         env={
             **os.environ,
@@ -237,6 +252,11 @@ def initialized(bundle: Path, shim: Path) -> Path:
     created = run(bundle, shim, "init")
     assert created.returncode == 0, created.stderr
     return bundle
+
+
+def recorded(log: Path) -> list[str]:
+    """Return the lines a shim log holds; the shim creates one only when it writes."""
+    return log.read_text(encoding="utf-8").splitlines() if log.is_file() else []
 
 
 def family(result: Captured) -> str:
@@ -991,3 +1011,112 @@ def test_stop_refuses_when_docker_cannot_prove_ownership(initialized: Path, shim
     result = run(initialized, shim, "stop", environment={"SHIM_OWNED_LABEL": identity})
 
     assert family(result) == "docker-unavailable", result.stderr + result.stdout
+
+
+# ---------------------------------------------------------------------------
+# lifecycle before anything has resolved an image
+# ---------------------------------------------------------------------------
+
+# The lifecycle commands that never call `check_image`. Compose interpolates
+# `${INFRAHUB_SYNC_IMAGE:?}` on every one of them, including the ones an
+# operator reaches before the candidate has been loaded, so `init` copies the
+# record's index reference into the generated state to keep them working.
+UNCHECKED_LIFECYCLE = ("status", "logs", "stop", "restart")
+
+# What the shim answers so each of those reaches its Compose call: a container
+# of this project and its label, the dependency health `status` reads, and the
+# worker state `status` and `restart` wait for. `SHIM_RESOLVABLE` holds nothing,
+# so any question asked about the image is answered "this host has neither".
+UNRESOLVED = {
+    "SHIM_RESOLVABLE": "",
+    "SHIM_DOCKER_PS_RC": "0",
+    "SHIM_RUNNING_CONTAINERS": "cafe1234",
+    "SHIM_OWNED_CONTAINER": "cafe1234",
+    "SHIM_HEALTH": "healthy",
+    "SHIM_WORKER_STATE": "ready",
+}
+
+
+def settings_chain(bundle: Path) -> str:
+    """The three settings layers as one Compose call carries them, in order."""
+    return " ".join(f"--env-file {bundle / name}" for name in ("defaults.conf", "operator.env", ".instance"))
+
+
+@pytest.mark.parametrize("command", UNCHECKED_LIFECYCLE)
+def test_a_lifecycle_command_names_a_listed_image_before_anything_resolves_one(
+    bundle: Path, shim: Path, tmp_path: Path, command: str
+) -> None:
+    """`init` alone is enough to run these, on a host that holds neither encoding.
+
+    Nothing here resolves, the ambient name is hostile and the guard against it
+    is armed, so the generated state is the only place a value can come from --
+    and it has to be one of the two the record lists, because an image Compose
+    could interpolate but this bundle never qualified is not an answer either.
+    """
+    argv_log = tmp_path / f"{command}-argv.log"
+    inspect_log = tmp_path / f"{command}-inspect.log"
+    created = run(bundle, shim, "init", environment=UNRESOLVED)
+    assert created.returncode == 0, created.stderr
+
+    result = run(
+        bundle,
+        shim,
+        command,
+        environment={
+            **UNRESOLVED,
+            "SHIM_OWNED_LABEL": instance_setting(bundle, "INFRAHUB_SYNC_INSTANCE"),
+            "SHIM_ARGV_LOG": str(argv_log),
+            "SHIM_INSPECT_LOG": str(inspect_log),
+            "SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT": "1",
+            "INFRAHUB_SYNC_IMAGE": "unexpected-ambient:latest",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    # Not a resolution that happened to succeed: no image question was asked at
+    # all, which is what keeps these commands independent of a loaded candidate.
+    assert recorded(inspect_log) == []
+    calls = recorded(argv_log)
+    assert calls, "the command reached Compose not at all"
+    for call in calls:
+        assert settings_chain(bundle) in call, call
+    assert instance_setting(bundle, "INFRAHUB_SYNC_IMAGE") in {BINDING_INDEX_REFERENCE, BINDING_CONFIG_DIGEST}
+
+
+def test_reset_removes_an_instance_that_has_never_been_started(bundle: Path, shim: Path, tmp_path: Path) -> None:
+    """A bundle can be reset straight after `init`, and only on its exact identity.
+
+    This is the one destructive command reachable before a first start -- an
+    `init` in the wrong directory, an archive extracted twice -- and it goes
+    through Compose like every other lifecycle call, so it needs the same
+    recorded image. The wrong identity runs first as the control: a `reset` that
+    quietly removed nothing would satisfy the rows after it just as well.
+    """
+    argv_log = tmp_path / "reset-argv.log"
+    inspect_log = tmp_path / "reset-inspect.log"
+    created = run(bundle, shim, "init", environment=UNRESOLVED)
+    assert created.returncode == 0, created.stderr
+    identity = instance_setting(bundle, "INFRAHUB_SYNC_INSTANCE")
+    answers = {
+        **UNRESOLVED,
+        "SHIM_RUNNING_CONTAINERS": "",
+        "SHIM_OWNED_LABEL": identity,
+        "SHIM_ARGV_LOG": str(argv_log),
+        "SHIM_INSPECT_LOG": str(inspect_log),
+        "SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT": "1",
+        "INFRAHUB_SYNC_IMAGE": "unexpected-ambient:latest",
+    }
+
+    refused = run(bundle, shim, "reset", "not-this-instance", environment=answers)
+
+    assert family(refused) == "confirmation-required", refused.stderr
+    assert recorded(argv_log) == [], "a refused reset reached Compose"
+    assert instance_setting(bundle, "INFRAHUB_SYNC_IMAGE") in {BINDING_INDEX_REFERENCE, BINDING_CONFIG_DIGEST}
+
+    removed = run(bundle, shim, "reset", identity, environment=answers)
+
+    assert removed.returncode == 0, removed.stderr + removed.stdout
+    assert recorded(inspect_log) == []
+    assert [call for call in recorded(argv_log) if settings_chain(bundle) in call], recorded(argv_log)
+    assert not (bundle / ".instance").exists()
+    assert (bundle / "operator.env").is_file()
