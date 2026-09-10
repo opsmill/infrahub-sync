@@ -57,7 +57,7 @@ if [ "$1" = "compose" ]; then
     done
     if [ "$sub" != "version" ] && [ "${SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT:-}" = "1" ]; then
         guarded="INFRAHUB_SYNC_IMAGE INFRAHUB_SYNC_INSTANCE INFRAHUB_SYNC_API_PORT"
-        guarded="$guarded INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION NETBOX_TOKEN NAUTOBOT_TOKEN"
+        guarded="$guarded NETBOX_TOKEN NAUTOBOT_TOKEN"
         for name in $guarded; do
             eval "value=\${$name-}"
             if [ -n "$value" ]; then
@@ -180,9 +180,9 @@ def initialized(bundle: Path, shim: Path) -> Path:
     assert created.returncode == 0, created.stderr
     settings = bundle / "operator.env"
     settings.write_text(
-        settings.read_text(encoding="utf-8")
-        .replace("INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE=sha256:{'a' * 64}")
-        .replace("INFRAHUB_API_TOKEN=REPLACE-ME", "INFRAHUB_API_TOKEN=preflight-destination-token"),
+        settings.read_text(encoding="utf-8").replace(
+            "INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE=sha256:{'a' * 64}"
+        ),
         encoding="utf-8",
     )
     return bundle
@@ -358,7 +358,6 @@ def test_ambient_bundle_settings_cannot_override_the_checked_files(initialized: 
             "INFRAHUB_SYNC_IMAGE": "unexpected:latest",
             "INFRAHUB_SYNC_INSTANCE": "foreign-identity",
             "INFRAHUB_SYNC_API_PORT": "9999",
-            "INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION": "/not-the-declared-package",
         },
     )
 
@@ -393,20 +392,20 @@ def test_preflight_refuses_an_unwritable_bundle_path(initialized: Path, shim: Pa
     assert family(result) == "path-unwritable", result.stderr
 
 
-def test_preflight_refuses_a_declared_configuration_it_cannot_read(initialized: Path, shim: Path) -> None:
-    """Bootstrap registers that file; an absent one fails after the stack is up."""
+def test_preflight_needs_no_declared_configuration_at_all(initialized: Path, shim: Path) -> None:
+    """A deployment starts empty, so the example package is not a startup input."""
     (initialized / "configuration" / "qualification.yaml").unlink()
 
     result = run(initialized, shim, "preflight")
 
-    assert family(result) == "path-unreadable", result.stderr
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "preflight passed" in result.stdout
 
 
 @pytest.mark.parametrize(
     "setting",
     [
         "INFRAHUB_SYNC_IMAGE",
-        "INFRAHUB_API_TOKEN",
         "INFRAHUB_SYNC_PRODUCT_PASSWORD",
         "INFRAHUB_SYNC_PREFECT_PASSWORD",
         "INFRAHUB_SYNC_S3_ACCESS_KEY",
@@ -436,7 +435,7 @@ def test_a_missing_credential_refusal_renders_no_value(initialized: Path, shim: 
         line.split("=", 1)[1] for line in text.splitlines() if line.startswith("INFRAHUB_SYNC_S3_SECRET_KEY=")
     )
     settings.write_text(
-        "\n".join(line for line in text.splitlines() if not line.startswith("INFRAHUB_API_TOKEN=")) + "\n",
+        "\n".join(line for line in text.splitlines() if not line.startswith("INFRAHUB_SYNC_PRODUCT_PASSWORD=")) + "\n",
         encoding="utf-8",
     )
 
@@ -449,7 +448,7 @@ def test_a_missing_credential_refusal_renders_no_value(initialized: Path, shim: 
 
 
 def test_preflight_refuses_the_placeholder_init_leaves_behind(bundle: Path, shim: Path) -> None:
-    """`init` cannot know the image or the destination token, and says so by refusing."""
+    """`init` cannot know the image, and says so by refusing."""
     run(bundle, shim, "init")
 
     result = run(bundle, shim, "preflight")
@@ -607,11 +606,28 @@ def test_preflight_passes_when_both_required_binds_are_free(initialized: Path, s
     assert "free" in result.stdout
 
 
-def test_preflight_refuses_a_destination_that_did_not_answer(initialized: Path, shim: Path) -> None:
-    """The probe runs in the Sync image; this script only learns whether it passed."""
-    result = run(initialized, shim, "preflight", environment={"SHIM_DESTINATION_RC": "1"})
+def test_preflight_reaches_no_destination(initialized: Path, shim: Path, tmp_path: Path) -> None:
+    """READY means the Sync-owned dependencies answer; no destination is consulted.
 
-    assert family(result) == "destination-unavailable", result.stderr
+    Both halves: an unreachable destination does not refuse the start, and the
+    recorded argv shows no containerized probe was run to ask.
+    """
+    argv_log = tmp_path / "compose-argv.log"
+
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={"SHIM_DESTINATION_RC": "1", "SHIM_ARGV_LOG": str(argv_log)},
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "preflight passed" in result.stdout
+    recorded = argv_log.read_text(encoding="utf-8").splitlines() if argv_log.is_file() else []
+    # By subcommand: every containerized probe is a `compose run`, and the paths
+    # in a recorded line carry the test's own directory names.
+    subcommands = [word for line in recorded for word in line.split() if word in {"version", "ps", "run"}]
+    assert "run" not in subcommands, recorded
 
 
 def test_status_refuses_when_docker_cannot_enumerate_the_instance(initialized: Path, shim: Path) -> None:

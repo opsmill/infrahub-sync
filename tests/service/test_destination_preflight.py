@@ -5,12 +5,16 @@ resolver are, so it is the one part of preflight that sees a URL and a
 credential. Everything it reports is a fixed family name: an HTTP client renders
 both of those into its own exception text, and that text must not cross this
 boundary.
+
+Nothing starts it. It is the explicit diagnostic an operator runs against a
+package they name.
 """
 
 from __future__ import annotations
 
 import copy
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -19,8 +23,9 @@ import yaml
 from typing_extensions import Self  # ty targets 3.10, where typing.Self does not exist
 
 from infrahub_sync.configuration.models import parse_configuration_package
-from infrahub_sync.service.bootstrap import CONFIGURATION_PATH_ENV, BootstrapError
+from infrahub_sync.service.bootstrap import SETTING_MISSING, BootstrapError
 from infrahub_sync.service.preflight import (
+    CONFIGURATION_PATH_ENV,
     CREDENTIAL_UNRESOLVED,
     DESTINATION_UNREACHABLE,
     declared_destination_url,
@@ -31,8 +36,6 @@ from infrahub_sync.service.preflight import (
 from tests.configuration.validation_packages import package_data
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from infrahub_sync.configuration import ConfigurationPackage
 
 # The URL and the credential the fakes below render into their own failure text.
@@ -154,3 +157,38 @@ def test_a_resolved_credential_is_never_returned(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("INFRAHUB_API_TOKEN", CREDENTIAL_CANARY)
 
     assert resolve_destination_credentials(_package()) is None
+
+
+def test_the_diagnostic_refuses_when_no_package_is_named(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An operator names the package to check; nothing supplies one on their behalf."""
+    monkeypatch.delenv(CONFIGURATION_PATH_ENV, raising=False)
+
+    with caplog.at_level(logging.ERROR):
+        result = main()
+
+    assert result == 1
+    assert SETTING_MISSING in caplog.text
+
+
+def test_the_diagnostic_probes_the_destination_the_named_package_declares(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The real client reaches the declared address, and refuses in the family.
+
+    The declared address is a closed loopback port, so the probe resolves and
+    fails locally rather than leaving this host.
+    """
+    content = copy.deepcopy(package_data())
+    content["configuration"]["destination"]["settings"]["url"] = "http://127.0.0.1:1"
+    package = tmp_path / "configuration.yaml"
+    package.write_text(yaml.safe_dump(content), encoding="utf-8")
+    monkeypatch.setenv(CONFIGURATION_PATH_ENV, str(package))
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", CREDENTIAL_CANARY)
+
+    with caplog.at_level(logging.ERROR):
+        result = main()
+
+    assert result == 1
+    assert DESTINATION_UNREACHABLE in caplog.text

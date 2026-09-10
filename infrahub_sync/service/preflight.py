@@ -1,9 +1,12 @@
-"""Prove one deployment's destination answers, before anything is started.
+"""Prove one destination answers, for a package an operator names.
 
-This runs in the Sync image because that is where the declared package, the
-credential resolver, and the destination's own settings already live. The host
-lifecycle entry point owns Docker; it owns no configuration parsing, and it
-never sees a credential value.
+This is an explicit diagnostic, not a startup step: a deployment starts without
+a configuration and without a reachable destination. An operator runs it against
+a package they supply, before or after registering it.
+
+It runs in the Sync image because that is where the declared package, the
+credential resolver, and the destination's own settings already live. Nothing on
+the host parses a configuration or sees a credential value.
 
 Every failure leaves as a family name. The inputs are a URL and a credential,
 and an HTTP client renders both into its own exception text, so nothing from
@@ -23,12 +26,18 @@ from infrahub_sync.configuration.credentials import CredentialConfigurationError
 from infrahub_sync.configuration.models import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.product_store import configs
 
-from .bootstrap import CONFIGURATION_INVALID, CONFIGURATION_PATH_ENV, SETTING_MISSING, BootstrapError
+from .bootstrap import SETTING_MISSING, BootstrapError
 
 if TYPE_CHECKING:
     from infrahub_sync.configuration import ConfigurationPackage
 
 logger = logging.getLogger(__name__)
+
+# The package an operator names for this check, and the family an unreadable or
+# unparseable one is refused with. Read here and nowhere else: no startup path
+# takes a declared configuration.
+CONFIGURATION_PATH_ENV = "INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION"
+CONFIGURATION_INVALID = "configuration-invalid"
 
 DESTINATION_UNREACHABLE = "destination-unreachable"
 CREDENTIAL_UNRESOLVED = "destination-credential-unresolved"

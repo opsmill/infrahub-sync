@@ -1,9 +1,10 @@
 ---
 # The supported single-host Infrahub Sync deployment.
 #
-# One Sync image supplies the API, the worker, and the one-off bootstrap job;
-# every external service carries its digest, so a re-pointed tag cannot change
-# what this bundle runs. The tag beside each digest is there for a human reader.
+# One Sync image supplies the API, the worker, the one-off bootstrap job, and the
+# opt-in CLI; every external service carries its digest, so a re-pointed tag
+# cannot change what this bundle runs. The tag beside each digest is there for a
+# human reader.
 #
 # Two properties this file exists to hold, and which the Compose contract suite
 # checks rather than trusts:
@@ -139,10 +140,14 @@ services:
       start_period: 20s
 
   # One completion-style job converges everything durable this deployment needs:
-  # the artifact bucket, the process work pool, the installed deployment, and the
-  # bundled declared configuration. It is safe to repeat, and it is the only
-  # place any of that is created -- an API or a worker that converged bootstrap
-  # state on startup would make every restart a write.
+  # the product schema, the artifact bucket, the process work pool, and the
+  # installed deployment. It is safe to repeat, and it is the only place any of
+  # that is created -- an API or a worker that converged bootstrap state on
+  # startup would make every restart a write.
+  #
+  # It registers nothing. A started deployment holds an empty configuration
+  # registry until an operator registers a package through the API, so this job
+  # takes no configuration input and reaches no destination.
   sync-bootstrap:
     image: "${INFRAHUB_SYNC_IMAGE:?an immutable sha256 image reference is required}"
     labels: *instance-labels
@@ -158,15 +163,8 @@ services:
         condition: service_healthy
     environment:
       <<: *sync-storage
-      INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION: "/etc/infrahub-sync/configuration.yaml"
-      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:?the destination credential is required}"
     read_only: true
     tmpfs: *sync-scratch
-    # The one filesystem input in this bundle, read-only and given to this job
-    # alone. The registered content it produces lives in PostgreSQL, which is
-    # what lets the worker be given no configuration mount at all.
-    volumes:
-      - "${INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION}:/etc/infrahub-sync/configuration.yaml:ro"
 
   sync-api:
     image: "${INFRAHUB_SYNC_IMAGE:?an immutable sha256 image reference is required}"
@@ -184,7 +182,10 @@ services:
       INFRAHUB_SYNC_SERVICE_BEARER_TOKENS: "${INFRAHUB_SYNC_SERVICE_BEARER_TOKENS:?the API principals are required}"
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS}"
       PREFECT_WORKER_QUERY_SECONDS: "${PREFECT_WORKER_QUERY_SECONDS}"
-      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:?the destination credential is required}"
+      # Optional, and empty when unset: a deployment starts before any package is
+      # registered, so there is no destination to hold a credential for yet. A
+      # run that selects an absent value fails that run, not this start.
+      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:-}"
     read_only: true
     tmpfs: *sync-scratch
     ports:
@@ -226,7 +227,8 @@ services:
       # or thirty seconds, whichever is longer. Ten seconds puts a stopped or
       # paused worker at that thirty-second floor instead of Prefect's ninety.
       PREFECT_WORKER_HEARTBEAT_SECONDS: "${PREFECT_WORKER_HEARTBEAT_SECONDS}"
-      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:?the destination credential is required}"
+      # Optional for the same reason as on the API above.
+      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:-}"
       # The source credentials the bundled NetBox and Nautobot adapters resolve,
       # and the only service given either: a run is what consumes one, and the
       # worker is what runs one. Optional rather than required, because a

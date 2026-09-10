@@ -1105,16 +1105,28 @@ row_cold_start_and_idempotence() {
     require_no_foreign_mount
     report "empty state reached READY, with nothing mounted from outside the bundle"
 
+    # READY with no configuration file, no destination and an empty registry.
+    # The product schema is read from PostgreSQL, so an empty registry is told
+    # apart from a deployment that converged nothing at all.
+    check cold_bootstrap || fail "the cold start did not reach an empty registry over a converged schema"
+    report "a cold start registered nothing"
+
+    # Everything from row 3 on runs against a registered configuration, and
+    # nothing in the bundle registers one. This is the operator step that
+    # creates it, made once, through the client an operator has.
+    check register_configuration || fail "the qualification configuration could not be registered through the API"
+    report "the qualification configuration was registered explicitly through the API"
+
     before=$(durable_snapshot)
     # No run has happened yet, so `product_runs` is legitimately zero here. What
-    # bootstrap did create is a registered configuration, and that is what a
-    # repeat start has to leave alone -- without this the equality below is
-    # satisfied by there having been no durable object at all.
+    # exists is the configuration just registered, and that is what a repeat
+    # start has to leave alone -- without this the equality below is satisfied by
+    # there having been no durable object at all.
     require_snapshot_holds "$before" configuration_versions "a repeat start changing nothing would demonstrate nothing"
     compose_bundle start >"$WORK/second-start" 2>&1 \
         || fail "a second start of the same deployment did not succeed"
     require "a second start changed a durable object" "$before" "$(durable_snapshot)"
-    report "a second start changed no durable object"
+    report "a second start changed no durable object, including the registration it did not make"
 }
 
 # ---------------------------------------------------------------------------

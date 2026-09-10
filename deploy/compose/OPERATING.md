@@ -22,9 +22,8 @@ cd infrahub-sync-compose-<version>
 ```
 
 The checksum is a claim about the archive as shipped and about nothing
-afterwards. Preparing a deployment writes `operator.env` and edits the declared
-configuration, and both are expected to leave the extracted tree different from
-the archive.
+afterwards. Preparing a deployment writes `operator.env`, which is expected to
+leave the extracted tree different from the archive.
 
 The image is named by digest, never by a tag. A tag can be re-pointed between
 the qualification that trusted an image and the run that uses it, so the
@@ -46,19 +45,31 @@ release record names and the form `INFRAHUB_SYNC_IMAGE` takes.
 
 That generates `.instance`, `secrets/postgres-admin-password`, and
 `operator.env`, with passwords for the two database owner roles, the object
-store, and one API principal. Two values are yours to supply in `operator.env`:
+store, and one API principal. One value is yours to supply in `operator.env`
+before the first start:
 
 ```bash
 INFRAHUB_SYNC_IMAGE=sha256:<64 hex>          # or <registry>/<repository>@sha256:<64 hex>
+```
+
+A configuration is not a startup input. The deployment starts with an empty
+registry and no destination, and you register a declared package through the
+Sync API once it is running. `configuration/qualification.yaml` in this bundle is
+an example of that package's shape, and nothing loads it on your behalf. A
+package holds credential *references*, never values.
+
+The credentials a registered package references are yours to add to
+`operator.env` before the run that needs them, and `init` leaves each one
+commented:
+
+```bash
 INFRAHUB_API_TOKEN=<your Infrahub token>
 ```
 
-Then point `configuration/qualification.yaml` at your Infrahub, or point
-`INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION` at a declared package of your own. Edit
-it before the first start: the registry checksums the declared content, and
-bootstrap recognises the configuration by its declared name, so different
-content under a name already registered is refused. A package holds credential
-*references*, never values.
+A container reads its environment once, at start. After changing any value in
+`operator.env`, run `./infrahub-sync-compose start` again: that recreates the
+services whose environment changed, where `restart` would replace the processes
+inside containers that keep the environment they were created with.
 
 ### Reading from NetBox or Nautobot
 
@@ -100,7 +111,8 @@ Four things decide whether this works:
   optional, so a deployment reading from neither source starts normally, and a
   package that names one source does not need the other's token.
 - **The worker reads its environment once, at start.** After changing either
-  value in `operator.env`, run `./infrahub-sync-compose restart`.
+  value in `operator.env`, run `./infrahub-sync-compose start`; `restart` keeps
+  the environment each container already has.
 
 Only the worker is given these tokens. The API, the bootstrap job, PostgreSQL,
 the object store and the Prefect server never receive one: registration and the
@@ -126,22 +138,27 @@ and a fixed sentence, and none of them renders a credential value:
 | `no-docker`, `docker-unavailable` | Docker is absent from `PATH`, or it could not enumerate or inspect this instance. Neither is evidence that the deployment is stopped. |
 | `no-instance` | This bundle has no identity yet. Run `init`. |
 | `no-operator-settings` | `operator.env` does not exist. Run `init`. |
-| `path-unwritable`, `path-unreadable`, `path-missing` | The bundle directory, `secrets/`, or the declared configuration is not usable by this user. |
+| `path-unwritable`, `path-unreadable`, `path-missing` | The bundle directory or `secrets/` is not usable by this user. |
 | `credentials-missing` | A required setting is empty or still holds `REPLACE-ME`. |
 | `image-not-immutable` | `INFRAHUB_SYNC_IMAGE` names a tag or a malformed digest. |
 | `image-unresolvable` | Docker cannot find that digest locally or in a registry. |
 | `port-unset` | `INFRAHUB_SYNC_BIND_ADDRESS`, or one of the two port settings, names nothing. |
 | `port-occupied`, `port-unprovable` | A required loopback bind is held, or the bind probe could not run. |
-| `destination-unavailable` | The declared destination URL did not answer. |
 | `foreign-resource` | A resource under this name carries another instance's label. Nothing was changed. |
 | `not-ready` | `start` brought the deployment up and no live worker registered inside `INFRAHUB_SYNC_READY_TIMEOUT` seconds. |
 | `confirmation-required` | `reset` was not given this deployment's exact identity. |
 
 `start` runs `preflight`, brings the deployment up, and returns once the Sync API
 reports a worker that has registered. Repeating it is safe: bootstrap converges
-the two databases and their owners, the artifact bucket, the Prefect work pool,
-the installed deployment, and the declared configuration, and a second run
-creates none of them twice.
+the two databases and their owners, the product schema, the artifact bucket, the
+Prefect work pool, and the installed deployment, and a second run creates none of
+them twice. It registers nothing, so a repeat also leaves every configuration you
+registered exactly as it was.
+
+`READY` is a statement about this deployment's own dependencies and a live
+worker. It says nothing about whether a configuration is registered, whether one
+is valid, or whether its destination answers — a deployment reaches `READY` with
+an empty registry, no credentials and no reachable destination.
 
 Both published surfaces bind to loopback: the Sync API on `127.0.0.1:8000`, the
 Prefect UI and API on `127.0.0.1:4200`.
@@ -191,10 +208,11 @@ bundle and the same image:
 ```
 
 The start that follows is a cold bootstrap, not a resumption: the databases, the
-bucket, the work pool, the deployment, and the declared configuration are created
-from nothing, and the deployment reaches `READY` with no runs and no artifacts
-behind it. Prior run history, retained plans, and artifacts do not survive. Keep
-anything you need outside the deployment before you reset.
+product schema, the bucket, the work pool, and the deployment are created from
+nothing, and the deployment reaches `READY` with an empty registry, no runs and
+no artifacts behind it. Prior run history, retained plans, registered
+configurations, and artifacts do not survive. Keep anything you need outside the
+deployment before you reset, and register your package again afterwards.
 
 ## When the outcome of a write is uncertain
 

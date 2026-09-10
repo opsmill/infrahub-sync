@@ -35,8 +35,7 @@ INFRAHUB_SYNC_PRODUCT_PASSWORD
 INFRAHUB_SYNC_PREFECT_PASSWORD
 INFRAHUB_SYNC_S3_ACCESS_KEY
 INFRAHUB_SYNC_S3_SECRET_KEY
-INFRAHUB_SYNC_SERVICE_BEARER_TOKENS
-INFRAHUB_API_TOKEN'
+INFRAHUB_SYNC_SERVICE_BEARER_TOKENS'
 
 # Every setting Compose interpolates comes from the delivered files below. An
 # exported shell value otherwise outranks every --env-file, which would let the
@@ -45,7 +44,6 @@ INFRAHUB_API_TOKEN'
 COMPOSE_SETTINGS='INFRAHUB_API_TOKEN
 INFRAHUB_SYNC_API_PORT
 INFRAHUB_SYNC_BIND_ADDRESS
-INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION
 INFRAHUB_SYNC_DATABASE_URL
 INFRAHUB_SYNC_IMAGE
 INFRAHUB_SYNC_IMAGE_PULL_POLICY
@@ -224,11 +222,7 @@ check_paths() {
     done
     [ -r "$COMPOSE_FILE" ] || refuse path-unreadable "$COMPOSE_FILE cannot be read"
     [ -r "$DEFAULTS" ] || refuse path-unreadable "$DEFAULTS cannot be read"
-    package=$(read_setting INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION "$OPERATOR")
-    [ -n "$package" ] || package=$(read_setting INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION "$DEFAULTS")
-    case "$package" in /*) : ;; *) package="$BUNDLE/$package" ;; esac
-    [ -r "$package" ] || refuse path-unreadable "the declared configuration $package cannot be read"
-    report "lifecycle and configuration paths are readable and writable"
+    report "lifecycle paths are readable and writable"
 }
 
 check_credentials() {
@@ -352,15 +346,6 @@ check_ports() {
     done
 }
 
-check_destination() {
-    # Inside the Sync image, where the declared package and the credential
-    # resolver already are. This script parses no configuration and sees no
-    # credential value.
-    compose run --rm --no-deps --quiet-pull sync-bootstrap python -m infrahub_sync.service.preflight ||
-        refuse destination-unavailable "the declared destination did not answer; see the reported family above"
-    report "the declared destination answered"
-}
-
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -402,17 +387,17 @@ command_init() {
 # Operator-owned settings for this Infrahub Sync deployment. Git ignores this
 # file. The passwords below were generated locally and are used by nothing else.
 #
-# Two values are yours to supply before the first start:
+# One value is yours to supply before the first start:
 #   INFRAHUB_SYNC_IMAGE  the Sync image, by digest
-#   INFRAHUB_API_TOKEN   the credential the declared configuration references
 INFRAHUB_SYNC_IMAGE=REPLACE-ME
-INFRAHUB_API_TOKEN=REPLACE-ME
 
-# Source credentials, only for a configuration that reads from that source.
-# Uncomment the one your registered package names and give it the token; leave
-# both commented otherwise. They reach the worker alone, and a run that selects
-# one refuses to start if its value is missing or empty. Restart the worker
-# after changing either: a container reads its environment once, at start.
+# Destination and source credentials, only for a configuration that names one.
+# Uncomment what your registered package references and give it the value; leave
+# them commented otherwise. A start needs none of them. They reach the services
+# that resolve them, and a run that selects a missing value fails that run.
+# Start again after changing any of these: a container reads its environment
+# once, and `restart` keeps the environment its container already has.
+#INFRAHUB_API_TOKEN=
 #NETBOX_TOKEN=
 #NAUTOBOT_TOKEN=
 
@@ -427,16 +412,18 @@ INFRAHUB_SYNC_S3_SECRET_KEY=$secret
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}
 OPERATOR_SETTINGS
     chmod 0600 "$OPERATOR"
-    report "wrote $OPERATOR; set INFRAHUB_SYNC_IMAGE and INFRAHUB_API_TOKEN before starting"
+    report "wrote $OPERATOR; set INFRAHUB_SYNC_IMAGE before starting"
 }
 
 command_preflight() {
+    # Sync-owned dependencies only. A destination is neither required nor
+    # consulted: a deployment starts empty, and which destination it will reach
+    # is a property of a package an operator registers afterwards.
     check_compose_version
     check_paths
     check_credentials
     check_image
     check_ports
-    check_destination
     report "preflight passed"
 }
 
@@ -553,7 +540,7 @@ usage() {
 Usage: infrahub-sync-compose <command>
 
   init        Generate this deployment's identity and operator settings file.
-  preflight   Check Compose, paths, credentials, image, ports, and destination.
+  preflight   Check Compose, paths, credentials, image, and ports.
   start       Preflight, start the deployment, and wait for endpoint-backed READY.
   status      Report READY (exit 0), DEGRADED (exit 3), or STOPPED (exit 4).
   logs [svc]  Print a bounded tail of the deployment's logs.

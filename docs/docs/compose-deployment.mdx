@@ -71,20 +71,27 @@ credentials:
 
 That writes `.instance`, `secrets/postgres-admin-password`, and `operator.env`
 with generated passwords for the two database owner roles, the object store, and
-one API principal. Two values are yours to supply:
+one API principal. One value is yours to supply before the first start:
 
 ```bash
 # The Sync image, by digest. A tag is refused: it can be re-pointed between the
 # qualification that trusted it and the run that uses it.
 INFRAHUB_SYNC_IMAGE=sha256:<64 hex>            # a locally loaded image
 INFRAHUB_SYNC_IMAGE=ghcr.io/opsmill/infrahub-sync@sha256:<64 hex>   # a published one
+```
 
-# The credential the declared configuration references.
+Nothing else is needed to start. The deployment comes up with an empty
+configuration registry: which package it runs is a decision you make afterwards,
+by registering one through the Sync API. `configuration/qualification.yaml` in
+the bundle is an example of that package's shape and is never loaded for you.
+
+The credentials a registered package references belong in `operator.env` before
+the run that needs them, and `init` leaves each one commented:
+
+```bash
 INFRAHUB_API_TOKEN=<your Infrahub token>
 ```
 
-Then edit `configuration/qualification.yaml` so its `url` names your Infrahub, or
-point `INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION` at a declared package of your own.
 Credentials in a package are references, never values:
 
 ```yaml
@@ -95,6 +102,13 @@ credentials:
     provider: env
     identifier: INFRAHUB_API_TOKEN
 ```
+
+:::note
+A container reads its environment once, at start. After changing a value in
+`operator.env`, run `./infrahub-sync-compose start` again — that recreates the
+services whose environment changed. `restart` replaces the processes inside
+containers that keep the environment they were created with.
+:::
 
 ### Reading from NetBox or Nautobot
 
@@ -133,8 +147,9 @@ Nautobot uses the same shape with `nautobot`, `nautobot-token` and
   starts normally, and a package naming one source does not need the other's
   token. When a package does select a source, a missing or empty token fails
   that run and the message names the environment variable, never its value.
-- **Restart the worker after changing either value.** A container reads its
-  environment once, at start: `./infrahub-sync-compose restart`.
+- **Start again after changing either value.** A container reads its environment
+  once, at start, so `./infrahub-sync-compose start` recreates the worker;
+  `restart` keeps the environment it already has.
 
 Only `sync-worker` receives these tokens. Registration and the default
 validation judge declared content without resolving a source secret, so the API
@@ -160,20 +175,26 @@ name followed by a fixed sentence. It never renders a credential value.
 | --- | --- |
 | `compose-unreadable` | Docker Compose reported no version this can compare. Check the installation. |
 | `compose-too-old` | Install Docker Compose 2.17.3 or later. |
-| `path-unwritable`, `path-unreadable`, `path-missing` | The bundle directory, `secrets/`, or the declared configuration is not usable by this user. |
+| `path-unwritable`, `path-unreadable`, `path-missing` | The bundle directory or `secrets/` is not usable by this user. |
 | `credentials-missing` | The named settings are empty or still hold the `REPLACE-ME` placeholder. |
 | `image-not-immutable` | `INFRAHUB_SYNC_IMAGE` names a tag, or a malformed digest. Use one of the two forms above. |
 | `image-unresolvable` | Docker cannot find that digest locally or in a registry. |
 | `port-occupied` | Something else already holds one of the required loopback binds. Preflight asks the engine for the bind rather than reading container names, so a foreign container published on any address and a host process that is not a container are both found. |
 | `port-unprovable` | The disposable bind probe could not run at all, so the port was neither proved free nor proved held. Check that the Sync image runs on this host. |
-| `destination-unavailable` | The declared destination URL did not answer. An HTTP authentication challenge counts as an answer: preflight proves that each credential reference resolves locally, while the adapter's first authenticated read proves that the destination accepts it. |
 | `docker-unavailable` | Docker could not enumerate or inspect this instance. This is not evidence that the deployment is stopped; restore Docker access and repeat the command. |
 
 `start` runs `preflight`, brings the deployment up, and returns only once the
 Sync API reports a worker that has registered. It is safe to repeat: bootstrap
-converges the two databases, their owner roles, the artifact bucket, the Prefect
-process work pool, the installed deployment, and the declared configuration, and
-a second run creates none of them twice.
+converges the two databases, their owner roles, the product schema, the artifact
+bucket, the Prefect process work pool, and the installed deployment, and a second
+run creates none of them twice. It registers nothing, so a repeat leaves every
+configuration you registered exactly as it was.
+
+`READY` describes this deployment's own dependencies and a live worker, and
+nothing about a configuration. A deployment reaches `READY` with an empty
+registry, no credentials set, and no reachable destination; whether a registered
+package is valid is answered by `configs validate`, and whether its destination
+answers is answered by the first run against it.
 
 Both published surfaces bind to loopback by default:
 

@@ -196,10 +196,9 @@ def started(
 ) -> Iterator[Deployment]:
     """A never-initialized copy of the bundle, taken to READY by the entry point.
 
-    Its declared destination is the pinned Infrahub, named by an address that
-    reaches the host from inside a container. Preflight probes the destination
-    before anything in the bundle is running, which is what a real deployment's
-    external destination is: reachable without help from the bundle itself.
+    The destination credential is supplied for the managed rows below, which do
+    register a package and run against the pinned Infrahub. The start itself
+    needs neither: preflight reaches no destination.
     """
     bundle = tmp_path_factory.mktemp("lifecycle") / "compose"
     shutil.copytree(BUNDLE, bundle)
@@ -214,10 +213,13 @@ def started(
     assert created.returncode == 0, created.stderr
     settings = bundle / "operator.env"
     settings.write_text(
-        settings.read_text(encoding="utf-8")
-        .replace("INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE={sync_image}")
-        .replace("INFRAHUB_API_TOKEN=REPLACE-ME", f"INFRAHUB_API_TOKEN={infrahub_fixture['token']}")
-        + f"INFRAHUB_SYNC_IMAGE_PULL_POLICY=never\nINFRAHUB_SYNC_API_PORT={API_PORT}\n"
+        settings.read_text(encoding="utf-8").replace(
+            "INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE={sync_image}"
+        )
+        # Appended, not substituted: `init` leaves the destination credential a
+        # commented optional entry, because a start needs none.
+        + f"INFRAHUB_API_TOKEN={infrahub_fixture['token']}\n"
+        f"INFRAHUB_SYNC_IMAGE_PULL_POLICY=never\nINFRAHUB_SYNC_API_PORT={API_PORT}\n"
         f"INFRAHUB_SYNC_PREFECT_PORT={PREFECT_PORT}\n",
         encoding="utf-8",
     )
@@ -540,29 +542,18 @@ SPARE_PREFECT_PORT = "4241"
 
 @pytest.fixture
 def unstarted(started: Deployment, sync_image: str, tmp_path: Path) -> Iterator[Path]:
-    """A second copy of the bundle, initialized on spare ports and never started.
-
-    Preflight is the whole subject here, and it refuses at the ports before it
-    ever reaches the destination probe, so nothing in this bundle has to run.
-    """
+    """A second copy of the bundle, initialized on spare ports and never started."""
     bundle = tmp_path / "compose"
     shutil.copytree(BUNDLE, bundle)
-    # The same real destination the started deployment uses, so a preflight that
-    # gets past the ports is answered by something rather than refused for an
-    # unrelated reason.
-    package = bundle / "configuration" / "qualification.yaml"
-    package.write_text(
-        package.read_text(encoding="utf-8").replace("http://infrahub.example.net:8000", started.destination),
-        encoding="utf-8",
-    )
     created = entry_point(bundle, "init")
     assert created.returncode == 0, created.stderr
     settings = bundle / "operator.env"
     settings.write_text(
-        settings.read_text(encoding="utf-8")
-        .replace("INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE={sync_image}")
-        .replace("INFRAHUB_API_TOKEN=REPLACE-ME", f"INFRAHUB_API_TOKEN={setting(started.bundle, 'INFRAHUB_API_TOKEN')}")
-        + f"INFRAHUB_SYNC_IMAGE_PULL_POLICY=never\nINFRAHUB_SYNC_API_PORT={SPARE_API_PORT}\n"
+        settings.read_text(encoding="utf-8").replace(
+            "INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE={sync_image}"
+        )
+        + f"INFRAHUB_API_TOKEN={setting(started.bundle, 'INFRAHUB_API_TOKEN')}\n"
+        f"INFRAHUB_SYNC_IMAGE_PULL_POLICY=never\nINFRAHUB_SYNC_API_PORT={SPARE_API_PORT}\n"
         f"INFRAHUB_SYNC_PREFECT_PORT={SPARE_PREFECT_PORT}\n",
         encoding="utf-8",
     )
@@ -715,10 +706,9 @@ def test_the_next_start_after_reset_is_a_cold_bootstrap(started: Deployment) -> 
     would not have reset anything. Both are only visible from the other side of
     a real second start, so this drives one.
 
-    Cold is asserted, not assumed: no runs, no artifacts, and exactly one
-    registered configuration version — the bundled one this bootstrap just
-    registered. Before the reset there were runs, artifacts, and a second
-    configuration this suite registered itself.
+    Cold is asserted, not assumed: no runs, no artifacts, and an empty
+    configuration registry. Before the reset there were runs, artifacts, and the
+    configurations this suite registered itself.
     """
     bundle = started.bundle
     # The reset case above already took this bundle's identity. Run on its own,
@@ -754,8 +744,7 @@ def test_the_next_start_after_reset_is_a_cold_bootstrap(started: Deployment) -> 
         state = probe_json(cold, DURABLE_STATE)
         assert state["runs"] == 0, state["runs"]
         assert state["objects"] == [], state["objects"]
-        assert len(state["configuration_versions"]) == 1, state["configuration_versions"]
-        assert state["configuration_versions"][0][1] == 1, state["configuration_versions"]
+        assert state["configuration_versions"] == [], state["configuration_versions"]
         assert volume_exists(foreign), "the cold start took a volume this instance does not own"
     finally:
         entry_point(bundle, "reset", instance)

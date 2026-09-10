@@ -21,6 +21,7 @@ from tests.compose.conftest import (
     BUNDLE_LABEL,
     BUNDLED_CONFIGURATION,
     COMPOSE_FILE,
+    DEFAULTS_FILE,
     INSTANCE_LABEL,
     SCRATCH_OPTIONS,
     SYNC_SCRATCH_ROOTS,
@@ -60,6 +61,12 @@ ROUTED_SERVICES = {"sync-bootstrap", "sync-worker"}
 # this a statement of the contract instead of a restatement of the YAML.
 SOURCE_TOKEN_SETTINGS = ("NETBOX_TOKEN", "NAUTOBOT_TOKEN")
 SOURCE_TOKEN_RECEIVERS = {"sync-worker"}
+
+# The destination credential, and the two services that resolve one. The API
+# resolves it for the destination schema reads it serves; the worker resolves it
+# for a run. Nothing else has a destination to reach.
+DESTINATION_CREDENTIAL = "INFRAHUB_API_TOKEN"
+DESTINATION_CREDENTIAL_RECEIVERS = {"sync-api", "sync-worker"}
 
 
 def services(model: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -259,12 +266,12 @@ def test_the_bundle_refuses_to_resolve_without_an_instance_identity(
 
 
 # ---------------------------------------------------------------------------
-# The bundled configuration
+# The example configuration
 # ---------------------------------------------------------------------------
 
 
-def test_the_bundled_configuration_is_a_registerable_package() -> None:
-    """Bootstrap registers this file's declared content; an unparseable one fails at start."""
+def test_the_example_configuration_is_a_registerable_package() -> None:
+    """Nothing loads it; an operator registers it, so it has to be one a register accepts."""
     package = parse_configuration_package(configs.load_package_content(BUNDLED_CONFIGURATION))
 
     assert package.configuration.name == "infrahub-sync-qualification"
@@ -285,17 +292,16 @@ def test_the_bundled_configuration_declares_no_secret_value() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The one filesystem input
+# No filesystem input at all
 # ---------------------------------------------------------------------------
 
 
-def test_the_bundled_configuration_is_the_only_filesystem_input_any_sync_service_takes(
-    model: dict[str, Any],
-) -> None:
-    """One read-only file, given to the job that registers it and to nothing else.
+def test_no_sync_service_takes_a_filesystem_input(model: dict[str, Any]) -> None:
+    """A start needs no configuration file, so no service is given one.
 
-    Registered content lives in PostgreSQL afterwards, which is what lets the API
-    and the worker take no configuration input at all.
+    An equality over every Sync service, not the absence of one known mount: a
+    configuration handed back to any of them would restore a startup that decides
+    what the deployment runs before the operator has registered anything.
     """
     readers = {
         name: definition.get("volumes") or []
@@ -303,12 +309,53 @@ def test_the_bundled_configuration_is_the_only_filesystem_input_any_sync_service
         if name.startswith("sync-") and (definition.get("volumes") or [])
     }
 
-    assert sorted(readers) == ["sync-bootstrap"], f"Sync services taking a filesystem input: {sorted(readers)}"
-    mounts = readers["sync-bootstrap"]
-    assert len(mounts) == 1, f"sync-bootstrap takes {len(mounts)} inputs"
-    assert mounts[0]["read_only"] is True, "the bundled configuration is mounted writable"
-    assert Path(mounts[0]["source"]).resolve() == BUNDLED_CONFIGURATION.resolve()
-    assert mounts[0]["target"] == "/etc/infrahub-sync/configuration.yaml"
+    assert readers == {}, f"Sync services taking a filesystem input: {sorted(readers)}"
+
+
+def test_the_bundle_interpolates_no_declared_configuration_setting(model: dict[str, Any]) -> None:
+    """The setting is gone from the shipped startup, not merely unused by it."""
+    interpolated = set(re.findall(r"\$\{([A-Z][A-Z0-9_]*)", COMPOSE_FILE.read_text(encoding="utf-8")))
+    shipped = {
+        line.split("=", 1)[0]
+        for line in DEFAULTS_FILE.read_text(encoding="utf-8").splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+    resolved = {name for definition in services(model).values() for name in (definition.get("environment") or {})}
+
+    assert "INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION" not in interpolated
+    assert "INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION" not in shipped
+    assert "INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION" not in resolved
+
+
+# ---------------------------------------------------------------------------
+# The destination credential
+# ---------------------------------------------------------------------------
+
+
+def test_the_destination_credential_reaches_the_api_and_the_worker_and_no_job(model: dict[str, Any]) -> None:
+    """Only the two services that resolve a destination are given it."""
+    holders = {
+        name
+        for name, definition in services(model).items()
+        if DESTINATION_CREDENTIAL in (definition.get("environment") or {})
+    }
+
+    assert holders == DESTINATION_CREDENTIAL_RECEIVERS, f"{DESTINATION_CREDENTIAL} is given to {sorted(holders)}"
+
+
+def test_the_destination_credential_is_optional_and_resolves_empty_when_unset(
+    compose_version: str, contract_environment: dict[str, str]
+) -> None:
+    """Required interpolation would refuse the resolve before anything is registered."""
+    del compose_version
+    without = {key: value for key, value in contract_environment.items() if key != DESTINATION_CREDENTIAL}
+
+    resolved = resolve_privately(without)
+
+    for name in sorted(DESTINATION_CREDENTIAL_RECEIVERS):
+        environment = service(resolved, name)["environment"]
+        assert DESTINATION_CREDENTIAL in environment, f"{DESTINATION_CREDENTIAL} is absent from {name}"
+        assert not environment[DESTINATION_CREDENTIAL], f"{DESTINATION_CREDENTIAL} resolved to a value nobody supplied"
 
 
 def test_the_long_running_sync_services_wait_for_that_convergence(model: dict[str, Any]) -> None:
