@@ -281,15 +281,40 @@ terminal and the record carries what is known.
 
 Read the run itself first. `reconciliation_required` is on the run, not buried in
 its evidence, so deciding whether a run needs reconciling never requires parsing
-a failure:
+a failure.
 
-Both reads are CLI commands, so nothing here needs a token on a command line or
-in your shell — `cli` presents the one `init` generated:
+`cli runs show` reports the phase, the outcome and the Prefect correlation, and
+`cli runs results` prints what the run recorded — neither prints
+`reconciliation_required`, so the decision field comes from the full run record:
 
 ```bash
 ./infrahub-sync-compose cli runs show RUN_ID
 ./infrahub-sync-compose cli runs results RUN_ID
 ```
+
+The full record is one direct authenticated read. Put the header in a private
+curl configuration rather than on the command line, where the value would be
+visible to every process on the host while the request runs, and remove it when
+the read is done:
+
+```bash
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
+umask 077
+CURL_CONFIG=$(mktemp)
+# `printf` is a shell builtin and `sed` never sees the value, so the token
+# reaches no process argument list. Run this from the bundle directory.
+printf 'header = "Authorization: Bearer %s"\n' \
+  "$(sed -n 's/^INFRAHUB_SYNC_SERVICE_BEARER_TOKENS=.*"token": "\([^"]*\)".*/\1/p' operator.env)" \
+  > "$CURL_CONFIG"
+
+# The whole run record, which is where `reconciliation_required` is.
+curl -sS --config "$CURL_CONFIG" "$INFRAHUB_SYNC_API_URL/runs/RUN_ID"
+
+rm -f "$CURL_CONFIG"
+```
+
+Never `source` `operator.env`: it holds every other credential of the
+deployment.
 
 Two records mean an uncertain write, and they are not the same thing:
 

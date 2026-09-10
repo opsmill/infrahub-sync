@@ -349,14 +349,24 @@ exact checksum and confirms.
 ```
 
 An independent verification of a retained plan is the one step here with no CLI
-command. It is a direct authenticated call, so it uses the private curl
-configuration above:
+command. It is a direct authenticated call, so it creates its own private curl
+configuration and removes it afterwards:
 
 ```bash
+umask 077
+CURL_CONFIG=$(mktemp)
+# `printf` is a shell builtin and `sed` never sees the value, so the token
+# reaches no process argument list. Run this from the bundle directory.
+printf 'header = "Authorization: Bearer %s"\n' \
+  "$(sed -n 's/^INFRAHUB_SYNC_SERVICE_BEARER_TOKENS=.*"token": "\([^"]*\)".*/\1/p' operator.env)" \
+  > "$CURL_CONFIG"
+
 curl -sS -X POST --config "$CURL_CONFIG" \
   -H "Idempotency-Key: $(uuidgen)" -H 'Content-Type: application/json' \
   -d '{"reason": "second opinion before applying"}' \
   "$INFRAHUB_SYNC_API_URL/runs/RUN_ID/verify"
+
+rm -f "$CURL_CONFIG"
 ```
 
 ## Status
@@ -458,11 +468,33 @@ and the record carries what is known.
 
 `reconciliation_required` is a field of the run itself rather than something
 buried in its evidence, so deciding whether a run needs reconciling never means
-parsing a failure:
+parsing a failure.
+
+`cli runs show` reports the phase, the outcome and the Prefect correlation, and
+`cli runs results` prints what the run recorded. Neither prints
+`reconciliation_required`, so the decision field is read from the full run
+record — one direct authenticated call, through a private curl configuration
+this recipe creates and removes:
 
 ```bash
 ./infrahub-sync-compose cli runs show RUN_ID
 ./infrahub-sync-compose cli runs results RUN_ID
+```
+
+```bash
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
+umask 077
+CURL_CONFIG=$(mktemp)
+# `printf` is a shell builtin and `sed` never sees the value, so the token
+# reaches no process argument list. Run this from the bundle directory.
+printf 'header = "Authorization: Bearer %s"\n' \
+  "$(sed -n 's/^INFRAHUB_SYNC_SERVICE_BEARER_TOKENS=.*"token": "\([^"]*\)".*/\1/p' operator.env)" \
+  > "$CURL_CONFIG"
+
+# The whole run record, which is where `reconciliation_required` is.
+curl -sS --config "$CURL_CONFIG" "$INFRAHUB_SYNC_API_URL/runs/RUN_ID"
+
+rm -f "$CURL_CONFIG"
 ```
 
 Two different records mean an uncertain write. A write execution that ended

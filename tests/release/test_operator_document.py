@@ -62,6 +62,10 @@ PRINCIPAL_VARIABLE = "INFRAHUB_SYNC_API_TOKEN"
 # documented extraction quietly yielding an empty string.
 PRINCIPAL_SETTING = "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"
 PRINCIPAL_FIELD = '"token": "'
+# The private curl configuration a direct authenticated recipe carries its header
+# in, and the run identifier both documents use in a recipe.
+CONFIG_VARIABLE = "CURL_CONFIG"
+RUN_PLACEHOLDER = "RUN_ID"
 
 
 def documented(path: Path) -> str:
@@ -269,35 +273,75 @@ def test_no_document_puts_the_bearer_token_on_a_command_line(path: Path) -> None
     )
 
 
-def test_the_shipped_document_needs_no_credential_of_its_own() -> None:
-    """Every authenticated read it documents is a CLI call, so it derives no token."""
-    body = documented(OPERATOR_DOCUMENT)
-
-    assert PRINCIPAL_SETTING in body, f"{OPERATOR_DOCUMENT.name} does not say which setting holds the token"
-    assert "curl" not in body, f"{OPERATOR_DOCUMENT.name} makes a direct HTTP call it no longer needs"
-    assert f"{PRINCIPAL_VARIABLE}=$(" not in body, f"{OPERATOR_DOCUMENT.name} extracts a token it does not use"
+def assigns(line: str, variable: str) -> bool:
+    """Whether one line sets the variable, exported or not."""
+    head = line.lstrip().removeprefix("export ")
+    return head.startswith(f"{variable}=")
 
 
-def test_the_site_guide_derives_every_variable_its_one_direct_recipe_needs() -> None:
-    """The direct call is for the one route the CLI has no command for.
+@pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
+@pytest.mark.parametrize("variable", REQUEST_VARIABLES)
+def test_every_document_derives_the_variables_its_direct_recipes_need(path: Path, variable: str) -> None:
+    """A variable used before it is set leaves an operator sending an empty header.
 
-    A variable used before it is set leaves an operator sending an empty header,
-    which the API answers with a refusal that looks like a permissions problem.
+    The API answers that with a refusal that reads like a permissions problem, so
+    the recipe has to derive what it sends before it sends it.
     """
-    lines = commands(GUIDE)
+    lines = commands(path)
+    used = [index for index, line in enumerate(lines) if f"${variable}" in line and not assigns(line, variable)]
+    assigned = [index for index, line in enumerate(lines) if assigns(line, variable)]
 
-    def assigns(line: str, variable: str) -> bool:
-        """Whether one line sets the variable, exported or not."""
-        head = line.lstrip().removeprefix("export ")
-        return head.startswith(f"{variable}=")
+    assert used, f"{path.name} never uses ${variable}"
+    assert assigned, f"{path.name} uses ${variable} without ever setting it"
+    assert min(assigned) < min(used), f"{path.name} uses ${variable} before it is set"
 
-    for variable in REQUEST_VARIABLES:
-        used = [index for index, line in enumerate(lines) if f"${variable}" in line and not assigns(line, variable)]
-        assigned = [index for index, line in enumerate(lines) if assigns(line, variable)]
 
-        assert used, f"{GUIDE.name} never uses ${variable}"
-        assert assigned, f"{GUIDE.name} uses ${variable} without ever setting it"
-        assert min(assigned) < min(used), f"{GUIDE.name} uses ${variable} before it is set"
+@pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
+def test_the_decision_field_is_read_from_the_record_that_carries_it(path: Path) -> None:
+    """`runs show` does not print it, so the document has to read the whole record.
+
+    Bound to the executable recipe rather than to prose: the block that GETs the
+    run record is the one that has to name the field, so a document that names the
+    field and then shows a command not carrying it fails here.
+    """
+    blocks = command_blocks(path)
+    reads = [
+        block
+        for block in blocks
+        if any("--config" in line and f"/runs/{RUN_PLACEHOLDER}" in line and "-X POST" not in line for line in block)
+    ]
+
+    assert SAFETY_FIELD in PublicRunResource.model_fields, (
+        f"{SAFETY_FIELD} is not a field of the run record the documented read returns"
+    )
+    assert len(reads) == 1, f"{path.name} has {len(reads)} direct full-run reads; it needs exactly one"
+    assert any(SAFETY_FIELD in line for line in reads[0]), (
+        f"{path.name} reads the run record without saying it is where {SAFETY_FIELD} is"
+    )
+    assert SAFETY_FIELD not in " ".join(line for block in blocks for line in block if "cli runs" in line), (
+        f"{path.name} attributes {SAFETY_FIELD} to a CLI command that does not print it"
+    )
+
+
+@pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
+def test_every_private_curl_configuration_outlives_its_last_use(path: Path) -> None:
+    """A configuration removed before the request that needs it leaves a broken recipe.
+
+    Each block that uses one has to create it, and the removal has to come after
+    the last use — checked per block, because that is the unit an operator runs.
+    """
+    for index, block in enumerate(command_blocks(path), start=1):
+        uses = [position for position, line in enumerate(block) if f"${CONFIG_VARIABLE}" in line]
+        if not uses:
+            continue
+        created = [position for position, line in enumerate(block) if assigns(line, CONFIG_VARIABLE)]
+        removed = [position for position, line in enumerate(block) if f'rm -f "${CONFIG_VARIABLE}"' in line]
+        last_use = max(position for position in uses if position not in removed)
+
+        assert created, f"{path.name} block {index} uses ${CONFIG_VARIABLE} without creating it"
+        assert min(created) < last_use, f"{path.name} block {index} uses ${CONFIG_VARIABLE} before creating it"
+        assert removed, f"{path.name} block {index} leaves ${CONFIG_VARIABLE} behind"
+        assert max(removed) > last_use, f"{path.name} block {index} removes ${CONFIG_VARIABLE} before its last use"
 
 
 @pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
@@ -314,7 +358,7 @@ def test_no_document_sources_or_renders_the_credential_file(path: Path) -> None:
         assert rendering not in body, f"{path.name} renders a credential with {rendering!r}"
 
 
-def test_the_extraction_the_site_guide_gives_matches_what_init_writes() -> None:
+def test_the_extraction_both_documents_give_matches_what_init_writes() -> None:
     """The pattern is only useful while it matches the line the entry point really generates.
 
     Read off the entry point's own heredoc rather than restated here, so changing
@@ -327,4 +371,5 @@ def test_the_extraction_the_site_guide_gives_matches_what_init_writes() -> None:
     assert PRINCIPAL_FIELD in generated[0], (
         f"the entry point no longer writes {PRINCIPAL_FIELD!r}, so the documented extraction cannot match it"
     )
-    assert PRINCIPAL_FIELD in documented(GUIDE), f"{GUIDE.name} does not extract the field the entry point writes"
+    for path in DOCUMENTS:
+        assert PRINCIPAL_FIELD in documented(path), f"{path.name} does not extract the field the entry point writes"
