@@ -19,7 +19,10 @@ dependencies = [
     "structlog>=25.1,<26.0",
     "typing-extensions>=4.4",
     "httpx>=0.27,<1",
-    "pyyaml>=6,<7",
+    # 6.0.2 is the first release with a cp313 wheel. Below it a Python 3.13
+    # lowest-direct resolution falls back to 6.0's source build, which no longer
+    # builds against a current Cython.
+    "pyyaml>=6.0.2,<7",
     # The `[redis]` extra is deliberately dropped: it caps `redis<5.0`, which is
     # unsatisfiable next to the optional `prefect` extra below
     # (prefect>=3.6 -> pydocket -> redis>=5). diffsync's cap is stale rather than
@@ -72,6 +75,13 @@ service = [
     "fastapi>=0.115,<1; python_version >= '3.11'",
     "prefect==3.8.1; python_version >= '3.11'",
     "psycopg[binary]>=3.2,<4; python_version >= '3.11'",
+    # The SDKs the bundled NetBox and Nautobot source adapters import at module
+    # top. pynetbox 7.6 is where NetBox's v2 (`nbt_`) tokens are supported;
+    # pynautobot stays below 3, whose server line and default many-to-many
+    # inclusion differ from what these adapters extract. Both bounds select a
+    # packaging dependency, not a supported source-server profile.
+    "pynautobot>=2.5,<3; python_version >= '3.11'",
+    "pynetbox>=7.6,<8; python_version >= '3.11'",
     "uvicorn>=0.34,<1; python_version >= '3.11'",
 ]
 dev = [

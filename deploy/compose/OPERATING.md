@@ -60,6 +60,56 @@ bootstrap recognises the configuration by its declared name, so different
 content under a name already registered is refused. A package holds credential
 *references*, never values.
 
+### Reading from NetBox or Nautobot
+
+A package that reads from one of those declares the endpoint and a reference to
+the token, and `init` leaves both names commented in `operator.env`. Uncomment
+only the one your package names:
+
+```bash
+NETBOX_TOKEN=<your NetBox token>
+```
+
+```yaml
+configuration:
+  source:
+    name: netbox
+    settings:
+      url: "http://netbox.example.net:8080"
+      token:
+        $credential: netbox-token
+credentials:
+  netbox-token:
+    provider: env
+    identifier: NETBOX_TOKEN
+```
+
+Nautobot is the same shape with `nautobot`, `nautobot-token` and
+`NAUTOBOT_TOKEN`.
+
+Four things decide whether this works:
+
+- **The URL is resolved inside a container, not on your host.** `localhost`
+  there is the worker itself. Name a host the Compose network can reach, or the
+  host's own address; `127.0.0.1` and `localhost` will not do.
+- **The declared `url` is the only one used.** Exporting `NETBOX_ADDRESS`,
+  `NETBOX_URL`, `NAUTOBOT_ADDRESS` or `NAUTOBOT_URL` in your shell changes
+  nothing — a registered run reads what the package declares.
+- **A missing or empty token fails that run, not the deployment.** The worker
+  refuses with the environment variable's name, never its value. Both tokens are
+  optional, so a deployment reading from neither source starts normally, and a
+  package that names one source does not need the other's token.
+- **The worker reads its environment once, at start.** After changing either
+  value in `operator.env`, run `./infrahub-sync-compose restart`.
+
+Only the worker is given these tokens. The API, the bootstrap job, PostgreSQL,
+the object store and the Prefect server never receive one: registration and the
+default validation judge declared content without resolving a source secret.
+
+That both adapters are installed and import is a packaging fact. It is not a
+statement that any particular NetBox or Nautobot version has been qualified
+against this release.
+
 ## Start
 
 ```bash

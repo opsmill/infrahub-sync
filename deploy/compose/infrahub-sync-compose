@@ -68,6 +68,8 @@ INFRAHUB_SYNC_S3_REGION
 INFRAHUB_SYNC_S3_SECRET_KEY
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS
 INFRAHUB_SYNC_WORK_POOL
+NAUTOBOT_TOKEN
+NETBOX_TOKEN
 PREFECT_WORKER_HEARTBEAT_SECONDS
 PREFECT_WORKER_QUERY_SECONDS'
 
@@ -405,6 +407,14 @@ command_init() {
 #   INFRAHUB_API_TOKEN   the credential the declared configuration references
 INFRAHUB_SYNC_IMAGE=REPLACE-ME
 INFRAHUB_API_TOKEN=REPLACE-ME
+
+# Source credentials, only for a configuration that reads from that source.
+# Uncomment the one your registered package names and give it the token; leave
+# both commented otherwise. They reach the worker alone, and a run that selects
+# one refuses to start if its value is missing or empty. Restart the worker
+# after changing either: a container reads its environment once, at start.
+#NETBOX_TOKEN=
+#NAUTOBOT_TOKEN=
 
 INFRAHUB_SYNC_PRODUCT_PASSWORD=$product
 INFRAHUB_SYNC_PREFECT_PASSWORD=$prefect

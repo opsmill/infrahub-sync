@@ -227,6 +227,15 @@ services:
       # paused worker at that thirty-second floor instead of Prefect's ninety.
       PREFECT_WORKER_HEARTBEAT_SECONDS: "${PREFECT_WORKER_HEARTBEAT_SECONDS}"
       INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:?the destination credential is required}"
+      # The source credentials the bundled NetBox and Nautobot adapters resolve,
+      # and the only service given either: a run is what consumes one, and the
+      # worker is what runs one. Optional rather than required, because a
+      # deployment that syncs neither source must still start -- and because a
+      # token nothing selects has no reason to exist here. When a registered
+      # package does select one, the resolver refuses an absent or empty value
+      # by name, so an unset token fails that run rather than this container.
+      NETBOX_TOKEN: "${NETBOX_TOKEN:-}"
+      NAUTOBOT_TOKEN: "${NAUTOBOT_TOKEN:-}"
     read_only: true
     tmpfs: *sync-scratch
 

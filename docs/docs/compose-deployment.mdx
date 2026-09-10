@@ -96,6 +96,56 @@ credentials:
     identifier: INFRAHUB_API_TOKEN
 ```
 
+### Reading from NetBox or Nautobot
+
+The image installs the bundled NetBox and Nautobot source adapters, so a package
+may declare either as its source. `init` leaves both token names commented in
+`operator.env`; uncomment only the one your package names.
+
+```bash
+NETBOX_TOKEN=<your NetBox token>
+# NAUTOBOT_TOKEN=<your Nautobot token>
+```
+
+```yaml
+configuration:
+  source:
+    name: netbox
+    settings:
+      url: "http://netbox.example.net:8080"
+      token:
+        $credential: netbox-token
+credentials:
+  netbox-token:
+    provider: env
+    identifier: NETBOX_TOKEN
+```
+
+Nautobot uses the same shape with `nautobot`, `nautobot-token` and
+`NAUTOBOT_TOKEN`.
+
+- **Name a URL a container can reach.** The worker resolves it from inside the
+  Compose network, where `localhost` is the worker itself.
+- **The declared `url` is the one used.** `NETBOX_ADDRESS`, `NETBOX_URL`,
+  `NAUTOBOT_ADDRESS` and `NAUTOBOT_URL` exported in your shell are ignored: a
+  registered run reads what its package declares.
+- **Both tokens are optional.** A deployment that reads from neither source
+  starts normally, and a package naming one source does not need the other's
+  token. When a package does select a source, a missing or empty token fails
+  that run and the message names the environment variable, never its value.
+- **Restart the worker after changing either value.** A container reads its
+  environment once, at start: `./infrahub-sync-compose restart`.
+
+Only `sync-worker` receives these tokens. Registration and the default
+validation judge declared content without resolving a source secret, so the API
+and the bootstrap job never hold one.
+
+:::note
+That both adapters install and import is a packaging property of this release.
+It is not a statement that any particular NetBox or Nautobot server version has
+been qualified against it.
+:::
+
 ## Start
 
 ```bash

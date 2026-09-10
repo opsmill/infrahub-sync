@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from tests.compose.conftest import BUNDLE
-from tests.compose.redaction import Captured, capture
+from tests.compose.redaction import SECRETS, Captured, capture
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -34,6 +34,11 @@ ENTRY_POINT = "infrahub-sync-compose"
 # parsed out of the script: a test that reads the value it checks would accept
 # any value the script happened to hold.
 MINIMUM_COMPOSE = "2.17.3"
+
+# The source credentials the worker resolves. An operator sets these in the file
+# the bundle owns, so an exported shell value of the same name must not reach
+# Compose -- the same rule every other interpolated setting already follows.
+SOURCE_TOKEN_SETTINGS = ("NETBOX_TOKEN", "NAUTOBOT_TOKEN")
 
 DOCKER_SHIM = r"""#!/bin/sh
 # A Docker stand-in for the preflight suite. It answers exactly the questions the
@@ -50,7 +55,9 @@ if [ "$1" = "compose" ]; then
         esac
     done
     if [ "$sub" != "version" ] && [ "${SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT:-}" = "1" ]; then
-        for name in INFRAHUB_SYNC_IMAGE INFRAHUB_SYNC_INSTANCE INFRAHUB_SYNC_API_PORT INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION; do
+        guarded="INFRAHUB_SYNC_IMAGE INFRAHUB_SYNC_INSTANCE INFRAHUB_SYNC_API_PORT"
+        guarded="$guarded INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION NETBOX_TOKEN NAUTOBOT_TOKEN"
+        for name in $guarded; do
             eval "value=\${$name-}"
             if [ -n "$value" ]; then
                 printf 'docker shim: ambient %s reached Compose\n' "$name" >&2
@@ -241,6 +248,74 @@ def test_every_interpolated_setting_is_removed_from_composes_ambient_environment
     interpolated = set(re.findall(r"\$\{([A-Z][A-Z0-9_]*)", (BUNDLE / "compose.yaml").read_text(encoding="utf-8")))
 
     assert sanitized == interpolated
+
+
+@pytest.mark.parametrize("setting", SOURCE_TOKEN_SETTINGS)
+def test_the_closed_compose_environment_covers_the_source_credentials(setting: str) -> None:
+    """Named directly, so the closed set cannot lose one and stay self-consistent.
+
+    The equality above would also pass for a bundle that interpolates neither
+    token, which is exactly the state this work leaves behind.
+    """
+    script = (BUNDLE / ENTRY_POINT).read_text(encoding="utf-8")
+    declared = re.search(r"COMPOSE_SETTINGS='([^']*)'", script)
+    assert declared is not None
+
+    assert setting in set(declared.group(1).split())
+
+
+def test_an_ambient_source_token_cannot_reach_compose(initialized: Path, shim: Path) -> None:
+    """The operator file owns the value; an exported shell variable does not.
+
+    The shim refuses the run if either name arrives with a value, so this fails
+    while the wrapper still lets a shell export through.
+    """
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={
+            "SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT": "1",
+            "NETBOX_TOKEN": "preflight-ambient-netbox-token-must-lose",
+            "NAUTOBOT_TOKEN": "preflight-ambient-nautobot-token-must-lose",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
+@pytest.mark.parametrize("setting", SOURCE_TOKEN_SETTINGS)
+def test_init_documents_the_optional_source_credentials(bundle: Path, shim: Path, setting: str) -> None:
+    """An operator has to be told the key exists before they can set it.
+
+    Commented, because neither is required: an uncommented empty assignment
+    would read like something the deployment needs.
+    """
+    run(bundle, shim, "init")
+
+    lines = (bundle / "operator.env").read_text(encoding="utf-8").splitlines()
+    mentions = [line for line in lines if setting in line]
+
+    assert mentions, f"the generated operator settings never mention {setting}"
+    assert all(line.lstrip().startswith("#") for line in mentions), mentions
+
+
+def test_init_prints_no_value_from_the_settings_it_generates(bundle: Path, shim: Path) -> None:
+    """It reports what it wrote, not what it wrote there.
+
+    Compared privately: the assertion reports the names that leaked, never the
+    values it searched for.
+    """
+    result = run(bundle, shim, "init")
+
+    generated = {
+        name: value
+        for name, _, value in (
+            line.partition("=") for line in (bundle / "operator.env").read_text(encoding="utf-8").splitlines()
+        )
+        if value and not name.lstrip().startswith("#") and len(value) >= 16
+    }
+    assert SECRETS.leaked(result.unredacted(), generated) == []
 
 
 # ---------------------------------------------------------------------------

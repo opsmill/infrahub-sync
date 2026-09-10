@@ -27,6 +27,7 @@ from tests.compose.conftest import (
     SYNC_SERVICES,
     mount_sources,
     resolve,
+    resolve_privately,
     service,
 )
 
@@ -52,6 +53,13 @@ PERSISTENT_SERVICES = {"postgres", "object-store"}
 FIXTURE_OVERRIDE = Path(__file__).resolve().parent / "fixture-override.yaml"
 HOST_ROUTE = "host.docker.internal=host-gateway"
 ROUTED_SERVICES = {"sync-bootstrap", "sync-worker"}
+
+# The source credentials the bundled adapters resolve. Only a run consumes one,
+# and only the worker runs one, so the worker is the only service that may be
+# given either. Naming them here rather than deriving them from the file keeps
+# this a statement of the contract instead of a restatement of the YAML.
+SOURCE_TOKEN_SETTINGS = ("NETBOX_TOKEN", "NAUTOBOT_TOKEN")
+SOURCE_TOKEN_RECEIVERS = {"sync-worker"}
 
 
 def services(model: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -336,3 +344,63 @@ def test_the_host_route_is_test_only_and_reaches_exactly_the_two_destination_ser
     assert routed(model) == set(), f"the shipped bundle routes {sorted(routed(model))} to the host"
     overridden = resolve(contract_environment, files=(COMPOSE_FILE, FIXTURE_OVERRIDE))
     assert routed(overridden) == ROUTED_SERVICES, f"the override routes {sorted(routed(overridden))}"
+
+
+# ---------------------------------------------------------------------------
+# Source credentials
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("setting", SOURCE_TOKEN_SETTINGS)
+def test_only_the_worker_is_given_a_source_credential(model: dict[str, Any], setting: str) -> None:
+    """A secret with no receiver is a secret that cannot leak from one.
+
+    An equality over every service, not a check that the worker has it: a source
+    token added to the API, the bootstrap job, or Prefect would fail here even
+    though the worker still worked.
+    """
+    holders = {name for name, definition in services(model).items() if setting in (definition.get("environment") or {})}
+
+    assert holders == SOURCE_TOKEN_RECEIVERS, f"{setting} is given to {sorted(holders)}"
+
+
+@pytest.mark.parametrize("setting", SOURCE_TOKEN_SETTINGS)
+def test_a_source_credential_is_optional_and_resolves_empty_when_unset(
+    contract_environment: dict[str, str], compose_version: str, setting: str
+) -> None:
+    """A deployment that syncs neither source must still start.
+
+    The contract environment supplies no source token, so an interpolation that
+    made one required would have failed the whole resolve, and one that carried
+    a default would show it here.
+    """
+    del compose_version
+    resolved = resolve_privately(contract_environment)
+    environment = service(resolved, "sync-worker")["environment"]
+
+    assert setting in environment, f"{setting} is absent from the worker environment"
+    assert not environment[setting], f"{setting} resolved to a value with no operator input"
+
+
+@pytest.mark.parametrize("setting", SOURCE_TOKEN_SETTINGS)
+def test_a_declared_source_credential_reaches_only_the_worker(
+    contract_environment: dict[str, str], compose_version: str, setting: str
+) -> None:
+    """The operator's value is what the worker is given, and the only thing given it.
+
+    Read from raw output, because a credential-named setting is redacted by name
+    and a redacted model cannot answer which value it carries. Compared
+    privately: the assertions below report service names, never the value.
+    """
+    del compose_version
+    planted = f"contract-{setting.lower().replace('_', '-')}-4f7ab2"
+
+    resolved = resolve_privately({**contract_environment, setting: planted})
+
+    carriers = {
+        name
+        for name, definition in services(resolved).items()
+        if planted in (definition.get("environment") or {}).values()
+    }
+    assert carriers == SOURCE_TOKEN_RECEIVERS, f"{setting} value reached {sorted(carriers)}"
+    assert service(resolved, "sync-worker")["environment"][setting] == planted

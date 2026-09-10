@@ -4,8 +4,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-import pynautobot  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
-import pynautobot.core.query  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
+import pynautobot  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
+import pynautobot.core.query  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
 from diffsync import Adapter, DiffSyncModel
 from pydantic import ValidationError
 from typing_extensions import Self

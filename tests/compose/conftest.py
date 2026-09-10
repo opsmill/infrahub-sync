@@ -190,6 +190,24 @@ def resolve(environment: Mapping[str, str], *, files: Sequence[Path] = (COMPOSE_
     return json.loads(result.stdout)
 
 
+def resolve_privately(environment: Mapping[str, str], *, files: Sequence[Path] = (COMPOSE_FILE,)) -> dict[str, Any]:
+    """Return the resolved model built from raw output, for value-level checks.
+
+    `resolve` reads redacted output, which is right for every property about
+    shape: a credential must not reach a value the suite can render. But a
+    credential-named setting is redacted by name, so a caller asking *which*
+    value the model carries reads `[redacted]` there and can prove nothing.
+
+    This is the sanctioned exception, and it comes with an obligation: a caller
+    compares privately and reports names. Nothing returned here may be rendered
+    into an assertion message.
+    """
+    result = compose(["config", "--format", "json"], environment=environment, files=files)
+    if result.returncode != 0:
+        pytest.fail(f"docker compose config refused the bundle: {result.stderr.strip()}")
+    return json.loads(result.unredacted())
+
+
 @lru_cache(maxsize=1)
 def _compose_available() -> str | None:
     """Return the installed Compose version, or None when the CLI is absent."""
