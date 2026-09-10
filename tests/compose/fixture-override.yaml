@@ -8,11 +8,9 @@
 # reason to carry: a deployment's destination is a real address it resolves like
 # any other.
 services:
-  # The two that reach the destination: the job that probes it before a start,
-  # and the worker that runs against it. The API opens no connection to it.
-  sync-bootstrap:
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+  # The one service that reaches the destination: the worker that runs against
+  # it. The API resolves runs out of PostgreSQL and dispatches through Prefect,
+  # and the bootstrap job reaches no destination at all.
   sync-worker:
     extra_hosts:
       - "host.docker.internal:host-gateway"

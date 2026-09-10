@@ -553,6 +553,91 @@ def test_a_clean_row_six_reports_its_property(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The registration a reset destroys, and the rows after it that need one
+# ---------------------------------------------------------------------------
+# Row 2 registers the qualification configuration once, through the API, and
+# every row from there on runs against it. Row 9 resets the deployment, which
+# takes that registration with it, and then proves the start after the reset
+# reaches an empty registry -- a proof a deployment still holding a registration
+# could not give. So the order matters in both directions: the cold proof cannot
+# come after a re-registration, and the row cannot end without one.
+ROW_NINE_INSTANCE = "23a0e26e17b7999f"
+
+
+def row_nine_harness(work: Path, *, registration: int = 0) -> str:
+    """Row 9's own text, with its destructive steps stubbed and its sequence recorded."""
+    return "\n".join(
+        [
+            "set -eu",
+            f"WORK={work}",
+            "ROW=ownership_and_reset",
+            f"INSTANCE={ROW_NINE_INSTANCE}",
+            "FOREIGN_VOLUME=infrahub-sync-clean-host-foreign-$INSTANCE",
+            'fail() { echo "clean-host: $ROW: $1" >&2; exit 1; }',
+            'report() { echo "clean-host: $ROW: $1"; }',
+            # The reset this row is about: refused without the exact identity,
+            # and destructive with it. Recorded to a file rather than to stdout,
+            # which the row redirects.
+            "compose_bundle() {",
+            '    if [ "$2" != "$INSTANCE" ]; then echo confirmation-required; return 1; fi',
+            '    echo reset >> "$WORK/order"',
+            "}",
+            # Every check the row asks for, in the order it asks for it, so what
+            # this test reads is the driver's own sequence and not a reading of it.
+            "check() {",
+            '    echo "check:$1" >> "$WORK/order"',
+            f'    if [ "$1" = register_configuration ]; then return {registration}; fi',
+            "    return 0",
+            "}",
+            "create_foreign_volume() { :; }",
+            "capture_deployment_evidence() { :; }",
+            "reinitialise_deployment() { :; }",
+            "start_deployment() { :; }",
+            "remove_foreign_volume() { :; }",
+            # The host answers that this row's own assertions read: the foreign
+            # volume is still there, and the reset left no container behind.
+            "docker() { :; }",
+            shell_function("row_ownership_and_reset"),
+            "row_ownership_and_reset",
+        ]
+    )
+
+
+def row_nine_order(work: Path) -> list[str]:
+    """What row 9 asked of the deployment, in the order it asked."""
+    recorded = work / "order"
+    return recorded.read_text(encoding="utf-8").split() if recorded.is_file() else []
+
+
+def test_the_reset_row_proves_a_cold_registry_and_then_leaves_a_registration_behind(tmp_path: Path) -> None:
+    """The regression: the reset took row 2's registration and nothing put it back.
+
+    Row 10 was the row that failed for it, on a live host, asking for disposable
+    state against a deployment that had no configuration registered any more. The
+    cold proof stays first, because it is only a proof while the registry is
+    empty; the registration is made again after it, because the row's own
+    boundary is where the next managed action starts.
+    """
+    answered = run_shell(row_nine_harness(tmp_path), work=tmp_path)
+
+    assert answered.returncode == 0, answered.stderr
+    assert row_nine_order(tmp_path) == ["reset", "check:cold_bootstrap", "check:register_configuration"], (
+        "row 9 did not prove an empty registry before restoring the registration the next row needs"
+    )
+    assert "the next start after a reset is cold" in answered.stdout
+
+
+def test_a_registration_the_reset_row_could_not_remake_ends_the_run(tmp_path: Path) -> None:
+    """Assumed rather than checked, this is the next row failing for row 9's reason."""
+    answered = run_shell(row_nine_harness(tmp_path, registration=1), work=tmp_path)
+
+    assert answered.returncode != 0
+    assert "could not be registered again after the reset" in answered.stderr, (
+        "a registration this row could not remake reads as having been made"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Sharing a private directory with a container, on a host with no privileges
 # ---------------------------------------------------------------------------
 # A host directory cannot be given away to the candidate image's user: `chown`

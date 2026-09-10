@@ -98,3 +98,29 @@ def test_the_build_records_no_attestations_beside_the_image() -> None:
 
     assert "--provenance=false" in command
     assert "--sbom=false" in command
+
+
+def test_the_build_asks_the_exporter_for_no_name_of_its_own() -> None:
+    """The index name is the exporter's answer, and the record repeats it.
+
+    Passing `name=` here would let the build decide what the bundle's binding
+    calls the index, and the two would agree because one of them was told. What
+    a host can actually resolve is decided by the layout, so that is where the
+    name has to come from.
+    """
+    command = image.build_command(IDENTITY, platforms=image.PLATFORMS, destination=Path("/tmp/layout"))  # noqa: S108
+
+    exported = command[command.index("--output") + 1]
+    assert exported.startswith("type=oci"), exported
+    assert "name=" not in exported, exported
+
+
+def test_the_digest_record_declares_the_schema_that_carries_the_index_name() -> None:
+    """The bundle's binding needs the name, and an older record does not hold one.
+
+    Stated as the version rather than left implicit: a record written under 1
+    parses cleanly and is silently missing the field, so the bump is what tells
+    a reader the two are not the same document.
+    """
+    assert image.DIGESTS_SCHEMA_VERSION == 2
+    assert image.REFERENCE_ANNOTATION == "org.opencontainers.image.ref.name"

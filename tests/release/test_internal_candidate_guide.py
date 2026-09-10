@@ -73,11 +73,14 @@ SELF_EXCLUDED_GROUP = "infrahub-sync-qualification-record"
 # The image the deployment and the CLI are both given: the configuration digest
 # read out of the record and exported, never a tag and never an unbound name.
 IMAGE_VARIABLE = "INFRAHUB_SYNC_IMAGE"
+# The record the release generates into the archive. The operator names no
+# image, so this is where the guide's image check has moved to.
+BINDING_FILE = "image.bind"
 
 # A single confirmed write with no reviewed plan between the request and the
 # destination. It is a real capability and it is not what this procedure
 # qualifies, because it demonstrates nothing about the admission path.
-DIRECT_WRITE = "sync sync"
+DIRECT_WRITE = "cli sync"
 
 # The procedure changes directory twice, so anything one step writes and a later
 # step reads is named by one absolute variable rather than by a relative path
@@ -299,11 +302,11 @@ def test_the_guide_qualifies_a_write_only_through_a_reviewed_plan() -> None:
     script = commands(guide())
 
     assert DIRECT_WRITE not in script, f"{GUIDE.name} runs `{DIRECT_WRITE}`, which skips the reviewed plan"
-    assert "sync diff" in script, f"{GUIDE.name} never plans"
-    assert "sync runs plan" in script, f"{GUIDE.name} never reads the saved plan"
+    assert "cli diff" in script, f"{GUIDE.name} never plans"
+    assert "cli runs plan" in script, f"{GUIDE.name} never reads the saved plan"
     assert "--expected-checksum" in script, f"{GUIDE.name} never binds the reviewed checksum to the apply"
-    plan = script.index("sync runs plan")
-    assert plan < script.index("sync apply"), f"{GUIDE.name} applies before reading the plan"
+    plan = script.index("cli runs plan")
+    assert plan < script.index("cli apply"), f"{GUIDE.name} applies before reading the plan"
 
 
 @pytest.mark.parametrize("tool", FORBIDDEN_TOOLS)
@@ -326,11 +329,16 @@ def test_the_guide_declares_the_tools_it_actually_uses(tool: str) -> None:
     assert tool in prerequisites, f"{GUIDE.name} uses {tool} without declaring it up front"
 
 
-def test_the_guide_exports_the_verified_configuration_digest_before_it_is_used() -> None:
-    """The CLI wrapper and the deployment are both handed one value, and it has to be the checked one.
+def test_the_guide_verifies_the_bundles_binding_against_the_digest_it_checked() -> None:
+    """The deployment is never handed an image, so what has to be ordered is the check.
 
-    An unbound variable there runs whatever the shell happens to hold, and a tag
-    would be refused by the bundle but not by `docker run`.
+    Every container the procedure runs -- the API, the worker, the bootstrap job
+    and the CLI -- comes from the record the archive shipped, which the operator
+    does not write. What the guide still owes a reader is proof that the record
+    names the candidate they verified, and the three steps have one order: read
+    the digest out of the qualification record, export it, and compare the
+    bundle's own binding against it. An unbound variable in that comparison
+    compares against nothing and passes.
     """
     script = commands(guide())
     lines = script.splitlines()
@@ -338,7 +346,10 @@ def test_the_guide_exports_the_verified_configuration_digest_before_it_is_used()
         (index for index, line in enumerate(lines) if line.strip() == f"export {IMAGE_VARIABLE}"),
         None,
     )
-    used = next((index for index, line in enumerate(lines) if f'"${IMAGE_VARIABLE}" infrahub-sync' in line), None)
+    compared = next(
+        (index for index, line in enumerate(lines) if BINDING_FILE in line and f"${IMAGE_VARIABLE}" in line),
+        None,
+    )
     read_from_record = next(
         (index for index, line in enumerate(lines) if IMAGE_VARIABLE in line and "platforms" in line),
         None,
@@ -346,8 +357,25 @@ def test_the_guide_exports_the_verified_configuration_digest_before_it_is_used()
 
     assert read_from_record is not None, f"{GUIDE.name} does not read the image digest out of the record"
     assert exported is not None, f"{GUIDE.name} never exports {IMAGE_VARIABLE}"
-    assert used is not None, f"{GUIDE.name} never runs the CLI under {IMAGE_VARIABLE}"
-    assert read_from_record < exported < used, f"{GUIDE.name} uses {IMAGE_VARIABLE} before verifying and exporting it"
+    assert compared is not None, f"{GUIDE.name} never checks {BINDING_FILE} against {IMAGE_VARIABLE}"
+    assert read_from_record < exported < compared, (
+        f"{GUIDE.name} compares against {IMAGE_VARIABLE} before verifying and exporting it"
+    )
+
+
+def test_the_guide_never_tells_a_reader_to_name_an_image_themselves() -> None:
+    """The whole point of the shipped record is that this step no longer exists.
+
+    A leftover instruction is worse than a missing one: it tells a reader to edit
+    a setting the deployment does not read, and the deployment they end up with
+    runs something else than the line they edited says.
+    """
+    script = commands(guide())
+
+    assert f"{IMAGE_VARIABLE}=" not in script.replace(f"{IMAGE_VARIABLE}=$(", ""), (
+        f"{GUIDE.name} still assigns {IMAGE_VARIABLE} somewhere an operator would edit"
+    )
+    assert "REPLACE-ME" not in script, f"{GUIDE.name} still refers to a placeholder nothing writes"
 
 
 def test_every_file_carried_across_a_directory_change_is_named_absolutely() -> None:
@@ -464,13 +492,20 @@ def _renders(segment: str) -> bool:
     return command in RENDERING_COMMANDS
 
 
-def test_the_guide_confirms_the_settings_are_present_without_showing_them() -> None:
-    """Removing the rendering leaves the reader needing to know it worked."""
+def test_the_guide_confirms_what_it_can_without_rendering_a_credential() -> None:
+    """Removing the rendering leaves the reader needing to know it worked.
+
+    The binding is the one file here that holds no credential, so the guide reads
+    it out loud and compares it. Every other confirmation still has to reach the
+    terminal as a sentence rather than as a value, which the rendering scan below
+    is what enforces.
+    """
     script = commands(guide())
 
-    assert "grep -q" in script, f"{GUIDE.name} has no non-rendering presence check"
-    assert "is set" in script, f"{GUIDE.name} never confirms the settings are in place"
-    assert "REPLACE-ME" in script, f"{GUIDE.name} accepts a setting still holding its placeholder"
+    assert BINDING_FILE in script, f"{GUIDE.name} never looks at the record the bundle ships"
+    assert "OK: the bundle names the candidate you loaded" in script, (
+        f"{GUIDE.name} never confirms the bundle names the verified candidate"
+    )
 
 
 def test_the_guide_reads_the_api_token_without_sourcing_the_credential_file() -> None:

@@ -8,6 +8,7 @@ session-scoped stack can be shared by every case that needs one.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import time
 import uuid
@@ -170,6 +171,20 @@ class Deployment:
         return f"http://127.0.0.1:{self.prefect_port}"
 
 
+# The bound one wrapper command is given. A `start` runs preflight, a waited
+# `up`, and then polls for a live worker, so it is the longest of them.
+ENTRY_POINT_TIMEOUT_SECONDS = 900
+
+
+def entry_point(bundle: Path, *arguments: str, timeout: int = ENTRY_POINT_TIMEOUT_SECONDS) -> Captured:
+    """Run one lifecycle command exactly as an operator would.
+
+    The entry point prints Compose's own output, so what comes back is retained
+    Compose output and goes through the same redaction boundary as the rest.
+    """
+    return capture([str(bundle / "infrahub-sync-compose"), *arguments], timeout=timeout, env=os.environ.copy())
+
+
 def wait_for(description: str, probe: Callable[[], object], *, timeout: int = READY_TIMEOUT_SECONDS) -> object:
     """Poll one probe until it returns a truthy value, or fail naming what it last said."""
     deadline = time.monotonic() + timeout
@@ -308,6 +323,40 @@ def owned_volumes(deployment: Deployment) -> dict[str, str]:
 def bundle_relative(path: Path) -> str:
     """Render one path the way a Compose file inside the bundle would name it."""
     return str(path.relative_to(BUNDLE))
+
+
+def write_candidate_binding(bundle: Path, image: str) -> bytes:
+    """Write into a bundle copy the binding a release would generate for this candidate.
+
+    Two rules meet here. The record is produced by the release's own helper from
+    the whole digest record the image gate wrote — its index name and index
+    digest included — because a record synthesised from the candidate reference
+    alone would be a shape this repository never ships, and the suite would be
+    asserting against its own invention.
+
+    And the environment stays what it is: `INFRAHUB_SYNC_IMAGE` names the test
+    input, and this refuses rather than quietly writing a record that names
+    something else. A helper that accepted the drift would turn the environment
+    into the operator image-selection channel the binding exists to remove.
+    """
+    from tasks.image import read_digests, recorded_identity
+    from tasks.release import BINDING_CONFIG_KEY, BINDING_MEMBER, image_binding
+
+    record = read_digests()
+    binding = image_binding(record, recorded_identity(record))
+    consumed = dict(line.split("=", 1) for line in binding.decode("utf-8").splitlines())
+    assert consumed[BINDING_CONFIG_KEY] == image, (
+        "the generated binding names a candidate other than the image under test"
+    )
+    (bundle / BINDING_MEMBER).write_bytes(binding)
+    return binding
+
+
+def instance_identity(bundle: Path) -> str:
+    """Return the identity a bundle's generated state file names."""
+    from tests.compose.conftest import instance_setting
+
+    return instance_setting(bundle, "INFRAHUB_SYNC_INSTANCE")
 
 
 def operator_environment(

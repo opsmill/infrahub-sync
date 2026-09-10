@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-import pynetbox  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
+import pynetbox  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
 from diffsync import Adapter, DiffSyncModel
 from requests import Session
 from typing_extensions import Self

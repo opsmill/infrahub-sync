@@ -22,21 +22,36 @@ cd infrahub-sync-compose-<version>
 ```
 
 The checksum is a claim about the archive as shipped and about nothing
-afterwards. Preparing a deployment writes `operator.env` and edits the declared
-configuration, and both are expected to leave the extracted tree different from
-the archive.
+afterwards. Preparing a deployment writes `operator.env`, which is expected to
+leave the extracted tree different from the archive.
+
+The archive names the image it was qualified against. That record is
+`image.bind` beside the entry point, and it is not yours to edit: it holds the
+qualified platform and the same image in the two immutable forms a host can hold
+it under — the exported index, and the configuration digest a `docker load`
+leaves behind. There is no setting anywhere that names a different image.
+
+```bash
+cat image.bind
+```
 
 The image is named by digest, never by a tag. A tag can be re-pointed between
 the qualification that trusted an image and the run that uses it, so the
-lifecycle entry point refuses one before it creates anything. Confirm what a
-local image actually is:
+lifecycle entry point refuses one before it creates anything.
+
+Load the image this record names onto the host before the first `start`. Which
+of its two forms your host ends up holding depends on how it was loaded, and the
+deployment answers that itself: it tries the index first, then the configuration
+digest, and it asks only this engine. No registry is consulted, because what a
+registry holds says nothing about what this host can run.
+
+Confirming that what you loaded is what the record names is one command. The
+identifier it prints is the image's configuration digest, which is the form the
+release record names and the second of the two forms in `image.bind`:
 
 ```bash
 docker image inspect --format '{{.Id}}' <reference>
 ```
-
-That identifier is the image's configuration digest, which is the form the
-release record names and the form `INFRAHUB_SYNC_IMAGE` takes.
 
 ## Prepare
 
@@ -46,19 +61,82 @@ release record names and the form `INFRAHUB_SYNC_IMAGE` takes.
 
 That generates `.instance`, `secrets/postgres-admin-password`, and
 `operator.env`, with passwords for the two database owner roles, the object
-store, and one API principal. Two values are yours to supply in `operator.env`:
+store, and one API principal. Nothing in `operator.env` has to be filled in
+before the first start.
+
+`init` needs no Docker: it reads `image.bind`, checks its grammar, and copies the
+index reference into `.instance` so every later command has an image name to
+work with. It resolves nothing, so it works before the image has been loaded.
+
+A configuration is not a startup input. The deployment starts with an empty
+registry and no destination, and you register a declared package through the
+Sync API once it is running. `configuration/qualification.yaml` in this bundle is
+an example of that package's shape, and nothing loads it on your behalf. A
+package holds credential *references*, never values.
+
+The credentials a registered package references are yours to add to
+`operator.env` before the run that needs them, and `init` leaves each one
+commented:
 
 ```bash
-INFRAHUB_SYNC_IMAGE=sha256:<64 hex>          # or <registry>/<repository>@sha256:<64 hex>
 INFRAHUB_API_TOKEN=<your Infrahub token>
 ```
 
-Then point `configuration/qualification.yaml` at your Infrahub, or point
-`INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION` at a declared package of your own. Edit
-it before the first start: the registry checksums the declared content, and
-bootstrap recognises the configuration by its declared name, so different
-content under a name already registered is refused. A package holds credential
-*references*, never values.
+A container reads its environment once, at start. After changing any value in
+`operator.env`, run `./infrahub-sync-compose start` again: that recreates the
+services whose environment changed, where `restart` would replace the processes
+inside containers that keep the environment they were created with.
+
+### Reading from NetBox or Nautobot
+
+A package that reads from one of those declares the endpoint and a reference to
+the token, and `init` leaves both names commented in `operator.env`. Uncomment
+only the one your package names:
+
+```bash
+NETBOX_TOKEN=<your NetBox token>
+```
+
+```yaml
+configuration:
+  source:
+    name: netbox
+    settings:
+      url: "http://netbox.example.net:8080"
+      token:
+        $credential: netbox-token
+credentials:
+  netbox-token:
+    provider: env
+    identifier: NETBOX_TOKEN
+```
+
+Nautobot is the same shape with `nautobot`, `nautobot-token` and
+`NAUTOBOT_TOKEN`.
+
+Four things decide whether this works:
+
+- **The URL is resolved inside a container, not on your host.** `localhost`
+  there is the worker itself. Name a host the Compose network can reach, or the
+  host's own address; `127.0.0.1` and `localhost` will not do.
+- **The declared `url` is the only one used.** Exporting `NETBOX_ADDRESS`,
+  `NETBOX_URL`, `NAUTOBOT_ADDRESS` or `NAUTOBOT_URL` in your shell changes
+  nothing — a registered run reads what the package declares.
+- **A missing or empty token fails that run, not the deployment.** The worker
+  refuses with the environment variable's name, never its value. Both tokens are
+  optional, so a deployment reading from neither source starts normally, and a
+  package that names one source does not need the other's token.
+- **The worker reads its environment once, at start.** After changing either
+  value in `operator.env`, run `./infrahub-sync-compose start`; `restart` keeps
+  the environment each container already has.
+
+Only the worker is given these tokens. The API, the bootstrap job, PostgreSQL,
+the object store and the Prefect server never receive one: registration and the
+default validation judge declared content without resolving a source secret.
+
+That both adapters are installed and import is a packaging fact. It is not a
+statement that any particular NetBox or Nautobot version has been qualified
+against this release.
 
 ## Start
 
@@ -66,6 +144,12 @@ content under a name already registered is refused. A package holds credential
 ./infrahub-sync-compose preflight
 ./infrahub-sync-compose start
 ```
+
+`start` runs `preflight` itself, so the separate call above is optional. It is a
+diagnostic rather than a read-only one: it may replace the image recorded in
+`.instance` with whichever of the record's two forms this engine resolved. It
+starts no service, changes nothing in `operator.env` or `secrets/`, leaves the
+instance identity alone, and reaches no source or destination.
 
 `preflight` refuses before anything is created. Each refusal is one family name
 and a fixed sentence, and none of them renders a credential value:
@@ -76,25 +160,103 @@ and a fixed sentence, and none of them renders a credential value:
 | `no-docker`, `docker-unavailable` | Docker is absent from `PATH`, or it could not enumerate or inspect this instance. Neither is evidence that the deployment is stopped. |
 | `no-instance` | This bundle has no identity yet. Run `init`. |
 | `no-operator-settings` | `operator.env` does not exist. Run `init`. |
-| `path-unwritable`, `path-unreadable`, `path-missing` | The bundle directory, `secrets/`, or the declared configuration is not usable by this user. |
-| `credentials-missing` | A required setting is empty or still holds `REPLACE-ME`. |
-| `image-not-immutable` | `INFRAHUB_SYNC_IMAGE` names a tag or a malformed digest. |
-| `image-unresolvable` | Docker cannot find that digest locally or in a registry. |
+| `path-unwritable`, `path-unreadable`, `path-missing` | The bundle directory, `secrets/`, or the generated `.instance` is not usable by this user. A refused state write leaves the previous `.instance` exactly as it was. |
+| `credentials-missing` | A required setting in `operator.env` is empty. |
+| `image-binding-missing` | `image.bind` is absent or unreadable, so this bundle names no image. Extract the archive again. |
+| `image-binding-invalid` | `image.bind` names no platform, no index reference and no configuration digest; names a platform this bundle is not qualified on; or names something that is not an immutable digest. |
+| `image-binding-mismatch` | `.instance` names an image `image.bind` does not. Run `init`. |
+| `image-not-immutable` | The selected reference carries a malformed digest. |
+| `image-unresolvable` | This engine holds neither image `image.bind` names. Load the candidate on this host. |
+| `image-platform-unqualified` | The image this engine resolved is another architecture. It is not a fallback; load the qualified one. |
 | `port-unset` | `INFRAHUB_SYNC_BIND_ADDRESS`, or one of the two port settings, names nothing. |
 | `port-occupied`, `port-unprovable` | A required loopback bind is held, or the bind probe could not run. |
-| `destination-unavailable` | The declared destination URL did not answer. |
+| `cli-usage` | `cli --package` was given no file. |
+| `package-unusable` | The named package is not a readable regular file, or its copy could not be staged for that call. The refusal names the path and never its content. |
 | `foreign-resource` | A resource under this name carries another instance's label. Nothing was changed. |
 | `not-ready` | `start` brought the deployment up and no live worker registered inside `INFRAHUB_SYNC_READY_TIMEOUT` seconds. |
 | `confirmation-required` | `reset` was not given this deployment's exact identity. |
 
 `start` runs `preflight`, brings the deployment up, and returns once the Sync API
 reports a worker that has registered. Repeating it is safe: bootstrap converges
-the two databases and their owners, the artifact bucket, the Prefect work pool,
-the installed deployment, and the declared configuration, and a second run
-creates none of them twice.
+the two databases and their owners, the product schema, the artifact bucket, the
+Prefect work pool, and the installed deployment, and a second run creates none of
+them twice. It registers nothing, so a repeat also leaves every configuration you
+registered exactly as it was.
+
+`READY` is a statement about this deployment's own dependencies and a live
+worker. It says nothing about whether a configuration is registered, whether one
+is valid, or whether its destination answers — a deployment reaches `READY` with
+an empty registry, no credentials and no reachable destination.
 
 Both published surfaces bind to loopback: the Sync API on `127.0.0.1:8000`, the
 Prefect UI and API on `127.0.0.1:4200`.
+
+## Register a configuration and run it
+
+`cli` runs the shipped CLI against this deployment, in a container of the same
+image and on the deployment's own network. Like `preflight`, it resolves the
+image before it runs anything, so it too may replace the image recorded in
+`.instance` with whichever of the record's two forms this engine resolved. It
+authenticates with `INFRAHUB_SYNC_API_TOKEN`, which `init` wrote as the same
+value as the principal in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`; those two
+settings are one credential, so a hand edit to either has to be made to both.
+
+An `operator.env` generated by an earlier alpha has no `INFRAHUB_SYNC_API_TOKEN`
+line at all, and nothing adds one: `init` leaves an existing file exactly as it
+found it, and this alpha migrates no state in place. Every `cli` call against
+such a bundle fails to authenticate. Add the setting by hand and give it the
+token already inside that same file's `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`,
+which is the principal this deployment authorizes; nothing here rotates it, and
+any other value would leave the CLI unauthenticated again. Never `source`
+`operator.env` to read it: that file holds every other credential of the
+deployment.
+
+Each call is one container, removed when the command ends. It publishes nothing,
+starts no service as a side effect, and keeps no volume.
+
+`--package` gives one call one file: its bytes are copied into a private
+directory, mounted read-only at `/input/package.yaml`, and removed afterwards.
+Your own file is never mounted and never modified.
+
+```bash
+./infrahub-sync-compose init
+# No image to name and no configuration or destination needed: the archive names the image.
+./infrahub-sync-compose start
+./infrahub-sync-compose cli configs list
+# Add destination/source credentials to operator.env before planning; recreate affected services
+# using start after changed environment; restart alone retains the old container environment.
+./infrahub-sync-compose start
+./infrahub-sync-compose cli --package ./package.yml -- configs register /input/package.yaml --reason 'register my configuration'
+./infrahub-sync-compose cli configs show CONFIG_ID
+./infrahub-sync-compose cli configs versions CONFIG_ID
+./infrahub-sync-compose cli configs validate CONFIG_ID 1
+./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'review initial sync'
+./infrahub-sync-compose cli runs plan RUN_ID --detail
+./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM --branch main --reason 'apply reviewed initial sync'
+./infrahub-sync-compose cli runs show RUN_ID
+./infrahub-sync-compose cli runs results RUN_ID
+./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'verify unchanged source'
+# Versioning is explicit, and never rewrites a registered version:
+./infrahub-sync-compose cli --package ./edited-package.yml -- configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'
+```
+
+`CONFIG_ID`, `RUN_ID` and `CHECKSUM` are results the previous commands printed.
+`--` separates this wrapper's own options from the CLI's arguments.
+
+Four things worth knowing before the first plan:
+
+- **`READY` is not a statement about a configuration.** It says the Sync-owned
+  dependencies answer and a worker is live. Whether a registered package is
+  valid is what `configs validate` answers; whether its destination answers is
+  what the first run against it answers.
+- **A package's URLs are resolved inside a container.** `localhost` there is the
+  container itself, so name an address the Compose network can reach.
+- **A package's credentials are references.** Their values live in
+  `operator.env`, so no secret is registered, stored or printed. Add one before
+  the run that needs it and run `start` again.
+- **Registered content is preserved.** It lives in PostgreSQL, and the file you
+  registered from is not mounted by anything afterwards. A registered version is
+  immutable: register an edit as the next version with `configs version`.
 
 ## Status and logs
 
@@ -141,10 +303,11 @@ bundle and the same image:
 ```
 
 The start that follows is a cold bootstrap, not a resumption: the databases, the
-bucket, the work pool, the deployment, and the declared configuration are created
-from nothing, and the deployment reaches `READY` with no runs and no artifacts
-behind it. Prior run history, retained plans, and artifacts do not survive. Keep
-anything you need outside the deployment before you reset.
+product schema, the bucket, the work pool, and the deployment are created from
+nothing, and the deployment reaches `READY` with an empty registry, no runs and
+no artifacts behind it. Prior run history, retained plans, registered
+configurations, and artifacts do not survive. Keep anything you need outside the
+deployment before you reset, and register your package again afterwards.
 
 ## When the outcome of a write is uncertain
 
@@ -156,33 +319,16 @@ terminal and the record carries what is known.
 
 Read the run itself first. `reconciliation_required` is on the run, not buried in
 its evidence, so deciding whether a run needs reconciling never requires parsing
-a failure:
+a failure.
 
-Both requests need the API principal `init` generated. It is one field of one
-line of `operator.env`, so read that field out rather than sourcing the file —
-sourcing it would export every other credential in it too. Run this from the
-bundle directory:
-
-```bash
-INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
-INFRAHUB_SYNC_API_TOKEN=$(
-  sed -n 's/^INFRAHUB_SYNC_SERVICE_BEARER_TOKENS=.*"token": "\([^"]*\)".*/\1/p' operator.env
-)
-export INFRAHUB_SYNC_API_URL INFRAHUB_SYNC_API_TOKEN
-
-# Confirms it was found without showing it. Nothing here prints the value.
-[ -n "$INFRAHUB_SYNC_API_TOKEN" ] \
-  && echo "the operator token was read" \
-  || echo "no operator token in operator.env; was this deployment initialised?"
-```
-
-Then:
+`cli runs show` prints it, beside the phase, the outcome and the Prefect
+correlation, and prints it for both of its values: `false` is an answer, and a
+field that appeared only when it was true could not be told apart from one this
+command does not report. `cli runs results` prints what the run itself recorded.
 
 ```bash
-curl -sS -H "Authorization: Bearer $INFRAHUB_SYNC_API_TOKEN" \
-  "$INFRAHUB_SYNC_API_URL/runs/RUN"
-curl -sS -H "Authorization: Bearer $INFRAHUB_SYNC_API_TOKEN" \
-  "$INFRAHUB_SYNC_API_URL/runs/RUN/results"
+./infrahub-sync-compose cli runs show RUN_ID
+./infrahub-sync-compose cli runs results RUN_ID
 ```
 
 Two records mean an uncertain write, and they are not the same thing:
@@ -212,5 +358,7 @@ flag, no partial-write marker — and needs only a new plan.
 - The API and the worker share no mount, no volume, and no scratch directory.
   Run state travels between them through PostgreSQL and the object store.
 - One Sync image serves the API, the worker, the bootstrap job, and the CLI.
+- The CLI reaches the Sync API and nothing else. It is given no storage, Prefect,
+  source or destination credential, and no Docker socket.
 - Credentials live in `operator.env` and `secrets/`, generated per deployment.
   Neither is part of the archive, and nothing prints their values.

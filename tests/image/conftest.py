@@ -58,6 +58,14 @@ READ_ONLY_ROOTS = (
 # `python -m ruff format` to keep regenerated code byte-stable, so the project
 # declares it as a runtime dependency and the image has to carry a working one.
 SERVICE_RUNTIMES = ("boto3", "fastapi", "prefect", "psycopg", "uvicorn")
+# The bundled source adapters whose SDK the service profile installs. The
+# adapter modules, not the SDKs: `import pynetbox` succeeding says the wheel is
+# present, while importing the adapter is what a registered run actually does
+# and is what fails when the adapter and the installed SDK disagree.
+BUNDLED_SOURCE_ADAPTERS = (
+    "infrahub_sync.adapters.netbox",
+    "infrahub_sync.adapters.nautobot",
+)
 RUNTIME_TOOLS = ("ruff",)
 EXCLUDED_MODULES = ("pytest", "invoke", "pylint")
 

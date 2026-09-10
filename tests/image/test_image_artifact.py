@@ -13,6 +13,7 @@ import pytest
 from packaging.version import Version
 
 from tests.image.conftest import (
+    BUNDLED_SOURCE_ADAPTERS,
     EXCLUDED_MODULES,
     READ_ONLY_ROOTS,
     REPO_ROOT,
@@ -191,6 +192,18 @@ def test_the_shipped_ruff_can_format_generated_code(image_ref: str) -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().splitlines()[-1] == 'x = {"a": 1}'
+
+
+@pytest.mark.parametrize("module", BUNDLED_SOURCE_ADAPTERS)
+def test_the_image_can_import_every_bundled_source_adapter(image_ref: str, module: str) -> None:
+    """A registered run resolves its adapter from installed code, so importing it is the claim.
+
+    The SDK being present is not the same property: the adapter is what binds
+    the SDK's surface, and it is the module a worker imports.
+    """
+    result = run_in_image(image_ref, ["python", "-c", f"import {module}"])
+
+    assert result.returncode == 0, f"{module}: {result.stderr}"
 
 
 @pytest.mark.parametrize("module", EXCLUDED_MODULES)

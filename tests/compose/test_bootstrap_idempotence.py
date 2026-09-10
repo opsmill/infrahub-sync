@@ -2,8 +2,11 @@
 
 `start` is safe to repeat, and Compose re-runs a completion-style job whenever
 its container is gone, so every one of these jobs runs again on an ordinary
-restart. A second run that created a second database, bucket, pool, deployment,
-or registration would turn restart into a slow corruption rather than a no-op.
+restart. A second run that created a second database, bucket, pool, or
+deployment would turn restart into a slow corruption rather than a no-op.
+
+The configuration registry is the operator's. A bootstrap registers nothing into
+it, and a repeat leaves whatever an operator put there exactly as it was.
 
 Each case reads the durable state from inside the deployment, before and after,
 and compares. Reading an exit code alone would pass for a job that succeeded at
@@ -16,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tests.compose.lifecycle import probe_json, run_bootstrap
+from tests.compose.lifecycle import api_client, probe_json, register, run_bootstrap, smoke_package
 
 if TYPE_CHECKING:
     from tests.compose.lifecycle import Deployment
@@ -83,6 +86,14 @@ print(json.dumps(sorted(event.actor + "/" + event.operation for event in events)
 
 
 @pytest.fixture(scope="module")
+def destination_url() -> str:
+    """The address the fixture destination answers on, as a container names it."""
+    from tests.compose.conftest import FIXTURE_INFRAHUB_PORT
+
+    return f"http://host.docker.internal:{FIXTURE_INFRAHUB_PORT}"
+
+
+@pytest.fixture(scope="module")
 def converged(deployment: Deployment) -> dict[str, Any]:
     """Everything durable the first bootstrap left behind."""
     return {
@@ -112,11 +123,12 @@ def test_the_first_bootstrap_created_the_bucket_the_pool_and_the_deployment(
     assert converged["prefect"]["deployments"] == ["run"], converged["prefect"]
 
 
-def test_the_first_bootstrap_registered_the_bundled_configuration(converged: dict[str, Any]) -> None:
-    """One version of it, from the file the job was given read-only."""
-    bundled = [entry for entry in converged["configurations"] if entry[0] == "infrahub-sync-qualification"]
-
-    assert [entry[1] for entry in bundled] == [1], converged["configurations"]
+def test_the_first_bootstrap_registered_no_configuration_and_recorded_no_event(
+    converged: dict[str, Any],
+) -> None:
+    """A started deployment holds an empty registry until an operator fills it."""
+    assert converged["configurations"] == [], converged["configurations"]
+    assert [event for event in converged["audit"] if "configs.register" in event] == [], converged["audit"]
 
 
 def test_the_database_bootstrap_repeats_without_changing_anything(
@@ -132,20 +144,34 @@ def test_the_database_bootstrap_repeats_without_changing_anything(
 def test_the_sync_bootstrap_repeats_without_duplicating_any_durable_object(
     deployment: Deployment, converged: dict[str, Any]
 ) -> None:
-    """Bucket, pool, deployment, and registration all converge rather than accumulate."""
+    """Bucket, pool, and deployment converge rather than accumulate."""
     repeated = run_bootstrap(deployment)
 
     assert repeated.returncode == 0, repeated.output
     assert probe_json(deployment, BUCKETS) == converged["buckets"]
     assert probe_json(deployment, PREFECT) == converged["prefect"]
-    assert probe_json(deployment, CONFIGURATIONS) == converged["configurations"]
 
 
-def test_a_repeated_bootstrap_records_no_second_registration_event(
-    deployment: Deployment, converged: dict[str, Any]
+def test_a_repeated_bootstrap_leaves_an_explicitly_registered_package_alone(
+    deployment: Deployment, canaries: dict[str, str], destination_url: str
 ) -> None:
-    """Registering is a decision and leaves evidence; finding it again is not."""
-    run_bootstrap(deployment)
+    """The registry the operator filled is the state a repeat must not touch.
 
-    assert probe_json(deployment, AUDIT) == converged["audit"]
-    assert converged["audit"].count("compose-bootstrap/configs.register") == 1, converged["audit"]
+    Registered through the API first, because an empty registry is preserved by a
+    bootstrap that wipes one as readily as by one that writes nothing.
+    """
+    with api_client(deployment, canaries["principal"]) as client:
+        _config_id, registry_version = register(
+            client,
+            smoke_package(destination_url),
+            "compose suite: a configuration a repeated bootstrap must preserve",
+        )
+    registered = probe_json(deployment, CONFIGURATIONS)
+    audited = probe_json(deployment, AUDIT)
+
+    repeated = run_bootstrap(deployment)
+
+    assert repeated.returncode == 0, repeated.output
+    assert probe_json(deployment, CONFIGURATIONS) == registered
+    assert probe_json(deployment, AUDIT) == audited
+    assert [entry[1] for entry in registered if entry[0] == "compose-suite-registered"] == [registry_version]

@@ -19,6 +19,15 @@ class _FakeRecord(UserDict):
     """`dict(MagicMock())` returns {}, so use UserDict to make `dict(node)` work."""
 
 
+@pytest.fixture(autouse=True)
+def _stubbed_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the adapter client for each test and restore its factory afterward."""
+    monkeypatch.setattr(
+        "infrahub_sync.adapters.nautobot.NautobotAdapter._create_nautobot_client",
+        lambda _self, _adapter: MagicMock(),
+    )
+
+
 def _make_adapter(mappings: list[dict]) -> "NautobotAdapter":
     """Build a NautobotAdapter with stubbed pynautobot client."""
     from infrahub_sync import SchemaMappingModel, SyncAdapter, SyncConfig
@@ -32,7 +41,6 @@ def _make_adapter(mappings: list[dict]) -> "NautobotAdapter":
         schema_mapping=schema_mapping,
     )
     adapter_settings = SyncAdapter(name="nautobot", settings={"url": "https://example.invalid", "token": "x"})
-    NautobotAdapter._create_nautobot_client = lambda _self, _adapter: MagicMock()  # ty: ignore[invalid-assignment]
     return NautobotAdapter(target="test", adapter=adapter_settings, config=config)
 
 
@@ -82,7 +90,7 @@ def test_list_changed_since_falls_back_when_endpoint_rejects_filter() -> None:
     """Some Nautobot endpoints (front-ports, rear-ports, ...) return 400 'Unknown filter field'
     on `last_updated__gte`. The adapter must catch that and fall back to `endpoint.all()`.
     """
-    import pynautobot  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
+    import pynautobot.core.query  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
 
     adapter = _make_adapter([{"name": "InfraDevice", "mapping": "dcim.devices", "identifiers": ["name"]}])
     fake_record = _FakeRecord({"id": 7, "name": "edge1"})

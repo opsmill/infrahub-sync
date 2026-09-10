@@ -60,7 +60,16 @@ SKOPEO_IMAGE = "quay.io/skopeo/stable:v1.20.0@sha256:47853bb9fb24202af9110531ebd
 
 CANARY_ENV = "INFRAHUB_SYNC_IMAGE_CANARY"
 SMOKE_COMMAND = "pytest -m docker tests/image"
-DIGESTS_SCHEMA_VERSION = 1
+# 2 added `index_name`: the reference annotation the exporter wrote beside the
+# index descriptor. A record written under 1 carries no name, and the bundle's
+# binding cannot be derived from one — which is a refusal there rather than a
+# field this reader invents.
+DIGESTS_SCHEMA_VERSION = 2
+
+# The annotation an OCI exporter puts on the index descriptor it writes. It is
+# the only name a layout carries: the export is a directory, not a repository,
+# so nothing else in it says what the index would be loaded as.
+REFERENCE_ANNOTATION = "org.opencontainers.image.ref.name"
 WAIVER_SCHEMA_VERSION = 1
 WAIVER_FIELDS = ("vulnerability", "owner", "reason", "expires")
 BLOCKING_SEVERITIES = frozenset({"high", "critical"})
@@ -163,11 +172,16 @@ def read_blob(layout: Path, digest: str) -> dict:
 
 
 def read_layout(layout: Path) -> dict:
-    """Return the index digest and the per-platform digests an OCI layout records.
+    """Return the index digest, its recorded name, and the per-platform digests.
 
     The layout is written by an external exporter, so its shape is checked rather
     than assumed: every digest below is read from a descriptor this function has
     confirmed is present and well formed.
+
+    The reference annotation is read the same way and recorded as it was found.
+    An export carrying none is still a readable layout — `image.inspect` has to
+    keep working on one — so an absent name is an empty string here and a refusal
+    wherever a name is actually required.
     """
     index_file = layout / "index.json"
     if not index_file.is_file():
@@ -185,6 +199,9 @@ def read_layout(layout: Path) -> dict:
     if not isinstance(index_digest, str):
         msg = f"{index_file} records no index digest"
         raise ImageTaskError(msg)
+    annotations = entries[0].get("annotations")
+    named = annotations.get(REFERENCE_ANNOTATION) if isinstance(annotations, dict) else None
+    index_name = named if isinstance(named, str) else ""
 
     # A multi-platform export names an index that lists one manifest per platform,
     # and a single-platform export names that one manifest directly. Both are
@@ -217,7 +234,7 @@ def read_layout(layout: Path) -> dict:
     if not platforms:
         msg = f"{layout} holds no platform images"
         raise ImageTaskError(msg)
-    return {"index": index_digest, "platforms": platforms}
+    return {"index": index_digest, "index_name": index_name, "platforms": platforms}
 
 
 def read_digests() -> dict:
@@ -470,11 +487,15 @@ def build(context: Context, platforms: str = ",".join(PLATFORMS)) -> None:
             "created": identity.created,
         },
         "index_digest": layout["index"],
+        # What the exporter called the index it wrote. The bundle's binding names
+        # the candidate as `<name>@<index digest>`, so losing this here would
+        # leave a release with no honest way to write that half.
+        "index_name": layout["index_name"],
         "platforms": layout["platforms"],
         "canary_present": True,
     }
     DIGESTS_FILE.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(f" - [{NAMESPACE}] OCI index {layout['index']}")
+    print(f" - [{NAMESPACE}] OCI index {layout['index_name']}@{layout['index']}")
     for name, digests in sorted(layout["platforms"].items()):
         print(f" - [{NAMESPACE}]   {name} manifest {digests['manifest']}")
     print(f" - [{NAMESPACE}] Digests recorded in {DIGESTS_FILE}")
@@ -486,6 +507,7 @@ def inspect(context: Context) -> None:
     del context
     record = read_digests()
     print(f" - [{NAMESPACE}] Index digest {record['index_digest']}")
+    print(f" - [{NAMESPACE}] Index name   {record.get('index_name', '')}")
     for name, digests in sorted(record["platforms"].items()):
         configuration = read_blob(LAYOUT_DIR, digests["config"]).get("config", {})
         print(f" - [{NAMESPACE}] {name}")

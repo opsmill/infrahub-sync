@@ -41,6 +41,49 @@ BUNDLED_CONFIGURATION = BUNDLE / "configuration" / "qualification.yaml"
 INSTANCE_LABEL = "io.infrahub-sync.instance"
 BUNDLE_LABEL = "io.infrahub-sync.bundle"
 
+# The member a release generates into the archive, naming the image the bundle
+# was qualified against. The repository tracks no such file — it is derived from
+# a candidate's digests — so a copy of `deploy/compose` is not what an operator
+# extracts until this is written beside it.
+#
+# The settings are restated here rather than imported from `tasks.release`, so a
+# change to the record's shape has to be made on both sides instead of one of
+# them reading the other and agreeing with itself.
+BINDING_FILE = "image.bind"
+BINDING_PLATFORM = "linux/amd64"
+BINDING_INDEX_NAME = "latest"
+BINDING_INDEX_DIGEST = "sha256:" + "1" * 64
+BINDING_CONFIG_DIGEST = "sha256:" + "2" * 64
+BINDING_INDEX_REFERENCE = f"{BINDING_INDEX_NAME}@{BINDING_INDEX_DIGEST}"
+
+
+def write_binding(bundle: Path, **overrides: str | None) -> Path:
+    """Write the binding member into a bundle copy, and return where it went.
+
+    An override of `None` drops that setting, which is how an incomplete record
+    is produced without each caller hand-writing the whole file.
+    """
+    values: dict[str, str | None] = {
+        "INFRAHUB_SYNC_IMAGE_PLATFORM": BINDING_PLATFORM,
+        "INFRAHUB_SYNC_IMAGE_INDEX": BINDING_INDEX_REFERENCE,
+        "INFRAHUB_SYNC_IMAGE_CONFIG": BINDING_CONFIG_DIGEST,
+    }
+    values.update(overrides)
+    record = bundle / BINDING_FILE
+    record.write_text(
+        "".join(f"{name}={value}\n" for name, value in values.items() if value is not None), encoding="utf-8"
+    )
+    return record
+
+
+def instance_setting(bundle: Path, name: str) -> str:
+    """Read one setting out of a bundle's generated instance state file."""
+    for line in (bundle / ".instance").read_text(encoding="utf-8").splitlines():
+        key, _, value = line.partition("=")
+        if key == name:
+            return value
+    return ""
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Register the flag the qualification command runs this suite with."""
@@ -190,6 +233,24 @@ def resolve(environment: Mapping[str, str], *, files: Sequence[Path] = (COMPOSE_
     return json.loads(result.stdout)
 
 
+def resolve_privately(environment: Mapping[str, str], *, files: Sequence[Path] = (COMPOSE_FILE,)) -> dict[str, Any]:
+    """Return the resolved model built from raw output, for value-level checks.
+
+    `resolve` reads redacted output, which is right for every property about
+    shape: a credential must not reach a value the suite can render. But a
+    credential-named setting is redacted by name, so a caller asking *which*
+    value the model carries reads `[redacted]` there and can prove nothing.
+
+    This is the sanctioned exception, and it comes with an obligation: a caller
+    compares privately and reports names. Nothing returned here may be rendered
+    into an assertion message.
+    """
+    result = compose(["config", "--format", "json"], environment=environment, files=files)
+    if result.returncode != 0:
+        pytest.fail(f"docker compose config refused the bundle: {result.stderr.strip()}")
+    return json.loads(result.unredacted())
+
+
 @lru_cache(maxsize=1)
 def _compose_available() -> str | None:
     """Return the installed Compose version, or None when the CLI is absent."""
@@ -227,6 +288,23 @@ def model(compose_version: str, contract_environment: dict[str, str]) -> dict[st
     """The resolved bundle every contract test reads."""
     del compose_version
     return resolve(contract_environment)
+
+
+# The one profile the bundle declares, and the service behind it.
+CLI_PROFILE = "cli"
+
+
+@pytest.fixture(scope="session")
+def cli_model(compose_version: str, contract_environment: dict[str, str]) -> dict[str, Any]:
+    """The resolved bundle with the CLI profile named, which is the only way to get it."""
+    del compose_version
+    result = compose(
+        ["--profile", CLI_PROFILE, "config", "--format", "json"],
+        environment=contract_environment,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"docker compose config refused the bundle: {result.stderr.strip()}")
+    return json.loads(result.stdout)
 
 
 def service(model: Mapping[str, Any], name: str) -> dict[str, Any]:

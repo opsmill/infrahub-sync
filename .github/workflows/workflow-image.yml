@@ -109,14 +109,17 @@ jobs:
       - name: "Build the distributions an approval would publish"
         run: uv run --no-sync invoke release.build
 
-      - name: "Produce the deployment bundle and the qualification kit"
-        run: uv run --no-sync invoke release.kit
-
       - name: "Build both platforms"
         run: uv run --no-sync invoke image.build
 
       - name: "Record the index and platform digests"
         run: uv run --no-sync invoke image.inspect
+
+      # After the build, because the bundle names the image it was qualified
+      # against: the binding it ships is derived from the digests that build
+      # recorded, and there is no mode that produces an unbound bundle.
+      - name: "Produce the deployment bundle and the qualification kit"
+        run: uv run --no-sync invoke release.kit
 
       # Two further builds on the builder the candidate build just warmed. They
       # prove a Python-only edit reaches the next image rather than resolving to

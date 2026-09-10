@@ -10,10 +10,13 @@ value the page and the bundle disagree about is a copy-and-paste failure.
 from __future__ import annotations
 
 import ast
+import re
+import shlex
 from typing import Any, get_type_hints
 
 import pytest
 from pydantic import BaseModel
+from typer.testing import CliRunner
 
 from infrahub_sync.client import SyncClient
 from tests.compose.conftest import BUNDLE, REPO_ROOT
@@ -26,7 +29,45 @@ API_REFERENCE = REPO_ROOT / "docs" / "docs" / "reference" / "sync-http-api.mdx"
 
 # Every command the entry point answers to. A command nobody wrote down is one
 # the deployment appears not to have.
-COMMANDS = ("init", "preflight", "start", "status", "logs", "stop", "restart", "reset")
+COMMANDS = ("init", "preflight", "start", "status", "logs", "stop", "restart", "reset", "cli")
+
+# The frozen operator sequence, in order and complete: the two lifecycle commands
+# that precede any CLI call, the literal second `start` after credentials are
+# added, and the unchanged-source diff after the apply. Order is the property --
+# an operator follows what is written, top to bottom -- so the documents are
+# scanned monotonically and the duplicate `start` has to be two occurrences.
+OPERATOR_SEQUENCE = (
+    "./infrahub-sync-compose init",
+    "./infrahub-sync-compose start",
+    "./infrahub-sync-compose cli configs list",
+    "./infrahub-sync-compose start",
+    (
+        "./infrahub-sync-compose cli --package ./package.yml -- "
+        "configs register /input/package.yaml --reason 'register my configuration'"
+    ),
+    "./infrahub-sync-compose cli configs show CONFIG_ID",
+    "./infrahub-sync-compose cli configs versions CONFIG_ID",
+    "./infrahub-sync-compose cli configs validate CONFIG_ID 1",
+    ("./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'review initial sync'"),
+    "./infrahub-sync-compose cli runs plan RUN_ID --detail",
+    (
+        "./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM "
+        "--branch main --reason 'apply reviewed initial sync'"
+    ),
+    "./infrahub-sync-compose cli runs show RUN_ID",
+    "./infrahub-sync-compose cli runs results RUN_ID",
+    (
+        "./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 "
+        "--branch main --reason 'verify unchanged source'"
+    ),
+    (
+        "./infrahub-sync-compose cli --package ./edited-package.yml -- "
+        "configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'"
+    ),
+)
+
+# The two operator documents this sequence has to appear in, in this order.
+OPERATOR_DOCUMENTS = ("docs/docs/compose-deployment.mdx", "deploy/compose/OPERATING.md")
 
 # The three lifecycle states and the exit code each one carries, so a reader can
 # script against them.
@@ -37,7 +78,11 @@ STATES = (("READY", "0"), ("DEGRADED", "3"), ("STOPPED", "4"))
 REFUSAL_FAMILIES = (
     "compose-too-old",
     "credentials-missing",
+    "image-binding-missing",
+    "image-binding-invalid",
+    "image-binding-mismatch",
     "image-not-immutable",
+    "image-platform-unqualified",
     "port-occupied",
     "port-unprovable",
     "foreign-resource",
@@ -52,6 +97,7 @@ BUNDLE_FILES = (
     "configuration/qualification.yaml",
     "bootstrap/databases.sh",
     "OPERATING.md",
+    "image.bind",
     "operator.env",
     "secrets/postgres-admin-password",
     ".instance",
@@ -99,6 +145,145 @@ def test_the_page_is_listed_in_the_docs_sidebar() -> None:
 def test_the_page_documents_every_lifecycle_command(command: str) -> None:
     """`--help` names them; this page is where their consequences are written down."""
     assert f"infrahub-sync-compose {command}" in page()
+
+
+def shell_blocks(body: str) -> list[list[str]]:
+    """Return each fenced shell block of one document as its list of lines."""
+    blocks: list[list[str]] = []
+    current: list[str] | None = None
+    for line in body.splitlines():
+        if line.startswith("```"):
+            if current is None:
+                current = [] if line.startswith("```bash") else None
+            else:
+                blocks.append(current)
+                current = None
+        elif current is not None:
+            current.append(line)
+    return blocks
+
+
+def missing_step(block: list[str]) -> str | None:
+    """Return the first sequence step this block does not carry in order, or None.
+
+    Monotonic over the block's own lines, so a step consumes the line it matched:
+    the second `start` needs a second line, and a reordered pair fails at the
+    first of the two.
+    """
+    remaining = list(block)
+    for step in OPERATOR_SEQUENCE:
+        for index, line in enumerate(remaining):
+            if line.strip() == step:
+                remaining = remaining[index + 1 :]
+                break
+        else:
+            return step
+    return None
+
+
+@pytest.mark.parametrize("document", OPERATOR_DOCUMENTS)
+def test_both_operator_documents_carry_the_whole_sequence_in_order(document: str) -> None:
+    """The bundled copy and the site page teach one procedure, in one order.
+
+    One block has to carry the whole sequence, and it is scanned monotonically
+    against that block's own lines. A step deleted, a pair reordered, or the
+    second `start` collapsed into one occurrence fails here; membership anywhere
+    in the document would accept all three, because both documents name `start`
+    in several unrelated places.
+    """
+    blocks = shell_blocks((REPO_ROOT / document).read_text(encoding="utf-8"))
+    complete = [block for block in blocks if missing_step(block) is None]
+    nearest = min((missing_step(block) or "" for block in blocks), key=len, default="")
+
+    assert complete, f"{document} carries no block running the whole frozen sequence in order (missing {nearest!r})"
+
+
+@pytest.mark.parametrize("document", OPERATOR_DOCUMENTS)
+def test_no_step_of_the_sequence_asks_an_operator_for_an_image(document: str) -> None:
+    """The archive names the image, so there is no image setting to be sent to.
+
+    The commands of the sequence are frozen above; the lines between them are
+    what an operator is told to do besides running them, and a step directing
+    them at a setting that does not exist stops the procedure at its second
+    line. Scoped to the sequence block rather than the page, so the prose that
+    explains why `operator.env` holds no image is untouched.
+    """
+    blocks = shell_blocks((REPO_ROOT / document).read_text(encoding="utf-8"))
+    sequence = [block for block in blocks if missing_step(block) is None]
+    assert sequence, f"{document} carries no complete sequence block to check"
+
+    for block in sequence:
+        for line in block:
+            lowered = line.lower()
+            assert not ("image" in lowered and "operator.env" in lowered), f"{document}: {line}"
+
+
+def usage_entries() -> dict[str, str]:
+    """Each command's own paragraph of the entry point's printed usage text."""
+    body = ENTRY_POINT.read_text(encoding="utf-8")
+    body = body[body.index("Usage: infrahub-sync-compose") : body.index("\nUSAGE\n")]
+    entries: dict[str, str] = {}
+    current = ""
+    for line in body.splitlines():
+        head = re.match(r"^  (\w+)", line)
+        if head and head.group(1) in COMMANDS:
+            current = head.group(1)
+            entries[current] = ""
+        if current:
+            entries[current] += line + "\n"
+    return entries
+
+
+@pytest.mark.parametrize("command", ["preflight", "cli"])
+def test_every_command_that_can_replace_the_recorded_image_says_so(command: str) -> None:
+    """Both of these resolve the binding, and resolving it persists what resolved.
+
+    An operator reading `--help` decides from it which commands touch the bundle.
+    A command that writes to `.instance` while its own entry reads like a
+    read-only one is the case where that decision is wrong.
+    """
+    entry = usage_entries()[command]
+
+    assert "recorded image" in entry, entry
+
+
+@pytest.mark.parametrize("document", OPERATOR_DOCUMENTS)
+def test_both_operator_documents_cover_an_operator_file_older_than_the_cli_token(document: str) -> None:
+    """`init` leaves an existing `operator.env` alone, including one without the token.
+
+    A bundle carried forward from an earlier alpha has an `operator.env` that
+    predates `INFRAHUB_SYNC_API_TOKEN`, and nothing adds it: this alpha migrates
+    no state in place. Every `cli` call then fails to authenticate, and the
+    document is the only place that says which value to write and where it is.
+    """
+    body = (REPO_ROOT / document).read_text(encoding="utf-8")
+
+    paragraphs = [block for block in body.split("\n\n") if "INFRAHUB_SYNC_API_TOKEN" in block]
+    covered = [
+        block
+        for block in paragraphs
+        if ("older" in block or "earlier" in block) and "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" in block
+    ]
+
+    assert covered, f"{document} does not say what to do with an operator.env that has no token"
+
+
+@pytest.mark.parametrize("line", [line for line in OPERATOR_SEQUENCE if " cli " in line])
+def test_every_documented_cli_call_names_commands_the_cli_has(line: str) -> None:
+    """A documented call the CLI refuses is a procedure that stops at that step.
+
+    Resolved against the real Typer application, so a renamed command or a
+    dropped option fails here rather than during an operator's first run. Only
+    the CLI lines are resolved this way: `init` and `start` are the wrapper's.
+    """
+    from infrahub_sync.cli import app
+
+    arguments = shlex.split(line.split(" cli ", 1)[1])
+    if arguments[:1] == ["--package"]:
+        arguments = arguments[arguments.index("--") + 1 :]
+    result = CliRunner().invoke(app, [*arguments, "--help"], env={"NO_COLOR": "1", "COLUMNS": "200"})
+
+    assert result.exit_code == 0, f"{line}: {result.output}"
 
 
 def test_the_page_documents_no_command_the_entry_point_does_not_have() -> None:
@@ -149,12 +334,18 @@ def test_the_page_states_the_minimum_compose_version_the_bundle_enforces() -> No
     assert minimum in page(), minimum
 
 
-def test_the_page_documents_both_immutable_image_forms() -> None:
-    """One is what a local candidate looks like; the other is what a published one does."""
+def test_the_page_says_the_bundle_names_its_own_image_rather_than_the_operator() -> None:
+    """A reader who goes looking for a setting to fill in has to be told there is none.
+
+    The page names the record, and both of the immutable forms it holds. The
+    refusal families the record's checks produce are covered by the table
+    above, which is read from the entry point's own `refuse` calls.
+    """
     text = page()
 
-    assert "INFRAHUB_SYNC_IMAGE=sha256:" in text
+    assert "image.bind" in text
     assert "@sha256:" in text
+    assert "INFRAHUB_SYNC_IMAGE=sha256:" not in text, "the page still asks an operator to name an image"
 
 
 def test_the_page_tells_a_clean_host_how_to_get_the_bundle_and_check_it() -> None:

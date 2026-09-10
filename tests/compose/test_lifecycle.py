@@ -15,7 +15,6 @@ last on purpose.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import socket
 import time
@@ -37,15 +36,18 @@ from tests.compose.lifecycle import (
     await_verification,
     container_reachable_host,
     docker,
+    entry_point,
     idempotency,
+    instance_identity,
     online_worker_names,
     plant_pending_update,
     probe_json,
     register,
     smoke_package,
     wait_for,
+    write_candidate_binding,
 )
-from tests.compose.redaction import SECRETS, Captured, capture
+from tests.compose.redaction import SECRETS, Captured
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -69,19 +71,6 @@ GENERATED_SETTINGS = (
     "INFRAHUB_SYNC_S3_SECRET_KEY",
     "INFRAHUB_SYNC_S3_ACCESS_KEY",
 )
-
-
-def entry_point(bundle: Path, *arguments: str) -> Captured:
-    """Run one lifecycle command exactly as an operator would.
-
-    The entry point prints Compose's own output, so what comes back is retained
-    Compose output and goes through the same redaction boundary as the rest.
-    """
-    return capture(
-        [str(bundle / "infrahub-sync-compose"), *arguments],
-        timeout=START_TIMEOUT_SECONDS,
-        env=os.environ.copy(),
-    )
 
 
 def verdict(result: Captured) -> str:
@@ -196,10 +185,9 @@ def started(
 ) -> Iterator[Deployment]:
     """A never-initialized copy of the bundle, taken to READY by the entry point.
 
-    Its declared destination is the pinned Infrahub, named by an address that
-    reaches the host from inside a container. Preflight probes the destination
-    before anything in the bundle is running, which is what a real deployment's
-    external destination is: reachable without help from the bundle itself.
+    The destination credential is supplied for the managed rows below, which do
+    register a package and run against the pinned Infrahub. The start itself
+    needs neither: preflight reaches no destination.
     """
     bundle = tmp_path_factory.mktemp("lifecycle") / "compose"
     shutil.copytree(BUNDLE, bundle)
@@ -210,18 +198,22 @@ def started(
         encoding="utf-8",
     )
 
+    # What an operator extracts: the committed tree plus the member the release
+    # generated. `init` reads the image out of it, so nothing names one here.
+    write_candidate_binding(bundle, sync_image)
     created = entry_point(bundle, "init")
     assert created.returncode == 0, created.stderr
     settings = bundle / "operator.env"
     settings.write_text(
         settings.read_text(encoding="utf-8")
-        .replace("INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE={sync_image}")
-        .replace("INFRAHUB_API_TOKEN=REPLACE-ME", f"INFRAHUB_API_TOKEN={infrahub_fixture['token']}")
-        + f"INFRAHUB_SYNC_IMAGE_PULL_POLICY=never\nINFRAHUB_SYNC_API_PORT={API_PORT}\n"
+        # Appended, not substituted: `init` leaves the destination credential a
+        # commented optional entry, because a start needs none.
+        + f"INFRAHUB_API_TOKEN={infrahub_fixture['token']}\n"
+        f"INFRAHUB_SYNC_IMAGE_PULL_POLICY=never\nINFRAHUB_SYNC_API_PORT={API_PORT}\n"
         f"INFRAHUB_SYNC_PREFECT_PORT={PREFECT_PORT}\n",
         encoding="utf-8",
     )
-    instance = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    instance = instance_identity(bundle)
     # Started here rather than in the first case, so every case below runs
     # against a deployment that exists however few of them are selected.
     launched = entry_point(bundle, "start")
@@ -540,41 +532,28 @@ SPARE_PREFECT_PORT = "4241"
 
 @pytest.fixture
 def unstarted(started: Deployment, sync_image: str, tmp_path: Path) -> Iterator[Path]:
-    """A second copy of the bundle, initialized on spare ports and never started.
-
-    Preflight is the whole subject here, and it refuses at the ports before it
-    ever reaches the destination probe, so nothing in this bundle has to run.
-    """
+    """A second copy of the bundle, initialized on spare ports and never started."""
     bundle = tmp_path / "compose"
     shutil.copytree(BUNDLE, bundle)
-    # The same real destination the started deployment uses, so a preflight that
-    # gets past the ports is answered by something rather than refused for an
-    # unrelated reason.
-    package = bundle / "configuration" / "qualification.yaml"
-    package.write_text(
-        package.read_text(encoding="utf-8").replace("http://infrahub.example.net:8000", started.destination),
-        encoding="utf-8",
-    )
+    write_candidate_binding(bundle, sync_image)
     created = entry_point(bundle, "init")
     assert created.returncode == 0, created.stderr
     settings = bundle / "operator.env"
     settings.write_text(
-        settings.read_text(encoding="utf-8")
-        .replace("INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE={sync_image}")
-        .replace("INFRAHUB_API_TOKEN=REPLACE-ME", f"INFRAHUB_API_TOKEN={setting(started.bundle, 'INFRAHUB_API_TOKEN')}")
-        + f"INFRAHUB_SYNC_IMAGE_PULL_POLICY=never\nINFRAHUB_SYNC_API_PORT={SPARE_API_PORT}\n"
+        settings.read_text(encoding="utf-8") + f"INFRAHUB_API_TOKEN={setting(started.bundle, 'INFRAHUB_API_TOKEN')}\n"
+        f"INFRAHUB_SYNC_IMAGE_PULL_POLICY=never\nINFRAHUB_SYNC_API_PORT={SPARE_API_PORT}\n"
         f"INFRAHUB_SYNC_PREFECT_PORT={SPARE_PREFECT_PORT}\n",
         encoding="utf-8",
     )
     yield bundle
     # Nothing was started, so the only thing that could remain is a bind probe
     # that failed to be removed. The assertion below is what proves there is not.
-    entry_point(bundle, "reset", (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip())
+    entry_point(bundle, "reset", instance_identity(bundle))
 
 
 def probe_containers(bundle: Path) -> list[str]:
     """Every bind-probe container this bundle's instance could have left behind."""
-    instance = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    instance = instance_identity(bundle)
     listed = docker(["ps", "--all", "--quiet", "--filter", f"name=infrahub-sync-portprobe-{instance}-"])
     assert listed.returncode == 0, listed.stderr
     return listed.stdout.split()
@@ -715,24 +694,23 @@ def test_the_next_start_after_reset_is_a_cold_bootstrap(started: Deployment) -> 
     would not have reset anything. Both are only visible from the other side of
     a real second start, so this drives one.
 
-    Cold is asserted, not assumed: no runs, no artifacts, and exactly one
-    registered configuration version — the bundled one this bootstrap just
-    registered. Before the reset there were runs, artifacts, and a second
-    configuration this suite registered itself.
+    Cold is asserted, not assumed: no runs, no artifacts, and an empty
+    configuration registry. Before the reset there were runs, artifacts, and the
+    configurations this suite registered itself.
     """
     bundle = started.bundle
     # The reset case above already took this bundle's identity. Run on its own,
     # this case has to take it too, or it would be restarting a deployment
     # rather than bootstrapping one.
     if (bundle / ".instance").is_file():
-        previous = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+        previous = instance_identity(bundle)
         removed = entry_point(bundle, "reset", previous)
         assert removed.returncode == 0, removed.output
 
     foreign = plant_foreign_volume()
     created = entry_point(bundle, "init")
     assert created.returncode == 0, created.stderr
-    instance = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    instance = instance_identity(bundle)
     assert instance != started.instance, "reset left the identity its volumes were labelled with"
     settings = bundle / "operator.env"
     cold = Deployment(
@@ -754,8 +732,7 @@ def test_the_next_start_after_reset_is_a_cold_bootstrap(started: Deployment) -> 
         state = probe_json(cold, DURABLE_STATE)
         assert state["runs"] == 0, state["runs"]
         assert state["objects"] == [], state["objects"]
-        assert len(state["configuration_versions"]) == 1, state["configuration_versions"]
-        assert state["configuration_versions"][0][1] == 1, state["configuration_versions"]
+        assert state["configuration_versions"] == [], state["configuration_versions"]
         assert volume_exists(foreign), "the cold start took a volume this instance does not own"
     finally:
         entry_point(bundle, "reset", instance)

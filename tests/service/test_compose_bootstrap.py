@@ -4,11 +4,13 @@ Every case here drives the real convergence functions against fakes that answer
 the way the providers do. What is being checked is the decision each one makes —
 create, leave alone, or refuse — because that decision is what makes a second
 `start` a no-op instead of a second set of objects.
+
+Registering a configuration is not one of those objects: a deployment starts
+empty and an operator registers through the API.
 """
 
 from __future__ import annotations
 
-import copy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,15 +23,12 @@ import httpx
 from botocore.exceptions import ClientError
 from prefect.exceptions import ObjectNotFound
 
-from infrahub_sync.configuration.models import parse_configuration_package
-from infrahub_sync.product_store import local_product_projection
+from infrahub_sync.product_store import configs, local_product_projection
 from infrahub_sync.service import bootstrap
 from infrahub_sync.service.bootstrap import (
-    BOOTSTRAP_ACTOR,
     PROCESS_POOL_TYPE,
     BootstrapError,
     converge_bucket,
-    converge_configuration,
     converge_work_pool,
 )
 from tests.configuration.validation_packages import package_data
@@ -39,7 +38,6 @@ if TYPE_CHECKING:
 
     from prefect.client.schemas.actions import WorkPoolCreate
 
-    from infrahub_sync.configuration import ConfigurationPackage
     from infrahub_sync.product_store import ProductProjection
 
 _REQUEST = httpx.Request("GET", "http://prefect-server:4200/api/work_pools/infrahub-sync")
@@ -94,21 +92,8 @@ class _Pool:
         self.created.append((work_pool.name, work_pool.type))
 
 
-def _package(name: str = "from-netbox", *, url: str | None = None) -> ConfigurationPackage:
-    content = copy.deepcopy(package_data())
-    content["configuration"]["name"] = name
-    if url is not None:
-        content["configuration"]["destination"]["settings"]["url"] = url
-    return parse_configuration_package(content)
-
-
 def _projection(tmp_path: Path) -> ProductProjection:
     return local_product_projection(tmp_path / "product")
-
-
-def _audit_actors(projection: ProductProjection) -> list[str]:
-    events = projection.audit_events() if hasattr(projection, "list_audit_events") else ()
-    return [event.actor for event in events]
 
 
 # ---------------------------------------------------------------------------
@@ -176,101 +161,65 @@ async def test_a_pool_of_another_type_is_refused_before_anything_is_created() ->
 
 
 # ---------------------------------------------------------------------------
-# The bundled configuration
+# The registry a bootstrap must leave alone
 # ---------------------------------------------------------------------------
 
 
-def test_the_bundled_configuration_is_registered_once(tmp_path: Path) -> None:
+def _converged(monkeypatch: pytest.MonkeyPatch, projection: ProductProjection) -> None:
+    """Replace every provider a successful convergence reaches, and nothing else."""
+    monkeypatch.setattr(bootstrap.boto3, "client", lambda *_arguments, **_settings: _Bucket())
+    monkeypatch.setattr(bootstrap, "converge_bucket", lambda *_arguments: True)
+    monkeypatch.setattr(bootstrap, "_required", lambda _name: "present")
+    monkeypatch.setattr(bootstrap, "apply_deployment", lambda: 0)
+    monkeypatch.setattr(bootstrap, "service_product_projection", lambda: projection)
+
+    def finish(coroutine: Coroutine[object, object, bool]) -> bool:
+        coroutine.close()
+        return False
+
+    monkeypatch.setattr(bootstrap.asyncio, "run", finish)
+
+
+def test_a_cold_bootstrap_leaves_the_registry_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No configuration and no registration event: a start registers nothing."""
     projection = _projection(tmp_path)
-    package = _package()
+    _converged(monkeypatch, projection)
 
-    config_id, registry_version, created = converge_configuration(projection, package)
-
-    stored = projection.list_configuration_versions(config_id)
-    assert (created, registry_version) == (True, 1)
-    assert [version.package_checksum for version in stored] == [package.checksum()]
+    assert bootstrap.main() == 0
+    assert len(projection.list_configurations()) == 0
+    assert len(projection.audit_events()) == 0
 
 
-def test_a_first_registration_records_exactly_one_bootstrap_audit_event(tmp_path: Path) -> None:
-    """One event, with a fixed actor: there is no operator here to attribute a decision to."""
+def test_a_repeated_bootstrap_changes_nothing_an_operator_registered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Registered explicitly first: an empty registry is also what a wipe leaves."""
     projection = _projection(tmp_path)
+    registered = configs.register(package=package_data(), projection=projection)
+    _converged(monkeypatch, projection)
 
-    converge_configuration(projection, _package())
+    assert bootstrap.main() == 0
+    assert bootstrap.main() == 0
 
-    events = projection.audit_events()
-    assert [event.actor for event in events] == [BOOTSTRAP_ACTOR]
-
-
-def test_a_repeated_bootstrap_finds_the_registration_it_made(tmp_path: Path) -> None:
-    """The registry allocates the identifier, so a repeat has to recognise its own work.
-
-    Nothing in the bundle can name the configuration created last time, which is
-    why identity is the declared name plus the checksum rather than an id.
-    """
-    projection = _projection(tmp_path)
-    package = _package()
-    first = converge_configuration(projection, package)
-
-    second = converge_configuration(projection, package)
-
-    assert second == (first[0], first[1], False)
+    versions = projection.list_configuration_versions(registered.version.config_id)
+    assert [version.registry_version for version in versions] == [registered.version.registry_version]
+    assert [version.package_checksum for version in versions] == [registered.version.package_checksum]
     assert len(projection.list_configurations()) == 1
-    assert len(projection.list_configuration_versions(first[0])) == 1
+    assert len(projection.audit_events()) == 0
 
 
-def test_a_repeated_bootstrap_records_no_second_audit_event(tmp_path: Path) -> None:
-    """Convergence is not a decision, so it leaves no evidence of one."""
-    projection = _projection(tmp_path)
-    package = _package()
-    converge_configuration(projection, package)
+def test_no_registration_path_is_retained_for_a_configured_deployment() -> None:
+    """Registration is deleted, not made optional: no setting can switch it back on."""
+    source = Path(bootstrap.__file__).read_text(encoding="utf-8")
 
-    converge_configuration(projection, package)
-
-    assert len(projection.audit_events()) == 1
-
-
-def test_changed_content_under_the_same_name_is_refused(tmp_path: Path) -> None:
-    """Registering a second one would leave two live candidates under one name."""
-    projection = _projection(tmp_path)
-    converge_configuration(projection, _package())
-
-    with pytest.raises(BootstrapError) as refusal:
-        converge_configuration(projection, _package(url="http://elsewhere.internal:8000"))
-
-    assert refusal.value.family == "configuration-conflict"
-    assert len(projection.list_configurations()) == 1
-
-
-def test_two_registrations_under_one_name_are_refused(tmp_path: Path) -> None:
-    """A registry this job did not create is one it must not add to."""
-    projection = _projection(tmp_path)
-    package = _package()
-    projection.create_configuration(package)
-    projection.create_configuration(package)
-
-    with pytest.raises(BootstrapError) as refusal:
-        converge_configuration(projection, package)
-
-    assert refusal.value.family == "configuration-conflict"
-
-
-def test_a_configuration_registered_under_another_name_is_not_matched(tmp_path: Path) -> None:
-    """Identity is the declared name; an unrelated configuration is simply unrelated."""
-    projection = _projection(tmp_path)
-    projection.create_configuration(_package(name="something-else"))
-
-    config_id, _registry_version, created = converge_configuration(projection, _package())
-
-    assert created is True
-    assert len(projection.list_configurations()) == 2
-    assert [version.package_checksum for version in projection.list_configuration_versions(config_id)] == [
-        _package().checksum()
+    retained = [
+        name for name in ("configs.register", "load_package_content", "parse_configuration_package") if name in source
     ]
+    assert retained == [], f"the bootstrap still carries the registration surface: {retained}"
 
 
 def _bootstrap_before_deployment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Replace the successful steps before deployment without leaking a coroutine."""
-    monkeypatch.setattr(bootstrap, "_bundled_package", _package)
     monkeypatch.setattr(bootstrap.boto3, "client", lambda *_arguments, **_settings: _Bucket())
     monkeypatch.setattr(bootstrap, "converge_bucket", lambda *_arguments: False)
     monkeypatch.setattr(bootstrap, "_required", lambda _name: "present")
@@ -352,7 +301,6 @@ class _FailsOnExit:
 
 def _bootstrap_before_the_work_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     """Replace the steps before the pool, leaving `asyncio.run` and the context real."""
-    monkeypatch.setattr(bootstrap, "_bundled_package", _package)
     monkeypatch.setattr(bootstrap.boto3, "client", lambda *_arguments, **_settings: _Bucket())
     monkeypatch.setattr(bootstrap, "converge_bucket", lambda *_arguments: False)
     monkeypatch.setattr(bootstrap, "_required", lambda _name: "present")

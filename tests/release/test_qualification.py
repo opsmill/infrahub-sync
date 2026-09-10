@@ -22,6 +22,9 @@ COMMIT_TIME = "2026-09-04T10:15:00+02:00"
 
 PLATFORMS = ("linux/amd64", "linux/arm64")
 INDEX = "sha256:" + "1" * 64
+# What the exporter called the index it wrote. The bundle's binding is derived
+# from it, so a candidate whose record lost it produces no archive at all.
+INDEX_NAME = "latest"
 DIGESTS = {
     "linux/amd64": {"manifest": "sha256:" + "c" * 64, "config": "sha256:" + "a" * 64},
     "linux/arm64": {"manifest": "sha256:" + "d" * 64, "config": "sha256:" + "b" * 64},
@@ -74,13 +77,19 @@ def candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
                 "schema_version": image.DIGESTS_SCHEMA_VERSION,
                 "provenance": {"version": VERSION, "revision": COMMIT, "created": COMMIT_TIME},
                 "index_digest": INDEX,
+                "index_name": INDEX_NAME,
                 "platforms": DIGESTS,
                 "canary_present": True,
             }
         ),
         encoding="utf-8",
     )
-    release.write_bundle(derived, release.bundle_paths(Context()), release.BUNDLE_DIR)
+    release.write_bundle(
+        derived,
+        release.bundle_paths(Context()),
+        release.BUNDLE_DIR,
+        generated={release.BINDING_MEMBER: release.image_binding(image.read_digests(), derived)},
+    )
     for name in PLATFORMS:
         image.sbom_file(derived, name).write_text('{"packages": []}', encoding="utf-8")
         image.scan_file(derived, name).write_text('{"matches": []}', encoding="utf-8")
