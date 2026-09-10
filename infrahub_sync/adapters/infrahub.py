@@ -7,6 +7,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from diffsync import Adapter, DiffSyncModel
+from diffsync.exceptions import ObjectNotFound
 from infrahub_sdk import (
     Config,
     InfrahubClientSync,
@@ -291,10 +292,51 @@ class PeerIdentifierError(ValueError):
         super().__init__(msg)
 
 
+def _sdk_node_has_identifiers(node: object, identifiers: tuple[str, ...]) -> bool:
+    """Return whether an SDK node carries every DiffSync identifier value."""
+    schema = getattr(node, "_schema", None)
+    attributes = {attribute.name for attribute in getattr(schema, "attributes", ())}
+    relationships = {relationship.name: relationship for relationship in getattr(schema, "relationships", ())}
+    for identifier in identifiers:
+        if identifier in attributes:
+            attribute = getattr(node, identifier, None)
+            if attribute is None or getattr(attribute, "value", None) is None:
+                return False
+            continue
+
+        relationship = relationships.get(identifier)
+        # Fail closed for unknown fields and cardinality-many relationship
+        # identifiers instead of guessing an identity from an ambiguous value.
+        if relationship is None or relationship.cardinality != "one":
+            return False
+        related_node = getattr(node, identifier, None)
+        if related_node is None or getattr(related_node, "id", None) is None:
+            return False
+    return True
+
+
+def _unresolved_peer_identifiers(
+    peer_data: Mapping[str, Any],
+    identifiers: tuple[str, ...],
+    *,
+    verified_null_identifiers: frozenset[str],
+) -> tuple[str, ...]:
+    """Return identifiers absent from peer data or carrying an unverified null."""
+    return tuple(
+        identifier
+        for identifier in identifiers
+        if identifier not in peer_data
+        or (peer_data[identifier] is None and identifier not in verified_null_identifiers)
+    )
+
+
 class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
     continue_on_error: bool = False
+    # Cache state: absent means hydration has not been attempted; None means
+    # one attempt was exhausted; a string is the resolved DiffSync identity.
+    _peer_unique_ids: dict[tuple[str, str], str | None]
 
     def __init__(
         self,
@@ -308,6 +350,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         super().__init__(*args, **kwargs)
         self.target = target
         self.config = config
+        self._peer_unique_ids = {}
 
         settings = adapter.settings or {}
         infrahub_url = os.environ.get("INFRAHUB_ADDRESS") or os.environ.get("INFRAHUB_URL") or settings.get("url")
@@ -491,9 +534,32 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             logger.warning("Unable to map '%s' with kind '%s' - Ignored", peer_node, peer_kind)
             return None
 
-        peer_data = self.infrahub_node_to_diffsync(peer_node)
+        peer_id = str(peer_node.id)
+        cache_key = (peer_kind, peer_id)
+        hydration_attempted = cache_key in self._peer_unique_ids
         identifiers = tuple(peer_model._identifiers)
-        missing = tuple(k for k in identifiers if k not in peer_data)
+        if hydration_attempted:
+            cached_unique_id = self._peer_unique_ids[cache_key]
+            if cached_unique_id is not None:
+                self._reconcile_peer_sdk_alias(
+                    peer_kind=peer_kind,
+                    peer_id=peer_id,
+                    unique_id=cached_unique_id,
+                    identifiers=identifiers,
+                )
+                return cached_unique_id
+
+        peer_data, hydrated, verified_null_identifiers = self._peer_data_with_hydration(
+            peer_node=peer_node,
+            peer_kind=peer_kind,
+            identifiers=identifiers,
+            hydration_attempted=hydration_attempted,
+        )
+        missing = _unresolved_peer_identifiers(
+            peer_data,
+            identifiers,
+            verified_null_identifiers=verified_null_identifiers,
+        )
         if missing:
             err = PeerIdentifierError(
                 parent_kind=parent_node._schema.kind,
@@ -505,18 +571,120 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 missing_keys=missing,
                 present_keys=tuple(peer_data.keys()),
             )
+            self._peer_unique_ids[cache_key] = None
             if self.continue_on_error:
-                logger.warning("Skipping peer relationship: %s", err)
+                if not hydration_attempted:
+                    logger.warning("Skipping peer relationship: %s", err)
                 return None
             raise err
 
         unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
-        peer_item = self.store.get(model=peer_kind, identifier=unique_id)
-        if not peer_item:
+        try:
+            peer_item = self.store.get(model=peer_kind, identifier=unique_id)
+        except ObjectNotFound:
             peer_item = peer_model(**peer_data)
             self.update_or_add_model_instance(peer_item)
-            self.client.store.set(key=unique_id, node=peer_node)
-        return peer_item.get_unique_id()
+
+        # Identifier-only hydration is deliberately adapter-local: inserting its
+        # narrow result into the shared SDK store can replace a fuller node that
+        # was loaded earlier. Reconciliation chooses only nodes that carry the
+        # complete DiffSync identity.
+        self._reconcile_peer_sdk_alias(
+            peer_kind=peer_kind,
+            peer_id=peer_id,
+            unique_id=unique_id,
+            identifiers=identifiers,
+            fallback_node=None if hydrated else peer_node,
+        )
+        resolved_unique_id = peer_item.get_unique_id()
+        self._peer_unique_ids[cache_key] = resolved_unique_id
+        if verified_null_identifiers:
+            logger.warning(
+                "Resolved peer %s[%s] with verified null attribute identifier(s): %s",
+                peer_kind,
+                peer_id,
+                sorted(verified_null_identifiers),
+            )
+        return resolved_unique_id
+
+    def _peer_data_with_hydration(
+        self,
+        *,
+        peer_node: InfrahubNodeSync,
+        peer_kind: str,
+        identifiers: tuple[str, ...],
+        hydration_attempted: bool,
+    ) -> tuple[dict[str, Any], bool, frozenset[str]]:
+        """Read peer data and perform at most one bounded hydration attempt."""
+        peer_data = self.infrahub_node_to_diffsync(peer_node)
+        unresolved_identifiers = _unresolved_peer_identifiers(
+            peer_data,
+            identifiers,
+            verified_null_identifiers=frozenset(),
+        )
+        if not unresolved_identifiers:
+            return peer_data, False, frozenset()
+
+        if hydration_attempted:
+            return peer_data, False, frozenset()
+
+        try:
+            hydrated_peer = self.client.get(
+                id=peer_node.id,
+                kind=peer_kind,
+                include=list(identifiers),
+                populate_store=False,
+            )
+        except NodeNotFoundError:
+            hydrated_peer = None
+        if hydrated_peer is None:
+            return peer_data, False, frozenset()
+
+        hydrated_peer_data = self.infrahub_node_to_diffsync(hydrated_peer)
+        attribute_names = {attribute.name for attribute in getattr(hydrated_peer._schema, "attributes", ())}
+        # Top-level model loads are full fetches. Peer payloads may be shallow,
+        # so only this successful hydration can verify a nullable attribute.
+        verified_null_identifiers = frozenset(
+            identifier
+            for identifier in unresolved_identifiers
+            if identifier in attribute_names
+            and identifier in hydrated_peer_data
+            and hydrated_peer_data[identifier] is None
+        )
+        hydrated_identifiers = {
+            identifier: hydrated_peer_data[identifier]
+            for identifier in identifiers
+            if hydrated_peer_data.get(identifier) is not None or identifier in verified_null_identifiers
+        }
+        return {**peer_data, **hydrated_identifiers}, True, verified_null_identifiers
+
+    def _reconcile_peer_sdk_alias(
+        self,
+        *,
+        peer_kind: str,
+        peer_id: str,
+        unique_id: str,
+        identifiers: tuple[str, ...],
+        fallback_node: InfrahubNodeSync | None = None,
+    ) -> None:
+        """Alias the peer identity key to an identity-complete SDK node, if one exists."""
+        sdk_peer_by_uuid = self.client.store.get(key=peer_id, kind=peer_kind, raise_when_missing=False)
+        sdk_peer_by_identity = self.client.store.get(key=unique_id, kind=peer_kind, raise_when_missing=False)
+        sdk_peer = next(
+            (
+                peer
+                for peer in (sdk_peer_by_uuid, sdk_peer_by_identity, fallback_node)
+                if peer is not None and _sdk_node_has_identifiers(peer, identifiers)
+            ),
+            None,
+        )
+        if sdk_peer is None:
+            # This is the hydration-only path: a non-hydrated success supplies
+            # an identity-complete fallback. Leave two shallow store entries untouched.
+            return
+        if sdk_peer_by_uuid is sdk_peer and sdk_peer_by_identity is sdk_peer:
+            return
+        self.client.store.set(key=unique_id, node=sdk_peer)
 
     def infrahub_node_to_diffsync(self, node: InfrahubNodeSync) -> dict[str, Any]:
         """
