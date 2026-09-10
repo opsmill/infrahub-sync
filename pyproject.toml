@@ -16,11 +16,11 @@ classifiers = [
 ]
 dependencies = [
     "infrahub-sdk>=1.17,<2",
-    "structlog>=25.1,<26.0",
+    "structlog>=25.1,<27.0",
     "diffsync[redis]>=2.1,<3.0",
     "netutils>=1.12,<2.0",
     "tqdm>=4.67",
-    "pyarrow>=18,<22",
+    "pyarrow>=18,<26",
     "fsspec>=2024.6",
     "filelock>=3.13",
     "jinja2>=3.0.2",
@@ -51,7 +51,7 @@ dev = [
     "types-toml>=0.10",
     "types-ujson>=5.10",
     "typer-cli>=0.23",
-    "invoke>=2.2.1,<3",
+    "invoke>=2.2.1,<4",
     "types-PyYAML>=6.0.12",
     "ruff==0.15.5",
     "pytest>=9.0.2,<10",
@@ -59,7 +59,7 @@ dev = [
     "pytest-xdist>=3.8",
     "ty==0.0.32",
     "types-python-slugify>=8.0.2.20240310",
-    "towncrier>=24.8,<25",
+    "towncrier>=24.8,<27",
     "rumdl>=0.1.68",
 ]
 
