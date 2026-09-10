@@ -247,7 +247,45 @@ $ infrahub-sync runs [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
+* `show`: Show one run&#x27;s service record and its...
+* `results`: Print the results the service recorded for...
 * `plan`: Review a saved plan summary, checksum, and...
+
+### `infrahub-sync runs show`
+
+Show one run&#x27;s service record and its selected execution.
+
+**Usage**:
+
+```console
+$ infrahub-sync runs show [OPTIONS] RUN_ID
+```
+
+**Arguments**:
+
+* `RUN_ID`: Service-issued run ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
+
+### `infrahub-sync runs results`
+
+Print the results the service recorded for one run, as JSON.
+
+**Usage**:
+
+```console
+$ infrahub-sync runs results [OPTIONS] RUN_ID
+```
+
+**Arguments**:
+
+* `RUN_ID`: Service-issued run ID.  [required]
+
+**Options**:
+
+* `--help`: Show this message and exit.
 
 ### `infrahub-sync runs plan`
 

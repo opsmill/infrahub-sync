@@ -396,6 +396,9 @@ def _echo_run(resource: RunResource) -> None:
             ("phase", run.phase),
             ("outcome", run.outcome),
             ("execution_state", selected.state if selected is not None else None),
+            # The correlation an operator follows into Prefect, from the same
+            # selected attempt the state above is read from.
+            ("flow_run_id", selected.flow_run_id if selected is not None else None),
         )
     )
 
@@ -670,6 +673,31 @@ def apply_cmd(
             raise
         if wait:
             _echo_run(completed)
+
+
+@runs_app.command("show")
+def runs_show(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Service-issued run ID."),
+) -> None:
+    """Show one run's service record and its selected execution."""
+    with _client_errors():
+        _echo_run(_client(ctx).get_run(run_id))
+
+
+@runs_app.command("results")
+def runs_results(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Service-issued run ID."),
+) -> None:
+    """Print the results the service recorded for one run, as JSON."""
+    # The API owns what a result says and what is safe to say, so this renders
+    # the typed response and adds no structure of its own. `json.dumps` escapes
+    # every control character it emits, which keeps recorded provider text from
+    # reaching a terminal as an escape sequence.
+    with _client_errors():
+        resource = _client(ctx).get_results(run_id)
+        typer.echo(json.dumps(resource.model_dump(mode="json"), sort_keys=True, indent=2))
 
 
 @runs_app.command("plan")

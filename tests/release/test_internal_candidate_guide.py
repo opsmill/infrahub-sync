@@ -77,7 +77,7 @@ IMAGE_VARIABLE = "INFRAHUB_SYNC_IMAGE"
 # A single confirmed write with no reviewed plan between the request and the
 # destination. It is a real capability and it is not what this procedure
 # qualifies, because it demonstrates nothing about the admission path.
-DIRECT_WRITE = "sync sync"
+DIRECT_WRITE = "cli sync"
 
 # The procedure changes directory twice, so anything one step writes and a later
 # step reads is named by one absolute variable rather than by a relative path
@@ -299,11 +299,11 @@ def test_the_guide_qualifies_a_write_only_through_a_reviewed_plan() -> None:
     script = commands(guide())
 
     assert DIRECT_WRITE not in script, f"{GUIDE.name} runs `{DIRECT_WRITE}`, which skips the reviewed plan"
-    assert "sync diff" in script, f"{GUIDE.name} never plans"
-    assert "sync runs plan" in script, f"{GUIDE.name} never reads the saved plan"
+    assert "cli diff" in script, f"{GUIDE.name} never plans"
+    assert "cli runs plan" in script, f"{GUIDE.name} never reads the saved plan"
     assert "--expected-checksum" in script, f"{GUIDE.name} never binds the reviewed checksum to the apply"
-    plan = script.index("sync runs plan")
-    assert plan < script.index("sync apply"), f"{GUIDE.name} applies before reading the plan"
+    plan = script.index("cli runs plan")
+    assert plan < script.index("cli apply"), f"{GUIDE.name} applies before reading the plan"
 
 
 @pytest.mark.parametrize("tool", FORBIDDEN_TOOLS)
@@ -327,10 +327,12 @@ def test_the_guide_declares_the_tools_it_actually_uses(tool: str) -> None:
 
 
 def test_the_guide_exports_the_verified_configuration_digest_before_it_is_used() -> None:
-    """The CLI wrapper and the deployment are both handed one value, and it has to be the checked one.
+    """The deployment is handed one image value, and it has to be the checked one.
 
-    An unbound variable there runs whatever the shell happens to hold, and a tag
-    would be refused by the bundle but not by `docker run`.
+    Every container the procedure runs -- the API, the worker, the bootstrap job
+    and the CLI -- comes from the reference in `operator.env`, so what has to be
+    ordered is reading the digest out of the record, exporting it, and writing it
+    into that file. An unbound variable there would set an empty reference.
     """
     script = commands(guide())
     lines = script.splitlines()
@@ -338,7 +340,14 @@ def test_the_guide_exports_the_verified_configuration_digest_before_it_is_used()
         (index for index, line in enumerate(lines) if line.strip() == f"export {IMAGE_VARIABLE}"),
         None,
     )
-    used = next((index for index, line in enumerate(lines) if f'"${IMAGE_VARIABLE}" infrahub-sync' in line), None)
+    used = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if f"^{IMAGE_VARIABLE}=" in line and f"${{{IMAGE_VARIABLE}}}" in line and CREDENTIAL_FILE in line
+        ),
+        None,
+    )
     read_from_record = next(
         (index for index, line in enumerate(lines) if IMAGE_VARIABLE in line and "platforms" in line),
         None,
@@ -346,7 +355,7 @@ def test_the_guide_exports_the_verified_configuration_digest_before_it_is_used()
 
     assert read_from_record is not None, f"{GUIDE.name} does not read the image digest out of the record"
     assert exported is not None, f"{GUIDE.name} never exports {IMAGE_VARIABLE}"
-    assert used is not None, f"{GUIDE.name} never runs the CLI under {IMAGE_VARIABLE}"
+    assert used is not None, f"{GUIDE.name} never writes {IMAGE_VARIABLE} into {CREDENTIAL_FILE}"
     assert read_from_record < exported < used, f"{GUIDE.name} uses {IMAGE_VARIABLE} before verifying and exporting it"
 
 

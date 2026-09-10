@@ -331,31 +331,37 @@ cd "$WORK/${BUNDLE_NAME%.tar.gz}"
 ```
 
 `init` writes `.instance`, `secrets/postgres-admin-password`, and `operator.env`
-with generated passwords. Two values are yours to supply. Set the image to the
-digest you just verified:
+with generated passwords. One value is yours to supply before the first start.
+Set the image to the digest you just verified:
 
 ```bash
 sed -i "s|^INFRAHUB_SYNC_IMAGE=.*|INFRAHUB_SYNC_IMAGE=${INFRAHUB_SYNC_IMAGE}|" operator.env
-sed -i "s|^INFRAHUB_API_TOKEN=.*|INFRAHUB_API_TOKEN=<your Infrahub token>|" operator.env
 
-# Confirm both are set without rendering either value. `grep -q` prints nothing,
-# so the only thing that reaches the terminal is the sentence below.
-for setting in INFRAHUB_SYNC_IMAGE INFRAHUB_API_TOKEN; do
-  if grep -q "^${setting}=..*" operator.env && ! grep -q "^${setting}=REPLACE-ME$" operator.env; then
-    printf '%s is set\n' "$setting"
-  else
-    printf '%s is NOT set\n' "$setting"
-  fi
-done
+# Confirm it is set without rendering its value. `grep -q` prints nothing, so the
+# only thing that reaches the terminal is the sentence below.
+if grep -q "^INFRAHUB_SYNC_IMAGE=..*" operator.env && ! grep -q "^INFRAHUB_SYNC_IMAGE=REPLACE-ME$" operator.env; then
+  printf 'INFRAHUB_SYNC_IMAGE is set\n'
+else
+  printf 'INFRAHUB_SYNC_IMAGE is NOT set\n'
+fi
 ```
+
+Nothing else is needed to start. The deployment comes up with an empty
+configuration registry and no destination; the Infrahub token and the declared
+package are step 8's inputs, not this step's.
 
 Use a **disposable** Infrahub you are **authorised to write to**. Step 8 applies
 a real write. Do not point this at anything you cannot afford to have changed.
 
-Then point the declared configuration at that Infrahub. Edit
-`configuration/qualification.yaml` so its `url` names your instance, and leave
-the credential as a reference — a configuration package holds credential
-*references*, never values:
+Prepare the package you will register in step 8. Copy the example the bundle
+ships, edit its two `url` values to name your instance, and leave the credential
+as a reference — a configuration package holds credential *references*, never
+values:
+
+```bash
+cp configuration/qualification.yaml "$WORK/package.yml"
+# Edit both `url` values in $WORK/package.yml to name your Infrahub.
+```
 
 ```yaml
 token:
@@ -366,9 +372,9 @@ credentials:
     identifier: INFRAHUB_API_TOKEN
 ```
 
-Edit it before the first start. Bootstrap recognises a configuration by its
-declared name and checksums its content, so different content under a name it
-has already registered is refused.
+Nothing loads that file. Step 8 registers it explicitly, and a registered version
+is immutable: a later edit is registered as the next version rather than
+replacing one.
 
 The extracted bundle carries `OPERATING.md`, the same procedure written for
 whoever runs the deployment. Read it when this page runs out.
@@ -383,9 +389,9 @@ whoever runs the deployment. Read it when this page runs out.
 name and a fixed sentence. `OPERATING.md` has the whole table. The ones you are
 most likely to meet here: `image-not-immutable` (a tag rather than a digest),
 `image-unresolvable` (the digest is not loaded), `credentials-missing` (a value
-in `operator.env` is still empty or `REPLACE-ME`), `destination-unavailable`
-(your Infrahub URL did not answer), and `port-occupied` (something already holds
-`127.0.0.1:8000` or `:4200`).
+in `operator.env` is still empty or `REPLACE-ME`), and `port-occupied`
+(something already holds `127.0.0.1:8000` or `:4200`). Preflight reaches no
+destination: a deployment starts without one.
 
 When preflight passes:
 
@@ -394,8 +400,10 @@ When preflight passes:
 ./infrahub-sync-compose status
 ```
 
-`status` must print `READY` and exit 0. `READY` is endpoint-backed: dependencies
-answer, the API answers, and a registered worker is heartbeating. `DEGRADED`
+`status` must print `READY` and exit 0. `READY` is endpoint-backed and
+Sync-owned: dependencies answer, the API answers, and a registered worker is
+heartbeating. It says nothing about a configuration — there is none registered
+yet, and no destination has been named. `DEGRADED`
 (exit 3) means something owned exists but not all of that is true; `STOPPED`
 (exit 4) means no container of this instance is running. Container health alone
 is not readiness — a hung worker looks healthy to Docker and still reaches
@@ -409,40 +417,49 @@ in time. Take the logs before anything else:
 ./infrahub-sync-compose logs sync-api
 ```
 
-## 8. Plan, review the saved plan, then apply that exact plan
+## 8. Register a package, plan, review the saved plan, then apply that exact plan
 
-The API principal `init` generated lives in `operator.env` as a JSON document.
-Read the token out of it without sourcing the file — it holds every other
-credential too:
-
-```bash
-export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
-INFRAHUB_SYNC_API_TOKEN=$(grep '^INFRAHUB_SYNC_SERVICE_BEARER_TOKENS=' operator.env \
-  | cut -d= -f2- | jq -r '.operator.token')
-export INFRAHUB_SYNC_API_TOKEN
-
-curl -sS "$INFRAHUB_SYNC_API_URL/status" | jq '.worker.state'
-curl -sS -H "Authorization: Bearer $INFRAHUB_SYNC_API_TOKEN" \
-  "$INFRAHUB_SYNC_API_URL/configs" | jq '.'
-```
-
-The CLI ships in the candidate image, so you never install it. It runs under the
-same verified digest you exported in step 5:
+The CLI ships in the candidate image and the bundle runs it for you, in a
+container of that same verified digest, on the deployment's own network. It
+authenticates with the token `init` generated: one value, written to both
+`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` and `INFRAHUB_SYNC_API_TOKEN`. Nothing here
+reads a credential out of a file or puts one on a command line.
 
 ```bash
-sync() {
-  docker run --rm --network host \
-    --env INFRAHUB_SYNC_API_URL --env INFRAHUB_SYNC_API_TOKEN \
-    "$INFRAHUB_SYNC_IMAGE" infrahub-sync "$@"
-}
-
-sync configs list
+./infrahub-sync-compose cli configs list
 ```
 
-Note the configuration's identity and version — the next step needs both.
+That answers with nothing: the registry is empty. Give the deployment the
+Infrahub credential the package references: uncomment `INFRAHUB_API_TOKEN` in
+`operator.env` and set it to your token with an editor, so no value reaches a
+terminal or a scrollback buffer. Then start again, so the services that resolve
+it are recreated — `restart` would replace the processes inside containers
+holding the old environment:
+
+```bash
+./infrahub-sync-compose start
+```
+
+Then register the package you prepared in step 6. `--package` copies that one
+file into a private directory, mounts it read-only at `/input/package.yaml` for
+this call alone, and removes the copy afterwards:
+
+```bash
+./infrahub-sync-compose cli --package "$WORK/package.yml" -- \
+  configs register /input/package.yaml --reason "candidate qualification"
+```
+
+Note the `config_id` and `registry_version` it prints — the next step needs both.
+The declared content now lives in PostgreSQL, and no host file is mounted by the
+API or the worker afterwards.
+
+```bash
+./infrahub-sync-compose cli configs list
+./infrahub-sync-compose cli configs validate <config> <version>
+```
 
 Qualification is one write, taken the managed way: plan, read the saved plan,
-then apply the plan you read by its checksum. **Do not use `sync sync` here.** It
+then apply the plan you read by its checksum. **Do not use `cli sync` here.** It
 is a real capability, and it is a single confirmed write with no reviewed plan
 in between, so it proves nothing about the admission path this deployment
 exists to enforce.
@@ -450,20 +467,21 @@ exists to enforce.
 Plan first. It writes nothing:
 
 ```bash
-sync diff --config-id <config> --version <version> --reason "candidate qualification"
+./infrahub-sync-compose cli diff --config-id <config> --version <version> \
+  --reason "candidate qualification"
 ```
 
 That prints a run ID. Read the saved plan and its checksum:
 
 ```bash
-sync runs plan <run-id>
-sync runs plan <run-id> --detail
+./infrahub-sync-compose cli runs plan <run-id>
+./infrahub-sync-compose cli runs plan <run-id> --detail
 ```
 
 Read what it proposes before going on. Then apply that exact plan:
 
 ```bash
-sync apply <run-id> \
+./infrahub-sync-compose cli apply <run-id> \
   --expected-checksum <the checksum runs plan printed> \
   --reason "candidate qualification"
 ```
@@ -477,15 +495,34 @@ change that happened, and that nothing else did.
 
 ## 9. Retrieve the run's evidence
 
-A run's artifacts are held by the deployment, not on a container filesystem:
+The run record and what the service recorded for it come back through the same
+CLI:
 
 ```bash
 RUN_ID=<the run you applied>
-AUTH="Authorization: Bearer $INFRAHUB_SYNC_API_TOKEN"
 
-curl -sS -H "$AUTH" "$INFRAHUB_SYNC_API_URL/runs/$RUN_ID" | jq '.'
-curl -sS -H "$AUTH" "$INFRAHUB_SYNC_API_URL/runs/$RUN_ID/results" | jq '.'
-curl -sS -H "$AUTH" "$INFRAHUB_SYNC_API_URL/runs/$RUN_ID/artifacts" | jq '.'
+./infrahub-sync-compose cli runs show "$RUN_ID"
+./infrahub-sync-compose cli runs results "$RUN_ID"
+```
+
+`runs show` prints the phase, the outcome and the Prefect correlation; `runs
+results` prints the recorded results as JSON.
+
+A run's artifacts are held by the deployment, not on a container filesystem, and
+the CLI has no artifact command yet — so this one step goes over HTTP. Put the
+token in a private curl configuration rather than on a command line, where it
+would be visible to every process on the host:
+
+```bash
+export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
+umask 077
+# The one line curl needs. `sed` reads the token out of the JSON principal
+# without sourcing operator.env, which holds every other credential too.
+printf 'header = "Authorization: Bearer %s"\n' \
+  "$(sed -n 's/^INFRAHUB_SYNC_SERVICE_BEARER_TOKENS=.*"token": "\([^"]*\)".*/\1/p' operator.env)" \
+  > "$WORK/api.curlrc"
+
+curl -sS --config "$WORK/api.curlrc" "$INFRAHUB_SYNC_API_URL/runs/$RUN_ID/artifacts" | jq '.'
 ```
 
 Each entry has an `artifact_id`, a `digest`, and a `size`. Fetch one and check
@@ -495,10 +532,11 @@ in step 4:
 
 ```bash
 ARTIFACT=<an artifact_id from the list>
-EXPECTED=$(curl -sS -H "$AUTH" "$INFRAHUB_SYNC_API_URL/runs/$RUN_ID/artifacts" \
+EXPECTED=$(curl -sS --config "$WORK/api.curlrc" \
+  "$INFRAHUB_SYNC_API_URL/runs/$RUN_ID/artifacts" \
   | jq -r --arg a "$ARTIFACT" '.artifacts[] | select(.artifact_id == $a) | .digest')
 
-curl -sS -D headers.txt -H "$AUTH" \
+curl -sS -D headers.txt --config "$WORK/api.curlrc" \
   "$INFRAHUB_SYNC_API_URL/runs/$RUN_ID/artifacts/$ARTIFACT" -o artifact.bin
 grep -i '^digest:' headers.txt
 printf 'expected %s\nactual   %s\n' "$EXPECTED" "$(sha256sum artifact.bin | cut -d' ' -f1)"
@@ -570,6 +608,12 @@ and its data:
 `reset` makes you repeat the identity it shows, and there is no forcing flag. It
 refuses any resource carrying another instance's label and stops before its
 first mutation. It leaves `operator.env` and `secrets/` in place.
+
+Remove the curl configuration step 9 wrote, which holds the API token:
+
+```bash
+rm -f "$WORK/api.curlrc"
+```
 
 Reset the deployment when you are finished. This alpha promises no in-place
 state migration and no backup or restore, so a reset is also how it is replaced:

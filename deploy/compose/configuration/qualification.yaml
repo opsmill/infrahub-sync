@@ -1,5 +1,7 @@
 ---
-# The declared configuration the lifecycle qualification registers and runs.
+# An example declared configuration. Nothing loads it: a deployment starts with
+# an empty registry, and this file becomes a configuration only when an operator
+# registers it explicitly through the Sync API.
 #
 # Both adapters are the bundled `infrahub` one, so a registered run resolves
 # them from installed code: nothing is generated, and no worker filesystem is
@@ -7,12 +9,17 @@
 # `INFRAHUB_API_TOKEN` from its own environment, so no secret value is declared
 # here, stored in PostgreSQL, or printed by any lifecycle command.
 #
-# Edit `url` to name your own Infrahub, or point
-# `INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION` at a package file of your own. Edit it
-# before the first start: the declared content below is what the registry
-# checksums, and bootstrap recognises this configuration by its declared name, so
-# an edit afterwards is refused as conflicting content under a name that is
-# already registered. To change it later, change `name` as well.
+# Edit `url` to name your own Infrahub before registering it, or register a
+# package file of your own instead:
+#
+#   ./infrahub-sync-compose cli --package ./package.yml -- \
+#     configs register /input/package.yaml --reason 'register my configuration'
+#
+# A registered version is immutable. To change a registered configuration, edit
+# your own copy and register the edit as the next version of it:
+#
+#   ./infrahub-sync-compose cli --package ./package.yml -- \
+#     configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'
 #
 # The schema this maps is the one Infrahub Sync ships for its own qualification:
 # examples/prefect_remote_run/schemas/infra_device.yml

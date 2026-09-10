@@ -43,6 +43,7 @@ INFRAHUB_SYNC_SERVICE_BEARER_TOKENS'
 # Keep this closed set equal to the ${...} names in compose.yaml.
 COMPOSE_SETTINGS='INFRAHUB_API_TOKEN
 INFRAHUB_SYNC_API_PORT
+INFRAHUB_SYNC_API_TOKEN
 INFRAHUB_SYNC_BIND_ADDRESS
 INFRAHUB_SYNC_DATABASE_URL
 INFRAHUB_SYNC_IMAGE
@@ -347,6 +348,74 @@ check_ports() {
 }
 
 # ---------------------------------------------------------------------------
+# The containerized CLI
+# ---------------------------------------------------------------------------
+# The CLI runs in the same image as the deployment, in a container of its own
+# that is removed when the command ends. The only filesystem input it can be
+# given is one declared package, and the caller's own file is never what is
+# mounted: an operator's file is theirs, and an image user of 10001 cannot read
+# a 0640 file owned by somebody else.
+
+CLI_MOUNT=/input/package.yaml
+STAGE=''
+
+remove_stage() {
+    [ -n "$STAGE" ] || return 0
+    rm -rf -- "$STAGE"
+    STAGE=''
+}
+
+stage_package() {
+    # A copy, in a directory only this user can enter, carrying the caller's
+    # bytes and none of the caller's permissions. The copy is world-readable so
+    # the image user can read the mount; the 0700 directory is what keeps it
+    # from being readable by anybody else on this host.
+    [ -f "$1" ] && [ -r "$1" ] || refuse package-unusable "$1 is not a readable regular file"
+    STAGE=$(mktemp -d "${TMPDIR:-/tmp}/infrahub-sync-cli.XXXXXX") ||
+        refuse package-unusable "a private directory for the package copy could not be created"
+    chmod 0700 "$STAGE"
+    # Redirected rather than copied, so nothing about the original crosses into
+    # the staged file except its content.
+    cat -- "$1" > "$STAGE/package.yaml" || refuse package-unusable "$1 could not be staged for this call"
+    chmod 0644 "$STAGE/package.yaml"
+}
+
+command_cli() {
+    package=''
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --package)
+                shift
+                [ $# -gt 0 ] || refuse cli-usage "\`--package\` names no file"
+                package=$1
+                shift
+                ;;
+            --) shift; break ;;
+            *) break ;;
+        esac
+    done
+    # The staged copy is removed on every way out of this command, including an
+    # interrupted one: a declared package left on the host is the input this
+    # staging exists to keep bounded.
+    trap 'remove_stage' EXIT HUP TERM
+    trap 'remove_stage; exit 130' INT
+    # The CLI's own status is the whole result, so it is captured rather than
+    # left to `set -e`, which would skip the removal below.
+    set +e
+    if [ -n "$package" ]; then
+        stage_package "$package"
+        compose --profile cli run --rm --no-deps -T \
+            --volume "$STAGE/package.yaml:$CLI_MOUNT:ro" sync-cli "$@"
+    else
+        compose --profile cli run --rm --no-deps -T sync-cli "$@"
+    fi
+    status=$?
+    set -e
+    remove_stage
+    return $status
+}
+
+# ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
 
@@ -381,6 +450,9 @@ command_init() {
     prefect=$(random_value 24)
     access=$(random_value 12)
     secret=$(random_value 24)
+    # One value, written to the two settings that name it: the API principal the
+    # deployment authenticates, and the token the containerized CLI presents.
+    # Generating two would leave the shipped CLI unable to reach this deployment.
     principal=$(random_value 24)
     umask 077
     cat > "$OPERATOR" <<OPERATOR_SETTINGS
@@ -409,7 +481,11 @@ INFRAHUB_SYNC_PREFECT_DATABASE_URL=postgresql+asyncpg://prefect:$prefect@postgre
 INFRAHUB_SYNC_S3_ACCESS_KEY=$access
 INFRAHUB_SYNC_S3_SECRET_KEY=$secret
 
+# These two are one credential. The first is the principal the Sync API accepts;
+# the second is what \`./infrahub-sync-compose cli\` presents to it. Change one by
+# hand and you have to change the other to the same value.
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}
+INFRAHUB_SYNC_API_TOKEN=$principal
 OPERATOR_SETTINGS
     chmod 0600 "$OPERATOR"
     report "wrote $OPERATOR; set INFRAHUB_SYNC_IMAGE before starting"
@@ -543,6 +619,10 @@ Usage: infrahub-sync-compose <command>
   preflight   Check Compose, paths, credentials, image, and ports.
   start       Preflight, start the deployment, and wait for endpoint-backed READY.
   status      Report READY (exit 0), DEGRADED (exit 3), or STOPPED (exit 4).
+  cli [--package FILE] [--] CLI_ARGUMENTS...
+              Run the Sync CLI against this deployment, in a container of the
+              same image. With --package, one readable file is copied and
+              mounted read-only at /input/package.yaml for that one call.
   logs [svc]  Print a bounded tail of the deployment's logs.
   stop        Stop the deployment, keeping its containers and all of its data.
   restart     Replace the API and worker processes, keeping every durable record.
@@ -556,6 +636,7 @@ case "${1:-}" in
     preflight) require_identity; command_preflight ;;
     start) require_identity; command_start ;;
     status) require_identity; command_status ;;
+    cli) require_identity; shift; command_cli "$@" ;;
     logs) require_identity; shift; command_logs "$@" ;;
     stop) require_identity; command_stop ;;
     restart) require_identity; command_restart ;;

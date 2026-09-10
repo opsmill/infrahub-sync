@@ -144,6 +144,8 @@ and a fixed sentence, and none of them renders a credential value:
 | `image-unresolvable` | Docker cannot find that digest locally or in a registry. |
 | `port-unset` | `INFRAHUB_SYNC_BIND_ADDRESS`, or one of the two port settings, names nothing. |
 | `port-occupied`, `port-unprovable` | A required loopback bind is held, or the bind probe could not run. |
+| `cli-usage` | `cli --package` was given no file. |
+| `package-unusable` | The named package is not a readable regular file, or its copy could not be staged for that call. The refusal names the path and never its content. |
 | `foreign-resource` | A resource under this name carries another instance's label. Nothing was changed. |
 | `not-ready` | `start` brought the deployment up and no live worker registered inside `INFRAHUB_SYNC_READY_TIMEOUT` seconds. |
 | `confirmation-required` | `reset` was not given this deployment's exact identity. |
@@ -162,6 +164,61 @@ an empty registry, no credentials and no reachable destination.
 
 Both published surfaces bind to loopback: the Sync API on `127.0.0.1:8000`, the
 Prefect UI and API on `127.0.0.1:4200`.
+
+## Register a configuration and run it
+
+`cli` runs the shipped CLI against this deployment, in a container of the same
+image and on the deployment's own network. It authenticates with
+`INFRAHUB_SYNC_API_TOKEN`, which `init` wrote as the same value as the principal
+in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`; those two settings are one credential,
+so a hand edit to either has to be made to both.
+
+Each call is one container, removed when the command ends. It publishes nothing,
+starts no service as a side effect, and keeps no volume.
+
+`--package` gives one call one file: its bytes are copied into a private
+directory, mounted read-only at `/input/package.yaml`, and removed afterwards.
+Your own file is never mounted and never modified.
+
+```bash
+./infrahub-sync-compose init
+# Set the immutable image in operator.env; no configuration or destination is needed yet.
+./infrahub-sync-compose start
+./infrahub-sync-compose cli configs list
+# Add destination/source credentials to operator.env before planning; recreate affected services
+# using start after changed environment; restart alone retains the old container environment.
+./infrahub-sync-compose start
+./infrahub-sync-compose cli --package ./package.yml -- configs register /input/package.yaml --reason 'register my configuration'
+./infrahub-sync-compose cli configs show CONFIG_ID
+./infrahub-sync-compose cli configs versions CONFIG_ID
+./infrahub-sync-compose cli configs validate CONFIG_ID 1
+./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'review initial sync'
+./infrahub-sync-compose cli runs plan RUN_ID --detail
+./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM --branch main --reason 'apply reviewed initial sync'
+./infrahub-sync-compose cli runs show RUN_ID
+./infrahub-sync-compose cli runs results RUN_ID
+./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'verify unchanged source'
+# Versioning is explicit, and never rewrites a registered version:
+./infrahub-sync-compose cli --package ./edited-package.yml -- configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'
+```
+
+`CONFIG_ID`, `RUN_ID` and `CHECKSUM` are results the previous commands printed.
+`--` separates this wrapper's own options from the CLI's arguments.
+
+Four things worth knowing before the first plan:
+
+- **`READY` is not a statement about a configuration.** It says the Sync-owned
+  dependencies answer and a worker is live. Whether a registered package is
+  valid is what `configs validate` answers; whether its destination answers is
+  what the first run against it answers.
+- **A package's URLs are resolved inside a container.** `localhost` there is the
+  container itself, so name an address the Compose network can reach.
+- **A package's credentials are references.** Their values live in
+  `operator.env`, so no secret is registered, stored or printed. Add one before
+  the run that needs it and run `start` again.
+- **Registered content is preserved.** It lives in PostgreSQL, and the file you
+  registered from is not mounted by anything afterwards. A registered version is
+  immutable: register an edit as the next version with `configs version`.
 
 ## Status and logs
 
@@ -280,5 +337,7 @@ flag, no partial-write marker — and needs only a new plan.
 - The API and the worker share no mount, no volume, and no scratch directory.
   Run state travels between them through PostgreSQL and the object store.
 - One Sync image serves the API, the worker, the bootstrap job, and the CLI.
+- The CLI reaches the Sync API and nothing else. It is given no storage, Prefect,
+  source or destination credential, and no Docker socket.
 - Credentials live in `operator.env` and `secrets/`, generated per deployment.
   Neither is part of the archive, and nothing prints their values.

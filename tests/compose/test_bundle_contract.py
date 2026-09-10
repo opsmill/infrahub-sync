@@ -68,6 +68,9 @@ SOURCE_TOKEN_RECEIVERS = {"sync-worker"}
 DESTINATION_CREDENTIAL = "INFRAHUB_API_TOKEN"
 DESTINATION_CREDENTIAL_RECEIVERS = {"sync-api", "sync-worker"}
 
+# The opt-in client, and the profile that is the only way to resolve it.
+CLI_SERVICE = "sync-cli"
+
 
 def services(model: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     return dict(model["services"])
@@ -391,6 +394,65 @@ def test_the_host_route_is_test_only_and_reaches_exactly_the_two_destination_ser
     assert routed(model) == set(), f"the shipped bundle routes {sorted(routed(model))} to the host"
     overridden = resolve(contract_environment, files=(COMPOSE_FILE, FIXTURE_OVERRIDE))
     assert routed(overridden) == ROUTED_SERVICES, f"the override routes {sorted(routed(overridden))}"
+
+
+# ---------------------------------------------------------------------------
+# The containerized CLI
+# ---------------------------------------------------------------------------
+
+
+def test_the_cli_service_exists_only_when_its_profile_is_named(
+    model: dict[str, Any], cli_model: dict[str, Any]
+) -> None:
+    """An ordinary start creates no CLI container; naming the profile is what does."""
+    assert CLI_SERVICE not in services(model), "the CLI service is part of an ordinary start"
+    assert CLI_SERVICE in services(cli_model), "the CLI profile resolves no CLI service"
+
+
+def test_the_cli_service_is_given_exactly_the_two_settings_it_needs(cli_model: dict[str, Any]) -> None:
+    """It talks to the Sync API, so an equality here is what keeps every other credential out.
+
+    A storage, Prefect, source or destination value added to this service would
+    fail here even though the CLI kept working.
+    """
+    environment = service(cli_model, CLI_SERVICE)["environment"]
+
+    assert set(environment) == {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_API_TOKEN"}, sorted(environment)
+    assert environment["INFRAHUB_SYNC_API_URL"] == "http://sync-api:8000"
+
+
+def test_the_cli_service_reaches_no_host_and_keeps_nothing(cli_model: dict[str, Any]) -> None:
+    """No published port, no dependency startup, no volume, and no Docker socket."""
+    definition = service(cli_model, CLI_SERVICE)
+
+    assert published(definition) == [], f"the CLI service publishes {published(definition)}"
+    assert definition.get("depends_on") in (None, {}), f"the CLI service waits for {definition.get('depends_on')}"
+    assert definition.get("volumes") in (None, []), f"the CLI service mounts {definition.get('volumes')}"
+    assert definition.get("restart") == "no"
+    assert "/var/run/docker.sock" not in str(definition)
+
+
+def test_the_cli_service_runs_the_cli_in_the_image_the_deployment_runs(cli_model: dict[str, Any]) -> None:
+    """Same immutable reference, the CLI as its entrypoint, and the image's own user."""
+    definition = service(cli_model, CLI_SERVICE)
+    api = service(cli_model, "sync-api")
+    expected = [f"{root}:{SCRATCH_OPTIONS}" for root in SYNC_SCRATCH_ROOTS]
+
+    assert definition["image"] == api["image"]
+    assert IMMUTABLE_REFERENCE.fullmatch(str(definition["image"])), definition["image"]
+    assert definition["entrypoint"] == ["infrahub-sync"]
+    assert definition.get("read_only") is True
+    assert definition.get("tmpfs") == expected
+    # Nothing overrides the user, so the container runs as the image's non-root one.
+    assert "user" not in definition, f"the CLI service overrides the image user with {definition.get('user')}"
+
+
+def test_the_cli_service_carries_the_instance_labels_like_every_other(cli_model: dict[str, Any]) -> None:
+    """A container this bundle created has to be one teardown can prove it owns."""
+    labels = service(cli_model, CLI_SERVICE)["labels"]
+
+    assert labels.get(INSTANCE_LABEL) == "contract-0000000000000000"
+    assert labels.get(BUNDLE_LABEL) == "compose"
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ session-scoped stack can be shared by every case that needs one.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import time
 import uuid
@@ -168,6 +169,20 @@ class Deployment:
     @property
     def prefect(self) -> str:
         return f"http://127.0.0.1:{self.prefect_port}"
+
+
+# The bound one wrapper command is given. A `start` runs preflight, a waited
+# `up`, and then polls for a live worker, so it is the longest of them.
+ENTRY_POINT_TIMEOUT_SECONDS = 900
+
+
+def entry_point(bundle: Path, *arguments: str, timeout: int = ENTRY_POINT_TIMEOUT_SECONDS) -> Captured:
+    """Run one lifecycle command exactly as an operator would.
+
+    The entry point prints Compose's own output, so what comes back is retained
+    Compose output and goes through the same redaction boundary as the rest.
+    """
+    return capture([str(bundle / "infrahub-sync-compose"), *arguments], timeout=timeout, env=os.environ.copy())
 
 
 def wait_for(description: str, probe: Callable[[], object], *, timeout: int = READY_TIMEOUT_SECONDS) -> object:

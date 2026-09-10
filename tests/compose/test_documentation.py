@@ -10,10 +10,12 @@ value the page and the bundle disagree about is a copy-and-paste failure.
 from __future__ import annotations
 
 import ast
+import shlex
 from typing import Any, get_type_hints
 
 import pytest
 from pydantic import BaseModel
+from typer.testing import CliRunner
 
 from infrahub_sync.client import SyncClient
 from tests.compose.conftest import BUNDLE, REPO_ROOT
@@ -26,7 +28,33 @@ API_REFERENCE = REPO_ROOT / "docs" / "docs" / "reference" / "sync-http-api.mdx"
 
 # Every command the entry point answers to. A command nobody wrote down is one
 # the deployment appears not to have.
-COMMANDS = ("init", "preflight", "start", "status", "logs", "stop", "restart", "reset")
+COMMANDS = ("init", "preflight", "start", "status", "logs", "stop", "restart", "reset", "cli")
+
+# The operator sequence the page has to carry verbatim. An operator follows what
+# is written, so a line that drifted from the shipped surface is the failure this
+# catches -- and each of these is checked against the CLI's own commands below.
+OPERATOR_SEQUENCE = (
+    "./infrahub-sync-compose cli configs list",
+    (
+        "./infrahub-sync-compose cli --package ./package.yml -- "
+        "configs register /input/package.yaml --reason 'register my configuration'"
+    ),
+    "./infrahub-sync-compose cli configs show CONFIG_ID",
+    "./infrahub-sync-compose cli configs versions CONFIG_ID",
+    "./infrahub-sync-compose cli configs validate CONFIG_ID 1",
+    ("./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'review initial sync'"),
+    "./infrahub-sync-compose cli runs plan RUN_ID --detail",
+    (
+        "./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM "
+        "--branch main --reason 'apply reviewed initial sync'"
+    ),
+    "./infrahub-sync-compose cli runs show RUN_ID",
+    "./infrahub-sync-compose cli runs results RUN_ID",
+    (
+        "./infrahub-sync-compose cli --package ./edited-package.yml -- "
+        "configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'"
+    ),
+)
 
 # The three lifecycle states and the exit code each one carries, so a reader can
 # script against them.
@@ -99,6 +127,30 @@ def test_the_page_is_listed_in_the_docs_sidebar() -> None:
 def test_the_page_documents_every_lifecycle_command(command: str) -> None:
     """`--help` names them; this page is where their consequences are written down."""
     assert f"infrahub-sync-compose {command}" in page()
+
+
+@pytest.mark.parametrize("line", OPERATOR_SEQUENCE)
+def test_both_operator_documents_carry_the_sequence_verbatim(line: str) -> None:
+    """The bundled copy and the site page teach one procedure, not two."""
+    assert line in page(), line
+    assert line in (BUNDLE / "OPERATING.md").read_text(encoding="utf-8"), line
+
+
+@pytest.mark.parametrize("line", OPERATOR_SEQUENCE)
+def test_every_documented_cli_call_names_commands_the_cli_has(line: str) -> None:
+    """A documented call the CLI refuses is a procedure that stops at that step.
+
+    Resolved against the real Typer application, so a renamed command or a
+    dropped option fails here rather than during an operator's first run.
+    """
+    from infrahub_sync.cli import app
+
+    arguments = shlex.split(line.split(" cli ", 1)[1])
+    if arguments[:1] == ["--package"]:
+        arguments = arguments[arguments.index("--") + 1 :]
+    result = CliRunner().invoke(app, [*arguments, "--help"], env={"NO_COLOR": "1", "COLUMNS": "200"})
+
+    assert result.exit_code == 0, f"{line}: {result.output}"
 
 
 def test_the_page_documents_no_command_the_entry_point_does_not_have() -> None:

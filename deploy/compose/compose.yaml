@@ -241,6 +241,31 @@ services:
     read_only: true
     tmpfs: *sync-scratch
 
+  # The operator's client, in the same immutable image, behind a profile so no
+  # ordinary start creates it. One invocation is one command: it is called with
+  # `run --rm --no-deps -T`, publishes nothing, waits for nothing, and keeps no
+  # volume. It reaches the Sync API and nothing else, so it is given no storage,
+  # Prefect, source or destination credential -- and no Docker socket, so no
+  # command run through it can change the deployment it belongs to.
+  #
+  # The image's own non-root user runs it; nothing here overrides that.
+  sync-cli:
+    image: "${INFRAHUB_SYNC_IMAGE:?an immutable sha256 image reference is required}"
+    labels: *instance-labels
+    profiles: ["cli"]
+    restart: "no"
+    pull_policy: "${INFRAHUB_SYNC_IMAGE_PULL_POLICY:-missing}"
+    entrypoint: ["infrahub-sync"]
+    environment:
+      # The API on the deployment's own network, and the operator token `init`
+      # generated for the principal it also wrote. Empty when unset, so a call
+      # against an unauthenticated deployment refuses at the API rather than
+      # failing to resolve here.
+      INFRAHUB_SYNC_API_URL: "http://sync-api:8000"
+      INFRAHUB_SYNC_API_TOKEN: "${INFRAHUB_SYNC_API_TOKEN:-}"
+    read_only: true
+    tmpfs: *sync-scratch
+
 secrets:
   postgres-admin-password:
     file: "${INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD_FILE:-./secrets/postgres-admin-password}"

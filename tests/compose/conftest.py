@@ -247,6 +247,23 @@ def model(compose_version: str, contract_environment: dict[str, str]) -> dict[st
     return resolve(contract_environment)
 
 
+# The one profile the bundle declares, and the service behind it.
+CLI_PROFILE = "cli"
+
+
+@pytest.fixture(scope="session")
+def cli_model(compose_version: str, contract_environment: dict[str, str]) -> dict[str, Any]:
+    """The resolved bundle with the CLI profile named, which is the only way to get it."""
+    del compose_version
+    result = compose(
+        ["--profile", CLI_PROFILE, "config", "--format", "json"],
+        environment=contract_environment,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"docker compose config refused the bundle: {result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
 def service(model: Mapping[str, Any], name: str) -> dict[str, Any]:
     """Return one resolved service, failing rather than skipping when it is gone."""
     services = model["services"]

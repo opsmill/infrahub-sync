@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -160,6 +161,7 @@ def client() -> MagicMock:
     injected.apply.return_value = _run(operation="apply")
     injected.wait_for_run.side_effect = lambda accepted, **_kwargs: accepted
     injected.get_plan.return_value = _plan()
+    injected.get_run.return_value = _run()
     return injected
 
 
@@ -411,6 +413,62 @@ def test_failed_apply_keeps_terminal_verdict_when_failure_evidence_is_unavailabl
     assert "terminal_outcome: failed" in result.output
     assert "phase: apply-failed" in result.output
     assert "outcome: failed" in result.output
+
+
+def test_runs_show_renders_the_service_record_and_its_selected_execution(client: MagicMock) -> None:
+    """An operator following a run needs the Prefect correlation, not just the phase."""
+    client.get_run.return_value = _run(operation="apply", phase="applied")
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    client.get_run.assert_called_once_with("service-run-1")
+    for field in (
+        "run_id: service-run-1",
+        "operation: apply",
+        "config_id: edge-sync",
+        "registry_version: 1",
+        f"package_checksum: {CHECKSUM}",
+        "phase: applied",
+        "execution_state: pending",
+        "flow_run_id: flow-service-1",
+    ):
+        assert field in result.output
+
+
+def test_runs_results_renders_the_typed_response_as_parseable_json(client: MagicMock) -> None:
+    """The API owns what a result says; this renders it without inventing structure."""
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={"apply": {"created": 3, "updated": 0}, "verification": {"checksum_ok": True}},
+    )
+
+    result = _invoke(client, "runs", "results", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    client.get_results.assert_called_once_with("service-run-1")
+    assert json.loads(result.output) == {
+        "run_id": "service-run-1",
+        "results": {"apply": {"created": 3, "updated": 0}, "verification": {"checksum_ok": True}},
+    }
+
+
+def test_runs_results_escapes_control_characters_rather_than_emitting_them(client: MagicMock) -> None:
+    """Recorded provider text can carry an escape sequence a terminal would act on."""
+    client.get_results.return_value = ResultsResource(
+        run_id="service-run-1",
+        results={"apply_failure": {"error_type": "OperationApplyFailedError", "detail": "line\x1b[2Jone\ttwo"}},
+    )
+
+    result = _invoke(client, "runs", "results", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    rendered = result.output
+    # The literal escape must be absent and its JSON escape present, so the two
+    # are compared as the six characters `\u001b` rather than as the character.
+    assert "\x1b" not in rendered
+    assert "\\u001b" in rendered
+    assert json.loads(rendered)["results"]["apply_failure"]["detail"] == "line\x1b[2Jone\ttwo"
 
 
 def test_runs_plan_filters_detail_and_marks_deletes_not_executed(client: MagicMock) -> None:

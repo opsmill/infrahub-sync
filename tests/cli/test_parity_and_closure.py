@@ -37,6 +37,8 @@ CLI_CLIENT_PARITY = (
     ("diff", "plan", "POST /runs"),
     ("sync", "sync", "POST /runs"),
     ("runs plan RUN_ID", "get_plan", "GET /runs/{run_id}/plan"),
+    ("runs show RUN_ID", "get_run", "GET /runs/{run_id}"),
+    ("runs results RUN_ID", "get_results", "GET /runs/{run_id}/results"),
     ("apply RUN_ID", "apply", "POST /runs/{run_id}/apply"),
     ("apply RUN_ID failure evidence", "get_results", "GET /runs/{run_id}/results"),
 )
@@ -65,6 +67,8 @@ def test_parity_matrix_is_exactly_the_accepted_cli_surface() -> None:
         "plan",
         "sync",
         "get_plan",
+        "get_run",
+        "get_results",
         "apply",
         "get_results",
     ]
@@ -113,6 +117,8 @@ def test_all_retired_local_execution_options_are_absent_from_live_command_help()
     assert not (removed & set(help_text.split()))
     assert "--detail" in _help("runs", "plan")
     assert "--kind" in _help("runs", "plan")
+    for command in ("show", "results"):
+        assert command in _help("runs"), f"`runs {command}` is absent from the group's help"
 
 
 def test_cli_imports_only_the_shared_client_boundary() -> None:

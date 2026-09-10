@@ -207,28 +207,93 @@ External exposure and TLS termination are not part of this topology.
 
 ## Use it
 
-The bearer token `init` generated is in `operator.env` under
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`.
+`cli` runs the shipped CLI against this deployment, in a container of the same
+image, on the deployment's own network:
+
+```bash
+./infrahub-sync-compose cli configs list
+```
+
+There is nothing to authenticate by hand. `init` generated one value and wrote it
+to both settings that name it — `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, the
+principal the Sync API accepts, and `INFRAHUB_SYNC_API_TOKEN`, what `cli`
+presents. They are one credential: if you change one, change the other to the
+same value.
+
+Each call is one container: nothing is published, no service is started as a
+side effect, no volume is kept, and the container is removed when the command
+ends. `cli --help` is the CLI's own help, and everything after `cli` is passed
+through as given — an argument holding spaces stays one argument.
+
+### Registering a package
+
+A package is a file on your machine, and the CLI runs in a container. `--package`
+bridges that for one call: the file's bytes are copied into a private directory,
+mounted read-only at `/input/package.yaml`, and removed when the command ends.
+Your own file is never mounted and never modified, so its permissions are left
+alone.
+
+```bash
+./infrahub-sync-compose cli --package ./package.yml -- \
+  configs register /input/package.yaml --reason 'register my configuration'
+```
+
+Two refusals belong to `--package` alone: `cli-usage` when it is given no file,
+and `package-unusable` when the named path is not a readable regular file. Both
+name the path and never its content.
+
+`--` separates the wrapper's own options from the CLI's. After registration the
+declared content lives in PostgreSQL: no host file is mounted by the API or the
+worker, and the file you registered from is not needed again. Every later command
+names the configuration by its identifier and version.
+
+Two things a package declares are resolved elsewhere:
+
+- **Its URLs are resolved inside a container.** `localhost` there is the
+  container itself. Name an address the Compose network can reach.
+- **Its credentials are references.** The value lives in `operator.env` and is
+  resolved by the service that needs it, so no secret is registered, stored or
+  echoed. Add the credential before the run that needs it and run `start` again
+  to recreate the services whose environment changed.
+
+### The operator sequence
+
+```bash
+./infrahub-sync-compose init
+# Set the immutable image in operator.env; no configuration or destination is needed yet.
+./infrahub-sync-compose start
+./infrahub-sync-compose cli configs list
+# Add destination/source credentials to operator.env before planning; recreate affected services
+# using start after changed environment; restart alone retains the old container environment.
+./infrahub-sync-compose start
+./infrahub-sync-compose cli --package ./package.yml -- configs register /input/package.yaml --reason 'register my configuration'
+./infrahub-sync-compose cli configs show CONFIG_ID
+./infrahub-sync-compose cli configs versions CONFIG_ID
+./infrahub-sync-compose cli configs validate CONFIG_ID 1
+./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'review initial sync'
+./infrahub-sync-compose cli runs plan RUN_ID --detail
+./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM --branch main --reason 'apply reviewed initial sync'
+./infrahub-sync-compose cli runs show RUN_ID
+./infrahub-sync-compose cli runs results RUN_ID
+./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'verify unchanged source'
+# Versioning is explicit, and never rewrites a registered version:
+./infrahub-sync-compose cli --package ./edited-package.yml -- configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'
+```
+
+`CONFIG_ID`, `RUN_ID` and `CHECKSUM` are results the previous commands printed.
+`runs show` reports the run's phase, outcome and Prefect correlation; `runs
+results` prints what the service recorded for it as JSON.
+
+### Over HTTP or from Python
+
+The same deployment answers directly. The bearer token is the principal in
+`operator.env`:
 
 ```bash
 export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8000
 export INFRAHUB_SYNC_API_TOKEN=<the generated principal token>
-```
-
-Over HTTP:
-
-```bash
 curl -sS "$INFRAHUB_SYNC_API_URL/status"
 curl -sS -H "Authorization: Bearer $INFRAHUB_SYNC_API_TOKEN" "$INFRAHUB_SYNC_API_URL/configs"
-```
-
-With the shipped CLI, which runs from the same image:
-
-```bash
-export INFRAHUB_SYNC_IMAGE=<the immutable image reference used during init>
-docker run --rm --network host \
-  --env INFRAHUB_SYNC_API_URL --env INFRAHUB_SYNC_API_TOKEN \
-  "$INFRAHUB_SYNC_IMAGE" infrahub-sync configs list
 ```
 
 From Python:

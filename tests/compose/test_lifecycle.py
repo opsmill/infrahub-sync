@@ -15,7 +15,6 @@ last on purpose.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import socket
 import time
@@ -37,6 +36,7 @@ from tests.compose.lifecycle import (
     await_verification,
     container_reachable_host,
     docker,
+    entry_point,
     idempotency,
     online_worker_names,
     plant_pending_update,
@@ -45,7 +45,7 @@ from tests.compose.lifecycle import (
     smoke_package,
     wait_for,
 )
-from tests.compose.redaction import SECRETS, Captured, capture
+from tests.compose.redaction import SECRETS, Captured
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -69,19 +69,6 @@ GENERATED_SETTINGS = (
     "INFRAHUB_SYNC_S3_SECRET_KEY",
     "INFRAHUB_SYNC_S3_ACCESS_KEY",
 )
-
-
-def entry_point(bundle: Path, *arguments: str) -> Captured:
-    """Run one lifecycle command exactly as an operator would.
-
-    The entry point prints Compose's own output, so what comes back is retained
-    Compose output and goes through the same redaction boundary as the rest.
-    """
-    return capture(
-        [str(bundle / "infrahub-sync-compose"), *arguments],
-        timeout=START_TIMEOUT_SECONDS,
-        env=os.environ.copy(),
-    )
 
 
 def verdict(result: Captured) -> str:

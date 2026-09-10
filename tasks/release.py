@@ -58,10 +58,10 @@ EXAMPLE_SCHEMA = REPO_ROOT / "examples" / "prefect_remote_run" / "schemas" / "in
 
 # The deployment bundle, as the repository holds it. Which of its files ship is
 # decided by what they are, not by what they are called: `configuration/
-# qualification.yaml` is the declared configuration the bootstrap job registers
-# and the one filesystem input `compose.yaml` binds, so it ships despite its
-# name. What never ships is what a deployment generates on its host —
-# `operator.env`, `secrets/`, and `.instance` — none of which Git tracks.
+# qualification.yaml` is an example declared package an operator registers
+# explicitly through the Sync API, so it ships despite its name. What never ships
+# is what a deployment generates on its host — `operator.env`, `secrets/`, and
+# `.instance` — none of which Git tracks.
 BUNDLE_SOURCE = REPO_ROOT / "deploy" / "compose"
 BUNDLE_TREE = "deploy/compose"
 CHECKSUM_SUFFIX = ".sha256"
