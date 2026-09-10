@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
@@ -64,7 +64,7 @@ jobs:
             git push origin "refs/tags/${VERSION}"
           fi
 
-      - uses: release-drafter/release-drafter@v6
+      - uses: release-drafter/release-drafter@v7
         with:
           config-name: release-drafter.yml
           publish: ${{ inputs.publish }}
