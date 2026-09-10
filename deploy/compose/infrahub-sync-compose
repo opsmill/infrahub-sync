@@ -265,7 +265,9 @@ check_image() {
         docker manifest inspect "$reference" >/dev/null 2>&1 ||
         refuse image-unresolvable "Docker cannot resolve the image $reference locally or in a registry"
     SYNC_IMAGE=$reference
-    report "the Sync image is named by digest and resolves"
+    # Quiet for the CLI path: its stdout is the CLI's own output, and a command
+    # like `runs results` prints JSON a caller parses.
+    [ "${1:-}" = "--quiet" ] || report "the Sync image is named by digest and resolves"
 }
 
 setting_value() {
@@ -381,6 +383,11 @@ stage_package() {
 }
 
 command_cli() {
+    check_image --quiet
+    # The same digest-only boundary every other executable path passes. This one
+    # runs a container of that image and hands it the operator API token, so it
+    # is checked before anything is staged and before any container is created:
+    # a re-pointed tag must not be runnable here while `start` refuses it.
     package=''
     while [ $# -gt 0 ]; do
         case "$1" in

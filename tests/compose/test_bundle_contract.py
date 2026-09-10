@@ -47,13 +47,12 @@ PERSISTENT_SERVICES = {"postgres", "object-store"}
 
 # The test-only override, and the host route it adds -- in the form Compose
 # resolves it to, since the file writes `name:value` and the model renders
-# `name=value`. Exactly two services reach the declared destination: the job that
-# probes it before a start, and the worker that runs against it. The API resolves
-# runs out of PostgreSQL and dispatches through Prefect, and opens no connection
-# to the destination at all.
+# `name=value`. One service reaches the declared destination: the worker that
+# runs against it. The API resolves runs out of PostgreSQL and dispatches through
+# Prefect, and the bootstrap job reaches no destination at all.
 FIXTURE_OVERRIDE = Path(__file__).resolve().parent / "fixture-override.yaml"
 HOST_ROUTE = "host.docker.internal=host-gateway"
-ROUTED_SERVICES = {"sync-bootstrap", "sync-worker"}
+ROUTED_SERVICES = {"sync-worker"}
 
 # The source credentials the bundled adapters resolve. Only a run consumes one,
 # and only the worker runs one, so the worker is the only service that may be
@@ -70,6 +69,11 @@ DESTINATION_CREDENTIAL_RECEIVERS = {"sync-api", "sync-worker"}
 
 # The opt-in client, and the profile that is the only way to resolve it.
 CLI_SERVICE = "sync-cli"
+# The API client credential, and the only service allowed to hold one. It
+# authenticates a caller *to* this deployment, so a worker or a job holding it
+# would be a service carrying a credential for the service that dispatches it.
+CLIENT_CREDENTIAL = "INFRAHUB_SYNC_API_TOKEN"
+CLIENT_CREDENTIAL_RECEIVERS = {CLI_SERVICE}
 
 
 def services(model: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -374,10 +378,10 @@ def test_the_long_running_sync_services_wait_for_that_convergence(model: dict[st
         )
 
 
-def test_the_host_route_is_test_only_and_reaches_exactly_the_two_destination_services(
+def test_the_host_route_is_test_only_and_reaches_exactly_the_destination_consumer(
     model: dict[str, Any], contract_environment: dict[str, str]
 ) -> None:
-    """The shipped bundle grants it to nobody; the override grants it to exactly two.
+    """The shipped bundle grants it to nobody; the override grants it to the worker alone.
 
     Both halves are equalities over every service, so a route added to the
     shipped file fails, and adding a service to the override or dropping one
@@ -419,6 +423,21 @@ def test_the_cli_service_is_given_exactly_the_two_settings_it_needs(cli_model: d
 
     assert set(environment) == {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_API_TOKEN"}, sorted(environment)
     assert environment["INFRAHUB_SYNC_API_URL"] == "http://sync-api:8000"
+
+
+def test_the_client_credential_is_held_by_the_cli_service_alone(cli_model: dict[str, Any]) -> None:
+    """An equality over every service, so a token added to the worker or a job fails here.
+
+    Closing the CLI service's own environment says what it holds; this says that
+    nothing else holds the same credential.
+    """
+    holders = {
+        name
+        for name, definition in services(cli_model).items()
+        if CLIENT_CREDENTIAL in (definition.get("environment") or {})
+    }
+
+    assert holders == CLIENT_CREDENTIAL_RECEIVERS, f"{CLIENT_CREDENTIAL} is given to {sorted(holders)}"
 
 
 def test_the_cli_service_reaches_no_host_and_keeps_nothing(cli_model: dict[str, Any]) -> None:

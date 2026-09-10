@@ -93,7 +93,7 @@ BUNDLED_CONFIGURATION = "infrahub-sync-qualification"
 
 
 def bundled(client: SyncClient) -> tuple[str, int]:
-    """Return the configuration this deployment's own bootstrap registered.
+    """Return the configuration row 2 registered explicitly through the API.
 
     Identified by the name it declares, because rows that need a package of
     their own register one, and a run against the wrong configuration would not
@@ -124,7 +124,7 @@ def create_run(operation: Operation, *, config_id: str, registry_version: int, r
 
 
 def run_request(client: SyncClient, operation: Operation, reason: str) -> CreateRunRequest:
-    """Return a request for one run against the configuration bootstrap registered."""
+    """Return a request for one run against the configuration row 2 registered."""
     config_id, registry_version = bundled(client)
     return create_run(operation, config_id=config_id, registry_version=registry_version, reason=reason)
 
@@ -244,7 +244,7 @@ def key(purpose: str) -> str:
 # ---------------------------------------------------------------------------
 # The destination state a managed row needs before it means anything
 # ---------------------------------------------------------------------------
-# The declared configuration the deployment's own bootstrap registers, mounted
+# The declared configuration row 2 registers explicitly through the API, mounted
 # read-only from the extracted bundle. Which branches a run reads and writes is
 # named there and nowhere else.
 CONFIGURATION = "/configuration/qualification.yaml"

@@ -9,6 +9,8 @@ nothing: the shim is what observes it while it exists.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -57,6 +59,15 @@ if [ "$1" = "compose" ]; then
             version | run) sub=$word; break ;;
         esac
     done
+    if [ "$sub" != "version" ] && [ "${SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT:-}" = "1" ]; then
+        for name in INFRAHUB_SYNC_API_TOKEN INFRAHUB_SYNC_IMAGE INFRAHUB_SYNC_INSTANCE; do
+            eval "value=\${$name-}"
+            if [ -n "$value" ]; then
+                printf 'docker shim: ambient %s reached Compose\n' "$name" >&2
+                exit 96
+            fi
+        done
+    fi
     case "$sub" in
         version)
             printf '%s\n' "${SHIM_COMPOSE_VERSION}"
@@ -86,6 +97,12 @@ if [ "$1" = "compose" ]; then
     printf 'docker shim: unexpected compose call: %s\n' "$*" >&2
     exit 97
 fi
+
+case "$1 $2" in
+    "image inspect" | "manifest inspect")
+        exit "${SHIM_IMAGE_RESOLVES:-0}"
+        ;;
+esac
 printf 'docker shim: unexpected call: %s\n' "$*" >&2
 exit 97
 """
@@ -187,10 +204,15 @@ def test_init_writes_one_generated_token_into_both_settings_that_name_it(bundle:
     result = run(bundle, shim, "init")
 
     assert result.returncode == 0, result.stderr
+    # Compared before the assertion. Pytest renders the operands of a rewritten
+    # assertion, so a generated token in one of them would reach the report.
     principals = setting(bundle, "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS")
     client_token = setting(bundle, "INFRAHUB_SYNC_API_TOKEN")
-    assert client_token, "init generated no client token"
-    assert f'"token": "{client_token}"' in principals, "the client token is not the server principal's"
+    generated = bool(client_token)
+    matched = bool(client_token) and f'"token": "{client_token}"' in principals
+
+    assert generated, "init generated no client token"
+    assert matched, "the client token init generated is not the server principal's"
 
 
 def test_init_prints_neither_value_of_the_token_pair(bundle: Path, shim: Path) -> None:
@@ -205,7 +227,10 @@ def test_init_prints_neither_value_of_the_token_pair(bundle: Path, shim: Path) -
         "INFRAHUB_SYNC_API_TOKEN": setting(bundle, "INFRAHUB_SYNC_API_TOKEN"),
         "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": setting(bundle, "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"),
     }
-    assert SECRETS.leaked(result.unredacted(), generated) == []
+    # The scan runs before the assertion, and only the names it found reach it.
+    leaked = SECRETS.leaked(result.unredacted(), generated)
+
+    assert leaked == [], f"init printed the value of {leaked}"
 
 
 def test_init_leaves_an_existing_operator_file_and_its_token_pair_alone(bundle: Path, shim: Path) -> None:
@@ -262,6 +287,110 @@ def test_cli_runs_one_transient_container_and_starts_no_dependency(
     for expected in ("--rm", "--no-deps", "-T", "sync-cli"):
         assert expected in run_call, f"the CLI call is missing {expected}: {run_call}"
     assert not [call for call in vector(recorded) if "up" in call], "the CLI command started services"
+
+
+def test_cli_refuses_a_mutable_image_before_it_runs_or_stages_anything(
+    initialized: Path, shim: Path, tmp_path: Path
+) -> None:
+    """This path runs a container of that image and gives it the operator token.
+
+    `start` already refuses a tag. Without the same check here, a re-pointed
+    reference is runnable through the CLI while the deployment beside it keeps
+    running the digest it was started with.
+    """
+    recorded = tmp_path / "argv-vector.log"
+    stage = tmp_path / "stage.log"
+    settings = initialized / "operator.env"
+    settings.write_text(
+        settings.read_text(encoding="utf-8").replace(
+            f"INFRAHUB_SYNC_IMAGE=sha256:{'a' * 64}", "INFRAHUB_SYNC_IMAGE=infrahub-sync:latest"
+        ),
+        encoding="utf-8",
+    )
+    package = _package(tmp_path)
+
+    result = run(
+        initialized,
+        shim,
+        "cli",
+        "--package",
+        str(package),
+        "--",
+        "configs",
+        "list",
+        environment={"SHIM_ARGV_VECTOR": str(recorded), "SHIM_STAGE_RECORD": str(stage)},
+    )
+
+    assert result.returncode != 0
+    assert family(result) == "image-not-immutable", result.stderr
+    calls = vector(recorded) if recorded.is_file() else []
+    assert not [call for call in calls if "run" in call], "a refused image still ran the CLI"
+    assert not stage.is_file(), "a refused image still staged the package"
+
+
+def test_cli_refuses_an_image_docker_cannot_resolve(initialized: Path, shim: Path, tmp_path: Path) -> None:
+    """Whether the repository half names anything is Docker's question, and it is asked."""
+    recorded = tmp_path / "argv-vector.log"
+
+    result = run(
+        initialized,
+        shim,
+        "cli",
+        "configs",
+        "list",
+        environment={"SHIM_IMAGE_RESOLVES": "1", "SHIM_ARGV_VECTOR": str(recorded)},
+    )
+
+    assert result.returncode != 0
+    assert family(result) == "image-unresolvable", result.stderr
+    calls = vector(recorded) if recorded.is_file() else []
+    assert not [call for call in calls if "run" in call], "an unresolvable image still ran the CLI"
+
+
+def test_the_cli_writes_nothing_of_its_own_to_the_clis_output_stream(initialized: Path, shim: Path) -> None:
+    """`runs results` prints JSON a caller parses, so the wrapper adds no line to it."""
+    result = run(initialized, shim, "cli", "runs", "results", "service-run-1")
+
+    wrote_nothing = not result.stdout
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert wrote_nothing, "the wrapper wrote a line of its own to the CLI's output stream"
+
+
+def test_an_ambient_client_token_cannot_override_the_operator_file(
+    initialized: Path, shim: Path, tmp_path: Path
+) -> None:
+    """The operator file owns the value the CLI presents; an exported one does not.
+
+    Both halves together are the property. The operator file already declares the
+    token `init` generated while the shell exports a different one under the same
+    name, and the shim refuses the call if either reaches Compose with a value --
+    so a wrapper that stopped clearing the environment fails here. The recorded
+    argv then shows the value was not merely dropped: Compose is given the three
+    env files in the order that lets the operator file supply it.
+    """
+    argv_log = tmp_path / "compose-argv.log"
+
+    result = run(
+        initialized,
+        shim,
+        "cli",
+        "configs",
+        "list",
+        environment={
+            "SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT": "1",
+            "SHIM_ARGV_LOG": str(argv_log),
+            "INFRAHUB_SYNC_API_TOKEN": "cli-ambient-client-token-must-lose",
+            "INFRAHUB_SYNC_IMAGE": "unexpected:latest",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    recorded = argv_log.read_text(encoding="utf-8")
+    chain = re.findall(r"--env-file (\S+)", recorded)
+    assert [Path(entry).name for entry in chain[:3]] == ["defaults.conf", "operator.env", ".instance"], chain[:3]
+    declared = bool(setting(initialized, "INFRAHUB_SYNC_API_TOKEN"))
+    assert declared, "the operator file declares no client token for the CLI to present"
 
 
 def test_cli_preserves_the_exit_status_of_the_command_it_ran(initialized: Path, shim: Path) -> None:
@@ -349,7 +478,9 @@ def test_a_staged_package_carries_the_callers_bytes_unchanged(initialized: Path,
         environment={"SHIM_STAGE_RECORD": str(record)},
     )
 
-    assert staged(record)["content"] == expected
+    unchanged = staged(record)["content"] == expected
+
+    assert unchanged, "the staged copy does not carry the caller's bytes unchanged"
 
 
 def test_a_staged_package_is_readable_by_the_image_user_inside_a_private_directory(
@@ -390,7 +521,9 @@ def test_staging_never_touches_the_callers_own_file(initialized: Path, shim: Pat
 
     run(initialized, shim, "cli", "--package", str(package), "--", "configs", "list")
 
-    assert (package.stat().st_mode & 0o777, package.read_bytes()) == before
+    untouched = (package.stat().st_mode & 0o777, package.read_bytes()) == before
+
+    assert untouched, "staging changed the caller's own file"
 
 
 def test_a_relative_package_path_resolves_against_the_callers_directory(
@@ -415,8 +548,10 @@ def test_a_relative_package_path_resolves_against_the_callers_directory(
         cwd=working,
     )
 
+    staged_the_named_file = staged(record)["content"] == package.read_bytes().hex()
+
     assert result.returncode == 0, result.stderr + result.stdout
-    assert staged(record)["content"] == package.read_bytes().hex()
+    assert staged_the_named_file, "the staged copy is not the file the caller named"
 
 
 def test_a_package_path_holding_spaces_is_one_path(initialized: Path, shim: Path, tmp_path: Path) -> None:
@@ -438,8 +573,10 @@ def test_a_package_path_holding_spaces_is_one_path(initialized: Path, shim: Path
         environment={"SHIM_STAGE_RECORD": str(record)},
     )
 
+    staged_the_named_file = staged(record)["content"] == package.read_bytes().hex()
+
     assert result.returncode == 0, result.stderr + result.stdout
-    assert staged(record)["content"] == package.read_bytes().hex()
+    assert staged_the_named_file, "a path holding spaces did not stage the file it names"
 
 
 @pytest.mark.parametrize("kind", ["absent", "directory"])
@@ -487,9 +624,13 @@ def test_a_refused_package_discloses_no_content(initialized: Path, shim: Path, t
     finally:
         package.chmod(0o600)
 
+    # Membership is decided before the assertion: the raw output is the operand a
+    # rewritten assertion would render, and it is what the refusal must not carry.
+    disclosed = canary in result.unredacted()
+
     assert result.returncode != 0
     assert family(result) == "package-unusable", result.stderr
-    assert canary not in result.unredacted()
+    assert not disclosed, "the refusal disclosed content from the package it refused"
 
 
 # ---------------------------------------------------------------------------
@@ -564,24 +705,79 @@ def test_the_staged_copy_is_removed_when_the_operator_interrupts(initialized: Pa
 # ---------------------------------------------------------------------------
 
 
+# The value the CLI container is meant to receive, and the two source tokens it
+# must not. Distinct per name, so a private comparison can say which one crossed.
+CLIENT_CREDENTIAL = "cli-container-client-token-8ad3f1"
+SOURCE_TOKENS = {
+    "NETBOX_TOKEN": "cli-container-netbox-token-2b71ce",
+    "NAUTOBOT_TOKEN": "cli-container-nautobot-token-6f0a94",
+}
+
+
 def _container_environment(tmp_path: Path) -> dict[str, str]:
-    """Every operator input the bundle needs, with the image under test named."""
+    """Every operator input the bundle needs, with the image under test named.
+
+    The client token is non-empty on purpose: a probe run with an empty one
+    proves the name is present and nothing about the value reaching the child.
+    The two source tokens are planted for the same reason — a comparison against
+    values nobody supplied would pass on a bundle that leaked both.
+    """
     image = os.environ.get("INFRAHUB_SYNC_IMAGE", "").strip()
     if not image:
         pytest.skip("INFRAHUB_SYNC_IMAGE names no built image; this gate runs against the candidate artifact")
     secret = tmp_path / "postgres-admin-password"
     secret.write_text("container-administrator-password\n", encoding="utf-8")
+    SECRETS.register(CLIENT_CREDENTIAL, *SOURCE_TOKENS.values())
     return {
         **CONTRACT_ENVIRONMENT,
+        **SOURCE_TOKENS,
         "INFRAHUB_SYNC_IMAGE": image,
         "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD_FILE": str(secret),
+        "INFRAHUB_SYNC_API_TOKEN": CLIENT_CREDENTIAL,
     }
 
 
-def _cli(arguments: Sequence[str], environment: Mapping[str, str]) -> Captured:
-    """One transient CLI container of the candidate image, with no dependency started."""
+# Read from inside the container: every environment name, and a digest of each
+# value. A digest is not the value it covers, so what crosses back out of the
+# container proves what it holds without rendering any of it.
+CONTAINER_PROBE = (
+    "import hashlib,json,os;"
+    "print(json.dumps({name: hashlib.sha256(value.encode()).hexdigest()"
+    " for name, value in os.environ.items()}))"
+)
+
+
+def _probe_payload(result: Captured) -> str:
+    """Return the one JSON line the probe printed, from the raw stream.
+
+    Raw, because a credential-named key's value is redacted by name and the probe
+    reports a digest under one of those names. The raw text is parsed and never
+    rendered: what leaves this module is a Boolean and a list of names.
+    """
+    candidates = [line for line in result.unredacted().splitlines() if line.startswith("{") and line.endswith("}")]
+    assert candidates, "the probe printed no JSON object"
+    return candidates[-1]
+
+
+def _digest(value: str) -> str:
+    """The digest a value is compared by, so no comparison holds the value itself."""
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _cli(
+    arguments: Sequence[str],
+    environment: Mapping[str, str],
+    *,
+    entrypoint: str | None = None,
+) -> Captured:
+    """One transient CLI container of the candidate image, with no dependency started.
+
+    `entrypoint` replaces the service's own, which is the only way to ask the
+    container a question the CLI has no command for.
+    """
+    override = ["--entrypoint", entrypoint] if entrypoint is not None else []
     return compose(
-        ["--profile", "cli", "run", "--rm", "--no-deps", "-T", "sync-cli", *arguments],
+        ["--profile", "cli", "run", "--rm", "--no-deps", "-T", *override, "sync-cli", *arguments],
         environment=dict(environment),
         env_files=(DEFAULTS_FILE,),
     )
@@ -607,12 +803,36 @@ def test_the_cli_container_holds_no_credential_beyond_its_own_api_token(docker_d
     resolved model says what was asked for, and this says what the process got.
     """
     del docker_daemon
-    probe = (
-        "import json,os;"
-        "print(json.dumps(sorted(name for name in os.environ"
-        " if any(part in name for part in ('TOKEN','PASSWORD','SECRET','KEY','DATABASE','PREFECT','S3')))))"
-    )
+    environment = _container_environment(tmp_path)
 
-    result = _cli(["--", "python", "-c", probe], _container_environment(tmp_path))
+    result = _cli(["-c", CONTAINER_PROBE], environment, entrypoint="python")
 
     assert result.returncode == 0, result.output
+    # Read from the raw stream, and only here. The redaction boundary replaces a
+    # credential-named key's value, so on the redacted stream the digest under
+    # `INFRAHUB_SYNC_API_TOKEN` is already `[redacted]` and answers nothing. The
+    # obligation that comes with the exception is met below: every comparison is
+    # made before its assertion, and only Booleans and names reach one.
+    digests = json.loads(_probe_payload(result))
+    # The bundle's own settings, by prefix. `GPG_KEY` and `PREFECT_HOME` belong
+    # to the images underneath and are not operator inputs, which is why this
+    # names what the bundle supplies rather than matching credential-shaped
+    # words -- an over-broad match here would report the base image's own keys.
+    supplied = {name for name in digests if name.startswith(("INFRAHUB_", "AWS_", "POSTGRES_", "PREFECT_API"))}
+
+    assert supplied == {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_API_TOKEN"}, sorted(supplied)
+
+    # The intended value arrived, and no other operator input did. Both compared
+    # as digests before the assertions, so what reaches a failure report is a
+    # Boolean and a list of names.
+    expected = _digest(CLIENT_CREDENTIAL)
+    received_intended = digests.get("INFRAHUB_SYNC_API_TOKEN") == expected
+    planted = {
+        name: _digest(value)
+        for name, value in environment.items()
+        if name not in {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_API_TOKEN"} and len(value) >= 8
+    }
+    carried = sorted(name for name, digest in planted.items() if digest in set(digests.values()))
+
+    assert received_intended, "the CLI container did not receive the client token the deployment gave it"
+    assert carried == [], f"these operator inputs reached the CLI container: {carried}"

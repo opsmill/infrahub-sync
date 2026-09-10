@@ -22,7 +22,7 @@ from infrahub_sync.client import RunTerminalError, RunWaitTimeoutError
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DRIVER = REPO_ROOT / "tests" / "compose" / "clean_host" / "clean-host.sh"
 CHECKS = REPO_ROOT / "tests" / "compose" / "clean_host" / "checks"
-# The declared configuration the deployment's own bootstrap registers. What its
+# The declared configuration the gate registers explicitly before row 3. What its
 # destination side names is what every managed row plans against.
 BUNDLED_CONFIGURATION = REPO_ROOT / "deploy" / "compose" / "configuration" / "qualification.yaml"
 # Every stage that can record a failure, as the service names the result key.

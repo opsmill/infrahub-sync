@@ -558,8 +558,9 @@ still be readable through the API afterwards. Check that they are — that is th
 claim being tested, not the exit code.
 
 Starting an already-started deployment is also safe. Bootstrap converges the two
-databases and their owners, the bucket, the work pool, the installed deployment
-and the declared configuration, and creates none of them twice:
+databases and their owners, the product schema, the bucket, the work pool and the
+installed deployment, and creates none of them twice. It registers nothing, so
+the configuration you registered in step 8 is left exactly as it was:
 
 ```bash
 ./infrahub-sync-compose start

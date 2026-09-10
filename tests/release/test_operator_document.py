@@ -53,9 +53,9 @@ UNCERTAIN_OUTCOMES = ("ambiguous", "failed")
 SAFETY_FIELD = "reconciliation_required"
 PARTIAL_WRITE_KEY = "may_have_partially_written"
 
-# What the shipped document's own requests need before they can be run. A host
-# that has only the archive cannot be told to send a token nothing gave it.
-REQUEST_VARIABLES = ("INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_API_TOKEN")
+# What a documented recipe needs before it can be run. A variable used before it
+# is set leaves an operator sending an empty value.
+REQUEST_VARIABLES = ("INFRAHUB_SYNC_API_URL", "CURL_CONFIG")
 PRINCIPAL_VARIABLE = "INFRAHUB_SYNC_API_TOKEN"
 # Where `init` puts the API principal, and the field inside it. Both are read off
 # the entry point below, so a change to either fails rather than leaving the
@@ -251,50 +251,75 @@ def test_the_guide_points_at_the_copy_the_archive_carries() -> None:
     assert OPERATOR_DOCUMENT.name in documented(GUIDE)
 
 
-def test_the_shipped_document_derives_every_variable_its_requests_need() -> None:
-    """A host with only the archive cannot be told to send a token it was never given.
+@pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
+def test_no_document_puts_the_bearer_token_on_a_command_line(path: Path) -> None:
+    """A header expanded into argv is readable by every process on the host.
 
-    The uncertain-write section is the one an operator reaches under pressure, and
-    it was asking for two variables the document never set. Both are now derived
-    from what `init` actually wrote.
+    The authenticated reads an operator makes go through `cli`, which presents
+    the token `init` generated from inside the deployment's own network. What is
+    left is checked as an equality over every shell line, so a returning recipe
+    fails here rather than being noticed by a reader.
     """
-    lines = commands(OPERATOR_DOCUMENT)
-    for variable in REQUEST_VARIABLES:
-        used = [
-            index
-            for index, line in enumerate(lines)
-            if f"${variable}" in line and not line.lstrip().startswith(f"{variable}=")
-        ]
-        assigned = [index for index, line in enumerate(lines) if line.lstrip().startswith(f"{variable}=")]
+    exposed = [line.strip() for line in commands(path) if "Authorization: Bearer $" in line]
 
-        assert used, f"{OPERATOR_DOCUMENT.name} never uses ${variable}"
-        assert assigned, f"{OPERATOR_DOCUMENT.name} uses ${variable} without ever setting it"
-        assert min(assigned) < min(used), f"{OPERATOR_DOCUMENT.name} uses ${variable} before it is set"
+    assert exposed == [], f"{path.name} expands the bearer token into a command line"
+    assert "infrahub-sync-compose cli runs show" in documented(path), f"{path.name} does not read a run through the CLI"
+    assert "infrahub-sync-compose cli runs results" in documented(path), (
+        f"{path.name} does not read a run's results through the CLI"
+    )
 
 
-def test_the_shipped_document_reads_the_token_without_sourcing_or_showing_it() -> None:
-    """`operator.env` holds every other credential of the deployment.
-
-    Sourcing it exports all of them; printing the line renders one. The document
-    reads the single field it needs out of the line `init` wrote, and confirms it
-    was found without rendering the value.
-    """
+def test_the_shipped_document_needs_no_credential_of_its_own() -> None:
+    """Every authenticated read it documents is a CLI call, so it derives no token."""
     body = documented(OPERATOR_DOCUMENT)
 
     assert PRINCIPAL_SETTING in body, f"{OPERATOR_DOCUMENT.name} does not say which setting holds the token"
+    assert "curl" not in body, f"{OPERATOR_DOCUMENT.name} makes a direct HTTP call it no longer needs"
+    assert f"{PRINCIPAL_VARIABLE}=$(" not in body, f"{OPERATOR_DOCUMENT.name} extracts a token it does not use"
+
+
+def test_the_site_guide_derives_every_variable_its_one_direct_recipe_needs() -> None:
+    """The direct call is for the one route the CLI has no command for.
+
+    A variable used before it is set leaves an operator sending an empty header,
+    which the API answers with a refusal that looks like a permissions problem.
+    """
+    lines = commands(GUIDE)
+
+    def assigns(line: str, variable: str) -> bool:
+        """Whether one line sets the variable, exported or not."""
+        head = line.lstrip().removeprefix("export ")
+        return head.startswith(f"{variable}=")
+
+    for variable in REQUEST_VARIABLES:
+        used = [index for index, line in enumerate(lines) if f"${variable}" in line and not assigns(line, variable)]
+        assigned = [index for index, line in enumerate(lines) if assigns(line, variable)]
+
+        assert used, f"{GUIDE.name} never uses ${variable}"
+        assert assigned, f"{GUIDE.name} uses ${variable} without ever setting it"
+        assert min(assigned) < min(used), f"{GUIDE.name} uses ${variable} before it is set"
+
+
+@pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
+def test_no_document_sources_or_renders_the_credential_file(path: Path) -> None:
+    """`operator.env` holds every other credential of the deployment.
+
+    Sourcing it exports all of them; printing the line renders one.
+    """
+    body = documented(path)
+
     for sourcing in ("source operator.env", ". operator.env", "set -a"):
-        assert sourcing not in body, f"{OPERATOR_DOCUMENT.name} sources the credential file with {sourcing!r}"
+        assert sourcing not in body, f"{path.name} sources the credential file with {sourcing!r}"
     for rendering in ("cat operator.env", f"echo ${PRINCIPAL_VARIABLE}", f'echo "${PRINCIPAL_VARIABLE}"'):
-        assert rendering not in body, f"{OPERATOR_DOCUMENT.name} renders a credential with {rendering!r}"
-    assert f'[ -n "${PRINCIPAL_VARIABLE}" ]' in body, f"{OPERATOR_DOCUMENT.name} does not confirm the token was found"
+        assert rendering not in body, f"{path.name} renders a credential with {rendering!r}"
 
 
-def test_the_extraction_the_shipped_document_gives_matches_what_init_writes() -> None:
+def test_the_extraction_the_site_guide_gives_matches_what_init_writes() -> None:
     """The pattern is only useful while it matches the line the entry point really generates.
 
     Read off the entry point's own heredoc rather than restated here, so changing
     how the token is written fails this instead of leaving the operator with a
-    command that silently yields an empty string.
+    private curl configuration that silently holds an empty header.
     """
     generated = [line for line in documented(ENTRY_POINT).splitlines() if line.startswith(f"{PRINCIPAL_SETTING}=")]
 
@@ -302,6 +327,4 @@ def test_the_extraction_the_shipped_document_gives_matches_what_init_writes() ->
     assert PRINCIPAL_FIELD in generated[0], (
         f"the entry point no longer writes {PRINCIPAL_FIELD!r}, so the documented extraction cannot match it"
     )
-    assert PRINCIPAL_FIELD in documented(OPERATOR_DOCUMENT), (
-        f"{OPERATOR_DOCUMENT.name} does not extract the field the entry point writes"
-    )
+    assert PRINCIPAL_FIELD in documented(GUIDE), f"{GUIDE.name} does not extract the field the entry point writes"

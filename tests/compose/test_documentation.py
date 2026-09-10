@@ -30,11 +30,16 @@ API_REFERENCE = REPO_ROOT / "docs" / "docs" / "reference" / "sync-http-api.mdx"
 # the deployment appears not to have.
 COMMANDS = ("init", "preflight", "start", "status", "logs", "stop", "restart", "reset", "cli")
 
-# The operator sequence the page has to carry verbatim. An operator follows what
-# is written, so a line that drifted from the shipped surface is the failure this
-# catches -- and each of these is checked against the CLI's own commands below.
+# The frozen operator sequence, in order and complete: the two lifecycle commands
+# that precede any CLI call, the literal second `start` after credentials are
+# added, and the unchanged-source diff after the apply. Order is the property --
+# an operator follows what is written, top to bottom -- so the documents are
+# scanned monotonically and the duplicate `start` has to be two occurrences.
 OPERATOR_SEQUENCE = (
+    "./infrahub-sync-compose init",
+    "./infrahub-sync-compose start",
     "./infrahub-sync-compose cli configs list",
+    "./infrahub-sync-compose start",
     (
         "./infrahub-sync-compose cli --package ./package.yml -- "
         "configs register /input/package.yaml --reason 'register my configuration'"
@@ -51,10 +56,17 @@ OPERATOR_SEQUENCE = (
     "./infrahub-sync-compose cli runs show RUN_ID",
     "./infrahub-sync-compose cli runs results RUN_ID",
     (
+        "./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 "
+        "--branch main --reason 'verify unchanged source'"
+    ),
+    (
         "./infrahub-sync-compose cli --package ./edited-package.yml -- "
         "configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'"
     ),
 )
+
+# The two operator documents this sequence has to appear in, in this order.
+OPERATOR_DOCUMENTS = ("docs/docs/compose-deployment.mdx", "deploy/compose/OPERATING.md")
 
 # The three lifecycle states and the exit code each one carries, so a reader can
 # script against them.
@@ -129,19 +141,64 @@ def test_the_page_documents_every_lifecycle_command(command: str) -> None:
     assert f"infrahub-sync-compose {command}" in page()
 
 
-@pytest.mark.parametrize("line", OPERATOR_SEQUENCE)
-def test_both_operator_documents_carry_the_sequence_verbatim(line: str) -> None:
-    """The bundled copy and the site page teach one procedure, not two."""
-    assert line in page(), line
-    assert line in (BUNDLE / "OPERATING.md").read_text(encoding="utf-8"), line
+def shell_blocks(body: str) -> list[list[str]]:
+    """Return each fenced shell block of one document as its list of lines."""
+    blocks: list[list[str]] = []
+    current: list[str] | None = None
+    for line in body.splitlines():
+        if line.startswith("```"):
+            if current is None:
+                current = [] if line.startswith("```bash") else None
+            else:
+                blocks.append(current)
+                current = None
+        elif current is not None:
+            current.append(line)
+    return blocks
 
 
-@pytest.mark.parametrize("line", OPERATOR_SEQUENCE)
+def missing_step(block: list[str]) -> str | None:
+    """Return the first sequence step this block does not carry in order, or None.
+
+    Monotonic over the block's own lines, so a step consumes the line it matched:
+    the second `start` needs a second line, and a reordered pair fails at the
+    first of the two.
+    """
+    remaining = list(block)
+    for step in OPERATOR_SEQUENCE:
+        for index, line in enumerate(remaining):
+            if line.strip() == step:
+                remaining = remaining[index + 1 :]
+                break
+        else:
+            return step
+    return None
+
+
+@pytest.mark.parametrize("document", OPERATOR_DOCUMENTS)
+def test_both_operator_documents_carry_the_whole_sequence_in_order(document: str) -> None:
+    """The bundled copy and the site page teach one procedure, in one order.
+
+    One block has to carry the whole sequence, and it is scanned monotonically
+    against that block's own lines. A step deleted, a pair reordered, or the
+    second `start` collapsed into one occurrence fails here; membership anywhere
+    in the document would accept all three, because both documents name `start`
+    in several unrelated places.
+    """
+    blocks = shell_blocks((REPO_ROOT / document).read_text(encoding="utf-8"))
+    complete = [block for block in blocks if missing_step(block) is None]
+    nearest = min((missing_step(block) or "" for block in blocks), key=len, default="")
+
+    assert complete, f"{document} carries no block running the whole frozen sequence in order (missing {nearest!r})"
+
+
+@pytest.mark.parametrize("line", [line for line in OPERATOR_SEQUENCE if " cli " in line])
 def test_every_documented_cli_call_names_commands_the_cli_has(line: str) -> None:
     """A documented call the CLI refuses is a procedure that stops at that step.
 
     Resolved against the real Typer application, so a renamed command or a
-    dropped option fails here rather than during an operator's first run.
+    dropped option fails here rather than during an operator's first run. Only
+    the CLI lines are resolved this way: `init` and `start` are the wrapper's.
     """
     from infrahub_sync.cli import app
 

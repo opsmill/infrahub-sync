@@ -257,12 +257,13 @@ def test_a_repeated_bootstrap_leaves_registered_content_exactly_as_it_was(starte
     assert probe_json(started, REGISTRY) == registered
     assert [entry[1] for entry in registered] == [registry_version]
     assert config_id
-    # The operator's registration is the only decision recorded, and a repeated
-    # bootstrap adds nothing to the census -- under any actor.
+    # The operator's registration is the one decision recorded, and a repeated
+    # bootstrap adds nothing to the census under any actor. The operation name is
+    # the API's to choose, so what is asserted is the count and the actor.
     census = probe_json(started, AUDIT)
     assert census == audited, census
+    assert len(audited) == 1, audited
     assert [event for event in census if event.startswith(f"{RETIRED_BOOTSTRAP_ACTOR}/")] == [], census
-    assert [event for event in census if event.endswith("/configs.register")] == audited, census
 
 
 def test_stop_and_start_preserve_the_registered_package(started: Deployment) -> None:
