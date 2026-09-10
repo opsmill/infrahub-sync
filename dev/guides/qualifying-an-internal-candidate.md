@@ -299,11 +299,14 @@ test "$RECORDED_BUNDLE" = "$ACTUAL_BUNDLE" \
 
 Do not extract the archive until both pass.
 
-## 5. Load the image and bind it to the record
+## 5. Load the image and confirm it is the one the record names
 
 Read the configuration digest the record names, load the archive, and confirm
-Docker holds that exact configuration. Export it now: it is what the deployment
-and the CLI are both given, and a tag would not be accepted anyway.
+Docker holds that exact configuration.
+
+Nothing downstream is *given* this value: the bundle ships `image.bind`, which
+already names the same image, and the deployment selects it locally. Exporting it
+here is what lets the two checks below compare the record and the archive.
 
 ```bash
 INFRAHUB_SYNC_IMAGE=$(jq -r '.image.platforms["linux/amd64"].config' record/qualification.json)
@@ -331,19 +334,18 @@ cd "$WORK/${BUNDLE_NAME%.tar.gz}"
 ```
 
 `init` writes `.instance`, `secrets/postgres-admin-password`, and `operator.env`
-with generated passwords. One value is yours to supply before the first start.
-Set the image to the digest you just verified:
+with generated passwords. There is no image to set: the archive shipped
+`image.bind`, and `init` copied the index reference from it into `.instance`.
+
+Confirm the record names the image you just loaded. `image.bind` holds no
+credential, so it can be read out loud:
 
 ```bash
-sed -i "s|^INFRAHUB_SYNC_IMAGE=.*|INFRAHUB_SYNC_IMAGE=${INFRAHUB_SYNC_IMAGE}|" operator.env
+cat image.bind
 
-# Confirm it is set without rendering its value. `grep -q` prints nothing, so the
-# only thing that reaches the terminal is the sentence below.
-if grep -q "^INFRAHUB_SYNC_IMAGE=..*" operator.env && ! grep -q "^INFRAHUB_SYNC_IMAGE=REPLACE-ME$" operator.env; then
-  printf 'INFRAHUB_SYNC_IMAGE is set\n'
-else
-  printf 'INFRAHUB_SYNC_IMAGE is NOT set\n'
-fi
+test "$(sed -n 's/^INFRAHUB_SYNC_IMAGE_CONFIG=//p' image.bind)" = "$INFRAHUB_SYNC_IMAGE" \
+  && echo "OK: the bundle names the candidate you loaded" \
+  || echo "STOP: the bundle names a different image than the record does"
 ```
 
 Nothing else is needed to start. The deployment comes up with an empty
@@ -387,11 +389,16 @@ whoever runs the deployment. Read it when this page runs out.
 
 `preflight` refuses before anything is created, and each refusal is one family
 name and a fixed sentence. `OPERATING.md` has the whole table. The ones you are
-most likely to meet here: `image-not-immutable` (a tag rather than a digest),
-`image-unresolvable` (the digest is not loaded), `credentials-missing` (a value
-in `operator.env` is still empty or `REPLACE-ME`), and `port-occupied`
-(something already holds `127.0.0.1:8000` or `:4200`). Preflight reaches no
-destination: a deployment starts without one.
+most likely to meet here: `image-unresolvable` (neither form the record names is
+loaded on this host), `image-platform-unqualified` (what resolved is another
+architecture), `image-binding-mismatch` (`.instance` was edited to name
+something the record does not), `credentials-missing` (a value in `operator.env`
+is empty), and `port-occupied` (something already holds `127.0.0.1:8000` or
+`:4200`). Preflight reaches no destination: a deployment starts without one.
+
+`preflight` is optional — `start` runs it — and it is not read-only: it may
+replace the image recorded in `.instance` with whichever of the record's two
+forms this host resolved. It starts no service and changes nothing you own.
 
 When preflight passes:
 

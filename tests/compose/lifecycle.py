@@ -325,6 +325,40 @@ def bundle_relative(path: Path) -> str:
     return str(path.relative_to(BUNDLE))
 
 
+def write_candidate_binding(bundle: Path, image: str) -> bytes:
+    """Write into a bundle copy the binding a release would generate for this candidate.
+
+    Two rules meet here. The record is produced by the release's own helper from
+    the whole digest record the image gate wrote — its index name and index
+    digest included — because a record synthesised from the candidate reference
+    alone would be a shape this repository never ships, and the suite would be
+    asserting against its own invention.
+
+    And the environment stays what it is: `INFRAHUB_SYNC_IMAGE` names the test
+    input, and this refuses rather than quietly writing a record that names
+    something else. A helper that accepted the drift would turn the environment
+    into the operator image-selection channel the binding exists to remove.
+    """
+    from tasks.image import read_digests, recorded_identity
+    from tasks.release import BINDING_CONFIG_KEY, BINDING_MEMBER, image_binding
+
+    record = read_digests()
+    binding = image_binding(record, recorded_identity(record))
+    consumed = dict(line.split("=", 1) for line in binding.decode("utf-8").splitlines())
+    assert consumed[BINDING_CONFIG_KEY] == image, (
+        "the generated binding names a candidate other than the image under test"
+    )
+    (bundle / BINDING_MEMBER).write_bytes(binding)
+    return binding
+
+
+def instance_identity(bundle: Path) -> str:
+    """Return the identity a bundle's generated state file names."""
+    from tests.compose.conftest import instance_setting
+
+    return instance_setting(bundle, "INFRAHUB_SYNC_INSTANCE")
+
+
 def operator_environment(
     directory: Path,
     *,

@@ -947,22 +947,39 @@ row_artifact_identity() {
 }
 
 # A tag names whatever it points at today, so the bundle has to refuse one before
-# it starts anything. Two things decide whether this tests that at all: the
-# reference is read from the operator's settings file, which is the only channel
-# `check_image` consults, and preflight reaches that check only once every
-# required setting has a value -- credentials are checked first and refuse for
-# their own reason.
+# it starts anything. The reference is no longer an operator's to write: it comes
+# from the record the release generated into the archive, so this corrupts that
+# record and restores it. What is under test is that a mutable reference is
+# refused wherever it comes from, which is the same claim as before.
+#
+# The record is restored from its own bytes rather than rewritten, so a restore
+# that silently produced a different record would leave the rest of the matrix
+# running against something this row invented.
 refuse_a_tag_only_image() {
-    digest=$(setting INFRAHUB_SYNC_IMAGE)
-    set_setting INFRAHUB_SYNC_IMAGE "infrahub-sync:latest"
+    cp "$BUNDLE/image.bind" "$WORK/image.bind.original" \
+        || fail "the extracted bundle ships no image binding to check"
+    sed 's|^INFRAHUB_SYNC_IMAGE_CONFIG=.*|INFRAHUB_SYNC_IMAGE_CONFIG=infrahub-sync:latest|' \
+        "$WORK/image.bind.original" > "$BUNDLE/image.bind"
     if compose_bundle preflight >"$WORK/tag-refusal" 2>&1; then
-        set_setting INFRAHUB_SYNC_IMAGE "$digest"
+        cp "$WORK/image.bind.original" "$BUNDLE/image.bind"
         fail "the bundle accepted a tag-only image reference"
     fi
-    set_setting INFRAHUB_SYNC_IMAGE "$digest"
-    grep -q "image-not-immutable" "$WORK/tag-refusal" \
+    cp "$WORK/image.bind.original" "$BUNDLE/image.bind"
+    cmp -s "$WORK/image.bind.original" "$BUNDLE/image.bind" \
+        || fail "the image binding was not restored after the refusal check"
+    grep -q "image-binding-invalid" "$WORK/tag-refusal" \
         || fail "the bundle refused a tag-only reference, but not for being mutable"
     report "a tag-only image reference is refused before anything starts"
+}
+
+# The archive named its own image, so nothing here selects one. What this checks
+# is that the record and the candidate this host loaded are the same artifact --
+# the operator-facing half of what row 1 established from the record.
+require_bundle_names_the_loaded_candidate() {
+    [ -r "$BUNDLE/image.bind" ] || fail "the extracted bundle ships no image binding"
+    bound=$(sed -n 's/^INFRAHUB_SYNC_IMAGE_CONFIG=//p' "$BUNDLE/image.bind")
+    require "the bundle names an image other than the candidate this host loaded" "$IMAGE" "$bound"
+    report "the bundle names the candidate this host loaded"
 }
 
 # ---------------------------------------------------------------------------
@@ -1007,7 +1024,10 @@ point_configuration_at_destination() {
 configure_deployment() {
     [ -n "$DESTINATION_URL" ] || fail "the deployment was configured before this host knew where the destination is"
     [ -n "$PROXY_URL" ] || fail "the deployment was configured before the proxy its writes go through existed"
-    set_setting INFRAHUB_SYNC_IMAGE "$IMAGE"
+    # No image is set here. The archive names the one it was qualified against,
+    # and this confirms that is the candidate this host loaded rather than
+    # writing a fourth channel that could disagree with it.
+    require_bundle_names_the_loaded_candidate
     set_setting INFRAHUB_API_TOKEN "$DESTINATION_TOKEN"
     point_configuration_at_destination "$PROXY_URL"
     # The checks reach the deployment through the product's own client, which is

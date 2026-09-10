@@ -213,9 +213,12 @@ ARCHIVE_UPLOAD = "infrahub-sync-candidate-image"
 APPROVED_ORDER = (
     "release.identity",
     "release.build",
-    "release.kit",
+    # After the digests exist. The bundle ships a binding derived from the image
+    # this build recorded, so a kit produced before it would have nothing to
+    # derive from -- and there is no unbound-bundle mode to fall back to.
     "image.build",
     "image.inspect",
+    "release.kit",
     "image.freshness",
     "image.sbom",
     "image.scan",

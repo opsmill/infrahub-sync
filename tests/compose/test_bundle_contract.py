@@ -9,6 +9,7 @@ can be fooled by.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -26,6 +27,7 @@ from tests.compose.conftest import (
     SCRATCH_OPTIONS,
     SYNC_SCRATCH_ROOTS,
     SYNC_SERVICES,
+    compose,
     mount_sources,
     resolve,
     resolve_privately,
@@ -231,6 +233,39 @@ def test_a_tag_only_sync_image_still_resolves_to_the_tag_it_was_given(
     tagged = resolve({**contract_environment, "INFRAHUB_SYNC_IMAGE": "infrahub-sync:latest"})
 
     assert tagged["services"]["sync-api"]["image"] == "infrahub-sync:latest"
+
+
+def test_the_generated_layer_supplies_the_image_over_the_operators_own_file(
+    compose_version: str, contract_environment: dict[str, str], tmp_path: Path
+) -> None:
+    """Compose itself decides this, so it is Compose that is asked.
+
+    The entry point hands three env files in one order — shipped defaults, the
+    operator's own settings, then the generated instance state — and the image
+    the deployment runs has to come from the last of them. An operator naming
+    another one in their own file must lose, and the property is only worth
+    stating if the real parser is what settles it.
+    """
+    del compose_version
+    checked = "sha256:" + "c" * 64
+    defaults = tmp_path / "defaults.conf"
+    defaults.write_text(
+        DEFAULTS_FILE.read_text(encoding="utf-8")
+        + "".join(f"{name}={value}\n" for name, value in contract_environment.items()),
+        encoding="utf-8",
+    )
+    operator = tmp_path / "operator.env"
+    operator.write_text(f"INFRAHUB_SYNC_IMAGE=sha256:{'d' * 64}\n", encoding="utf-8")
+    generated = tmp_path / ".instance"
+    generated.write_text(f"INFRAHUB_SYNC_IMAGE={checked}\n", encoding="utf-8")
+
+    resolved = compose(
+        ["config", "--format", "json"],
+        env_files=(defaults, operator, generated),
+    )
+
+    assert resolved.returncode == 0, resolved.stderr
+    assert json.loads(resolved.stdout)["services"]["sync-api"]["image"] == checked
 
 
 # ---------------------------------------------------------------------------

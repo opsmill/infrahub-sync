@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 from invoke import Context
 
-from tasks import release
+from tasks import image, release
 
 VERSION = "3.0.0a1"
 COMMIT = "708a8fca4b3fe300ae33242ddcd791a181926eeb"
@@ -41,8 +41,9 @@ ROOT = f"infrahub-sync-compose-{VERSION}"
 # at a copy. The content comparison below is against what the repository ships.
 BUNDLE_SOURCE = release.BUNDLE_SOURCE
 
-# Everything the bundle ships, as an equality: a file newly reaching it fails
-# here rather than shipping unnoticed.
+# Everything the bundle ships *from the repository*, as an equality: a file newly
+# reaching it fails here rather than shipping unnoticed. The binding member below
+# is not one of these — nothing in the source tree holds it.
 SHIPPED = {
     "compose.yaml",
     "infrahub-sync-compose",
@@ -56,6 +57,34 @@ SHIPPED = {
 # What a deployment writes beside them on its own host. None is the repository's
 # to ship, and one of them is a credential.
 GENERATED = ("operator.env", ".instance", "secrets/postgres-admin-password")
+
+# The one member the release generates rather than copies. It ships, which is
+# the opposite of `GENERATED` above: those are an operator host's own files and
+# never leave it, and this one is the package naming the image it was built for.
+BINDING = release.BINDING_MEMBER
+
+# The digest record one candidate build leaves, as the binding is derived from it.
+INDEX_NAME = "latest"
+INDEX_DIGEST = "sha256:" + "1" * 64
+AMD64_CONFIG = "sha256:" + "2" * 64
+ARM64_CONFIG = "sha256:" + "3" * 64
+
+
+def digests(**overrides: object) -> dict[str, object]:
+    """The digest record `image.build` writes for one two-platform candidate."""
+    record: dict[str, object] = {
+        "schema_version": image.DIGESTS_SCHEMA_VERSION,
+        "provenance": {"version": VERSION, "revision": COMMIT, "created": COMMIT_TIME},
+        "index_digest": INDEX_DIGEST,
+        "index_name": INDEX_NAME,
+        "platforms": {
+            "linux/amd64": {"manifest": "sha256:" + "4" * 64, "config": AMD64_CONFIG},
+            "linux/arm64": {"manifest": "sha256:" + "5" * 64, "config": ARM64_CONFIG},
+        },
+    }
+    record.update(overrides)
+    return record
+
 
 # The lifecycle entry point is the only file a host executes.
 EXECUTABLE = "infrahub-sync-compose"
@@ -108,9 +137,15 @@ def tracked(source: Path) -> dict[str, int]:
 
 
 @pytest.fixture
-def archive(identity: release.ReleaseIdentity, tracked: dict[str, int], tmp_path: Path) -> Path:
+def binding(identity: release.ReleaseIdentity) -> bytes:
+    """The record `release.kit` derives from one candidate's digests."""
+    return release.image_binding(digests(), identity)
+
+
+@pytest.fixture
+def archive(identity: release.ReleaseIdentity, tracked: dict[str, int], binding: bytes, tmp_path: Path) -> Path:
     """One built archive, from the copied tree and the modes Git records for it."""
-    return release.write_bundle(identity, tracked, tmp_path / "out")
+    return release.write_bundle(identity, tracked, tmp_path / "out", generated={BINDING: binding})
 
 
 def members(archive: Path) -> list[tarfile.TarInfo]:
@@ -158,25 +193,65 @@ def test_the_archive_holds_the_shipped_files_and_nothing_a_deployment_generates(
     """The credential, the operator environment, and the instance identity stay on the host."""
     held = {member.name for member in members(archive) if member.isfile()}
 
-    assert held == {f"{ROOT}/{name}" for name in SHIPPED}
+    assert held == {f"{ROOT}/{name}" for name in (*SHIPPED, BINDING)}
 
 
-def test_every_file_in_the_archive_carries_the_bytes_of_its_source(archive: Path, tracked: dict[str, int]) -> None:
+def test_every_committed_file_in_the_archive_carries_the_bytes_of_its_source(
+    archive: Path, tracked: dict[str, int]
+) -> None:
     """Every property above holds just as well over an archive of empty entries.
 
     Names, modes, order, owners and stamps are each asserted apart from content,
     and two runs agreeing on their bytes agrees just as readily on the wrong
     ones. This is the one case that reads what a deployment would actually run.
+
+    Only the committed half: the generated member has no file behind it, so
+    comparing the whole archive against the source tree would require inventing
+    one there — which is exactly the untracked artifact the release must not
+    leave in `deploy/compose`.
     """
-    assert contents(archive) == {name: (BUNDLE_SOURCE / name).read_bytes() for name in tracked}
+    held = contents(archive)
+
+    assert {name: held[name] for name in tracked} == {name: (BUNDLE_SOURCE / name).read_bytes() for name in tracked}
+
+
+def test_the_generated_binding_ships_as_its_own_member_with_the_derived_bytes(archive: Path, binding: bytes) -> None:
+    """The bundle selects its image, so the record has to arrive inside the archive.
+
+    Asserted apart from the committed members above, because the two are
+    different claims: those carry a source file's bytes, and this one carries
+    bytes no source file holds.
+    """
+    assert contents(archive)[BINDING] == binding
+
+
+def test_exactly_one_binding_member_is_written(archive: Path) -> None:
+    """A second entry under one name is what a tar reader resolves by luck."""
+    named = [member.name for member in members(archive) if member.name == f"{ROOT}/{BINDING}"]
+
+    assert named == [f"{ROOT}/{BINDING}"]
+
+
+def test_the_generated_member_arrives_as_a_regular_file_a_host_can_read(archive: Path) -> None:
+    """A directory sentinel and a generated byte member are different entries.
+
+    They travel the same code path, and the one thing that tells them apart is
+    what the entry says it is. A binding written as a directory extracts as one,
+    and the wrapper's first read of it fails on a clean host rather than here.
+    """
+    entry = next(member for member in members(archive) if member.name == f"{ROOT}/{BINDING}")
+
+    assert entry.isfile()
+    assert entry.mode == 0o644
+    assert entry.size == len(contents(archive)[BINDING])
 
 
 def test_two_runs_from_one_tree_produce_the_same_bytes(
-    identity: release.ReleaseIdentity, tracked: dict[str, int], tmp_path: Path
+    identity: release.ReleaseIdentity, tracked: dict[str, int], binding: bytes, tmp_path: Path
 ) -> None:
     """The claim a recorded checksum rests on."""
-    first = release.write_bundle(identity, tracked, tmp_path / "first")
-    second = release.write_bundle(identity, tracked, tmp_path / "second")
+    first = release.write_bundle(identity, tracked, tmp_path / "first", generated={BINDING: binding})
+    second = release.write_bundle(identity, tracked, tmp_path / "second", generated={BINDING: binding})
 
     assert first.read_bytes() == second.read_bytes()
 
@@ -238,3 +313,74 @@ def test_the_checksum_names_the_archive_in_the_form_a_clean_host_reads(
 
     assert named == identity.bundle
     assert len(digest) == 64
+
+
+# ---------------------------------------------------------------------------
+# The binding record the package generates
+# ---------------------------------------------------------------------------
+# Three settings, derived from the candidate's own digests. An operator never
+# writes one and never copies a digest into one: the whole point is that the
+# archive already names the image it was qualified against.
+
+
+def parsed(record: bytes) -> dict[str, str]:
+    """Return the binding as the wrapper's own `KEY=VALUE` reader sees it."""
+    return dict(line.split("=", 1) for line in record.decode("utf-8").splitlines() if line and not line.startswith("#"))
+
+
+def test_the_binding_names_the_qualified_platform_and_both_of_its_encodings(
+    identity: release.ReleaseIdentity,
+) -> None:
+    """Index first for a host that holds the original export, configuration for a load."""
+    assert parsed(release.image_binding(digests(), identity)) == {
+        release.BINDING_PLATFORM_KEY: "linux/amd64",
+        release.BINDING_INDEX_KEY: f"{INDEX_NAME}@{INDEX_DIGEST}",
+        release.BINDING_CONFIG_KEY: AMD64_CONFIG,
+    }
+
+
+def test_the_binding_carries_no_pull_policy_of_its_own(identity: release.ReleaseIdentity) -> None:
+    """An already-loaded private image resolves under the shipped `missing` policy.
+
+    A fourth setting here would be a second image channel an operator could
+    edit, which is the thing the record exists to remove.
+    """
+    assert set(parsed(release.image_binding(digests(), identity))) == {
+        release.BINDING_PLATFORM_KEY,
+        release.BINDING_INDEX_KEY,
+        release.BINDING_CONFIG_KEY,
+    }
+
+
+def test_two_derivations_of_one_candidate_produce_the_same_bytes(identity: release.ReleaseIdentity) -> None:
+    """The member is inside a checksummed archive, so its order cannot float."""
+    assert release.image_binding(digests(), identity) == release.image_binding(digests(), identity)
+
+
+def test_a_record_without_a_retained_index_name_is_refused(identity: release.ReleaseIdentity) -> None:
+    """Half a reference is not a reference; a bundle would ship an unresolvable one."""
+    with pytest.raises(release.ReleaseTaskError, match="index name"):
+        release.image_binding(digests(index_name=""), identity)
+
+
+def test_a_record_missing_the_qualified_platform_is_refused(identity: release.ReleaseIdentity) -> None:
+    """linux/amd64 is what the lifecycle claim is made on; arm64 alone qualifies nothing."""
+    arm64_only = {"linux/arm64": {"manifest": "sha256:" + "5" * 64, "config": ARM64_CONFIG}}
+
+    with pytest.raises(release.ReleaseTaskError, match="linux/amd64"):
+        release.image_binding(digests(platforms=arm64_only), identity)
+
+
+def test_a_record_left_by_another_release_is_refused(identity: release.ReleaseIdentity) -> None:
+    """A stale digest record would bind this bundle to somebody else's image."""
+    foreign = digests(provenance={"version": "3.0.0a2", "revision": "b" * 40, "created": COMMIT_TIME})
+
+    with pytest.raises(release.ReleaseTaskError, match="different release"):
+        release.image_binding(foreign, identity)
+
+
+@pytest.mark.parametrize("value", ["latest name", "latest\n", "\tlatest"])
+def test_a_reference_value_carrying_whitespace_is_refused(identity: release.ReleaseIdentity, value: str) -> None:
+    """The wrapper reads this file line by line; a value with a newline is two settings."""
+    with pytest.raises(release.ReleaseTaskError, match="whitespace"):
+        release.image_binding(digests(index_name=value), identity)

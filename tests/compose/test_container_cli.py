@@ -22,7 +22,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.compose.conftest import BUNDLE, CONTRACT_ENVIRONMENT, DEFAULTS_FILE, compose
+from tests.compose.conftest import (
+    BUNDLE,
+    CONTRACT_ENVIRONMENT,
+    DEFAULTS_FILE,
+    compose,
+    write_binding,
+)
 from tests.compose.redaction import SECRETS, Captured, capture
 
 if TYPE_CHECKING:
@@ -100,7 +106,15 @@ fi
 
 case "$1 $2" in
     "image inspect" | "manifest inspect")
-        exit "${SHIM_IMAGE_RESOLVES:-0}"
+        [ "${SHIM_IMAGE_RESOLVES:-0}" = "0" ] || exit "${SHIM_IMAGE_RESOLVES}"
+        # The architecture of whatever resolved, asked for with a format. The
+        # binding names one platform, and a resolved image of another is refused.
+        for word in "$@"; do
+            case "$word" in
+                *Architecture*) printf '%s\n' "${SHIM_ARCHITECTURE:-amd64}" ;;
+            esac
+        done
+        exit 0
         ;;
 esac
 printf 'docker shim: unexpected call: %s\n' "$*" >&2
@@ -110,9 +124,15 @@ exit 97
 
 @pytest.fixture
 def bundle(tmp_path: Path) -> Path:
-    """A private copy of the shipped bundle this test may write into."""
+    """A private copy of an extracted bundle: the committed tree and its binding.
+
+    The repository tracks no `image.bind` — a release derives it from the
+    candidate's digests and writes it straight into the archive — so a copy of
+    the source tree is not what an operator has until the record is beside it.
+    """
     copy = tmp_path / "compose"
     shutil.copytree(BUNDLE, copy)
+    write_binding(copy)
     return copy
 
 
@@ -150,16 +170,13 @@ def run(
 
 @pytest.fixture
 def initialized(bundle: Path, shim: Path) -> Path:
-    """A bundle that has been through `init` and had its one placeholder filled."""
+    """A bundle that has been through `init` and needs no operator edit at all.
+
+    The archive names its image and `init` generates every credential, so what
+    an operator has after this is a deployment the CLI can be pointed at.
+    """
     created = run(bundle, shim, "init")
     assert created.returncode == 0, created.stderr
-    settings = bundle / "operator.env"
-    settings.write_text(
-        settings.read_text(encoding="utf-8").replace(
-            "INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE=sha256:{'a' * 64}"
-        ),
-        encoding="utf-8",
-    )
     return bundle
 
 
@@ -294,19 +311,13 @@ def test_cli_refuses_a_mutable_image_before_it_runs_or_stages_anything(
 ) -> None:
     """This path runs a container of that image and gives it the operator token.
 
-    `start` already refuses a tag. Without the same check here, a re-pointed
-    reference is runnable through the CLI while the deployment beside it keeps
-    running the digest it was started with.
+    `start` already refuses a mutable reference. Without the same check here, a
+    re-pointed one is runnable through the CLI while the deployment beside it
+    keeps running the image it was started with.
     """
     recorded = tmp_path / "argv-vector.log"
     stage = tmp_path / "stage.log"
-    settings = initialized / "operator.env"
-    settings.write_text(
-        settings.read_text(encoding="utf-8").replace(
-            f"INFRAHUB_SYNC_IMAGE=sha256:{'a' * 64}", "INFRAHUB_SYNC_IMAGE=infrahub-sync:latest"
-        ),
-        encoding="utf-8",
-    )
+    write_binding(initialized, INFRAHUB_SYNC_IMAGE_CONFIG="infrahub-sync:latest")
     package = _package(tmp_path)
 
     result = run(
@@ -322,7 +333,7 @@ def test_cli_refuses_a_mutable_image_before_it_runs_or_stages_anything(
     )
 
     assert result.returncode != 0
-    assert family(result) == "image-not-immutable", result.stderr
+    assert family(result) == "image-binding-invalid", result.stderr
     calls = vector(recorded) if recorded.is_file() else []
     assert not [call for call in calls if "run" in call], "a refused image still ran the CLI"
     assert not stage.is_file(), "a refused image still staged the package"

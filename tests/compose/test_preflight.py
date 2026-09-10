@@ -22,7 +22,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.compose.conftest import BUNDLE
+from tests.compose.conftest import (
+    BINDING_CONFIG_DIGEST,
+    BINDING_FILE,
+    BINDING_INDEX_REFERENCE,
+    BUNDLE,
+    instance_setting,
+    write_binding,
+)
 from tests.compose.redaction import SECRETS, Captured, capture
 
 if TYPE_CHECKING:
@@ -87,8 +94,40 @@ if [ "$1" = "compose" ]; then
 fi
 
 case "$1 $2" in
-    "image inspect" | "manifest inspect")
-        exit "${SHIM_IMAGE_RESOLVES:-0}"
+    "image inspect")
+        # Which reference, and whether a format was asked for. Both matter: the
+        # binding is resolved by asking about one encoding and then the other,
+        # and the architecture of whichever resolved is read the same way.
+        shift 2
+        format=''
+        reference=''
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --format) format=${2:-}; shift 2 ;;
+                *) reference=$1; shift ;;
+            esac
+        done
+        [ -z "${SHIM_INSPECT_LOG:-}" ] || printf '%s\n' "$reference" >> "$SHIM_INSPECT_LOG"
+        [ "${SHIM_IMAGE_RESOLVES:-0}" = "0" ] || exit "${SHIM_IMAGE_RESOLVES}"
+        # Unset means every reference resolves, which is what every row that is
+        # not about selection wants. Set means exactly these do.
+        if [ -n "${SHIM_RESOLVABLE+set}" ]; then
+            held=0
+            for candidate in ${SHIM_RESOLVABLE:-}; do
+                [ "$candidate" = "$reference" ] && held=1
+            done
+            [ "$held" = "1" ] || exit 1
+        fi
+        case "$format" in
+            *Architecture*) printf '%s\n' "${SHIM_ARCHITECTURE:-amd64}" ;;
+        esac
+        exit 0
+        ;;
+    "manifest inspect")
+        # Recorded, because the binding is a local-only question: a row proves a
+        # refusal happened without a registry ever having been asked.
+        [ -z "${SHIM_MANIFEST_LOG:-}" ] || printf '%s\n' "${3:-}" >> "$SHIM_MANIFEST_LOG"
+        exit "${SHIM_MANIFEST_RESOLVES:-${SHIM_IMAGE_RESOLVES:-0}}"
         ;;
     "container inspect" | "volume inspect" | "network inspect")
         printf '%s\n' "${SHIM_OWNED_LABEL:-}"
@@ -137,8 +176,22 @@ exit 97
 
 @pytest.fixture
 def bundle(tmp_path: Path) -> Path:
-    """A private copy of the shipped bundle this test may write into."""
+    """A private copy of the shipped bundle, with the member a release generates.
+
+    The repository tracks no binding — it is derived from a candidate's digests
+    and only ever exists inside an archive — so an extracted bundle is what this
+    reproduces: the committed tree plus that one generated member.
+    """
     copy = tmp_path / "compose"
+    shutil.copytree(BUNDLE, copy)
+    write_binding(copy)
+    return copy
+
+
+@pytest.fixture
+def unbound(tmp_path: Path) -> Path:
+    """A copy of the committed tree with no binding member at all."""
+    copy = tmp_path / "unbound"
     shutil.copytree(BUNDLE, copy)
     return copy
 
@@ -175,16 +228,14 @@ def run(bundle: Path, shim: Path, command: str, *, environment: Mapping[str, str
 
 @pytest.fixture
 def initialized(bundle: Path, shim: Path) -> Path:
-    """A bundle that has been through `init` and had its two placeholders filled."""
+    """A bundle that has been through `init` and needs no operator edit to start.
+
+    Nothing is filled in afterwards any more. `init` generates every credential
+    the deployment needs and the archive already names the image, so what an
+    operator has after this is a deployment that starts.
+    """
     created = run(bundle, shim, "init")
     assert created.returncode == 0, created.stderr
-    settings = bundle / "operator.env"
-    settings.write_text(
-        settings.read_text(encoding="utf-8").replace(
-            "INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE=sha256:{'a' * 64}"
-        ),
-        encoding="utf-8",
-    )
     return bundle
 
 
@@ -222,22 +273,329 @@ def test_init_keeps_the_identity_and_credentials_it_already_generated(bundle: Pa
     assert ((bundle / ".instance").read_text(), (bundle / "operator.env").read_text()) == before
 
 
-def test_the_instance_state_file_holds_the_identity_and_nothing_else(bundle: Path, shim: Path) -> None:
-    """It is a non-secret label, and closing its content is what keeps it one.
+def test_the_instance_state_file_holds_the_identity_and_the_image_and_nothing_else(bundle: Path, shim: Path) -> None:
+    """It is non-secret, and closing its content is what keeps it one.
 
     Asserting that some particular credential is absent would pass for any file
-    holding a different one. The whole file is one assignment, so any addition —
-    a credential, a path, an endpoint — fails here.
+    holding a different one. The whole file is these two assignments, so any
+    addition — a credential, a path, an endpoint — fails here. Both are labels:
+    an instance identity and the image the package names.
     """
     run(bundle, shim, "init")
 
     lines = (bundle / ".instance").read_text(encoding="utf-8").splitlines()
 
-    assert len(lines) == 1, lines
-    name, _, value = lines[0].partition("=")
-    assert name == "INFRAHUB_SYNC_INSTANCE"
-    assert len(value) >= 16, value
-    assert all(character in "0123456789abcdef" for character in value), value
+    assert [line.partition("=")[0] for line in lines] == ["INFRAHUB_SYNC_INSTANCE", "INFRAHUB_SYNC_IMAGE"], lines
+    identity = instance_setting(bundle, "INFRAHUB_SYNC_INSTANCE")
+    assert len(identity) >= 16, identity
+    assert all(character in "0123456789abcdef" for character in identity), identity
+
+
+# ---------------------------------------------------------------------------
+# The package-generated image binding
+# ---------------------------------------------------------------------------
+# The archive names the image it was qualified against. An operator never copies
+# a digest, and there is no setting of theirs that could name a different one.
+
+
+def test_the_generated_settings_ask_the_operator_for_no_image_at_all(bundle: Path, shim: Path) -> None:
+    """The whole reason the binding exists: one fewer thing to get wrong.
+
+    Both halves. The operator file must not name the setting — an assignment
+    there would read as something to fill in — and it must not tell them to.
+    """
+    run(bundle, shim, "init")
+
+    lines = (bundle / "operator.env").read_text(encoding="utf-8").splitlines()
+
+    assert [line for line in lines if line.startswith("INFRAHUB_SYNC_IMAGE=")] == [], lines
+    assert [line for line in lines if "REPLACE-ME" in line] == [], lines
+
+
+def test_init_copies_the_binding_index_reference_into_the_generated_state(bundle: Path, shim: Path) -> None:
+    """Compose interpolates that name before anything has resolved an image.
+
+    Without it, `init` followed by `status`, `logs`, `stop` or `reset` would meet
+    a raw interpolation refusal from Compose rather than this bundle's own answer.
+    """
+    run(bundle, shim, "init")
+
+    assert instance_setting(bundle, "INFRAHUB_SYNC_IMAGE") == BINDING_INDEX_REFERENCE
+
+
+def test_init_asks_docker_nothing(bundle: Path, shim: Path, tmp_path: Path) -> None:
+    """`init` is the one command a host runs before it has the image.
+
+    Resolving anything here would make the first command of the procedure
+    require a daemon, a loaded candidate, or both.
+    """
+    log = tmp_path / "inspected.log"
+
+    created = run(bundle, shim, "init", environment={"SHIM_INSPECT_LOG": str(log), "SHIM_RESOLVABLE": ""})
+
+    assert created.returncode == 0, created.stderr
+    assert not log.exists(), log.read_text(encoding="utf-8")
+    assert instance_setting(bundle, "INFRAHUB_SYNC_IMAGE") == BINDING_INDEX_REFERENCE
+
+
+def test_a_repeated_init_keeps_the_image_a_resolution_already_selected(initialized: Path, shim: Path) -> None:
+    """A second `init` must not undo the encoding this host proved it can run."""
+    passed = run(initialized, shim, "preflight", environment={"SHIM_RESOLVABLE": BINDING_CONFIG_DIGEST})
+    assert passed.returncode == 0, passed.stderr
+    assert instance_setting(initialized, "INFRAHUB_SYNC_IMAGE") == BINDING_CONFIG_DIGEST
+
+    repeated = run(initialized, shim, "init")
+
+    assert repeated.returncode == 0, repeated.stderr
+    assert instance_setting(initialized, "INFRAHUB_SYNC_IMAGE") == BINDING_CONFIG_DIGEST
+
+
+def test_a_bundle_with_no_binding_is_refused(unbound: Path, shim: Path) -> None:
+    """An archive that lost its record names no image, and cannot be made to guess one."""
+    result = run(unbound, shim, "init")
+
+    assert family(result) == "image-binding-missing", result.stderr
+
+
+def test_a_binding_nothing_can_read_is_refused(unbound: Path, shim: Path) -> None:
+    """Unreadable is not empty: a record that cannot be read says nothing."""
+    (unbound / BINDING_FILE).write_text("INFRAHUB_SYNC_IMAGE_INDEX=x\n", encoding="utf-8")
+    (unbound / BINDING_FILE).chmod(0o000)
+    try:
+        result = run(unbound, shim, "init")
+    finally:
+        (unbound / BINDING_FILE).chmod(0o644)
+
+    assert family(result) == "image-binding-missing", result.stderr
+
+
+@pytest.mark.parametrize(
+    "dropped",
+    ["INFRAHUB_SYNC_IMAGE_PLATFORM", "INFRAHUB_SYNC_IMAGE_INDEX", "INFRAHUB_SYNC_IMAGE_CONFIG"],
+)
+def test_an_incomplete_binding_is_refused(unbound: Path, shim: Path, dropped: str) -> None:
+    """Each of the three settings is load-bearing, so each absence is its own refusal."""
+    write_binding(unbound, **{dropped: None})
+
+    result = run(unbound, shim, "init")
+
+    assert family(result) == "image-binding-invalid", result.stderr
+
+
+@pytest.mark.parametrize(
+    "reference",
+    ["infrahub-sync:latest", "ghcr.io/opsmill/infrahub-sync:3.0.0", "sha256:short", "sha256:" + "z" * 64],
+)
+def test_a_binding_naming_a_mutable_or_malformed_reference_is_refused(
+    unbound: Path, shim: Path, reference: str
+) -> None:
+    """A tag can be re-pointed between qualification and the run that trusts it.
+
+    The check that used to read an operator's setting now reads the record, and
+    what it refuses is unchanged: anything that is not an immutable digest.
+    """
+    write_binding(unbound, INFRAHUB_SYNC_IMAGE_CONFIG=reference)
+
+    result = run(unbound, shim, "init")
+
+    assert family(result) == "image-binding-invalid", result.stderr
+
+
+def test_a_binding_naming_a_platform_the_release_did_not_qualify_is_refused(unbound: Path, shim: Path) -> None:
+    """The qualified lifecycle platform is one, and the record has to say which."""
+    write_binding(unbound, INFRAHUB_SYNC_IMAGE_PLATFORM="linux/arm64")
+
+    result = run(unbound, shim, "init")
+
+    assert family(result) == "image-binding-invalid", result.stderr
+
+
+def test_a_state_image_the_record_does_not_name_is_refused(initialized: Path, shim: Path) -> None:
+    """The state file is generated, and an edit to it is not a third image channel."""
+    identity = instance_setting(initialized, "INFRAHUB_SYNC_INSTANCE")
+    (initialized / ".instance").write_text(
+        f"INFRAHUB_SYNC_INSTANCE={identity}\nINFRAHUB_SYNC_IMAGE=sha256:{'d' * 64}\n", encoding="utf-8"
+    )
+
+    result = run(initialized, shim, "preflight")
+
+    assert family(result) == "image-binding-mismatch", result.stderr
+
+
+def test_the_index_encoding_is_selected_when_this_host_holds_the_original_export(
+    initialized: Path, shim: Path, tmp_path: Path
+) -> None:
+    """Index first: a host that kept the exported layout runs the artifact it holds."""
+    manifests = tmp_path / "manifest.log"
+
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={"SHIM_RESOLVABLE": BINDING_INDEX_REFERENCE, "SHIM_MANIFEST_LOG": str(manifests)},
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert instance_setting(initialized, "INFRAHUB_SYNC_IMAGE") == BINDING_INDEX_REFERENCE
+    assert not manifests.exists(), manifests.read_text(encoding="utf-8")
+
+
+def test_the_index_wins_when_this_host_holds_both_encodings(initialized: Path, shim: Path) -> None:
+    """Order is the property, and only a host holding both can observe it.
+
+    Each of the two rows beside this one makes exactly one encoding resolvable,
+    so both of them pass just as happily with the order reversed. This is the
+    case that fails when it is: the index is what the record names first, and
+    what a host that kept the original export should run.
+    """
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={"SHIM_RESOLVABLE": f"{BINDING_INDEX_REFERENCE} {BINDING_CONFIG_DIGEST}"},
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert instance_setting(initialized, "INFRAHUB_SYNC_IMAGE") == BINDING_INDEX_REFERENCE
+
+
+def test_the_configuration_encoding_is_selected_when_the_index_is_absent(
+    initialized: Path, shim: Path, tmp_path: Path
+) -> None:
+    """A classic `docker load` of the candidate leaves the configuration digest and no index."""
+    manifests = tmp_path / "manifest.log"
+
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={"SHIM_RESOLVABLE": BINDING_CONFIG_DIGEST, "SHIM_MANIFEST_LOG": str(manifests)},
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert instance_setting(initialized, "INFRAHUB_SYNC_IMAGE") == BINDING_CONFIG_DIGEST
+    assert not manifests.exists(), manifests.read_text(encoding="utf-8")
+
+
+def test_a_registry_is_never_asked_to_settle_the_binding(initialized: Path, shim: Path, tmp_path: Path) -> None:
+    """A registry answering says nothing about what this host can run.
+
+    The refusal has to happen with a reachable registry that would gladly have
+    resolved the reference, or the local-only rule is only being observed by
+    accident on a disconnected machine.
+    """
+    manifests = tmp_path / "manifest.log"
+
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={
+            "SHIM_RESOLVABLE": "",
+            "SHIM_MANIFEST_RESOLVES": "0",
+            "SHIM_MANIFEST_LOG": str(manifests),
+        },
+    )
+
+    assert family(result) == "image-unresolvable", result.stderr
+    assert not manifests.exists(), manifests.read_text(encoding="utf-8")
+
+
+def test_a_resolved_image_of_another_architecture_is_refused_rather_than_run(initialized: Path, shim: Path) -> None:
+    """An arm64 image under the amd64 record is not a fallback, it is the wrong image."""
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={"SHIM_RESOLVABLE": BINDING_CONFIG_DIGEST, "SHIM_ARCHITECTURE": "arm64"},
+    )
+
+    assert family(result) == "image-platform-unqualified", result.stderr
+
+
+def test_resolving_twice_leaves_the_same_state(initialized: Path, shim: Path) -> None:
+    """A preflight is repeated on every start, so its state update has to settle."""
+    first = run(initialized, shim, "preflight", environment={"SHIM_RESOLVABLE": BINDING_CONFIG_DIGEST})
+    assert first.returncode == 0, first.stderr
+    settled = (initialized / ".instance").read_text(encoding="utf-8")
+
+    second = run(initialized, shim, "preflight", environment={"SHIM_RESOLVABLE": BINDING_CONFIG_DIGEST})
+
+    assert second.returncode == 0, second.stderr
+    assert (initialized / ".instance").read_text(encoding="utf-8") == settled
+
+
+def test_the_derived_state_update_changes_nothing_an_operator_owns(initialized: Path, shim: Path) -> None:
+    """It persists which encoding resolved, and touches nothing else.
+
+    The operator's settings and the mounted credential are theirs; the instance
+    identity is what every volume this deployment created is labelled with.
+    """
+    before = (
+        (initialized / "operator.env").read_bytes(),
+        (initialized / "secrets" / "postgres-admin-password").read_bytes(),
+        instance_setting(initialized, "INFRAHUB_SYNC_INSTANCE"),
+    )
+
+    result = run(initialized, shim, "preflight", environment={"SHIM_RESOLVABLE": BINDING_CONFIG_DIGEST})
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        (initialized / "operator.env").read_bytes(),
+        (initialized / "secrets" / "postgres-admin-password").read_bytes(),
+        instance_setting(initialized, "INFRAHUB_SYNC_INSTANCE"),
+    ) == before
+
+
+def test_an_operator_named_image_cannot_displace_the_one_that_was_checked(
+    initialized: Path, shim: Path, tmp_path: Path
+) -> None:
+    """The generated layer is last, so an operator edit of this name loses.
+
+    The run passes with the binding's own image while the operator file names
+    another, and the recorded chain shows why: Compose reads the generated state
+    after the operator's own file.
+    """
+    settings = initialized / "operator.env"
+    settings.write_text(
+        settings.read_text(encoding="utf-8") + f"INFRAHUB_SYNC_IMAGE=sha256:{'e' * 64}\n", encoding="utf-8"
+    )
+    argv_log = tmp_path / "compose-argv.log"
+
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={"SHIM_RESOLVABLE": BINDING_INDEX_REFERENCE, "SHIM_ARGV_LOG": str(argv_log)},
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert instance_setting(initialized, "INFRAHUB_SYNC_IMAGE") == BINDING_INDEX_REFERENCE
+    chain = re.findall(r"--env-file (\S+)", argv_log.read_text(encoding="utf-8"))
+    assert [Path(entry).name for entry in chain[:3]] == ["defaults.conf", "operator.env", ".instance"], chain[:3]
+
+
+def test_init_writes_its_comments_literally_and_runs_nothing_they_name(
+    bundle: Path, shim: Path, tmp_path: Path
+) -> None:
+    """The generated file is written from an interpolating heredoc.
+
+    A comment there that quotes a command in backticks is a command
+    substitution: the text vanishes from the file an operator reads, and
+    whatever is first on PATH under that name runs as this script's own user.
+    Both halves are asserted — the comment survives, and the command was never
+    called.
+    """
+    marker = tmp_path / "restart-was-called"
+    injected = shim / "restart"
+    injected.write_text(f"#!/bin/sh\n: > {marker}\n", encoding="utf-8")
+    injected.chmod(0o755)
+
+    created = run(bundle, shim, "init")
+
+    assert created.returncode == 0, created.stderr
+    assert not marker.exists(), "init executed a command named by one of its own comments"
+    assert "`restart`" in (bundle / "operator.env").read_text(encoding="utf-8")
 
 
 def test_every_interpolated_setting_is_removed_from_composes_ambient_environment() -> None:
@@ -405,7 +763,6 @@ def test_preflight_needs_no_declared_configuration_at_all(initialized: Path, shi
 @pytest.mark.parametrize(
     "setting",
     [
-        "INFRAHUB_SYNC_IMAGE",
         "INFRAHUB_SYNC_PRODUCT_PASSWORD",
         "INFRAHUB_SYNC_PREFECT_PASSWORD",
         "INFRAHUB_SYNC_S3_ACCESS_KEY",
@@ -447,49 +804,20 @@ def test_a_missing_credential_refusal_renders_no_value(initialized: Path, shim: 
     assert secret not in result.unredacted()
 
 
-def test_preflight_refuses_the_placeholder_init_leaves_behind(bundle: Path, shim: Path) -> None:
-    """`init` cannot know the image, and says so by refusing."""
-    run(bundle, shim, "init")
+def test_preflight_passes_on_what_init_alone_produced(bundle: Path, shim: Path) -> None:
+    """The archive names the image and `init` generates the rest, so nothing is left to fill in.
+
+    This is the operator-facing claim of the whole binding: extract, `init`,
+    `start`. A required setting reintroduced without a generated value fails
+    here rather than in a procedure somebody is following.
+    """
+    created = run(bundle, shim, "init")
+    assert created.returncode == 0, created.stderr
 
     result = run(bundle, shim, "preflight")
 
-    assert family(result) == "credentials-missing", result.stderr
-    assert "INFRAHUB_SYNC_IMAGE" in result.stderr
-
-
-@pytest.mark.parametrize(
-    "reference",
-    ["infrahub-sync:latest", "ghcr.io/opsmill/infrahub-sync:3.0.0", "sha256:short", "sha256:" + "z" * 64],
-)
-def test_preflight_refuses_a_sync_image_that_is_not_immutable(initialized: Path, shim: Path, reference: str) -> None:
-    """A tag can be re-pointed between qualification and the run that trusts it."""
-    settings = initialized / "operator.env"
-    settings.write_text(
-        settings.read_text(encoding="utf-8").replace(
-            f"INFRAHUB_SYNC_IMAGE=sha256:{'a' * 64}", f"INFRAHUB_SYNC_IMAGE={reference}"
-        ),
-        encoding="utf-8",
-    )
-
-    result = run(initialized, shim, "preflight")
-
-    assert family(result) == "image-not-immutable", result.stderr
-
-
-@pytest.mark.parametrize("reference", ["sha256:" + "a" * 64, "ghcr.io/opsmill/infrahub-sync@sha256:" + "b" * 64])
-def test_preflight_accepts_both_immutable_image_forms(initialized: Path, shim: Path, reference: str) -> None:
-    """The local image ID before publication, and the repository digest after it."""
-    settings = initialized / "operator.env"
-    settings.write_text(
-        settings.read_text(encoding="utf-8").replace(
-            f"INFRAHUB_SYNC_IMAGE=sha256:{'a' * 64}", f"INFRAHUB_SYNC_IMAGE={reference}"
-        ),
-        encoding="utf-8",
-    )
-
-    result = run(initialized, shim, "preflight")
-
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "preflight passed" in result.stdout
 
 
 def test_preflight_refuses_an_image_docker_cannot_resolve(initialized: Path, shim: Path) -> None:
@@ -523,7 +851,7 @@ def test_preflight_accepts_the_publication_this_instance_already_made(initialize
     resolving to a container that carries this instance's label and publishes
     that exact port.
     """
-    identity = (initialized / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    identity = instance_setting(initialized, "INFRAHUB_SYNC_INSTANCE")
 
     result = run(
         initialized,
@@ -568,7 +896,7 @@ def test_preflight_refuses_a_publication_of_a_port_it_does_not_need(initialized:
     A container of this instance that publishes some other port says nothing
     about the bind in question, so the probe still has to answer for it.
     """
-    identity = (initialized / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    identity = instance_setting(initialized, "INFRAHUB_SYNC_INSTANCE")
 
     result = run(
         initialized,
@@ -657,7 +985,7 @@ def test_status_refuses_when_compose_cannot_inspect_a_required_dependency(initia
 
 def test_stop_refuses_when_docker_cannot_prove_ownership(initialized: Path, shim: Path) -> None:
     """A destructive command fails closed when its discovery query fails."""
-    identity = (initialized / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    identity = instance_setting(initialized, "INFRAHUB_SYNC_INSTANCE")
 
     result = run(initialized, shim, "stop", environment={"SHIM_OWNED_LABEL": identity})
 

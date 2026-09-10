@@ -18,6 +18,10 @@ OPERATOR="$BUNDLE/operator.env"
 STATE="$BUNDLE/.instance"
 SECRETS="$BUNDLE/secrets"
 ADMIN_SECRET="$SECRETS/postgres-admin-password"
+# The record the release generated into this archive. It names the one image
+# this bundle was qualified against, in the two encodings a host can hold it
+# under, and it is not an operator's file: there is nothing in it to edit.
+BINDING="$BUNDLE/image.bind"
 
 # Measured, not assumed: the bundle was resolved by this exact Compose release,
 # which is also the oldest one still published as a pinned binary. It supplies
@@ -26,10 +30,16 @@ ADMIN_SECRET="$SECRETS/postgres-admin-password"
 # `up --wait` with `--wait-timeout`.
 MINIMUM_COMPOSE=2.17.3
 
+# The platform this bundle's lifecycle is qualified on, and the architecture
+# component of it. A resolved image is compared against the second: an engine
+# reports an image's architecture, not a platform string.
+QUALIFIED_PLATFORM=linux/amd64
+QUALIFIED_ARCHITECTURE=${QUALIFIED_PLATFORM#*/}
+
 # The settings an operator must supply. Names only: this list is printed, the
-# values behind it never are.
-REQUIRED_SETTINGS='INFRAHUB_SYNC_IMAGE
-INFRAHUB_SYNC_DATABASE_URL
+# values behind it never are. The image is not among them -- the archive names
+# it -- and its validity is the binding check's question rather than this one's.
+REQUIRED_SETTINGS='INFRAHUB_SYNC_DATABASE_URL
 INFRAHUB_SYNC_PREFECT_DATABASE_URL
 INFRAHUB_SYNC_PRODUCT_PASSWORD
 INFRAHUB_SYNC_PREFECT_PASSWORD
@@ -96,6 +106,20 @@ read_setting() {
     # One value from a KEY=VALUE file, without sourcing it: a file an operator
     # edits must not be able to run anything in this shell.
     sed -n "s/^$1=//p" "$2" 2>/dev/null | tail -n 1
+}
+
+write_setting() {
+    # One setting of the generated state file, replaced in place. Every other
+    # line survives -- the instance identity above all, which is what every
+    # volume this deployment created is labelled with.
+    #
+    # Written privately and moved into place, so no reader ever sees a partial
+    # state file and an interrupted write leaves the previous one intact.
+    scratch="$STATE.next"
+    (umask 077 && grep -v "^$1=" "$STATE" > "$scratch") || : > "$scratch"
+    printf '%s=%s\n' "$1" "$2" >> "$scratch"
+    chmod 0600 "$scratch"
+    mv -- "$scratch" "$STATE"
 }
 
 # Resolved once, into a variable. A refusal inside `$( )` would exit only the
@@ -247,27 +271,96 @@ check_credentials() {
 # run, which preflight has just proved the engine can resolve.
 SYNC_IMAGE=''
 
-check_image() {
-    reference=$(read_setting INFRAHUB_SYNC_IMAGE "$OPERATOR")
+# The record's three values, read once by `require_binding`. Resolved into
+# variables for the same reason the identity is: a refusal inside `$( )` would
+# exit only the subshell.
+BIND_PLATFORM=''
+BIND_INDEX=''
+BIND_CONFIG=''
+
+immutable_reference() {
     # An immutable reference carries a digest. Whether the rest of it names a
     # repository Docker can resolve is Docker's question, not this script's, so
     # the grammar check stops at the digest and the engine answers the rest.
-    case "$reference" in
-        sha256:*) digest=${reference#sha256:} ;;
-        *@sha256:*) digest=${reference##*@sha256:} ;;
-        *) refuse image-not-immutable "INFRAHUB_SYNC_IMAGE must carry an @sha256: digest; '$reference' names a tag" ;;
+    case "$1" in
+        sha256:*) digest=${1#sha256:} ;;
+        *@sha256:*) digest=${1##*@sha256:} ;;
+        *) return 1 ;;
     esac
     case "$digest" in
-        *[!0-9a-f]* | '') refuse image-not-immutable "INFRAHUB_SYNC_IMAGE carries a malformed sha256 digest" ;;
+        *[!0-9a-f]* | '') return 1 ;;
     esac
-    [ "${#digest}" -eq 64 ] || refuse image-not-immutable "INFRAHUB_SYNC_IMAGE carries a malformed sha256 digest"
+    [ "${#digest}" -eq 64 ]
+}
+
+require_binding() {
+    # The image this bundle ships against, read the way every settings file here
+    # is read: without sourcing it. It arrived inside the archive, so nothing in
+    # it is an operator's to edit -- and a member of an archive must not be able
+    # to run anything in this shell either.
+    [ -r "$BINDING" ] ||
+        refuse image-binding-missing "$BINDING is absent or unreadable, so this bundle names no image"
+    BIND_PLATFORM=$(read_setting INFRAHUB_SYNC_IMAGE_PLATFORM "$BINDING")
+    BIND_INDEX=$(read_setting INFRAHUB_SYNC_IMAGE_INDEX "$BINDING")
+    BIND_CONFIG=$(read_setting INFRAHUB_SYNC_IMAGE_CONFIG "$BINDING")
+    [ -n "$BIND_PLATFORM" ] && [ -n "$BIND_INDEX" ] && [ -n "$BIND_CONFIG" ] ||
+        refuse image-binding-invalid "$BINDING names no platform, index reference, and configuration digest"
+    [ "$BIND_PLATFORM" = "$QUALIFIED_PLATFORM" ] ||
+        refuse image-binding-invalid "$BINDING names $BIND_PLATFORM; this bundle is qualified on $QUALIFIED_PLATFORM"
+    for reference in "$BIND_INDEX" "$BIND_CONFIG"; do
+        immutable_reference "$reference" ||
+            refuse image-binding-invalid "$BINDING names '$reference', which carries no sha256 digest"
+    done
+}
+
+resolve_binding() {
+    # Which of the record's two encodings this engine holds. The index first: a
+    # host that kept the original export runs the artifact it already has, and
+    # the configuration digest is what a classic archive load leaves behind.
+    #
+    # Local only, and deliberately not the resolvability check further down. A
+    # registry answering says what a registry holds, which is nothing about what
+    # this host can run -- and a private candidate is loaded, never pulled.
+    for candidate in "$BIND_INDEX" "$BIND_CONFIG"; do
+        if docker image inspect "$candidate" >/dev/null 2>&1; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+check_image() {
+    require_binding
+    reference=$(read_setting INFRAHUB_SYNC_IMAGE "$STATE")
+    # The state file is generated. Its image is one of the two the record names,
+    # or this deployment has been pointed at something no release qualified.
+    if [ "$reference" != "$BIND_INDEX" ] && [ "$reference" != "$BIND_CONFIG" ]; then
+        refuse image-binding-mismatch "the instance state names an image $BINDING does not; run \`$0 init\`"
+    fi
+    selected=$(resolve_binding || true)
+    [ -n "$selected" ] ||
+        refuse image-unresolvable "Docker holds neither image this bundle names; load the candidate on this host"
+    # An engine reports an architecture, so that is what the record's own
+    # architecture is compared against. A resolved image of another one is the
+    # wrong image, never a fallback this bundle may choose.
+    architecture=$(docker image inspect --format '{{.Architecture}}' "$selected" 2>/dev/null || true)
+    [ "$architecture" = "$QUALIFIED_ARCHITECTURE" ] ||
+        refuse image-platform-unqualified \
+            "the resolved image is '$architecture', not the qualified $QUALIFIED_ARCHITECTURE"
+    # Persisted so a later command runs the encoding this host proved it can
+    # resolve, and so repeating this changes nothing once it has settled.
+    [ "$selected" = "$reference" ] || write_setting INFRAHUB_SYNC_IMAGE "$selected"
+    reference=$selected
+    immutable_reference "$reference" ||
+        refuse image-not-immutable "INFRAHUB_SYNC_IMAGE carries a malformed sha256 digest"
     docker image inspect "$reference" >/dev/null 2>&1 ||
         docker manifest inspect "$reference" >/dev/null 2>&1 ||
         refuse image-unresolvable "Docker cannot resolve the image $reference locally or in a registry"
     SYNC_IMAGE=$reference
     # Quiet for the CLI path: its stdout is the CLI's own output, and a command
     # like `runs results` prints JSON a caller parses.
-    [ "${1:-}" = "--quiet" ] || report "the Sync image is named by digest and resolves"
+    [ "${1:-}" = "--quiet" ] || report "the Sync image this bundle names is loaded and is $QUALIFIED_ARCHITECTURE"
 }
 
 setting_value() {
@@ -433,6 +526,11 @@ random_value() {
 }
 
 command_init() {
+    # The record is read and its grammar checked, and nothing is resolved: this
+    # is the first command a host runs, before the candidate has been loaded and
+    # possibly before Docker is even installed. Asking an engine anything here
+    # would make it a prerequisite of generating an identity.
+    require_binding
     mkdir -p "$SECRETS"
     chmod 0700 "$SECRETS"
     if [ -f "$STATE" ]; then
@@ -443,6 +541,17 @@ command_init() {
         chmod 0600 "$STATE"
         require_identity
         report "generated instance $INSTANCE"
+    fi
+    # Compose interpolates the image on every command, including the ones that
+    # run before anything has resolved one. Copying the record's index reference
+    # in as plain text is what lets `status`, `logs`, `stop`, `restart` and
+    # `reset` work on a freshly initialized bundle instead of meeting a raw
+    # interpolation refusal. A host that already resolved the other encoding
+    # keeps that answer.
+    selected=$(read_setting INFRAHUB_SYNC_IMAGE "$STATE")
+    if [ "$selected" != "$BIND_INDEX" ] && [ "$selected" != "$BIND_CONFIG" ]; then
+        write_setting INFRAHUB_SYNC_IMAGE "$BIND_INDEX"
+        report "this bundle runs the image named in $BINDING"
     fi
     if [ ! -s "$ADMIN_SECRET" ]; then
         random_value 24 > "$ADMIN_SECRET"
@@ -466,16 +575,16 @@ command_init() {
 # Operator-owned settings for this Infrahub Sync deployment. Git ignores this
 # file. The passwords below were generated locally and are used by nothing else.
 #
-# One value is yours to supply before the first start:
-#   INFRAHUB_SYNC_IMAGE  the Sync image, by digest
-INFRAHUB_SYNC_IMAGE=REPLACE-ME
+# Nothing here has to be filled in before the first start. The Sync image is not
+# one of these settings: this bundle already names the one it was qualified
+# against, and no setting of yours can point it somewhere else.
 
 # Destination and source credentials, only for a configuration that names one.
 # Uncomment what your registered package references and give it the value; leave
 # them commented otherwise. A start needs none of them. They reach the services
 # that resolve them, and a run that selects a missing value fails that run.
 # Start again after changing any of these: a container reads its environment
-# once, and `restart` keeps the environment its container already has.
+# once, and \`restart\` keeps the environment its container already has.
 #INFRAHUB_API_TOKEN=
 #NETBOX_TOKEN=
 #NAUTOBOT_TOKEN=
@@ -622,8 +731,12 @@ usage() {
     cat <<'USAGE'
 Usage: infrahub-sync-compose <command>
 
-  init        Generate this deployment's identity and operator settings file.
-  preflight   Check Compose, paths, credentials, image, and ports.
+  init        Generate this deployment's identity and operator settings file,
+              and record the image this bundle names. Needs no Docker.
+  preflight   Check Compose, paths, credentials, image, and ports. Optional:
+              start runs it. It is a diagnostic, not a read-only one -- it may
+              replace the recorded image with the encoding this host resolves.
+              It starts no service and reaches no source or destination.
   start       Preflight, start the deployment, and wait for endpoint-backed READY.
   status      Report READY (exit 0), DEGRADED (exit 3), or STOPPED (exit 4).
   cli [--package FILE] [--] CLI_ARGUMENTS...

@@ -38,12 +38,14 @@ from tests.compose.lifecycle import (
     docker,
     entry_point,
     idempotency,
+    instance_identity,
     online_worker_names,
     plant_pending_update,
     probe_json,
     register,
     smoke_package,
     wait_for,
+    write_candidate_binding,
 )
 from tests.compose.redaction import SECRETS, Captured
 
@@ -196,13 +198,14 @@ def started(
         encoding="utf-8",
     )
 
+    # What an operator extracts: the committed tree plus the member the release
+    # generated. `init` reads the image out of it, so nothing names one here.
+    write_candidate_binding(bundle, sync_image)
     created = entry_point(bundle, "init")
     assert created.returncode == 0, created.stderr
     settings = bundle / "operator.env"
     settings.write_text(
-        settings.read_text(encoding="utf-8").replace(
-            "INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE={sync_image}"
-        )
+        settings.read_text(encoding="utf-8")
         # Appended, not substituted: `init` leaves the destination credential a
         # commented optional entry, because a start needs none.
         + f"INFRAHUB_API_TOKEN={infrahub_fixture['token']}\n"
@@ -210,7 +213,7 @@ def started(
         f"INFRAHUB_SYNC_PREFECT_PORT={PREFECT_PORT}\n",
         encoding="utf-8",
     )
-    instance = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    instance = instance_identity(bundle)
     # Started here rather than in the first case, so every case below runs
     # against a deployment that exists however few of them are selected.
     launched = entry_point(bundle, "start")
@@ -532,14 +535,12 @@ def unstarted(started: Deployment, sync_image: str, tmp_path: Path) -> Iterator[
     """A second copy of the bundle, initialized on spare ports and never started."""
     bundle = tmp_path / "compose"
     shutil.copytree(BUNDLE, bundle)
+    write_candidate_binding(bundle, sync_image)
     created = entry_point(bundle, "init")
     assert created.returncode == 0, created.stderr
     settings = bundle / "operator.env"
     settings.write_text(
-        settings.read_text(encoding="utf-8").replace(
-            "INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE={sync_image}"
-        )
-        + f"INFRAHUB_API_TOKEN={setting(started.bundle, 'INFRAHUB_API_TOKEN')}\n"
+        settings.read_text(encoding="utf-8") + f"INFRAHUB_API_TOKEN={setting(started.bundle, 'INFRAHUB_API_TOKEN')}\n"
         f"INFRAHUB_SYNC_IMAGE_PULL_POLICY=never\nINFRAHUB_SYNC_API_PORT={SPARE_API_PORT}\n"
         f"INFRAHUB_SYNC_PREFECT_PORT={SPARE_PREFECT_PORT}\n",
         encoding="utf-8",
@@ -547,12 +548,12 @@ def unstarted(started: Deployment, sync_image: str, tmp_path: Path) -> Iterator[
     yield bundle
     # Nothing was started, so the only thing that could remain is a bind probe
     # that failed to be removed. The assertion below is what proves there is not.
-    entry_point(bundle, "reset", (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip())
+    entry_point(bundle, "reset", instance_identity(bundle))
 
 
 def probe_containers(bundle: Path) -> list[str]:
     """Every bind-probe container this bundle's instance could have left behind."""
-    instance = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    instance = instance_identity(bundle)
     listed = docker(["ps", "--all", "--quiet", "--filter", f"name=infrahub-sync-portprobe-{instance}-"])
     assert listed.returncode == 0, listed.stderr
     return listed.stdout.split()
@@ -702,14 +703,14 @@ def test_the_next_start_after_reset_is_a_cold_bootstrap(started: Deployment) -> 
     # this case has to take it too, or it would be restarting a deployment
     # rather than bootstrapping one.
     if (bundle / ".instance").is_file():
-        previous = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+        previous = instance_identity(bundle)
         removed = entry_point(bundle, "reset", previous)
         assert removed.returncode == 0, removed.output
 
     foreign = plant_foreign_volume()
     created = entry_point(bundle, "init")
     assert created.returncode == 0, created.stderr
-    instance = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    instance = instance_identity(bundle)
     assert instance != started.instance, "reset left the identity its volumes were labelled with"
     settings = bundle / "operator.env"
     cold = Deployment(

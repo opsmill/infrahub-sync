@@ -25,17 +25,33 @@ The checksum is a claim about the archive as shipped and about nothing
 afterwards. Preparing a deployment writes `operator.env`, which is expected to
 leave the extracted tree different from the archive.
 
+The archive names the image it was qualified against. That record is
+`image.bind` beside the entry point, and it is not yours to edit: it holds the
+qualified platform and the same image in the two immutable forms a host can hold
+it under — the exported index, and the configuration digest a `docker load`
+leaves behind. There is no setting anywhere that names a different image.
+
+```bash
+cat image.bind
+```
+
 The image is named by digest, never by a tag. A tag can be re-pointed between
 the qualification that trusted an image and the run that uses it, so the
-lifecycle entry point refuses one before it creates anything. Confirm what a
-local image actually is:
+lifecycle entry point refuses one before it creates anything.
+
+Load the image this record names onto the host before the first `start`. Which
+of its two forms your host ends up holding depends on how it was loaded, and the
+deployment answers that itself: it tries the index first, then the configuration
+digest, and it asks only this engine. No registry is consulted, because what a
+registry holds says nothing about what this host can run.
+
+Confirming that what you loaded is what the record names is one command. The
+identifier it prints is the image's configuration digest, which is the form the
+release record names and the second of the two forms in `image.bind`:
 
 ```bash
 docker image inspect --format '{{.Id}}' <reference>
 ```
-
-That identifier is the image's configuration digest, which is the form the
-release record names and the form `INFRAHUB_SYNC_IMAGE` takes.
 
 ## Prepare
 
@@ -45,12 +61,12 @@ release record names and the form `INFRAHUB_SYNC_IMAGE` takes.
 
 That generates `.instance`, `secrets/postgres-admin-password`, and
 `operator.env`, with passwords for the two database owner roles, the object
-store, and one API principal. One value is yours to supply in `operator.env`
-before the first start:
+store, and one API principal. Nothing in `operator.env` has to be filled in
+before the first start.
 
-```bash
-INFRAHUB_SYNC_IMAGE=sha256:<64 hex>          # or <registry>/<repository>@sha256:<64 hex>
-```
+`init` needs no Docker: it reads `image.bind`, checks its grammar, and copies the
+index reference into `.instance` so every later command has an image name to
+work with. It resolves nothing, so it works before the image has been loaded.
 
 A configuration is not a startup input. The deployment starts with an empty
 registry and no destination, and you register a declared package through the
@@ -129,6 +145,12 @@ against this release.
 ./infrahub-sync-compose start
 ```
 
+`start` runs `preflight` itself, so the separate call above is optional. It is a
+diagnostic rather than a read-only one: it may replace the image recorded in
+`.instance` with whichever of the record's two forms this engine resolved. It
+starts no service, changes nothing in `operator.env` or `secrets/`, leaves the
+instance identity alone, and reaches no source or destination.
+
 `preflight` refuses before anything is created. Each refusal is one family name
 and a fixed sentence, and none of them renders a credential value:
 
@@ -139,9 +161,13 @@ and a fixed sentence, and none of them renders a credential value:
 | `no-instance` | This bundle has no identity yet. Run `init`. |
 | `no-operator-settings` | `operator.env` does not exist. Run `init`. |
 | `path-unwritable`, `path-unreadable`, `path-missing` | The bundle directory or `secrets/` is not usable by this user. |
-| `credentials-missing` | A required setting is empty or still holds `REPLACE-ME`. |
-| `image-not-immutable` | `INFRAHUB_SYNC_IMAGE` names a tag or a malformed digest. |
-| `image-unresolvable` | Docker cannot find that digest locally or in a registry. |
+| `credentials-missing` | A required setting in `operator.env` is empty. |
+| `image-binding-missing` | `image.bind` is absent or unreadable, so this bundle names no image. Extract the archive again. |
+| `image-binding-invalid` | `image.bind` names no platform, no index reference and no configuration digest; names a platform this bundle is not qualified on; or names something that is not an immutable digest. |
+| `image-binding-mismatch` | `.instance` names an image `image.bind` does not. Run `init`. |
+| `image-not-immutable` | The selected reference carries a malformed digest. |
+| `image-unresolvable` | This engine holds neither image `image.bind` names. Load the candidate on this host. |
+| `image-platform-unqualified` | The image this engine resolved is another architecture. It is not a fallback; load the qualified one. |
 | `port-unset` | `INFRAHUB_SYNC_BIND_ADDRESS`, or one of the two port settings, names nothing. |
 | `port-occupied`, `port-unprovable` | A required loopback bind is held, or the bind probe could not run. |
 | `cli-usage` | `cli --package` was given no file. |
@@ -182,7 +208,7 @@ Your own file is never mounted and never modified.
 
 ```bash
 ./infrahub-sync-compose init
-# Set the immutable image in operator.env; no configuration or destination is needed yet.
+# No image to name and no configuration or destination needed: the archive names the image.
 ./infrahub-sync-compose start
 ./infrahub-sync-compose cli configs list
 # Add destination/source credentials to operator.env before planning; recreate affected services

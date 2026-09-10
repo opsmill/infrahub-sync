@@ -30,11 +30,13 @@ from tests.compose.lifecycle import (
     Deployment,
     api_client,
     entry_point,
+    instance_identity,
     probe_json,
     register,
     run_bootstrap,
     wait_for,
     worker_state,
+    write_candidate_binding,
 )
 
 if TYPE_CHECKING:
@@ -159,12 +161,18 @@ def setting(bundle: Path, name: str) -> str:
 
 
 def prepare(bundle: Path, image: str) -> None:
-    """Take a fresh copy of the bundle through `init` and name the candidate image."""
+    """Take a fresh copy of the bundle through `init`, as an extracted archive.
+
+    The binding is written first, because that is what an operator extracts: a
+    release derives it from the candidate's digests and puts it in the archive.
+    Nothing here names an image afterwards — the record does, and `init` reads it.
+    """
+    write_candidate_binding(bundle, image)
     created = entry_point(bundle, "init")
     assert created.returncode == 0, created.stderr
     settings = bundle / "operator.env"
     settings.write_text(
-        settings.read_text(encoding="utf-8").replace("INFRAHUB_SYNC_IMAGE=REPLACE-ME", f"INFRAHUB_SYNC_IMAGE={image}")
+        settings.read_text(encoding="utf-8")
         # Loaded, never pulled: this is the candidate the image gate built at
         # this head, which no registry holds. No destination or source credential
         # is added, which is the whole point of this module.
@@ -176,7 +184,7 @@ def prepare(bundle: Path, image: str) -> None:
 
 def deployment_of(bundle: Path) -> Deployment:
     """The deployment this bundle's current identity names."""
-    instance = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    instance = instance_identity(bundle)
     settings = bundle / "operator.env"
     return Deployment(
         instance=instance,
@@ -202,7 +210,7 @@ def started(sync_image: str, tmp_path_factory: pytest.TempPathFactory) -> Iterat
     try:
         yield deployment
     finally:
-        instance = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+        instance = instance_identity(bundle)
         entry_point(bundle, "reset", instance)
         deployment.down(volumes=True)
 
@@ -281,14 +289,16 @@ def test_stop_and_start_preserve_the_registered_package(started: Deployment) -> 
     assert [event for event in probe_json(started, AUDIT) if event.startswith(f"{RETIRED_BOOTSTRAP_ACTOR}/")] == []
 
 
-def test_reset_needs_the_exact_identity_and_the_next_start_comes_back_empty(started: Deployment) -> None:
+def test_reset_needs_the_exact_identity_and_the_next_start_comes_back_empty(
+    started: Deployment, sync_image: str
+) -> None:
     """What reset is for, from the other side of a real second start.
 
     Runs last: it takes this module's deployment down and brings a new identity
     up in its place.
     """
     bundle = started.bundle
-    instance = (bundle / ".instance").read_text(encoding="utf-8").split("=", 1)[1].strip()
+    instance = instance_identity(bundle)
 
     refused = entry_point(bundle, "reset", "not-this-instance")
     assert refused.returncode != 0
@@ -297,7 +307,9 @@ def test_reset_needs_the_exact_identity_and_the_next_start_comes_back_empty(star
     removed = entry_point(bundle, "reset", instance)
     assert removed.returncode == 0, removed.stderr
 
-    prepare(bundle, setting(bundle, "INFRAHUB_SYNC_IMAGE"))
+    # `reset` removes the generated state and leaves the binding, so the second
+    # preparation names the same candidate the first one did.
+    prepare(bundle, sync_image)
     cold = deployment_of(bundle)
     assert cold.instance != instance, "reset left the identity its volumes were labelled with"
     launched = entry_point(bundle, "start")

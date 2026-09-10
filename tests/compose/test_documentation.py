@@ -77,7 +77,11 @@ STATES = (("READY", "0"), ("DEGRADED", "3"), ("STOPPED", "4"))
 REFUSAL_FAMILIES = (
     "compose-too-old",
     "credentials-missing",
+    "image-binding-missing",
+    "image-binding-invalid",
+    "image-binding-mismatch",
     "image-not-immutable",
+    "image-platform-unqualified",
     "port-occupied",
     "port-unprovable",
     "foreign-resource",
@@ -92,6 +96,7 @@ BUNDLE_FILES = (
     "configuration/qualification.yaml",
     "bootstrap/databases.sh",
     "OPERATING.md",
+    "image.bind",
     "operator.env",
     "secrets/postgres-admin-password",
     ".instance",
@@ -258,12 +263,18 @@ def test_the_page_states_the_minimum_compose_version_the_bundle_enforces() -> No
     assert minimum in page(), minimum
 
 
-def test_the_page_documents_both_immutable_image_forms() -> None:
-    """One is what a local candidate looks like; the other is what a published one does."""
+def test_the_page_says_the_bundle_names_its_own_image_rather_than_the_operator() -> None:
+    """A reader who goes looking for a setting to fill in has to be told there is none.
+
+    The page names the record, and both of the immutable forms it holds. The
+    refusal families the record's checks produce are covered by the table
+    above, which is read from the entry point's own `refuse` calls.
+    """
     text = page()
 
-    assert "INFRAHUB_SYNC_IMAGE=sha256:" in text
+    assert "image.bind" in text
     assert "@sha256:" in text
+    assert "INFRAHUB_SYNC_IMAGE=sha256:" not in text, "the page still asks an operator to name an image"
 
 
 def test_the_page_tells_a_clean_host_how_to_get_the_bundle_and_check_it() -> None:

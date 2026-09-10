@@ -41,6 +41,49 @@ BUNDLED_CONFIGURATION = BUNDLE / "configuration" / "qualification.yaml"
 INSTANCE_LABEL = "io.infrahub-sync.instance"
 BUNDLE_LABEL = "io.infrahub-sync.bundle"
 
+# The member a release generates into the archive, naming the image the bundle
+# was qualified against. The repository tracks no such file — it is derived from
+# a candidate's digests — so a copy of `deploy/compose` is not what an operator
+# extracts until this is written beside it.
+#
+# The settings are restated here rather than imported from `tasks.release`, so a
+# change to the record's shape has to be made on both sides instead of one of
+# them reading the other and agreeing with itself.
+BINDING_FILE = "image.bind"
+BINDING_PLATFORM = "linux/amd64"
+BINDING_INDEX_NAME = "latest"
+BINDING_INDEX_DIGEST = "sha256:" + "1" * 64
+BINDING_CONFIG_DIGEST = "sha256:" + "2" * 64
+BINDING_INDEX_REFERENCE = f"{BINDING_INDEX_NAME}@{BINDING_INDEX_DIGEST}"
+
+
+def write_binding(bundle: Path, **overrides: str | None) -> Path:
+    """Write the binding member into a bundle copy, and return where it went.
+
+    An override of `None` drops that setting, which is how an incomplete record
+    is produced without each caller hand-writing the whole file.
+    """
+    values: dict[str, str | None] = {
+        "INFRAHUB_SYNC_IMAGE_PLATFORM": BINDING_PLATFORM,
+        "INFRAHUB_SYNC_IMAGE_INDEX": BINDING_INDEX_REFERENCE,
+        "INFRAHUB_SYNC_IMAGE_CONFIG": BINDING_CONFIG_DIGEST,
+    }
+    values.update(overrides)
+    record = bundle / BINDING_FILE
+    record.write_text(
+        "".join(f"{name}={value}\n" for name, value in values.items() if value is not None), encoding="utf-8"
+    )
+    return record
+
+
+def instance_setting(bundle: Path, name: str) -> str:
+    """Read one setting out of a bundle's generated instance state file."""
+    for line in (bundle / ".instance").read_text(encoding="utf-8").splitlines():
+        key, _, value = line.partition("=")
+        if key == name:
+            return value
+    return ""
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Register the flag the qualification command runs this suite with."""
