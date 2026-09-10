@@ -10,6 +10,7 @@ value the page and the bundle disagree about is a copy-and-paste failure.
 from __future__ import annotations
 
 import ast
+import re
 import shlex
 from typing import Any, get_type_hints
 
@@ -195,6 +196,76 @@ def test_both_operator_documents_carry_the_whole_sequence_in_order(document: str
     nearest = min((missing_step(block) or "" for block in blocks), key=len, default="")
 
     assert complete, f"{document} carries no block running the whole frozen sequence in order (missing {nearest!r})"
+
+
+@pytest.mark.parametrize("document", OPERATOR_DOCUMENTS)
+def test_no_step_of_the_sequence_asks_an_operator_for_an_image(document: str) -> None:
+    """The archive names the image, so there is no image setting to be sent to.
+
+    The commands of the sequence are frozen above; the lines between them are
+    what an operator is told to do besides running them, and a step directing
+    them at a setting that does not exist stops the procedure at its second
+    line. Scoped to the sequence block rather than the page, so the prose that
+    explains why `operator.env` holds no image is untouched.
+    """
+    blocks = shell_blocks((REPO_ROOT / document).read_text(encoding="utf-8"))
+    sequence = [block for block in blocks if missing_step(block) is None]
+    assert sequence, f"{document} carries no complete sequence block to check"
+
+    for block in sequence:
+        for line in block:
+            lowered = line.lower()
+            assert not ("image" in lowered and "operator.env" in lowered), f"{document}: {line}"
+
+
+def usage_entries() -> dict[str, str]:
+    """Each command's own paragraph of the entry point's printed usage text."""
+    body = ENTRY_POINT.read_text(encoding="utf-8")
+    body = body[body.index("Usage: infrahub-sync-compose") : body.index("\nUSAGE\n")]
+    entries: dict[str, str] = {}
+    current = ""
+    for line in body.splitlines():
+        head = re.match(r"^  (\w+)", line)
+        if head and head.group(1) in COMMANDS:
+            current = head.group(1)
+            entries[current] = ""
+        if current:
+            entries[current] += line + "\n"
+    return entries
+
+
+@pytest.mark.parametrize("command", ["preflight", "cli"])
+def test_every_command_that_can_replace_the_recorded_image_says_so(command: str) -> None:
+    """Both of these resolve the binding, and resolving it persists what resolved.
+
+    An operator reading `--help` decides from it which commands touch the bundle.
+    A command that writes to `.instance` while its own entry reads like a
+    read-only one is the case where that decision is wrong.
+    """
+    entry = usage_entries()[command]
+
+    assert "recorded image" in entry, entry
+
+
+@pytest.mark.parametrize("document", OPERATOR_DOCUMENTS)
+def test_both_operator_documents_cover_an_operator_file_older_than_the_cli_token(document: str) -> None:
+    """`init` leaves an existing `operator.env` alone, including one without the token.
+
+    A bundle carried forward from an earlier alpha has an `operator.env` that
+    predates `INFRAHUB_SYNC_API_TOKEN`, and nothing adds it: this alpha migrates
+    no state in place. Every `cli` call then fails to authenticate, and the
+    document is the only place that says which value to write and where it is.
+    """
+    body = (REPO_ROOT / document).read_text(encoding="utf-8")
+
+    paragraphs = [block for block in body.split("\n\n") if "INFRAHUB_SYNC_API_TOKEN" in block]
+    covered = [
+        block
+        for block in paragraphs
+        if ("older" in block or "earlier" in block) and "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" in block
+    ]
+
+    assert covered, f"{document} does not say what to do with an operator.env that has no token"
 
 
 @pytest.mark.parametrize("line", [line for line in OPERATOR_SEQUENCE if " cli " in line])

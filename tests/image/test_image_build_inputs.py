@@ -110,7 +110,8 @@ def test_the_build_asks_the_exporter_for_no_name_of_its_own() -> None:
     """
     command = image.build_command(IDENTITY, platforms=image.PLATFORMS, destination=Path("/tmp/layout"))  # noqa: S108
 
-    exported = next(word for word in command if word.startswith(("--output", "type=oci")))
+    exported = command[command.index("--output") + 1]
+    assert exported.startswith("type=oci"), exported
     assert "name=" not in exported, exported
 
 

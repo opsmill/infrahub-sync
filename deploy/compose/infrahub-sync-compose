@@ -113,13 +113,35 @@ write_setting() {
     # line survives -- the instance identity above all, which is what every
     # volume this deployment created is labelled with.
     #
-    # Written privately and moved into place, so no reader ever sees a partial
-    # state file and an interrupted write leaves the previous one intact.
-    scratch="$STATE.next"
-    (umask 077 && grep -v "^$1=" "$STATE" > "$scratch") || : > "$scratch"
+    # Written into this attempt's own private scratch and moved into place, so
+    # no reader ever sees a partial state file, and two attempts never share a
+    # name. The scratch is removed on every way out of here, including a
+    # catchable interruption, so what a stopped write leaves behind is the
+    # previous state file and nothing beside it. A `SIGKILL` runs no handler and
+    # this claims none: it can leave a scratch, and the state file is still the
+    # one that was there.
+    #
+    # The traps below are this function's alone. It runs before `command_cli`
+    # installs its staging traps, and it has to keep doing so: they are restored
+    # here by being cleared, which is what they were.
+    scratch=$(umask 077 && mktemp "$STATE.next.XXXXXX") ||
+        refuse path-unwritable "a private scratch file could not be created beside $STATE"
+    trap 'rm -f -- "$scratch"' EXIT
+    trap 'rm -f -- "$scratch"; exit 130' INT
+    trap 'rm -f -- "$scratch"; exit 129' HUP
+    trap 'rm -f -- "$scratch"; exit 143' TERM
+    filtered=0
+    grep -v "^$1=" "$STATE" > "$scratch" || filtered=$?
+    # `grep` reports 1 when it selects no line at all, which is the ordinary
+    # answer for a state file that holds only this setting. Anything above that
+    # is a failure to read, and what could be read of the old state is not the
+    # old state: the identity is exactly what would go missing.
+    [ "$filtered" -le 1 ] ||
+        refuse path-unreadable "$STATE could not be read, so its $1 was left unchanged"
     printf '%s=%s\n' "$1" "$2" >> "$scratch"
     chmod 0600 "$scratch"
     mv -- "$scratch" "$STATE"
+    trap - EXIT INT HUP TERM
 }
 
 # Resolved once, into a variable. A refusal inside `$( )` would exit only the
@@ -354,9 +376,10 @@ check_image() {
     reference=$selected
     immutable_reference "$reference" ||
         refuse image-not-immutable "INFRAHUB_SYNC_IMAGE carries a malformed sha256 digest"
-    docker image inspect "$reference" >/dev/null 2>&1 ||
-        docker manifest inspect "$reference" >/dev/null 2>&1 ||
-        refuse image-unresolvable "Docker cannot resolve the image $reference locally or in a registry"
+    # Nothing is asked again here. The selection above is a local resolution
+    # this engine already answered, and the only thing a further lookup could
+    # add is a registry -- which says what a registry holds, never what this
+    # host can run.
     SYNC_IMAGE=$reference
     # Quiet for the CLI path: its stdout is the CLI's own output, and a command
     # like `runs results` prints JSON a caller parses.
@@ -741,8 +764,10 @@ Usage: infrahub-sync-compose <command>
   status      Report READY (exit 0), DEGRADED (exit 3), or STOPPED (exit 4).
   cli [--package FILE] [--] CLI_ARGUMENTS...
               Run the Sync CLI against this deployment, in a container of the
-              same image. With --package, one readable file is copied and
-              mounted read-only at /input/package.yaml for that one call.
+              same image. Like preflight, it resolves the image first and may
+              replace the recorded image with the encoding this host resolves.
+              With --package, one readable file is copied and mounted read-only
+              at /input/package.yaml for that one call.
   logs [svc]  Print a bounded tail of the deployment's logs.
   stop        Stop the deployment, keeping its containers and all of its data.
   restart     Replace the API and worker processes, keeping every durable record.

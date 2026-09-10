@@ -17,6 +17,9 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
+import subprocess  # noqa: S404 -- an interrupted run needs the process, not its finished output
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -379,7 +382,15 @@ def test_a_bundle_with_no_binding_is_refused(unbound: Path, shim: Path) -> None:
 
 
 def test_a_binding_nothing_can_read_is_refused(unbound: Path, shim: Path) -> None:
-    """Unreadable is not empty: a record that cannot be read says nothing."""
+    """Unreadable is not empty: a record that cannot be read says nothing.
+
+    Mode bits are the predicate under test, because they are what `[ -r ]` in
+    the entry point reads. That makes this a non-root check: root ignores them,
+    so under a root pytest the record stays readable and this row proves
+    nothing about it. The suite's own entry points and CI both run as an
+    ordinary user, and a dangling symlink is not a substitute -- it is an
+    absent file, which the row above this one already covers.
+    """
     (unbound / BINDING_FILE).write_text("INFRAHUB_SYNC_IMAGE_INDEX=x\n", encoding="utf-8")
     (unbound / BINDING_FILE).chmod(0o000)
     try:
@@ -566,6 +577,162 @@ def test_the_derived_state_update_changes_nothing_an_operator_owns(initialized: 
         (initialized / "secrets" / "postgres-admin-password").read_bytes(),
         instance_setting(initialized, "INFRAHUB_SYNC_INSTANCE"),
     ) == before
+
+
+# A `grep` stand-in for the two rows below. The entry point filters the old
+# state through `grep` to replace one of its settings, and those two rows are
+# about what happens when that filtering does not finish: a read that fails, and
+# a run interrupted while it is in progress. Neither answer can be produced on
+# demand by the real `grep`, and both decide whether the instance identity -- the
+# label every volume this deployment created carries -- survives.
+#
+# Every other call is the real `grep`, including the entry point's own use of it
+# to read a container's published ports.
+GREP_SHIM = """#!/bin/sh
+# Inert unless a row names the file it is interested in, so every other command
+# in the same bundle -- `init` above all -- filters through the real `grep`,
+# and so does the entry point's own reading of a container's published ports.
+state=0
+if [ -n "${SHIM_STATE_FILE_NAME:-}" ]; then
+    for word in "$@"; do
+        case "$word" in
+            *"$SHIM_STATE_FILE_NAME") state=1 ;;
+        esac
+    done
+fi
+if [ "$state" = "1" ] && [ -n "${SHIM_STATE_GREP_RC:-}" ]; then
+    exit "$SHIM_STATE_GREP_RC"
+fi
+if [ "$state" = "1" ] && [ -n "${SHIM_STATE_GREP_HANG:-}" ]; then
+    # Filter as usual, so the scratch this write is building really exists, then
+    # stop where an interrupted operator would leave it.
+    "REAL_GREP" "$@"
+    : > "$SHIM_STATE_GREP_HANG"
+    sleep 60
+    exit 1
+fi
+exec "REAL_GREP" "$@"
+"""
+
+STATE_FILE_NAME = ".instance"
+
+
+@pytest.fixture
+def state_shim(shim: Path) -> Path:
+    """The Docker stand-in directory, with a `grep` that can fail the state read."""
+    real = shutil.which("grep")
+    assert real, "this suite needs a real grep to defer to"
+    executable = shim / "grep"
+    executable.write_text(GREP_SHIM.replace("REAL_GREP", real), encoding="utf-8")
+    executable.chmod(0o755)
+    return shim
+
+
+def scratch_files(bundle: Path) -> list[Path]:
+    """Every private scratch of the state file left behind in a bundle."""
+    return sorted(bundle.glob(f"{STATE_FILE_NAME}.next*"))
+
+
+def test_a_state_file_that_cannot_be_read_is_not_replaced_by_what_could_be_read_of_it(
+    initialized: Path, state_shim: Path
+) -> None:
+    """A failed read is not an empty file, and the identity is what it would cost.
+
+    The setting being replaced is one line of a generated file whose other line
+    names this instance. Treating a read failure as "no other lines" writes back
+    a state file with the image and no identity, and every volume the deployment
+    created is labelled with that identity.
+    """
+    before = (initialized / STATE_FILE_NAME).read_bytes()
+
+    result = run(
+        initialized,
+        state_shim,
+        "preflight",
+        environment={
+            "SHIM_RESOLVABLE": BINDING_CONFIG_DIGEST,
+            "SHIM_STATE_FILE_NAME": STATE_FILE_NAME,
+            "SHIM_STATE_GREP_RC": "2",
+        },
+    )
+
+    assert family(result) == "path-unreadable", result.stderr
+    assert (initialized / STATE_FILE_NAME).read_bytes() == before
+    assert scratch_files(initialized) == []
+
+
+def test_an_interrupted_state_write_leaves_the_old_state_and_no_scratch_beside_it(
+    initialized: Path, state_shim: Path, tmp_path: Path
+) -> None:
+    """Ctrl-C during a write is ordinary, and it must leave the bundle as it was.
+
+    The write is stopped after its private scratch holds the filtered old state
+    and before anything is moved into place, which is the whole window the
+    scratch exists in. What the bundle has afterwards is the state file it
+    started with and nothing else -- a stray scratch beside it is a file no
+    later command owns, under a name a second attempt would collide with.
+
+    `SIGKILL` is not covered here and is not claimed anywhere: no handler runs.
+    """
+    ready = tmp_path / "filtered"
+    before = (initialized / STATE_FILE_NAME).read_bytes()
+    process = subprocess.Popen(  # noqa: S603 -- the entry point under test, with a fixed argv
+        [str(initialized / ENTRY_POINT), "preflight"],
+        start_new_session=True,
+        env={
+            **os.environ,
+            "PATH": f"{state_shim}{os.pathsep}{os.environ['PATH']}",
+            "SHIM_COMPOSE_VERSION": MINIMUM_COMPOSE,
+            "SHIM_RESOLVABLE": BINDING_CONFIG_DIGEST,
+            "SHIM_STATE_FILE_NAME": STATE_FILE_NAME,
+            "SHIM_STATE_GREP_HANG": str(ready),
+        },
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and not ready.is_file():
+            time.sleep(0.2)
+        assert ready.is_file(), "the interrupted run never reached the state write"
+        os.killpg(os.getpgid(process.pid), signal.SIGINT)
+        process.wait(timeout=60)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
+
+    assert (initialized / STATE_FILE_NAME).read_bytes() == before
+    assert scratch_files(initialized) == [], "an interrupted write left a scratch state file behind"
+
+
+def test_a_resolved_binding_is_not_looked_up_a_second_time(initialized: Path, shim: Path, tmp_path: Path) -> None:
+    """One resolution answers it: what resolved, and what architecture it is.
+
+    Asking again after that decides nothing -- the answer is already held -- and
+    the repeat is what a registry fallback used to hang off. Counted rather than
+    merely checked for absence of a registry call, because a second local lookup
+    is the thing that makes a fallback look reasonable to add back.
+    """
+    inspects = tmp_path / "inspect.log"
+    manifests = tmp_path / "manifest.log"
+
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={
+            "SHIM_RESOLVABLE": BINDING_CONFIG_DIGEST,
+            "SHIM_INSPECT_LOG": str(inspects),
+            "SHIM_MANIFEST_LOG": str(manifests),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    # The index, refused because this host does not hold it, then the
+    # configuration digest, and that same digest once more for its architecture.
+    assert recorded(inspects) == [BINDING_INDEX_REFERENCE, BINDING_CONFIG_DIGEST, BINDING_CONFIG_DIGEST]
+    assert not manifests.exists(), manifests.read_text(encoding="utf-8")
 
 
 def test_an_operator_named_image_cannot_displace_the_one_that_was_checked(

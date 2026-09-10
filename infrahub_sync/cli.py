@@ -395,6 +395,10 @@ def _echo_run(resource: RunResource) -> None:
             ("package_checksum", run.package_checksum),
             ("phase", run.phase),
             ("outcome", run.outcome),
+            # Printed for both values. Absent when false, an operator could not
+            # tell a run that needs no reconciling from one this command does
+            # not report on, and the only way to settle that is the HTTP API.
+            ("reconciliation_required", run.reconciliation_required),
             ("execution_state", selected.state if selected is not None else None),
             # The correlation an operator follows into Prefect, from the same
             # selected attempt the state above is read from.

@@ -279,7 +279,33 @@ def assigns(line: str, variable: str) -> bool:
     return head.startswith(f"{variable}=")
 
 
-@pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
+# The documents that still show an operator a request they build themselves. The
+# shipped operator document no longer shows one: every read it documents is a
+# packaged command. The site guide still reaches the API directly for the two
+# surfaces no packaged command covers, and the rows below are about those, so
+# this is named once and then proved rather than being derived per row -- a
+# selection that quietly emptied would make every check under it vacuous.
+DIRECT_RECIPE_DOCUMENTS = (GUIDE,)
+
+
+def direct_requests(path: Path) -> list[str]:
+    """Return every line of one document that issues a request the reader built."""
+    return [line for line in commands(path) if line.lstrip().startswith("curl ")]
+
+
+def test_the_documents_that_show_a_direct_request_are_the_ones_named() -> None:
+    """Guards every row below against selecting nothing and proving nothing.
+
+    Both halves are asserted. A guide that stopped carrying a direct recipe
+    would leave the checks under it passing over an empty set, and an operator
+    document that gained one back would take its recipe out of their reach.
+    """
+    carrying = tuple(path for path in DOCUMENTS if direct_requests(path))
+
+    assert carrying == DIRECT_RECIPE_DOCUMENTS, f"{[path.name for path in carrying]} show a direct request"
+
+
+@pytest.mark.parametrize("path", DIRECT_RECIPE_DOCUMENTS, ids=lambda path: path.name)
 @pytest.mark.parametrize("variable", REQUEST_VARIABLES)
 def test_every_document_derives_the_variables_its_direct_recipes_need(path: Path, variable: str) -> None:
     """A variable used before it is set leaves an operator sending an empty header.
@@ -297,12 +323,14 @@ def test_every_document_derives_the_variables_its_direct_recipes_need(path: Path
 
 
 @pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
-def test_the_decision_field_is_read_from_the_record_that_carries_it(path: Path) -> None:
-    """`runs show` does not print it, so the document has to read the whole record.
+def test_the_decision_field_is_read_through_the_command_that_prints_it(path: Path) -> None:
+    """`runs show` prints it, so the document sends an operator there and nowhere else.
 
-    Bound to the executable recipe rather than to prose: the block that GETs the
-    run record is the one that has to name the field, so a document that names the
-    field and then shows a command not carrying it fails here.
+    The field used to reach an operator only through a hand-built authenticated
+    request against the run record. That recipe put a bearer token in a file an
+    operator had to remember to remove, for a value the packaged command now
+    reports, so a document that still directs them at a raw read of the run is
+    teaching the workaround rather than the command.
     """
     blocks = command_blocks(path)
     reads = [
@@ -312,15 +340,14 @@ def test_the_decision_field_is_read_from_the_record_that_carries_it(path: Path) 
     ]
 
     assert SAFETY_FIELD in PublicRunResource.model_fields, (
-        f"{SAFETY_FIELD} is not a field of the run record the documented read returns"
+        f"{SAFETY_FIELD} is not a field of the run record the documented command reports"
     )
-    assert len(reads) == 1, f"{path.name} has {len(reads)} direct full-run reads; it needs exactly one"
-    assert any(SAFETY_FIELD in line for line in reads[0]), (
-        f"{path.name} reads the run record without saying it is where {SAFETY_FIELD} is"
+    assert not reads, f"{path.name} still reads the whole run record directly for {SAFETY_FIELD}"
+    assert f"cli runs show {RUN_PLACEHOLDER}" in documented(path), (
+        f"{path.name} names {SAFETY_FIELD} without showing the command that prints it"
     )
-    assert SAFETY_FIELD not in " ".join(line for block in blocks for line in block if "cli runs" in line), (
-        f"{path.name} attributes {SAFETY_FIELD} to a CLI command that does not print it"
-    )
+    section = prose(path)
+    assert SAFETY_FIELD in section, f"{path.name} does not name {SAFETY_FIELD} at all"
 
 
 @pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
@@ -371,5 +398,5 @@ def test_the_extraction_both_documents_give_matches_what_init_writes() -> None:
     assert PRINCIPAL_FIELD in generated[0], (
         f"the entry point no longer writes {PRINCIPAL_FIELD!r}, so the documented extraction cannot match it"
     )
-    for path in DOCUMENTS:
+    for path in DIRECT_RECIPE_DOCUMENTS:
         assert PRINCIPAL_FIELD in documented(path), f"{path.name} does not extract the field the entry point writes"
