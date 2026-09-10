@@ -47,6 +47,7 @@ DOCKER_SHIM = r"""#!/bin/sh
 # scan fails here rather than quietly working on the developer's machine.
 
 if [ "$1" = "compose" ]; then
+    [ -n "${SHIM_ARGV_LOG:-}" ] && printf '%s\n' "$*" >> "$SHIM_ARGV_LOG"
     # Which Compose subcommand, ignoring the global flags in front of it.
     sub=""
     for word in "$@"; do
@@ -264,24 +265,39 @@ def test_the_closed_compose_environment_covers_the_source_credentials(setting: s
     assert setting in set(declared.group(1).split())
 
 
-def test_an_ambient_source_token_cannot_reach_compose(initialized: Path, shim: Path) -> None:
+def test_an_ambient_source_token_cannot_reach_compose(initialized: Path, shim: Path, tmp_path: Path) -> None:
     """The operator file owns the value; an exported shell variable does not.
 
-    The shim refuses the run if either name arrives with a value, so this fails
-    while the wrapper still lets a shell export through.
+    Both halves together are the property. The operator file declares one token
+    while the shell exports a different one under the same name, and the shim
+    refuses the run if either name reaches Compose with a value — so a wrapper
+    that stopped clearing the environment fails here. The recorded argv then
+    shows the value was not merely dropped: Compose is given the three env files
+    in the order that lets the operator file supply it.
     """
+    settings = initialized / "operator.env"
+    settings.write_text(
+        settings.read_text(encoding="utf-8") + "NETBOX_TOKEN=preflight-declared-netbox-token-9c2f41\n",
+        encoding="utf-8",
+    )
+    argv_log = tmp_path / "compose-argv.log"
+
     result = run(
         initialized,
         shim,
         "preflight",
         environment={
             "SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT": "1",
+            "SHIM_ARGV_LOG": str(argv_log),
             "NETBOX_TOKEN": "preflight-ambient-netbox-token-must-lose",
             "NAUTOBOT_TOKEN": "preflight-ambient-nautobot-token-must-lose",
         },
     )
 
     assert result.returncode == 0, result.stderr + result.stdout
+    recorded = argv_log.read_text(encoding="utf-8")
+    chain = re.findall(r"--env-file (\S+)", recorded)
+    assert [Path(entry).name for entry in chain[:3]] == ["defaults.conf", "operator.env", ".instance"], chain[:3]
 
 
 @pytest.mark.parametrize("setting", SOURCE_TOKEN_SETTINGS)

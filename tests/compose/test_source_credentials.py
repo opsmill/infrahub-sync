@@ -28,7 +28,6 @@ from __future__ import annotations
 import os
 import socket
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -39,7 +38,7 @@ import requests
 from infrahub_sync.configuration import collect_findings, parse_configuration_package
 from infrahub_sync.configuration.credentials import CredentialConfigurationError, select_runtime_credential
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
-from tests.compose.conftest import CONTRACT_ENVIRONMENT, compose
+from tests.compose.conftest import CONTRACT_ENVIRONMENT, DEFAULTS_FILE, compose
 from tests.compose.redaction import SECRETS
 
 if TYPE_CHECKING:
@@ -341,8 +340,11 @@ def test_the_netbox_adapter_client_carries_the_registered_credential(
 
     adapter = NetboxAdapter(target="netbox", adapter=instance.source, config=instance)
 
-    assert adapter.client.base_url == f"{NETBOX_URL}/api"
-    assert adapter.client.token == DECLARED_SOURCE_TOKEN
+    base_url_is_declared = adapter.client.base_url == f"{NETBOX_URL}/api"
+    token_is_declared = adapter.client.token == DECLARED_SOURCE_TOKEN
+
+    assert base_url_is_declared, "the client was not built against the declared url"
+    assert token_is_declared, "the client does not carry the declared token"
 
 
 @NEEDS_SERVICE_PROFILE
@@ -372,7 +374,9 @@ def test_the_nautobot_adapter_client_carries_the_registered_credential(
         del args, kwargs
         sent = {**dict(session.headers), **dict(headers or {})}
         seen.append((url, sent.get("Authorization")))
-        assert url == NAUTOBOT_VERSION_URL, "the adapter requested something other than the version document"
+        if url != NAUTOBOT_VERSION_URL:
+            message = "the adapter requested something other than the declared version document"
+            raise AssertionError(message)
         answer = requests.Response()
         answer.status_code = 200
         answer.url = url
@@ -390,10 +394,19 @@ def test_the_nautobot_adapter_client_carries_the_registered_credential(
 
     adapter = NautobotAdapter(target="nautobot", adapter=instance.source, config=instance)
 
-    assert adapter.client.base_url == f"{NAUTOBOT_URL}/api"
-    assert adapter.client.token == DECLARED_SOURCE_TOKEN
-    assert len(seen) == 1, f"the constructor made {len(seen)} requests"
-    assert seen[0] == (NAUTOBOT_VERSION_URL, f"Token {DECLARED_SOURCE_TOKEN}")
+    # Reduced to verdicts before the assert: pytest renders an assertion's operands
+    # on failure, and these carry the declared credential.
+    base_url_is_declared = adapter.client.base_url == f"{NAUTOBOT_URL}/api"
+    token_is_declared = adapter.client.token == DECLARED_SOURCE_TOKEN
+    exactly_one_version_get = len(seen) == 1
+    version_get_url_is_declared = bool(seen) and seen[0][0] == NAUTOBOT_VERSION_URL
+    version_get_carries_declared_token = bool(seen) and seen[0][1] == f"Token {DECLARED_SOURCE_TOKEN}"
+
+    assert base_url_is_declared, "the client was not built against the declared url"
+    assert token_is_declared, "the client does not carry the declared token"
+    assert exactly_one_version_get, "the constructor did not make exactly one version request"
+    assert version_get_url_is_declared, "the version request did not go to the declared version document"
+    assert version_get_carries_declared_token, "the version request did not carry the declared credential"
 
 
 # ---------------------------------------------------------------------------
@@ -434,10 +447,25 @@ package = parse_configuration_package({
 instance = resolve_runtime_instance(package, directory="/tmp/infrahub-sync/pkg-r1")
 expected_token = os.environ[identifier]
 
+# The one external answer this probe supplies. Nautobot's client asks for the API
+# version while constructing and returns no object without it. Everything about
+# that request is recorded and judged: the URL, the effective Authorization header
+# the session would actually send, and how many times it happens. Any other URL,
+# any second call, or a header that does not carry the declared credential leaves
+# the verdicts below false. Nothing raw is printed.
+seen = []
+
 if source == "nautobot":
     import requests
 
+    expected_version_url = declared_url.rstrip("/") + "/api/"
+
     def version_only_get(session, url, *args, headers=None, **kwargs):
+        effective = dict(session.headers)
+        effective.update(dict(headers or {}))
+        seen.append((url, effective.get("Authorization")))
+        if url != expected_version_url:
+            raise AssertionError("the probe rejects every request but the declared version document")
         answer = requests.Response()
         answer.status_code = 200
         answer.url = url
@@ -451,6 +479,7 @@ def refuse(*args, **kwargs):
     raise AssertionError("the container probe denies every network call")
 
 socket.socket.connect = refuse
+socket.socket.connect_ex = refuse
 socket.create_connection = refuse
 
 if source == "netbox":
@@ -467,27 +496,42 @@ checks = {
     "token_is_declared": adapter.client.token == expected_token,
     "ambient_url_ignored": "ambient" not in adapter.client.base_url,
 }
-print("PKG-R1-CONTAINER " + json.dumps(checks, sort_keys=True))
+if source == "nautobot":
+    checks["exactly_one_version_get"] = len(seen) == 1
+    checks["version_get_url_is_declared"] = bool(seen) and seen[0][0] == expected_version_url
+    checks["version_get_carries_declared_token"] = bool(seen) and seen[0][1] == "Token " + expected_token
+else:
+    checks["no_transport_call_during_construction"] = seen == []
 print("PKG-R1-CONTAINER PASS" if all(checks.values()) else "PKG-R1-CONTAINER FAIL")
 """
 
 
-def container_environment() -> dict[str, str]:
+def container_environment(tmp_path: Path) -> dict[str, str]:
     """Every operator input the bundle needs, with the image under test named.
 
-    The image reference is the built candidate the gate loaded, which is what
-    makes this a claim about the artifact rather than about a source checkout.
+    Deliberately carries no source token. The whole point of the container proof
+    is that the declared value arrives through the operator file, so handing it
+    to Compose in the process environment here would make the test pass whether
+    or not operator-file loading works at all.
     """
     image = os.environ.get(IMAGE_REFERENCE_ENV, "").strip()
     if not image:
         pytest.skip(f"{IMAGE_REFERENCE_ENV} names no built image; this gate runs against the candidate artifact")
-    secret = Path(tempfile.mkdtemp()) / "postgres-admin-password"
+    secret = tmp_path / "postgres-admin-password"
     secret.write_text("container-administrator-password\n", encoding="utf-8")
     return {
         **CONTRACT_ENVIRONMENT,
         IMAGE_REFERENCE_ENV: image,
         "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD_FILE": str(secret),
     }
+
+
+def operator_file(tmp_path: Path, **settings: str) -> Path:
+    """Write one operator-format env file, in the shape `init` generates."""
+    path = tmp_path / "operator.env"
+    path.write_text("".join(f"{name}={value}\n" for name, value in settings.items()), encoding="utf-8")
+    path.chmod(0o600)
+    return path
 
 
 CONTAINER_DECLARED_URL = {"netbox": "http://netbox.invalid:8080", "nautobot": "http://nautobot.invalid:8080"}
@@ -502,19 +546,25 @@ CONTAINER_TOKENS = {
 @pytest.mark.docker
 @pytest.mark.parametrize("source", sorted(SOURCES))
 def test_the_worker_container_gives_the_declared_credential_to_the_real_adapter(
-    docker_daemon: None, source: str
+    docker_daemon: None, source: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """One `compose run` in the shipped image, resolving and constructing for real.
 
-    The operator file supplies the token through the Compose model; a hostile
-    ambient URL and token are exported into the same container. What the adapter
-    ends up holding is compared inside the container, and only verdicts are
-    printed, so the value never reaches anything this suite retains.
+    The declared token reaches Compose only through an operator-format env file
+    placed after `defaults.conf`, and is absent from this process's environment,
+    so the case fails if operator-file loading is broken rather than passing on a
+    value Compose was handed directly. A hostile ambient URL is exported into the
+    same container. What the adapter ends up holding is compared inside the
+    container and only verdicts are printed, so the value never reaches anything
+    this suite retains.
     """
     del docker_daemon
     profile = SOURCES[source]
     token = CONTAINER_TOKENS[source]
     SECRETS.register(token)
+
+    monkeypatch.delenv(profile.identifier, raising=False)
+    settings = operator_file(tmp_path, **{profile.identifier: token})
 
     result = compose(
         [
@@ -533,18 +583,32 @@ def test_the_worker_container_gives_the_declared_credential_to_the_real_adapter(
             CONTAINER_DECLARED_URL[source],
             source,
         ],
-        environment={**container_environment(), profile.identifier: token},
+        environment=container_environment(tmp_path),
+        env_files=(DEFAULTS_FILE, settings),
     )
 
+    assert profile.identifier not in os.environ, "the token must reach Compose from the operator file alone"
     assert result.returncode == 0, result.output
     assert "PKG-R1-CONTAINER PASS" in result.stdout, result.output
     assert SECRETS.leaked(result.unredacted(), {profile.identifier: token}) == []
 
 
 @pytest.mark.docker
-def test_a_missing_source_token_fails_the_run_inside_the_container(docker_daemon: None) -> None:
-    """The refusal an operator sees names the variable, and the container still started."""
+def test_a_missing_source_token_fails_the_run_inside_the_container(
+    docker_daemon: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The refusal an operator sees names the variable, and the container still started.
+
+    The identifier check reads raw output, because the redaction boundary replaces
+    a credential-shaped *name* and the refusal is built from one — on the redacted
+    stream the very string this asserts is already `[redacted]`. The comparison is
+    therefore reduced to a bool before the assert: pytest rewrites assertions and
+    renders their operands on failure, so an `in` test written inline would put the
+    captured output into the report. Only the bool reaches the assert, and nothing
+    holds the raw text afterwards.
+    """
     del docker_daemon
+    monkeypatch.delenv("NETBOX_TOKEN", raising=False)
 
     result = compose(
         [
@@ -559,9 +623,13 @@ def test_a_missing_source_token_fails_the_run_inside_the_container(docker_daemon
             CONTAINER_DECLARED_URL["netbox"],
             "netbox",
         ],
-        environment=container_environment(),
+        environment=container_environment(tmp_path),
+        env_files=(DEFAULTS_FILE, operator_file(tmp_path)),
     )
 
+    names_expected_identifier = "NETBOX_TOKEN" in result.unredacted()
+
     assert result.returncode != 0
-    assert "NETBOX_TOKEN" in result.output
+    assert names_expected_identifier, "the refusal did not name the expected environment identifier"
+    assert "CredentialConfigurationError" in result.output
     assert "PKG-R1-CONTAINER PASS" not in result.stdout
