@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import socket
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,6 +67,16 @@ NAUTOBOT_API_VERSION = "2.4"
 
 # The built candidate the Docker-marked cases run against.
 IMAGE_REFERENCE_ENV = "INFRAHUB_SYNC_IMAGE"
+
+# Both SDKs are declared `python_version >= '3.11'` in the service extra, so the
+# Python 3.10 profile does not install them and cannot construct either client.
+# Keyed to the interpreter rather than to whether the import happens to work: on
+# every supported service Python these two cases always run, and a missing
+# package fails them.
+NEEDS_SERVICE_PROFILE = pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="the service extra declares both source SDKs python_version >= '3.11'",
+)
 
 
 @dataclass(frozen=True)
@@ -308,6 +319,7 @@ def test_the_registered_url_and_token_beat_a_conflicting_ambient_pair(
 # proves nothing if the adapter then goes and reads the environment itself.
 
 
+@NEEDS_SERVICE_PROFILE
 def test_the_netbox_adapter_client_carries_the_registered_credential(
     monkeypatch: pytest.MonkeyPatch, deny_network: None
 ) -> None:
@@ -333,6 +345,7 @@ def test_the_netbox_adapter_client_carries_the_registered_credential(
     assert adapter.client.token == DECLARED_SOURCE_TOKEN
 
 
+@NEEDS_SERVICE_PROFILE
 def test_the_nautobot_adapter_client_carries_the_registered_credential(
     monkeypatch: pytest.MonkeyPatch, deny_network: None
 ) -> None:
