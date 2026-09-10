@@ -304,12 +304,13 @@ def test_the_generated_settings_ask_the_operator_for_no_image_at_all(bundle: Pat
     Both halves. The operator file must not name the setting — an assignment
     there would read as something to fill in — and it must not tell them to.
     """
-    run(bundle, shim, "init")
+    created = run(bundle, shim, "init")
 
     lines = (bundle / "operator.env").read_text(encoding="utf-8").splitlines()
 
     assert [line for line in lines if line.startswith("INFRAHUB_SYNC_IMAGE=")] == [], lines
     assert [line for line in lines if "REPLACE-ME" in line] == [], lines
+    assert "INFRAHUB_SYNC_IMAGE" not in created.stdout, created.stdout
 
 
 def test_init_copies_the_binding_index_reference_into_the_generated_state(bundle: Path, shim: Path) -> None:

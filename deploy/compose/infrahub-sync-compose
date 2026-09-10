@@ -604,7 +604,7 @@ INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "admini
 INFRAHUB_SYNC_API_TOKEN=$principal
 OPERATOR_SETTINGS
     chmod 0600 "$OPERATOR"
-    report "wrote $OPERATOR; set INFRAHUB_SYNC_IMAGE before starting"
+    report "wrote $OPERATOR"
 }
 
 command_preflight() {
