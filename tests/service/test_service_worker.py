@@ -277,9 +277,12 @@ async def test_polling_submission_refuses_when_refresh_changes_identity_to_none(
     await refresh_cleared_identity.wait()
     assert worker.backend_id is None
 
+    # Both releases precede the await: the submission now waits on the identity
+    # lock this paused refresh holds, so releasing the poll alone would leave the
+    # poll waiting on a refresh that is itself waiting to be released.
     release_poll.set()
-    results = await poll_task
     release_refresh.set()
+    results = await poll_task
     await refresh_task
 
     assert len(results) == 1
