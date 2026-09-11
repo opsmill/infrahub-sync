@@ -1,0 +1,77 @@
+---
+title: Release 2.0.1
+---
+
+<table>
+  <tbody>
+    <tr>
+      <th>Release Number</th>
+      <td>2.0.1</td>
+    </tr>
+    <tr>
+      <th>Release Date</th>
+      <td>September 11th, 2026</td>
+    </tr>
+    <tr>
+      <th>Tag</th>
+      <td>[2.0.1](https://github.com/opsmill/infrahub-sync/releases/tag/2.0.1)</td>
+    </tr>
+  </tbody>
+</table>
+
+Infrahub Sync 2.0.1 is a maintenance release for 2.0.0. Install the package on its own and every module it imports at runtime is present. Synchronize NetBox interfaces in tagged L2 modes, update relationships on an existing Infrahub object, or generate models from a schema read over the API, and each completes correctly.
+
+## Bug fixes
+
+### Synchronize tagged and tagged-all interfaces from NetBox
+
+Run a NetBox synchronization that includes interfaces in `tagged` or `tagged-all` 802.1Q mode. These previously failed while being translated to the destination model.
+
+- NetBox `q-in-q` mode is refused explicitly, because the example destination schema cannot represent it.
+- A malformed non-null mode fails at the transform boundary with the offending value named, instead of producing an invalid interface. ([#176](https://github.com/opsmill/infrahub-sync/pull/176))
+
+### Keep lineage on relationships changed by an update
+
+Attribute source and owner on relationship edges that a destination update adds or changes. Lineage was applied when an object was first created, but edges written by a later update to an existing object carried none, so attribution depended on which run happened to write the edge. ([#143](https://github.com/opsmill/infrahub-sync/pull/143))
+
+### Generate models from schemas read over the API
+
+Run `infrahub-sync generate` against a recent infrahub-sdk and get the same annotations as before. Optional attributes and many-relationships are annotated and defaulted correctly again, because `get_kind()` is duck-typed rather than checked with `isinstance` against write-side schema classes.
+
+- String attribute defaults are emitted as Python literals, so a default containing a quote, a newline, or a backslash stays valid Python and keeps its exact schema value. ([#188](https://github.com/opsmill/infrahub-sync/pull/188), [#187](https://github.com/opsmill/infrahub-sync/issues/187))
+
+### Read non-string attributes without converting them
+
+Read attributes from Infrahub and keep their type. Every non-string attribute value was converted to a string, so an integer or a boolean reached the destination as text. Only IP-related types are converted to strings now. ([#130](https://github.com/opsmill/infrahub-sync/pull/130))
+
+## Installation and dependencies
+
+Install infrahub-sync into a clean environment and every package the product imports is declared by the package itself, rather than arriving through the `dev` extra or through another dependency.
+
+- `requests` and `urllib3` are runtime dependencies. `packaging`, `pydantic`, and `typing-extensions` are declared directly instead of relying on other packages to bring them.
+- infrahub-sync no longer installs the `infrahub-sdk[all]` extra. It declares `jinja2`, `pyyaml`, and `typer` directly, which are the only packages it used from that extra, so a plain install pulls fewer unrelated packages. The supported SDK range stays `>=1.17,<2` and infrahub-sdk 1.23.2 is the tested version, so infrahub-sync can be paired with the SDK release an Infrahub server needs.
+- The `netutils` and `pyarrow` lower bounds match the oldest versions that work on Python 3.13. The locked and tested diffsync is 2.2.3; the previously locked 2.2.2 was yanked upstream. ([#189](https://github.com/opsmill/infrahub-sync/pull/189))
+
+## Upgrade notes
+
+- If your environment relied on a package that arrived transitively through `infrahub-sdk[all]`, declare it in your own project. Only `jinja2`, `pyyaml`, and `typer` are still pulled in through infrahub-sync.
+- Regenerate your sync models with `infrahub-sync generate` if you generated them against a recent infrahub-sdk and saw optional or list annotations missing.
+
+## Full changelog
+
+### Changed
+
+- infrahub-sync no longer installs the `infrahub-sdk[all]` extra, and declares `jinja2`, `pyyaml`, and `typer` directly. The supported range stays `>=1.17,<2`, with infrahub-sdk 1.23.2 as the tested version. ([#189](https://github.com/opsmill/infrahub-sync/pull/189))
+
+### Fixed
+
+- Added `requests` and `urllib3` as runtime dependencies, declared `packaging`, `pydantic`, and `typing-extensions` directly, raised the `netutils` and `pyarrow` floors to versions that work on Python 3.13, and locked diffsync 2.2.3 after 2.2.2 was yanked upstream. ([#189](https://github.com/opsmill/infrahub-sync/pull/189))
+- Applied source and owner lineage to relationship edges added or changed during an Infrahub destination update. ([#143](https://github.com/opsmill/infrahub-sync/pull/143))
+- Fixed NetBox interface synchronization for `tagged` and `tagged-all` L2 modes, refused `q-in-q` explicitly, and made malformed non-null modes fail contextually at the transform boundary. ([#176](https://github.com/opsmill/infrahub-sync/pull/176))
+- Fixed generated DiffSync model annotations for schemas read from the Infrahub API, and emitted string attribute defaults as Python literals. ([#188](https://github.com/opsmill/infrahub-sync/pull/188))
+- Limited automatic string conversion to IP-related types, so other non-string attribute values keep their type. ([#130](https://github.com/opsmill/infrahub-sync/pull/130))
+- Restored the `from-netbox` name of the shipped NetBox example sync project, which the tutorial work in [#140](https://github.com/opsmill/infrahub-sync/pull/140) had renamed. ([#147](https://github.com/opsmill/infrahub-sync/pull/147))
+
+### Housekeeping
+
+- Gave development tools declared without a lower bound one, so a lowest-version resolution can no longer select releases that predate Python 3. The `typer-cli` floor matters most: older releases pull `typer-slim`, which shadows the real `typer` package and breaks the CLI. ([#189](https://github.com/opsmill/infrahub-sync/pull/189))

@@ -106,6 +106,18 @@ jobs:
       - name: Update lock file
         run: uv lock
 
+      - name: Build changelog from news fragments
+        env:
+          VERSION: ${{ needs.check_commit.outputs.next_version }}
+        run: |
+          set -euo pipefail
+          fragment="$(find changelog -maxdepth 1 -type f -name '*.md' ! -name 'towncrier.md.template' | head -n 1)"
+          if [ -n "$fragment" ]; then
+            uv run towncrier build --yes --version "${VERSION#v}"
+          else
+            echo "No changelog fragments found; skipping towncrier build."
+          fi
+
       - name: Commit version bump (skip CI) only if there are changes
         id: commit_bump
         env:
@@ -117,7 +129,7 @@ jobs:
           git config user.email "github-bot@opsmill.com"
 
           # Stage expected files
-          git add pyproject.toml uv.lock || true
+          git add pyproject.toml uv.lock CHANGELOG.md changelog || true
 
           # Commit only if there are staged changes
           if git diff --cached --quiet; then
