@@ -19,12 +19,8 @@ from infrahub_sync import SchemaMappingField, SchemaMappingModel
 pynetbox = pytest.importorskip("pynetbox")
 pynautobot = pytest.importorskip("pynautobot")
 
-from pynautobot.core.response import (  # noqa: E402  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
-    Record as NautobotRecord,
-)
-from pynetbox.core.response import (  # noqa: E402  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
-    Record as NetboxRecord,
-)
+NetboxRecord = pytest.importorskip("pynetbox.core.response").Record
+NautobotRecord = pytest.importorskip("pynautobot.core.response").Record
 
 from infrahub_sync.adapters.nautobot import NautobotAdapter, NautobotModel  # noqa: E402
 from infrahub_sync.adapters.netbox import NetboxAdapter, NetboxModel  # noqa: E402
@@ -184,6 +180,7 @@ FALSY_STATICS = (
     pytest.param("device_type", "height", 0, id="int-zero"),
     pytest.param("rir", "description", "", id="str-empty"),
     pytest.param("rir", "tags", [], id="list-empty"),
+    pytest.param("device_type", "local_data", {}, id="dict-empty"),
 )
 
 TRUTHY_STATICS = (
