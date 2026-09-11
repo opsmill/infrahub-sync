@@ -280,10 +280,15 @@ class ServiceProcessWorker(ProcessWorker):
     def _validate_child_identity(self, configuration: ProcessJobConfiguration) -> None:
         if not isinstance(configuration, ServiceProcessJobConfiguration):
             raise ServiceWorkerIdentityError(_IDENTITY_ERROR)
+        # Only identity facts belong here. The two refresh flags are lock state:
+        # `_identity_refresh_active` is set and cleared inside `_identity_lock`,
+        # so it is always false for this caller, and a non-zero
+        # `_identity_refresh_requests` says a heartbeat is queued -- which
+        # cannot change anything until we release, and says nothing about
+        # whether the identity we hold right now is the one we hold. Treating
+        # either as invalidating refused children whose identity was current.
         if (
-            self._identity_refresh_requests
-            or self._identity_refresh_active
-            or self.backend_id is None
+            self.backend_id is None
             or configuration._identity_generation != self._identity_generation
             or configuration.env.get("PREFECT__WORKER_ID") != str(self.backend_id)
         ):
@@ -295,9 +300,14 @@ class ServiceProcessWorker(ProcessWorker):
         configuration: ProcessJobConfiguration,
         task_status: TaskStatus[int] | None = None,
     ) -> ProcessWorkerResult:
-        """Start a child only while its prepared identity generation is current."""
-        if self._identity_refresh_requests or self._identity_refresh_active:
-            raise ServiceWorkerIdentityError(_IDENTITY_ERROR)
+        """Start a child once its prepared identity is confirmed still current."""
+        # Waiting is the deferral. A refresh owns `_identity_lock` for its whole
+        # window, so acquiring it holds this submission until the refresh has
+        # finished and then revalidates against whatever it left. Refusing here
+        # instead refused a submission that was valid immediately before and
+        # immediately after, with no wait and no revalidation -- and Prefect had
+        # already proposed Submitting, so the run was marked Crashed for a
+        # replacement that never happened.
         await self._identity_lock.acquire()
         effective_status: TaskStatus[int] = task_status if task_status is not None else anyio.TASK_STATUS_IGNORED
         lease = _IdentityLeaseTaskStatus(effective_status, self._identity_lock)
