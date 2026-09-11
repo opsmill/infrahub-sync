@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import importlib
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -85,7 +85,7 @@ DEVICE_TYPE_MODELS = {"netbox": NetboxDcimDeviceType, "nautobot": NautobotDcimDe
 RIR_MODELS = {"netbox": NetboxOrganizationRIR, "nautobot": NautobotOrganizationRIR}
 MODELS_BY_KEY = {"device_type": DEVICE_TYPE_MODELS, "rir": RIR_MODELS}
 
-DEVICE_TYPE_PAYLOADS = {
+DEVICE_TYPE_PAYLOADS: dict[str, dict[str, Any]] = {
     "netbox": {"id": 1, "name": "MX204", "manufacturer": "juniper", "is_full_depth": True},
     "nautobot": {
         "id": "aaaaaaaa-0000-0000-0000-000000000001",
@@ -94,7 +94,7 @@ DEVICE_TYPE_PAYLOADS = {
         "is_full_depth": True,
     },
 }
-RIR_PAYLOADS = {
+RIR_PAYLOADS: dict[str, dict[str, Any]] = {
     "netbox": {
         "id": 2,
         "name": "RIPE",
@@ -160,8 +160,8 @@ def _convert(
     mapping = SchemaMappingModel(name=model._modelname, fields=fields)
     holder = SimpleNamespace(store=store)
     if adapter == "netbox":
-        return NetboxAdapter.netbox_obj_to_diffsync(holder, obj, mapping, model)
-    return NautobotAdapter.nautobot_obj_to_diffsync(holder, obj, mapping, model)
+        return NetboxAdapter.netbox_obj_to_diffsync(cast("NetboxAdapter", holder), obj, mapping, model)
+    return NautobotAdapter.nautobot_obj_to_diffsync(cast("NautobotAdapter", holder), obj, mapping, model)
 
 
 def _assert_exact(data: dict[str, Any], name: str, expected: object) -> None:
