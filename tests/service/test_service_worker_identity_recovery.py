@@ -210,6 +210,27 @@ async def waiting_submission(
     return task
 
 
+async def queued_refresh(worker: ServiceProcessWorker) -> asyncio.Task[None]:
+    """Start a refresh and return once it is counted and waiting for the lock.
+
+    Ordering here decides what a test proves, so it is established rather than
+    assumed: `sync_with_backend` increments the pending count before it asks for
+    the lock, and `Event.set` does not yield, so when this returns the refresh
+    has been counted and has parked at the acquire behind whoever is already
+    queued. Relying on the order `create_task` happens to schedule in would
+    leave the same test passing for the wrong reason.
+    """
+    entered = asyncio.Event()
+
+    async def _refresh() -> None:
+        entered.set()
+        await worker.sync_with_backend()
+
+    task = asyncio.create_task(_refresh())
+    await entered.wait()
+    return task
+
+
 async def test_a_heartbeat_that_resolves_the_same_record_keeps_a_submission_valid(
     worker: ServiceProcessWorker,
 ) -> None:
@@ -526,9 +547,9 @@ async def test_refreshes_queued_behind_the_wait_do_not_admit_a_stale_submission(
 
     A queued refresh is counted before it owns the lock, so the counter says
     only that a heartbeat is pending. That is why it cannot be a validity term.
-    What has to hold instead is that every queued refresh completes before the
-    waiting submission is validated, so the identity it is checked against is
-    the one actually installed at the end.
+    What has to hold instead is that the identity the waiting submission is
+    checked against is the one installed by the refreshes that finished ahead of
+    it.
     """
     async with worker:
         await worker.sync_with_backend()
@@ -556,9 +577,16 @@ async def test_a_queued_refresh_alone_does_not_refuse_a_current_submission(
 ) -> None:
     """A pending heartbeat is not a changed identity, and must not read as one.
 
-    This is the defect in its smallest form. The refreshes here all re-resolve
-    the same record, so nothing about the identity moves; only the pending
-    count does.
+    This is the defect in its smallest form, and the one case that discriminates
+    the pending count as a validity term. The submission is parked at the lock
+    *before* the other refreshes are queued, so the lock hands it over while
+    those refreshes are counted and still waiting: it is validated with the
+    count non-zero and the identity unchanged. Queue them ahead of it instead
+    and each one decrements as it releases, so the count is back to zero by the
+    time validation runs and the test passes either way.
+
+    The refreshes all re-resolve the same record, so nothing about the identity
+    moves; only the pending count does.
     """
     async with worker:
         await worker.sync_with_backend()
@@ -569,8 +597,13 @@ async def test_a_queued_refresh_alone_does_not_refuse_a_current_submission(
         holding, release = pause_the_next_refresh(worker)
         held = asyncio.create_task(worker.sync_with_backend())
         await holding.wait()
-        queued = [asyncio.create_task(worker.sync_with_backend()) for _ in range(2)]
         submission = await waiting_submission(worker, configuration)
+        queued = [await queued_refresh(worker) for _ in range(2)]
+
+        # Read-only, and the premise of the case: the refresh holding the lock
+        # plus the two queued behind the submission. Staging this by hand would
+        # prove only what was staged, so it is asserted, not assigned.
+        assert worker._identity_refresh_requests >= 3, "the queued refreshes were not counted before the handover"
 
         release.set()
         result = await submission
