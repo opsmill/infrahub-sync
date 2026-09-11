@@ -83,6 +83,17 @@ When a destination field should always be set to the same value regardless of so
 
 This is useful for fields that record provenance, type discriminators, or any field where the value is determined by the sync configuration rather than the source data.
 
+`static` assigns whatever value you declare, including `false`, `0`, `""` and `[]`:
+
+```yaml
+- name: full_depth
+  static: false
+```
+
+Omitting `static`, or setting it to `null`, means "no static value" — the field then falls back to its `mapping` or `reference`. A field that declares both `static` and `mapping` takes the static value.
+
+Not every adapter assigns these values yet. The NetBox, Nautobot and Prometheus adapters preserve `false`, `0`, `""` and `[]`; the ACI, Generic REST API, IP Fabric and Slurp’it adapters, and the custom-adapter example, currently drop them and emit no field at all. That is a known bug in those adapters, not a difference in intended behavior — `static` is meant to assign any declared value on every adapter.
+
 ### References to other models
 
 When a destination field is a relationship to another model that is also being synced, use `reference` to point to that model:

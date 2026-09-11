@@ -10,7 +10,7 @@ from typing_extensions import override
 
 pytest.importorskip("botocore")
 
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ReadTimeoutError
 
 from infrahub_sync.product_store import DuplicateArtifactError
 
@@ -33,16 +33,31 @@ def _client_error(code: str, status: int | None = None) -> ClientError:
 
 
 class _Body:
+    """The part of botocore's StreamingBody the adapter uses: a sized read and a close."""
+
     def __init__(self, data: bytes) -> None:
         self._data = data
+        self._position = 0
+        self.closed = False
 
-    def read(self) -> bytes:
-        return self._data
+    def read(self, amt: int | None = None) -> bytes:
+        end = len(self._data) if amt is None else min(self._position + amt, len(self._data))
+        chunk = self._data[self._position : end]
+        self._position = end
+        return chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+    @property
+    def unread(self) -> bytes:
+        return self._data[self._position :]
 
 
 class _SDK:
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], bytes] = {}
+        self.bodies: list[_Body] = []
         self.put_calls: list[dict[str, object]] = []
         self.copy_calls: list[dict[str, object]] = []
         self.delete_calls: list[dict[str, object]] = []
@@ -59,13 +74,56 @@ class _SDK:
         if key not in self.objects:
             code = "NoSuchKey"
             raise _client_error(code)
-        return {"Body": _Body(self.objects[key])}
+        body = _Body(self.objects[key])
+        self.bodies.append(body)
+        return {"Body": body}
 
     def copy_object(self, **kwargs: object) -> None:
         self.copy_calls.append(kwargs)
 
     def delete_object(self, **kwargs: object) -> None:
         self.delete_calls.append(kwargs)
+
+
+class _ValueBody:
+    """One SDK-shaped response body whose read returns, or raises, a fixed object."""
+
+    def __init__(self, value: object) -> None:
+        self._value = value
+        self.closed = False
+
+    def read(self, _amt: int | None = None) -> object:
+        if isinstance(self._value, BaseException):
+            raise self._value
+        return self._value
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _ResponseSDK:
+    """One SDK whose get_object returns, or raises, exactly one fixed result."""
+
+    def __init__(self, result: object) -> None:
+        self._result = result
+
+    def get_object(self, **_kwargs: object) -> object:
+        if isinstance(self._result, BaseException):
+            raise self._result
+        return self._result
+
+
+_BOUND = 64
+
+
+def _lookup(sdk: object, method: str) -> bytes | None:
+    """Read one object through whichever adapter lookup the case covers."""
+    from infrahub_sync.service.storage import Boto3S3Client
+
+    client = Boto3S3Client(sdk)
+    if method == "get":
+        return client.get(bucket="records", key="object")
+    return client.get_bounded(bucket="records", key="object", limit=_BOUND)
 
 
 def test_s3_client_preserves_the_small_object_protocol() -> None:
@@ -163,37 +221,87 @@ def test_s3_missing_get_classification_is_the_exact_code_status_product(code: st
         assert raised.value is failure
 
 
-def test_s3_get_accepts_only_exact_bytes_and_only_exact_missing_object() -> None:
-    """Lookup must not turn malformed bodies or non-missing SDK failures into absence."""
-    from infrahub_sync.service.storage import Boto3S3Client, S3ProtocolError
+@pytest.mark.parametrize("method", ["get", "get_bounded"])
+def test_s3_lookup_accepts_only_exact_bytes_and_only_exact_missing_object(method: str) -> None:
+    """Neither lookup may turn a malformed body or a non-missing SDK failure into absence."""
+    from infrahub_sync.service.storage import S3ProtocolError
 
-    class Body:
-        def __init__(self, value: object) -> None:
-            self._value = value
-
-        def read(self) -> object:
-            return self._value
-
-    class SDK:
-        def __init__(self, result: object) -> None:
-            self._result = result
-
-        def get_object(self, **_kwargs: object) -> object:
-            if isinstance(self._result, BaseException):
-                raise self._result
-            return self._result
-
-    assert Boto3S3Client(SDK({"Body": Body(b"exact-bytes")})).get(bucket="records", key="object") == b"exact-bytes"
-    assert Boto3S3Client(SDK(_client_error("NoSuchKey"))).get(bucket="records", key="missing") is None
+    body = _ValueBody(b"exact-bytes")
+    assert _lookup(_ResponseSDK({"Body": body}), method) == b"exact-bytes"
+    assert body.closed is True
+    assert _lookup(_ResponseSDK(_client_error("NoSuchKey")), method) is None
 
     for failure in (_client_error("NoSuchBucket"), _client_error("AccessDenied"), _client_error("InternalError")):
         with pytest.raises(ClientError):
-            Boto3S3Client(SDK(failure)).get(bucket="records", key="object")
-    for response in ({"Body": Body(bytearray(b"not-bytes"))}, {"Body": object()}, {}):
+            _lookup(_ResponseSDK(failure), method)
+    for response in ({"Body": _ValueBody(bytearray(b"not-bytes"))}, {"Body": object()}, {}):
         with pytest.raises(S3ProtocolError) as error:
-            Boto3S3Client(SDK(response)).get(bucket="records", key="object")
+            _lookup(_ResponseSDK(response), method)
         assert str(error.value) == "S3 get response body must return bytes"
         assert error.value.__cause__ is None
+
+
+def test_s3_get_closes_the_response_body_it_reads() -> None:
+    """A fully read body belongs to the adapter that acquired it."""
+    from infrahub_sync.service.storage import Boto3S3Client
+
+    sdk = _SDK()
+    sdk.objects["records", "object"] = b"0123456789"
+
+    assert Boto3S3Client(sdk).get(bucket="records", key="object") == b"0123456789"
+    assert [body.closed for body in sdk.bodies] == [True]
+
+
+def test_s3_get_bounded_closes_the_response_body_it_reads_inside_the_bound() -> None:
+    """A bounded read that consumes the whole object still closes it."""
+    from infrahub_sync.service.storage import Boto3S3Client
+
+    sdk = _SDK()
+    sdk.objects["records", "object"] = b"0123456789"
+
+    assert Boto3S3Client(sdk).get_bounded(bucket="records", key="object", limit=32) == b"0123456789"
+    assert [body.closed for body in sdk.bodies] == [True]
+
+
+def test_s3_get_bounded_closes_the_response_body_it_leaves_unread() -> None:
+    """An overrun reads one byte past the bound, leaves the remainder, and closes the body."""
+    from infrahub_sync.service.storage import Boto3S3Client
+
+    sdk = _SDK()
+    sdk.objects["records", "object"] = b"0123456789"
+    limit = 2
+
+    result = Boto3S3Client(sdk).get_bounded(bucket="records", key="object", limit=limit)
+    assert result is not None
+    assert len(result) <= limit + 1
+    assert result == b"012"
+    assert [body.unread for body in sdk.bodies] == [b"3456789"]
+    assert [body.closed for body in sdk.bodies] == [True]
+
+
+@pytest.mark.parametrize("method", ["get", "get_bounded"])
+def test_s3_lookup_closes_a_response_body_that_returns_a_non_bytes_value(method: str) -> None:
+    """The invalid-type refusal is unchanged, and the acquired body is still closed."""
+    from infrahub_sync.service.storage import S3ProtocolError
+
+    body = _ValueBody(bytearray(b"not-bytes"))
+    with pytest.raises(S3ProtocolError) as error:
+        _lookup(_ResponseSDK({"Body": body}), method)
+    assert str(error.value) == "S3 get response body must return bytes"
+    assert error.value.__cause__ is None
+    assert body.closed is True
+
+
+@pytest.mark.parametrize("method", ["get", "get_bounded"])
+def test_s3_lookup_closes_a_response_body_whose_read_fails(method: str) -> None:
+    """An ordinary provider read failure reaches the caller unchanged, with the body closed."""
+    failure = ReadTimeoutError(endpoint_url="https://s3.example.test")
+    body = _ValueBody(failure)
+
+    with pytest.raises(ReadTimeoutError) as raised:
+        _lookup(_ResponseSDK({"Body": body}), method)
+    assert raised.value is failure
+    assert body.closed is True
 
 
 def test_service_storage_factory_validates_settings_and_hides_startup_details() -> None:

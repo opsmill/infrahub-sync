@@ -190,7 +190,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         for field in mapping.fields:  # pylint: disable=too-many-nested-blocks
             field_is_list = model.is_list(name=field.name)
 
-            if field.static:
+            if field.static is not None:
                 data[field.name] = field.static
             elif not field_is_list and field.mapping and not field.reference:
                 value = get_value(obj, field.mapping)
