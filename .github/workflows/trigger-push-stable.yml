@@ -2,17 +2,37 @@
 # yamllint disable rule:truthy
 name: "Push on main"
 
+# Prepares a release; it does not cut one. A push to `main` opens a reviewable
+# `chore(release)` pull request carrying the version bump and the assembled
+# changelog, and stops there. Merging that pull request is the authorisation:
+# release-publish.yml then creates the tag and publishes the GitHub Release.
+#
+# Scoped to `main` alone. This workflow used to also fire on `stable`, but that
+# branch does not exist in this repository (`gh api
+# repos/opsmill/infrahub-sync/branches`), and the two workflows this one now
+# co-operates with — changelog-check.yml and release-publish.yml — are both
+# `main`-only. Preparing a release pull request against a branch nothing can
+# publish would leave the version stranded.
 on:
   push:
     branches:
-      - stable
       - main
     paths-ignore:
       - 'docs/**'
 
+# Release preparation queries, closes and creates release pull requests as one
+# unsynchronised read-modify-write. Two overlapping runs let the older one
+# close the newer run's release PR and leave its own older version standing,
+# so only one run may prepare a release at a time. cancel-in-progress is false
+# deliberately: a run cancelled between closing the stale PRs and creating the
+# new one leaves the repository with no open release PR at all.
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
 permissions:
   contents: write
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   check_commit:
@@ -49,24 +69,53 @@ jobs:
       # Decide whether to skip downstream work:
       - id: decide
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
+          # Read through the environment rather than interpolated into the
+          # script body: a commit subject is attacker-controlled text and
+          # `${{ }}` splices it in before bash ever sees it.
+          COMMIT_AUTHOR: ${{ steps.commit_meta.outputs.author }}
+          COMMIT_MESSAGE: ${{ steps.commit_meta.outputs.message }}
+          PREV_TAG: ${{ steps.previoustag.outputs.tag }}
+          NEXT_VERSION: ${{ steps.version.outputs.next-version }}
         run: |
           set -euo pipefail
           skip=false
           reason=""
 
-          author='${{ steps.commit_meta.outputs.author }}'
-          msg='${{ steps.commit_meta.outputs.message }}'
-          prev='${{ steps.previoustag.outputs.tag }}'
-          next='${{ steps.version.outputs.next-version }}'
-
           # Normalize version strings (strip optional leading 'v')
-          prev_norm="${prev#v}"
-          next_norm="${next#v}"
+          prev_norm="${PREV_TAG#v}"
+          next_norm="${NEXT_VERSION#v}"
 
-          # Skip on bot housekeeping commits
-          if [[ "$author" == "opsmill-bot" ]] && [[ "$msg" =~ ^chore(:|\(release\):) ]]; then
+          # Skip the merge of a release pull request, so preparing a release
+          # cannot trigger preparing another. That merge only says
+          # `chore(release):` when the pull request was squashed or rebased;
+          # `allow_merge_commit` is enabled on this repository and
+          # `merge_commit_title` is MERGE_MESSAGE, so a merge commit reads
+          # `Merge pull request #...` and matches neither check below. Ask the
+          # API which pull requests this commit belongs to instead, which
+          # holds for all three merge strategies.
+          RELEASE_PR=$(
+            gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+              --jq '[.[]
+                     | select(.merged_at != null)
+                     | select(.head.ref | startswith("release/"))
+                     | .number] | first // empty'
+          )
+
+          if [ -n "${RELEASE_PR}" ]; then
+            echo "Release PR #${RELEASE_PR} merged here — not preparing another."
             skip=true
-            reason="bot-commit"
+            reason="release-merge"
+          fi
+
+          # The author/subject checks stay as a cheap fast path: they cost no
+          # API call and still recognise in-flight commits from the previous
+          # scheme, which pushed `chore(release): ...` straight to main.
+          if [[ "${COMMIT_AUTHOR}" == "opsmill-bot" ]] && \
+             [[ "${COMMIT_MESSAGE}" =~ ^chore(:|\(release\):) ]]; then
+            skip=true
+            reason="${reason:+$reason,}bot-commit"
           fi
 
           # Skip when there is no new version to cut
@@ -82,9 +131,6 @@ jobs:
     needs: check_commit
     if: needs.check_commit.outputs.skip == 'false'
     runs-on: ubuntu-22.04
-    outputs:
-      head_sha: ${{ steps.head.outputs.sha }}
-      next_version: ${{ steps.expose.outputs.next_version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -96,68 +142,190 @@ jobs:
         with:
           version: "latest"
 
+      - name: Normalise the version
+        id: normalize
+        env:
+          RAW_VERSION: ${{ needs.check_commit.outputs.next_version }}
+        run: |
+          set -euo pipefail
+
+          # Tags here are bare (`2.0.1`), not `v`-prefixed, and
+          # release-publish.yml reads the tag it creates back out of
+          # pyproject.toml. Every consumer of this value — `uv version`,
+          # towncrier, the release branch name, the pull-request title — has
+          # to see the same bare string, so strip the prefix once here rather
+          # than at each use.
+          VERSION="${RAW_VERSION#v}"
+          if ! printf '%s' "${VERSION}" \
+              | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            MSG="Calculated version '${RAW_VERSION}' is not a usable version"
+            MSG="${MSG} string — refusing to prepare a release from it."
+            echo "::error::${MSG}"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Update pyproject.toml version
         env:
-          VERSION: ${{ needs.check_commit.outputs.next_version }}
+          VERSION: ${{ steps.normalize.outputs.version }}
         run: |
-          echo "Updating to version $VERSION"
-          uv version $VERSION
+          set -euo pipefail
+          echo "Updating to version ${VERSION}"
+          uv version "${VERSION}"
 
       - name: Update lock file
         run: uv lock
 
-      - name: Build changelog from news fragments
+      - name: Assemble the changelog
+        id: changelog
         env:
-          VERSION: ${{ needs.check_commit.outputs.next_version }}
+          VERSION: ${{ steps.normalize.outputs.version }}
         run: |
           set -euo pipefail
-          fragment="$(find changelog -maxdepth 1 -type f -name '*.md' ! -name 'towncrier.md.template' | head -n 1)"
-          if [ -n "$fragment" ]; then
-            uv run towncrier build --yes --version "${VERSION#v}"
-          else
-            echo "No changelog fragments found; skipping towncrier build."
+
+          # The same pattern changelog-check.yml enforces at pull-request
+          # time, so the two gates agree on what a fragment is. Counting any
+          # `*.md` would let a stray `changelog/README.md` stand in for a real
+          # fragment and cut a release whose notes are empty. Held verbatim in
+          # both files rather than shared: a composite action wrapping two
+          # greps costs more to follow than it saves.
+          TYPES="security|removed|deprecated|added|changed|fixed|housekeeping"
+          FRAGMENT="^changelog/[^/]+\.(${TYPES})(\.[0-9]+)?\.md$"
+
+          shopt -s nullglob
+          KEPT=()
+          for f in changelog/*.md; do
+            printf '%s\n' "${f}" | grep -Eq "${FRAGMENT}" || continue
+
+            # An empty fragment still counts towards the total below, so the
+            # release would proceed and towncrier would render its type as a
+            # heading with nothing under it. Name the file and stop: only the
+            # author knows what it was meant to say.
+            if ! grep -q '[^[:space:]]' "${f}"; then
+              MSG="News fragment ${f} has no content — it would render as an"
+              MSG="${MSG} empty entry. Describe the change in it, or delete"
+              MSG="${MSG} the file."
+              echo "::error::${MSG}"
+              exit 1
+            fi
+            KEPT+=("${f}")
+          done
+
+          # Deliberately a skip and not a failure, which is where this repo
+          # parts company with the sibling repositories. There a release is
+          # prepared on a push to `stable`, which is itself a human promotion
+          # decision, so "promoted nothing releasable" is an error worth
+          # failing. Here `main` is the development branch and takes roughly
+          # twenty-five pushes a month, and the pull-request gate does not in
+          # fact guarantee a fragment exists: changelog-check.yml exempts
+          # `ci/skip-changelog` and dependabot, and .github/dependabot.yml
+          # labels its pull requests `type/housekeeping`, which
+          # .github/version-drafter.yml counts as a patch bump. A week of
+          # dependency updates therefore reaches this step with a new version
+          # and no fragments, through no author's mistake — hard-failing would
+          # redden every push to `main` until someone wrote a fragment nobody
+          # owed. Nothing is lost by declining: no release pull request opens,
+          # so release-publish.yml has nothing to tag, and the next push after
+          # a real fragment lands prepares the release normally.
+          if [ ${#KEPT[@]} -eq 0 ]; then
+            MSG="No news fragments under changelog/ — nothing to release, so"
+            MSG="${MSG} no release pull request was prepared for ${VERSION}."
+            echo "::notice::${MSG}"
+            echo "${MSG}" >> "$GITHUB_STEP_SUMMARY"
+            echo "has_fragments=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-      - name: Commit version bump (skip CI) only if there are changes
-        id: commit_bump
+          echo "Consuming ${#KEPT[@]} news fragment(s):"
+          printf '%s\n' "${KEPT[@]}"
+          echo "has_fragments=true" >> "$GITHUB_OUTPUT"
+
+          uv run towncrier build --yes --version "${VERSION}"
+
+      - name: Open the release pull request
+        if: steps.changelog.outputs.has_fragments == 'true'
         env:
-          VERSION: ${{ needs.check_commit.outputs.next_version }}
-          BRANCH: ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
+          VERSION: ${{ steps.normalize.outputs.version }}
         run: |
           set -euo pipefail
+          BRANCH="release/${VERSION}"
+          export BRANCH
+
           git config user.name "opsmill-bot"
           git config user.email "github-bot@opsmill.com"
+          git switch -c "${BRANCH}"
 
-          # Stage expected files
-          git add pyproject.toml uv.lock CHANGELOG.md changelog || true
+          git add pyproject.toml uv.lock CHANGELOG.md changelog/
+          git commit -m "chore(release): ${VERSION}"
 
-          # Commit only if there are staged changes
-          if git diff --cached --quiet; then
-            echo "No changes detected; skipping commit."
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            git commit -m "chore(release): v${VERSION} [skip ci]"
-            git push origin "HEAD:${BRANCH}"
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          # Re-running on a later push to main refreshes the same branch
+          # rather than opening a second pull request for the same version.
+          # Plain --force rather than --force-with-lease: checkout does not
+          # fetch this branch's remote ref, so a lease has nothing to compare
+          # against. The branch is bot-owned and regenerated every run.
+          git push --force origin "${BRANCH}"
+
+          # A run that computes a different version opens a different branch,
+          # so an earlier release pull request can still be open. Merging that
+          # one after this one would walk the version files back and let
+          # release-publish.yml tag a version older than the one already
+          # released — supersede it rather than let the two race. --limit is
+          # explicit because `gh pr list` otherwise stops at 30 and a stale
+          # release PR could sit past that cut.
+          STALE=$(
+            gh pr list --state open --base main --limit 100 \
+              --json number,headRefName \
+              --jq '.[]
+                    | select(.headRefName | startswith("release/"))
+                    | select(.headRefName != env.BRANCH)
+                    | .number'
+          )
+          for PR in ${STALE}; do
+            echo "Closing release PR #${PR}, superseded by ${BRANCH}."
+            gh pr close "${PR}" \
+              --comment "Superseded by the release pull request for ${VERSION}."
+          done
+
+          # Only an *open* pull request counts as one already prepared:
+          # `gh pr view <branch>` resolves closed and merged ones too, so a
+          # release PR closed without merging would otherwise be mistaken for
+          # the current one and leave the version stranded on the branch with
+          # nothing to merge.
+          OPEN_PR=$(
+            gh pr list --head "${BRANCH}" --state open --limit 100 \
+              --json number --jq '.[0].number // empty'
+          )
+          if [ -n "${OPEN_PR}" ]; then
+            echo "Release PR #${OPEN_PR} for ${BRANCH} already open — updated in place."
+            exit 0
           fi
 
-      - name: Get new HEAD of branch after push
-        id: head
-        env:
-          BRANCH: ${{ github.ref_name }}
-        run: |
-          git fetch origin "${BRANCH}"
-          echo "sha=$(git rev-parse "origin/${BRANCH}")" >> "$GITHUB_OUTPUT"
+          # This pull request consumes news fragments rather than adding one,
+          # so changelog-check.yml — which fires on it, because it is opened
+          # with a PAT and not GITHUB_TOKEN — would block it. The label is the
+          # opt-out that check already honours.
+          cat > "${RUNNER_TEMP}/release-pr-body.md" <<EOF
+          Prepared automatically. Merging this pull request authorises the release:
+          \`release-publish.yml\` then creates the \`${VERSION}\` tag and publishes
+          the GitHub Release using the assembled changelog section as its body.
+          Publishing that Release is what triggers \`trigger-release.yml\` and the
+          PyPI upload.
 
-      - name: Expose next_version for downstream jobs
-        id: expose
-        run: echo "next_version=${{ needs.check_commit.outputs.next_version }}" >> "$GITHUB_OUTPUT"
+          - Version bumped to \`${VERSION}\` in \`pyproject.toml\`, with \`uv.lock\` refreshed
+          - \`CHANGELOG.md\` assembled from the news fragments, which this commit consumes
 
-  release:
-    needs: ["prepare_release"]
-    if: needs.prepare_release.result == 'success'
-    uses: ./.github/workflows/workflow-release-drafter.yml
-    with:
-      version: ${{ needs.prepare_release.outputs.next_version }}
-      target_sha: ${{ needs.prepare_release.outputs.head_sha }}
-    secrets: inherit
+          Review the assembled changelog before merging — it is what users will read.
+          EOF
+
+          gh pr create \
+            --base main \
+            --head "${BRANCH}" \
+            --title "chore(release): ${VERSION}" \
+            --label "ci/skip-changelog" \
+            --body-file "${RUNNER_TEMP}/release-pr-body.md"
+
+# The release is no longer drafted here. prepare_release opens a release pull
+# request; merging it lands the version on `main`, and release-publish.yml then
+# creates the tag and publishes the GitHub Release with the assembled changelog
+# as its body.
