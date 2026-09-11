@@ -7,3 +7,6 @@ submission that meets a refresh now waits for it on the lock the refresh already
 then revalidates against the identity the refresh left. Refusal is now reserved for an
 identity that really did change: no resolved record, a moved identity generation, or a
 child environment naming a different worker.
+
+The deployment's object store is now pulled from the publisher's Quay location,
+`quay.io/minio/minio`, at the same tag and digest it was already pinned to.
