@@ -1,5 +1,9 @@
 """Run-oriented Sync API behavior over durable Sync product records."""
 
+# pylint: disable=too-many-lines
+# This bounded status and render-redaction repair takes the module past pylint's
+# default 1000-line cap. Splitting it is a separate, larger change.
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -557,7 +561,8 @@ class RunService:
                     run_id, link.flow_run_id, state=observed.state, secrets=self._secrets
                 )
                 wrote = True
-        return self._resource_with_observations(self._required_run(run_id) if wrote else run, collected)
+        rendered = self._required_run(run_id) if wrote else run
+        return self._resource_with_observations(self._redacted_links(rendered), collected)
 
     async def status(self, work_pool_name: str) -> ServiceStatusResource:
         """Return lifecycle-safe pool state without exposing provider identifiers."""
@@ -878,6 +883,16 @@ class RunService:
                 "mutation_id": mutation_id,
             }
         }
+
+    def _redacted_links(self, run: ProductRun) -> ProductRun:
+        """Retained observation text is provider-supplied, so redact it at this boundary."""
+        links = tuple(
+            link
+            if link.last_observed_state is None
+            else link.model_copy(update={"last_observed_state": redact(link.last_observed_state, self._secrets)})
+            for link in run.prefect_executions
+        )
+        return run.model_copy(update={"prefect_executions": links})
 
     @staticmethod
     def _resource_with_observations(run: ProductRun, observations: dict[str, Observation]) -> RunResource:

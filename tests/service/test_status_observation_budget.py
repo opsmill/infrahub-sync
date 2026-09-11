@@ -4,10 +4,15 @@ A terminal execution is immutable, so its retained summary needs no live observa
 The counts here are pinned with ``==`` on purpose: the durable observation write inside
 reconciliation is what rule 1 later reads, so a dropped write has to fail a test rather
 than merely shrink a budget.
+
+The same request is also the redaction boundary for retained provider text: the durable
+row stays raw so reconciliation's predicates keep comparing what they wrote, and only the
+rendered copy is redacted.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Literal
 
@@ -41,6 +46,7 @@ TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interr
 TerminalOutcome = Literal["succeeded", "failed", "cancelled", "abandoned", "ambiguous"]
 NOW = datetime(2026, 9, 3, 12, tzinfo=timezone.utc)
 AUTH = {"Authorization": "Bearer status-budget-token"}
+CANARY = "canary-secret-0001"
 ADMISSION_TTL_SECONDS = 300
 STALL_THRESHOLD_SECONDS = 30
 
@@ -164,10 +170,11 @@ def _client(
     orchestration: _CountingOrchestration,
     *,
     reconciler: bool = True,
+    secrets: tuple[str, ...] = (),
 ) -> tuple[TestClient, _CountingProjection]:
     projection = _CountingProjection(local_product_projection(tmp_path))
     projection.create_run(run)
-    service = RunService(projection, orchestration, clock=lambda: NOW)
+    service = RunService(projection, orchestration, secrets=secrets, clock=lambda: NOW)
     liveness = (
         RunLivenessReconciler(
             projection,
@@ -362,3 +369,104 @@ def test_without_a_reconciler_the_route_still_observes_only_pending_executions(t
         "live-detail-not-requested",
     )
     assert (summaries[1]["state"], summaries[1]["detail_available"]) == ("running", True)
+
+
+def test_a_supplied_secret_is_redacted_out_of_a_pending_links_retained_state(tmp_path: Path) -> None:
+    """Retained observation text is provider-supplied, so the rendered copy is redacted."""
+    orchestration = _CountingOrchestration({"flow-supplied": Observation(available=True, state=f"running-{CANARY}")})
+    client, projection = _client(
+        tmp_path, _run("run-supplied", (_pending("flow-supplied", 1),)), orchestration, secrets=(CANARY,)
+    )
+
+    response = client.get("/runs/run-supplied", headers=AUTH)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run"]["prefect_executions"][0]["last_observed_state"] == "running-***"
+    assert CANARY not in json.dumps(body["run"])
+    stored = projection.lookup_run("run-supplied").value
+    assert stored is not None
+    # Raw at rest by design: reconciliation's predicates compare the value they wrote.
+    assert stored.prefect_executions[0].last_observed_state == f"running-{CANARY}"
+
+
+def test_a_secret_collected_from_the_environment_is_redacted_without_being_supplied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A credential-shaped variable is a secret of the process, not only of the caller."""
+    monkeypatch.setenv("PROBE_PASSWORD", CANARY)
+    orchestration = _CountingOrchestration({"flow-env": Observation(available=True, state=f"running-{CANARY}")})
+    client, _projection = _client(tmp_path, _run("run-env", (_pending("flow-env", 1),)), orchestration)
+
+    response = client.get("/runs/run-env", headers=AUTH)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run"]["prefect_executions"][0]["last_observed_state"] == "running-***"
+    assert CANARY not in json.dumps(body["run"])
+
+
+def test_a_terminal_links_retained_state_is_redacted_in_both_places_it_is_rendered(tmp_path: Path) -> None:
+    """A terminal summary renders from the durable value, so that value is redacted too."""
+    link = _terminal("flow-terminal-secret", 1, last_observed_state=f"running-{CANARY}")
+    orchestration = _CountingOrchestration()
+    client, projection = _client(tmp_path, _run("run-terminal-secret", (link,)), orchestration, secrets=(CANARY,))
+
+    response = client.get("/runs/run-terminal-secret", headers=AUTH)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run"]["prefect_executions"][0]["last_observed_state"] == "running-***"
+    assert body["orchestration"][0]["state"] == "running-***"
+    assert CANARY not in json.dumps(body["run"])
+    assert orchestration.observed == []
+    assert projection.observation_writes == 0
+
+
+def test_a_secret_that_spells_a_terminal_state_still_reaches_its_cancellation_verdict(tmp_path: Path) -> None:
+    """Redacting before the predicate would lose the verdict, so the durable row stays raw."""
+    link = PrefectExecutionLink(
+        flow_run_id="flow-overlap",
+        purpose="plan",
+        attempt=1,
+        submitted_at=NOW,
+        last_observed_state="pending",
+        claimed_at=NOW - timedelta(seconds=60),
+        claiming_worker_id="8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0",
+        cancellation_requested_at=NOW - timedelta(seconds=10),
+        cancellation_recovery_deadline_at=NOW + timedelta(seconds=20),
+        cancellation_receipt_id="m-overlap-1",
+        cancellation_acknowledged_at=NOW - timedelta(seconds=5),
+    )
+    orchestration = _CountingOrchestration({"flow-overlap": Observation(available=True, state="cancelled")})
+    client, projection = _client(tmp_path, _run("run-overlap", (link,)), orchestration, secrets=("cancelled",))
+
+    response = client.get("/runs/run-overlap", headers=AUTH)
+
+    assert response.status_code == 200
+    summary = response.json()["orchestration"][0]
+    assert (summary["terminal_state"], summary["terminal_outcome"]) == ("cancelled", "cancelled")
+    assert (summary["state"], summary["detail_available"]) == ("cancelled", True)
+    assert response.json()["run"]["prefect_executions"][0]["last_observed_state"] == "***"
+    stored = projection.lookup_run("run-overlap").value
+    assert stored is not None
+    assert stored.prefect_executions[0].last_observed_state == "cancelled"
+
+
+def test_redacting_the_rendered_links_leaves_the_record_it_was_given_untouched(tmp_path: Path) -> None:
+    """The redacted copy is for rendering only, so it cannot become the value anything reads."""
+    link = _pending("flow-untouched", 1).model_copy(update={"last_observed_state": f"running-{CANARY}"})
+    run = _run("run-untouched", (link,))
+    service = RunService(
+        _CountingProjection(local_product_projection(tmp_path)),
+        _CountingOrchestration(),
+        secrets=(CANARY,),
+        clock=lambda: NOW,
+    )
+
+    redacted = service._redacted_links(run)  # pylint: disable=protected-access
+
+    assert redacted is not run
+    assert redacted.prefect_executions[0].last_observed_state == "running-***"
+    assert run.prefect_executions[0] is link
+    assert link.last_observed_state == f"running-{CANARY}"
