@@ -92,6 +92,8 @@ This is useful for fields that record provenance, type discriminators, or any fi
 
 Omitting `static`, or setting it to `null`, means "no static value" — the field then falls back to its `mapping` or `reference`. A field that declares both `static` and `mapping` takes the static value.
 
+Not every adapter assigns these values yet. The NetBox, Nautobot and Prometheus adapters preserve `false`, `0`, `""` and `[]`; the ACI, Generic REST API, IP Fabric and Slurp’it adapters, and the custom-adapter example, currently drop them and emit no field at all. That is a known bug in those adapters, not a difference in intended behavior — `static` is meant to assign any declared value on every adapter.
+
 ### References to other models
 
 When a destination field is a relationship to another model that is also being synced, use `reference` to point to that model:

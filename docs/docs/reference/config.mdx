@@ -92,7 +92,7 @@ Defines the mappings from source to destination schemas. The tables below are th
 | -------- | ---- | ----------- | --------- |
 | name | string | Name of the field. | Yes |
 | mapping | string | How the field is mapped from source to destination. | No |
-| static | Any | A static value to assign to the field. Any declared value is assigned, including `false`, `0`, `""` and `[]`; omit it or set it to `null` for no static value. Takes precedence over `mapping` when both are declared. | No |
+| static | Any | A static value to assign to the field. Any declared value is assigned, including `false`, `0`, `""` and `[]`; omit it or set it to `null` for no static value. Takes precedence over `mapping` when both are declared. See [Static values](./schema-mapping.mdx#static-values) for the adapters that do not assign these values yet. | No |
 | reference | string | Reference to another object in the configuration, used if direct mapping is not applicable. | No |
 
 ##### Mapping filters
