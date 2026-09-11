@@ -543,21 +543,21 @@ class RunService:
 
     async def get_run(self, run_id: str, observations: dict[str, Observation] | None = None) -> RunResource:
         """Return retained product state even when Prefect detail expired."""
-        observed_states = dict(observations or {})
+        collected = dict(observations or {})
         run = self._required_run(run_id)
         wrote = False
         for link in run.prefect_executions:
-            # A terminal execution is immutable: its retained summary needs no observation.
-            if link.flow_run_id in observed_states or link.terminal_at is not None:
+            # Already observed by this request, or terminal and therefore immutable: no observation needed.
+            if link.flow_run_id in collected or link.terminal_at is not None:
                 continue
             observed = await self._orchestration.observe(link.flow_run_id)
-            observed_states[link.flow_run_id] = observed
+            collected[link.flow_run_id] = observed
             if observed.available:
                 self._projection.observe_prefect_execution(
                     run_id, link.flow_run_id, state=observed.state, secrets=self._secrets
                 )
                 wrote = True
-        return self._resource_with_observations(self._required_run(run_id) if wrote else run, observed_states)
+        return self._resource_with_observations(self._required_run(run_id) if wrote else run, collected)
 
     async def status(self, work_pool_name: str) -> ServiceStatusResource:
         """Return lifecycle-safe pool state without exposing provider identifiers."""

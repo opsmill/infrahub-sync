@@ -9,7 +9,7 @@ than merely shrink a budget.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import pytest
 
@@ -36,6 +36,9 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+# `PrefectExecutionLink` spells its verdict domains inline, so they are named here.
+TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
+TerminalOutcome = Literal["succeeded", "failed", "cancelled", "abandoned", "ambiguous"]
 NOW = datetime(2026, 9, 3, 12, tzinfo=timezone.utc)
 AUTH = {"Authorization": "Bearer status-budget-token"}
 ADMISSION_TTL_SECONDS = 300
@@ -109,14 +112,13 @@ class _Resolver:
         return Principal(actor="operator")
 
 
-def _pending(flow_run_id: str, attempt: int, **fields: object) -> PrefectExecutionLink:
+def _pending(flow_run_id: str, attempt: int) -> PrefectExecutionLink:
     return PrefectExecutionLink(
         flow_run_id=flow_run_id,
         purpose="plan",
         attempt=attempt,
         submitted_at=NOW,
         last_observed_state="pending",
-        **fields,  # ty: ignore[invalid-argument-type]
     )
 
 
@@ -124,8 +126,8 @@ def _terminal(
     flow_run_id: str,
     attempt: int,
     *,
-    terminal_state: str = "completed",
-    terminal_outcome: str = "succeeded",
+    terminal_state: TerminalState = "completed",
+    terminal_outcome: TerminalOutcome = "succeeded",
     last_observed_state: str | None = "running",
 ) -> PrefectExecutionLink:
     return PrefectExecutionLink(
@@ -138,8 +140,8 @@ def _terminal(
         last_observed_state=last_observed_state,
         last_observed_at=NOW - timedelta(seconds=60),
         terminal_at=NOW - timedelta(seconds=30),
-        terminal_state=terminal_state,  # ty: ignore[invalid-argument-type]
-        terminal_outcome=terminal_outcome,  # ty: ignore[invalid-argument-type]
+        terminal_state=terminal_state,
+        terminal_outcome=terminal_outcome,
     )
 
 
@@ -209,7 +211,7 @@ def test_one_run_read_observes_every_pending_execution_once_and_no_terminal_one(
 
 def test_terminal_executions_render_their_own_distinguished_verdicts_unobserved(tmp_path: Path) -> None:
     """Retained verdicts stay distinct without any live provider detail."""
-    verdicts = (
+    verdicts: tuple[tuple[TerminalState, TerminalOutcome], ...] = (
         ("completed", "succeeded"),
         ("failed", "failed"),
         ("cancelled", "cancelled"),
@@ -299,9 +301,12 @@ def test_an_execution_that_terminalizes_during_the_request_renders_its_new_verdi
 
 def test_the_reconciliation_write_still_carries_an_acknowledged_cancellation_to_its_verdict(tmp_path: Path) -> None:
     """Rule 1 reads the durable cancelled state that this same request wrote moments earlier."""
-    link = _pending(
-        "flow-cancelling",
-        1,
+    link = PrefectExecutionLink(
+        flow_run_id="flow-cancelling",
+        purpose="plan",
+        attempt=1,
+        submitted_at=NOW,
+        last_observed_state="pending",
         claimed_at=NOW - timedelta(seconds=60),
         claiming_worker_id="8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0",
         cancellation_requested_at=NOW - timedelta(seconds=10),
