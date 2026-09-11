@@ -1,0 +1,19 @@
+.github/labels.yml
+  s_a425b5334ab261::t_93987c63542d56 2-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "79c30719052db8e2a1fe50cb67bc15e492ef03e1",
+  "prompts": {},
+  "sessions": {
+    "s_a425b5334ab261": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-async-unitB-ab235dfe1f4a2cc6",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
