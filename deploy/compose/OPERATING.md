@@ -159,7 +159,7 @@ against this release.
 
 `start` runs `preflight` itself, so the separate call above is optional. It is a
 diagnostic rather than a read-only one: it may replace the image recorded in
-`.instance` with whichever of the record's two forms this engine resolved. It
+`.instance` with whichever of the record's three forms this engine resolved. It
 starts no service, changes nothing in `operator.env` or `secrets/`, leaves the
 instance identity alone, and reaches no source or destination.
 
@@ -208,7 +208,7 @@ Prefect UI and API on `127.0.0.1:4200`.
 `cli` runs the shipped CLI against this deployment, in a container of the same
 image and on the deployment's own network. Like `preflight`, it resolves the
 image before it runs anything, so it too may replace the image recorded in
-`.instance` with whichever of the record's two forms this engine resolved. It
+`.instance` with whichever of the record's three forms this engine resolved. It
 authenticates with `INFRAHUB_SYNC_API_TOKEN`, which `init` wrote as the same
 value as the principal in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`; those two
 settings are one credential, so a hand edit to either has to be made to both.
