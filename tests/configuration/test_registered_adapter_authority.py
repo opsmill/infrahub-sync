@@ -143,7 +143,12 @@ def _adapter_module(monkeypatch: pytest.MonkeyPatch, row: AdapterRow) -> types.M
     # Record the pre-test entry, or its absence, so teardown restores the real module or
     # drops the stub-bound one. `monkeypatch.delitem` records nothing when the key is
     # absent, which is the normal state here, and would leave the stub-bound module cached.
+    # The re-import also rebinds the parent package attribute, which `sys.modules` alone
+    # does not cover: an attribute walk would still reach the stub-bound module.
     monkeypatch.setitem(sys.modules, module_name, types.ModuleType(module_name))
+    monkeypatch.setattr(
+        importlib.import_module("infrahub_sync.adapters"), row.name, types.ModuleType(module_name), raising=False
+    )
     del sys.modules[module_name]
     return importlib.import_module(module_name)
 
