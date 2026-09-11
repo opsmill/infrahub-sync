@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -276,7 +277,8 @@ class Boto3S3Client:
                 return None
             raise
         try:
-            result = response["Body"].read()
+            with contextlib.closing(response["Body"]) as body:
+                result = body.read()
         except (AttributeError, KeyError, TypeError):
             raise S3ProtocolError from None
         if type(result) is not bytes:  # pylint: disable=unidiomatic-typecheck  # Exact protocol contract.
@@ -305,7 +307,8 @@ class Boto3S3Client:
                 return None
             raise
         try:
-            result = response["Body"].read(limit + 1)
+            with contextlib.closing(response["Body"]) as body:
+                result = body.read(limit + 1)
         except (AttributeError, KeyError, TypeError):
             raise S3ProtocolError from None
         if type(result) is not bytes:  # pylint: disable=unidiomatic-typecheck  # Exact protocol contract.
