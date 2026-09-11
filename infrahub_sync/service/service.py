@@ -894,18 +894,19 @@ class RunService:
         )
         return run.model_copy(update={"prefect_executions": links})
 
-    @staticmethod
-    def _resource_with_observations(run: ProductRun, observations: dict[str, Observation]) -> RunResource:
+    def _resource_with_observations(self, run: ProductRun, observations: dict[str, Observation]) -> RunResource:
         orchestration = []
         for link in run.prefect_executions:
             observed = observations.get(link.flow_run_id)
+            # Live and retained observation text is provider-supplied, so no summary is built from it raw.
+            retained = None if link.last_observed_state is None else redact(link.last_observed_state, self._secrets)
             if observed is None:
                 orchestration.append(
                     OrchestrationSummary(
                         flow_run_id=link.flow_run_id,
                         purpose=link.purpose,
                         attempt=link.attempt,
-                        state=link.last_observed_state,
+                        state=retained,
                         detail_available=False,
                         unavailable_reason="live-detail-not-requested",
                         submitted_at=link.submitted_at,
@@ -920,14 +921,16 @@ class RunService:
                     )
                 )
                 continue
+            live = None if observed.state is None else redact(observed.state, self._secrets)
+            reason = None if observed.reason is None else redact(observed.reason, self._secrets)
             orchestration.append(
                 OrchestrationSummary(
                     flow_run_id=link.flow_run_id,
                     purpose=link.purpose,
                     attempt=link.attempt,
-                    state=observed.state if observed.available else link.last_observed_state,
+                    state=live if observed.available else retained,
                     detail_available=observed.available,
-                    unavailable_reason=observed.reason,
+                    unavailable_reason=reason,
                     submitted_at=link.submitted_at,
                     claimed_at=link.claimed_at,
                     stalled_at=link.stalled_at,

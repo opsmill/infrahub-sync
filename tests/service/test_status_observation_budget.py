@@ -446,7 +446,7 @@ def test_a_secret_that_spells_a_terminal_state_still_reaches_its_cancellation_ve
     assert response.status_code == 200
     summary = response.json()["orchestration"][0]
     assert (summary["terminal_state"], summary["terminal_outcome"]) == ("cancelled", "cancelled")
-    assert (summary["state"], summary["detail_available"]) == ("cancelled", True)
+    assert (summary["state"], summary["detail_available"]) == ("***", True)
     assert response.json()["run"]["prefect_executions"][0]["last_observed_state"] == "***"
     stored = projection.lookup_run("run-overlap").value
     assert stored is not None
@@ -470,3 +470,71 @@ def test_redacting_the_rendered_links_leaves_the_record_it_was_given_untouched(t
     assert redacted.prefect_executions[0].last_observed_state == "running-***"
     assert run.prefect_executions[0] is link
     assert link.last_observed_state == f"running-{CANARY}"
+
+
+def test_a_reconciler_supplied_live_observation_is_redacted_in_the_response(tmp_path: Path) -> None:
+    """Reconciliation hands its observations to the route, so the response is where they are redacted."""
+    orchestration = _CountingOrchestration({"flow-live": Observation(available=True, state=f"running-{CANARY}")})
+    client, _projection = _client(
+        tmp_path, _run("run-live", (_pending("flow-live", 1),)), orchestration, secrets=(CANARY,)
+    )
+
+    response = client.get("/runs/run-live", headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.json()["orchestration"][0]["state"] == "running-***"
+    assert CANARY not in response.text
+
+
+def test_a_live_observation_is_redacted_by_a_secret_collected_from_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The process's own credential-shaped variables redact the same response fields."""
+    monkeypatch.setenv("PROBE_TOKEN", CANARY)
+    orchestration = _CountingOrchestration({"flow-env-live": Observation(available=True, state=f"running-{CANARY}")})
+    client, _projection = _client(tmp_path, _run("run-env-live", (_pending("flow-env-live", 1),)), orchestration)
+
+    response = client.get("/runs/run-env-live", headers=AUTH)
+
+    assert response.status_code == 200
+    assert response.json()["orchestration"][0]["state"] == "running-***"
+    assert CANARY not in response.text
+
+
+def test_an_unavailable_observations_reason_is_redacted_in_the_response(tmp_path: Path) -> None:
+    """Provider text reaches the summary through the reason as well as the state."""
+    orchestration = _CountingOrchestration(
+        {"flow-reason": Observation(available=False, state=None, reason=f"prefect-execution-unavailable-{CANARY}")}
+    )
+    client, _projection = _client(
+        tmp_path, _run("run-reason", (_pending("flow-reason", 1),)), orchestration, secrets=(CANARY,)
+    )
+
+    response = client.get("/runs/run-reason", headers=AUTH)
+
+    assert response.status_code == 200
+    summary = response.json()["orchestration"][0]
+    assert summary["unavailable_reason"] == "prefect-execution-unavailable-***"
+    assert (summary["state"], summary["detail_available"]) == ("pending", False)
+    assert CANARY not in response.text
+
+
+def test_the_stores_redaction_pass_is_a_no_op_on_an_already_redacted_response_body(tmp_path: Path) -> None:
+    """A replayed body must equal the one first returned, so the second pass has to change nothing."""
+
+    from infrahub_sync.product_store.store import _normalize_mapping, _redact_value  # noqa: PLC2701
+
+    link = _pending("flow-replay", 1)
+    service = RunService(
+        _CountingProjection(local_product_projection(tmp_path)),
+        _CountingOrchestration(),
+        secrets=(CANARY,),
+        clock=lambda: NOW,
+    )
+    observations = {"flow-replay": Observation(available=True, state=f"running-{CANARY}", reason=None)}
+
+    resource = service._resource_with_observations(_run("run-replay", (link,)), observations)  # pylint: disable=protected-access
+    body = resource.model_dump(mode="json")
+
+    assert CANARY not in json.dumps(body)
+    assert _redact_value(_normalize_mapping(body), (CANARY,)) == body
