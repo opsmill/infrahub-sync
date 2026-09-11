@@ -19,8 +19,12 @@ from infrahub_sync import SchemaMappingField, SchemaMappingModel
 pynetbox = pytest.importorskip("pynetbox")
 pynautobot = pytest.importorskip("pynautobot")
 
-from pynautobot.core.response import Record as NautobotRecord  # noqa: E402
-from pynetbox.core.response import Record as NetboxRecord  # noqa: E402
+from pynautobot.core.response import (  # noqa: E402  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
+    Record as NautobotRecord,
+)
+from pynetbox.core.response import (  # noqa: E402  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
+    Record as NetboxRecord,
+)
 
 from infrahub_sync.adapters.nautobot import NautobotAdapter, NautobotModel  # noqa: E402
 from infrahub_sync.adapters.netbox import NetboxAdapter, NetboxModel  # noqa: E402
