@@ -39,28 +39,36 @@ is no setting anywhere that names a different one:
 cat image.bind
 ```
 
-It holds the qualified platform and the same image in the two immutable forms a
-host can hold it under — the exported OCI index, and the configuration digest a
-`docker load` leaves behind:
+It holds the qualified platform and the same image in the three immutable forms a
+host can hold it under:
 
 ```bash
 INFRAHUB_SYNC_IMAGE_PLATFORM=linux/amd64
 INFRAHUB_SYNC_IMAGE_INDEX=<index name>@sha256:<64 hex>
+INFRAHUB_SYNC_IMAGE_MANIFEST=sha256:<64 hex>
 INFRAHUB_SYNC_IMAGE_CONFIG=sha256:<64 hex>
 ```
+
+Which form a host holds is decided by the image store its Docker runs. The
+`containerd` image store — the default from Docker Engine 29 — identifies a loaded
+archive by the digest of a manifest it synthesizes at load time, which is the
+`MANIFEST` line; the classic store identifies it by the configuration digest,
+which is the `CONFIG` line. The `INDEX` line is the exported OCI index, which a
+host that kept the original export already holds.
 
 The image is named by digest, never by a tag: a tag can be re-pointed between the
 qualification that trusted it and the run that uses it, so the entry point
 refuses one before it creates anything.
 
-Load that image onto the host before the first start. Which of the two forms your
-host ends up holding depends on how it was loaded, and the deployment settles it
-itself: the index first, then the configuration digest, asking only this engine.
-No registry is consulted — what a registry holds says nothing about what this
-host can run, and a private candidate is loaded rather than pulled.
+Load that image onto the host before the first start, from the
+`image-linux-amd64.tar` the release publishes beside the bundle. The deployment
+settles which form it got by itself: the index first, then the manifest digest,
+then the configuration digest, asking only this engine. No registry is consulted
+— what a registry holds says nothing about what this host can run, and a private
+candidate is loaded rather than pulled.
 
 Confirming that what you loaded is what the record names is one command, and the
-identifier it prints is the second of the record's two forms:
+identifier it prints is one of the record's three forms:
 
 ```bash
 docker image inspect --format '{{.Id}}' <reference>
@@ -211,10 +219,10 @@ name followed by a fixed sentence. It never renders a credential value.
 | `path-unwritable`, `path-unreadable`, `path-missing` | The bundle directory, `secrets/`, or the generated `.instance` is not usable by this user. A refused state write leaves the previous `.instance` exactly as it was. |
 | `credentials-missing` | The named settings in `operator.env` are empty. |
 | `image-binding-missing` | `image.bind` is absent or unreadable, so this bundle names no image. Extract the archive again. |
-| `image-binding-invalid` | `image.bind` is incomplete, names a platform this bundle is not qualified on, or names something that is not an immutable digest. |
+| `image-binding-invalid` | `image.bind` is missing one of its four settings, names a platform this bundle is not qualified on, or names something that is not an immutable digest. |
 | `image-binding-mismatch` | `.instance` names an image `image.bind` does not. Run `init`. |
 | `image-not-immutable` | The selected reference carries a malformed digest. |
-| `image-unresolvable` | This engine holds neither image `image.bind` names. Load the candidate on this host; no registry is consulted. |
+| `image-unresolvable` | This engine holds none of the three identities `image.bind` names. Load `image-linux-amd64.tar` on this host; no registry is consulted. |
 | `image-platform-unqualified` | The image this engine resolved is another architecture. It is not a fallback: load the qualified one. |
 | `port-occupied` | Something else already holds one of the required loopback binds. Preflight asks the engine for the bind rather than reading container names, so a foreign container published on any address and a host process that is not a container are both found. |
 | `port-unprovable` | The disposable bind probe could not run at all, so the port was neither proved free nor proved held. Check that the Sync image runs on this host. |

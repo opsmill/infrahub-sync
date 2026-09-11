@@ -16,6 +16,7 @@ import shlex
 import tarfile
 from dataclasses import dataclass
 from datetime import date
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -25,6 +26,7 @@ from .release import DISTRIBUTION_FILE, ReleaseIdentity, identity_from, read_rel
 from .utils import ESCAPED_REPO_PATH, REPO_BASE
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 NAMESPACE = "INFRAHUB-SYNC-IMAGE"
@@ -79,6 +81,26 @@ FIXED_STATE = "fixed"
 # asks for none, so one appearing means the exporter added something the recorded
 # digests would otherwise silently describe as an image.
 _ATTESTATION_ARCHITECTURE = "unknown"
+
+# The media types of the Docker schema2 manifest an engine synthesizes for a
+# legacy docker-archive, which carries no manifest of its own. They are fixed
+# strings rather than anything read from the archive: the synthesized document
+# has to match Docker's byte for byte, because its digest is the identity a
+# containerd image store gives the loaded image.
+SCHEMA2_MEDIA_TYPE = "application/vnd.docker.distribution.manifest.v2+json"
+CONFIGURATION_MEDIA_TYPE = "application/vnd.docker.container.image.v1+json"
+LAYER_MEDIA_TYPE = "application/vnd.docker.image.rootfs.diff.tar"
+# A layer's own first bytes say how it is compressed, and the suffix that adds to
+# its media type. What the archive calls the file says nothing: skopeo names every
+# layer `layer.tar` whether or not it is compressed.
+LAYER_COMPRESSION = ((b"\x1f\x8b", ".gzip"), (b"\x28\xb5\x2f\xfd", ".zstd"))
+MAGIC_LENGTH = max(len(magic) for magic, _ in LAYER_COMPRESSION)
+# One layer is hundreds of megabytes, and every blob is read exactly once to get
+# its digest, its length, and the magic above. Nothing is held in memory.
+BLOB_CHUNK = 1024 * 1024
+# One entry of a manifest: what the blob is, what it hashes to, and how long it
+# is. The three fields a schema2 descriptor carries, in the order it writes them.
+Descriptor = tuple[str, str, int]
 
 
 class ImageTaskError(RuntimeError):
@@ -414,6 +436,105 @@ def archive_configuration(archive: Path) -> str:
     return f"sha256:{configuration.removesuffix('.json')}"
 
 
+def layer_media_type(prefix: bytes) -> str:
+    """Return the media type one layer's own first bytes name."""
+    for magic, suffix in LAYER_COMPRESSION:
+        if prefix.startswith(magic):
+            return f"{LAYER_MEDIA_TYPE}{suffix}"
+    return LAYER_MEDIA_TYPE
+
+
+def synthesized_manifest(config: Descriptor, layers: Sequence[Descriptor]) -> bytes:
+    """Return the Docker schema2 manifest an engine synthesizes for a docker-archive.
+
+    Exact bytes, because the digest of these bytes is the identity: the compact
+    separators, the ASCII encoding, and the key order below are Docker's own, and
+    a document differing from it in any of them hashes to something no engine
+    holds. Everything in it comes from the archive, so the same archive produces
+    the same manifest on every machine that reads it.
+    """
+
+    def descriptor(entry: Descriptor) -> dict[str, Any]:
+        media_type, digest, size = entry
+        return {"mediaType": media_type, "digest": digest, "size": size}
+
+    document = {
+        "schemaVersion": 2,
+        "mediaType": SCHEMA2_MEDIA_TYPE,
+        "config": descriptor(config),
+        "layers": [descriptor(layer) for layer in layers],
+    }
+    return json.dumps(document, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+
+
+def _read_blob(opened: tarfile.TarFile, name: str) -> tuple[str, int, bytes]:
+    """Return one archive member's digest, its length, and its first bytes, reading it once.
+
+    A layer is hundreds of megabytes, so the stream is consumed in chunks and
+    nothing but the running digest, the length, and the leading magic is kept.
+    """
+    entry = opened.extractfile(name)
+    if entry is None:
+        msg = f"{name} is not a readable blob of this archive"
+        raise ImageTaskError(msg)
+    digest = sha256()
+    size = 0
+    prefix = b""
+    while chunk := entry.read(BLOB_CHUNK):
+        digest.update(chunk)
+        size += len(chunk)
+        if len(prefix) < MAGIC_LENGTH:
+            prefix = (prefix + chunk)[:MAGIC_LENGTH]
+    return f"sha256:{digest.hexdigest()}", size, prefix
+
+
+def archive_manifest(archive: Path) -> str:
+    """Return the image identifier a containerd image store gives this archive.
+
+    Docker's classic store keeps a loaded archive's configuration digest as the
+    image ID. The containerd store — the default from Docker Engine 29 — keeps
+    the digest of a Docker schema2 manifest it synthesizes at load time, because
+    a legacy docker-archive carries none. Neither identity resolves on the other
+    store, so a bundle that names only one of them is unusable on half the hosts
+    that run it.
+
+    It is derived from the archive's bytes rather than read from an engine on
+    purpose. Loading the candidate to ask a daemon what it called it would make
+    the answer a property of that machine's Docker, and the machine that builds a
+    release is not the machine that runs it — while the archive is the same bytes
+    everywhere, and this is a pure function of them.
+    """
+    try:
+        with tarfile.open(archive) as opened:
+            entry = opened.extractfile("manifest.json")
+            manifest = json.loads(entry.read()) if entry is not None else None
+            if not isinstance(manifest, list) or len(manifest) != 1:
+                msg = f"{archive} must hold exactly one image"
+                raise ImageTaskError(msg)
+            held = _mapping(manifest[0], f"the {archive.name} manifest")
+            configuration = held.get("Config")
+            if not isinstance(configuration, str):
+                msg = f"{archive} names no image configuration"
+                raise ImageTaskError(msg)
+            layers = held.get("Layers")
+            if not isinstance(layers, list) or any(not isinstance(name, str) for name in layers):
+                msg = f"{archive} names no layer sequence"
+                raise ImageTaskError(msg)
+            digest, size, _ = _read_blob(opened, configuration)
+            config_descriptor: Descriptor = (CONFIGURATION_MEDIA_TYPE, digest, size)
+            # The archive's own order, which is the order the manifest has to
+            # list them in: layers are applied in sequence, so a reordering
+            # describes a different image.
+            layer_descriptors: list[Descriptor] = []
+            for name in layers:
+                digest, size, prefix = _read_blob(opened, name)
+                layer_descriptors.append((layer_media_type(prefix), digest, size))
+    except (tarfile.TarError, KeyError, json.JSONDecodeError):
+        msg = f"{archive} is not a readable Docker-load archive"
+        raise ImageTaskError(msg) from None
+    return f"sha256:{sha256(synthesized_manifest(config_descriptor, layer_descriptors)).hexdigest()}"
+
+
 def recorded_identity(record: dict) -> ReleaseIdentity:
     """Return the release identity the build recorded beside its digests.
 
@@ -564,6 +685,35 @@ def _export_platform(context: Context, record: dict, platform: str) -> Path:
         msg = f"{archive} holds {exported}, not the built {platform} image {expected}"
         raise ImageTaskError(msg)
     return archive
+
+
+def transferable_archive(context: Context, record: dict, platform: str) -> Path:
+    """Return the archive holding one recorded platform, exporting it if there is none.
+
+    The deployment bundle names the identity a containerd image store will give
+    the loaded archive, which is derived from the archive's own bytes — and the
+    bundle is built before the bill of materials and the vulnerability scan have
+    exported anything. So this is where that ordering is answered: an export
+    already on disk is reused when it holds this candidate's configuration, and
+    anything else is a leftover that is exported over.
+    """
+    platforms = record.get("platforms")
+    held = platforms.get(platform) if isinstance(platforms, dict) else None
+    if not isinstance(held, dict) or not isinstance(held.get("config"), str):
+        msg = f"{platform} was not built; run `uv run invoke image.build` for it first"
+        raise ImageTaskError(msg)
+    archive = archive_file(platform)
+    if archive.is_file():
+        try:
+            exported = archive_configuration(archive)
+        except ImageTaskError:
+            # Unreadable is not this candidate either, and the export below
+            # replaces it: a refusal here would make a stale file a dead end.
+            exported = ""
+        if exported == held["config"]:
+            print(f" - [{NAMESPACE}] Reusing the exported {platform} archive {archive}")
+            return archive
+    return _export_platform(context, record, platform)
 
 
 def _import_platform(context: Context, record: dict, platform: str) -> str:

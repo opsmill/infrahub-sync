@@ -29,6 +29,7 @@ from tests.compose.conftest import (
     BINDING_CONFIG_DIGEST,
     BINDING_FILE,
     BINDING_INDEX_REFERENCE,
+    BINDING_MANIFEST_DIGEST,
     BUNDLE,
     instance_setting,
     write_binding,
@@ -403,10 +404,15 @@ def test_a_binding_nothing_can_read_is_refused(unbound: Path, shim: Path) -> Non
 
 @pytest.mark.parametrize(
     "dropped",
-    ["INFRAHUB_SYNC_IMAGE_PLATFORM", "INFRAHUB_SYNC_IMAGE_INDEX", "INFRAHUB_SYNC_IMAGE_CONFIG"],
+    [
+        "INFRAHUB_SYNC_IMAGE_PLATFORM",
+        "INFRAHUB_SYNC_IMAGE_INDEX",
+        "INFRAHUB_SYNC_IMAGE_MANIFEST",
+        "INFRAHUB_SYNC_IMAGE_CONFIG",
+    ],
 )
 def test_an_incomplete_binding_is_refused(unbound: Path, shim: Path, dropped: str) -> None:
-    """Each of the three settings is load-bearing, so each absence is its own refusal."""
+    """Each of the four settings is load-bearing, so each absence is its own refusal."""
     write_binding(unbound, **{dropped: None})
 
     result = run(unbound, shim, "init")
@@ -427,6 +433,21 @@ def test_a_binding_naming_a_mutable_or_malformed_reference_is_refused(
     what it refuses is unchanged: anything that is not an immutable digest.
     """
     write_binding(unbound, INFRAHUB_SYNC_IMAGE_CONFIG=reference)
+
+    result = run(unbound, shim, "init")
+
+    assert family(result) == "image-binding-invalid", result.stderr
+
+
+@pytest.mark.parametrize("reference", ["infrahub-sync:latest", "sha256:short", "sha256:" + "z" * 64])
+def test_a_binding_naming_a_malformed_manifest_digest_is_refused(unbound: Path, shim: Path, reference: str) -> None:
+    """The third identity is checked by the same grammar as the other two.
+
+    It is derived from the archive's bytes rather than copied from an engine,
+    so a value that is not a digest means the record was generated wrong, and
+    resolving it would be this script guessing what it should have been.
+    """
+    write_binding(unbound, INFRAHUB_SYNC_IMAGE_MANIFEST=reference)
 
     result = run(unbound, shim, "init")
 
@@ -454,6 +475,24 @@ def test_a_state_image_the_record_does_not_name_is_refused(initialized: Path, sh
     assert family(result) == "image-binding-mismatch", result.stderr
 
 
+def test_a_state_image_naming_the_manifest_identity_is_accepted(initialized: Path, shim: Path) -> None:
+    """What a host resolved once is what it keeps, and all three are the record's own.
+
+    A containerd-store host settles on the manifest identity, so the check that
+    guards the state file has to recognise it as the package's image rather
+    than as something an edit introduced.
+    """
+    identity = instance_setting(initialized, "INFRAHUB_SYNC_INSTANCE")
+    (initialized / ".instance").write_text(
+        f"INFRAHUB_SYNC_INSTANCE={identity}\nINFRAHUB_SYNC_IMAGE={BINDING_MANIFEST_DIGEST}\n", encoding="utf-8"
+    )
+
+    result = run(initialized, shim, "preflight", environment={"SHIM_RESOLVABLE": BINDING_MANIFEST_DIGEST})
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert instance_setting(initialized, "INFRAHUB_SYNC_IMAGE") == BINDING_MANIFEST_DIGEST
+
+
 def test_the_index_encoding_is_selected_when_this_host_holds_the_original_export(
     initialized: Path, shim: Path, tmp_path: Path
 ) -> None:
@@ -472,23 +511,63 @@ def test_the_index_encoding_is_selected_when_this_host_holds_the_original_export
     assert not manifests.exists(), manifests.read_text(encoding="utf-8")
 
 
-def test_the_index_wins_when_this_host_holds_both_encodings(initialized: Path, shim: Path) -> None:
-    """Order is the property, and only a host holding both can observe it.
+def test_the_index_wins_when_this_host_holds_every_encoding(initialized: Path, shim: Path) -> None:
+    """Order is the property, and only a host holding all three can observe it.
 
-    Each of the two rows beside this one makes exactly one encoding resolvable,
-    so both of them pass just as happily with the order reversed. This is the
-    case that fails when it is: the index is what the record names first, and
-    what a host that kept the original export should run.
+    Each of the rows beside this one makes exactly one encoding resolvable, so
+    every one of them passes just as happily with the order reversed. This is
+    the case that fails when it is: the index is what the record names first,
+    and what a host that kept the original export should run.
     """
     result = run(
         initialized,
         shim,
         "preflight",
-        environment={"SHIM_RESOLVABLE": f"{BINDING_INDEX_REFERENCE} {BINDING_CONFIG_DIGEST}"},
+        environment={"SHIM_RESOLVABLE": f"{BINDING_INDEX_REFERENCE} {BINDING_MANIFEST_DIGEST} {BINDING_CONFIG_DIGEST}"},
     )
 
     assert result.returncode == 0, result.stderr + result.stdout
     assert instance_setting(initialized, "INFRAHUB_SYNC_IMAGE") == BINDING_INDEX_REFERENCE
+
+
+def test_the_manifest_encoding_is_selected_when_a_containerd_store_loaded_the_archive(
+    initialized: Path, shim: Path, tmp_path: Path
+) -> None:
+    """Docker's containerd image store names a loaded archive by neither other identity.
+
+    It synthesizes a manifest for an archive that carries none and keeps that
+    digest as the image ID, so this is the only one of the three such a host
+    resolves -- and the state file has to end up naming it.
+    """
+    manifests = tmp_path / "manifest.log"
+
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={"SHIM_RESOLVABLE": BINDING_MANIFEST_DIGEST, "SHIM_MANIFEST_LOG": str(manifests)},
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert instance_setting(initialized, "INFRAHUB_SYNC_IMAGE") == BINDING_MANIFEST_DIGEST
+    assert not manifests.exists(), manifests.read_text(encoding="utf-8")
+
+
+def test_the_manifest_wins_over_the_configuration_digest(initialized: Path, shim: Path) -> None:
+    """A host holding both is running a containerd store, whose own ID is the manifest.
+
+    The configuration digest resolving there says the classic store still holds
+    a copy, not that it is what this engine will run.
+    """
+    result = run(
+        initialized,
+        shim,
+        "preflight",
+        environment={"SHIM_RESOLVABLE": f"{BINDING_MANIFEST_DIGEST} {BINDING_CONFIG_DIGEST}"},
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert instance_setting(initialized, "INFRAHUB_SYNC_IMAGE") == BINDING_MANIFEST_DIGEST
 
 
 def test_the_configuration_encoding_is_selected_when_the_index_is_absent(
@@ -531,6 +610,21 @@ def test_a_registry_is_never_asked_to_settle_the_binding(initialized: Path, shim
 
     assert family(result) == "image-unresolvable", result.stderr
     assert not manifests.exists(), manifests.read_text(encoding="utf-8")
+
+
+def test_the_unresolvable_refusal_names_every_identity_the_record_holds(initialized: Path, shim: Path) -> None:
+    """An operator whose host holds none of them has to be told what to look for.
+
+    Three identities and one archive to load: the message carries the values
+    themselves, because a host that resolves none of them is exactly the host
+    that cannot be asked to print them.
+    """
+    result = run(initialized, shim, "preflight", environment={"SHIM_RESOLVABLE": ""})
+
+    assert family(result) == "image-unresolvable", result.stderr
+    for value in (BINDING_INDEX_REFERENCE, BINDING_MANIFEST_DIGEST, BINDING_CONFIG_DIGEST):
+        assert value in result.stderr, result.stderr
+    assert "image-linux-amd64.tar" in result.stderr, result.stderr
 
 
 def test_a_resolved_image_of_another_architecture_is_refused_rather_than_run(initialized: Path, shim: Path) -> None:
@@ -729,9 +823,15 @@ def test_a_resolved_binding_is_not_looked_up_a_second_time(initialized: Path, sh
     )
 
     assert result.returncode == 0, result.stderr + result.stdout
-    # The index, refused because this host does not hold it, then the
-    # configuration digest, and that same digest once more for its architecture.
-    assert recorded(inspects) == [BINDING_INDEX_REFERENCE, BINDING_CONFIG_DIGEST, BINDING_CONFIG_DIGEST]
+    # The index and then the manifest, each refused because this host does not
+    # hold it, then the configuration digest, and that same digest once more
+    # for its architecture.
+    assert recorded(inspects) == [
+        BINDING_INDEX_REFERENCE,
+        BINDING_MANIFEST_DIGEST,
+        BINDING_CONFIG_DIGEST,
+        BINDING_CONFIG_DIGEST,
+    ]
     assert not manifests.exists(), manifests.read_text(encoding="utf-8")
 
 

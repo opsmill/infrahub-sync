@@ -338,12 +338,19 @@ def write_candidate_binding(bundle: Path, image: str) -> bytes:
     input, and this refuses rather than quietly writing a record that names
     something else. A helper that accepted the drift would turn the environment
     into the operator image-selection channel the binding exists to remove.
+
+    The third identity the record names is derived from the exported archive, as
+    the release derives it. The archive is what the image gate loaded this
+    candidate from, so it is on disk whenever this suite has a candidate to run
+    at all, and a missing one is a harness error rather than a value to invent.
     """
-    from tasks.image import read_digests, recorded_identity
-    from tasks.release import BINDING_CONFIG_KEY, BINDING_MEMBER, image_binding
+    from tasks.image import archive_file, archive_manifest, read_digests, recorded_identity
+    from tasks.release import BINDING_CONFIG_KEY, BINDING_MEMBER, BINDING_PLATFORM, image_binding
 
     record = read_digests()
-    binding = image_binding(record, recorded_identity(record))
+    archive = archive_file(BINDING_PLATFORM)
+    assert archive.is_file(), f"{archive} is absent, so no binding can name what a containerd store would load"
+    binding = image_binding(record, recorded_identity(record), loaded_manifest=archive_manifest(archive))
     consumed = dict(line.split("=", 1) for line in binding.decode("utf-8").splitlines())
     assert consumed[BINDING_CONFIG_KEY] == image, (
         "the generated binding names a candidate other than the image under test"

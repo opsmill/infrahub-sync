@@ -69,7 +69,7 @@ BUNDLE_TREE = "deploy/compose"
 CHECKSUM_SUFFIX = ".sha256"
 
 # The one member a release generates rather than copies: the image the bundle was
-# qualified against, named in the two encodings a host can hold it under. It has
+# qualified against, named in the three encodings a host can hold it under. It has
 # no file in `deploy/compose` and never acquires one — a tracked digest would be
 # a second answer that a checkout could contradict, and an untracked file there
 # would be picked up as bundle content by nothing and left behind by everything.
@@ -80,6 +80,10 @@ BINDING_MODE = 0o644
 BINDING_PLATFORM = "linux/amd64"
 BINDING_PLATFORM_KEY = "INFRAHUB_SYNC_IMAGE_PLATFORM"
 BINDING_INDEX_KEY = "INFRAHUB_SYNC_IMAGE_INDEX"
+# What Docker's containerd image store calls the loaded archive: the digest of a
+# schema2 manifest the engine synthesizes for an archive that carries none. It is
+# derived from the exported archive's bytes, never read from a daemon.
+BINDING_MANIFEST_KEY = "INFRAHUB_SYNC_IMAGE_MANIFEST"
 BINDING_CONFIG_KEY = "INFRAHUB_SYNC_IMAGE_CONFIG"
 
 _IMMUTABLE_REFERENCE = re.compile(r"(?:.+@)?sha256:[0-9a-f]{64}")
@@ -419,18 +423,23 @@ def write_bundle(
     return archive
 
 
-def image_binding(digests: Mapping[str, Any], identity: ReleaseIdentity) -> bytes:
+def image_binding(digests: Mapping[str, Any], identity: ReleaseIdentity, *, loaded_manifest: str) -> bytes:
     """Return the binding record this release's bundle ships, from one build's digests.
 
-    Three settings, in a `KEY=VALUE` file the deployment's own reader parses
-    without sourcing it. Two of them are the same image in the two encodings a
-    host can hold it under: the index as the exporter named it, and the
-    configuration digest a classic `docker load` leaves behind. Which one a host
-    can resolve is that host's question, and the deployment answers it locally.
+    Four settings, in a `KEY=VALUE` file the deployment's own reader parses
+    without sourcing it. Three of them are the same image in the three encodings
+    a host can hold it under: the index as the exporter named it, the digest of
+    the schema2 manifest Docker's containerd image store synthesizes for the
+    loaded archive, and the configuration digest a classic `docker load` leaves
+    behind. Which one a host can resolve is that host's question — it depends on
+    which image store its engine runs — and the deployment answers it locally, in
+    the order they are written here.
 
-    Everything is derived from the record the build wrote. There is no caller
-    digest and no mode that produces an unbound bundle: a candidate that cannot
-    name its own image is a refusal here, before anything is archived.
+    Everything but the manifest is derived from the record the build wrote, and
+    the manifest is derived by the caller from the exported archive's own bytes
+    rather than from any engine. There is no caller-chosen digest and no mode
+    that produces an unbound bundle: a candidate that cannot name its own image
+    is a refusal here, before anything is archived.
     """
     built = identity_from(digests.get("provenance"), "the digest record")
     if built != identity:
@@ -455,6 +464,7 @@ def image_binding(digests: Mapping[str, Any], identity: ReleaseIdentity) -> byte
     values = {
         BINDING_PLATFORM_KEY: BINDING_PLATFORM,
         BINDING_INDEX_KEY: f"{name}@{index_digest}",
+        BINDING_MANIFEST_KEY: loaded_manifest,
         BINDING_CONFIG_KEY: str(qualified["config"]),
     }
     for key, value in values.items():
@@ -464,7 +474,7 @@ def image_binding(digests: Mapping[str, Any], identity: ReleaseIdentity) -> byte
         if value != value.strip() or any(character.isspace() for character in value):
             msg = f"{key} would carry whitespace, so the record it writes names no single image"
             raise ReleaseTaskError(msg)
-    for key in (BINDING_INDEX_KEY, BINDING_CONFIG_KEY):
+    for key in (BINDING_INDEX_KEY, BINDING_MANIFEST_KEY, BINDING_CONFIG_KEY):
         if not _IMMUTABLE_REFERENCE.fullmatch(values[key]):
             msg = f"{key} is {values[key]!r}, which is not an immutable sha256 reference"
             raise ReleaseTaskError(msg)
@@ -658,20 +668,29 @@ def kit(context: Context) -> None:
     equality is the same one the qualification record makes — a digest record
     left by another release binds this bundle to somebody else's image.
 
+    One of the three identities it names is not in the digest record at all. The
+    identity a containerd image store gives the loaded archive is a function of
+    that archive's bytes, so the qualified platform is exported here — reusing an
+    export that already holds this candidate — and read rather than asked of any
+    daemon.
+
     Imported here rather than at the top for the reason `qualify` states: the
     image tasks read this module, so this is the one place that sees both.
     """
-    from .image import read_digests  # noqa: PLC0415 -- see the docstring
+    from .image import archive_manifest, read_digests, transferable_archive  # noqa: PLC0415 -- see the docstring
 
     identity = read_recorded_identity()
     require_archivable_bundle(context)
-    binding = image_binding(read_digests(), identity)
+    record = read_digests()
+    manifest = archive_manifest(transferable_archive(context, record, BINDING_PLATFORM))
+    binding = image_binding(record, identity, loaded_manifest=manifest)
     archive = write_bundle(identity, bundle_paths(context), BUNDLE_DIR, generated={BINDING_MEMBER: binding})
     checksum = write_checksum(archive)
     build_qualification_kit()
     print(f" - [{NAMESPACE}] Bundle    {archive}")
     print(f" - [{NAMESPACE}] Checksum  {checksum.read_text(encoding='utf-8').strip()}")
     print(f" - [{NAMESPACE}] Binding   {BINDING_MEMBER} names the {BINDING_PLATFORM} candidate")
+    print(f" - [{NAMESPACE}] Manifest  {manifest} is what a containerd image store calls the loaded archive")
     print(f" - [{NAMESPACE}] Qualification kit in {QUALIFICATION_DIR}")
 
 

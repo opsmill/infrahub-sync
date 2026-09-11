@@ -54,6 +54,8 @@ BINDING_PLATFORM = "linux/amd64"
 BINDING_INDEX_NAME = "latest"
 BINDING_INDEX_DIGEST = "sha256:" + "1" * 64
 BINDING_CONFIG_DIGEST = "sha256:" + "2" * 64
+# The third identity: what a containerd image store calls the loaded archive.
+BINDING_MANIFEST_DIGEST = "sha256:" + "3" * 64
 BINDING_INDEX_REFERENCE = f"{BINDING_INDEX_NAME}@{BINDING_INDEX_DIGEST}"
 
 
@@ -66,6 +68,7 @@ def write_binding(bundle: Path, **overrides: str | None) -> Path:
     values: dict[str, str | None] = {
         "INFRAHUB_SYNC_IMAGE_PLATFORM": BINDING_PLATFORM,
         "INFRAHUB_SYNC_IMAGE_INDEX": BINDING_INDEX_REFERENCE,
+        "INFRAHUB_SYNC_IMAGE_MANIFEST": BINDING_MANIFEST_DIGEST,
         "INFRAHUB_SYNC_IMAGE_CONFIG": BINDING_CONFIG_DIGEST,
     }
     values.update(overrides)
