@@ -27,27 +27,39 @@ leave the extracted tree different from the archive.
 
 The archive names the image it was qualified against. That record is
 `image.bind` beside the entry point, and it is not yours to edit: it holds the
-qualified platform and the same image in the two immutable forms a host can hold
-it under — the exported index, and the configuration digest a `docker load`
-leaves behind. There is no setting anywhere that names a different image.
+qualified platform and the same image in the three immutable forms a host can
+hold it under. There is no setting anywhere that names a different image.
 
 ```bash
 cat image.bind
 ```
 
+```bash
+INFRAHUB_SYNC_IMAGE_PLATFORM=linux/amd64
+INFRAHUB_SYNC_IMAGE_INDEX=<index name>@sha256:<64 hex>
+INFRAHUB_SYNC_IMAGE_MANIFEST=sha256:<64 hex>
+INFRAHUB_SYNC_IMAGE_CONFIG=sha256:<64 hex>
+```
+
+Which form your host holds depends on which image store its Docker runs. The
+`containerd` image store, the default from Docker Engine 29, gives a loaded
+archive the manifest digest; the classic store gives it the configuration
+digest. The index is what a host that kept the original export already holds.
+
 The image is named by digest, never by a tag. A tag can be re-pointed between
 the qualification that trusted an image and the run that uses it, so the
 lifecycle entry point refuses one before it creates anything.
 
-Load the image this record names onto the host before the first `start`. Which
-of its two forms your host ends up holding depends on how it was loaded, and the
-deployment answers that itself: it tries the index first, then the configuration
-digest, and it asks only this engine. No registry is consulted, because what a
-registry holds says nothing about what this host can run.
+Load the image this record names onto the host before the first `start`, from
+the `image-linux-amd64.tar` the release publishes beside this archive. The
+deployment settles which form it got by itself: it tries the index, then the
+manifest digest, then the configuration digest, and it asks only this engine. No
+registry is consulted, because what a registry holds says nothing about what
+this host can run.
 
 Confirming that what you loaded is what the record names is one command. The
-identifier it prints is the image's configuration digest, which is the form the
-release record names and the second of the two forms in `image.bind`:
+identifier it prints is one of the three forms in `image.bind` — which one
+depends on your image store:
 
 ```bash
 docker image inspect --format '{{.Id}}' <reference>
@@ -147,7 +159,7 @@ against this release.
 
 `start` runs `preflight` itself, so the separate call above is optional. It is a
 diagnostic rather than a read-only one: it may replace the image recorded in
-`.instance` with whichever of the record's two forms this engine resolved. It
+`.instance` with whichever of the record's three forms this engine resolved. It
 starts no service, changes nothing in `operator.env` or `secrets/`, leaves the
 instance identity alone, and reaches no source or destination.
 
@@ -163,10 +175,10 @@ and a fixed sentence, and none of them renders a credential value:
 | `path-unwritable`, `path-unreadable`, `path-missing` | The bundle directory, `secrets/`, or the generated `.instance` is not usable by this user. A refused state write leaves the previous `.instance` exactly as it was. |
 | `credentials-missing` | A required setting in `operator.env` is empty. |
 | `image-binding-missing` | `image.bind` is absent or unreadable, so this bundle names no image. Extract the archive again. |
-| `image-binding-invalid` | `image.bind` names no platform, no index reference and no configuration digest; names a platform this bundle is not qualified on; or names something that is not an immutable digest. |
+| `image-binding-invalid` | `image.bind` is missing one of its four settings; names a platform this bundle is not qualified on; or names something that is not an immutable digest. |
 | `image-binding-mismatch` | `.instance` names an image `image.bind` does not. Run `init`. |
 | `image-not-immutable` | The selected reference carries a malformed digest. |
-| `image-unresolvable` | This engine holds neither image `image.bind` names. Load the candidate on this host. |
+| `image-unresolvable` | This engine holds none of the three identities `image.bind` names. Load `image-linux-amd64.tar` on this host. |
 | `image-platform-unqualified` | The image this engine resolved is another architecture. It is not a fallback; load the qualified one. |
 | `port-unset` | `INFRAHUB_SYNC_BIND_ADDRESS`, or one of the two port settings, names nothing. |
 | `port-occupied`, `port-unprovable` | A required loopback bind is held, or the bind probe could not run. |
@@ -196,7 +208,7 @@ Prefect UI and API on `127.0.0.1:4200`.
 `cli` runs the shipped CLI against this deployment, in a container of the same
 image and on the deployment's own network. Like `preflight`, it resolves the
 image before it runs anything, so it too may replace the image recorded in
-`.instance` with whichever of the record's two forms this engine resolved. It
+`.instance` with whichever of the record's three forms this engine resolved. It
 authenticates with `INFRAHUB_SYNC_API_TOKEN`, which `init` wrote as the same
 value as the principal in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`; those two
 settings are one credential, so a hand edit to either has to be made to both.

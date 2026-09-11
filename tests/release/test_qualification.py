@@ -29,6 +29,10 @@ DIGESTS = {
     "linux/amd64": {"manifest": "sha256:" + "c" * 64, "config": "sha256:" + "a" * 64},
     "linux/arm64": {"manifest": "sha256:" + "d" * 64, "config": "sha256:" + "b" * 64},
 }
+# The identity a containerd image store gives the loaded amd64 archive. `kit`
+# derives it from that archive's bytes; this module builds the bundle directly,
+# so it stands in for one here.
+LOADED_MANIFEST = "sha256:" + "e" * 64
 
 ARTIFACT_NAMES = ("infrahub-sync-candidate-bundle", "infrahub-sync-candidate-distributions")
 RETENTION_DAYS = 90
@@ -88,7 +92,11 @@ def candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         derived,
         release.bundle_paths(Context()),
         release.BUNDLE_DIR,
-        generated={release.BINDING_MEMBER: release.image_binding(image.read_digests(), derived)},
+        generated={
+            release.BINDING_MEMBER: release.image_binding(
+                image.read_digests(), derived, loaded_manifest=LOADED_MANIFEST
+            )
+        },
     )
     for name in PLATFORMS:
         image.sbom_file(derived, name).write_text('{"packages": []}', encoding="utf-8")

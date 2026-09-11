@@ -33,6 +33,17 @@ FIXTURE_OVERRIDE = Path(__file__).resolve().parent / "fixture-override.yaml"
 API_PORT = 8021
 PREFECT_PORT = 4221
 
+# The manifest identity the harness writes into the binding it generates. This
+# suite runs against Docker's classic image store, where a loaded archive is the
+# configuration digest and nothing resolves the manifest one, so the record's
+# third identity is a syntactically valid digest no engine holds. That is what
+# the wrapper's index -> manifest -> configuration order needs to stay
+# observable here, and it is a harness placeholder rather than any claim about
+# what a containerd image store would call this candidate. Deriving the real one
+# is not available: `compose.reclaim` removes the exported archives before the
+# lifecycle matrix runs.
+HARNESS_MANIFEST = "sha256:" + "f" * 64
+
 # The bundle's own PostgreSQL image, reused as a probe so no fourth external
 # image has to be pinned for a two-command question.
 GATEWAY_PROBE_IMAGE = "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
@@ -338,12 +349,17 @@ def write_candidate_binding(bundle: Path, image: str) -> bytes:
     input, and this refuses rather than quietly writing a record that names
     something else. A helper that accepted the drift would turn the environment
     into the operator image-selection channel the binding exists to remove.
+
+    The third identity a release derives from the exported archive is
+    `HARNESS_MANIFEST` here, for the reason stated where it is defined: this
+    suite is on the classic image store and the archive it would be derived from
+    has already been reclaimed by the time the matrix runs.
     """
     from tasks.image import read_digests, recorded_identity
     from tasks.release import BINDING_CONFIG_KEY, BINDING_MEMBER, image_binding
 
     record = read_digests()
-    binding = image_binding(record, recorded_identity(record))
+    binding = image_binding(record, recorded_identity(record), loaded_manifest=HARNESS_MANIFEST)
     consumed = dict(line.split("=", 1) for line in binding.decode("utf-8").splitlines())
     assert consumed[BINDING_CONFIG_KEY] == image, (
         "the generated binding names a candidate other than the image under test"

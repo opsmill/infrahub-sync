@@ -69,6 +69,11 @@ INDEX_DIGEST = "sha256:" + "1" * 64
 AMD64_CONFIG = "sha256:" + "2" * 64
 ARM64_CONFIG = "sha256:" + "3" * 64
 
+# The identity a containerd image store gives the exported amd64 archive once it
+# is loaded. It is derived from that archive's own bytes rather than from the
+# digest record, so it reaches the writer as an argument.
+LOADED_MANIFEST = "sha256:" + "6" * 64
+
 
 def digests(**overrides: object) -> dict[str, object]:
     """The digest record `image.build` writes for one two-platform candidate."""
@@ -138,8 +143,8 @@ def tracked(source: Path) -> dict[str, int]:
 
 @pytest.fixture
 def binding(identity: release.ReleaseIdentity) -> bytes:
-    """The record `release.kit` derives from one candidate's digests."""
-    return release.image_binding(digests(), identity)
+    """The record `release.kit` derives from one candidate's digests and its archive."""
+    return release.image_binding(digests(), identity, loaded_manifest=LOADED_MANIFEST)
 
 
 @pytest.fixture
@@ -318,9 +323,10 @@ def test_the_checksum_names_the_archive_in_the_form_a_clean_host_reads(
 # ---------------------------------------------------------------------------
 # The binding record the package generates
 # ---------------------------------------------------------------------------
-# Three settings, derived from the candidate's own digests. An operator never
-# writes one and never copies a digest into one: the whole point is that the
-# archive already names the image it was qualified against.
+# Four settings, derived from the candidate's own digests and its exported
+# archive. An operator never writes one and never copies a digest into one: the
+# whole point is that the archive already names the image it was qualified
+# against, in every form a host can hold it under.
 
 
 def parsed(record: bytes) -> dict[str, str]:
@@ -328,39 +334,65 @@ def parsed(record: bytes) -> dict[str, str]:
     return dict(line.split("=", 1) for line in record.decode("utf-8").splitlines() if line and not line.startswith("#"))
 
 
-def test_the_binding_names_the_qualified_platform_and_both_of_its_encodings(
+def test_the_binding_names_the_qualified_platform_and_all_three_of_its_encodings(
     identity: release.ReleaseIdentity,
 ) -> None:
-    """Index first for a host that holds the original export, configuration for a load."""
-    assert parsed(release.image_binding(digests(), identity)) == {
-        release.BINDING_PLATFORM_KEY: "linux/amd64",
-        release.BINDING_INDEX_KEY: f"{INDEX_NAME}@{INDEX_DIGEST}",
-        release.BINDING_CONFIG_KEY: AMD64_CONFIG,
-    }
+    """One image, in every immutable form a host can end up holding it under.
+
+    The order is fixed and is the order the deployment tries them in: the index
+    for a host that kept the original export, the synthesized manifest a
+    containerd image store assigns a loaded archive, and the configuration
+    digest the classic store leaves behind.
+    """
+    written = release.image_binding(digests(), identity, loaded_manifest=LOADED_MANIFEST)
+
+    assert list(parsed(written).items()) == [
+        (release.BINDING_PLATFORM_KEY, "linux/amd64"),
+        (release.BINDING_INDEX_KEY, f"{INDEX_NAME}@{INDEX_DIGEST}"),
+        (release.BINDING_MANIFEST_KEY, LOADED_MANIFEST),
+        (release.BINDING_CONFIG_KEY, AMD64_CONFIG),
+    ]
 
 
 def test_the_binding_carries_no_pull_policy_of_its_own(identity: release.ReleaseIdentity) -> None:
     """An already-loaded private image resolves under the shipped `missing` policy.
 
-    A fourth setting here would be a second image channel an operator could
+    A further setting here would be a second image channel an operator could
     edit, which is the thing the record exists to remove.
     """
-    assert set(parsed(release.image_binding(digests(), identity))) == {
+    assert set(parsed(release.image_binding(digests(), identity, loaded_manifest=LOADED_MANIFEST))) == {
         release.BINDING_PLATFORM_KEY,
         release.BINDING_INDEX_KEY,
+        release.BINDING_MANIFEST_KEY,
         release.BINDING_CONFIG_KEY,
     }
 
 
 def test_two_derivations_of_one_candidate_produce_the_same_bytes(identity: release.ReleaseIdentity) -> None:
     """The member is inside a checksummed archive, so its order cannot float."""
-    assert release.image_binding(digests(), identity) == release.image_binding(digests(), identity)
+    assert release.image_binding(digests(), identity, loaded_manifest=LOADED_MANIFEST) == release.image_binding(
+        digests(), identity, loaded_manifest=LOADED_MANIFEST
+    )
+
+
+@pytest.mark.parametrize("value", ["sha256:short", "sha256:" + "z" * 64, "infrahub-sync:latest", ""])
+def test_a_malformed_loaded_manifest_is_refused(identity: release.ReleaseIdentity, value: str) -> None:
+    """It is derived, so anything but a digest means the derivation went wrong."""
+    with pytest.raises(release.ReleaseTaskError, match="immutable sha256 reference"):
+        release.image_binding(digests(), identity, loaded_manifest=value)
+
+
+@pytest.mark.parametrize("value", ["sha256:" + "6" * 64 + "\n", " sha256:" + "6" * 64, "sha256: " + "6" * 63])
+def test_a_loaded_manifest_carrying_whitespace_is_refused(identity: release.ReleaseIdentity, value: str) -> None:
+    """The wrapper reads this file line by line, and the manifest is one of its lines."""
+    with pytest.raises(release.ReleaseTaskError, match="whitespace"):
+        release.image_binding(digests(), identity, loaded_manifest=value)
 
 
 def test_a_record_without_a_retained_index_name_is_refused(identity: release.ReleaseIdentity) -> None:
     """Half a reference is not a reference; a bundle would ship an unresolvable one."""
     with pytest.raises(release.ReleaseTaskError, match="index name"):
-        release.image_binding(digests(index_name=""), identity)
+        release.image_binding(digests(index_name=""), identity, loaded_manifest=LOADED_MANIFEST)
 
 
 def test_a_record_missing_the_qualified_platform_is_refused(identity: release.ReleaseIdentity) -> None:
@@ -368,7 +400,7 @@ def test_a_record_missing_the_qualified_platform_is_refused(identity: release.Re
     arm64_only = {"linux/arm64": {"manifest": "sha256:" + "5" * 64, "config": ARM64_CONFIG}}
 
     with pytest.raises(release.ReleaseTaskError, match="linux/amd64"):
-        release.image_binding(digests(platforms=arm64_only), identity)
+        release.image_binding(digests(platforms=arm64_only), identity, loaded_manifest=LOADED_MANIFEST)
 
 
 def test_a_record_left_by_another_release_is_refused(identity: release.ReleaseIdentity) -> None:
@@ -376,11 +408,11 @@ def test_a_record_left_by_another_release_is_refused(identity: release.ReleaseId
     foreign = digests(provenance={"version": "3.0.0a2", "revision": "b" * 40, "created": COMMIT_TIME})
 
     with pytest.raises(release.ReleaseTaskError, match="different release"):
-        release.image_binding(foreign, identity)
+        release.image_binding(foreign, identity, loaded_manifest=LOADED_MANIFEST)
 
 
 @pytest.mark.parametrize("value", ["latest name", "latest\n", "\tlatest"])
 def test_a_reference_value_carrying_whitespace_is_refused(identity: release.ReleaseIdentity, value: str) -> None:
     """The wrapper reads this file line by line; a value with a newline is two settings."""
     with pytest.raises(release.ReleaseTaskError, match="whitespace"):
-        release.image_binding(digests(index_name=value), identity)
+        release.image_binding(digests(index_name=value), identity, loaded_manifest=LOADED_MANIFEST)
