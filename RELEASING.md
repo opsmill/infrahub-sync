@@ -20,7 +20,7 @@ Before publishing, ensure:
 
 ## Method 1: Automated release (recommended)
 
-This is the standard release flow. Releases are triggered automatically when PRs are merged to `main` or `stable` branches.
+This is the standard release flow. Nothing about a release is edited by hand: a push to `main` prepares a release pull request, and merging that pull request publishes the release.
 
 ### Step 1: Label your pull requests
 
@@ -32,7 +32,7 @@ Apply appropriate labels to PRs before merging. Labels determine the version bum
 | `changes/minor`, `type/feature`, `type/refactoring` | Minor (1.0.0 → 1.1.0) | New features, refactoring |
 | `changes/patch`, `type/bug`, `type/housekeeping`, `type/documentation` | Patch (1.0.0 → 1.0.1) | Bug fixes, docs, maintenance |
 
-Auto-labeling rules are configured in `.github/release-drafter.yml` but require a separate workflow trigger to activate. For now, apply labels manually:
+The bump labels live in `.github/version-drafter.yml`. Apply them manually:
 
 | PR Title Pattern | Recommended Label |
 |------------------|-------------------|
@@ -41,28 +41,38 @@ Auto-labeling rules are configured in `.github/release-drafter.yml` but require 
 | Contains `chore` | `ci/skip-changelog` |
 | Contains `deprecat` | `type/deprecated` |
 
+Every pull request into `main` must also carry a news fragment under `changelog/` — `changelog-check.yml` enforces this. See the Changelog section of [AGENTS.md](AGENTS.md).
+
 ### Step 2: Merge to main
 
-Merge your labeled PR to the `main` branch. The automation will:
+Merge your labeled PR to the `main` branch. `trigger-push-stable.yml` then:
 
-1. Calculate the next version based on PR labels
-2. Update `pyproject.toml` with the new version (and regenerate `uv.lock`)
-3. Commit changes as `chore(release): v{VERSION} [skip ci]`
-4. Create/update a draft GitHub Release with auto-generated release notes
+1. Calculates the next version from the labels on PRs merged since the last release
+2. Updates `pyproject.toml` with the new version and regenerates `uv.lock`
+3. Assembles `CHANGELOG.md` from the news fragments with towncrier, consuming them
+4. Opens a `chore(release): {VERSION}` pull request from `release/{VERSION}` into `main`
 
-### Step 3: Publish the GitHub release
+If there are no news fragments, no release pull request is prepared — the run reports this and stops. Add a fragment and push again.
 
-1. Navigate to the repository's **Releases** page
-2. Find the draft release created by Release Drafter
-3. Review the auto-generated release notes
-4. Edit if needed (add context, highlights, migration notes)
-5. Click **Publish release**
+### Step 3: Review and merge the release pull request
 
-Publishing the release triggers the PyPI upload automatically.
+The release pull request is the reviewable artefact. Read the assembled `CHANGELOG.md` section in its diff — that is what users will read — and merge when it is right.
+
+Merging it triggers `release-publish.yml`, which:
+
+1. Reads the version back out of `pyproject.toml`
+2. Creates the bare tag (for example `2.0.2`, not `v2.0.2`)
+3. Publishes a GitHub Release whose body is the changelog section
+
+Publishing that Release triggers `trigger-release.yml` and the PyPI upload.
+
+A release is only ever cut by merging a `release/*` pull request: `release-publish.yml` refuses to tag a commit that is not one, so a hand-edited version on `main` cannot publish anything on its own.
 
 ## Method 2: Manual GitHub release
 
 Use this method when you want full control over the release timing and notes.
+
+This is an escape hatch and bypasses the changelog: fragments under `changelog/` are left unconsumed and `CHANGELOG.md` is not updated, so the release notes are whatever you type into the GitHub UI. Prefer Method 1. Note also that `main` is protected — the version bump still has to go through a pull request.
 
 ### Step 1: Update the version
 
@@ -73,12 +83,13 @@ Update the version in `pyproject.toml`:
 uv lock
 ```
 
-Commit and push the changes:
+Commit the changes on a branch and merge them through a pull request:
 
 ```bash
+git switch -c chore/release-X.Y.Z
 git add pyproject.toml uv.lock
-git commit -m "chore(release): vX.Y.Z"
-git push origin main
+git commit -m "chore(release): X.Y.Z"
+git push origin chore/release-X.Y.Z
 ```
 
 ### Step 2: Create a GitHub release
@@ -118,19 +129,11 @@ gh workflow run workflow-publish.yml \
 
 ## Release notes
 
-Release notes are auto-generated based on merged PRs and their labels:
+Release notes are written by contributors, not generated from pull-request titles. Each pull request adds a news fragment under `changelog/`; towncrier assembles them into `CHANGELOG.md` when the release pull request is prepared, and `release-publish.yml` uses that section verbatim as the GitHub Release body.
 
-| Category | Labels |
-|----------|--------|
-| Breaking Changes | `changes/major` |
-| Minor Changes | `changes/minor`, `type/feature`, `type/refactoring` |
-| Patch & Bug Fixes | `type/bug`, `changes/patch` |
-| Documentation Change | `type/documentation` |
+The seven fragment types come from `[tool.towncrier]` in `pyproject.toml`: `security`, `removed`, `deprecated`, `added`, `changed`, `fixed`, `housekeeping`. See the Changelog section of [AGENTS.md](AGENTS.md) for how to add one.
 
-PRs with these labels are excluded from release notes:
-
-- `ci/skip-changelog`
-- `type/duplicate`
+Labels no longer shape the release notes — they only decide the version bump (see Step 1 above).
 
 ## Verifying a release
 
@@ -147,13 +150,21 @@ infrahub-sync --version
 
 ## Troubleshooting
 
-### Release workflow skipped
+### No release pull request was opened
 
-The automated release is skipped when:
+Preparing a release is skipped when:
 
-- The commit author is `opsmill-bot` with a `chore` prefix (prevents recursive releases)
+- The push is the merge of a `release/*` pull request (prevents recursive releases)
+- The commit author is `opsmill-bot` with a `chore` prefix (same, for the older scheme)
 - No version bump is detected (no labeled PRs since last release)
 - Changes are only in the `docs/` directory
+- There are no news fragments under `changelog/` — there is nothing to release
+
+The last case is the common one after a run of `ci/skip-changelog` pull requests. Add a fragment (`housekeeping` is fine) and push again.
+
+### The release pull request failed to prepare
+
+`trigger-push-stable.yml` fails rather than skips when a news fragment exists but is empty or whitespace-only — it would otherwise render as a changelog heading with nothing under it. The error names the file: fill it in or delete it.
 
 ### The PyPI upload failed
 
@@ -173,7 +184,8 @@ Ensure PRs have appropriate labels before merging. If labels are missing, the ve
 
 | Workflow | Type | Purpose |
 |----------|------|---------|
-| `trigger-push-stable.yml` | Push to `main`/`stable` | Calculates version, bumps `pyproject.toml`, triggers release draft |
-| `workflow-release-drafter.yml` | Reusable (`workflow_call`) | Creates/updates GitHub Release draft; invoked by `trigger-release.yml` |
-| `trigger-release.yml` | GitHub Release published | Orchestrates release: invokes release drafter and publish workflows |
+| `changelog-check.yml` | PR into `main` | Requires a news fragment on every pull request |
+| `trigger-push-stable.yml` | Push to `main` | Calculates version, bumps `pyproject.toml`, assembles the changelog, opens the release pull request |
+| `release-publish.yml` | Push to `main` | Tags and publishes the GitHub Release when a `release/*` pull request lands |
+| `trigger-release.yml` | GitHub Release published | Invokes the publish workflow |
 | `workflow-publish.yml` | Reusable (`workflow_dispatch`) | Builds and publishes package to PyPI; invoked by `trigger-release.yml` |

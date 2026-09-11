@@ -131,6 +131,26 @@ uv run rumdl check .   # check
 uv run rumdl fmt .     # fix
 ```
 
+## Changelog
+
+Release notes are written by contributors, not generated from PR titles. Every pull request into `main` must add a news fragment under `changelog/`, and `changelog-check.yml` fails the PR if it does not.
+
+Create one with towncrier, naming it after the issue or PR number:
+
+```bash
+uv run towncrier create -c "Short description of what changed." 123.fixed.md
+```
+
+The file must be a direct child of `changelog/` named `<id>.<type>.md`. The seven types are configured in `[tool.towncrier]` in `pyproject.toml`:
+
+`security`, `removed`, `deprecated`, `added`, `changed`, `fixed`, `housekeeping`
+
+Use `+` as the id for a change with no issue number (`+short-slug.housekeeping.md`). Nested paths and unknown types are ignored by towncrier, so the check rejects them rather than let an entry vanish at release time. A fragment that is empty or whitespace-only fails the release build, which names the file.
+
+Label a pull request `ci/skip-changelog` when it genuinely needs no entry — a dependency bump or a typo fix. Dependabot applies that label itself.
+
+**Versions and `CHANGELOG.md` are never edited by hand.** A push to `main` opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes; merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md).
+
 ## Invoke Tasks (reference)
 
 `uv run invoke --list` for the full set. Key tasks:
@@ -161,6 +181,7 @@ uv run rumdl fmt .     # fix
 - [ ] `uv run ty check .` exits 0; new code typed.
 - [ ] CLI behaviors validated (`--help`, `list`, targeted `generate`).
 - [ ] Docs updated if flags or config changed.
+- [ ] News fragment added under `changelog/`, or `ci/skip-changelog` applied.
 - [ ] Error handling uses specific exception types and clear messages.
 
 ## Review Process
