@@ -15,6 +15,7 @@ from infrahub_sync.product_store import (  # noqa: TC001 - runtime protocol boun
 )
 
 from .orchestration import (
+    Observation,
     PoolStatus,
     ServiceOrchestration,
     normalized_pool_status,
@@ -152,21 +153,31 @@ class RunLivenessReconciler:
         for run_id, link in self._projection.pending_executions():
             await self.reconcile_execution(run_id, link, pool, now)
 
-    async def reconcile_run(self, run_id: str) -> None:
-        """Refresh every pending link of one requested run before it is rendered."""
+    async def reconcile_run(self, run_id: str) -> dict[str, Observation]:
+        """Refresh every pending link of one requested run before it is rendered.
+
+        Returns the observation taken for each refreshed link, keyed by flow-run ID, so
+        the caller that renders the run does not have to observe it a second time.
+        """
         run = self._projection.lookup_run(run_id).value
         if run is None:
-            return
+            return {}
         now = self._clock()
         pool = await self._orchestration.pool_status(self._work_pool_name, now)
+        observations: dict[str, Observation] = {}
         for link in run.prefect_executions:
             if link.terminal_at is None:
-                await self.reconcile_execution(run_id, link, pool, now)
+                observations[link.flow_run_id] = await self.reconcile_execution(run_id, link, pool, now)
+        return observations
 
     async def reconcile_execution(  # noqa: PLR0911  # pylint: disable=too-many-return-statements
         self, run_id: str, link: PrefectExecutionLink, pool: PoolStatus | None = None, now: datetime | None = None
-    ) -> None:
-        """Reconcile one link, suitable for request-time freshness before rendering."""
+    ) -> Observation:
+        """Reconcile one link, suitable for request-time freshness before rendering.
+
+        Returns the single remote observation this call took, on every path, so a caller
+        rendering the same link can reuse it rather than observe the link again.
+        """
         now = now or self._clock()
         pool = normalized_pool_status(pool or await self._orchestration.pool_status(self._work_pool_name, now))
         observed = await self._orchestration.observe(link.flow_run_id)
@@ -174,13 +185,13 @@ class RunLivenessReconciler:
             self._projection.observe_prefect_execution(run_id, link.flow_run_id, state=observed.state)
         refreshed_run = self._projection.lookup_run(run_id).value
         if refreshed_run is None:
-            return
+            return observed
         refreshed = next(
             (candidate for candidate in refreshed_run.prefect_executions if candidate.flow_run_id == link.flow_run_id),
             None,
         )
         if refreshed is None or refreshed.terminal_at is not None:
-            return
+            return observed
         link = refreshed
         if link.cancellation_requested_at is not None:
             if (
@@ -188,29 +199,30 @@ class RunLivenessReconciler:
                 and link.last_observed_state == "cancelled"
                 and self._projection.cancel_execution(run_id, link.flow_run_id, terminal_at=now)
             ):
-                return
+                return observed
             assert link.cancellation_recovery_deadline_at is not None
             if now >= link.cancellation_recovery_deadline_at:
                 self._projection.expire_execution_cancellation(run_id, link.flow_run_id, terminal_at=now)
-            return
+            return observed
         if link.claimed_at is None:
             if link.submitted_at is not None and age(now, link.submitted_at) >= self._policy.admission_ttl_seconds:
                 self._projection.abandon_execution(run_id, link.flow_run_id, terminal_at=now)
-                return
+                return observed
             if (
                 link.submitted_at is not None
                 and age(now, link.submitted_at) >= self._policy.stall_threshold_seconds
                 and pool.detail_available
             ):
                 self._projection.mark_execution_stalled(run_id, link.flow_run_id, stalled_at=now)
-            return
+            return observed
         if observed.available and observed.state in _TERMINAL_STATES:
             self._projection.interrupt_execution(run_id, link.flow_run_id, terminal_at=now)
-            return
+            return observed
         if link.claimed_at is None or age(now, link.claimed_at) < self._policy.stall_threshold_seconds:
-            return
+            return observed
         if pool.detail_available and not _owner_is_fresh(link.claiming_worker_id, pool, now):
             self._projection.interrupt_execution(run_id, link.flow_run_id, terminal_at=now)
+        return observed
 
 
 def _owner_is_fresh(worker_id: str | None, pool: PoolStatus, now: datetime) -> bool:

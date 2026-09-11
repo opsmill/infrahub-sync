@@ -46,7 +46,7 @@ class _CountingProjection(ProductProjection):
     """The real local projection with counters for one request's durable I/O."""
 
     def __init__(self, projection: ProductProjection) -> None:
-        super().__init__(projection._records, projection._artifacts)  # noqa: SLF001  # pylint: disable=protected-access
+        super().__init__(projection._records, projection._artifacts)  # pylint: disable=protected-access
         self.lookup_runs = 0
         self.observation_writes = 0
 
@@ -165,11 +165,11 @@ def _client(
 ) -> tuple[TestClient, _CountingProjection]:
     projection = _CountingProjection(local_product_projection(tmp_path))
     projection.create_run(run)
-    service = RunService(projection, orchestration, clock=lambda: NOW)  # ty: ignore[invalid-argument-type]
+    service = RunService(projection, orchestration, clock=lambda: NOW)
     liveness = (
         RunLivenessReconciler(
             projection,
-            orchestration,  # ty: ignore[invalid-argument-type]
+            orchestration,
             LivenessPolicy(ADMISSION_TTL_SECONDS, STALL_THRESHOLD_SECONDS, 5),
             "pool",
             clock=lambda: NOW,

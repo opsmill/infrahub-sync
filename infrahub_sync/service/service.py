@@ -541,21 +541,23 @@ class RunService:
         error.__suppress_context__ = True
         raise error from error.__cause__
 
-    async def get_run(self, run_id: str) -> RunResource:
+    async def get_run(self, run_id: str, observations: dict[str, Observation] | None = None) -> RunResource:
         """Return retained product state even when Prefect detail expired."""
+        observed_states = dict(observations or {})
         run = self._required_run(run_id)
-        observations: dict[str, Observation] = {}
+        wrote = False
         for link in run.prefect_executions:
+            # A terminal execution is immutable: its retained summary needs no observation.
+            if link.flow_run_id in observed_states or link.terminal_at is not None:
+                continue
             observed = await self._orchestration.observe(link.flow_run_id)
-            observations[link.flow_run_id] = observed
+            observed_states[link.flow_run_id] = observed
             if observed.available:
                 self._projection.observe_prefect_execution(
-                    run_id,
-                    link.flow_run_id,
-                    state=observed.state,
-                    secrets=self._secrets,
+                    run_id, link.flow_run_id, state=observed.state, secrets=self._secrets
                 )
-        return self._resource_with_observations(self._required_run(run_id), observations)
+                wrote = True
+        return self._resource_with_observations(self._required_run(run_id) if wrote else run, observed_states)
 
     async def status(self, work_pool_name: str) -> ServiceStatusResource:
         """Return lifecycle-safe pool state without exposing provider identifiers."""

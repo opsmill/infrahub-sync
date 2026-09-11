@@ -252,6 +252,14 @@ to whether it was claimed. An acknowledged request retains its accepted response
 but still reaches that terminal verdict unless Prefect is durably observed as
 terminally cancelled first.
 
+A terminal execution is immutable, so its summary is served from the retained record
+and carries no live provider detail: `detail_available` is `false` and
+`unavailable_reason` is `live-detail-not-requested`. Its `state` is the last state
+observed before the verdict, so a completed execution can report `running` there;
+`terminal_state` and `terminal_outcome` are the authoritative fields for how an
+execution ended. Only the response that terminalises an execution still carries that
+execution's live detail.
+
 ## Routes
 
 Every route below requires `Authorization: Bearer <token>`. Every `POST` route also requires a
@@ -260,7 +268,7 @@ non-empty `Idempotency-Key` header and a non-empty `reason` in its JSON body.
 | Route | Behavior |
 | --- | --- |
 | `POST /runs` | Create one Sync run and accept `plan` or confirmed composed `sync`. |
-| `GET /runs/{run_id}` | Return the durable product record with current linked Prefect detail when available. |
+| `GET /runs/{run_id}` | Return the durable product record, with current linked Prefect detail for non-terminal executions. |
 | `GET /runs/{run_id}/plan` | Return retained saved-plan review data. |
 | `GET /runs/{run_id}/results` | Return retained results independently of Prefect result retention. |
 | `GET /runs/{run_id}/artifacts` | List immutable run-owned artifact references. |

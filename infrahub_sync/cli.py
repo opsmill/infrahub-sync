@@ -399,7 +399,9 @@ def _echo_run(resource: RunResource) -> None:
             # tell a run that needs no reconciling from one this command does
             # not report on, and the only way to settle that is the HTTP API.
             ("reconciliation_required", run.reconciliation_required),
-            ("execution_state", selected.state if selected is not None else None),
+            # A durable verdict outranks the last provider observation, which is
+            # frozen once an execution is terminal.
+            ("execution_state", (selected.terminal_state or selected.state) if selected is not None else None),
             # The correlation an operator follows into Prefect, from the same
             # selected attempt the state above is read from.
             ("flow_run_id", selected.flow_run_id if selected is not None else None),
