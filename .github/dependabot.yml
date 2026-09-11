@@ -12,6 +12,9 @@ updates:
       time: "09:00"
     labels:
       - "type/housekeeping"
+      # Dependency bumps carry no behaviour change of their own, so they are
+      # exempt from the news-fragment gate in changelog-check.yml.
+      - "ci/skip-changelog"
     groups:
       all:
         patterns:
@@ -25,6 +28,9 @@ updates:
       time: "09:00"
     labels:
       - "type/housekeeping"
+      # Dependency bumps carry no behaviour change of their own, so they are
+      # exempt from the news-fragment gate in changelog-check.yml.
+      - "ci/skip-changelog"
     groups:
       all:
         patterns:
