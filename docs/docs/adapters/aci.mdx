@@ -135,12 +135,13 @@ This transform:
 - Builds a mapping of node IDs to device names
 - The filter performs a lookup with a fallback to the original node ID if not found
 
-## Generating the models
+## Registering the package
 
-Use the generate command to produce models from the schema mapping and examples:
+Register the example package before creating a run:
 
 ```bash
-uv run infrahub-sync generate --name from-cisco-aci --directory examples/
+uv run infrahub-sync configs register examples/aci_to_infrahub/package.yml \
+  --reason "register Cisco ACI import"
 ```
 
 ## Common issues and troubleshooting

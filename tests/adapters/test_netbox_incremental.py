@@ -15,6 +15,15 @@ if TYPE_CHECKING:
 pytest.importorskip("pynetbox")
 
 
+@pytest.fixture(autouse=True)
+def _stubbed_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the adapter client for each test and restore its factory afterward."""
+    monkeypatch.setattr(
+        "infrahub_sync.adapters.netbox.NetboxAdapter._create_netbox_client",
+        lambda _self, _adapter: MagicMock(),
+    )
+
+
 def _make_adapter(mappings: list[dict]) -> "NetboxAdapter":
     """Build a NetboxAdapter with stubbed schema_mapping.
 
@@ -35,7 +44,6 @@ def _make_adapter(mappings: list[dict]) -> "NetboxAdapter":
     settings = {"url": "https://example.invalid", "token": "x"}
 
     adapter_settings = SyncAdapter(name="netbox", settings=settings)
-    NetboxAdapter._create_netbox_client = lambda _self, _adapter: MagicMock()  # ty: ignore[invalid-assignment]
     return NetboxAdapter(target=target, adapter=adapter_settings, config=config)
 
 
@@ -85,7 +93,10 @@ def test_list_changed_since_uses_last_updated_filter() -> None:
     fake_record = _FakeRecord({"id": 1, "name": "leaf1"})
     fake_endpoint = MagicMock()
     fake_endpoint.filter.return_value = [fake_record]
-    adapter.client.dcim.devices = fake_endpoint
+    # pynetbox resolves endpoints through `App.__getattr__`, so `devices` is not a
+    # declared attribute for ty to see. Removable once pynetbox ships typing for
+    # its dynamic endpoint access.
+    adapter.client.dcim.devices = fake_endpoint  # ty: ignore[unresolved-attribute]
 
     # Register a minimal model stub so getattr(adapter, "InfraDevice") works.
     # filter_records and transform_records pass records through unchanged.
@@ -129,7 +140,10 @@ def test_list_existing_ids_returns_unique_ids() -> None:
     rec_b = _FakeRecord({"id": 2, "name": "leaf2"})
     fake_endpoint = MagicMock()
     fake_endpoint.all.return_value = [rec_a, rec_b]
-    adapter.client.dcim.devices = fake_endpoint
+    # pynetbox resolves endpoints through `App.__getattr__`, so `devices` is not a
+    # declared attribute for ty to see. Removable once pynetbox ships typing for
+    # its dynamic endpoint access.
+    adapter.client.dcim.devices = fake_endpoint  # ty: ignore[unresolved-attribute]
 
     # Stub the model so get_unique_id returns something predictable.
     fake_model = MagicMock()

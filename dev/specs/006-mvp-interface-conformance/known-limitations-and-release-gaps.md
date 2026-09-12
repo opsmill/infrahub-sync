@@ -1,15 +1,12 @@
-# Known limitations and release gaps
+# Known limitations and qualification gaps
 
-## Hard release gates not implemented by DB-006
+## External prerequisites
 
 1. **Configuration-package registration/version management is absent.** MVP records an
    immutable configuration fingerprint/reference. There is no registration API, version
    lifecycle, or package promotion contract.
-2. **Prefect Extras is still an exact Git dependency.** The accepted staging pin is not a
-   released dependency and must be replaced through its owning release process before
-   PyPI publication or promotion to `main`.
-3. **No release promotion occurred.** This branch was not merged, pushed, published, or
-   promoted to `main`.
+2. **Prefect Extras is still an exact Git dependency.** Public package installation
+   requires a published dependency instead of repository credentials.
 
 ## Qualification limits
 
@@ -27,9 +24,9 @@
   this correction. The independent live environment was subsequently torn down under
   authorization: all eight assigned containers, five project volumes, and its compose
   network were removed, and post-teardown checks found no compose-project resources and
-  ports 8000 and 6362 free. The receipt and pre-existing adapter/SDK issue disposition are
-  recorded in `infrahub-sync-lab@2cd4010234608fee5d737f8cf051cb576516fd3d` at
-  `.planning/investigations/2026-08-10-lag-peer-identity-rediff-crash.md`.
+  ports 8000 and 6362 free. The pre-existing interface/LAG destination re-diff defect,
+  including its error and recovery procedure, is documented in the
+  [NetBox tutorial](../../../docs/docs/tutorials/netbox-demo-to-infrahub.mdx#diff-fails-after-a-sync-that-wrote-interfaces).
 - The oracle proves complete ProductRun/artifact equality for the plan envelope and the
   executed CLI/Python/actor-free-managed-worker plan, apply, and sync envelopes, including
   actual returned counts/outcomes/operations and in-memory routing/boundary effects. The
@@ -49,7 +46,7 @@
 
 ## Product limitations retained
 
-- Delete operations remain reviewable but are not executed by this release.
+- Saved-plan apply records delete operations for review but does not execute them.
 - The public Python and CLI projection supports the existing local SQLite/filesystem
   provider only. Adding a provider selector is out of DB-006 scope; production
   PostgreSQL/S3 construction remains the DB-003 Python provider surface.

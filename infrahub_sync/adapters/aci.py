@@ -23,6 +23,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
+from infrahub_sync.configuration.credentials import select_runtime_credential
 
 from .utils import get_value
 
@@ -205,9 +206,9 @@ class AciAdapter(DiffSyncMixin, Adapter):
 
     def _create_aci_client(self, adapter: SyncAdapter) -> AciApiClient:
         settings = adapter.settings or {}
-        url = os.environ.get("CISCO_APIC_URL") or settings.get("url")
-        username = os.environ.get("CISCO_APIC_USERNAME") or settings.get("username")
-        password = os.environ.get("CISCO_APIC_PASSWORD") or settings.get("password")
+        url = select_runtime_credential(settings, "url", ("CISCO_APIC_URL",))
+        username = select_runtime_credential(settings, "username", ("CISCO_APIC_USERNAME",))
+        password = select_runtime_credential(settings, "password", ("CISCO_APIC_PASSWORD",))
         # Prefer explicit env var for verify; allow boolean or string values
         verify_raw = os.environ.get("CISCO_APIC_VERIFY")
         if verify_raw is None:

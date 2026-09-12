@@ -646,7 +646,7 @@ def _warn_identity_finer_than_destination_key(
     Skipped where the kind declares no key at all: there is nothing to be finer than, and
     FR-024's first arm already reports that write as unkeyed. Warning only; the resolution
     (tighten the destination schema, loosen the mapping, or override per kind) is a
-    per-deployment decision and out of this release's scope.
+    per-deployment decision and is not part of plan derivation.
     """
     keys = _destination_keys(node)
     if not keys or any(supplied <= set(key) for key in keys):

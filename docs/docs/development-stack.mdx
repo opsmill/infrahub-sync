@@ -1,0 +1,136 @@
+---
+title: Local development stack
+---
+
+The repository ships a complete local stack for working on Infrahub Sync: a disposable
+Infrahub instance, PostgreSQL and MinIO for the service's own records and artifacts, a
+dedicated Prefect server, and the Sync HTTP API and its Prefect worker running from your
+checkout.
+
+Everything the stack creates is disposable, and every credential it uses is a published
+local default. Never point any value on this page at a shared or internet-facing
+instance.
+
+## Install
+
+The stack needs Docker, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13.
+
+```bash
+uv sync --extra dev --extra prefect --extra service
+```
+
+All three extras are required. Without `prefect` and `service` the Sync API and its
+worker cannot start, and the type checker cannot resolve their imports.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `uv run invoke preview.up` | Start the containers and the host processes. Writes nothing to Infrahub. |
+| `uv run invoke preview.seed` | Write the smoke dataset into Infrahub. |
+| `uv run invoke preview.smoke` | Seed, then run the smoke suite, which creates and applies real runs. |
+| `uv run invoke preview.status` | Show container, host process, and endpoint state. |
+| `uv run invoke preview.logs` | Print the tail of a host process log. |
+| `uv run invoke preview.down` | Stop the host processes and the containers, keeping the data. |
+| `uv run invoke preview.down --volumes` | Stop everything and delete every data volume. |
+
+`preview.logs` prints the Sync API log by default; pass `-n prefect-worker` for the
+worker's, and `--lines` for how much of it to print.
+
+### Starting the stack writes nothing
+
+`preview.up` brings the stack up and stops there. It loads no schema, creates no branch
+or node, and admits no run, so starting it again against an environment you are already
+using changes none of your data.
+
+Two commands write, and each says what it will write before writing:
+
+- `preview.seed` loads the example schema from
+  `examples/prefect_remote_run/schemas/infra_device.yml`, creates the `InfraDevice` named
+  `core01` on `main`, and then forks the `preview-smoke` branch from it. It changes
+  nothing on an environment that already holds that branch.
+- `preview.smoke` seeds, then runs the smoke suite. That suite mutates `core01` on `main`
+  and drives real plan and apply runs against `preview-smoke`.
+
+A clean `preview.up` followed by `preview.smoke` therefore works without a separate seed.
+
+## Addresses
+
+| Service | Address | Runs as |
+| --- | --- | --- |
+| Infrahub | `http://localhost:8080` | Container |
+| Prefect | `http://localhost:4210` | Container |
+| Sync HTTP API | `http://127.0.0.1:8010` | Host process |
+| PostgreSQL | `127.0.0.1:5439` | Container |
+| MinIO | `http://127.0.0.1:9010` | Container |
+
+The defaults avoid ports 8000 and 4200, so an Infrahub development stack or a Prefect
+server you already run keeps working alongside. To change any of them, put the override
+in `development/preview.local.env`, which the tasks read after the shipped
+`development/preview.env`. Git ignores that local file.
+
+Runtime state — process identifiers, logs, and caches — lives under `.preview/` at the
+repository root, which Git also ignores.
+
+## Every credential is a development default
+
+Nothing the stack uses is a secret, and none of it works anywhere else:
+
+- `development/preview.env` ships the MinIO access key and secret key, the Infrahub admin
+  token, and the Sync API bearer principal.
+- `development/docker-compose.infrahub.yml` is the official Infrahub Compose file,
+  downloaded unmodified from `https://infrahub.opsmill.io/<VERSION>` for the `VERSION`
+  pinned in `development/preview.env`. Its Infrahub admin token, agent token, and
+  security key defaults are that file's own published values.
+
+They reach only the disposable local containers this stack creates. Do not reuse them in
+a deployment, and mint your own tokens in `development/preview.local.env` if you need
+different ones.
+
+## The stack refuses to start on retired state
+
+`preview.up` starts the containers and waits for Infrahub and Prefect to answer, then
+reads Prefect and the host process list before it starts the worker, the deployment, and
+the Sync API. It refuses at that point when it finds state left under the names this
+service used before its rename: the `infrahub-sync-managed` deployment, a work pool or
+worker whose name starts with it, or a host process running `infrahub_sync.managed.serve`
+or `infrahub_sync.managed.worker`.
+
+The refusal names its own fix:
+
+```bash
+uv run invoke preview.down --volumes
+```
+
+That reset is destructive. It deletes every data volume in the stack, so the Infrahub
+instance, the service records, and the artifacts all go. It also stops a retired host
+process it can identify without ambiguity; where more than one running process matches a
+retired name, it stops none of them and asks you to stop them by hand.
+
+`preview.down` without `--volumes` does neither. It leaves the data volumes and any
+retired process in place, so it does not clear the refusal.
+
+## Running the tests
+
+The smoke suite lives in `tests/preview/` and is opt-in:
+
+```bash
+uv run pytest -m preview tests/preview -q
+```
+
+Run it in a single process. Its modules share one Infrahub branch and one Prefect
+deployment, and a collection hook orders the run-creating modules ahead of the module
+that observes their Prefect flow runs. Under `pytest-xdist` that ordering would apply
+only within one worker, and the shared branch would take concurrent writes.
+
+Every test in the suite skips, rather than fails, when the stack is not reachable.
+
+The rest of the test suite needs no stack, and excludes the markers that write to one:
+
+```bash
+uv run pytest -m "not preview and not integration" -q
+```
+
+Run that form while the stack is up. A plain `pytest -q` would collect the smoke suite
+against your running environment, and the `integration` tests write to whatever Infrahub
+instance the ambient settings name.

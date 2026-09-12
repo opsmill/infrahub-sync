@@ -711,8 +711,8 @@ session below. None expands scope. All eleven are **ratified** on the same basis
   class is indistinguishable from a plan with no deletes. Is the omission reviewable? → A: **Not as
   written, and it must be.** Both review depths MUST surface the delete-computation record and say
   plainly when deletes were not computed for the plan, and a non-zero delete count MUST be annotated
-  inline in both the summary and the per-object detail to say that no delete will be executed by this
-  release. This is the disclosure that makes AD024 defensible; without it AD024's own justification —
+  inline in both the summary and the per-object detail to say that the saved-plan apply path will
+  not execute deletes. This is the disclosure that makes AD024 defensible; without it AD024's own justification —
   that the omission is "explicit and reviewable" — is delivered by no obligation at all. It is carried
   into FR-006, the plan-summary contract, SC-009's pass condition, and the review-rendering task.
   `[AD056]`
@@ -818,7 +818,7 @@ because the basis it now carries is the whole of its authority.
   is withdrawn. DBA-007 applies the phrase "the unsupported operation" to a recorded delete, and
   User-scenario 4 applies it to the same thing; on the withdrawn reading DBA-007's phrase would have no
   referent at all. The brief therefore settles the meaning of its own term against that ground. The
-  distinction this specification draws — between an operation this release declines to execute by design
+  distinction this specification draws — between an operation the saved-plan apply path declines to execute by design
   and an operation whose action it does not recognize — is the **substance** of the re-derivation, and it
   is a good and necessary distinction; what it is not is an alternative authority that makes the override
   optional. The consequence is the useful part: **no reading of the brief's text avoided amending a
@@ -833,8 +833,8 @@ because the basis it now carries is the whole of its authority.
   planner; nothing here edits the brief.
   **The re-derivation.** A plan containing a delete applies every non-delete operation, does not delete
   from the destination, and ends in run state `applied`, with a non-zero skipped-delete count recorded
-  in the run's summary and an operator-visible warning naming that count. **An operation this release
-  does not execute is a designed limitation, not a run failure.** The limitation is the brief's own —
+  in the run's summary and an operator-visible warning naming that count. **An operation the
+  saved-plan apply path does not execute is a designed limitation, not a run failure.** The limitation is the brief's own —
   DBR-010 puts applying deletes out of scope and assigns the capability to a later outcome — so a run
   that behaves exactly as designed must not be reported as a failure.
   **What DBR-016 protects is preserved, and that is the constraint the re-derivation is built around.**
@@ -848,7 +848,7 @@ because the basis it now carries is the whole of its authority.
   the applied set necessarily differs from the reviewed set on every delete-bearing plan; that difference
   must be provably knowable rather than inferred, which the applied-operation identifiers together with
   the recorded skipped-delete count and identifiers supply. A **genuinely** unsupported operation — one
-  whose action this release does not recognize at all — still fails the run, because nothing about it is
+  whose action the saved-plan apply path does not recognize at all — still fails the run, because nothing about it is
   designed and its effect on the destination is unknown.
   **New basis for DBA-007**: DBR-009, DBR-010 and the re-derived DBR-016, measured as the non-delete
   operations landing, the delete targets surviving, run state `applied`, the recorded non-zero
@@ -1072,8 +1072,8 @@ is why its closure was verified by a narrow check against the library rather tha
   have; the per-kind deduplication state is given a home with a stated lifetime, since the write surface is
   entered once per operation and "once per kind" needs state across them; a task asserts the report's
   existence, its level and its per-kind cardinality across two operations of one kind; and the docs sweep
-  gains a clause stating that convergence is not verified in this release for destination kinds whose
-  convergence key crosses a relationship — the one part of this that reaches an operator, and the part the
+  gains a clause stating that convergence is not verified on the saved-plan apply path for destination
+  kinds whose convergence key crosses a relationship — the one part of this that reaches an operator, and the part the
   sibling delete limitation already had. `[AD078]`
 - Q: The local track of the run guide is headed "local, no servers". Does every step under it run without
   one? → A: **No.** The third CLI-sanity command reaches the destination for its schema and exits non-zero
@@ -1513,7 +1513,7 @@ warning the operator sees.
 gap between "recorded" and "not applied" must be loud. A silent skip would leave the applied set
 merely inferable from the reviewed set instead of provably knowable against it, which contradicts the
 outcome. Recording the count and the identifiers of what was skipped is what makes the difference a
-value rather than a guess — and a limitation this release designed in is not the same thing as a run
+value rather than a guess — and a limitation designed into the saved-plan apply path is not the same thing as a run
 that went wrong, so the apply completes rather than failing. `[AD055]`
 
 **Independent Test**: Plan against a source from which a destination-present object has been
@@ -1533,7 +1533,7 @@ skipped-delete count and identifiers, and the warning naming that count.
    compared against the operations that were reviewed, **Then** every operation the two sets differ by
    is accounted for by the recorded skipped-delete identifiers, so the difference is a recorded value
    rather than an inference. `[AD055]`
-3. **Given** a plan carrying an operation whose action this release does not recognize at all,
+3. **Given** a plan carrying an operation whose action the saved-plan apply path does not recognize at all,
    **When** an apply is requested, **Then** the apply is refused before any destination write, naming
    the operation identifier, the unrecognized action and the operator's next action, and the run is
    recorded `failed` — which is the case a designed limitation is not.
@@ -1598,7 +1598,7 @@ references.
   matches no destination object refuses that operation and fails the run, naming the peer kind, the
   peer identity, and the referring operation identifier. A reference whose peer identity matches
   more than one destination object refuses, naming the peer kind, the peer identity, and the match
-  count. Neither case is ever a silent skip. Both refusals belong to the saved-plan apply resolver
+  count. Neither case is ever a silent skip. Both refusals belong to the saved-plan resolver
   only; the live write path's existing warn-and-continue on an unresolvable peer is unchanged.
   `[AD016]` `[AD048]`
 - **A plan-derivation failure on the non-mutating path.** An operation with no formable destination
@@ -1616,12 +1616,12 @@ references.
 - **A recorded delete at apply time.** The apply executes every non-delete operation, executes no
   delete, and completes in an applied state. The number of deletes it did not execute is recorded on
   the run alongside their identifiers, and a warning the operator sees names that count. This is a
-  designed limitation of this release rather than a run failure: applying deletes is explicitly out of
+  designed limitation of the saved-plan apply path rather than a run failure: applying deletes is explicitly out of
   scope and assigned to a later outcome, so a run that behaves exactly as designed is not reported as
   having gone wrong. What the recording preserves is that the applied set stays provably knowable
   against the reviewed set — the two differ by exactly the recorded skipped identifiers, which is a
   value rather than an inference. `[AD055]`
-- **An operation whose action this release does not recognize.** Distinct from a recorded delete, and
+- **An operation whose action the saved-plan apply path does not recognize.** Distinct from a recorded delete, and
   the case that does fail. An operation carrying an action outside the closed vocabulary is refused
   before any destination write, naming the operation identifier, the action found, the actions
   recognized, and the operator's next action; the run is recorded `failed`. Nothing about such an
@@ -1791,16 +1791,16 @@ references.
   entire delete class is indistinguishable from a plan that genuinely has no deletes, and FR-015's
   claim that the omission is explicit and reviewable is carried by nothing. A **non-zero** delete count
   MUST additionally be annotated inline, in the summary and in the per-object detail alike, stating that
-  no delete will be executed against the destination by this release, so a reviewer approving a plan sees
+  no delete will be executed against the destination by the saved-plan apply path, so a reviewer approving a plan sees
   what will and will not be written from the same output they approve.
   **Review renders a plan it would refuse to apply, with one exception that MUST be stated rather than
   discovered.** A plan that would fail the pre-apply verification is rendered anyway, annotated with why —
-  review's job is to show. But an operation carrying an action this release does not recognize is refused
+  review's job is to show. But an operation carrying an action the saved-plan apply path does not recognize is refused
   while the artifact is read, which is what puts FR-017's refusal before any destination write, and review
   reads through that same interface: so review **also** refuses such a plan, with the same message. That is
-  the intended behavior and not an accident of sharing a reader — a plan whose operation vocabulary this
-  release cannot interpret cannot be honestly summarized either, and the count it would print would be a
-  count of operations it does not understand. It is stated here so no reader takes "review never refuses to
+  the intended behavior and not an accident of sharing a reader. A plan cannot be honestly summarized
+  when the saved-plan apply path cannot interpret its operation vocabulary, and the count would cover
+  operations the reader does not understand. It is stated here so no reader takes "review never refuses to
   show" as absolute, and it is tested. *(DBR-002,
   DBR-005; minimum field set per AD020, filter-miss behavior per AD036, delete-computation and
   delete-count disclosure per AD056, the empty-versus-raise split per AD058, next action and the kind
@@ -2096,7 +2096,7 @@ references.
   action. A peer identity that matches **more than one** destination object MUST refuse, naming the peer
   kind, the peer identity, the match count, and the operator's next
   action. Neither case may be a silent skip. Both refusals are scoped to
-  **this saved-plan apply resolver only**. The existing live write path's warn-and-continue on an
+  **this saved-plan resolver only**. The existing live write path's warn-and-continue on an
   unresolvable peer is unchanged by this feature: it is existing behavior on an existing path that
   this outcome does not authorize touching, and the refusal is a property of resolving a peer from a
   saved plan with no comparison store loaded — a path that does not exist today. Where a peer's
@@ -2147,7 +2147,7 @@ references.
   destination-side identity canonicalisation per AD049, the review-surface disclosure per AD056)*
   `[AD024]` `[AD036]` `[AD049]` `[AD056]`
 - **FR-016**: A delete MUST NOT be applied to the destination by the saved-plan apply path. Not
-  executing it is a **designed limitation of this release**, not a fault condition: applying deletes is
+  executing it is a **designed limitation of the saved-plan apply path**, not a fault condition: applying deletes is
   out of scope here and is assigned to a later outcome, so the apply path is correct precisely when it
   declines to execute one. What FR-017 requires of that decline is that it be recorded and reported, not
   that it end the run. The existing write path's behavior under a project's configured comparison flags
@@ -2156,7 +2156,7 @@ references.
 - **FR-017**: A plan operation the apply path does not execute MUST be reported and MUST be recorded;
   it MUST NOT be silently skipped. Two classes exist and they are treated differently, because one is
   designed and the other is not.
-    1. **A recorded delete** is a designed limitation of this release under FR-016. The apply MUST
+    1. **A recorded delete** is a designed limitation of the saved-plan apply path under FR-016. The apply MUST
        execute every non-delete operation in the same plan, MUST NOT delete from the destination, and
        MUST end in the applied run state. It MUST record on the run, in the same place FR-020's
        applied-operation record lives, both the **count** of deletes it did not execute and their
@@ -2166,7 +2166,7 @@ references.
        run record are the only signals; and the command's completion line MUST name the skipped count when
        it is non-zero, so the last line an operator reads is not silent about it. A
        delete-bearing plan MUST NOT fail the run, and no new run state is introduced for it.
-    2. **A genuinely unsupported operation** — one carrying an action this release does not recognize —
+    2. **A genuinely unsupported operation** — one carrying an action the saved-plan apply path does not recognize —
        MUST be refused before any destination write, MUST name the operation identifier, the action
        found, the actions recognized and the operator's next action, and MUST fail the run. Nothing
        about such an operation is designed, so what it would do to the destination is unknown and the
@@ -2506,7 +2506,7 @@ references.
   destination rejection leaves the unattempted operations in neither set, which is how a partial apply stays
   distinguishable from a completed one, so the closure is checked after the operation sequence ends and not
   during it. A run state of `failed` **fails this criterion**: not executing a
-  delete is a designed limitation of this release, and the criterion measures that the limitation is
+  delete is a designed limitation of the saved-plan apply path, and the criterion measures that the limitation is
   disclosed, not that the run is reported as broken. *(DBA-007, re-derived per AD055; run state per
   AD010; the recorded record's home per AD062; the warning's level, the completion line and the
   completed-apply scoping pinned in the round-two remediation)* `[AD010]` `[AD055]`
@@ -2772,7 +2772,7 @@ is the whole of what is done: none of the capabilities below is built here.
   AD005, as corrected by AD057, rather than left open. `[AD057]`
 - An apply that skipped deletes records the applied run state, which the incremental path's success set
   already contains, so such a run counts as a successful prior run for a later warm start. This is
-  accepted rather than mitigated: the apply did succeed at everything this release executes, and
+  accepted rather than mitigated: the apply did succeed at everything the saved-plan apply path executes, and
   introducing a distinct state to say otherwise would be the compatibility change AD010 declines.
   *(per AD055)* `[AD055]`
 - SC-010's scan is performed over the artifact files and over the CLI's captured standard output.
@@ -2861,7 +2861,7 @@ derived-requirement policy is *not* the authority and was miscited as such: it r
 derivations on a basis-disclosure proviso, and read as a licence for downstream re-derivation it would make
 more than half of this brief advisory. It is cited here for the proviso alone — that a re-derivation carry
 its basis, which each row below does. AD074 also offered a second and narrower ground — that DBR-016
-governs an operation this release does not **support**, and a delete is a recognized action whose
+governs an operation the saved-plan apply path does not **support**, and a delete is a recognized action whose
 **execution** the brief excludes separately, so DBR-016 never reached a recorded delete. **That ground is
 withdrawn (AD077).** DBA-007 and the brief's User-scenario 4 both apply the phrase "the unsupported
 operation" to a recorded delete, so the brief's own usage places a recorded delete inside DBR-016's term
@@ -2880,7 +2880,7 @@ the brief.
 
 | Re-derived item | Brief's original basis | New basis carried here |
 |---|---|---|
-| **DBR-016** — an unsupported operation is reported at apply time and fails the run, never silently skipped | DBR-009 requires recording deletes while DBR-010 forbids applying them; a silent skip would make the applied set differ from the reviewed set | DBR-009 requires recording deletes while DBR-010 forbids applying them, so on every delete-bearing plan the applied set **necessarily** differs from the reviewed set. What must hold is that the difference be **provably knowable** rather than inferred — which the applied-operation identifiers together with the recorded skipped-delete count and identifiers supply. A skip is silent when nothing records it; this one is recorded twice over and warned about. An operation this release does not execute **by design** is a limitation, not a fault, so it does not fail the run; an operation whose action this release does not recognize **at all** still does, because nothing about it is designed. Carried by FR-016, FR-017 and FR-020 (AD055) |
+| **DBR-016** — an unsupported operation is reported at apply time and fails the run, never silently skipped | DBR-009 requires recording deletes while DBR-010 forbids applying them; a silent skip would make the applied set differ from the reviewed set | DBR-009 requires recording deletes while DBR-010 forbids applying them, so on every delete-bearing plan the applied set **necessarily** differs from the reviewed set. What must hold is that the difference be **provably knowable** rather than inferred — which the applied-operation identifiers together with the recorded skipped-delete count and identifiers supply. A skip is silent when nothing records it; this one is recorded twice over and warned about. An operation the saved-plan apply path does not execute **by design** is a limitation, not a fault, so it does not fail the run; an operation whose action the saved-plan apply path does not recognize **at all** still does, because nothing about it is designed. Carried by FR-016, FR-017 and FR-020 (AD055) |
 | **DBA-007** — a delete-bearing plan applies its non-deletes, does not delete, and ends in a failed state naming the unsupported operation | DBR-009, DBR-010, DBR-016 | DBR-009, DBR-010 and the re-derived DBR-016, measured as: the non-delete operations landing, the delete targets surviving, run state `applied`, a recorded non-zero skipped-delete count with the skipped identifiers alongside it, and an operator-visible warning naming that count. Carried by SC-007 and User Story 4 (AD055) |
 
 A successor note travels with both, recorded so a later reader finds it: the outcome that replaces the
@@ -2904,7 +2904,7 @@ separately. Every requirement in this specification appears in one of the two ta
 | Derived from DBR-009 and DBR-016: the delete derivation's extraction precondition | FR-004, FR-015; SC-017; Edge Cases (Destination side loaded incrementally) |
 | Derived from DBR-009 and DBR-016: the delete-computation record and the delete count must reach both review surfaces | FR-006, FR-015; SC-009, SC-017 (AD056) |
 | Derived from DBR-009, DBR-010 and DBR-016: a recorded delete at apply is a designed limitation, not a run failure | FR-016, FR-017, FR-020; SC-007; User Story 4; Edge Cases (A recorded delete at apply time) (AD055) |
-| Derived from DBR-016: an operation whose action this release does not recognize fails the run | FR-017; User Story 4 scenario 3; Edge Cases (An operation whose action this release does not recognize) (AD055) |
+| Derived from DBR-016: an operation whose action the saved-plan apply path does not recognize fails the run | FR-017; User Story 4 scenario 3; Edge Cases (An operation whose action the saved-plan apply path does not recognize) (AD055) |
 | Constraint: which existing commands carry review is an implementation choice, within no new command group | FR-008; SC-012; Assumptions; Dependencies |
 | Constraint: the qualified path is NetBox → Infrahub | Assumptions |
 | Derived from DBR-007 at apply time: peer resolution failures | FR-014; SC-016 |

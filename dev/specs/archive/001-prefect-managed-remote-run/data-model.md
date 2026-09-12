@@ -86,7 +86,7 @@ object) — the same rows the engine passes to `write_plan` — counting rows wh
 `action` is `create`/`update`/`delete`. The result is NEVER derived by re-reading
 `plan.parquet` (the DBA-009 test population's fakes never write one). Nested-child
 caveat: `_diff_to_rows` walks only the diff root's direct children while
-`Diff.has_diffs()` recurses; the rows are the preview's result fidelity boundary —
+`Diff.has_diffs()` recurses; the rows are the feature's result fidelity boundary —
 `has_diffs()` keeps gating `sync` execution as today, but the result fields come from
 the rows, so a nested-children-only diff reports `no-change`/`changed=False` even when
 a sync executed. A synthetic nested-diff unit test pins this behavior (tasks T029).

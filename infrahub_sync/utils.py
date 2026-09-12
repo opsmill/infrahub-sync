@@ -13,12 +13,14 @@ from infrahub_sdk import Config
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.cache.paths import run_dir as stored_run_dir
+from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.generator import render_template
 from infrahub_sync.plan.errors import PlanVerificationError
 from infrahub_sync.plan.reader import read_plan_artifact_bytes
 from infrahub_sync.plan.verify import destination_binding_failure
 from infrahub_sync.plugin_loader import PluginLoader, PluginLoadError
 from infrahub_sync.potenda import Potenda
+from infrahub_sync.runtime_schema import RuntimeModelScopeError, bind_runtime_models
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,9 @@ if TYPE_CHECKING:
     from infrahub_sdk.schema import GenericSchema, NodeSchema
 
     from infrahub_sync.plan.models import ApplyRecord
+    from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import RawPlanArtifact
+    from infrahub_sync.runtime_schema import RuntimeModelPlan
 
 
 def find_missing_schema_model(
@@ -104,28 +108,17 @@ def import_adapter(sync_instance: SyncInstance, adapter: SyncAdapter):
             except (ImportError, AttributeError, SyntaxError, TypeError, ValueError, OSError) as exc:
                 logger.warning("Could not load generated adapter from %s: %s", adapter_file_path, exc)
 
-    # Fall back to the plugin loader
-    # The "sync" classes could be declared into a separate module
-    adapter_paths = sync_instance.adapters_path or []
-    loader = PluginLoader.from_env_and_args(adapter_paths=adapter_paths)
-
-    # If explicit adapter spec is provided, use it
-    if adapter.adapter:
-        try:
-            # Try loading the explicitly specified adapter
-            adapter_class = loader.resolve(adapter.adapter)
-            logger.debug("Using directly specified adapter class: %s", adapter_class.__name__)
-        except PluginLoadError as exc:
+    # Fall back to the general loader. The "sync" classes could be declared into a
+    # separate module, and this local path keeps the adapter-path, environment and
+    # filesystem resolution it has always had; only registered admission is narrowed.
+    loader = PluginLoader.from_env_and_args(adapter_paths=sync_instance.adapters_path or [])
+    try:
+        return loader.resolve(adapter.adapter or adapter.name)
+    except PluginLoadError as exc:
+        if adapter.adapter:
             msg = f"Failed to load adapter '{adapter.adapter}': {exc}"
             raise ImportError(msg) from exc
-        else:
-            return adapter_class
-
-    else:
-        try:
-            return loader.resolve(adapter.name)
-        except PluginLoadError:
-            return None
+        return None
 
 
 def get_all_sync(directory: str | None = None) -> list[SyncInstance]:
@@ -174,6 +167,36 @@ def get_instance(
     return None
 
 
+def _adapter_classes(
+    sync_instance: SyncInstance, runtime_models: RuntimeModelPlan | None
+) -> tuple[type[Any], type[Any]]:
+    """Resolve both sides' adapter classes for one run.
+
+    A registered run resolved them from installed code when it built its model plan, so
+    nothing here reads the configuration directory. Every other run keeps the legacy
+    generated-wrapper-first resolution.
+
+    Raises:
+        ImportError: either side's adapter class could not be loaded.
+    """
+    if runtime_models is not None:
+        if runtime_models.source is None:
+            msg = "engine assembly needs both adapters, but this run prepared a destination-only runtime model plan"
+            raise RuntimeModelScopeError(msg)
+        return runtime_models.source.adapter_class, runtime_models.destination.adapter_class
+    source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
+    destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+    if source and destination:
+        return source, destination
+    missing = []
+    if not source:
+        missing.append(f"source adapter '{sync_instance.source.name}'")
+    if not destination:
+        missing.append(f"destination adapter '{sync_instance.destination.name}'")
+    msg = f"Could not load the following adapter(s): {', '.join(missing)}"
+    raise ImportError(msg)
+
+
 def get_potenda_from_instance(
     sync_instance: SyncInstance,
     branch: str | None = None,
@@ -182,23 +205,19 @@ def get_potenda_from_instance(
     run_id: str | None = None,
     continue_on_error: bool = False,
     concurrent_load: bool = True,
+    base_directory: Path | None = None,
 ) -> Potenda:
     """Create and return a Potenda instance based on the provided SyncInstance.
 
     When ``run_id`` is None, a fresh sortable identifier is allocated via
     ``generate_run_id()`` so each invocation gets its own cache directory.
-    """
-    source = import_adapter(sync_instance=sync_instance, adapter=sync_instance.source)
-    destination = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
 
-    if not source or not destination:
-        missing = []
-        if not source:
-            missing.append(f"source adapter '{sync_instance.source.name}'")
-        if not destination:
-            missing.append(f"destination adapter '{sync_instance.destination.name}'")
-        msg = f"Could not load the following adapter(s): {', '.join(missing)}"
-        raise ImportError(msg)
+    ``base_directory`` names the cache root explicitly, for a caller that owns the
+    directory this run works in instead of deriving it from the environment or the
+    working directory.
+    """
+    runtime_models = sync_instance._runtime_models
+    source, destination = _adapter_classes(sync_instance, runtime_models)
 
     source_store = LocalStore()
     destination_store = LocalStore()
@@ -226,6 +245,8 @@ def get_potenda_from_instance(
     except (ValueError, TypeError) as exc:
         msg = f"Error initializing {sync_instance.source.name.title()}Adapter: {exc}"
         raise ValueError(msg) from exc
+    if runtime_models is not None and runtime_models.source is not None:
+        bind_runtime_models(src, runtime_models.source.models)
 
     dest_kwargs = {
         "config": sync_instance,
@@ -234,13 +255,15 @@ def get_potenda_from_instance(
         "internal_storage_engine": destination_store,
     }
     if "infrahub" in sync_instance.destination.name.lower():
-        dest_kwargs["branch"] = (sync_instance.destination.settings or {}).get("branch") or branch or "main"
+        dest_kwargs["branch"] = effective_destination_branch(sync_instance.destination.settings, branch)
 
     try:
         dst = destination(**dest_kwargs)
     except (ValueError, TypeError) as exc:
         msg = f"Error initializing {sync_instance.destination.name.title()}Adapter: {exc}"
         raise ValueError(msg) from exc
+    if runtime_models is not None:
+        bind_runtime_models(dst, runtime_models.destination.models)
 
     # Single topological pass yields both the flat order and the tier layout
     # (tiers is None when an explicit `order` is configured).
@@ -249,7 +272,7 @@ def get_potenda_from_instance(
     from infrahub_sync.cache.paths import generate_run_id
 
     rid = run_id or generate_run_id()
-    rdir = stored_run_dir(sync_instance.name, rid)
+    rdir = stored_run_dir(sync_instance.name, rid, base_directory=base_directory)
     rdir.mkdir(parents=True, exist_ok=True)
 
     # Compute (and persist) the schema sub-hash *before* constructing Potenda so
@@ -321,7 +344,7 @@ class PlanApplier:
     credentials applies a reviewed plan without the source's dependencies, credentials or
     reachability. It locates the stored run directory without creating anything (AD026)
     and writes none of the run's sidecars: a stored run's files are the immutable
-    provenance of the plan under apply. `run.json` remains the CLI's to write (AD069).
+    provenance of the plan under apply. The worker execution path owns `run.json`.
     """
 
     def __init__(self, engine: Potenda, *, run_dir: Path, run_id: str) -> None:
@@ -346,14 +369,23 @@ class PlanApplier:
         run_id: str,
         branch: str | None = None,
         verbosity: int | None = None,
+        base_directory: Path | None = None,
     ) -> PlanApplier:
         """Open the stored run `run_id` of `sync_instance` for applying.
+
+        `base_directory` names the cache root explicitly, for a caller that placed the
+        run's directory itself rather than deriving its location.
 
         Raises:
             ImportError: the destination adapter could not be loaded.
             ValueError: the destination adapter could not be initialized.
         """
-        destination_class = import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+        runtime_models = sync_instance._runtime_models
+        destination_class = (
+            import_adapter(sync_instance=sync_instance, adapter=sync_instance.destination)
+            if runtime_models is None
+            else runtime_models.destination.adapter_class
+        )
         if not destination_class:
             msg = f"Could not load the destination adapter '{sync_instance.destination.name}'"
             raise ImportError(msg)
@@ -365,18 +397,20 @@ class PlanApplier:
             "internal_storage_engine": _destination_store(sync_instance),
         }
         if "infrahub" in sync_instance.destination.name.lower():
-            dest_kwargs["branch"] = (sync_instance.destination.settings or {}).get("branch") or branch or "main"
+            dest_kwargs["branch"] = effective_destination_branch(sync_instance.destination.settings, branch)
         try:
             destination = destination_class(**dest_kwargs)
         except (ValueError, TypeError) as exc:
             msg = f"Error initializing {sync_instance.destination.name.title()}Adapter: {exc}"
             raise ValueError(msg) from exc
+        if runtime_models is not None:
+            bind_runtime_models(destination, runtime_models.destination.models)
 
         top_level, tiers = sync_instance.compute_order_and_tiers()
 
         # Located, never created: the run being applied already exists, and an apply that
         # allocated directories could manufacture the very run whose absence it should report.
-        rdir = stored_run_dir(sync_instance.name, run_id)
+        rdir = stored_run_dir(sync_instance.name, run_id, base_directory=base_directory)
 
         engine = Potenda(
             source=cast("Adapter", _PlanApplySource()),
@@ -394,6 +428,7 @@ class PlanApplier:
     def apply_plan(
         self,
         *,
+        ownership: WriteOwnership,
         config_version: str | None = None,
         allow_destination_change: bool = False,
         expected_checksum: str | None = None,
@@ -413,6 +448,9 @@ class PlanApplier:
 
         `expected_checksum` travels to the engine rather than being answered here, so the
         operator's approval is decided against the artifact the apply loop consumes.
+        `ownership` travels with it, required and without a default, because this seam
+        assembles the apply and an apply assembled without a write-ownership boundary is
+        an unguarded write.
 
         Raises:
             PlanVerificationError: the plan was computed against a different destination
@@ -421,7 +459,10 @@ class PlanApplier:
         artifact = read_plan_artifact_bytes(self.run_dir)
         self._require_recorded_destination(artifact=artifact, allow_destination_change=allow_destination_change)
         return self.engine.apply_plan(
-            config_version=config_version, artifact=artifact, expected_checksum=expected_checksum
+            ownership=ownership,
+            config_version=config_version,
+            artifact=artifact,
+            expected_checksum=expected_checksum,
         )
 
     def _require_recorded_destination(self, *, artifact: RawPlanArtifact, allow_destination_change: bool) -> None:

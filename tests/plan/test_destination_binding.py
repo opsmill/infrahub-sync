@@ -33,6 +33,7 @@ from infrahub_sync.plan.verify import destination_binding_failure
 from infrahub_sync.plan.writer import write_plan_artifact
 from infrahub_sync.utils import PlanApplier
 from tests.plan.artifact_fixtures import RUN_ID, manifest_path, write_artifact
+from tests.plan.ownership_fixtures import granted_ownership
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -243,11 +244,12 @@ class _RecordingEngine:
     def apply_plan(
         self,
         *,
+        ownership: object,
         config_version: str | None = None,
         artifact: object = None,
         expected_checksum: str | None = None,
     ) -> ApplyRecord:
-        _ = config_version, expected_checksum
+        _ = config_version, expected_checksum, ownership
         self.apply_calls += 1
         # Recorded, not ignored: the seam's read is what the engine must apply, so a delegation
         # that arrived without it would mean the engine reads the artifact a second time.
@@ -272,7 +274,7 @@ def test_a_destination_mismatch_refuses_before_the_engine_is_reached(tmp_path: P
     applier, engine = _applier(tmp_path, _BoundDestination(LIVE_URL))
 
     with pytest.raises(PlanVerificationError) as raised:
-        applier.apply_plan()
+        applier.apply_plan(ownership=granted_ownership())
 
     message = str(raised.value)
     assert RECORDED_URL in message
@@ -287,7 +289,7 @@ def test_the_override_applies_and_discloses_the_change(tmp_path: Path, caplog: p
     applier, engine = _applier(tmp_path, _BoundDestination(LIVE_URL))
 
     with caplog.at_level(logging.WARNING, logger="infrahub_sync.utils"):
-        applier.apply_plan(allow_destination_change=True)
+        applier.apply_plan(ownership=granted_ownership(), allow_destination_change=True)
 
     assert engine.apply_calls == 1
     warnings = " ".join(record.getMessage() for record in caplog.records if record.levelno >= logging.WARNING)
@@ -299,7 +301,7 @@ def test_a_matching_destination_applies_without_ceremony(tmp_path: Path) -> None
     _artifact(tmp_path, destination_binding=BINDING_OVERRIDE)
     applier, engine = _applier(tmp_path, _BoundDestination(RECORDED_URL))
 
-    applier.apply_plan()
+    applier.apply_plan(ownership=granted_ownership())
 
     assert engine.apply_calls == 1
     assert engine.artifacts == [engine.artifacts[0]], "the engine was delegated to exactly once"
@@ -319,7 +321,7 @@ def test_a_plan_without_the_field_applies_against_any_destination(tmp_path: Path
     _artifact(tmp_path)
     applier, engine = _applier(tmp_path, _BoundDestination(LIVE_URL))
 
-    applier.apply_plan()
+    applier.apply_plan(ownership=granted_ownership())
 
     assert engine.apply_calls == 1
 
@@ -328,7 +330,7 @@ def test_a_destination_exposing_no_binding_applies_unchecked(tmp_path: Path) -> 
     _artifact(tmp_path, destination_binding=BINDING_OVERRIDE)
     applier, engine = _applier(tmp_path, object())
 
-    applier.apply_plan()
+    applier.apply_plan(ownership=granted_ownership())
 
     assert engine.apply_calls == 1
 

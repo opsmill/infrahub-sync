@@ -175,6 +175,29 @@ def _write(
     )
 
 
+def test_registered_configuration_binding_is_written_and_covered_by_checksum(tmp_path: Path) -> None:
+    binding = ("config-001", 1, "a" * 64)
+    manifest = write_plan_artifact(
+        run_dir=tmp_path / RUN_ID,
+        run_id=RUN_ID,
+        config_version=CONFIG_VERSION,
+        source_snapshot=_snapshot(),
+        deletes_computed=True,
+        operations=[_tag("registered")],
+        configuration_binding=binding,
+        schema_fingerprint="b" * 64,
+    )
+
+    assert manifest.configuration_binding == binding
+    raw = json.loads(_manifest_path(tmp_path / RUN_ID).read_text(encoding="utf-8"))
+    assert raw["config_id"] == binding[0]
+    assert raw["registry_version"] == binding[1]
+    assert raw["package_checksum"] == binding[2]
+    assert manifest.plan_checksum != compute_plan_checksum(
+        {**raw, "package_checksum": "b" * 64}, _operations_path(tmp_path / RUN_ID).read_bytes()
+    )
+
+
 def _plan_dir(run_dir: Path) -> Path:
     return run_dir / PLAN_DIR_NAME
 
@@ -491,10 +514,10 @@ def test_an_unknown_manifest_field_is_tolerated_on_read(tmp_path: Path) -> None:
     """The writer emits the eight; the manifest *type* tolerates a ninth (FR-027, AD028)."""
     _write(tmp_path, [_tag("prod")])
     on_disk = json.loads(_manifest_path(tmp_path).read_text(encoding="utf-8"))
-    on_disk["schema_fingerprint"] = "a later outcome adds this"
+    on_disk["a_later_outcome_field"] = "a later outcome adds this"
 
     tolerated = PlanManifest.model_validate(on_disk)
-    assert tolerated.model_dump()["schema_fingerprint"] == "a later outcome adds this"
+    assert tolerated.model_dump()["a_later_outcome_field"] == "a later outcome adds this"
 
 
 # ======================================================================================

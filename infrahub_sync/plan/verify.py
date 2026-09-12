@@ -13,7 +13,7 @@ they are verification *subjects*, never applied.
 
 Two rules shape the check order and they are each other's exception (AD053):
 
-- **Check 1 is a gate.** An artifact whose `format_version` this release does not
+- **Check 1 is a gate.** An artifact whose `format_version` Infrahub Sync does not
   understand cannot have its remaining fields meaningfully interpreted, so when the gate
   fails checks 2 to 5 are **not evaluated** and the failure says so (PD-006).
 - **Once the gate passes, all of 2 to 5 are evaluated and every failure is named**, so one
@@ -41,7 +41,13 @@ from infrahub_sync.plan.models import (
     VerificationFailure,
     require_run_relative_path,
 )
-from infrahub_sync.plan.reader import operation_record_lines, stat_or_unreadable, supported_versions_text
+from infrahub_sync.plan.reader import (
+    DuplicateManifestKeyError,
+    load_manifest_mapping,
+    operation_record_lines,
+    stat_or_unreadable,
+    supported_versions_text,
+)
 from infrahub_sync.plan.writer import OPERATIONS_FILE_NAME, PLAN_DIR_NAME
 
 if TYPE_CHECKING:
@@ -88,12 +94,17 @@ def manifest_mapping_or_none(manifest_bytes: bytes | None) -> dict[str, Any] | N
 
     Named `..._or_none` rather than `manifest_mapping`, which `plan_checksum_failure` below
     already uses for the parameter that receives this function's result.
+
+    Decoding is the reader's strict `load_manifest_mapping`, so a manifest declaring one key
+    twice is *unparseable* here rather than silently resolved to its last value. Both readers
+    of the manifest share that one rule, which is what stops a duplicated binding being
+    re-checksummed into an artifact this gate would pass.
     """
     if manifest_bytes is None:
         return None
     try:
-        mapping = json.loads(manifest_bytes)
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        mapping = load_manifest_mapping(manifest_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError, DuplicateManifestKeyError):
         return None
     return mapping if isinstance(mapping, dict) else None
 
@@ -114,14 +125,14 @@ def _gate_failure(run_id: str, mapping: dict[str, Any] | None) -> VerificationFa
         "format_version",
         run_id=run_id,
         # Worded as a sentence rather than as the bare version list, because this failure is
-        # what an operator reads when an artifact a newer release wrote reaches this one: it
+        # what an operator reads when an artifact a newer version wrote reaches this one: it
         # is the apply path's whole answer for SC-018, which requires the message to name the
         # version found **and** the versions supported.
         expected=f"one of the supported plan format versions: {supported_versions_text()}",
         found=found,
         next_action=(
             f"The remaining checks ({', '.join(GATED_CHECKS)}) were not evaluated: an artifact whose "
-            f"format version this release does not understand cannot have its remaining fields "
+            f"format version this version of Infrahub Sync does not understand cannot have its remaining fields "
             f"meaningfully interpreted. Re-run `diff` with this version of infrahub-sync to rebuild "
             f"the artifact, or apply it with the version that wrote it."
         ),

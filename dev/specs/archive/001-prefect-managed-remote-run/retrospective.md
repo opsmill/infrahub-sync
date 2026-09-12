@@ -13,8 +13,7 @@ Sources verified for every finding: `run-report.md` (2114 lines),
 `opsmill-implement-report.md`, `tasks.md`, `AGENTS.md`, `tasks/__init__.py`,
 `tasks/linter.py`, `tasks/docs.py`, `pyproject.toml` `[tool.rumdl]`, `uv run invoke --list`,
 and the run ledger, acceptance matrix, decision register, final report, and planner feedback
-under `.planning/delivery-briefs/batch-developer-preview/runs/DB-001/20260730T192231Z/` in
-the `infrahub-sync-lab` repository.
+in the archived DB-001 run ledger in the `infrahub-sync-lab` repository.
 
 A note on framing: most of what follows is a property of the *process*, not of this feature.
 The delivered code came through two full lens rounds, a convergence pass, and two

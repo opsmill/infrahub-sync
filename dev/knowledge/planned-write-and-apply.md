@@ -110,37 +110,27 @@ Two checks protect the key, and they check different things:
   than the render call's own `"data"` key: `_generate_input_data(...)["data"]` is `{"data": {...}}`, a
   one-key mapping, so a check written against it would fire on every operation ever rendered.
 
-The gate branches on the kind's HFID shape, and the branch is the point:
+The gate applies one invariant to every kind: a render carrying no **usable** `id` or `hfid` raises
+`UnkeyedWriteRefusedError`, naming the operation and its kind. An unkeyed convergent write duplicates
+its object on a re-apply, and no HFID shape makes that safe. The key has to carry a value rather than
+merely be present, because a present-but-empty key keys nothing at the destination.
 
-| HFID shape | Render carries neither `id` nor `hfid` |
-|---|---|
-| **All direct** components | **Raise**, naming the kind — it can only mean the payload lost its identity components, which is always a defect |
-| **Crosses a relationship** | **Warn once per kind** and proceed |
-| **No HFID declared** | **Warn once per kind** and proceed — never raise; for such a kind, unkeyed is a schema fact, not a defect |
+`hfid` is the only key a planned write can genuinely render. The plan carries no destination UUID —
+FR-012 forbids the load that would supply one — and a payload field named `id` is not a substitute:
+`generate_payload_create` wraps every payload field into an attribute block, so such a field renders
+as an empty `id: {}`. That shape is refused rather than treated as keyed.
 
-The relationship-crossing row is not a shrug. The SDK cannot form an `hfid` client-side from a peer
-supplied as a resolved id: rendering a relationship value handed in as a bare id produces `{"id": ...}`
-with no `__typename`, so the store read that would resolve the peer is never attempted. Refusing would
-withdraw the relationship-bearing kinds from what this path supports. The write is issued, and the server
-may still key it: against one live destination, thirteen `InterfacePhysical` upserts rendered unkeyed, were
-issued with the warning, and a second apply of the identical plan produced no duplicate — because that
-kind declares a `device-name` uniqueness constraint the destination resolved the upsert on. That is one
-destination's answer. A relationship-crossing key with no covering uniqueness constraint would still
-duplicate.
+Three shapes cannot render a usable key and are therefore unsupported for planned writes:
 
-**So state the guarantee narrowly.** No write is issued whose payload is missing an HFID component, and
-no render is issued unkeyed where being unkeyed can only be a defect. "An unkeyed write is never issued"
-is false, and was struck from three places where it had been written.
+- **A key that crosses a relationship.** The SDK cannot form an `hfid` client-side from a peer supplied
+  as a resolved id: rendering a relationship value handed in as a bare id produces `{"id": ...}` with no
+  `__typename`, so the store read that would resolve the peer is never attempted.
+- **No HFID declared.** There is no convergence key to render.
+- **A payload field named `id`.** It renders as `id: {}` — a key with no value.
 
-The warning is at **warning level** and fires **once per destination kind**, with the dedup set living on
-the adapter instance for the lifetime of the apply. Both properties are pinned rather than described:
-`--quiet` floors the package logger at warning level, so an info-level emission satisfies every prose
-description of the obligation and vanishes for exactly the scripted and CI runs where it is the only
-signal; and once-per-operation would put a line on every row of a large apply. The content names the
-kind, that the write is issued anyway, which of the two conditions applies, and what to watch for. It
-is phrased in the present tense because the gate reads the *rendered* mutation: the warning is emitted
-at step 5b, before the upsert at step 6 and the relationship flush at step 7e, so a past-tense "the
-write was issued" would be claiming a write that has not happened yet and may still fail.
+Apply is sequential, so the guarantee is stated per operation: an operation whose render is unkeyed makes
+zero mutation calls, and no later operation executes. Operations applied before it stay written, and the
+apply record reports them.
 
 ## Peer resolution
 
@@ -180,7 +170,7 @@ The result count drives three arms: exactly one returns the node id and memoizes
 `PeerNotFoundError`; **more than one** raises `PeerAmbiguousError`. Both name the peer kind, the peer
 identity, the referring operation and the operator's next action, and both fail the run. Neither is ever
 a silent skip — a dropped relationship makes the applied set differ from the reviewed set exactly as a
-dropped operation does, and unlike a skipped delete it is not a designed limitation of the release. For a
+dropped operation does, and unlike a skipped delete it is not a designed limitation. For a
 kind whose HFID does not cover its plan identity, the documented fallback is to resolve the reference
 component's own peer first and filter on `<rel>__ids`.
 
@@ -193,6 +183,19 @@ references the dependency graph carries. Three cases it cannot express — a sel
 reachable only through an optional edge dropped to break a cycle, and any reference under an explicit
 `order:`, which yields no tiers at all — may leave a peer unresolved at apply, where the zero-match arm
 governs. The qualification is safe precisely because the miss is loud.
+
+## Cardinality-one nulls in plan format v1
+
+Plan format v1 does not encode whether a null optional cardinality-one relationship means
+"the source supplied no relationship" or "clear the destination relationship." Planned apply
+therefore omits that field. On a create this preserves absence; on an update it is a no-op and emits a
+warning naming the operation, kind, and field so the run does not silently claim that a requested clear
+converged. Clear the relationship directly at the destination, or use a future plan format that
+represents clears explicitly, when a clear is intended.
+
+A null mandatory cardinality-one relationship is never meaningful. Planned apply refuses it with
+`NullRelationshipValueError` before SDK rendering or any destination mutation, rather than allowing the
+SDK to turn Python `None` into a relationship id.
 
 ## Cardinality-many is an enforced replace-set
 
@@ -318,7 +321,7 @@ destination refusal is the more expensive mistake — the run records what was w
 ## Deletes are recorded, never executed
 
 Deletes are derived by set difference and recorded as first-class operations, then never executed —
-executing them is out of scope for this release. An apply over a delete-bearing plan completes
+executing them is not supported. An apply over a delete-bearing plan completes
 **`applied`**, with `summary["skipped_delete_count"]`, `summary["skipped_delete_operations"]` in stored
 order, and one warning naming the count. `applied_operations ∪ skipped_delete_operations` equals the
 plan's full identifier set on any completed apply, which is what keeps the applied set knowable against

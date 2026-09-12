@@ -1,0 +1,58 @@
+---
+# The two destination kinds the unkeyed-write row needs, and why each field is what
+# it is. Ported from `tests/integration/test_infrahub_unkeyed_refusal_integration.py`,
+# which proves this shape induces the refusal against a live Infrahub. It is not
+# ported from the offline adapter suite: that drives a recording client with a
+# locally constructed `NodeSchemaAPI`, whose `human_friendly_id` stays unset
+# forever, while a live destination reports whatever it computed instead.
+#
+# `CleanDevice`'s human-friendly ID crosses the `site` relationship. That is the
+# one shape the SDK cannot render a key for: the peer arrives as a resolved node
+# id, `get_path_value` cannot walk to `site__name__value`, the component resolves
+# to None, and no `hfid` is rendered. On a create the node carries no `id` either,
+# so the pre-write gate refuses before any mutation is attempted.
+#
+# `CleanSite`'s own identifier is all-direct, so it renders a key and is writable.
+# The refusal under test is `CleanDevice`'s alone.
+#
+# `CleanDevice.name` is deliberately not unique. Uniqueness is not the key here,
+# and a unique attribute is one more thing a destination could derive an
+# identifier from -- which is exactly how the previous mechanism died.
+#
+# This is qualification evidence. It is never part of the shipped bundle.
+version: "1.0"
+
+nodes:
+  - name: Site
+    namespace: Clean
+    label: Site
+    description: The peer whose identifier is direct, so it is both writable and resolvable.
+    include_in_menu: false
+    human_friendly_id:
+      - name__value
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+        order_weight: 1000
+
+  - name: Device
+    namespace: Clean
+    label: Device
+    description: The kind whose convergent write cannot be keyed, because its identifier crosses a relationship.
+    include_in_menu: false
+    human_friendly_id:
+      - site__name__value
+      - name__value
+    attributes:
+      - name: name
+        kind: Text
+        unique: false
+        order_weight: 1000
+    relationships:
+      - name: site
+        peer: CleanSite
+        cardinality: one
+        kind: Attribute
+        optional: false
+        order_weight: 2000

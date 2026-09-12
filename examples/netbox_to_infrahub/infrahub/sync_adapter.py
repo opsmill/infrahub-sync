@@ -31,28 +31,26 @@ _AdapterBaseClass = PluginLoader().resolve("infrahub")
 
 
 # -------------------------------------------------------
-# AUTO-GENERATED FILE, DO NOT MODIFY
-#  This file has been generated with the command `infrahub-sync generate`
-#  All modifications will be lost the next time you reexecute this command
+# Generated file - do not edit.
 # -------------------------------------------------------
 class InfrahubSync(_AdapterBaseClass):
     BuiltinTag = BuiltinTag
+    DcimCircuit = DcimCircuit
+    DcimDevice = DcimDevice
     DcimDeviceType = DcimDeviceType
     DcimPlatform = DcimPlatform
-    DcimDevice = DcimDevice
+    InterfaceLag = InterfaceLag
     InterfacePhysical = InterfacePhysical
     InterfaceVirtual = InterfaceVirtual
-    IpamPrefix = IpamPrefix
-    IpamIPAddress = IpamIPAddress
-    OrganizationManufacturer = OrganizationManufacturer
-    OrganizationProvider = OrganizationProvider
     IpamAggregate = IpamAggregate
-    OrganizationRIR = OrganizationRIR
-    DcimCircuit = DcimCircuit
-    InterfaceLag = InterfaceLag
-    LocationSite = LocationSite
-    LocationRack = LocationRack
+    IpamIPAddress = IpamIPAddress
+    IpamPrefix = IpamPrefix
+    IpamRouteTarget = IpamRouteTarget
     IpamVLAN = IpamVLAN
     IpamVLANGroup = IpamVLANGroup
     IpamVRF = IpamVRF
-    IpamRouteTarget = IpamRouteTarget
+    LocationRack = LocationRack
+    LocationSite = LocationSite
+    OrganizationManufacturer = OrganizationManufacturer
+    OrganizationProvider = OrganizationProvider
+    OrganizationRIR = OrganizationRIR

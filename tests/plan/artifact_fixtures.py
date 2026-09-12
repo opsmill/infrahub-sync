@@ -20,6 +20,7 @@ Not a test module: no assertions live here.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
@@ -162,3 +163,28 @@ def tamper_with_operations(run_directory: Path) -> None:
         )
         raise AssertionError(msg)
     path.write_bytes(tampered)
+
+
+def duplicated_key_manifest_bytes(
+    mapping: Mapping[str, Any],
+    *,
+    key: str,
+    first: Any,  # noqa: ANN401 — the shadowed first value is any JSON value
+    operations_bytes: bytes,
+) -> bytes:
+    """Encode `mapping` with `key` written **twice** — `first`, then the mapping's own value.
+
+    `json.loads` keeps the last of two duplicate keys, so the collapsed parse is `mapping`
+    itself and `plan_checksum` is repaired over exactly that. The artifact therefore verifies
+    as self-consistent and hashes to the value an operator would have approved: a duplicate
+    key has to be refused on its own, not caught by the checksum. Assembled at the byte level
+    because no mapping can hold one key twice.
+    """
+    body = dict(mapping)
+    body["plan_checksum"] = compute_plan_checksum(body, operations_bytes)
+    pairs: list[str] = []
+    for name, value in sorted(body.items()):
+        if name == key:
+            pairs.append(f"{json.dumps(name)}: {json.dumps(first)}")
+        pairs.append(f"{json.dumps(name)}: {json.dumps(value)}")
+    return ("{" + ", ".join(pairs) + "}").encode()

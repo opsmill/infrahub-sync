@@ -6,11 +6,10 @@ on-disk encoding and the data model fixes the rules they enforce, both under
 `dev/specs/archive/001-plan-artifact-saved-apply/`.
 
 Two asymmetries are deliberate. `PlanManifest` tolerates unknown fields — FR-027's
-forward-compatibility carve-out is written about the manifest, where a later outcome adds
-a schema-fingerprint field — while `PlannedOperation` is a **closed** field set, so an
-operation record this version cannot fully interpret is a torn record rather than a
-silently truncated one. And no field at either level groups operations into write units
-(FR-026).
+forward-compatibility carve-out is written about the manifest — while `PlannedOperation` is
+a **closed** field set, so an operation record this version cannot fully interpret is a
+torn record rather than a silently truncated one. And no field at either level groups
+operations into write units (FR-026).
 """
 
 from __future__ import annotations
@@ -309,7 +308,7 @@ class PlanManifest(BaseModel):
     """The artifact's header, and the format contract (FR-027).
 
     Unknown fields are tolerated, preserved verbatim, and included in the checksummed
-    bytes, because a later outcome adds a schema-fingerprint field here (AD028).
+    bytes (AD028).
     """
 
     model_config = ConfigDict(extra="allow")
@@ -322,9 +321,69 @@ class PlanManifest(BaseModel):
     operations_count: int = Field(ge=0)
     delete_operations_computed: bool
     plan_checksum: str
+    # Registered plans bind the exact configuration package the worker verified.  The
+    # three values are deliberately separate artifact fields so they participate in the
+    # canonical checksum alongside every other manifest fact.
+    config_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+    registry_version: int | None = Field(default=None, ge=1, le=2**63 - 1)
+    package_checksum: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     # Additive: manifests written before this field exists carry no
     # binding, and the apply-time destination comparison skips them.
     destination_binding: DestinationBindingRecord | None = None
+    # The consumed destination-schema semantics the plan was computed against, as the full
+    # SHA-256 digest of the canonical projection (`infrahub_sync.runtime_schema`).  Required
+    # on a registered plan and absent from an unregistered one, so a registered apply always
+    # has something to compare the live schema against and legacy manifests keep reading.
+    schema_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @field_validator("registry_version", mode="before")
+    @classmethod
+    def _require_exact_registry_version(cls, value: object) -> object:
+        """Refuse coercible values; a binding is an exact registry identity."""
+        if value is not None and type(value) is not int:  # pylint: disable=unidiomatic-typecheck
+            # Exact identity excludes bool and int subclasses.
+            msg = "registry_version must be int"
+            raise ValueError(msg)
+        return value
+
+    @model_validator(mode="after")
+    def _require_complete_configuration_binding(self) -> PlanManifest:
+        binding = (self.config_id, self.registry_version, self.package_checksum)
+        if any(value is None for value in binding) and any(value is not None for value in binding):
+            msg = "configuration binding must be all absent or all present"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _require_registered_schema_binding(self) -> PlanManifest:
+        """A registered plan records the schema semantics it was computed against.
+
+        Refused here rather than at the apply gate so the rule holds on both sides of the
+        artifact: the writer cannot emit a registered plan without the binding, and a
+        registered manifest that lost it reads as torn instead of reaching an apply that has
+        nothing to compare.
+        """
+        if self.config_id is not None and self.schema_fingerprint is None:
+            msg = "a registered plan manifest must record its schema_fingerprint"
+            raise ValueError(msg)
+        return self
+
+    @property
+    def configuration_binding(self) -> tuple[str, int, str] | None:
+        """Return the complete registered package identity, never a partial tuple."""
+        if self.config_id is None:
+            return None
+        assert self.registry_version is not None
+        assert self.package_checksum is not None
+        return self.config_id, self.registry_version, self.package_checksum
+
+    @property
+    def registered_schema_fingerprint(self) -> str | None:
+        """Return a registered plan's recorded schema identity, `None` when unregistered."""
+        if self.configuration_binding is None:
+            return None
+        assert self.schema_fingerprint is not None
+        return self.schema_fingerprint
 
     @model_serializer(mode="wrap")
     def _serialize_without_absent_binding(self, handler: Any) -> dict[str, Any]:
@@ -337,6 +396,12 @@ class PlanManifest(BaseModel):
         data: dict[str, Any] = handler(self)
         if data.get("destination_binding") is None:
             data.pop("destination_binding", None)
+        if self.schema_fingerprint is None:
+            data.pop("schema_fingerprint", None)
+        if self.configuration_binding is None:
+            data.pop("config_id", None)
+            data.pop("registry_version", None)
+            data.pop("package_checksum", None)
         return data
 
 

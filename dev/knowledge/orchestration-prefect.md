@@ -2,21 +2,27 @@
 
 > Part of: `dev/knowledge/` | Related: [The shared execution surface](execution-surface.md)
 
-<!-- Extracted from dev/specs/archive/001-prefect-managed-remote-run on 2026-07-31 -->
+<!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
 
-`infrahub_sync/orchestration/` is the Developer Preview Prefect integration: a flow that runs one plan
+`infrahub_sync/orchestration/` is the direct Prefect integration: a flow that runs one plan
 or one confirmed sync, and a serve entrypoint that exposes it as a locally served
-deployment. It is the only package in the repository that imports `prefect`, it is installed
-by the optional `prefect` extra, and nothing in the base package imports it — see
+deployment. It is installed by the optional `prefect` extra, and nothing in the base
+package imports it — see
 [ADR 9](../adr/0009-optional-integrations-live-in-their-own-package.md).
+
+Two packages under `infrahub_sync/` import `prefect`, and both are optional: this one, and
+`infrahub_sync/service/` below, which the `service` extra installs. No other package under
+`infrahub_sync/` imports it, so a base install loads neither. The vendored
+`opsmill_prefect_extras/` imports Prefect too; it sits outside `infrahub_sync/` and the
+`service` extra is what brings it into a working install.
 
 The flow calls [the shared execution surface](execution-surface.md) in-process. It never
 spawns the CLI.
 
-`infrahub_sync/managed/` is a separate, optional operational profile. Its managed flow
+`infrahub_sync/service/` is a separate, optional operational profile. Its service flow
 consumes the API-created product run ID and delegates deployment catalogue validation,
 deployment convergence, and native submission idempotency to OpsMill Prefect Extras pinned
-at commit `84688eb8d8db7e17770413640a66481ccdc3e725`. The managed HTTP service owns the
+at commit `97465e75137f6121d0377cd637383cfb3530d734`. The Sync HTTP service owns the
 public contract; Prefect remains authoritative for live execution, logs, retries, workers,
 and cancellation.
 
@@ -36,13 +42,31 @@ Exactly those four parameters. None of them accepts a path, a CLI fragment, a cr
 an environment override. Everything else the run needs comes from the serving process's own
 environment.
 
-The separate `infrahub-sync-managed/run` deployment accepts exactly seven parameters:
-`run_id`, `sync_name`, `stage`, `configuration_reference`, `branch`, `expected_checksum`,
-and `confirm_writes`. It does not replace or extend the four-parameter Developer Preview
-flow. Credentials, endpoints, adapter instances, product-cache locations, and saved-plan
-cache locations stay in the managed worker environment.
+The separate `infrahub-sync-service/run` deployment serves a different flow, with eight
+parameters:
 
-When the managed flow runs outside Prefect context in offline executor tests,
+```python
+@flow(name="infrahub-sync-service")
+def service_sync_run(
+    run_id: str,
+    stage: Literal["plan", "verify", "apply", "sync"],
+    config_id: str | None = None,
+    registry_version: int | None = None,
+    package_checksum: str | None = None,
+    branch: str | None = None,
+    expected_checksum: str | None = None,
+    confirm_writes: bool = False,
+) -> dict[str, Any]: ...
+```
+
+The three registry parameters travel together: when all three are set, they name the
+registered version the run is bound to; when all three are unset, the run uses the legacy
+path; and a partial carrier is refused.
+This flow does not replace or extend the four-parameter direct Prefect flow. Credentials,
+endpoints, adapter instances, product-cache locations, and saved-plan cache locations stay
+in the service worker environment.
+
+When the service flow runs outside Prefect context in offline executor tests,
 `get_run_logger()` raises `MissingContextError`. The flow catches only that exception and
 uses its module logger. It does not construct `RunLoggerBridge` in the fallback path.
 
@@ -62,7 +86,7 @@ SUMMARY_LINE_FORMAT = "run %s finished: status=%s changed=%s summary=create:%d,u
 ```
 
 This line is how a remote caller reads a run's outcome, and its format is contractual —
-never a Python dict repr. It carries five `RunResult` fields: `run_id` (the leading
+never a Python dictionary `repr`. It carries five `RunResult` fields: `run_id` (the leading
 substitution), `status`, `changed`, the three summary counts, and `artifact_path`.
 `sync_name` and `operation` deliberately do not appear. Changing the format is a breaking
 change for consumers.
@@ -127,7 +151,7 @@ The directory path is fixed at serve start; its *contents* are re-resolved on ev
 configurations added, edited or removed take effect on the next run without re-serving.
 
 The serve process must be started from the repository root for the shipped example to work:
-its `config.yml` uses repo-root-relative paths resolved against the serving process's
+its `config.yml` uses repository-root-relative paths resolved against the serving process's
 working directory, and the cache root defaults to `Path.cwd()/.infrahub-sync-cache`. Started
 elsewhere, the example degrades to a silently empty plan or an adapter import failure.
 

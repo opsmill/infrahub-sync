@@ -290,7 +290,7 @@ duplicate. So on this walkthrough a duplicate of one of those kinds is the
 top of this file says the same thing; this note exists so the two agree at the point of use.
 
 **Step 4 exits 0 and records `applied`, not `failed` (AD055).** Not executing a delete is a designed
-limitation of this release — DBR-010 puts applying deletes out of scope — so the apply reports it rather
+limitation of the saved-plan apply path — DBR-010 puts applying deletes out of scope — so the apply reports it rather
 than failing on it. Under the comparison engine's fallback flag set
 (`infrahub_sync/potenda/__init__.py:92-93`) any destination holding mapped objects absent from the source
 yields deletes, so this is the ordinary case on a non-pristine destination, not an exception. What makes it

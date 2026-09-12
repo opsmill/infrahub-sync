@@ -148,14 +148,14 @@ def test_changing_any_non_excluded_field_changes_the_checksum(changed: str) -> N
 
 def test_unknown_extra_manifest_field_changes_the_checksum() -> None:
     """A tolerated unknown field is inside the checksummed bytes (FR-027, AD028)."""
-    with_extra = dict(MANIFEST, schema_fingerprint="fp-1")
+    with_extra = dict(MANIFEST, a_later_outcome_field="value-1")
     assert compute_plan_checksum(with_extra, OPERATIONS_BYTES) != compute_plan_checksum(MANIFEST, OPERATIONS_BYTES)
 
 
 def test_unknown_extra_manifest_field_value_change_changes_the_checksum() -> None:
     """Not merely its presence — its value is covered too."""
-    first = dict(MANIFEST, schema_fingerprint="fp-1")
-    second = dict(MANIFEST, schema_fingerprint="fp-2")
+    first = dict(MANIFEST, a_later_outcome_field="value-1")
+    second = dict(MANIFEST, a_later_outcome_field="value-2")
     assert compute_plan_checksum(first, OPERATIONS_BYTES) != compute_plan_checksum(second, OPERATIONS_BYTES)
 
 

@@ -58,10 +58,10 @@ blocking theme against the working tree before disposition.
 
 ### D011 — Docs-site reference page (T035) is governance-mandated scope the brief did not enumerate
 
-**Question:** Does the preview ship the Docusaurus reference page and orchestration.mdx revision (T035), given the brief's deliverable list names only "one example"?
+**Question:** Does the feature ship the Docusaurus reference page and orchestration.mdx revision (T035), given the brief's deliverable list names only "one example"?
 **Evidence:** F6: AGENTS.md Documentation policy ("Update `docs/` for any user-visible changes") is incorporated by the brief's constraint "The implementation follows the repository workflow"; a new optional extra + remote flow is user-visible. The run recorded the analogous smaller expansion (D007) as a decision; consistency requires this one be ratified too. X9 additionally shows the existing page teaches the pattern this feature obsoletes.
 **Options:** A — ship T035 (one reference page + sidebar entry + orchestration.mdx Prefect subsection revised to lead with the packaged integration). B — strike T035 and leave docs untouched (violates repo docs governance for a user-visible change). C — cross-link only (leaves obsolete DIY guidance primary).
-**Recommendation:** A. **Rationale:** repo governance requires it; the brief's constraints incorporate repo workflow; leaving contradictory docs live is worse than the modest scope addition. **Confidence:** High. **Origin:** `brief-gap` / `systemic` — no current brief-template slot states whether AGENTS.md's docs-governance obligation is in scope for a preview feature; planners must be prompted to declare it. **Status:** RATIFIED (D011, Blake Ellis, 2026-07-30) — recommendation A accepted as written.
+**Recommendation:** A. **Rationale:** repo governance requires it; the brief's constraints incorporate repo workflow; leaving contradictory docs live is worse than the modest scope addition. **Confidence:** High. **Origin:** `brief-gap` / `systemic` — no current brief-template slot states whether AGENTS.md's docs-governance obligation is in scope for a feature; planners must be prompted to declare it. **Status:** RATIFIED (D011, Blake Ellis, 2026-07-30) — recommendation A accepted as written.
 
 ## Round-1 verdict
 

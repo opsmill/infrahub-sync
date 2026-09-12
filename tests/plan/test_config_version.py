@@ -41,6 +41,7 @@ from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, PLAN_DIR_NAME, write_p
 from infrahub_sync.potenda import Potenda
 from infrahub_sync.utils import get_instance
 from tests.plan.artifact_fixtures import RUN_ID, operation_record
+from tests.plan.ownership_fixtures import granted_ownership
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -350,7 +351,7 @@ def _apply_with(run_directory: Path, *, config_version: str) -> tuple[str, NoOpP
         run_id=RUN_ID,
     )
     try:
-        engine.apply_plan(config_version=config_version)
+        engine.apply_plan(ownership=granted_ownership(), config_version=config_version)
     except PlanVerificationError:
         return "failed", destination
     return "applied", destination

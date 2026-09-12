@@ -2,7 +2,7 @@
 
 > Part of: `dev/guidelines/` | Related: [The shared execution surface](../knowledge/execution-surface.md), [Writing an adapter](writing-an-adapter.md)
 
-<!-- Extracted from dev/specs/archive/001-prefect-managed-remote-run on 2026-07-31 -->
+<!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
 
 Rules for any code path that renders a failure across a process boundary — a served
 deployment, an API response, a queued job. The adapter rule ("never log a secret") is about

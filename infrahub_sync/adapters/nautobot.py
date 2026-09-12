@@ -2,11 +2,10 @@ from __future__ import annotations
 
 # pylint: disable=R0801
 import logging
-import os
 from typing import TYPE_CHECKING, Any
 
-import pynautobot  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
-import pynautobot.core.query  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
+import pynautobot  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
+import pynautobot.core.query  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
 from diffsync import Adapter, DiffSyncModel
 from pydantic import ValidationError
 from typing_extensions import Self
@@ -19,6 +18,7 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier
+from infrahub_sync.configuration.credentials import select_runtime_credential
 
 from .utils import get_value
 
@@ -53,11 +53,42 @@ def _is_unknown_filter_error(exc: pynautobot.core.query.RequestError, field: str
     return field in text and "filter" in text.lower()
 
 
+# Nautobot documents `depth` on list endpoints as an integer between 0 and 10.
+# 2.4.41 does not enforce the upper bound itself (`core/api/views.py` parses
+# `int(...)` and falls back to 0 on a non-integer), so the adapter refuses
+# out-of-range values rather than passing or trimming them.
+MAX_DEPTH = 10
+
+
+def _validated_depth(value: Any) -> int | None:
+    """Return the `depth` to send, or None when the operator selected none.
+
+    `None` covers both a missing key and an explicit YAML null; both mean "send
+    no depth parameter". Anything else must be an integer in the documented
+    range — refused here, never clamped or coerced.
+    """
+    if value is None:
+        return None
+    # `bool` and `IntEnum` members pass `isinstance(..., int)`, so identity on
+    # the type is what keeps a non-integer out.
+    if type(value) is not int or not 0 <= value <= MAX_DEPTH:
+        msg = f"Invalid Nautobot setting 'depth': {value!r}. It must be an integer between 0 and {MAX_DEPTH}."
+        raise ValueError(msg)
+    return value
+
+
 class NautobotAdapter(DiffSyncMixin, Adapter):
     type = "Nautobot"
 
     def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+
+        # Invariant: `depth` is validated before the client is constructed, so an
+        # invalid value is refused ahead of any request.
+        settings = adapter.settings or {}
+        depth = _validated_depth(settings.get("depth"))
+        # `{}` when absent, so every existing request stays byte-identical.
+        self._depth_kwargs: dict[str, int] = {} if depth is None else {"depth": depth}
 
         self.target = target
         self.client = self._create_nautobot_client(adapter)
@@ -65,8 +96,8 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
 
     def _create_nautobot_client(self, adapter: SyncAdapter) -> pynautobot.api:
         settings = adapter.settings or {}
-        url = os.environ.get("NAUTOBOT_ADDRESS") or os.environ.get("NAUTOBOT_URL") or settings.get("url")
-        token = os.environ.get("NAUTOBOT_TOKEN") or settings.get("token")
+        url = select_runtime_credential(settings, "url", ("NAUTOBOT_ADDRESS", "NAUTOBOT_URL"))
+        token = select_runtime_credential(settings, "token", ("NAUTOBOT_TOKEN",))
         verify_ssl = settings.get("verify_ssl", True)
 
         if not url or not token:
@@ -140,7 +171,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         model: type[NautobotModel] = getattr(self, model_name)
         endpoint = self._resolve_endpoint(element.mapping)
         try:
-            raw = [dict(node) for node in endpoint.filter(last_updated__gte=cursor.value)]
+            raw = [dict(node) for node in endpoint.filter(last_updated__gte=cursor.value, **self._depth_kwargs)]
         except pynautobot.core.query.RequestError as exc:
             # Not every Nautobot endpoint exposes `last_updated__gte` (e.g.
             # dcim.front-ports / dcim.rear-ports return 400 with a body like
@@ -153,7 +184,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 model_name,
                 element.mapping,
             )
-            raw = [dict(node) for node in endpoint.all()]
+            raw = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
         yield from self._records_to_diffsync(element=element, model=model, raw_records=raw)
 
     def list_existing_ids(self, model_name: str) -> Iterator[str]:
@@ -171,7 +202,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
 
         model: type[NautobotModel] = getattr(self, model_name)
         endpoint = self._resolve_endpoint(element.mapping)
-        raw_records = [dict(node) for node in endpoint.all()]
+        raw_records = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
         for payload in self._records_to_diffsync(element=element, model=model, raw_records=raw_records):
             yield model(**payload).get_unique_id()
 
@@ -191,7 +222,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 continue
 
             endpoint = self._resolve_endpoint(element.mapping)
-            raw_records = [dict(node) for node in endpoint.all()]
+            raw_records = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
             total = len(raw_records)
             resource_name = element.mapping.split(".")[-1]
             if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
@@ -232,7 +263,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         for field in mapping.fields:  # pylint: disable=too-many-nested-blocks
             field_is_list = model.is_list(name=field.name)
 
-            if field.static:
+            if field.static is not None:
                 data[field.name] = field.static
             elif not field_is_list and field.mapping and not field.reference:
                 value = get_value(obj, field.mapping)

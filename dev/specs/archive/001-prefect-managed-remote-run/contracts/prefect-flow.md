@@ -41,12 +41,10 @@ example enables it), but the import at `utils.py:11` is unconditional — so *im
 compatibility with the installed redis client is what matters for every user, and that is
 what T012a verifies.
 
-Install (preview-accurate form — the preview exists
-only on this branch and is not published to PyPI, matching T034's binding
-install-source rule): from the repository checkout, `pip install -e '.[prefect]'`
-(or `uv pip install -e '.[prefect]'`). The PyPI form
-`pip install 'infrahub-sync[prefect]'` is the post-publication shape only and must
-not appear in the example README.
+Install from the repository checkout with `pip install -e '.[prefect]'`
+(or `uv pip install -e '.[prefect]'`). This checkout-based form ensures the installed
+code matches the documentation under review and is the binding source rule for the
+example README.
 
 ## 2. Flow definition (`infrahub_sync/orchestration/flow.py`)
 
@@ -72,7 +70,7 @@ FLOW_NAME = "infrahub-sync"
 # /api/deployments/name/infrahub-sync/run instead of the stuttering
 # .../infrahub-sync/infrahub-sync, and future orchestration briefs get sibling
 # deployments as .../infrahub-sync/<verb> for free. Deliberate choice (X12);
-# renaming after the preview would break every remote caller's lookup.
+# renaming after delivery would break every remote caller's lookup.
 DEPLOYMENT_NAME = "run"
 CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
 
@@ -118,7 +116,7 @@ Contractual body behavior, in order:
    distinct `RunResult` fields (`run_id`, `status`, `changed`, `summary`,
    `artifact_path`); `sync_name` and `operation` do NOT appear on the line. Any
    format change is a breaking
-   change for consumers of this preview; a future API brief supersedes it via the
+   change for consumers of this feature; a future API brief supersedes it via the
    owned contract's extend-not-fork rule (F11) rather than by silently reformatting.
 4. Return an **asdict-shaped dict** built by EXPLICIT seven-key construction
    (binding — X15):
@@ -204,14 +202,14 @@ class RunLoggerBridge(logging.Handler):
   (spec clarification #4 / D004; verified by T016's root-at-WARNING case).
 - **Process-isolation assumption (stated, not assumed — E21)**: attaching the handler
   and setting the level mutate PROCESS-GLOBAL logging state, which is safe only
-  because each flow run occupies its own process — the preview's default served
+  because each flow run occupies its own process — the feature's default served
   behavior (`flow.serve(...)` runs each flow run in a subprocess). Concurrent
   same-process flow runs would race on the `infrahub_sync` logger: two runs of
   DIFFERENT configurations are not excluded by the per-configuration pipeline lock, so
   they would cross-attach bridges (one run's records, including adapter detail,
   forwarded into the other run's Prefect log) and one run's `finally` would restore the
   level under the other. In-process concurrent execution is OUT OF SCOPE for this
-  preview; if a later brief runs flows in-process, the bridge must key on the current
+  feature; if a later brief runs flows in-process, the bridge must key on the current
   run and the level mutation must be reference-counted. Worth one confirmation with the
   existing probe rig (submit two concurrent runs of two configurations, confirm
   distinct PIDs); probe c₁ was a single run.
@@ -234,7 +232,7 @@ request corpus documents (and what DBA-008 scans).
 | Create run | `POST /api/deployments/{id}/create_flow_run` body `{"parameters": {"sync_name": "custom-example", "operation": "plan"}}` | `201/200` with flow-run `id` **synchronously** (state `SCHEDULED`) — SC-001's "identifier in the synchronous response" |
 | Observe state | `GET /api/flow_runs/{id}` | `state.type` progresses to `COMPLETED` (probe b: ~7 s) or `FAILED`; `state.message` carries the sanitized failure cause |
 | Read logs | `POST /api/logs/filter` body `{"logs": {"flow_run_id": {"any_": ["{id}"]}}}` | Array of records incl. bridged `infrahub_sync` lifecycle lines (probe c₁/c₂) |
-| Read the result | same `POST /api/logs/filter` response — locate the flow's summary line | The §2-step-3 summary line with its FIXED key=value format (`... summary=create:N,update:N,delete:N ...`) is the supported remote carrier of the RunResult fields (X7; leading `%s` = `run_id`, X18) — its stability is scoped to THIS PREVIEW, and a future API brief supersedes it via the owned contract's extend-not-fork rule (F11); result retrieval via Prefect result persistence is NOT part of this preview's contract |
+| Read the result | same `POST /api/logs/filter` response — locate the flow's summary line | The §2-step-3 summary line with its FIXED key=value format (`... summary=create:N,update:N,delete:N ...`) is the supported remote carrier of the RunResult fields (X7; leading `%s` = `run_id`, X18) — its stability is scoped to THIS FEATURE, and a future API brief supersedes it via the owned contract's extend-not-fork rule (F11); result retrieval via Prefect result persistence is NOT part of this feature's contract |
 | Invalid `operation` | same create-run call with `"operation": "apply"` | **`409`**, body `{"detail": "Error creating flow run: Validation failed for field 'operation'. Failure reason: 'apply' is not one of ['plan', 'sync']"}` — **no flow run object is created** (probe d₁; satisfies spec edge case 1 in its strongest form: no RunResult, no log lines, no run directory) |
 
 ## 6. Import boundary (DBR-010 / DBA-001 / SC-006)

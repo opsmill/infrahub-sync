@@ -24,7 +24,7 @@ def _require_safe_segment(value: str, field: str) -> str:
     return value
 
 
-def cache_root_for(sync_name: str) -> Path:
+def cache_root_for(sync_name: str, *, base_directory: Path | None = None) -> Path:
     """Return the per-pipeline cache root.
 
     Defaults to `<cwd>/.infrahub-sync-cache/<sync_name>/`. Override with the
@@ -32,6 +32,12 @@ def cache_root_for(sync_name: str) -> Path:
     location (e.g., an NFS mount used by a fleet of runners). The override is
     expanded (`~`) and rejected if it contains `..` traversal segments, so a
     misconfigured value can't silently redirect the cache outside its root.
+
+    `base_directory` names the root explicitly and takes precedence over both. A
+    caller that owns a private directory for one run — the Sync service, whose stages
+    share no filesystem — passes it rather than configuring a location that other
+    processes could also derive. The segment guard still applies, so an explicit root
+    cannot be escaped either.
 
     This is the SINGLE derivation point for every cache path, so absolutizing a
     relative override here is what makes the run directory — and therefore
@@ -42,6 +48,8 @@ def cache_root_for(sync_name: str) -> Path:
     is preserved exactly.
     """
     _require_safe_segment(sync_name, "sync_name")
+    if base_directory is not None:
+        return base_directory.absolute() / sync_name
     base = os.environ.get("INFRAHUB_SYNC_CACHE_DIR")
     if base:
         base_path = Path(base).expanduser()
@@ -62,7 +70,7 @@ def generate_run_id() -> str:
     return f"{now}-{secrets.token_hex(4)}"
 
 
-def run_dir(sync_name: str, run_id: str) -> Path:
+def run_dir(sync_name: str, run_id: str, *, base_directory: Path | None = None) -> Path:
     """Concatenate the cache root with the run identifier."""
     _require_safe_segment(run_id, "run_id")
-    return cache_root_for(sync_name) / run_id
+    return cache_root_for(sync_name, base_directory=base_directory) / run_id

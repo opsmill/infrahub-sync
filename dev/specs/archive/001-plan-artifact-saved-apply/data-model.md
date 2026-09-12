@@ -248,7 +248,7 @@ that point an operator is the audience.
 | `by_kind` | `dict[str, int]` | e.g. `{"BuiltinTag": 3, "LocationSite": 6}` |
 | `total` | `int` | Sum of `by_action` |
 | `delete_operations_computed` | `bool` | Carried up from `manifest.delete_operations_computed` (FR-015). **Required**: without it a plan missing its whole delete class renders identically to a plan that has no deletes, and FR-015's "explicit and reviewable" claim is carried by nothing (AD056) |
-| `deletes_not_executed` | `int` | `by_action.get("delete", 0)`. Non-zero means the renderer must annotate, inline in summary and in detail, that no delete will be executed against the destination by this release (FR-006, FR-017, AD055, AD056) |
+| `deletes_not_executed` | `int` | `by_action.get("delete", 0)`. Non-zero means the renderer must annotate, inline in summary and in detail, that no delete will be executed against the destination by the saved-plan apply path (FR-006, FR-017, AD055, AD056) |
 
 Both fields are **derived on read** from the manifest and the operation set; neither is a new artifact
 field, so the format and `plan_checksum` are unaffected.
@@ -317,7 +317,7 @@ Transitions this feature adds or corrects:
 | Event | State recorded | Requirement |
 |---|---|---|
 | Pre-apply verification fails | `failed`, with an **empty** applied-operation set rather than no field at all | FR-009, AD010, AD036 |
-| A plan containing a delete finishes applying its non-deletes | **`applied`**, with a non-zero `skipped_delete_count` and the skipped identifiers recorded, and an operator-visible warning naming the count. **Not `failed`** — an operation this release does not execute by design is a limitation, not a fault (AD055) | FR-016, FR-017, SC-007 |
+| A plan containing a delete finishes applying its non-deletes | **`applied`**, with a non-zero `skipped_delete_count` and the skipped identifiers recorded, and an operator-visible warning naming the count. **Not `failed`** — an operation the saved-plan apply path does not execute by design is a limitation, not a fault (AD055) | FR-016, FR-017, SC-007 |
 | An operation carries an action outside `ACTIONS` | `failed`, refused before any destination write, naming the operation identifier, the action found, the actions recognized and the next action. This is the class that *is* genuinely unsupported | FR-017, AD055, AD059 |
 | The destination rejects an operation, or transport fails | `failed`, message naming the failing operation identifier, the underlying error and the next action; already-written operations stay written | AD027, FR-025, AD059 |
 | A run already at `applied` is applied again | Permitted; verification runs unconditionally regardless of operation count | AD033 |
@@ -336,7 +336,7 @@ measures. Making the check live is unrelated scope.
 `previous_successful_run_dir` treats `applied` as successful
 (`_SUCCESS_STATUSES = frozenset({"applied", "dry-run"})`, `infrahub_sync/cache/incremental.py:24`), so an
 apply that skipped deletes counts as a successful prior run for a later warm start. That is correct — the
-apply succeeded at everything this release executes — and introducing a distinct state to say otherwise
+apply succeeded at everything the saved-plan apply path executes — and introducing a distinct state to say otherwise
 would be exactly the compatibility change AD010 declines.
 
 ## The apply record on the run (AD062, AD055)

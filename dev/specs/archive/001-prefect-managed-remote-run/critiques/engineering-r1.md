@@ -83,7 +83,7 @@ Both load paths wrap *any* failure into `ValueError` (`infrahub_sync/potenda/__i
 
 **Failure scenario**: a custom-model configuration whose only changes sit in nested child elements gives `has_diffs() == True` (sync runs, writes happen) with zero materialized plan rows. If `status` derives from `has_diffs()` ("applied") and `summary` from rows (all zero), `__post_init__` raises `ValueError` → the run is reported failed *after* successfully writing — the worst possible ordering.
 
-**Recommendation**: derive `changed`, `status`, and `summary` from **one** source — the materialized plan rows — and record explicitly that nested-child-only changes are outside the preview's result fidelity (or make the row materializer recurse, which changes `plan.parquet` content and needs its own compatibility note). Add a unit test with a synthetic nested diff pinning whichever behavior is chosen.
+**Recommendation**: derive `changed`, `status`, and `summary` from **one** source — the materialized plan rows — and record explicitly that nested-child-only changes are outside the feature's result fidelity (or make the row materializer recurse, which changes `plan.parquet` content and needs its own compatibility note). Add a unit test with a synthetic nested diff pinning whichever behavior is chosen.
 
 ## E8 — Must-Address: T029's parity test is unsatisfiable with the fixture pattern it names, and the summary-derivation mechanism must be pinned to in-memory rows
 

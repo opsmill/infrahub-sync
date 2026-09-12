@@ -51,7 +51,7 @@ One format everywhere: `contracts/prefect-flow.md` §2 step 3 pins
 `"run %s finished: status=%s changed=%s summary=create:%d,update:%d,delete:%d artifact=%s"`
 and declares it the supported remote observation surface ("Any format change is a
 breaking contract change"); §5 gains the previously missing "Read the result" row and
-explicitly excludes Prefect result persistence from the preview contract — the
+explicitly excludes Prefect result persistence from regression contract — the
 either/or the round-1 finding demanded, decided as option (b). Consistent consumers:
 `quickstart.md:102-104` (`summary=create:5,update:0,delete:0`), T014 (same format
 string, "never a dict repr"), T017 (asserts the fixed-format line), T034 (README

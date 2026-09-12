@@ -18,7 +18,7 @@ Because that flag set is the **fallback** rather than an unusual configuration, 
 mapped objects absent from the source yields deletes. A delete-bearing plan is the ordinary case, not
 an exception — which decides what an apply must do when it meets one.
 
-Executing deletes is out of scope for this release and is assigned to a later outcome.
+Executing deletes is not supported.
 
 ## Decision
 

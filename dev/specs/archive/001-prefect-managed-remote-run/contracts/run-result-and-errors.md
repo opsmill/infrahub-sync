@@ -67,7 +67,7 @@ Binding properties (all asserted by DBA-010's result-schema tests):
 class RunValidationError(Exception):
     """Request or configuration failure — every input-boundary refusal.
 
-    Qualifying causes (exhaustive for this preview):
+    Qualifying causes (exhaustive for this feature):
       - operation == "sync" and not confirm_writes   (message states that
         confirm_writes=true is required to run operation=sync)
       - sync_name matches no installed configuration (unknown, path-like, and

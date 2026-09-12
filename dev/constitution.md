@@ -28,8 +28,8 @@ principles below put safety, reproducibility, and connector consistency ahead of
 
 The non-mutating path is the default path, and applying changes is always a deliberate act.
 
-- `list`, `diff`, and `generate` are non-applying and MUST stay safe to run at any time,
-  against any environment, without approval.
+- `configs` inspection, `runs plan`, and `diff` are non-applying and MUST stay safe to run
+  at any time, against any environment, without approval.
 - `sync` mutates a destination system and MUST require explicit user instruction,
   confirmed target servers, and human approval. It MUST NOT run as an implicit side
   effect of another command.
@@ -62,11 +62,11 @@ Adapters are the primary extension point; every connector MUST honor the same co
 
 - A new adapter MUST live in `infrahub_sync/adapters/<name>.py` and follow the existing
   adapter patterns rather than inventing new structure.
-- It MUST provide `list` and `diff` pathways before `sync` is enabled.
+- It MUST provide a `diff` pathway before `sync` is enabled.
 - It MUST ship a connection config schema and a sanitized example under `examples/`.
 - It MUST document required environment variables and expected error cases, and add a page
   under `docs/docs/adapters/`.
-- `list` / `diff` / `generate` / `sync` MUST flow through the core sync engine (`potenda`);
+- `diff` / `sync` / `apply` MUST flow through the core sync engine (`potenda`);
   no ad-hoc per-adapter sync logic that bypasses it.
 
 **Rationale:** Consistent adapters keep the CLI predictable, make each new connector
@@ -124,8 +124,8 @@ Prefer the simplest solution that works and matches the patterns already in the 
 - YAGNI: build what the task needs, not speculative abstraction. A new abstraction needs
   at least two real callers.
 - New dependencies MUST be justified.
-- Generated code (the Python that `generate` produces from YAML configs) MUST be regenerated
-  from its YAML source, never hand-edited.
+- Generated code (the Python the internal generator produces from YAML configs) MUST be
+  regenerated from its YAML source, never hand-edited.
 - Keep commits small and scoped; do not mix large refactors with behavior changes.
 
 **Rationale:** A connector library accretes complexity quickly. Keeping each change small,
@@ -167,8 +167,8 @@ After changes, verify the CLI still behaves:
 
 ```bash
 uv run infrahub-sync --help
-uv run infrahub-sync list --directory examples/
-uv run infrahub-sync generate --name from-netbox --directory examples/
+uv run infrahub-sync configs --help
+uv run infrahub-sync runs --help
 ```
 
 ### Logging

@@ -20,18 +20,185 @@ import pkgutil
 import re
 import sys
 from enum import Enum
-from importlib.metadata import entry_points
+from importlib.metadata import distributions, entry_points
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 from diffsync import Adapter, DiffSyncModel
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
+
+    from infrahub_sync import SyncAdapter
 
 
 class PluginLoadError(Exception):
     """Exception raised when a plugin cannot be loaded."""
+
+
+# This distribution's own package. Its bundled adapters ship with the product, so they
+# are admitted whatever the install style reports — an editable or source checkout has no
+# distribution metadata mapping `infrahub_sync` to a distribution at all.
+BUNDLED_PACKAGE = "infrahub_sync"
+# Where the bundled package really lives, taken from this module's own location rather
+# than from `sys.modules`, so a replaced `infrahub_sync` entry cannot move it.
+BUNDLED_ROOT = Path(__file__).resolve().parent
+
+
+def installed_module_origins(spec_path: str) -> set[Path]:
+    """Every location an installed distribution ships this exact dotted module at.
+
+    Read from distribution file metadata, so it names the installed copy rather than
+    whatever happens to answer the name on ``sys.path``.
+    """
+    relative = spec_path.replace(".", "/")
+    wanted = {f"{relative}.py", f"{relative}/__init__.py"}
+    origins: set[Path] = set()
+    for distribution in distributions():
+        for entry in distribution.files or ():
+            if str(entry).replace("\\", "/") in wanted:
+                origins.add(Path(str(distribution.locate_file(entry))))
+    return origins
+
+
+def _normalized_module_origin(module: object) -> Path | None:
+    """The file a loaded module reports itself as coming from, normalized."""
+    spec = getattr(module, "__spec__", None)
+    origin = getattr(spec, "origin", None) or getattr(module, "__file__", None)
+    if not isinstance(origin, str) or not origin:
+        return None
+    try:
+        return Path(origin).resolve()
+    except OSError:
+        return None
+
+
+def module_origin_is_admitted(module: object, spec_path: str) -> bool:
+    """Whether the module actually loaded is one registered execution may read.
+
+    Predicting an origin from ``sys.path`` does not cover a name already in
+    ``sys.modules`` — ``import_module`` returns that entry without consulting a finder —
+    nor a submodule reached through a parent package's manipulated ``__path__``. This
+    answers the same provenance question about the module object itself: bundled modules
+    must come from inside the installed bundled package, and everything else must be a
+    file some installed distribution ships. A module reporting no usable origin is
+    refused.
+    """
+    origin = _normalized_module_origin(module)
+    if origin is None:
+        return False
+    if spec_path.partition(".")[0] == BUNDLED_PACKAGE:
+        return origin.is_relative_to(BUNDLED_ROOT)
+    return any(candidate.resolve() == origin for candidate in installed_module_origins(spec_path))
+
+
+def _entry_point_object_origin_is_admitted(obj: object) -> bool:
+    """Whether an entry point loaded a module or class from installed code."""
+    if inspect.ismodule(obj):
+        loaded_module = obj
+        loaded_module_name = obj.__name__
+    elif inspect.isclass(obj):
+        loaded_module_name = obj.__module__
+        loaded_module = sys.modules.get(loaded_module_name)
+    else:
+        return False
+    return loaded_module is not None and module_origin_is_admitted(loaded_module, loaded_module_name)
+
+
+def _resolve_one_part(search: Sequence[Path], name: str) -> tuple[Path | None, list[Path]]:
+    """Answer one dotted component against an ordered search path.
+
+    Returns either the file a regular package or module supplies, or the namespace
+    portions found along the way. A regular package or module ends the scan the moment it
+    is met, which is what makes an earlier checkout shadow everything behind it; bare
+    directories are recorded as PEP 420 portions and the scan continues, which is what
+    lets one namespace span several installed roots.
+    """
+    portions: list[Path] = []
+    for base in search:
+        package_init = base / name / "__init__.py"
+        if package_init.is_file():
+            return package_init, []
+        module = base / f"{name}.py"
+        if module.is_file():
+            return module, []
+        directory = base / name
+        if directory.is_dir():
+            portions.append(directory)
+    return None, portions
+
+
+def effective_module_origin(spec_path: str) -> Path | None:
+    """The file an import of this dotted name would load, found without importing it.
+
+    Walks ``sys.path`` the way the path finder does, component by component, combining
+    namespace portions as PEP 420 does so an adapter shipped in a namespace distribution
+    is reachable. A name that resolves to no file — a namespace package, which is a set
+    of directories — returns None, as does anything this cannot resolve: a zip import or
+    a custom finder. Both are refused rather than guessed at.
+    """
+    parts = spec_path.split(".")
+    search: list[Path] = [Path(entry) if entry else Path.cwd() for entry in sys.path]
+    for index, part in enumerate(parts):
+        origin, portions = _resolve_one_part(search, part)
+        last = index == len(parts) - 1
+        if origin is not None:
+            if last:
+                return origin
+            # A module has no submodules, so the dotted name cannot continue through one.
+            if origin.name != "__init__.py":
+                return None
+            search = [origin.parent]
+            continue
+        if last or not portions:
+            return None
+        search = portions
+    return None
+
+
+def is_installed_distribution_module(spec_path: str) -> bool:
+    """Whether a dotted target is the module an installed distribution actually ships.
+
+    The provenance rule registered resolution admits by. A dotted spec is admitted when
+    its top-level package is this distribution's own, or when the file an import would
+    load is exactly a file some installed distribution ships. Owning the top-level name
+    is not enough: a checkout module that shadows an installed package answers the name
+    from a different file, and is refused.
+
+    Deliberately conservative at one edge: a third-party adapter installed in editable
+    mode ships no module files in its metadata either, so it sits outside the registered
+    profile until it is installed normally. Answered from distribution metadata and the
+    filesystem, so the verdict is reached without importing the candidate.
+    """
+    if spec_path.partition(".")[0] == BUNDLED_PACKAGE:
+        return True
+    origins = installed_module_origins(spec_path)
+    if not origins:
+        return False
+    effective = effective_module_origin(spec_path)
+    if effective is None:
+        return False
+    resolved = effective.resolve()
+    return any(origin.resolve() == resolved for origin in origins)
+
+
+def _raise_declared_class_unavailable(
+    name: str, class_name: str, default_class_candidates: tuple[str, ...]
+) -> NoReturn:
+    """Refuse a declaration whose named class the entry point's module cannot supply."""
+    target = _target_base_class(default_class_candidates)
+    required = "" if target is None else f" as a {target.__name__} subclass"
+    msg = f"Entry point '{name}' does not declare a class named '{class_name}'{required}."
+    raise PluginLoadError(msg)
+
+
+def _target_base_class(default_class_candidates: tuple[str, ...]) -> type[Any] | None:
+    """The base class a resolution request is really asking for, if it names one."""
+    if "Adapter" in default_class_candidates:
+        return Adapter
+    if "Model" in default_class_candidates:
+        return DiffSyncModel
+    return None
 
 
 class Plugintype(str, Enum):
@@ -54,15 +221,32 @@ class PluginLoader:
     - Python entry points: group infrahub_sync.adapters
     """
 
-    def __init__(self, adapter_paths: Iterable[str] | None = None) -> None:
+    def __init__(self, adapter_paths: Iterable[str] | None = None, *, installed_only: bool = False) -> None:
         """
         Initialize a new PluginLoader.
 
         Args:
             adapter_paths: Optional list of paths to search for adapters.
+            installed_only: Whether resolution is restricted to installed code. True
+                disables filesystem resolution outright and admits dotted and entry-point
+                module targets only when :func:`is_installed_distribution_module` owns them.
         """
         self.adapter_paths = list(adapter_paths) if adapter_paths else []
+        self.installed_only = installed_only
         self._cache: dict[str, tuple[type[Any], Plugintype]] = {}
+
+    @classmethod
+    def installed_only_loader(cls) -> PluginLoader:
+        """Return a loader that resolves installed code and nothing else.
+
+        Entry points with installed module targets, bundled adapter modules, and dotted
+        targets an installed distribution owns: no configured adapter paths, no
+        ``INFRAHUB_SYNC_ADAPTER_PATHS``, no working directory, and no module that is
+        importable only because a checkout is on ``sys.path``. This is the loader
+        registered execution resolves through, so an adapter that is not installed in
+        the worker's environment cannot enter a registered run.
+        """
+        return cls(adapter_paths=None, installed_only=True)
 
     @classmethod
     def from_env_and_args(cls, adapter_paths: Iterable[str] | None = None) -> PluginLoader:
@@ -158,19 +342,20 @@ class PluginLoader:
         )
 
         # 1. Dotted path (if it looks like one)
-        if is_dotted:
+        if is_dotted and (not self.installed_only or is_installed_distribution_module(spec_path)):
             cls = self._resolve_from_dotted_path(spec_path, class_name, default_class_candidates)
             if cls:
                 self._cache[spec] = (cls, Plugintype.DOTTED_PATH)
                 return cls
 
         # 2. Filesystem path (search adapter_paths and CWD)
-        cls = self._resolve_from_filesystem(
-            path=spec_path, class_name=class_name, default_class_candidates=default_class_candidates
-        )
-        if cls:
-            self._cache[spec] = (cls, Plugintype.FILESYSTEM)
-            return cls
+        if not self.installed_only:
+            cls = self._resolve_from_filesystem(
+                path=spec_path, class_name=class_name, default_class_candidates=default_class_candidates
+            )
+            if cls:
+                self._cache[spec] = (cls, Plugintype.FILESYSTEM)
+                return cls
 
         # 3. Try as an entry point
         if cls is None:
@@ -187,9 +372,16 @@ class PluginLoader:
                 return cls
 
         # If we get here, we couldn't resolve the class
+        if not self.installed_only:
+            msg = (
+                f"Could not resolve adapter class for spec '{spec}'. "
+                f"Tried dotted path, filesystem, entry point, and built-in resolution."
+            )
+            raise PluginLoadError(msg)
         msg = (
-            f"Could not resolve adapter class for spec '{spec}'. "
-            f"Tried dotted path, filesystem, entry point, and built-in resolution."
+            f"Could not resolve adapter class for spec '{spec}' from installed code. "
+            f"Tried built-in resolution, with dotted and entry-point module imports "
+            f"restricted to files shipped by an installed distribution."
         )
         raise PluginLoadError(msg)
 
@@ -213,8 +405,15 @@ class PluginLoader:
 
         try:
             module = importlib.import_module(path)
-            return self._find_class_in_module(module, class_name, path, default_class_candidates)
         except (ImportError, AttributeError):
+            return None
+        # The predicted origin decided whether to import at all; this decides whether the
+        # module that answered may be read, which a preloaded or redirected one changes.
+        if self.installed_only and not module_origin_is_admitted(module, path):
+            return None
+        try:
+            return self._find_class_in_module(module, class_name, path, default_class_candidates)
+        except AttributeError:
             return None
 
     def _resolve_from_filesystem(
@@ -310,19 +509,57 @@ class PluginLoader:
 
             # Get the first matching entry point
             ep = next(iter(plugin_entry_points))
-            obj = ep.load()
+            obj = None
+            if not self.installed_only or is_installed_distribution_module(ep.module):
+                loaded = ep.load()
+                if not self.installed_only or _entry_point_object_origin_is_admitted(loaded):
+                    obj = loaded
 
             # If it's a module, find the class
             if inspect.ismodule(obj):
-                return self._find_class_in_module(obj, class_name, name, default_class_candidates)
-            # If it's already a class, return it
+                resolved = self._find_class_in_module(obj, class_name, name, default_class_candidates)
+                if resolved is None and class_name is not None:
+                    _raise_declared_class_unavailable(name, class_name, default_class_candidates)
+                return resolved
             if inspect.isclass(obj):
-                return cast("type[Any]", obj)
+                return self._entry_point_class(cast("type[Any]", obj), class_name, name, default_class_candidates)
 
         except (ImportError, AttributeError):
             pass
 
         return None
+
+    def _entry_point_class(
+        self,
+        loaded: type[Any],
+        class_name: str | None,
+        name: str,
+        default_class_candidates: tuple[str, ...],
+    ) -> type[Any] | None:
+        """Answer a class-valued entry point for whichever class the caller asked for.
+
+        A distribution publishes one entry point per adapter, and it ordinarily names the
+        adapter class. That one entry point has to answer both questions the loader asks,
+        so a loaded class that is not what was requested is resolved from the module that
+        defines it — the same module a module-valued entry point would have named.
+
+        A declaration carrying an explicit ``:ClassName`` is answered by that name and no
+        other, because the declared name is what the package checksum covers: resolving
+        some other class would let the executed identity differ from the reviewed one.
+        """
+        target = _target_base_class(default_class_candidates)
+        satisfies = target is None or issubclass(loaded, target)
+        if satisfies and (class_name is None or loaded.__name__ == class_name):
+            return loaded
+        defining_module = sys.modules.get(loaded.__module__)
+        resolved = (
+            None
+            if defining_module is None
+            else self._find_class_in_module(defining_module, class_name, name, default_class_candidates)
+        )
+        if resolved is None and class_name is not None:
+            _raise_declared_class_unavailable(name, class_name, default_class_candidates)
+        return resolved
 
     def _resolve_from_builtin(
         self, name: str, class_name: str | None, default_class_candidates: tuple[str, ...]
@@ -420,13 +657,17 @@ class PluginLoader:
         Returns:
             The found class, or None if not found.
         """
-        # If class name is specified, look for it directly
+        # If class name is specified, look for it directly. It has to be a class, and it
+        # has to be the kind of class the caller asked for: a declaration naming the
+        # model where an adapter is required is an error, not a hint to look elsewhere.
         if class_name:
-            if hasattr(module, class_name):
-                cls = getattr(module, class_name)
-                if inspect.isclass(cls):
-                    return cls
-            return None
+            cls = getattr(module, class_name, None)
+            if not inspect.isclass(cls):
+                return None
+            target = _target_base_class(default_class_candidates)
+            if target is not None and not issubclass(cls, target):
+                return None
+            return cls
 
         # Get all classes defined in the module
         classes_in_module = [
@@ -435,11 +676,7 @@ class PluginLoader:
             if obj.__module__ == module.__name__ and not issubclass(obj, BaseException)
         ]
 
-        target_base_class = None
-        if "Adapter" in default_class_candidates:
-            target_base_class = Adapter
-        elif "Model" in default_class_candidates:
-            target_base_class = DiffSyncModel
+        target_base_class = _target_base_class(default_class_candidates)
 
         if target_base_class:
             for cls in classes_in_module:
@@ -479,3 +716,33 @@ class PluginLoader:
                     return cls
 
         return None
+
+
+def resolve_installed_adapter_class(adapter: SyncAdapter) -> type[Any]:
+    """Resolve one side's adapter class from installed code only.
+
+    The registered worker's resolution seam. It resolves through
+    :meth:`PluginLoader.installed_only_loader`, so neither generated Python in the configuration
+    directory nor any filesystem plugin — a configured adapter path, the
+    ``INFRAHUB_SYNC_ADAPTER_PATHS`` environment, or the working directory — can enter a
+    registered run.
+
+    Raises:
+        PluginLoadError: no installed class answers the declared adapter.
+    """
+    return PluginLoader.installed_only_loader().resolve(adapter.adapter or adapter.name)
+
+
+def resolve_installed_model_base(adapter: SyncAdapter) -> type[Any]:
+    """Resolve one side's DiffSync model base from installed code only.
+
+    Uses the spec the generated models file uses — the module half of an explicit
+    adapter spec, otherwise the adapter name — so a runtime-built class derives from the
+    same base a generated one would have, resolved through the same installed-only loader
+    as the adapter class.
+
+    Raises:
+        PluginLoadError: no installed class answers the declared adapter.
+    """
+    spec = adapter.adapter.split(":")[0] if adapter.adapter else adapter.name
+    return PluginLoader.installed_only_loader().resolve(spec, default_class_candidates=("Model",))

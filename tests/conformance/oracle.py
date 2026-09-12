@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, cast
 
-Surface = Literal["cli", "python", "managed"]
+Surface = Literal["cli", "python", "service"]
 
 RUN_ID_SCHEMA_PATHS = (
     ("product_record", "run_id"),

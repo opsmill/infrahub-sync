@@ -6,7 +6,8 @@ This guide covers how to set up a development environment for `infrahub-sync` an
 
 ## Prerequisites
 
-- Python 3.10–3.13 (3.12 recommended)
+- Python 3.11–3.13 for the full development profile (3.12 recommended). Python 3.10 runs
+  everything except the Sync service.
 - [uv](https://docs.astral.sh/uv/) for dependency management
 - Git
 
@@ -32,16 +33,25 @@ Or see the [uv installation guide](https://docs.astral.sh/uv/getting-started/ins
 ### Install dependencies
 
 ```bash
-uv sync --group dev
+uv sync --extra dev --extra prefect --extra service
 ```
 
-This installs all runtime and development dependencies defined in `pyproject.toml`.
+The `prefect` and `service` extras are not optional for development. Without them the type
+checker cannot resolve the imports in `infrahub_sync/orchestration/` and
+`infrahub_sync/service/`, and the tests that cover them skip themselves.
+
+On Python 3.10 the Sync service is unavailable, so install the direct Prefect profile
+instead and exclude the service from type checking:
+
+```bash
+uv sync --python 3.10 --extra dev --extra prefect
+```
 
 ### Verify your setup
 
 ```bash
 uv run infrahub-sync --help
-uv run infrahub-sync list --directory examples/
+uv run infrahub-sync configs --help
 ```
 
 ## Development workflow
@@ -49,10 +59,22 @@ uv run infrahub-sync list --directory examples/
 Before committing any changes, run the following commands in order:
 
 ```bash
-uv run invoke format    # Format code with ruff
-uv run invoke lint      # Lint code with ruff and pylint
-uv run mypy infrahub_sync/ --ignore-missing-imports
+# Run `rumdl fmt .`, then Ruff formatting and safe fixes.
+uv run invoke format
+# Run `rumdl check .`, then Ruff, Pylint, yamllint, and ty; stop at the first failure.
+uv run invoke lint
 ```
+
+`invoke lint` stops after the first gate that fails. Pylint does not pass on a clean
+checkout: its leg compares the run against a recorded baseline and fails only on a new
+diagnostic code or a count above the recorded maximum.
+
+Run `uv run invoke check-310` before pushing as well: it builds its environments under
+`.preview/check-310-venv`, leaves your active `.venv` alone, and reproduces the three CI legs your
+environment cannot reach — `ty` under the Python 3.10 excludes, and the unit tests on
+Python 3.10 both with the `prefect` extra and on a base install that has no service
+dependencies. If Python 3.10 is not installed, the task exits successfully without running
+the three legs. To install it, run `uv python install 3.10`.
 
 ### Validate the CLI
 
@@ -60,14 +82,30 @@ After making changes, verify the CLI still works:
 
 ```bash
 uv run infrahub-sync --help
-uv run infrahub-sync list --directory examples/
-uv run infrahub-sync generate --name from-netbox --directory examples/
+uv run infrahub-sync configs --help
+uv run infrahub-sync runs plan --help
 ```
 
 ### Running tests
 
+The offline gate is what a change has to keep green. It deselects the tests that need a
+running stack or an external service:
+
 ```bash
-uv run pytest -q
+uv run pytest -m "not preview and not integration" -q
+```
+
+### Running the full stack locally
+
+To run the Sync HTTP API, its Prefect worker, and a disposable Infrahub against your checkout, see the [local development stack](./development-stack.mdx).
+
+The suite that exercises that stack is opt-in under the `preview` marker, and it skips
+rather than fails when the stack is not running:
+
+```bash
+uv run invoke preview.up      # start the stack
+uv run invoke preview.smoke   # seed, then run `pytest -m preview tests/preview`
+uv run invoke preview.down --volumes
 ```
 
 ## Code standards
@@ -77,7 +115,7 @@ uv run pytest -q
 - Python 3.10–3.13 compatible
 - Type hints on new or changed code
 - Ruff-formatted and lint-clean
-- Mypy-checked (do not increase existing error count)
+- Clean under `ty`; do not add `[[tool.ty.overrides]]` blocks to mask an error
 - Public functions and classes require documentation strings
 - Raise specific exceptions; avoid broad `except Exception:`
 
@@ -100,7 +138,7 @@ uv run invoke docs.generate
 First-time setup (requires Node.js):
 
 ```bash
-cd docs && npm install
+cd docs && pnpm install --frozen-lockfile
 ```
 
 Build the site:
@@ -111,16 +149,26 @@ uv run invoke docs.docusaurus
 
 ### Lint markdown files
 
+Markdown structure is checked with [rumdl](https://github.com/rvben/rumdl), configured in
+`pyproject.toml`:
+
 ```bash
-npx markdownlint-cli "docs/docs/**/*.{md,mdx}"
-npx markdownlint-cli --fix "docs/docs/**/*.{md,mdx}"
+uv run invoke docs.format-rumdl   # run `rumdl fmt .`
+uv run invoke docs.rumdl          # run `rumdl check .`
+```
+
+Prose style is checked with [Vale](https://vale.sh/), configured in `.vale.ini`. Run it on
+the files you changed:
+
+```bash
+vale docs/docs/contributing.mdx
 ```
 
 ## Adding a new adapter
 
 1. Create `infrahub_sync/adapters/<name>.py` following existing adapter patterns
 2. Add connection configuration schema and an example under `examples/`
-3. Provide `list` and `diff` pathways before enabling `sync`
+3. Provide a `diff` pathway before enabling `sync`
 4. Document required environment variables and expected error cases
 5. Create a documentation page in `docs/docs/adapters/`
 6. Add the adapter to the sidebar in `docs/sidebars.ts`
@@ -141,7 +189,10 @@ Common tasks:
 | `linter.lint-ruff` | Lint Python code with ruff |
 | `linter.lint-pylint` | Lint Python code with pylint |
 | `linter.lint-yaml` | Lint YAML files with yamllint |
+| `linter.lint-ty` | Type-check with ty |
+| `docs.format-rumdl` | Format Markdown and MDX with rumdl |
+| `docs.rumdl` | Lint Markdown and MDX with rumdl |
 | `docs.generate` | Generate CLI documentation |
 | `docs.docusaurus` | Build documentation website |
-| `format` | Alias for ruff format |
-| `lint` | Run all linters |
+| `format` | Run rumdl formatting, then Ruff formatting and safe fixes |
+| `lint` | Run rumdl, Ruff, Pylint, yamllint, and ty in order |

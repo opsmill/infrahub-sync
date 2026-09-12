@@ -106,7 +106,7 @@ the engine gets a refusal rather than a deletion.
 Either way, every non-delete operation in the same plan is still applied, as SC-007 requires — the
 engine never stops on a delete.
 
-The run then ends **`applied`**, not `failed`. Applying deletes is out of scope for this release and is
+The run then ends **`applied`**, not `failed`. Applying deletes is out of scope for the saved-plan apply path and is
 assigned to a later outcome, so an apply that declines to execute one is behaving exactly as designed, and
 a run that behaves as designed must not be reported as broken. What the engine records instead:
 
@@ -233,7 +233,7 @@ insufficient for the sibling skipped-delete warning:
 | Content | The **destination kind**; that the write **was issued anyway**; and **what to watch for** — a duplicate object of that kind at the destination if the destination does not key on the components as sent. Plus which of the two conditions applies (the convergence key crosses a relationship, or the kind declares none). "Naming the recorded risk" is **not** sufficient content: the recorded risk is a row in [plan.md](../plan.md#risks), an artifact the operator does not have |
 | Cardinality | **Once per destination kind**, not once per operation — per operation would put one line per row on a four-thousand-operation apply, the same drowning failure the run-id enumeration bound exists to prevent |
 | Where the dedup state lives | A set of already-reported destination kinds on the **adapter instance**, created at the start of an apply and discarded with it — the same lifetime as `PeerResolver`'s memo. `apply_planned_operation` is per-operation, so "once per kind" cannot be local to it |
-| Documentation | The docs sweep states plainly that convergence is **not verified in this release** for destination kinds whose convergence key crosses a relationship, on the same footing as the delete limitation (T069) |
+| Documentation | The docs sweep states plainly that convergence is **not verified for the saved-plan apply path** for destination kinds whose convergence key crosses a relationship, on the same footing as the delete limitation (T069) |
 
 **The flat claim is struck.** "An unkeyed write is never issued" appeared in three places and was false for
 the second row above. What these two checks deliver, stated once and repeated nowhere in a stronger form:
@@ -492,7 +492,7 @@ class PeerResolver:
 | Population | From each completed create/update (step 8), so an operation's own result resolves later operations that refer to it | FR-014 |
 | Miss | Queries the destination (below) and memoizes the **successful** result | FR-014 |
 | Negative caching | **Never.** A failed lookup and a failed write are not cached, so a later operation referring to the same peer re-attempts resolution rather than inheriting a negative result | FR-014, AD036 |
-| No comparison store | The resolver never reads `client.store` or the DiffSync store — that is exactly the dependency `resolve_peer_node` has today (`infrahub_sync/adapters/infrahub.py:78,81`) and the one a saved-plan apply cannot satisfy | FR-014, DBR-007 |
+| No comparison store | The resolver never reads `client.store` or the DiffSync store — that is exactly the dependency `resolve_peer_node` has today (`infrahub_sync/adapters/infrahub.py:78,81`) and the one the saved-plan apply path cannot satisfy | FR-014, DBR-007 |
 
 ### The destination query (PD-004)
 
@@ -530,7 +530,7 @@ results = client.filters(kind=peer_kind, **filter_kwargs)
 Neither is ever a silent skip. "A silent skip would make the applied set differ from the reviewed set"
 is the brief's own reasoning for DBR-016, and it governs a dropped relationship exactly as it governs a
 dropped operation (AD016). It applies here **unchanged by AD055**: a dropped peer is not a designed
-limitation of this release — nothing declares it out of scope, and its effect on the destination is a
+limitation of the saved-plan apply path — nothing declares it out of scope, and its effect on the destination is a
 half-written object — so it fails the run, where a recorded delete does not.
 
 **Scope of the refusal (AD048).** These two refusals belong to **this resolver only** — the apply-path

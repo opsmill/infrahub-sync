@@ -1,27 +1,32 @@
 ---
-# from-netbox — demonstrates the two newest features of infrahub-sync:
+# from-netbox — the sync configuration body used by the service-backed workflow:
 #
 # Setup and current limitations:
 #   - README.md
 #   - docs/docs/tutorials/netbox-demo-to-infrahub.mdx
 #
-#   1. Auto-tiered write order. The `order:` list has been removed; the engine
-#      derives tiers from `schema_mapping[].fields[].reference` and groups
-#      kinds that can be written in parallel. Add `--parallel` to `sync` to
-#      enforce a hard barrier between tiers.
+#   1. Automatic write order. The `order:` list has been removed; the worker
+#      derives write-order tiers from `schema_mapping[].fields[].reference`,
+#      and every planned operation carries the tier its kind belongs to. An
+#      apply executes the reviewed operation sequence in `(tier, operation_id)`
+#      order, so a kind is written after the kinds it references. There is no
+#      separate serial or parallel execution mode.
 #
-#   2. Sidecar cache and the saved plan artifact. Every `diff` writes
-#      per-resource snapshots, a `plan.parquet` for querying, and a `plan/`
-#      directory under `.infrahub-sync-cache/from-netbox/<run_id>/`. The
-#      `plan/` directory is what `apply` reads. The run_id is logged at INFO;
-#      pass it to `diff --from-plan` to review the plan, and to `apply` to
-#      apply it without re-extracting the source.
+#   2. Service-owned saved plans. `diff` submits a plan run to the Sync API.
+#      Review the returned run with `runs plan`; `apply` binds the service run
+#      to the checksum printed by that review and never reads a local artifact.
 #
-# Usage:
-#   uv run infrahub-sync diff --name from-netbox --directory sync-projects
-#   uv run infrahub-sync diff --name from-netbox --from-plan <run_id> --directory sync-projects
-#   uv run infrahub-sync apply --name from-netbox --run-id <run_id> --directory sync-projects
-#   uv run infrahub-sync sync --name from-netbox --directory sync-projects --parallel
+# Usage from this repository's root, after configuring the Sync API URL and
+# bearer token as documented in the tutorial:
+#   uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
+#     --reason "register NetBox import"
+#   uv run infrahub-sync diff --config-id <config-id> --version <version> \
+#     --reason "review NetBox import"
+#   uv run infrahub-sync runs plan <run-id> --detail
+#   uv run infrahub-sync apply <run-id> --expected-checksum <checksum> \
+#     --reason "apply reviewed NetBox import"
+#   uv run infrahub-sync sync --config-id <config-id> --version <version> \
+#     --reason "run NetBox import"
 #
 # ---------------------------------------------------------------------------
 
@@ -31,17 +36,26 @@ source:
   name: netbox
   settings:
     url: "https://demo.netbox.dev"
+    token:
+      $credential: netbox-token
 
 destination:
   name: infrahub
   settings:
     url: "http://localhost:8000"
+    token:
+      $credential: infrahub-token
 
-# Credentials are read from the environment, not this file:
+# This file is the `configuration` body of package.yml, byte for byte, which is
+# where the `credentials` block naming these two references lives. Each token is
+# a reference, resolved by the service worker from its own environment. No
+# credential value is ever written here. Export before starting the worker:
 #   export NETBOX_URL="https://demo.netbox.dev"
 #   export NETBOX_TOKEN="nbt_..."
 #   export INFRAHUB_ADDRESS="http://localhost:8000"
 #   export INFRAHUB_API_TOKEN="..."
+# The CLI separately uses INFRAHUB_SYNC_API_URL and INFRAHUB_SYNC_API_TOKEN to
+# authenticate to the Sync API.
 
 # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
 # Uncomment and edit only if you need to override the computed order:
@@ -314,7 +328,7 @@ schema_mapping:
       - name: mac_address
         mapping: mac_address
       - name: l2_mode
-        mapping: mode.value
+        mapping: l2_mode
       - name: mtu
         mapping: mtu
       - name: ip_addresses
@@ -334,6 +348,17 @@ schema_mapping:
         mapping: lag
         reference: InterfaceLag
       # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
+    transforms:
+      # NetBox q-in-q is valid, but this destination schema exposes only
+      # access/trunk/trunk_all. The named undefined value makes StrictUndefined
+      # refuse q-in-q explicitly instead of applying a lossy translation;
+      # `or none` evaluates undefined results so every other unknown mode fails too.
+      - &netbox_l2_mode_transform
+        field: l2_mode
+        expression: >-
+          {{ ({'access': 'access', 'tagged': 'trunk', 'tagged-all': 'trunk_all',
+          'q-in-q': q_in_q_requires_destination_schema_support}[mode.value] or none)
+          if mode is defined and mode is not none else none }}
     filters: # Filters to only get the "physical interfaces"
       # NOTE: Netbox's `type` is a nested {value, label} object, not a plain
       # string — filtering on bare `type` compares against the dict itself
@@ -369,7 +394,7 @@ schema_mapping:
       - name: mac_address
         mapping: mac_address
       - name: l2_mode
-        mapping: mode.value
+        mapping: l2_mode
       - name: ip_addresses
         mapping: ip_addresses
         reference: IpamIPAddress
@@ -383,6 +408,8 @@ schema_mapping:
         mapping: device
         reference: DcimDevice
       # TODO: many fields are not implemented in the schema (mgmt_only, type, duplex ...)
+    transforms:
+      - *netbox_l2_mode_transform
     filters: # Filters to only get the "virtual interfaces"
       - field: type.value
         operation: "=="
@@ -406,7 +433,7 @@ schema_mapping:
       - name: mac_address
         mapping: mac_address
       - name: l2_mode
-        mapping: mode.value
+        mapping: l2_mode
       - name: ip_addresses
         mapping: ip_addresses
         reference: IpamIPAddress
@@ -428,6 +455,7 @@ schema_mapping:
         expression: |-
           {% set suffix = name[(name.rstrip('0123456789'))|length:] %}
           {{ suffix | int if suffix else None }}
+      - *netbox_l2_mode_transform
     filters: # Filters to only get the "lag interfaces"
       - field: type.value
         operation: "=="

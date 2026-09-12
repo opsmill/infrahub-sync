@@ -5,8 +5,12 @@ title: Sync instance configuration
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-The configuration file allows you to define the resources needs for the sync.
-The file should be formatted as a Yaml file, have the filename `config.yml`. During the generation phase, the Sync adapters, and models will be generated in the same folder.
+A configuration package defines the source, destination, and resources for a sync.
+Write the package as YAML or JSON and register it with `infrahub-sync configs register`.
+For a complete package, see `examples/netbox_to_infrahub/package.yml`.
+The service worker resolves the registered configuration and loads installed or
+pre-rendered adapter classes. Run commands select the package by the immutable
+configuration ID and registry version returned during registration.
 
 The following settings can be defined:
 
@@ -24,7 +28,7 @@ Describes the overall synchronization configuration.
 | `schema_mapping` | List of `SchemaMappingModel` | Defines how data is mapped from source to destination. | Yes |
 | `diffsync_flags` | List of `DiffSyncFlags` | Instruct Infrahub Sync how to handle some specific situation without changing the data  | No |
 
-### Auto-tiered execution
+### Automatic write order
 
 `order:` is now optional. When it is omitted, infrahub-sync derives a
 write-order graph from the `reference:` entries in each `schema_mapping`
@@ -33,19 +37,16 @@ field and groups kinds into **tiers**:
 - Tier 0: kinds with no outgoing references.
 - Tier N: kinds whose references all live in tiers `0..N-1`.
 
-The flattened tier order replaces the manual `order:` list. Tiers and any
-optional edges dropped to break cycles are logged at `INFO` level when
-`diff` or `sync` runs.
+The flattened tier order replaces the manual `order:` list, and every planned operation
+records the tier its kind belongs to. A plan stores its operations ordered by
+`(tier, operation_id)` and an apply executes them in exactly that order, so a kind is
+written after the kinds it references.
 
-`infrahub-sync sync` runs with `--parallel` on by default: the engine
-narrows the destination's `top_level` to one tier at a time so no tier
-starts before the previous tier's writes have completed. Pass
-`--no-parallel` to disable the tier boundary and fall back to the legacy
-single-pass code path.
-
-If you must override the computed order (because it doesn't match an
-adapter quirk), keep the `order:` list — it always wins, and `--parallel`
-will warn and fall back to serial when an explicit order is set.
+If you must override the computed order because it does not match an adapter quirk, keep
+the `order:` list. It always wins: no tiers are computed, and each operation's recorded
+tier is the kind's position in the list you gave. The ordering is the same either way —
+the reviewed operation sequence is what an apply consumes, and there is no separate
+serial or parallel execution mode to choose.
 
 ### Sync store
 
@@ -91,7 +92,7 @@ Defines the mappings from source to destination schemas. The tables below are th
 | -------- | ---- | ----------- | --------- |
 | name | string | Name of the field. | Yes |
 | mapping | string | How the field is mapped from source to destination. | No |
-| static | Any | A static value to assign to the field, used if `mapping` is not provided. | No |
+| static | Any | A static value to assign to the field. Any declared value is assigned, including `false`, `0`, `""` and `[]`; omit it or set it to `null` for no static value. Takes precedence over `mapping` when both are declared. See [Static values](./schema-mapping.mdx#static-values) for the adapters that do not assign these values yet. | No |
 | reference | string | Reference to another object in the configuration, used if direct mapping is not applicable. | No |
 
 ##### Mapping filters

@@ -2,7 +2,7 @@
 
 > Part of: `dev/guidelines/` | Related: [Testing adapters](testing-adapters.md), [Quality gates](../knowledge/quality-gates.md)
 
-<!-- Extracted from dev/specs/archive/001-prefect-managed-remote-run on 2026-07-31 -->
+<!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
 
 Repository-wide rules for tests. [Testing adapters](testing-adapters.md) covers what an
 adapter must ship; this document covers what makes any test worth having.

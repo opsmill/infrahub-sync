@@ -1,4 +1,5 @@
-# Code ownership for infrahub-sync.
-# The Solutions Architecture team owns the repository by default; PRs request
-# their review automatically. See https://docs.github.com/articles/about-code-owners
-* @opsmill/sa
+# This integration branch intentionally has no code-owner rule. Unit PRs target
+# feature/v3-develop without requesting Solutions Architecture review.
+#
+# Restore `* @opsmill/sa` before feature/v3-develop is merged into main so PRs
+# targeting main continue to request human review from that team.

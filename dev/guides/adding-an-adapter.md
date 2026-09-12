@@ -133,8 +133,8 @@ for this destination, or apply against a destination whose adapter implements th
 planned-write surface.
 ```
 
-Nothing else about the adapter degrades: `list`, `diff`, `sync` and plan *review*
-(`diff --from-plan <run-id>`) all work unchanged. Only `apply` is unavailable. `infrahub` is
+Nothing else about the adapter degrades: `diff`, `sync` and plan *review*
+(`runs plan RUN_ID`) all work unchanged. Only `apply` is unavailable. `infrahub` is
 the only one of the nine adapters shipped in this repository that implements the surface
 today; the other eight refuse an `apply` exactly as described above.
 
@@ -161,8 +161,9 @@ If you do implement it, the method must:
   in each `operation.relationships` entry; it returns one node id per identity, and
   cardinality is your concern, not its.
 - **Decline a `delete` rather than executing one** — raise `SkippedDeleteOperation`
-  (`infrahub_sync.plan.errors`) and touch nothing. Applying deletes is out of scope for this
-  release. In practice your method will not see one: the engine recognizes a `delete` in its
+  (`infrahub_sync.plan.errors`) and touch nothing. Applying deletes is not supported and
+  remains outside the planned-write contract. In practice your method will not see one:
+  the engine recognizes a `delete` in its
   own apply loop, records its identifier and never dispatches it to the write surface. Raise
   it anyway — it is the defensive half of the contract, for any caller that is not the
   engine. Either way the run applies every non-delete in the same plan and ends `applied`
@@ -242,13 +243,13 @@ Validate read-only paths before ever running `sync`:
 uv run invoke format
 uv run invoke lint
 
-uv run infrahub-sync list --directory examples/
-uv run infrahub-sync generate --name mysystem-example --directory examples/mysystem_to_infrahub/
-uv run infrahub-sync diff --name mysystem-example --directory examples/mysystem_to_infrahub/
+uv run infrahub-sync configs register --file examples/mysystem_to_infrahub/config.yml --reason "add mysystem example"
+uv run infrahub-sync configs validate --config-id mysystem-example --version 1
+uv run infrahub-sync diff --config-id mysystem-example --version 1 --reason "verify the new adapter"
 ```
 
-`list` and `generate` need no live source; `diff` reads both sides but writes nothing. Run
-`sync` only with explicit approval against a known-safe target.
+`configs register` and `configs validate` read no source; `diff` plans against both sides but
+writes nothing. Run `sync` only with explicit approval against a known-safe target.
 
 ## Quality checklist
 
@@ -257,7 +258,7 @@ uv run infrahub-sync diff --name mysystem-example --directory examples/mysystem_
 - [ ] Decided whether the adapter implements the planned-write surface — **both** `new_peer_resolver` and `apply_planned_operation`; if it does not, confirmed that `apply` refuses cleanly and that `sync` is the documented path for it.
 - [ ] Optional SDK imported with `# ty: ignore[unresolved-import]`; credentials from env vars; no secrets logged or committed.
 - [ ] `uv run invoke format` and `uv run invoke lint` are clean; `uv run ty check .` exits 0.
-- [ ] `list` / `generate` / `diff` succeed for the example.
+- [ ] `configs register` / `configs validate` / `diff` succeed for the example.
 - [ ] Unit tests added under `tests/adapters/`; `uv run pytest -q` passes offline.
 - [ ] Example added under `examples/`; env vars documented.
 - [ ] Documentation page added under `docs/docs/adapters/` and in the sidebar.

@@ -28,6 +28,7 @@ Built on the [`diffsync`](https://github.com/networktocode/diffsync) framework, 
 ## Prerequisites
 
 - A running [Infrahub](https://github.com/opsmill/infrahub) instance
+- A running Sync API and worker
 - Python 3.10–3.13
 - Credentials and network access for the source and destination systems
 
@@ -51,29 +52,49 @@ infrahub-sync --help
 
 ## Example: NetBox → Infrahub
 
-The repo includes a complete sync project at `examples/netbox_to_infrahub/`, named `from-netbox`. It is pre-configured to pull from the public NetBox demo (`demo.netbox.dev`) into a local Infrahub at `localhost:8000`.
+The repository includes a NetBox configuration package at
+`examples/netbox_to_infrahub/package.yml`. Register it once, then address the immutable
+configuration version returned by the service:
 
 ```bash
-# Preview what the sync would change
-infrahub-sync diff --name from-netbox --directory ./examples
+export INFRAHUB_SYNC_API_URL=https://sync.example.com
+export INFRAHUB_SYNC_API_TOKEN=<token>
 
-# Apply the changes
-infrahub-sync sync --name from-netbox --directory ./examples
+infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
+  --reason "register NetBox import"
+infrahub-sync diff --config-id <config-id> --version <version> \
+  --reason "review NetBox import"
+infrahub-sync runs plan <run-id> --detail
 ```
 
-After the sync completes, every NetBox device, interface, VLAN, prefix, and related model appears in Infrahub, mapped per the schema mapping in `config.yml`.
+Before applying the plan, read the
+[example prerequisites and current limitations](examples/netbox_to_infrahub/README.md).
+The public demo data and destination schema can change independently of this repository,
+and the complete example is not an unconditional write-success fixture.
 
-→ For the full walkthrough of what happens under the hood — adapter generation, diff calculation, and sync ordering — see [Run a sync](https://docs.infrahub.app/sync/running-a-sync).
+For setup and a complete walkthrough, see the
+[NetBox-to-Infrahub tutorial](https://docs.infrahub.app/sync/tutorials/netbox-demo-to-infrahub).
 
 ---
 
 ## Day 2 Operations
 
-**Scheduling.** Infrahub Sync runs as a CLI, so it plugs into the scheduling tooling your team already uses — cron, CI jobs, Prefect, or any workflow engine. This keeps the footprint small and lets you control sync cadence, observability, and failure handling through systems you already trust.
+**Scheduling.** The CLI submits runs to the Sync API. The service owns admission, durable
+run records, and worker execution, so a caller can disconnect after using `--no-wait` and
+inspect the same run later.
 
-**Observability.** Sync runs emit structured logs via `structlog`. Teams ship those logs to their existing observability stack (Splunk, Datadog, Loki, etc.).
+**Observability.** Sync runs emit lifecycle and adapter logs through Python logging. Public
+Python API lifecycle records include structured attributes such as the run identifier,
+operation, stage, and outcome. Forward these records to the logging system used by your
+scheduler or runtime.
 
-**Failure handling.** Sync runs are idempotent. If a run fails partway through, re-run it — the next pass calculates a fresh diff against the current destination state and applies only what is still outstanding. The three `diffsync_flags` (`SKIP_UNMATCHED_DST`, `SKIP_UNMATCHED_SRC`, `SKIP_MODIFIED`) and per-mapping filters give per-project control over what each run is allowed to change.
+**Failure handling.** After a failed write, inspect the run record and destination, then
+calculate a fresh plan. A failed operation can have written part of its change, and safe
+re-application is not established for destination kinds whose identity crosses a
+relationship. See [Run a sync](https://docs.infrahub.app/sync/running-a-sync) for the
+recovery and convergence boundaries. The three `diffsync_flags` (`SKIP_UNMATCHED_DST`,
+`SKIP_UNMATCHED_SRC`, `SKIP_MODIFIED`) and per-mapping filters control what each project
+may change.
 
 ---
 
@@ -103,9 +124,26 @@ After the sync completes, every NetBox device, interface, VLAN, prefix, and rela
 
 - **Sync engine.** Built on `diffsync` with three sync flags (`SKIP_UNMATCHED_DST` default, `SKIP_UNMATCHED_SRC`, `SKIP_MODIFIED`) and optional Redis-backed store for stateful sync.
 - **Declarative YAML configuration.** Per-field mapping with 14 filter operations (including `regex` and `is_ip_within`), per-field transforms, custom Jinja filters, and ordered cross-reference resolution.
-- **Typer-based CLI.** Five commands — `list`, `diff` (read-only), `generate`, `sync`, `apply` (write a previously reviewed saved plan to the destination without re-extracting the source).
+- **Typer-based CLI.** Register and inspect configuration packages, create plan or sync
+  runs, review service-owned plans, and apply a reviewed checksum through the Sync API.
 - **Custom adapters and certificates.** Load custom adapters from filesystem paths, Python module paths, or installed entry points (`INFRAHUB_SYNC_ADAPTER_PATHS`); custom CA certificate support for internal PKI.
-- **Example library.** Ready-to-run YAML configurations under `examples/` covering every pre-configured adapter plus additional targets (Device42, PeeringDB) and a custom adapter template.
+- **Example library.** Sample YAML configurations under `examples/` cover every pre-configured adapter plus additional targets (Device42, PeeringDB) and a custom adapter template. Review each example's adapter, schema, credential, and destination prerequisites before running it.
+
+### Execution surfaces
+
+| Surface | Use it for | Runtime requirements |
+|---|---|---|
+| CLI | Configuration registration, plan review, run admission, and reviewed-plan apply | Base installation and Sync API access |
+| Python client | Typed access to every shipped Sync API resource | Base installation and Sync API access |
+| Direct Prefect deployment | Starting and observing one plan or confirmed sync through Prefect's API | `prefect` extra and a Prefect server |
+| Sync HTTP API | Authenticated remote runs, durable records and artifacts, reviewed apply, idempotency, and cancellation | `service` extra, Prefect, a work pool, a worker, and shared durable storage |
+
+See the [Python API](https://docs.infrahub.app/sync/reference/python-api),
+[Prefect remote run](https://docs.infrahub.app/sync/reference/prefect-remote-run), and
+[Sync HTTP API](https://docs.infrahub.app/sync/reference/sync-http-api) references
+for their contracts and setup. For a bounded checkout-based live review, follow the
+[`custom-example` plan and apply guide](examples/custom_adapter/README.md). Its source
+fixture is deterministic; the review still uses a live, writable Infrahub destination.
 
 ---
 
@@ -119,7 +157,7 @@ After the sync completes, every NetBox device, interface, VLAN, prefix, and rela
 | **Configuration reference** | [Sync instance configuration](https://docs.infrahub.app/sync/reference/config) · [CLI reference](https://docs.infrahub.app/sync/reference/cli) |
 | **Custom CA certificates** | [Custom certificates guide](https://docs.infrahub.app/sync/custom-certificates) |
 | **Local custom adapters** | [Local adapters guide](https://docs.infrahub.app/sync/adapters/local-adapters) |
-| **Contribute** | [Contributing guide](https://docs.infrahub.app/sync/contributing) — development environment, tests, code standards |
+| **Contribute** | [Contributing guide](https://docs.infrahub.app/sync/contributing) — development environment, tests, code standards · [Local development stack](https://docs.infrahub.app/sync/development-stack) — the full stack on your machine |
 
 ---
 

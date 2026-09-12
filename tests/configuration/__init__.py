@@ -1,0 +1,1 @@
+"""Configuration foundation tests."""

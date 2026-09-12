@@ -79,6 +79,8 @@ JSONSchema
 kbps
 Keycloak
 LibreNMS
+liveness
+loopback
 Loopbacks
 markdownlint
 max_count
@@ -95,6 +97,7 @@ Netbox
 Newsfragment
 Nornir
 npm
+nullable
 o'brian
 Observium
 openconfig
@@ -103,6 +106,7 @@ order_by
 order_weight
 Prefect
 Prefetch
+Psycopg
 profile_name
 PyPI
 query_peers
@@ -116,6 +120,7 @@ REST
 RIRs
 rowcount
 Rowcount
+rumdl
 schema_mapping
 sdk
 Slurp'it
@@ -135,8 +140,12 @@ userinfo
 uuid
 UUID
 uv
+Uvicorn
+uvicorn
 validator
 validators
+vendored
+vendoring
 Version Control
 VRFs
 walkthrough
@@ -155,3 +164,15 @@ Yaml
 yamllint
 ty
 formatters
+Potenda
+autocommit
+pooler
+serializer
+traceback
+untrusted
+zlib
+Buildx
+Syft
+Grype
+Skopeo
+gzip

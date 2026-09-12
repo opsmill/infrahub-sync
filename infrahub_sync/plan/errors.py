@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 class SkippedDeleteOperation(Exception):  # noqa: N818 — a control signal, not an error
     """A recorded delete a write surface declines to execute (FR-016, FR-017, AD055).
 
-    The **defensive** half of the contract: applying deletes is out of scope for this
-    release, so a write surface handed a `delete` must raise this rather than touch the
+    The **defensive** half of the contract: applying deletes is not supported, so a write
+    surface handed a `delete` must raise this rather than touch the
     destination. Nothing catches it in product code and the apply loop never raises it —
     `Potenda.apply_plan` recognizes a delete itself, records the identifier and continues.
 
@@ -137,7 +137,7 @@ class PlanGenerationExistsError(PlanArtifactError):
 
     next_action = (
         "Re-run `diff` without `--run-id` so the new plan is written under a fresh run id. To use the "
-        "existing plan instead, review it with `diff --from-plan <run-id>` or apply it with "
+        "existing plan instead, review it with `runs plan <run-id>` or apply it with "
         "`apply --run-id <run-id>`."
     )
 
@@ -239,19 +239,26 @@ class UnaccountedIdentityComponentError(PlanArtifactError):
 
 
 class UnkeyedWriteRefusedError(PlanArtifactError):
-    """The rendered mutation carries no key for a kind whose HFID is all-direct (AD066).
+    """The rendered mutation carries no usable `id` or `hfid`.
 
-    Keyedness is a property of the rendered mutation input rather than of the assembled
-    data, so it is read there. For a kind every one of whose human-friendly-ID components is
-    a direct attribute, a render carrying neither `id` nor `hfid` can only mean the payload
-    lost its identity components, so the write is refused. A kind whose components cross a
-    relationship, and a kind declaring no human-friendly ID at all, are **warned** about and
-    proceed instead (AD076).
+    An unkeyed convergent write duplicates its object on a re-apply, so it is refused for
+    every destination kind. A key rendered without a value keys nothing and is refused on the
+    same terms. The refused operation attempts no destination mutation.
     """
 
     next_action = (
-        "Re-plan and re-apply: the operation's payload must carry the identity components. If a fresh "
-        "plan renders the same way, report it — the payload is losing them between derivation and write."
+        "Re-plan so the operation's payload carries the destination kind's identity components. A kind "
+        "whose human-friendly ID crosses a relationship, or that declares none at all, cannot render a "
+        "keyed mutation and is not supported for planned writes."
+    )
+
+
+class NullRelationshipValueError(PlanArtifactError):
+    """A planned payload carries null for a mandatory cardinality-one relationship."""
+
+    next_action = (
+        "Correct the mapping so the mandatory relationship resolves to a peer identity, then re-run "
+        "`diff` and apply the new plan."
     )
 
 
@@ -259,6 +266,23 @@ class PlanVerificationError(PlanArtifactError):
     """One or more pre-apply checks failed, so the apply is refused."""
 
     next_action = "Address each failed check named above; every failure carries its own next action."
+
+
+class PlanSchemaChangedError(PlanArtifactError):
+    """The destination no longer declares the schema semantics the plan was computed against.
+
+    Raised before the apply path constructs a write-capable destination or reads a source,
+    so nothing is written and the artifact is untouched. The condition is inequality of the
+    consumed-semantics fingerprint alone, which is why the remedy is the same for every
+    change that can reach it: the plan a human reviewed no longer means what it meant.
+    Destination growth the configuration does not consume leaves the fingerprint unchanged
+    and never reaches this class.
+    """
+
+    next_action = (
+        "Create a new plan for this configuration and review it: the recorded operations were "
+        "derived from schema semantics the destination no longer declares."
+    )
 
 
 class OperationApplyFailedError(PlanArtifactError):
@@ -333,12 +357,12 @@ class UnwalkedDiffChildrenError(PlanArtifactError):
 
     So the condition is refused rather than warned about, on the same reasoning as AD047:
     a derivation that degrades to warn-and-drop emits an artifact whose reviewer cannot see
-    what is missing from it. Recursing into children is not in this release's scope; the
+    what is missing from it. Recursing into children is not supported; the
     guard names the limitation at the one place where it would otherwise be invisible.
     """
 
     next_action = (
-        "Plan derivation does not descend into child objects in this release: remove `_children` from "
+        "Plan derivation does not descend into child objects: remove `_children` from "
         "that model, or synchronize the child kinds as top-level kinds of their own."
     )
 

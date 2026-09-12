@@ -121,10 +121,18 @@ Below is a snippet from the example config.yml file:
       url: "https://<NAUTOBOT-ENDPOINT>"
       token: "<TOKEN>"
       verify_ssl: true # Default value
+      depth: 1 # Optional. Omit to send no depth parameter.
   ```
 
   </TabItem>
 </Tabs>
+
+`depth` is passed straight through to Nautobot as a query parameter on every list
+request the adapter makes. It is an integer between 0 and 10; any other value is
+refused before the first request, and omitting the setting sends no depth
+parameter at all. Raise it only as far as the mappings in use require: a non-zero
+depth expands nested relations on every record of every page, so payload size and
+latency grow with it — materially so on large tables such as `dcim.interfaces`.
 
 ### Schema mapping
 

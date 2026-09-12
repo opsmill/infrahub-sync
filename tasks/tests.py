@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from invoke import Context, task
@@ -13,9 +14,12 @@ MAIN_DIRECTORY = CURRENT_DIRECTORY.parent
 
 @task
 def tests_unit(context: Context) -> None:
-    """Run unit tests — everything under tests/ except integration-marked tests."""
+    """Run tests excluding the integration, preview, Docker, builder, and Compose markers."""
+    command = 'pytest -m "not integration and not preview and not docker and not builder and not compose"'
+    if sys.version_info < (3, 11):
+        command += " --ignore=tests/service --ignore=tests/runtime_schema/test_worker_path.py"
     with context.cd(MAIN_DIRECTORY):
-        context.run('pytest -m "not integration"', pty=True)
+        context.run(command, pty=True)
 
 
 @task

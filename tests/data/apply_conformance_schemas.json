@@ -15,7 +15,7 @@
     "              shape in the fixture the harness cannot see that, which is how the defect",
     "              reached the tree. Do not remove it;",
     "  ConfDevice- a human-friendly ID that CROSSES A RELATIONSHIP, which cannot render keyed",
-    "              today and is the xfail(strict=True) arm (AD067)."
+    "              client-side, so the keyedness gate refuses its planned write (AD066)."
   ],
   "nodes": [
     {

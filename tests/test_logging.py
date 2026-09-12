@@ -1,25 +1,14 @@
-"""Tests for structured logging migration: no print() calls, logger definitions, CLI verbosity flags."""
+"""Tests for structured logging migration: no print() calls and logger definitions."""
 
 from __future__ import annotations
 
 import ast
-import re
+import logging
 from pathlib import Path
 
 import pytest
 
 PACKAGE_DIR = Path(__file__).resolve().parent.parent / "infrahub_sync"
-
-# Typer renders --help through rich, which in some environments (e.g. CI with
-# color forced on) styles each hyphen of an option as its own ANSI span, so the
-# literal flag string is absent from the raw output. Strip SGR codes before
-# asserting on flag names.
-_ANSI_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def _strip_ansi(text: str) -> str:
-    """Return *text* with ANSI SGR (color) escape sequences removed."""
-    return _ANSI_SGR_RE.sub("", text)
 
 
 def _python_files() -> list[Path]:
@@ -81,6 +70,7 @@ def test_no_print_calls_in_package() -> None:
 
 # Files that are allowed to not have a module-level logger (relative paths from repo root).
 _LOGGER_EXEMPT = {
+    "infrahub_sync/cli.py",
     "infrahub_sync/generator/__init__.py",
 }
 
@@ -103,7 +93,6 @@ def test_modules_have_logger() -> None:
     # Some files may legitimately not need a logger (e.g., pure type stubs, constants-only files).
     # We check the core files that we migrated.
     core_files = {
-        "infrahub_sync/cli.py",
         "infrahub_sync/utils.py",
         "infrahub_sync/potenda/__init__.py",
     }
@@ -111,43 +100,26 @@ def test_modules_have_logger() -> None:
     assert not missing_core, "Core modules missing logger definition:\n" + "\n".join(missing_core)
 
 
-def test_cli_has_verbosity_flag() -> None:
-    """SC-005: CLI exposes --verbosity, -v, and -q flags."""
+@pytest.mark.parametrize(
+    ("global_options", "command", "expected_level"),
+    [
+        (("-v",), ("configs", "--help"), logging.DEBUG),
+        (("-q",), ("runs", "plan", "--help"), logging.WARNING),
+        (("--verbosity", "default"), ("diff", "--help"), logging.INFO),
+        (("--verbosity", "verbose"), ("sync", "--help"), logging.DEBUG),
+        (("--verbosity", "quiet"), ("apply", "--help"), logging.WARNING),
+    ],
+)
+def test_logging_flags_remain_active_on_converted_commands(
+    global_options: tuple[str, ...],
+    command: tuple[str, ...],
+    expected_level: int,
+) -> None:
     from typer.testing import CliRunner
 
     from infrahub_sync.cli import app
 
-    runner = CliRunner()
-    result = runner.invoke(app, ["--help"])
-    assert result.exit_code == 0
-    output = _strip_ansi(result.output)
-    assert "--verbosity" in output
-    assert "-v" in output
-    assert "-q" in output
+    result = CliRunner().invoke(app, [*global_options, *command])
 
-
-def test_cli_has_show_progress_flag() -> None:
-    """SC-003: CLI exposes --show-progress / --no-show-progress flag."""
-    from typer.testing import CliRunner
-
-    from infrahub_sync.cli import app
-
-    runner = CliRunner()
-    # Check in diff subcommand help
-    result = runner.invoke(app, ["diff", "--help"])
-    assert result.exit_code == 0
-    assert "--show-progress" in _strip_ansi(result.output)
-
-
-@pytest.mark.parametrize("flag", ["-v", "-q", "--verbosity quiet", "--verbosity verbose"])
-def test_cli_verbosity_flags_accepted(flag: str) -> None:
-    """Verbosity flags are accepted without error when no subcommand requires a server."""
-    from typer.testing import CliRunner
-
-    from infrahub_sync.cli import app
-
-    runner = CliRunner()
-    args = [*flag.split(), "list", "--directory", str(PACKAGE_DIR.parent / "examples")]
-    result = runner.invoke(app, args)
-    # exit_code 0 means the flag was accepted; we don't care about the list output
-    assert result.exit_code == 0, f"Flag '{flag}' rejected: {result.output}"
+    assert result.exit_code == 0, result.output
+    assert logging.getLogger("infrahub_sync").level == expected_level

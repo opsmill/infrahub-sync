@@ -1,4 +1,4 @@
-# Quickstart: Validating the Prefect-Managed Remote Run (Developer Preview)
+# Quickstart: Validating the Prefect-Managed Remote Run
 
 Runnable validation scenarios proving the feature end-to-end. Contracts:
 [`contracts/execution-surface.md`](contracts/execution-surface.md),

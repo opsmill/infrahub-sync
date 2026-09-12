@@ -1,4 +1,4 @@
-# Research: Prefect-Managed Remote Infrahub Sync Run (Developer Preview)
+# Research: Prefect-Managed Remote Infrahub Sync Run
 
 **Status**: COMPLETE. Phase 0 initially STOPPED on a failed falsifying probe (the brief's
 `prefect==3.7.2` pin is unsatisfiable); the root orchestrator issued **D005** (pin
@@ -44,7 +44,7 @@ imports `diffsync.store.redis.RedisStore` unconditionally.
 **Resolution as recorded in Phase 0 — D005 repair path B (provisional)**: the optional
 extra pins `prefect==3.5.0`. Path A (restructuring base deps to keep 3.7.2 by allowing
 redis ≥5) was rejected: it ships a redis major bump to every existing user inside a
-preview. Origin: brief-gap/instance against the brief's Dependencies section (its "Prefect
+feature. Origin: brief-gap/instance against the brief's Dependencies section (its "Prefect
 3.7.2 — Available" satisfaction evidence was falsified at the install boundary; VAL-6 had
 supplied prefect via a `uv run --with` overlay, unpinned, so it never exercised
 extra-vs-base resolution).
@@ -139,7 +139,7 @@ empty; `pgrep -fl "prefect|probe_flow"` empty.
 - **Evidence**: probe a₁/a₂ (conflict), a₃ (3.5.0 resolves), root's independent
   re-verification.
 - **Options**: A — keep 3.7.2, restructure base deps to allow redis≥5 (rejected: redis
-  major bump for every existing user inside a preview); B — pin 3.5.0 (chosen); C —
+  major bump for every existing user within the bounded scope); B — pin 3.5.0 (chosen); C —
   return brief for intake (not needed given B).
 - **Gate note (2026-07-30, Blake Ellis)**: the human **overrode this record to option D**,
   a fourth option produced by gate research and not present in the list above: pin
@@ -169,7 +169,7 @@ empty; `pgrep -fl "prefect|probe_flow"` empty.
      — **chosen**: minimal, evidence-backed, entirely inside the optional extra (base
      install untouched; DBA-001 unaffected).
   3. Bisect fastapi to the true break point and use a wider ceiling — rejected for the
-     preview: cost without benefit; `<0.121` is the verified ceiling and can be widened
+     feature: cost without benefit; `<0.121` is the verified ceiling and can be widened
      later with evidence.
 - **Recommendation / Decision**: option 2. The extra reads:
   `prefect = ["prefect==3.5.0", "importlib-metadata>=4.4", "fastapi>=0.111,<0.121"]`

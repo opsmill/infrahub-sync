@@ -27,12 +27,19 @@ import dataclasses
 import logging
 import os
 from collections.abc import Sequence
+from threading import Lock
 from typing import Any, Literal, Protocol
 
 from prefect import flow
 from prefect.logging import get_run_logger
 
-from infrahub_sync.execution import RunExecutionError, redact, run_remote_request
+from infrahub_sync.execution import (
+    RunExecutionError,
+    _bind_remote_secret_values,
+    collect_secret_values,
+    redact,
+    run_remote_request,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +47,7 @@ FLOW_NAME = "infrahub-sync"
 # Deployment named "run", NOT a repeat of the flow name: the lookup path reads
 # /api/deployments/name/infrahub-sync/run instead of the stuttering
 # .../infrahub-sync/infrahub-sync, and future orchestration work gets sibling
-# deployments as .../infrahub-sync/<verb> for free. Renaming after the preview
+# deployments as .../infrahub-sync/<verb> for free. Renaming either value
 # would break every remote caller's lookup.
 DEPLOYMENT_NAME = "run"
 CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
@@ -49,11 +56,12 @@ CONFIG_DIR_ENV = "INFRAHUB_SYNC_CONFIG_DIRECTORY"
 # effective for the duration of one run.
 SOURCE_LOGGER_NAME = "infrahub_sync"
 BRIDGED_LEVEL = logging.INFO
+_REMOTE_LOGGER_OWNERSHIP_LOCK = Lock()
 
 # Contractual format of the one summary line a remote caller may parse. Carries
 # five RunResult fields (run_id, status, changed, summary, artifact_path);
 # sync_name and operation deliberately do not appear. Changing it is a breaking
-# change for consumers of this preview.
+# change for consumers of this deployment contract.
 SUMMARY_LINE_FORMAT = "run %s finished: status=%s changed=%s summary=create:%d,update:%d,delete:%d artifact=%s"
 
 
@@ -121,49 +129,56 @@ def infrahub_sync_run(
             serving environment, or any adapter/engine failure (sanitized).
     """
     run_logger = get_run_logger()
-    source_logger = logging.getLogger(SOURCE_LOGGER_NAME)
-    bridge = RunLoggerBridge(run_logger)
-    # The flow owns the source logger's LEVEL as well as the handler: attaching a
-    # handler never defeats `Logger.isEnabledFor`, and the `infrahub_sync`
-    # hierarchy is level-NOTSET by default (the CLI makes INFO effective through
-    # `_setup_logging`, which this flow never calls). Without owning the level,
-    # forwarding would silently depend on ambient root/Prefect configuration.
-    previous_level = source_logger.level
-    source_logger.addHandler(bridge)
-    source_logger.setLevel(BRIDGED_LEVEL)
-    try:
-        config_directory = os.environ.get(CONFIG_DIR_ENV)
-        if not config_directory:
-            # Validated at serve start; checked again here so a flow run started
-            # some other way fails with the actionable reason.
-            msg = f"{CONFIG_DIR_ENV} is not set in the serving process environment"
-            raise RunExecutionError(msg)
+    secrets = list(collect_secret_values())
+    with _REMOTE_LOGGER_OWNERSHIP_LOCK:
+        source_logger = logging.getLogger(SOURCE_LOGGER_NAME)
+        bridge = RunLoggerBridge(run_logger, secrets=secrets)
+        # The flow owns the source logger's LEVEL as well as the handler: attaching a
+        # handler never defeats `Logger.isEnabledFor`, and the `infrahub_sync`
+        # hierarchy is level-NOTSET by default (the CLI makes INFO effective through
+        # `_setup_logging`, which this flow never calls). Without owning the level,
+        # forwarding would silently depend on ambient root/Prefect configuration.
+        previous_level = source_logger.level
+        previous_propagate = source_logger.propagate
+        source_logger.addHandler(bridge)
+        source_logger.setLevel(BRIDGED_LEVEL)
+        source_logger.propagate = False
+        try:
+            with _bind_remote_secret_values(secrets):
+                config_directory = os.environ.get(CONFIG_DIR_ENV)
+                if not config_directory:
+                    # Validated at serve start; checked again here so a flow run started
+                    # some other way fails with the actionable reason.
+                    msg = f"{CONFIG_DIR_ENV} is not set in the serving process environment"
+                    raise RunExecutionError(msg)
 
-        result = run_remote_request(
-            sync_name,
-            operation,
-            confirm_writes,
-            branch,
-            config_directory=config_directory,
-        )
-        run_logger.info(
-            SUMMARY_LINE_FORMAT,
-            result.run_id,
-            result.status,
-            result.changed,
-            result.summary["create"],
-            result.summary["update"],
-            result.summary["delete"],
-            result.artifact_path,
-        )
-        # NOT `dataclasses.asdict(result)`: asdict() deep-copies field values, and
-        # `RunResult.summary` is a `types.MappingProxyType`, which is not
-        # deep-copyable — it raises `TypeError: cannot pickle 'mappingproxy'
-        # object`, so every successful run would fail at return time. Do not
-        # "simplify" this back to asdict().
-        out = {field.name: getattr(result, field.name) for field in dataclasses.fields(result)}
-        out["summary"] = dict(result.summary)
-        return out
-    finally:
-        source_logger.removeHandler(bridge)
-        source_logger.setLevel(previous_level)
+                result = run_remote_request(
+                    sync_name,
+                    operation,
+                    confirm_writes,
+                    branch,
+                    config_directory=config_directory,
+                )
+                run_logger.info(
+                    SUMMARY_LINE_FORMAT,
+                    result.run_id,
+                    result.status,
+                    result.changed,
+                    result.summary["create"],
+                    result.summary["update"],
+                    result.summary["delete"],
+                    result.artifact_path,
+                )
+                # NOT `dataclasses.asdict(result)`: asdict() deep-copies field values, and
+                # `RunResult.summary` is a `types.MappingProxyType`, which is not
+                # deep-copyable — it raises `TypeError: cannot pickle 'mappingproxy'
+                # object`, so every successful run would fail at return time. Do not
+                # "simplify" this back to asdict().
+                out = {field.name: getattr(result, field.name) for field in dataclasses.fields(result)}
+                out["summary"] = dict(result.summary)
+                return out
+        finally:
+            source_logger.removeHandler(bridge)
+            source_logger.setLevel(previous_level)
+            source_logger.propagate = previous_propagate
+            secrets.clear()
