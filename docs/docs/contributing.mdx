@@ -137,7 +137,7 @@ Release notes are written by contributors rather than generated from pull reques
 Create one with towncrier, naming it after the issue or pull request number:
 
 ```bash
-uv run towncrier create -c "Short description of what changed." 123.fixed.md
+uv run --extra dev towncrier create -c "Short description of what changed." 123.fixed.md
 ```
 
 The file must be a direct child of `changelog/` named `<id>.<type>.md`, where the type is one of `security`, `removed`, `deprecated`, `added`, `changed`, `fixed`, or `housekeeping`. Use `+` as the identifier when the change has no issue number, for example `+short-slug.housekeeping.md`.

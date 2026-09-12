@@ -138,7 +138,7 @@ Release notes are written by contributors, not generated from PR titles. Every p
 Create one with towncrier, naming it after the issue or PR number:
 
 ```bash
-uv run towncrier create -c "Short description of what changed." 123.fixed.md
+uv run --extra dev towncrier create -c "Short description of what changed." 123.fixed.md
 ```
 
 The file must be a direct child of `changelog/` named `<id>.<type>.md`. The seven types are configured in `[tool.towncrier]` in `pyproject.toml`:

@@ -94,7 +94,8 @@ jobs:
 
           if [ -z "${ADDED}" ]; then
             MSG="No news fragment found. Add one directly under changelog/,"
-            MSG="${MSG} named <id>.<type>.md, e.g. uv run towncrier create -c"
+            MSG="${MSG} named <id>.<type>.md, e.g. uv run --extra dev"
+            MSG="${MSG} towncrier create -c"
             MSG="${MSG} \"What changed\" ${PR}.fixed.md — types: security,"
             MSG="${MSG} removed, deprecated, added, changed, fixed,"
             MSG="${MSG} housekeeping. Nested paths and unknown types are not"

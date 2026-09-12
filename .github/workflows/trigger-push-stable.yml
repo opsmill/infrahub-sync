@@ -240,7 +240,13 @@ jobs:
           printf '%s\n' "${KEPT[@]}"
           echo "has_fragments=true" >> "$GITHUB_OUTPUT"
 
-          uv run towncrier build --yes --version "${VERSION}"
+          # `--extra dev` is required, not decorative: towncrier is declared in
+          # [project.optional-dependencies].dev, and `uv run` does not install
+          # extras by default. Without it this step fails on a cold runner with
+          # "Failed to spawn: towncrier" — after the release branch has already
+          # been prepared. The rest of this repo's CI reaches the same tools via
+          # `uv sync --frozen --extra dev`; this is the single-command form.
+          uv run --extra dev towncrier build --yes --version "${VERSION}"
 
       - name: Open the release pull request
         if: steps.changelog.outputs.has_fragments == 'true'
