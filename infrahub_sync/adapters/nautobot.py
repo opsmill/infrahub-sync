@@ -69,9 +69,9 @@ def _validated_depth(value: Any) -> int | None:
     """
     if value is None:
         return None
-    # `True` is an `int` in Python and `IntEnum` members are too, so identity on
+    # `bool` and `IntEnum` members pass `isinstance(..., int)`, so identity on
     # the type is what keeps a non-integer out.
-    if isinstance(value, bool) or type(value) is not int or not 0 <= value <= MAX_DEPTH:
+    if type(value) is not int or not 0 <= value <= MAX_DEPTH:
         msg = f"Invalid Nautobot setting 'depth': {value!r}. It must be an integer between 0 and {MAX_DEPTH}."
         raise ValueError(msg)
     return value
@@ -83,14 +83,12 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
     def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
-        # Read and validate before the client exists, so a bad value is refused
-        # ahead of any request. `_create_nautobot_client` is deliberately left
-        # alone: the adapter tests monkeypatch it, so validation placed there
-        # would be bypassed.
+        # Invariant: `depth` is validated before the client is constructed, so an
+        # invalid value is refused ahead of any request.
         settings = adapter.settings or {}
-        self.depth = _validated_depth(settings.get("depth"))
+        depth = _validated_depth(settings.get("depth"))
         # `{}` when absent, so every existing request stays byte-identical.
-        self._depth_kwargs: dict[str, int] = {} if self.depth is None else {"depth": self.depth}
+        self._depth_kwargs: dict[str, int] = {} if depth is None else {"depth": depth}
 
         self.target = target
         self.client = self._create_nautobot_client(adapter)
