@@ -53,11 +53,44 @@ def _is_unknown_filter_error(exc: pynautobot.core.query.RequestError, field: str
     return field in text and "filter" in text.lower()
 
 
+# Nautobot documents `depth` on list endpoints as an integer between 0 and 10.
+# 2.4.41 does not enforce the upper bound itself (`core/api/views.py` parses
+# `int(...)` and falls back to 0 on a non-integer), so the adapter refuses
+# out-of-range values rather than passing or trimming them.
+MAX_DEPTH = 10
+
+
+def _validated_depth(value: Any) -> int | None:
+    """Return the `depth` to send, or None when the operator selected none.
+
+    `None` covers both a missing key and an explicit YAML null; both mean "send
+    no depth parameter". Anything else must be an integer in the documented
+    range — refused here, never clamped or coerced.
+    """
+    if value is None:
+        return None
+    # `True` is an `int` in Python and `IntEnum` members are too, so identity on
+    # the type is what keeps a non-integer out.
+    if isinstance(value, bool) or type(value) is not int or not 0 <= value <= MAX_DEPTH:
+        msg = f"Invalid Nautobot setting 'depth': {value!r}. It must be an integer between 0 and {MAX_DEPTH}."
+        raise ValueError(msg)
+    return value
+
+
 class NautobotAdapter(DiffSyncMixin, Adapter):
     type = "Nautobot"
 
     def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+
+        # Read and validate before the client exists, so a bad value is refused
+        # ahead of any request. `_create_nautobot_client` is deliberately left
+        # alone: the adapter tests monkeypatch it, so validation placed there
+        # would be bypassed.
+        settings = adapter.settings or {}
+        self.depth = _validated_depth(settings.get("depth"))
+        # `{}` when absent, so every existing request stays byte-identical.
+        self._depth_kwargs: dict[str, int] = {} if self.depth is None else {"depth": self.depth}
 
         self.target = target
         self.client = self._create_nautobot_client(adapter)
@@ -140,7 +173,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         model: type[NautobotModel] = getattr(self, model_name)
         endpoint = self._resolve_endpoint(element.mapping)
         try:
-            raw = [dict(node) for node in endpoint.filter(last_updated__gte=cursor.value)]
+            raw = [dict(node) for node in endpoint.filter(last_updated__gte=cursor.value, **self._depth_kwargs)]
         except pynautobot.core.query.RequestError as exc:
             # Not every Nautobot endpoint exposes `last_updated__gte` (e.g.
             # dcim.front-ports / dcim.rear-ports return 400 with a body like
@@ -153,7 +186,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 model_name,
                 element.mapping,
             )
-            raw = [dict(node) for node in endpoint.all()]
+            raw = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
         yield from self._records_to_diffsync(element=element, model=model, raw_records=raw)
 
     def list_existing_ids(self, model_name: str) -> Iterator[str]:
@@ -171,7 +204,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
 
         model: type[NautobotModel] = getattr(self, model_name)
         endpoint = self._resolve_endpoint(element.mapping)
-        raw_records = [dict(node) for node in endpoint.all()]
+        raw_records = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
         for payload in self._records_to_diffsync(element=element, model=model, raw_records=raw_records):
             yield model(**payload).get_unique_id()
 
@@ -191,7 +224,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 continue
 
             endpoint = self._resolve_endpoint(element.mapping)
-            raw_records = [dict(node) for node in endpoint.all()]
+            raw_records = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
             total = len(raw_records)
             resource_name = element.mapping.split(".")[-1]
             if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]

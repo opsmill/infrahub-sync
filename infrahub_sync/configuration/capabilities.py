@@ -523,7 +523,7 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
         "nautobot": AdapterConfigurationCapabilities(
             adapter_name="nautobot",
             roles=_SOURCE_ONLY,
-            allowed_settings=frozenset({"token", "url", "verify_ssl"}),
+            allowed_settings=frozenset({"depth", "token", "url", "verify_ssl"}),
             credential_setting_paths=("token",),
             incremental_extraction=True,
         ),
