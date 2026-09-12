@@ -15,9 +15,8 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "infrahub-sdk[all]>=1.17,<2",
-    "structlog>=25.1,<26.0",
-    "typing-extensions>=4.4",
+    "infrahub-sdk>=1.17,<2",
+    "structlog>=25.1,<27.0",
     "httpx>=0.27,<1",
     # 6.0.2 is the first release with a cp313 wheel. Below it a Python 3.13
     # lowest-direct resolution falls back to 6.0's source build, which no longer
@@ -35,7 +34,7 @@ dependencies = [
     # every user. The floor is permissive on purpose (NOT `>=5`) so a downstream
     # consumer that still requires `diffsync[redis]` keeps resolving, at redis 4.6.0.
     "redis>=4.3,<9",
-    "netutils>=1.9,<2.0",
+    "netutils>=1.12,<2.0",
     # Runtime (not only dev) dependency: `generate` formats its rendered Python with
     # `ruff format` so regeneration is byte-stable. A range, not an exact pin: an
     # exact pin would make this package unresolvable next to any project holding a
@@ -44,9 +43,18 @@ dependencies = [
     # test enforces the contract against the locked version.
     "ruff>=0.15.5,<0.16",
     "tqdm>=4.67",
+    # The first release carrying the fix; 23.0.0 is inside the series but predates
+    # the patch. `tests/image/test_version_policy.py` enforces the refused releases.
     "pyarrow>=23.0.1,<24",
     "fsspec>=2024.6",
     "filelock>=3.13",
+    "jinja2>=3.0.2",
+    "typer>=0.23.1",
+    "pydantic>=2.10.2,<3",
+    "packaging>=22.0",
+    "requests>=2.28.2",
+    "urllib3>=1.26.9",
+    "typing-extensions>=4.12.2",
 ]
 
 [project.urls]
@@ -86,15 +94,14 @@ service = [
 ]
 dev = [
     "yamllint>=1.37.1",
-    "pylint",
-    "ipython",
-    "pytest-asyncio",
-    "requests",
-    "pre-commit>=4.0,<5.0",
-    "types-toml",
-    "types-ujson",
-    "typer-cli",
-    "invoke>=2.2.1,<3",
+    "pylint>=3.3",
+    "ipython>=8.18",
+    "pytest-asyncio>=0.24",
+    "prek>=0.5.0",
+    "types-toml>=0.10",
+    "types-ujson>=5.10",
+    "typer-cli>=0.23",
+    "invoke>=2.2.1,<4",
     "types-PyYAML>=6.0.12",
     "ruff==0.15.5",
     "pytest>=9.0.2,<10",
@@ -102,7 +109,7 @@ dev = [
     "pytest-xdist>=3.8",
     "ty==0.0.32",
     "types-python-slugify>=8.0.2.20240310",
-    "towncrier>=24.8,<25",
+    "towncrier>=24.8,<27",
     "rumdl>=0.1.68",
 ]
 

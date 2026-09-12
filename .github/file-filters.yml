@@ -1,6 +1,8 @@
 ---
 python_all: &python_all
   - "**/*.py"
+  - "pyproject.toml"
+  - "uv.lock"
 
 doc_files: &doc_files
   - "docs/**"
