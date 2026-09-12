@@ -175,9 +175,8 @@ def create_app(
 
     @application.get("/runs/{run_id}", responses=ERROR_RESPONSES)
     async def get_run(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> RunResource:
-        if reconciler is not None:
-            await reconciler.reconcile_run(run_id)
-        return await service.get_run(run_id)
+        observations = await reconciler.reconcile_run(run_id) if reconciler is not None else {}
+        return await service.get_run(run_id, observations)
 
     @application.get("/runs/{run_id}/plan", responses=ERROR_RESPONSES)
     def get_plan(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> PlanResource:

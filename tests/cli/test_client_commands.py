@@ -45,6 +45,8 @@ from infrahub_sync.client import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from infrahub_sync.client.models import TerminalOutcome, TerminalState
+
 NOW = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
 CHECKSUM = "a" * 64
 RUNNER = CliRunner()
@@ -65,7 +67,11 @@ def _run(
     operation: Literal["plan", "sync", "apply"] = "plan",
     phase: str = "accepted",
     reconciliation_required: bool = False,
+    outcome: str | None = None,
+    terminal: tuple[TerminalState, TerminalOutcome] | None = None,
 ) -> RunResource:
+    # The three verdict fields are all-or-nothing, so they are set from one optional pair.
+    terminal_state, terminal_outcome = terminal if terminal is not None else (None, None)
     execution = OrchestrationSummary(
         flow_run_id="flow-service-1",
         purpose=operation,
@@ -78,9 +84,9 @@ def _run(
         cancellation_requested_at=None,
         cancellation_recovery_deadline_at=None,
         cancellation_acknowledged_at=None,
-        terminal_at=None,
-        terminal_state=None,
-        terminal_outcome=None,
+        terminal_at=NOW if terminal is not None else None,
+        terminal_state=terminal_state,
+        terminal_outcome=terminal_outcome,
     )
     return RunResource(
         run=PublicRunResource(
@@ -93,6 +99,7 @@ def _run(
             actor="operator",
             started_at=NOW,
             phase=phase,
+            outcome=outcome,
             prefect_executions=(PublicExecutionLink(flow_run_id="flow-service-1", purpose=operation, attempt=1),),
             reconciliation_required=reconciliation_required,
         ),
@@ -440,6 +447,45 @@ def test_runs_show_renders_the_service_record_and_its_selected_execution(client:
         "flow_run_id: flow-service-1",
     ):
         assert field in result.output
+
+
+@pytest.mark.parametrize(
+    ("terminal", "expected_state"),
+    [
+        (None, "pending"),
+        (("completed", "succeeded"), "completed"),
+        (("failed", "failed"), "failed"),
+        (("cancelled", "cancelled"), "cancelled"),
+        (("abandoned", "abandoned"), "abandoned"),
+        (("interrupted", "ambiguous"), "interrupted"),
+    ],
+    ids=("pending", "completed", "failed", "cancelled", "abandoned", "interrupted"),
+)
+def test_runs_show_prefers_a_durable_execution_verdict_over_its_last_observed_state(
+    client: MagicMock, terminal: tuple[TerminalState, TerminalOutcome] | None, expected_state: str
+) -> None:
+    """Nothing observes an execution after its verdict, so the observed state stops being current."""
+    client.get_run.return_value = _run(terminal=terminal)
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert f"execution_state: {expected_state}" in result.output.splitlines()
+
+
+def test_runs_show_keeps_the_run_disposition_beside_an_interrupted_execution_verdict(client: MagicMock) -> None:
+    """The ambiguous disposition an interrupted write leaves stays readable without a new field."""
+    client.get_run.return_value = _run(
+        operation="sync", phase="interrupted", outcome="ambiguous", terminal=("interrupted", "ambiguous")
+    )
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert "phase: interrupted" in lines
+    assert "outcome: ambiguous" in lines
+    assert "execution_state: interrupted" in lines
 
 
 @pytest.mark.parametrize(

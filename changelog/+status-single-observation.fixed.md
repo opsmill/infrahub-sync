@@ -1,0 +1,1 @@
+Fixed `GET /runs/{run_id}` querying Prefect twice for every pending execution on the run, and at all for executions that had already reached a terminal verdict. `infrahub-sync runs show` now reports a terminal execution's durable verdict as its `execution_state` instead of the last state observed before that verdict.
