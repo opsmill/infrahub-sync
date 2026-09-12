@@ -21,7 +21,7 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 # The selected V3 MVP identity. It appears here and in the package metadata; every
 # artifact name below is derived rather than written down a second time.
-VERSION = "3.0.0a1"
+VERSION = "3.0.0a2"
 
 COMMIT = "708a8fca4b3fe300ae33242ddcd791a181926eeb"
 # The two forms Git writes for a commit's own timestamp: a numeric offset, and
@@ -129,7 +129,7 @@ def test_the_declared_identity_is_read_from_the_installed_distribution() -> None
     assert (derived.revision, derived.created) == (COMMIT, COMMIT_TIME)
 
 
-@pytest.mark.parametrize("declared", ["2.0.1", "3.0.0", "v3.0.0a1", "3.0.0a2", " 3.0.0a1", ""])
+@pytest.mark.parametrize("declared", ["2.0.1", "3.0.0", "v3.0.0a2", "3.0.0a1", " 3.0.0a2", ""])
 def test_a_declared_version_that_contradicts_the_source_is_refused(declared: str) -> None:
     """An accepted mismatch would let the caller, not the source, name the artifacts."""
     with pytest.raises(release.ReleaseTaskError, match="is not the source's"):
@@ -224,9 +224,9 @@ def test_the_dry_run_accepts_the_distributions_the_identity_names(
 @pytest.mark.parametrize(
     "produced",
     [
-        ("infrahub_sync-3.0.0a2-py3-none-any.whl", "infrahub_sync-3.0.0a2.tar.gz"),
-        ("infrahub_sync-3.0.0a1-py3-none-any.whl",),
-        ("infrahub-sync-3.0.0a1-py3-none-any.whl", "infrahub_sync-3.0.0a1.tar.gz"),
+        ("infrahub_sync-3.0.0a1-py3-none-any.whl", "infrahub_sync-3.0.0a1.tar.gz"),
+        ("infrahub_sync-3.0.0a2-py3-none-any.whl",),
+        ("infrahub-sync-3.0.0a2-py3-none-any.whl", "infrahub_sync-3.0.0a2.tar.gz"),
     ],
 )
 def test_the_dry_run_refuses_a_distribution_the_identity_does_not_name(
@@ -235,7 +235,7 @@ def test_the_dry_run_refuses_a_distribution_the_identity_does_not_name(
     """A distribution named something else is one an upload would publish as this release."""
     _recorded(tmp_path, monkeypatch)
 
-    with pytest.raises(release.ReleaseTaskError, match=r"not the 3\.0\.0a1 distributions"):
+    with pytest.raises(release.ReleaseTaskError, match=r"not the 3\.0\.0a2 distributions"):
         release.build(StubContext(builds=produced))
 
 
