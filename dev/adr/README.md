@@ -12,8 +12,8 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — the typed boundary a saved-plan apply writes through, and the member-presence-only limit of
   the runtime check.
 - [0003 — The replace-set flush is a targeted relationship write](0003-replace-set-flush-is-a-targeted-relationship-write.md)
-  — why no whole-node re-render can flush a reconciled peer set, and the live test that pins the
-  destination's replace semantics.
+  — **superseded by 0012** — why no whole-node re-render can flush a reconciled peer set, and the
+  live test that pins the destination's replace semantics.
 - [0004 — Deletes are recorded but never executed](0004-deletes-are-recorded-but-never-executed.md)
   — the delete contract and the rule that a plan may only record what it can know.
 - [0005 — Translate run failures only at the remote boundary](0005-translate-run-failures-only-at-the-remote-boundary.md)
@@ -35,6 +35,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0011 — Internal run bundles are private, uncompressed, and never redacted](0011-internal-run-bundles-are-private-and-byte-stable.md)
   — why stage handoff state is a second artifact class, why its bytes are byte-stable and
   exempt from redaction, and how an untrusted archive is bounded and validated.
+- [0012 — The convergent upsert is the replace-set write](0012-the-convergent-upsert-is-the-replace-set-write.md)
+  — why the targeted relationship flush was deleted, what the live shrink test now pins on the
+  Upsert mutation, and the escalation that is unchanged. Supersedes 0003.
 
 ## Related
 

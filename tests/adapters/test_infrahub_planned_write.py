@@ -9,10 +9,10 @@ Recording the rendered mutation rather than a mock call is load-bearing, because
 properties under test are invisible to an assertion made against a `MagicMock`: **keyedness**
 is a property of the rendered mutation and not of the assembled `data` (AD054, AD066); the
 **replace-set** is only real if it is *issued*, and surplus-peer removal rests on the
-destination's replace semantics, which only the live shrink test can pin (AD075); and
-the **flush** is a targeted `<kind>Update` that only the rendered mutation name separates from
-a second upsert (AD085, AD088). That the flush names no *unmapped* field is asserted in
-`tests/plan/test_apply_conformance.py`, against a fixture kind declaring one.
+destination's replace semantics, which only the live shrink test can pin (AD075); and **one
+write per operation** is a claim about the mutations that reach the transport, which only the
+recorded mutation names can settle (AD085). That the upsert names no *unmapped* field is
+asserted in `tests/plan/test_apply_conformance.py`, against a fixture kind declaring one.
 """
 
 from __future__ import annotations
@@ -203,8 +203,8 @@ ORPHAN_SCHEMA = NodeSchemaAPI(
 
 # One cardinality-many relationship: the replace-set cases. `owner` is mapped by no
 # operation here and is **load-bearing**: an unmapped optional cardinality-one relationship is
-# the shape the SDK's whole-node render nulls, which is what the AD088 tripwire at the end of
-# this module pins. Do not remove it.
+# the shape the SDK's whole-node render nulls, so it is what makes "the upsert names no unmapped
+# destination field" decidable. Do not remove it.
 TEAM_SCHEMA = NodeSchemaAPI(
     id="team-schema",
     name="Team",
@@ -227,7 +227,7 @@ TEAM_SCHEMA = NodeSchemaAPI(
     ],
 )
 
-# Two cardinality-many relationships, so "one flush per operation, not one per
+# Two cardinality-many relationships, so "one write per operation, not one per
 # relationship" (V40) is decidable.
 GROUP_SCHEMA = NodeSchemaAPI(
     id="group-schema",
@@ -255,9 +255,9 @@ SCHEMAS: dict[str, NodeSchemaAPI] = {
 class RecordingClient(InfrahubClientSync):
     """A real client whose destination calls are recorded on one ordered event log.
 
-    One log rather than three lists: the flush's ordering after the upsert (AD075) and the
-    **absence** of any destination read on the planned-write path
-    are both read off the same log, so neither can be satisfied by an unrelated call.
+    One log rather than three lists: that the operation makes exactly one write, and the
+    **absence** of any destination read on the planned-write path, are both read off the same
+    log, so neither can be satisfied by an unrelated call.
     """
 
     def __init__(self) -> None:
@@ -468,9 +468,9 @@ def record_payload_create(client: RecordingClient) -> Iterator[list[dict[str, An
 def issued_reads(client: RecordingClient) -> list[dict[str, Any]]:
     """Every destination read (`client.get`) on the client's event log.
 
-    The planned-write path must issue none: the flush writes the plan's peer set
-    directly, and surplus-peer removal is the destination Update mutation's replace
-    semantics, pinned live — not a fetch-and-reconcile round trip.
+    The planned-write path must issue none: the upsert carries the plan's peer set directly,
+    and surplus-peer removal is the destination Upsert mutation's replace semantics, pinned
+    live — not a fetch-and-reconcile round trip.
     """
     return [payload for name, payload in client.events if name == "get"]
 
@@ -1489,7 +1489,7 @@ def test_the_gate_verifies_member_presence_only_and_is_no_stronger_than_hasattr(
 #
 # Constitution V asks for adapter edge-case tests covering timeouts and 401/403. The two
 # surfaces this outcome adds both issue live destination calls during an apply — the planned
-# write itself (`client.create` → `save(allow_upsert=True)` → the targeted flush) and the
+# write itself (`client.create` → `save(allow_upsert=True)`) and the
 # apply-time peer resolver (`client.filters`) — and their *resolution* edges are covered above
 # (a zero-match and a multi-match peer each refuse and dispatch nothing), while their
 # transport and auth edges were not. plan.md's Principle V row disclosed that as owed; these

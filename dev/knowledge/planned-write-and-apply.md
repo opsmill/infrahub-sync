@@ -68,8 +68,7 @@ Only the Infrahub adapter implements the surface today.
 3b. DIAGNOSTIC: every human-friendly-ID component of the kind is accounted for
 5.  node = client.create(kind=..., data=generate_payload_create(...))
 5b. GATE: read the rendered mutation input and check it carries `id` or `hfid`
-6.  node.save(allow_upsert=True)               # the convergence point
-7e. ONE targeted relationship write carrying the plan's cardinality-many peer sets (see below)
+6.  node.save(allow_upsert=True)               # the convergence point, and the ONLY write
 8.  peers.remember(operation.kind, operation.identity, node.id)
 ```
 
@@ -199,33 +198,23 @@ SDK to turn Python `None` into a relationship id.
 
 ## Cardinality-many is an enforced replace-set
 
-The destination ends holding exactly the peers the plan names. The apply path writes those peer sets
-explicitly rather than leaving them to the upsert:
+The destination ends holding exactly the peers the plan names. The convergent upsert of step 6 is what
+does it: it carries each cardinality-many relationship as the plan's resolved peer list, and it is the
+operation's only destination write. No destination read is involved.
 
-```text
-7e. one hand-built <kind>Update carrying `id` plus only the replaced cardinality-many fields,
-    each rendered from the manager the create payload already built, issued once after the
-    upsert through client.execute_graphql
-```
+**Surplus-peer removal is the server's replace semantics, not something the client can express.** The
+SDK renders only the surviving peer list — `[{id: …}, …]` with no removal directive — so nothing about
+a removal ever reaches the wire, and a fetch-and-reconcile round trip before the write would decide
+nothing: if the destination's Upsert mutation replaces the list, the written list is the new set with
+or without it; if it merged, no in-process reconciliation could remove a peer either. The semantics
+are pinned by a live shrink test rather than hedged in code.
 
-No destination read is involved. Two properties are easy to get wrong here, and each was got wrong
-once:
+See [ADR 0012](../adr/0012-the-convergent-upsert-is-the-replace-set-write.md) for why the second,
+targeted relationship write this path used to make was deleted, and
+[ADR 0003](../adr/0003-replace-set-flush-is-a-targeted-relationship-write.md) for the record of the
+forms that came before it.
 
-- **Surplus-peer removal is the server's replace semantics, not something the client can express.**
-  `RelationshipManagerBase._generate_input_data` renders only the surviving peer list — `[{id: …}, …]`
-  with no removal directive — so a fetch-and-reconcile round trip before the write decided nothing: if
-  the destination's Update mutation replaces the list, the written list is the new set with or without
-  it; if it merged, no in-process reconciliation could remove a peer either. The semantics are pinned by
-  a live shrink test rather than hedged in code.
-- **The flush is a targeted relationship write, never a whole-node re-render.** A whole-node render of a
-  node the SDK considers existing emits `<rel>: None` for every **optional cardinality-one** relationship
-  left uninitialized, silently clearing destination fields the plan never mapped. No render flag avoids
-  it — which is why the mutation is built by hand and names only the fields being replaced.
-
-See [ADR 0003](../adr/0003-replace-set-flush-is-a-targeted-relationship-write.md) for the full
-reasoning, the withdrawn forms, and the round trips that were removed.
-
-`peers: []` under `cardinality: "many"` means "empty the set", and the write carries `[]` for it. The
+`peers: []` under `cardinality: "many"` means "empty the set", and the upsert carries `[]` for it. The
 observable throughout is the **issued destination write carrying the plan's peer list** — not the
 manager's in-memory state and not a mocked adapter call.
 
@@ -282,10 +271,10 @@ inferred from an absent key.
 A destination rejection or transport failure stops at that operation. What was written stays written;
 there is no rollback.
 
-**And the failing operation may itself have written part of its change.** Applying one operation is
-not one write — step 5 upserts the object and step 7e writes its replaced cardinality-many
-relationship sets — so a failure between them leaves the destination changed by an operation that is
-in neither `applied_operations` nor `skipped_delete_operations`. The record therefore names it under
+**And the failing operation may itself have written part of its change.** An operation is one
+destination mutation, and one mutation can still commit remotely before its response — or the
+transport carrying it — fails, which leaves the destination changed by an operation that is in
+neither `applied_operations` nor `skipped_delete_operations`. The record therefore names it under
 `failed_operation` and reports `may_have_partially_written`, and the engine's error message says the
 same in words. The marker is deliberately "may": the engine learns that the call raised, never how
 far it got, and a marker that understated the writes would be the one an operator could not recover
@@ -343,6 +332,7 @@ read unambiguously, and it is **not** guidance either way.
 
 - [The saved plan artifact](plan-artifact.md) — the format this path consumes.
 - [ADR 0002](../adr/0002-planned-write-destination-protocol.md) — the write-surface boundary.
-- [ADR 0003](../adr/0003-replace-set-flush-is-a-targeted-relationship-write.md) — the flush.
+- [ADR 0012](../adr/0012-the-convergent-upsert-is-the-replace-set-write.md) — one upsert is the
+  whole write, and what pins its replace semantics.
 - [ADR 0004](../adr/0004-deletes-are-recorded-but-never-executed.md) — the delete contract.
 - [Adapter anatomy](adapter-anatomy.md) — the `sync`-path contract this sits beside.

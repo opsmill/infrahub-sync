@@ -10,8 +10,8 @@ committed schema fixture with only the transport edge replaced; no server is con
 Five assertions: an all-direct human-friendly-ID kind renders keyed; the
 relationship-crossing kind, which cannot render keyed client-side, is refused before its own
 mutation; the replace-set is issued for every cardinality-many relationship including
-`peers: []`, with no destination read; the flush names only the relationship fields
-being replaced (AD088); and applying the same operation twice renders byte-identical inputs.
+`peers: []`, with no destination read; that same upsert names only the fields the plan maps
+plus its key; and applying the same operation twice renders byte-identical inputs.
 
 It deliberately does **not** assert "two applies produce one object": a fixture holds no
 destination state, so that could only pass for the wrong reason. Byte-identity is the
@@ -53,7 +53,7 @@ DEVICE_KIND = "ConfDevice"
 ALL_DIRECT_KINDS = (SITE_KIND, TAG_KIND, TEAM_KIND)
 
 # `ConfTeam`'s two relationships: the cardinality-many one the replace-set reconciles, and the
-# optional cardinality-one one no operation here maps — assertion 4's subject (AD088).
+# optional cardinality-one one no operation here maps — assertion 4's subject.
 REPLACED_RELATIONSHIP = "members"
 UNMAPPED_RELATIONSHIP = "owner"
 
@@ -92,9 +92,9 @@ SCHEMAS = _load_schemas()
 class ConformanceClient(InfrahubClientSync):
     """A real client whose transport edge alone is replaced, recording one ordered event log.
 
-    One log rather than separate lists: the flush's ordering after the upsert (AD075) and the
-    **absence** of any destination read on the planned-write path are both read off
-    the same log, so neither can be satisfied by an unrelated call.
+    One log rather than separate lists: that the operation makes exactly one write, and the
+    **absence** of any destination read on the planned-write path, are both read off the same
+    log, so neither can be satisfied by an unrelated call.
     """
 
     def __init__(self) -> None:
@@ -142,7 +142,7 @@ class ConformanceClient(InfrahubClientSync):
 
     @property
     def mutation_names(self) -> list[str]:
-        """Just the names, which is what separates an upsert flush from an update flush."""
+        """Just the names, which is what separates the convergent upsert from any other write."""
         return [name for name, _ in self.mutations]
 
 
@@ -234,8 +234,8 @@ def record_rendered_inputs() -> Iterator[list[tuple[str, dict[str, Any]]]]:
     `id:` also occurs inside every relationship value, so a text search cannot tell a keyed
     mutation from an unkeyed one that happens to carry a resolved peer.
 
-    The replace-set flush does **not** render through here (AD088): re-rendering the whole node
-    is exactly what it must not do. Assertion 4 reads the flush off the wire instead.
+    Assertion 4 reads the upsert off the wire rather than through this spy, because its claim is
+    about the fields the issued mutation **names**, which is what the destination acts on.
     """
     rendered: list[tuple[str, dict[str, Any]]] = []
     real = InfrahubNodeSync._generate_input_data
@@ -274,8 +274,7 @@ def mutation_input_fields(query: str) -> list[str]:
     of that block at twelve (`infrahub_sdk/graphql/query.py` with
     `render_input_block`), so the field names are the keys at exactly that depth. Reading them
     off the wire rather than off `_generate_input_data` is the point: assertion 4's claim is
-    about the mutation the flush **issues**, and after AD088 the flush does not render through
-    `_generate_input_data` at all.
+    about the mutation the planned write **issues**, not about any intermediate mapping.
     """
     return re.findall(r"^ {12}(\w+):", query, flags=re.MULTILINE)
 
@@ -303,7 +302,7 @@ def seeded_adapter(**existing: list[str]) -> tuple[ConformanceClient, InfrahubAd
 
 
 def test_the_committed_fixture_holds_the_shapes_every_assertion_needs() -> None:
-    """The precondition every assertion below rests on (Trap 4, AD067, AD088).
+    """The precondition every assertion below rests on (Trap 4, AD067).
 
     A fixture drifting to all-direct kinds only would leave assertion 2 vacuous and remove the
     one thing that exercises AD051's second arm — while the suite stayed green. So the shapes
@@ -312,7 +311,7 @@ def test_the_committed_fixture_holds_the_shapes_every_assertion_needs() -> None:
     The same holds for the relationship shapes on `ConfTeam`. Assertion 4 is vacuous unless the
     kind under replace-set also carries an **optional cardinality-one** relationship no
     operation maps: that is the shape the destination library nulls, and a fixture without it
-    is why the defect AD088 fixes was invisible here for a whole delivery.
+    is why the defect it guards against was invisible here for a whole delivery.
     """
     for kind in ALL_DIRECT_KINDS:
         components = SCHEMAS[kind].human_friendly_id or []
@@ -333,7 +332,7 @@ def test_the_committed_fixture_holds_the_shapes_every_assertion_needs() -> None:
     unmapped = team_relationships[UNMAPPED_RELATIONSHIP]
     shape_message = (
         f"{TEAM_KIND}.{UNMAPPED_RELATIONSHIP} must be an OPTIONAL CARDINALITY-ONE relationship — the shape "
-        f"assertion 4 exists for (AD088) — got cardinality={unmapped.cardinality!r} optional={unmapped.optional!r}."
+        f"assertion 4 exists for — got cardinality={unmapped.cardinality!r} optional={unmapped.optional!r}."
     )
     assert unmapped.cardinality == "one", shape_message
     assert unmapped.optional, shape_message

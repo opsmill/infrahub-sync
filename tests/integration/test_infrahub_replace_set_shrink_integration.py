@@ -1,13 +1,12 @@
-"""Pin the destination Update mutation's replace semantics, live.
+"""Pin the destination Upsert mutation's replace semantics, live.
 
-The planned-write flush is a targeted `<kind>Update` carrying the plan's cardinality-many
-peer sets (ADR-0003). Nothing about a peer *removal* ever reaches the wire — the SDK's
-`RelationshipManagerBase._generate_input_data` renders only the surviving peer list, with no
-removal directive — so surplus peers are removed **iff the destination's Update mutation
-replaces a relationship list rather than merging it**. That is a fact about the server no
-offline harness can settle, and this test is what pins it: it shrinks a cardinality-many peer
-set N → fewer and N → 0 through the planned-write surface and asserts the surplus peers are
-gone at the destination.
+A planned operation is written by exactly one destination mutation: the convergent upsert,
+carrying the plan's cardinality-many peer set (ADR-0012). Nothing about a peer *removal* ever
+reaches the wire — the SDK renders only the surviving peer list, with no removal directive —
+so surplus peers are removed **iff the destination's Upsert mutation replaces a relationship
+list rather than merging it**. That is a fact about the server no offline harness can settle,
+and this test is what pins it: it shrinks a cardinality-many peer set N → fewer and N → 0
+through the planned-write surface and asserts the surplus peers are gone at the destination.
 
 **If this test ever fails on the peer-set assertions, Infrahub has been proven to merge
 rather than replace**, and the named escalation applies: implement explicit per-peer
@@ -318,8 +317,8 @@ def test_shrinking_a_cardinality_many_peer_set_removes_surplus_peers(
     observed = _destination_peer_ids(client, team_id, branch)
     assert observed == {tag_ids[kept]}, (
         f"Shrinking members from 3 peers to 1 left {sorted(observed)} at the destination, expected "
-        f"exactly {{{tag_ids[kept]!r}}}. The destination Update mutation did NOT replace the "
-        "relationship list — ADR-0003's pinned semantics do not hold, and the escalation "
+        f"exactly {{{tag_ids[kept]!r}}}. The destination Upsert mutation did NOT replace the "
+        "relationship list — ADR-0012's pinned semantics do not hold, and the escalation "
         "(explicit per-peer removal mutations) applies."
     )
     assert _destination_lead_id(client, team_id, branch) == lead_id, (
@@ -335,7 +334,7 @@ def test_shrinking_a_cardinality_many_peer_set_removes_surplus_peers(
     observed = _destination_peer_ids(client, team_id, branch)
     assert observed == set(), (
         f"Emptying members left {sorted(observed)} at the destination. `peers: []` must remove "
-        "every remaining peer (AD085) under the Update mutation's replace semantics."
+        "every remaining peer (AD085) under the Upsert mutation's replace semantics."
     )
     assert _destination_lead_id(client, team_id, branch) == lead_id, (
         "The emptying apply maps only `members`, so it must leave `lead` exactly as it found it. "
