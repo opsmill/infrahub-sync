@@ -54,9 +54,10 @@ def _staged_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any
     monkeypatch.setattr(preview, "_start_process", _start)
 
     class _RecordingContext(Context):
-        def run(self, command: str, **kwargs: Any) -> None:  # noqa: ANN401, PLR6301 - Invoke surface.
+        def run(self, command: str, **kwargs: Any) -> Result:  # noqa: ANN401, PLR6301 - Invoke surface.
             if "service.deploy" in command:
                 captured["deploy_env"] = kwargs.get("env", {})
+            return Result(exited=0)
 
     cast("Task", preview.up).body(_RecordingContext())
     return captured

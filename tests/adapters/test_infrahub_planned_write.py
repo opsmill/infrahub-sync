@@ -33,6 +33,7 @@ from infrahub_sdk.schema.main import (
     AttributeKind,
     AttributeSchemaAPI,
     BranchSchema,
+    RelationshipCardinality,
     RelationshipKind,
     RelationshipSchemaAPI,
 )
@@ -93,10 +94,10 @@ def _many(rel_id: str, name: str, peer: str) -> RelationshipSchemaAPI:
         id=rel_id,
         name=name,
         peer=peer,
-        cardinality="many",
+        cardinality=RelationshipCardinality.MANY,
         kind=RelationshipKind.GENERIC,
         optional=True,
-        identifier=f"{name}__{peer}",
+        identifier=f"{name}__{peer}".lower(),
     )
 
 
@@ -144,7 +145,7 @@ DEVICE_SCHEMA = NodeSchemaAPI(
             id="device-site",
             name="site",
             peer=SITE_KIND,
-            cardinality="one",
+            cardinality=RelationshipCardinality.ONE,
             kind=RelationshipKind.ATTRIBUTE,
             optional=False,
             identifier="device__site",
@@ -167,7 +168,7 @@ SERVER_SCHEMA = NodeSchemaAPI(
             id="server-site",
             name="site",
             peer=SITE_KIND,
-            cardinality="one",
+            cardinality=RelationshipCardinality.ONE,
             kind=RelationshipKind.ATTRIBUTE,
             optional=False,
             identifier="server__site",
@@ -218,7 +219,7 @@ TEAM_SCHEMA = NodeSchemaAPI(
             id="team-owner",
             name="owner",
             peer=TAG_KIND,
-            cardinality="one",
+            cardinality=RelationshipCardinality.ONE,
             kind=RelationshipKind.ATTRIBUTE,
             optional=True,
             identifier="team__owner",

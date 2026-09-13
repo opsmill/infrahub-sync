@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from infrahub_sdk.node import InfrahubNodeSync, RelatedNodeSync
+from infrahub_sdk.schema import RelationshipCardinality
 from infrahub_sdk.schema.main import NodeSchemaAPI, RelationshipSchemaAPI
 
 from infrahub_sync.adapters import infrahub as infrahub_adapter
@@ -124,7 +125,9 @@ def _run_update(node: FakeNode, attrs: dict[str, object], source: str | None = N
 
 def _make_sdk_relationship_nodes(*, resource_pool: bool = False) -> tuple[InfrahubNodeSync, InfrahubNodeSync]:
     """Build real SDK nodes for a cardinality-one update without network access."""
-    relationship_schema = RelationshipSchemaAPI(name="location", peer="LocationRack", cardinality="one")
+    relationship_schema = RelationshipSchemaAPI(
+        name="location", peer="LocationRack", cardinality=RelationshipCardinality.ONE
+    )
     node_schema = NodeSchemaAPI(name="Device", namespace="Test", relationships=[relationship_schema])
     peer_schema = NodeSchemaAPI(
         name="RackPool" if resource_pool else "Rack",

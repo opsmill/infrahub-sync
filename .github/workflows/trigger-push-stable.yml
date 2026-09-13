@@ -23,7 +23,7 @@ jobs:
       next_version: ${{ steps.version.outputs.next-version }}
       previous_tag: ${{ steps.previoustag.outputs.tag }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
           fetch-depth: 0
@@ -36,7 +36,7 @@ jobs:
 
       - name: Get previous tag
         id: previoustag
-        uses: WyriHaximus/github-action-get-previous-tag@v1
+        uses: WyriHaximus/github-action-get-previous-tag@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -86,13 +86,13 @@ jobs:
       head_sha: ${{ steps.head.outputs.sha }}
       next_version: ${{ steps.expose.outputs.next_version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
           fetch-depth: 0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
 
