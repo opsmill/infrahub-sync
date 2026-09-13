@@ -1,0 +1,25 @@
+.github/workflows/trigger-push-stable.yml
+  s_e814976895190a::t_afda65ff89b3ea 5,10-17,22-29,46-47,49-65,71-74,82-87,90,98-101,104,115,122-145,246-247,293
+AGENTS.md
+  s_e814976895190a::t_a77d8cf737d423 152
+RELEASING.md
+  s_e814976895190a::t_ae7e25ea262345 23-25,50-58,60,65,67,173,198
+changelog/+towncrier-release-process.housekeeping.md
+  s_e814976895190a::t_7f09df6e128d23 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d61a3495a2f8428abf7987ceeca36361abc0eb15",
+  "prompts": {},
+  "sessions": {
+    "s_e814976895190a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f38e30c4-8c78-42ea-9268-f3396fdc0b01",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
