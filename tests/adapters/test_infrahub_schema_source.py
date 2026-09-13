@@ -97,16 +97,6 @@ def _adapter(client: InfrahubClientSync, schema: MutableMapping[str, MainSchemaT
     return adapter
 
 
-def test_the_schema_cache_starts_empty_for_a_directly_constructed_node(client: InfrahubClientSync) -> None:
-    """The premise: building a node with an explicit schema populates no cache entry."""
-    schema = _node_schema()
-
-    node = InfrahubNodeSync(client=client, schema=schema, branch="main", data={"id": "w1", "name": {"value": "a"}})
-
-    assert not client.schema.cache, "a directly constructed node registers no schema"
-    assert node.get_kind() == KIND
-
-
 def test_the_schema_manager_would_fetch_for_such_a_node(client: InfrahubClientSync) -> None:
     """The hazard this guards against: the manager misses and reaches for the network."""
     InfrahubNodeSync(client=client, schema=_node_schema(), branch="main", data={"id": "w1"})

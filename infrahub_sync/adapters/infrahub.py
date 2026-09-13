@@ -539,9 +539,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """
         data: dict[str, Any] = {"local_id": str(node.id)}
         node_kind = node.get_kind()
-        # The adapter's loaded mapping is the schema source for this branch. The SDK's
-        # schema manager is not consulted: a node built with an explicit schema never
-        # registers in that manager's cache, so a lookup there would issue a fetch.
+        # Schema comes from the adapter's loaded mapping; the SDK schema manager is not
+        # consulted because a node built with an explicit schema is absent from its cache
+        # and a lookup there could fetch.
         node_schema = self.schema[node_kind]
 
         for attr_name in node_schema.attribute_names:
