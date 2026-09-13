@@ -81,11 +81,18 @@ class _NodeSchema:
 class _Node:
     """One destination node, in the shape the adapter reads."""
 
-    def __init__(self, node_id: str, kind: str, attributes: dict[str, Any]) -> None:
+    def __init__(self, node_id: str, kind: str, attributes: dict[str, Any], branch: str = "main") -> None:
         self.id = node_id
+        self.branch = branch
         self._schema = _NodeSchema(kind=kind, attribute_names=list(attributes))
         for name, value in attributes.items():
             setattr(self, name, _Attribute(value=value))
+
+    def get_kind(self) -> str:
+        return self._schema.kind
+
+    def get_branch(self) -> str:
+        return self.branch
 
 
 class _Store:
@@ -108,6 +115,9 @@ class _SchemaEndpoint:
         self.branches.append(branch)
         return self._schema
 
+    def get(self, kind: str, branch: str | None = None) -> _NodeSchema:  # noqa: ARG002
+        return self._schema[kind]
+
 
 class _InfrahubClient:
     """The Infrahub SDK surface the destination adapter uses, and nothing else."""
@@ -115,7 +125,12 @@ class _InfrahubClient:
     def __init__(self, address: str, config: object) -> None:
         self.address = address
         self.config = config
-        self.schema = _SchemaEndpoint({kind: _NodeSchema(kind=kind) for kind in SNAPSHOT})
+        self.schema = _SchemaEndpoint(
+            {
+                kind: _NodeSchema(kind=kind, attribute_names=list(definition["attributes"]))
+                for kind, definition in SNAPSHOT.items()
+            }
+        )
         self.store = _Store()
         self.created: list[tuple[str, dict[str, Any]]] = []
 

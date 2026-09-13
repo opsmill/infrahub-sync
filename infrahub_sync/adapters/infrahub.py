@@ -73,9 +73,9 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.models import PlannedOperation
 
 
-def _node_has_complete_attributes(node: InfrahubNodeSync) -> bool:
+def _node_has_complete_attributes(node: InfrahubNodeSync, node_schema: MainSchemaTypesAPI) -> bool:
     """Check if a node has all its non-optional attributes populated."""
-    for attr_schema in node._schema.attributes:
+    for attr_schema in node_schema.attributes:
         if attr_schema.optional:
             continue
         attr = getattr(node, attr_schema.name, None)
@@ -91,6 +91,7 @@ def resolve_peer_node(
     store: NodeStoreSync,
     client: InfrahubClientSync | None = None,
     fallback: bool | None = False,
+    schemas: Mapping[str, MainSchemaTypesAPI] | None = None,
 ) -> InfrahubNodeSync | None:
     """
     Resolve a peer node given a key.
@@ -100,6 +101,11 @@ def resolve_peer_node(
       - If it is a GenericSchemaAPI, iterate over its `used_by` list and return the first matching node.
       - If not found and fallback is enabled, use the client to fetch the node.
       - If node is found but has incomplete attributes, re-fetch from Infrahub.
+
+    `schemas` is the caller's already-loaded kind-to-schema mapping. Completeness can only
+    be judged against a schema, and reading one the caller does not already hold would mean
+    a schema request this function never used to make, so a kind missing from `schemas`
+    leaves the stored peer as it is.
 
     Returns the found peer node or None.
     """
@@ -113,8 +119,10 @@ def resolve_peer_node(
                 break
 
     # Check if the node from store has incomplete attributes and needs re-fetching
-    if peer_node and fallback and client and not _node_has_complete_attributes(peer_node):
-        peer_node = client.get(id=key, kind=peer_node.get_kind(), populate_store=True)
+    if peer_node and fallback and client and schemas is not None:
+        peer_node_schema = schemas.get(peer_node.get_kind())
+        if peer_node_schema is not None and not _node_has_complete_attributes(peer_node, peer_node_schema):
+            peer_node = client.get(id=key, kind=peer_node.get_kind(), populate_store=True)
 
     if not peer_node and fallback and client is not None:
         logger.warning("Unable to find %s [%s] in Store - Fallback to Infrahub", rel_schema.peer, key)
@@ -137,6 +145,8 @@ def _relationship_input_data(peer_id: str | None, source: str | None, owner: str
 def update_node(
     node: InfrahubNodeSync,
     attrs: Mapping[str, Any],
+    client: InfrahubClientSync,
+    node_schema: MainSchemaTypesAPI,
     source: str | None = None,
     owner: str | None = None,
 ) -> InfrahubNodeSync:
@@ -149,12 +159,14 @@ def update_node(
     Args:
         node: The node to update.
         attrs: The attributes and relationships to update.
+        client: The client that owns `node`, used for schema and store lookups.
+        node_schema: The schema of `node`, read once by the caller.
         source: Optional source ID to set on updated attributes and relationships.
         owner: Optional owner ID to set on updated attributes and relationships.
     """
-    schemas: Mapping[str, MainSchemaTypesAPI] = node._client.schema.all(branch=node._branch)
+    schemas: Mapping[str, MainSchemaTypesAPI] = client.schema.all(branch=node.get_branch())
     for attr_name, attr_value in attrs.items():
-        if attr_name in node._schema.attribute_names:
+        if attr_name in node_schema.attribute_names:
             attr = getattr(node, attr_name)
             attr.value = attr_value
             if source:
@@ -162,8 +174,8 @@ def update_node(
             if owner:
                 attr.owner = NodeProperty(data=owner)
 
-        if attr_name in node._schema.relationship_names:
-            for rel_schema in node._schema.relationships:
+        if attr_name in node_schema.relationship_names:
+            for rel_schema in node_schema.relationships:
                 peer_schema = schemas.get(rel_schema.peer)
                 if attr_name != rel_schema.name or peer_schema is None:
                     continue
@@ -174,9 +186,10 @@ def update_node(
                             key=attr_value,
                             rel_schema=rel_schema,
                             peer_schema=peer_schema,
-                            store=node._client.store,
-                            client=node._client,
+                            store=client.store,
+                            client=client,
                             fallback=False,
+                            schemas=schemas,
                         )
                         if not peer_node:
                             logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
@@ -205,9 +218,10 @@ def update_node(
                             key=value,
                             rel_schema=rel_schema,
                             peer_schema=peer_schema,
-                            store=node._client.store,
-                            client=node._client,
+                            store=client.store,
+                            client=client,
                             fallback=False,
+                            schemas=schemas,
                         )
                         if peer_node:
                             new_peer_ids.append(peer_node.id)
@@ -226,7 +240,9 @@ def update_node(
     return node
 
 
-def _flush_replaced_relationship_sets(node: InfrahubNodeSync, rel_names: Sequence[str]) -> None:
+def _flush_replaced_relationship_sets(
+    node: InfrahubNodeSync, rel_names: Sequence[str], client: InfrahubClientSync
+) -> None:
     """Issue the plan's cardinality-many peer sets on `node`, and nothing else (AD088).
 
     THE FLUSH. A **targeted relationship write**: a hand-built `<kind>Update` carrying the
@@ -280,16 +296,17 @@ def _flush_replaced_relationship_sets(node: InfrahubNodeSync, rel_names: Sequenc
         data[rel_name] = manager._generate_input_data()
     data["id"] = node_id
 
-    mutation_name = f"{node._schema.kind}Update"
+    kind = node.get_kind()
+    mutation_name = f"{kind}Update"
     query = Mutation(
         mutation=mutation_name,
         input_data={"data": data},
         query=node._generate_mutation_query(),
     )
-    response = node._client.execute_graphql(
+    response = client.execute_graphql(
         query=query.render(),
-        branch_name=node._branch,
-        tracker=f"mutation-{str(node._schema.kind).lower()}-update",
+        branch_name=node.get_branch(),
+        tracker=f"mutation-{kind.lower()}-update",
     )
     node._process_mutation_result(mutation_name=mutation_name, response=response)
 
@@ -725,9 +742,14 @@ class PeerIdentifierError(ValueError):
         super().__init__(msg)
 
 
-def _sdk_node_has_identifiers(node: object, identifiers: tuple[str, ...]) -> bool:
-    """Return whether an SDK node carries every DiffSync identifier value."""
-    schema = getattr(node, "_schema", None)
+def _sdk_node_has_identifiers(
+    node: InfrahubNodeSync, identifiers: tuple[str, ...], schema: MainSchemaTypesAPI | None
+) -> bool:
+    """Return whether an SDK node carries every DiffSync identifier value.
+
+    `schema` is the caller's schema for the node's kind, or None when the caller holds none
+    — the same fail-closed input the removed private read produced for a node without one.
+    """
     attributes = {attribute.name for attribute in getattr(schema, "attributes", ())}
     relationships = {relationship.name: relationship for relationship in getattr(schema, "relationships", ())}
     for identifier in identifiers:
@@ -969,7 +991,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         Raises ``PeerIdentifierError`` otherwise so the operator sees actionable
         context instead of a bare ``KeyError``.
         """
-        peer_kind = peer_node._schema.kind
+        peer_kind = peer_node.get_kind()
         peer_model = getattr(self, peer_kind, None)
         if not peer_model:
             logger.warning("Unable to map '%s' with kind '%s' - Ignored", peer_node, peer_kind)
@@ -1011,7 +1033,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if hydrated_peer is not None:
                 hydrated = True
                 hydrated_peer_data = self.infrahub_node_to_diffsync(hydrated_peer)
-                attribute_names = {attribute.name for attribute in getattr(hydrated_peer._schema, "attributes", ())}
+                hydrated_peer_schema = self.schema.get(hydrated_peer.get_kind())
+                attribute_names = {attribute.name for attribute in getattr(hydrated_peer_schema, "attributes", ())}
                 # Top-level model loads are full fetches. Peer payloads may be shallow,
                 # so only this successful hydration can verify a nullable attribute.
                 verified_null_identifiers = frozenset(
@@ -1034,7 +1057,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             )
         if missing:
             err = PeerIdentifierError(
-                parent_kind=parent_node._schema.kind,
+                parent_kind=parent_node.get_kind(),
                 parent_id=str(getattr(parent_node, "id", None)),
                 rel_name=rel_name,
                 peer_kind=peer_kind,
@@ -1095,7 +1118,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             (
                 peer
                 for peer in (sdk_peer_by_uuid, sdk_peer_by_identity, fallback_node)
-                if peer is not None and _sdk_node_has_identifiers(peer, identifiers)
+                if peer is not None and _sdk_node_has_identifiers(peer, identifiers, self.schema.get(peer.get_kind()))
             ),
             None,
         )
@@ -1114,9 +1137,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         Handles attribute conversion and relationship resolution.
         """
         data: dict[str, Any] = {"local_id": str(node.id)}
+        node_kind = node.get_kind()
+        # The adapter's loaded schema is the authority for this branch. Asking the SDK's
+        # schema manager instead would fetch for any node built with an explicit schema,
+        # which never registers in that manager's cache — a request this method never made.
+        node_schema = self.schema[node_kind]
 
-        for attr_name in node._schema.attribute_names:
-            if has_field(config=self.config, name=node._schema.kind, field=attr_name):
+        for attr_name in node_schema.attribute_names:
+            if has_field(config=self.config, name=node_kind, field=attr_name):
                 attr = getattr(node, attr_name)
                 val = attr.value
                 # IP types come back from the Infrahub SDK as ipaddress
@@ -1134,8 +1162,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 else:
                     data[attr_name] = val
 
-        for rel_schema in node._schema.relationships:
-            if not has_field(config=self.config, name=node._schema.kind, field=rel_schema.name):
+        for rel_schema in node_schema.relationships:
+            if not has_field(config=self.config, name=node_kind, field=rel_schema.name):
                 continue
             peer_schema = self.schema.get(rel_schema.peer)
             if peer_schema is None:
@@ -1152,6 +1180,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                     store=self.client.store,
                     client=self.client,
                     fallback=True,
+                    schemas=self.schema,
                 )
                 if not peer_node:
                     continue
@@ -1175,6 +1204,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                         store=self.client.store,
                         client=self.client,
                         fallback=True,
+                        schemas=self.schema,
                     )
                     if not peer_node:
                         continue
@@ -1353,7 +1383,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # One write per operation, not one per relationship, and targeted rather than a
             # re-render of the node — a re-render nulls every unmapped optional cardinality-one
             # relationship. See `_flush_replaced_relationship_sets` (AD075, AD085, AD088).
-            _flush_replaced_relationship_sets(node, [reference.field for reference in many_references])
+            _flush_replaced_relationship_sets(node, [reference.field for reference in many_references], self.client)
 
         node_id = _require_node_id(node, context=f"for operation {operation.operation_id!r}")
         peers.remember(operation.kind, operation.identity, node_id)
@@ -1435,7 +1465,15 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
         node = adapter.client.get(id=self.local_id, kind=self.__class__.__name__)
         source_id = adapter.source_node.id if adapter.source_node else None
         owner_id = adapter.owner_node.id if adapter.owner_node else None
-        node = update_node(node=node, attrs=attrs, source=source_id, owner=owner_id)
+        node_schema = adapter.schema[node.get_kind()]
+        node = update_node(
+            node=node,
+            attrs=attrs,
+            client=adapter.client,
+            node_schema=node_schema,
+            source=source_id,
+            owner=owner_id,
+        )
         node.save(allow_upsert=True)
 
         return super().update(attrs=attrs)

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from diffsync.exceptions import ObjectNotFound
@@ -24,6 +24,9 @@ from infrahub_sdk.exceptions import NodeNotFoundError
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError, resolve_peer_node
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
 
 
 class _FakeStore:
@@ -54,12 +57,77 @@ class _FakeStore:
     def seed(self, *, model: str, identifier: str, item: object) -> None:
         self._items[model, identifier] = item
 
-    def set(self, *, key: str, node: object) -> None:  # match client.store.set signature
+    def set(self, *, key: str, node: _FakeNode) -> None:  # match client.store.set signature
         self.set_calls.append((key, node))
-        kind = getattr(node, "_schema", SimpleNamespace(kind="?")).kind
+        kind = node.get_kind()
         self._items[kind, key] = node
         if node_id := getattr(node, "id", None):
             self._items[kind, node_id] = node
+
+
+# The adapter reads a kind's schema from its own loaded mapping, which holds exactly one
+# schema per kind. The factories below therefore register into one mapping per test and
+# merge: several of these tests pair a shallow peer with a rich one of the same kind, and
+# the two differ in the values they carry, not in the schema their kind declares.
+_FAKE_SCHEMAS: dict[str, SimpleNamespace] = {}
+
+
+@pytest.fixture(autouse=True)
+def _isolate_fake_schemas() -> Iterator[None]:
+    """One kind-to-schema mapping per test, so no kind leaks its shape into the next."""
+    _FAKE_SCHEMAS.clear()
+    yield
+    _FAKE_SCHEMAS.clear()
+
+
+def _register_schema(
+    kind: str, attribute_names: Iterable[str], relationships: Iterable[SimpleNamespace] = ()
+) -> SimpleNamespace:
+    """Fold a fake's declared shape into its kind's single schema."""
+    schema = _FAKE_SCHEMAS.get(kind)
+    if schema is None:
+        schema = SimpleNamespace(kind=kind, attribute_names=[], attributes=[], relationships=[])
+        _FAKE_SCHEMAS[kind] = schema
+    for name in attribute_names:
+        if name not in schema.attribute_names:
+            schema.attribute_names.append(name)
+            schema.attributes.append(SimpleNamespace(name=name, optional=False))
+    known = {relationship.name for relationship in schema.relationships}
+    for relationship in relationships:
+        if relationship.name not in known:
+            schema.relationships.append(relationship)
+    return schema
+
+
+class _FakeNode:
+    """A fake SDK node.
+
+    A real node carries every attribute and relationship its kind declares; a shallow read
+    shows up as a null value, not as a missing member. These fakes do the same, so one kind
+    can have one schema no matter which fake is being converted.
+    """
+
+    # Data the ``_Harness`` conversion stub hands back in place of a real conversion.
+    _fake_diffsync_data: dict[str, object]
+
+    def __init__(self, kind: str, node_id: str) -> None:
+        self.__dict__["_kind"] = kind
+        self.id = node_id
+
+    def get_kind(self) -> str:
+        return self.__dict__["_kind"]
+
+    def get_branch(self) -> str:  # noqa: PLR6301
+        return "main"
+
+    def __getattr__(self, name: str) -> SimpleNamespace:
+        schema = _FAKE_SCHEMAS.get(self.__dict__["_kind"])
+        if schema is not None:
+            if name in schema.attribute_names:
+                return SimpleNamespace(value=None)
+            if any(relationship.name == name for relationship in schema.relationships):
+                return SimpleNamespace(id=None)
+        raise AttributeError(name)
 
 
 class _FakeClient:
@@ -111,6 +179,7 @@ class _Harness(InfrahubAdapter):
     """Skip the heavy __init__ that needs a real Infrahub server."""
 
     client: _FakeClient
+    schema: dict[str, SimpleNamespace]
 
     def __init__(
         self,
@@ -131,6 +200,7 @@ class _Harness(InfrahubAdapter):
         self.continue_on_error = continue_on_error
         self._peer_unique_ids = {}
         self._instances: list[object] = []
+        self.schema = _FAKE_SCHEMAS
         # Register the fake peer model under its kind so getattr(self, kind) works.
         self.LocationGeneric = _FakePeerModel
 
@@ -151,6 +221,7 @@ class _RelationshipHarness(InfrahubAdapter):
     """Exercise production conversion without initializing a live client."""
 
     client: _FakeClient
+    schema: dict[str, SimpleNamespace]
 
     def __init__(self, *, rehydrated_peer: object) -> None:
         self.client = _FakeClient(rehydrated_peer=rehydrated_peer)
@@ -161,7 +232,7 @@ class _RelationshipHarness(InfrahubAdapter):
         self._instances: list[object] = []
         self.InterfaceLag = _FakeLagModel
         self.InfraDevice = _FakeDeviceModel
-        self.schema = {"InfraDevice": SimpleNamespace(kind="InfraDevice")}  # ty: ignore[invalid-assignment]
+        self.schema = _FAKE_SCHEMAS
         self.config = SyncConfig(
             name="test",
             source=SyncAdapter(name="source", adapter="x:x"),
@@ -191,16 +262,10 @@ class _RelationshipHarness(InfrahubAdapter):
         self._instances.append(item)
 
 
-def _make_node(kind: str, node_id: str, diffsync_data: dict[str, object]) -> SimpleNamespace:
-    node = SimpleNamespace(
-        id=node_id,
-        _schema=SimpleNamespace(
-            kind=kind,
-            attributes=[SimpleNamespace(name=name, optional=False) for name in diffsync_data],
-            relationships=[],
-        ),
-        _fake_diffsync_data=diffsync_data,
-    )
+def _make_node(kind: str, node_id: str, diffsync_data: dict[str, object]) -> _FakeNode:
+    _register_schema(kind, diffsync_data)
+    node = _FakeNode(kind, node_id)
+    node._fake_diffsync_data = diffsync_data
     for name, value in diffsync_data.items():
         setattr(node, name, SimpleNamespace(value=value))
     return node
@@ -211,20 +276,17 @@ def _make_sdk_node(
     node_id: str,
     attrs: dict[str, object],
     relationships: dict[str, tuple[str, str]] | None = None,
-) -> SimpleNamespace:
+) -> _FakeNode:
     relationship_data = relationships or {}
-    node = SimpleNamespace(
-        id=node_id,
-        _schema=SimpleNamespace(
-            kind=kind,
-            attribute_names=list(attrs),
-            attributes=[SimpleNamespace(name=name, optional=False) for name in attrs],
-            relationships=[
-                SimpleNamespace(name=name, peer=peer_kind, cardinality="one")
-                for name, (peer_kind, _peer_id) in relationship_data.items()
-            ],
-        ),
+    _register_schema(
+        kind,
+        attrs,
+        [
+            SimpleNamespace(name=name, peer=peer_kind, cardinality="one")
+            for name, (peer_kind, _peer_id) in relationship_data.items()
+        ],
     )
+    node = _FakeNode(kind, node_id)
     for name, value in attrs.items():
         setattr(node, name, SimpleNamespace(value=value))
     for name, (_peer_kind, peer_id) in relationship_data.items():
@@ -232,7 +294,24 @@ def _make_sdk_node(
     return node
 
 
-def _seed_relationship_stores(harness: _RelationshipHarness, *, peer: object, peer_key: str) -> None:
+def _make_relationship_only_node(
+    kind: str,
+    node_id: str,
+    attrs: dict[str, object],
+    *,
+    relationship: SimpleNamespace,
+    rel_peer_id: str | None,
+) -> _FakeNode:
+    """A fake carrying one relationship of an explicit cardinality, registered like the rest."""
+    _register_schema(kind, attrs, [relationship])
+    node = _FakeNode(kind, node_id)
+    for name, value in attrs.items():
+        setattr(node, name, SimpleNamespace(value=value))
+    setattr(node, relationship.name, SimpleNamespace(id=rel_peer_id))
+    return node
+
+
+def _seed_relationship_stores(harness: _RelationshipHarness, *, peer: _FakeNode, peer_key: str) -> None:
     device = _make_sdk_node("InfraDevice", "device-id", {"name": "router-1"})
     harness.client.store.set(key="router-1", node=device)
     harness.client.store.set(key=peer_key, node=peer)
@@ -846,15 +925,12 @@ def test_reconciliation_rejects_null_attribute_identifier() -> None:
 
 def test_reconciliation_rejects_null_cardinality_one_relationship_identifier() -> None:
     harness = _Harness()
-    incomplete_peer = SimpleNamespace(
-        id="lag-id",
-        _schema=SimpleNamespace(
-            kind="InterfaceLag",
-            attributes=[SimpleNamespace(name="name", optional=False)],
-            relationships=[SimpleNamespace(name="device", cardinality="one")],
-        ),
-        name=SimpleNamespace(value="lag-1"),
-        device=SimpleNamespace(id=None),
+    incomplete_peer = _make_relationship_only_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1"},
+        relationship=SimpleNamespace(name="device", cardinality="one"),
+        rel_peer_id=None,
     )
     harness.client.store.set(key="lag-id", node=incomplete_peer)
     set_call_count = len(harness.client.store.set_calls)
@@ -872,15 +948,12 @@ def test_reconciliation_rejects_null_cardinality_one_relationship_identifier() -
 
 def test_reconciliation_rejects_cardinality_many_relationship_identifier() -> None:
     harness = _Harness()
-    incomplete_peer = SimpleNamespace(
-        id="lag-id",
-        _schema=SimpleNamespace(
-            kind="InterfaceLag",
-            attributes=[SimpleNamespace(name="name", optional=False)],
-            relationships=[SimpleNamespace(name="device", cardinality="many")],
-        ),
-        name=SimpleNamespace(value="lag-1"),
-        device=SimpleNamespace(id="device-id"),
+    incomplete_peer = _make_relationship_only_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1"},
+        relationship=SimpleNamespace(name="device", cardinality="many"),
+        rel_peer_id="device-id",
     )
     harness.client.store.set(key="lag-id", node=incomplete_peer)
     set_call_count = len(harness.client.store.set_calls)
