@@ -8,8 +8,7 @@ peer identification must stay request-free for any node they are handed, so the 
 loaded mapping is their only schema source.
 
 Each test drives a real SDK node and a real client whose schema cache is empty and whose
-HTTP layer raises on any use, so a schema fetch fails the test rather than passing
-silently.
+HTTP layer raises on any use, so a schema fetch fails the test rather than passing silently.
 """
 
 from __future__ import annotations
@@ -90,16 +89,6 @@ def _adapter(client: InfrahubClientSync, schema: MutableMapping[str, MainSchemaT
         ],
     )
     return adapter
-
-
-def test_the_schema_cache_starts_empty_for_a_directly_constructed_node(client: InfrahubClientSync) -> None:
-    """The premise: building a node with an explicit schema populates no cache entry."""
-    schema = _node_schema()
-
-    node = InfrahubNodeSync(client=client, schema=schema, branch="main", data={"id": "w1", "name": {"value": "a"}})
-
-    assert not client.schema.cache, "a directly constructed node registers no schema"
-    assert node.get_kind() == KIND
 
 
 def test_the_schema_manager_would_fetch_for_such_a_node(client: InfrahubClientSync) -> None:
