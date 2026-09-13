@@ -40,8 +40,6 @@ if TYPE_CHECKING:
     from infrahub_sdk.schema import MainSchemaTypesAPI
 
 KIND = "TestingWidget"
-# The client never reaches the network here; this only satisfies ``Config``.
-_API_TOKEN = "not-a-real-token"  # noqa: S105
 
 
 class _SchemaFetchAttemptedError(RuntimeError):
@@ -64,7 +62,9 @@ def client(monkeypatch: pytest.MonkeyPatch) -> InfrahubClientSync:
     ``_get``/``_post`` are the two methods ``SchemaManagerSync._fetch`` goes through, so
     replacing them turns any schema request into a test failure instead of a real socket.
     """
-    built = InfrahubClientSync(address="http://localhost:8000", config=Config(api_token=_API_TOKEN))
+    # No token: the client never reaches the network, and an unauthenticated client
+    # starts with the same empty schema cache these tests depend on.
+    built = InfrahubClientSync(address="http://localhost:8000", config=Config(api_token=None))
 
     def _refuse(*_args: object, **_kwargs: object) -> NoReturn:
         msg = "the adapter issued an HTTP request it should not need"

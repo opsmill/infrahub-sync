@@ -111,13 +111,14 @@ class FakeNode:
     ) -> None:
         self.schema = schema
         self.client = client
+        self.branch = "main"
         for name, holder in (attr_holders or {}).items():
             setattr(self, name, holder)
         for name, manager in (many_managers or {}).items():
             setattr(self, name, manager)
 
-    def get_branch(self) -> str:  # noqa: PLR6301
-        return "main"
+    def get_branch(self) -> str:
+        return self.branch
 
 
 def _run_update(node: FakeNode, attrs: dict[str, object], source: str | None = None, owner: str | None = None) -> None:
