@@ -1118,7 +1118,12 @@ def test_the_live_sync_write_path_still_warns_and_continues_on_an_unresolvable_p
     client = RecordingClient()
     node = InfrahubNodeSync(client=client, schema=DEVICE_SCHEMA, data={"id": "device-1", "name": {"value": "device-a"}})
 
-    returned = update_node(node=node, attrs={"name": "device-a", "site": "a-key-no-store-holds"})
+    returned = update_node(
+        node=node,
+        attrs={"name": "device-a", "site": "a-key-no-store-holds"},
+        client=client,
+        node_schema=DEVICE_SCHEMA,
+    )
 
     assert returned is node, "The live path returns the node it was given rather than raising."
     warnings = [record for record in captured_logs.records if "Ignored" in record.getMessage()]
@@ -1134,7 +1139,7 @@ def test_the_live_sync_write_path_still_drops_an_unresolvable_cardinality_many_p
         client=client, schema=TEAM_SCHEMA, data={"id": "team-1", "name": {"value": "team-a"}, "members": []}
     )
 
-    update_node(node=node, attrs={"members": ["a-key-no-store-holds"]})
+    update_node(node=node, attrs={"members": ["a-key-no-store-holds"]}, client=client, node_schema=TEAM_SCHEMA)
 
     assert not client.mutations, "Nothing is written and nothing is raised."
 

@@ -6,10 +6,11 @@ unchanged, which get string-coerced (e.g. ipaddress objects), and which
 must NOT be coerced (e.g. ``kind: List``).
 
 The tests bypass network setup by constructing the adapter via
-``__new__`` and supplying only the bits the method touches: ``config``,
-plus a node-like object exposing ``id``, ``_schema``, and one attribute
-per kind. Relationship handling is out of scope here — the fixtures use
-empty ``relationships`` so the method's relationship branch is a no-op.
+``__new__`` and supplying only the bits the method touches: ``config``
+and ``schema``, the adapter's own loaded kind-to-schema mapping, plus a
+node-like object exposing ``id``, ``get_kind()`` and one attribute per
+kind. Relationship handling is out of scope here — the fixtures use empty
+``relationships`` so the method's relationship branch is a no-op.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ class FakeAttr:
 
 @dataclass
 class FakeSchema:
-    """Stand-in for ``node._schema``."""
+    """Stand-in for the kind schema the adapter reads through ``client.schema.get``."""
 
     kind: str
     attribute_names: list[str] = field(default_factory=list)
@@ -62,9 +63,18 @@ class FakeNode:
 
     def __init__(self, node_id: str, kind: str, attrs: dict[str, Any]) -> None:
         self.id = node_id
-        self._schema = FakeSchema(kind=kind, attribute_names=list(attrs.keys()))
+        self.schema = FakeSchema(kind=kind, attribute_names=list(attrs.keys()))
         for name, value in attrs.items():
             setattr(self, name, FakeAttr(value=value))
+
+    def get_kind(self) -> str:
+        return self.schema.kind
+
+
+class FakeAdapter(InfrahubAdapter):
+    """``InfrahubAdapter`` with its schema mapping narrowed to the fakes these tests hold."""
+
+    schema: dict[str, FakeSchema]
 
 
 # ---------------------------------------------------------------------------
@@ -91,28 +101,31 @@ def _make_config(kind: str, field_names: list[str]) -> SyncConfig:
     )
 
 
-def _make_adapter(kind: str, field_names: list[str]) -> InfrahubAdapter:
+def _make_adapter(kind: str, field_names: list[str]) -> FakeAdapter:
     """Build an InfrahubAdapter that bypasses network setup.
 
     ``__init__`` requires live Infrahub plumbing (client, schema fetch,
     source/owner lookup). We don't need any of that for value-transform
-    tests — only ``self.config`` is touched. Using ``__new__`` skips
-    ``__init__`` entirely.
+    tests — only ``self.config`` and ``self.schema`` are touched. Using
+    ``__new__`` skips ``__init__`` entirely.
     """
-    adapter = InfrahubAdapter.__new__(InfrahubAdapter)
+    adapter = FakeAdapter.__new__(FakeAdapter)
     adapter.config = _make_config(kind, field_names)
+    adapter.schema = {}
     return adapter
 
 
-def _serialise(adapter: InfrahubAdapter, node: FakeNode) -> dict[str, Any]:
+def _serialise(adapter: FakeAdapter, node: FakeNode) -> dict[str, Any]:
     """Call ``adapter.infrahub_node_to_diffsync`` on a duck-typed fake node.
 
     The method's parameter annotation is ``InfrahubNodeSync``, but the
-    function body only reads ``node.id``, ``node._schema``, and per-name
-    attribute managers — all of which ``FakeNode`` provides. The type
-    suppression below is a single, scoped location rather than once per
-    test.
+    function body only reads ``node.id``, ``node.get_kind()`` and per-name
+    attribute managers — all of which ``FakeNode`` provides. The node's
+    schema goes into the adapter's own mapping first, because that mapping
+    is where the adapter reads a kind's schema. The type suppression below
+    is a single, scoped location rather than once per test.
     """
+    adapter.schema[node.get_kind()] = node.schema
     return adapter.infrahub_node_to_diffsync(node=node)  # ty: ignore[invalid-argument-type]
 
 
