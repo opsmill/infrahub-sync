@@ -1,15 +1,14 @@
 """The adapter reads a kind's schema from its own mapping, never from the SDK's manager.
 
 An ``InfrahubNodeSync`` built with an explicit schema — directly, or through
-``from_graphql(..., schema=...)`` — never registers that schema in
-``client.schema.cache`` (SDK 1.18.1 `node/node.py:1318-1331` and `1346-1352`).
-``SchemaManagerSync.get()`` therefore misses and issues ``GET /api/schema``
-(`schema/__init__.py:594-603, 761-771`). The adapter paths exercised here previously
-read ``node._schema`` and made no request at all, so reading through the schema manager
-would add one.
+``from_graphql(..., schema=...)`` — is absent from ``client.schema.cache`` (SDK 1.18.1
+`node/node.py:1318-1331` and `1346-1352`). ``SchemaManagerSync.get()`` misses for such a
+node and issues ``GET /api/schema`` (`schema/__init__.py:594-603, 761-771`). Conversion and
+peer identification must stay request-free for any node they are handed, so the adapter's
+loaded mapping is their only schema source.
 
 Each test drives a real SDK node and a real client whose schema cache is empty and whose
-HTTP layer raises on any use, so an added schema fetch fails the test rather than passing
+HTTP layer raises on any use, so a schema fetch fails the test rather than passing
 silently.
 """
 

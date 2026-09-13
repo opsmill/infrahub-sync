@@ -97,9 +97,8 @@ class FakeRelManager:
 class FakeNode:
     """Stand-in for ``InfrahubNodeSync`` exposing only what ``update_node`` reads.
 
-    ``schema`` and ``client`` are now handed to ``update_node`` by its caller rather
-    than read off the node, so they are held here only to keep each test's fixture in
-    one place.
+    ``update_node`` takes its schema and client as arguments, so the copies held here are
+    only a convenience that keeps each test's fixture in one place.
     """
 
     def __init__(
@@ -137,7 +136,7 @@ def _make_sdk_relationship_nodes(
     """Build real SDK nodes for a cardinality-one update without network access.
 
     The client and the node's schema come back with the nodes because ``update_node``
-    is given both explicitly rather than reading them off the node.
+    takes both as arguments.
     """
     relationship_schema = RelationshipSchemaAPI(
         name="location", peer="LocationRack", cardinality=RelationshipCardinality.ONE

@@ -102,10 +102,10 @@ def resolve_peer_node(
       - If not found and fallback is enabled, use the client to fetch the node.
       - If node is found but has incomplete attributes, re-fetch from Infrahub.
 
-    `schemas` is the caller's already-loaded kind-to-schema mapping. Completeness can only
-    be judged against a schema, and reading one the caller does not already hold would mean
-    a schema request this function never used to make, so a kind missing from `schemas`
-    leaves the stored peer as it is.
+    `schemas` is the caller's already-loaded kind-to-schema mapping and the only schema
+    source this function consults. Completeness is judged against the peer's own kind; a
+    kind absent from `schemas` leaves the stored peer as it is, so resolving a peer issues
+    no schema request.
 
     Returns the found peer node or None.
     """
@@ -747,8 +747,9 @@ def _sdk_node_has_identifiers(
 ) -> bool:
     """Return whether an SDK node carries every DiffSync identifier value.
 
-    `schema` is the caller's schema for the node's kind, or None when the caller holds none
-    — the same fail-closed input the removed private read produced for a node without one.
+    `schema` is the node's kind schema, or None when the caller holds none for that kind.
+    A None schema declares no attributes and no relationships, so a non-empty `identifiers`
+    fails closed.
     """
     attributes = {attribute.name for attribute in getattr(schema, "attributes", ())}
     relationships = {relationship.name: relationship for relationship in getattr(schema, "relationships", ())}
@@ -1138,9 +1139,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """
         data: dict[str, Any] = {"local_id": str(node.id)}
         node_kind = node.get_kind()
-        # The adapter's loaded schema is the authority for this branch. Asking the SDK's
-        # schema manager instead would fetch for any node built with an explicit schema,
-        # which never registers in that manager's cache — a request this method never made.
+        # The adapter's loaded mapping is the schema source for this branch. It is not
+        # interchangeable with the SDK's schema manager: a node built with an explicit
+        # schema is absent from that manager's cache, so a lookup there can issue a
+        # schema request.
         node_schema = self.schema[node_kind]
 
         for attr_name in node_schema.attribute_names:
