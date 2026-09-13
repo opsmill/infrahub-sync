@@ -59,19 +59,19 @@ UNMAPPED_RELATIONSHIP = "owner"
 
 NODE_ID = "conformance-node-1"
 
-# What assertion 4 says when the flush stops being a targeted relationship write.
+# What assertion 4 says when the convergent upsert names a field the plan never mapped.
 UNMAPPED_FIELD_MESSAGE = (
-    "The replace-set flush wrote a destination field the plan never mapped. This is the SECOND defect on "
-    "this one path caused by depending on how the infrahub-sdk renders a node, and `pyproject.toml` pins "
+    "The convergent upsert wrote a destination field the plan never mapped. This defect class comes from "
+    "depending on how the infrahub-sdk renders a node, and `pyproject.toml` pins "
     "`infrahub-sdk[all]>=1.17,<2` — a range — so a permitted upgrade can move that rendering with no other "
-    "signal. The library's render behaviour has changed, or the flush has gone back to re-rendering the "
-    "whole node. Either way `InfrahubNodeBase._generate_input_data` emits `data[<rel>] = None` for every "
-    "uninitialized OPTIONAL CARDINALITY-ONE relationship once the node is marked existing "
-    "(`infrahub_sdk/node/node.py`, 'to allow clearing relationships'), and the convergent upsert "
-    "marks it existing. AD088 depends on this: the flush must issue a mutation carrying `id` plus ONLY the "
-    "cardinality-many fields being replaced, never a re-render of the node. AD075 (the flush exists at all) "
-    "and AD085 (the emptied peer set must survive it) depend on it too. Re-derive AD088 against the new SDK "
-    "before changing this test."
+    "signal. `InfrahubNodeBase._generate_input_data` emits `data[<rel>] = None` for every uninitialized "
+    "OPTIONAL CARDINALITY-ONE relationship once the node is marked existing "
+    "(`infrahub_sdk/node/node.py`, 'to allow clearing relationships'). The upsert render is safe only "
+    "because it runs while the node is still marked new: `_process_mutation_result` marks it existing "
+    "afterwards. So either the library's render behaviour has changed, or a render now runs after the "
+    "upsert. FR-013 — the payload is authoritative for the fields it carries and touches no other — "
+    "depends on this, and so does the emptied peer set surviving as `[]`. Re-derive both against the new "
+    "SDK before changing this test."
 )
 
 
@@ -429,25 +429,31 @@ def test_an_empty_peer_list_is_issued_as_an_emptied_set() -> None:
 
 
 # ---------------------------------------------------------------------------------------
-# Assertion 4 — the flush touches no unmapped destination field (AD088)
+# Assertion 4 — the upsert touches no unmapped destination field
 # ---------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("peer_names", [["tag-b", "tag-c"], []], ids=["a non-empty replace", "an emptied set"])
-def test_the_flush_names_only_the_relationship_fields_being_replaced(peer_names: list[str]) -> None:
-    """AD088: the flush is a **targeted** relationship write, not a re-render of the node."""
+def test_the_upsert_names_only_the_mapped_fields_and_its_key(peer_names: list[str]) -> None:
+    """The upsert's input is the plan's mapped destination fields plus the SDK key, and no more.
+
+    `owner` is the fixture's optional cardinality-one relationship that no operation maps — the
+    shape a whole-node re-render nulls. The upsert must never name it, under a non-empty replace
+    and under an emptied set alike.
+    """
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-9"])
 
     adapter.apply_planned_operation(operation=team_operation(peer_names), peers=peers)
 
     assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
-    _, flush = client.mutations[1]
-    fields = mutation_input_fields(flush)
-    assert sorted(fields) == sorted(["id", REPLACED_RELATIONSHIP]), (
-        f"{UNMAPPED_FIELD_MESSAGE}\n\nThe flush named {sorted(fields)}; it may name only 'id' and "
-        f"{REPLACED_RELATIONSHIP!r}. Rendered mutation:\n{flush}"
+    _, upsert = client.mutations[0]
+    fields = mutation_input_fields(upsert)
+    assert sorted(fields) == sorted(["name", REPLACED_RELATIONSHIP, "hfid"]), (
+        f"{UNMAPPED_FIELD_MESSAGE}\n\nThe upsert named {sorted(fields)}; it may name only the mapped "
+        f"destination fields 'name' and {REPLACED_RELATIONSHIP!r} plus the key 'hfid'. Rendered "
+        f"mutation:\n{upsert}"
     )
-    assert f"{UNMAPPED_RELATIONSHIP}:" not in flush, f"{UNMAPPED_FIELD_MESSAGE}\n\nRendered mutation:\n{flush}"
+    assert f"{UNMAPPED_RELATIONSHIP}:" not in upsert, f"{UNMAPPED_FIELD_MESSAGE}\n\nRendered mutation:\n{upsert}"
 
 
 # ---------------------------------------------------------------------------------------

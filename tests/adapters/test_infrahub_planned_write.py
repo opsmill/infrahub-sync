@@ -862,8 +862,12 @@ def test_a_peer_set_the_destination_already_holds_is_flushed_unchanged() -> None
     assert issued_reads(client) == []
 
 
-def test_the_flush_retains_the_peer_lineage_metadata_the_upsert_carried() -> None:
-    """Planned-apply-managed peers keep their lineage metadata through the flush."""
+def test_the_upsert_carries_the_per_peer_write_metadata() -> None:
+    """The convergent upsert alone carries every peer's `is_protected`, `source` and `owner`.
+
+    Read off `client.mutations[0]` and nothing else: what makes the per-peer write metadata
+    reach the destination is the upsert's own peer list, not any later write.
+    """
     client = RecordingClient()
     adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
     peers = PeerResolver(adapter)
@@ -872,19 +876,19 @@ def test_the_flush_retains_the_peer_lineage_metadata_the_upsert_carried() -> Non
     adapter.apply_planned_operation(operation=team_operation(["tag-b"]), peers=peers)
 
     assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
-    for role, (_, query) in zip(("upsert", "flush"), client.mutations):
-        members_block = re.search(r"members:\s*\[(.*?)\]", query, flags=re.DOTALL)
-        assert members_block is not None, f"The {role} must render the `members` peer list:\n{query}"
-        rendered = members_block.group(1)
-        assert "_relation__is_protected: true" in rendered, (
-            f"The {role} must carry the peer's protection flag. Rendered:\n{query}"
-        )
-        assert '_relation__source: "source-account-1"' in rendered, (
-            f"The {role} must carry the peer's source attribution. Rendered:\n{query}"
-        )
-        assert '_relation__owner: "owner-account-1"' in rendered, (
-            f"The {role} must carry the peer's owner attribution. Rendered:\n{query}"
-        )
+    _, upsert = client.mutations[0]
+    members_block = re.search(r"members:\s*\[(.*?)\]", upsert, flags=re.DOTALL)
+    assert members_block is not None, f"The upsert must render the `members` peer list:\n{upsert}"
+    rendered = members_block.group(1)
+    assert "_relation__is_protected: true" in rendered, (
+        f"The upsert must carry the peer's protection flag. Rendered:\n{upsert}"
+    )
+    assert '_relation__source: "source-account-1"' in rendered, (
+        f"The upsert must carry the peer's source attribution. Rendered:\n{upsert}"
+    )
+    assert '_relation__owner: "owner-account-1"' in rendered, (
+        f"The upsert must carry the peer's owner attribution. Rendered:\n{upsert}"
+    )
 
 
 def test_one_flush_is_issued_per_operation_not_one_per_relationship() -> None:
