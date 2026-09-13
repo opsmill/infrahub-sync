@@ -91,6 +91,7 @@ def resolve_peer_node(
     store: NodeStoreSync,
     client: InfrahubClientSync | None = None,
     fallback: bool | None = False,
+    schemas: Mapping[str, MainSchemaTypesAPI] | None = None,
 ) -> InfrahubNodeSync | None:
     """
     Resolve a peer node given a key.
@@ -100,6 +101,11 @@ def resolve_peer_node(
       - If it is a GenericSchemaAPI, iterate over its `used_by` list and return the first matching node.
       - If not found and fallback is enabled, use the client to fetch the node.
       - If node is found but has incomplete attributes, re-fetch from Infrahub.
+
+    `schemas` is the caller's already-loaded kind-to-schema mapping. Completeness can only
+    be judged against a schema, and reading one the caller does not already hold would mean
+    a schema request this function never used to make, so a kind missing from `schemas`
+    leaves the stored peer as it is.
 
     Returns the found peer node or None.
     """
@@ -113,15 +119,10 @@ def resolve_peer_node(
                 break
 
     # Check if the node from store has incomplete attributes and needs re-fetching
-    if (
-        peer_node
-        and fallback
-        and client
-        and not _node_has_complete_attributes(
-            peer_node, client.schema.get(kind=peer_node.get_kind(), branch=peer_node.get_branch())
-        )
-    ):
-        peer_node = client.get(id=key, kind=peer_node.get_kind(), populate_store=True)
+    if peer_node and fallback and client and schemas is not None:
+        peer_node_schema = schemas.get(peer_node.get_kind())
+        if peer_node_schema is not None and not _node_has_complete_attributes(peer_node, peer_node_schema):
+            peer_node = client.get(id=key, kind=peer_node.get_kind(), populate_store=True)
 
     if not peer_node and fallback and client is not None:
         logger.warning("Unable to find %s [%s] in Store - Fallback to Infrahub", rel_schema.peer, key)
@@ -188,6 +189,7 @@ def update_node(
                             store=client.store,
                             client=client,
                             fallback=False,
+                            schemas=schemas,
                         )
                         if not peer_node:
                             logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
@@ -219,6 +221,7 @@ def update_node(
                             store=client.store,
                             client=client,
                             fallback=False,
+                            schemas=schemas,
                         )
                         if peer_node:
                             new_peer_ids.append(peer_node.id)
@@ -739,9 +742,14 @@ class PeerIdentifierError(ValueError):
         super().__init__(msg)
 
 
-def _sdk_node_has_identifiers(node: InfrahubNodeSync, identifiers: tuple[str, ...], client: InfrahubClientSync) -> bool:
-    """Return whether an SDK node carries every DiffSync identifier value."""
-    schema = client.schema.get(kind=node.get_kind(), branch=node.get_branch())
+def _sdk_node_has_identifiers(
+    node: InfrahubNodeSync, identifiers: tuple[str, ...], schema: MainSchemaTypesAPI | None
+) -> bool:
+    """Return whether an SDK node carries every DiffSync identifier value.
+
+    `schema` is the caller's schema for the node's kind, or None when the caller holds none
+    — the same fail-closed input the removed private read produced for a node without one.
+    """
     attributes = {attribute.name for attribute in getattr(schema, "attributes", ())}
     relationships = {relationship.name: relationship for relationship in getattr(schema, "relationships", ())}
     for identifier in identifiers:
@@ -1025,9 +1033,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if hydrated_peer is not None:
                 hydrated = True
                 hydrated_peer_data = self.infrahub_node_to_diffsync(hydrated_peer)
-                hydrated_peer_schema = self.client.schema.get(
-                    kind=hydrated_peer.get_kind(), branch=hydrated_peer.get_branch()
-                )
+                hydrated_peer_schema = self.schema.get(hydrated_peer.get_kind())
                 attribute_names = {attribute.name for attribute in getattr(hydrated_peer_schema, "attributes", ())}
                 # Top-level model loads are full fetches. Peer payloads may be shallow,
                 # so only this successful hydration can verify a nullable attribute.
@@ -1112,7 +1118,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             (
                 peer
                 for peer in (sdk_peer_by_uuid, sdk_peer_by_identity, fallback_node)
-                if peer is not None and _sdk_node_has_identifiers(peer, identifiers, self.client)
+                if peer is not None and _sdk_node_has_identifiers(peer, identifiers, self.schema.get(peer.get_kind()))
             ),
             None,
         )
@@ -1132,7 +1138,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """
         data: dict[str, Any] = {"local_id": str(node.id)}
         node_kind = node.get_kind()
-        node_schema = self.client.schema.get(kind=node_kind, branch=node.get_branch())
+        # The adapter's loaded schema is the authority for this branch. Asking the SDK's
+        # schema manager instead would fetch for any node built with an explicit schema,
+        # which never registers in that manager's cache — a request this method never made.
+        node_schema = self.schema[node_kind]
 
         for attr_name in node_schema.attribute_names:
             if has_field(config=self.config, name=node_kind, field=attr_name):
@@ -1171,6 +1180,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                     store=self.client.store,
                     client=self.client,
                     fallback=True,
+                    schemas=self.schema,
                 )
                 if not peer_node:
                     continue
@@ -1194,6 +1204,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                         store=self.client.store,
                         client=self.client,
                         fallback=True,
+                        schemas=self.schema,
                     )
                     if not peer_node:
                         continue
@@ -1454,7 +1465,7 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
         node = adapter.client.get(id=self.local_id, kind=self.__class__.__name__)
         source_id = adapter.source_node.id if adapter.source_node else None
         owner_id = adapter.owner_node.id if adapter.owner_node else None
-        node_schema = adapter.client.schema.get(kind=node.get_kind(), branch=node.get_branch())
+        node_schema = adapter.schema[node.get_kind()]
         node = update_node(
             node=node,
             attrs=attrs,
