@@ -268,6 +268,37 @@ def _make_sdk_node(
     return node
 
 
+def _make_relationship_only_node(
+    kind: str,
+    node_id: str,
+    attrs: dict[str, object],
+    *,
+    relationship: SimpleNamespace,
+    rel_peer_id: str | None,
+) -> SimpleNamespace:
+    """A fake carrying one relationship of an explicit cardinality, registered like the rest."""
+    branch = f"fake-{next(_FAKE_BRANCHES)}"
+    schema = _register_schema(
+        SimpleNamespace(
+            kind=kind,
+            attribute_names=list(attrs),
+            attributes=[SimpleNamespace(name=name, optional=False) for name in attrs],
+            relationships=[relationship],
+        ),
+        branch,
+    )
+    node = SimpleNamespace(
+        id=node_id,
+        _schema=schema,
+        get_kind=lambda: kind,
+        get_branch=lambda: branch,
+    )
+    for name, value in attrs.items():
+        setattr(node, name, SimpleNamespace(value=value))
+    setattr(node, relationship.name, SimpleNamespace(id=rel_peer_id))
+    return node
+
+
 def _seed_relationship_stores(harness: _RelationshipHarness, *, peer: object, peer_key: str) -> None:
     device = _make_sdk_node("InfraDevice", "device-id", {"name": "router-1"})
     harness.client.store.set(key="router-1", node=device)
@@ -882,15 +913,12 @@ def test_reconciliation_rejects_null_attribute_identifier() -> None:
 
 def test_reconciliation_rejects_null_cardinality_one_relationship_identifier() -> None:
     harness = _Harness()
-    incomplete_peer = SimpleNamespace(
-        id="lag-id",
-        _schema=SimpleNamespace(
-            kind="InterfaceLag",
-            attributes=[SimpleNamespace(name="name", optional=False)],
-            relationships=[SimpleNamespace(name="device", cardinality="one")],
-        ),
-        name=SimpleNamespace(value="lag-1"),
-        device=SimpleNamespace(id=None),
+    incomplete_peer = _make_relationship_only_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1"},
+        relationship=SimpleNamespace(name="device", cardinality="one"),
+        rel_peer_id=None,
     )
     harness.client.store.set(key="lag-id", node=incomplete_peer)
     set_call_count = len(harness.client.store.set_calls)
@@ -908,15 +936,12 @@ def test_reconciliation_rejects_null_cardinality_one_relationship_identifier() -
 
 def test_reconciliation_rejects_cardinality_many_relationship_identifier() -> None:
     harness = _Harness()
-    incomplete_peer = SimpleNamespace(
-        id="lag-id",
-        _schema=SimpleNamespace(
-            kind="InterfaceLag",
-            attributes=[SimpleNamespace(name="name", optional=False)],
-            relationships=[SimpleNamespace(name="device", cardinality="many")],
-        ),
-        name=SimpleNamespace(value="lag-1"),
-        device=SimpleNamespace(id="device-id"),
+    incomplete_peer = _make_relationship_only_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1"},
+        relationship=SimpleNamespace(name="device", cardinality="many"),
+        rel_peer_id="device-id",
     )
     harness.client.store.set(key="lag-id", node=incomplete_peer)
     set_call_count = len(harness.client.store.set_calls)
