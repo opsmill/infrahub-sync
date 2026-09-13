@@ -938,8 +938,11 @@ def test_a_completed_operation_resolves_a_later_reference_with_no_destination_qu
     assert client.resolver_queries == [], (
         "The peer was created by this same apply, so its identity must resolve from the memo."
     )
-    _, query = client.mutations[1]
-    assert rendered_related_id(query, "site") == NODE_ID
+    (site_mutation, _site_query), (server_mutation, server_query) = client.mutations
+    assert [site_mutation, server_mutation] == [f"{SITE_KIND}Upsert", f"{SERVER_KIND}Upsert"], (
+        "Each operation is one convergent upsert, issued in the order the operations were applied."
+    )
+    assert rendered_related_id(server_query, "site") == NODE_ID
 
 
 def test_a_failed_lookup_is_not_memoized_and_the_next_reference_reattempts() -> None:

@@ -210,9 +210,8 @@ or without it; if it merged, no in-process reconciliation could remove a peer ei
 are pinned by a live shrink test rather than hedged in code.
 
 See [ADR 0012](../adr/0012-the-convergent-upsert-is-the-replace-set-write.md) for why the second,
-targeted relationship write this path used to make was deleted, and
-[ADR 0003](../adr/0003-replace-set-flush-is-a-targeted-relationship-write.md) for the record of the
-forms that came before it.
+targeted relationship write this path used to make was deleted; it carries the link to the record
+of the forms that came before it.
 
 `peers: []` under `cardinality: "many"` means "empty the set", and the upsert carries `[]` for it. The
 observable throughout is the **issued destination write carrying the plan's peer list** — not the

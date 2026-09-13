@@ -47,10 +47,19 @@ from infrahub_sync.plan.models import PlanAction, PlannedOperation, Relationship
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from infrahub_sdk import InfrahubClientSync
+    from infrahub_sdk.node import RelatedNodeSync, RelationshipManagerSync
+
 pytestmark = pytest.mark.integration
 
 TEAM_KIND = "TestShrinkTeam"
 TAG_KIND = "TestShrinkTag"
+
+MEMBERS_RELATIONSHIP = "members"
+LEAD_RELATIONSHIP = "lead"
+# The SDK sets each relationship write property on the peer object dynamically, from its
+# `PROPERTIES_FLAG` list, so the name is read rather than reached for as an attribute.
+PROTECTION_PROPERTY = "is_protected"
 
 # `members` is the cardinality-many relationship under replace-set. `lead` is an OPTIONAL
 # CARDINALITY-ONE relationship no operation here maps — the shape a whole-node re-render nulls —
@@ -137,7 +146,7 @@ def _await_schema_kinds(address: str, token: str, kinds: tuple[str, ...], branch
         time.sleep(1.0)
 
 
-def _make_client(address: str, token: str, branch: str | None = None) -> Any:  # noqa: ANN401 — dynamically typed
+def _make_client(address: str, token: str, branch: str | None = None) -> InfrahubClientSync:
     """A sync Infrahub client, imported lazily so unit-only runs need no SDK extras.
 
     `branch` becomes the client's `default_branch`. That is how the adapter itself targets a
@@ -181,13 +190,14 @@ def _team_operation(team_name: str, tag_names: list[str], *, action: PlanAction)
     )
 
 
-def _destination_peer_ids(client: Any, team_id: str, branch: str) -> set[str]:  # noqa: ANN401 — SDK node
+def _destination_peer_ids(client: InfrahubClientSync, team_id: str, branch: str) -> set[str]:
     """The destination's current `members` peer ids for the team, read back independently."""
-    node = client.get(kind=TEAM_KIND, id=team_id, branch=branch, include=["members"])
-    return set(node.members.peer_ids)
+    node = client.get(kind=TEAM_KIND, id=team_id, branch=branch, include=[MEMBERS_RELATIONSHIP])
+    members: RelationshipManagerSync = getattr(node, MEMBERS_RELATIONSHIP)
+    return set(members.peer_ids)
 
 
-def _destination_peer_protection(client: Any, team_id: str, branch: str) -> dict[str, Any]:  # noqa: ANN401 — SDK node
+def _destination_peer_protection(client: InfrahubClientSync, team_id: str, branch: str) -> dict[str | None, Any]:
     """Each `members` peer's `is_protected` write property, read back from the destination.
 
     `property=True` is what makes the SDK request the relationship's write properties; without
@@ -195,18 +205,20 @@ def _destination_peer_protection(client: Any, team_id: str, branch: str) -> dict
     test adapter has no source or owner account, so protection is the write property that is
     checkable live; `source` and `owner` are covered offline.
     """
-    node = client.get(kind=TEAM_KIND, id=team_id, branch=branch, include=["members"], property=True)
-    return {peer.id: peer.is_protected for peer in node.members.peers}
+    node = client.get(kind=TEAM_KIND, id=team_id, branch=branch, include=[MEMBERS_RELATIONSHIP], property=True)
+    members: RelationshipManagerSync = getattr(node, MEMBERS_RELATIONSHIP)
+    return {peer.id: getattr(peer, PROTECTION_PROPERTY, None) for peer in members.peers}
 
 
-def _destination_lead_id(client: Any, team_id: str, branch: str) -> str | None:  # noqa: ANN401 — SDK node
+def _destination_lead_id(client: InfrahubClientSync, team_id: str, branch: str) -> str | None:
     """The destination's current `lead` peer id, or None when the relationship is empty."""
-    node = client.get(kind=TEAM_KIND, id=team_id, branch=branch, include=["lead"])
-    return node.lead.id if node.lead else None
+    node = client.get(kind=TEAM_KIND, id=team_id, branch=branch, include=[LEAD_RELATIONSHIP])
+    lead: RelatedNodeSync | None = getattr(node, LEAD_RELATIONSHIP)
+    return lead.id if lead else None
 
 
 @pytest.fixture
-def live_shrink_fixture() -> Iterator[tuple[Any, InfrahubAdapter, dict[str, str], str, str]]:
+def live_shrink_fixture() -> Iterator[tuple[InfrahubClientSync, InfrahubAdapter, dict[str, str], str, str]]:
     """A branch of this module's own, holding the throwaway schema and three tags.
 
     Yields `(client, adapter, tag_ids_by_name, team_name, branch)`. The team itself is created
@@ -243,7 +255,9 @@ def live_shrink_fixture() -> Iterator[tuple[Any, InfrahubAdapter, dict[str, str]
             name = f"shrink-tag-{suffix}-{index}"
             tag = client.create(kind=TAG_KIND, branch=branch, data={"name": name})
             tag.save()
-            tag_ids[name] = tag.id
+            tag_id = tag.id
+            assert tag_id is not None, f"the destination returned no id for the tag it created for {name!r}"
+            tag_ids[name] = tag_id
 
         # The adapter with only the state the planned-write surface reads — the same
         # `__new__` construction the sibling integration module uses to skip the
@@ -261,7 +275,7 @@ def live_shrink_fixture() -> Iterator[tuple[Any, InfrahubAdapter, dict[str, str]
 
 
 def test_shrinking_a_cardinality_many_peer_set_removes_surplus_peers(
-    live_shrink_fixture: tuple[Any, InfrahubAdapter, dict[str, str], str, str],
+    live_shrink_fixture: tuple[InfrahubClientSync, InfrahubAdapter, dict[str, str], str, str],
 ) -> None:
     """The pin. N → fewer and N → 0, surplus peers gone at the destination.
 
