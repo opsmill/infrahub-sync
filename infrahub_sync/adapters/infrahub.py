@@ -739,9 +739,9 @@ class PeerIdentifierError(ValueError):
         super().__init__(msg)
 
 
-def _sdk_node_has_identifiers(node: object, identifiers: tuple[str, ...]) -> bool:
+def _sdk_node_has_identifiers(node: InfrahubNodeSync, identifiers: tuple[str, ...], client: InfrahubClientSync) -> bool:
     """Return whether an SDK node carries every DiffSync identifier value."""
-    schema = getattr(node, "_schema", None)
+    schema = client.schema.get(kind=node.get_kind(), branch=node.get_branch())
     attributes = {attribute.name for attribute in getattr(schema, "attributes", ())}
     relationships = {relationship.name: relationship for relationship in getattr(schema, "relationships", ())}
     for identifier in identifiers:
@@ -1112,7 +1112,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             (
                 peer
                 for peer in (sdk_peer_by_uuid, sdk_peer_by_identity, fallback_node)
-                if peer is not None and _sdk_node_has_identifiers(peer, identifiers)
+                if peer is not None and _sdk_node_has_identifiers(peer, identifiers, self.client)
             ),
             None,
         )
