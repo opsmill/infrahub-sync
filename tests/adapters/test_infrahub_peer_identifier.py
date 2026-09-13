@@ -15,6 +15,7 @@ stand-in adapter that reuses the real helper. The focused cases cover:
 from __future__ import annotations
 
 import logging
+from itertools import count
 from types import SimpleNamespace
 from typing import Any
 
@@ -62,6 +63,26 @@ class _FakeStore:
             self._items[kind, node_id] = node
 
 
+# The adapter reads a node's schema through ``client.schema.get(kind=..., branch=...)``,
+# so the node factories below register the schema they build and the fake manager serves
+# it back. The registry is keyed by kind *and* branch because that is how the SDK's own
+# cache is keyed: one kind has one schema per branch. Several of these tests deliberately
+# pair a shallow peer with a rich one of the same kind, so each fake node is built on its
+# own branch — the only arrangement in which those two schemas can both be true.
+_FAKE_SCHEMAS: dict[tuple[str, str], SimpleNamespace] = {}
+_FAKE_BRANCHES = count()
+
+
+def _register_schema(schema: SimpleNamespace, branch: str) -> SimpleNamespace:
+    _FAKE_SCHEMAS[schema.kind, branch] = schema
+    return schema
+
+
+class _FakeSchemaManager:
+    def get(self, kind: str, branch: str) -> SimpleNamespace:  # noqa: PLR6301
+        return _FAKE_SCHEMAS[kind, branch]
+
+
 class _FakeClient:
     def __init__(
         self,
@@ -71,6 +92,7 @@ class _FakeClient:
         get_error: Exception | None = None,
     ) -> None:
         self.store = _FakeStore()
+        self.schema = _FakeSchemaManager()
         self.rehydrated_peer = rehydrated_peer
         self.raise_not_found = raise_not_found
         self.get_error = get_error
@@ -192,13 +214,20 @@ class _RelationshipHarness(InfrahubAdapter):
 
 
 def _make_node(kind: str, node_id: str, diffsync_data: dict[str, object]) -> SimpleNamespace:
-    node = SimpleNamespace(
-        id=node_id,
-        _schema=SimpleNamespace(
+    branch = f"fake-{next(_FAKE_BRANCHES)}"
+    schema = _register_schema(
+        SimpleNamespace(
             kind=kind,
             attributes=[SimpleNamespace(name=name, optional=False) for name in diffsync_data],
             relationships=[],
         ),
+        branch,
+    )
+    node = SimpleNamespace(
+        id=node_id,
+        _schema=schema,
+        get_kind=lambda: kind,
+        get_branch=lambda: branch,
         _fake_diffsync_data=diffsync_data,
     )
     for name, value in diffsync_data.items():
@@ -213,9 +242,9 @@ def _make_sdk_node(
     relationships: dict[str, tuple[str, str]] | None = None,
 ) -> SimpleNamespace:
     relationship_data = relationships or {}
-    node = SimpleNamespace(
-        id=node_id,
-        _schema=SimpleNamespace(
+    branch = f"fake-{next(_FAKE_BRANCHES)}"
+    schema = _register_schema(
+        SimpleNamespace(
             kind=kind,
             attribute_names=list(attrs),
             attributes=[SimpleNamespace(name=name, optional=False) for name in attrs],
@@ -224,6 +253,13 @@ def _make_sdk_node(
                 for name, (peer_kind, _peer_id) in relationship_data.items()
             ],
         ),
+        branch,
+    )
+    node = SimpleNamespace(
+        id=node_id,
+        _schema=schema,
+        get_kind=lambda: kind,
+        get_branch=lambda: branch,
     )
     for name, value in attrs.items():
         setattr(node, name, SimpleNamespace(value=value))

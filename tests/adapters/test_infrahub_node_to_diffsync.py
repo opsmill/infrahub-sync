@@ -6,8 +6,9 @@ unchanged, which get string-coerced (e.g. ipaddress objects), and which
 must NOT be coerced (e.g. ``kind: List``).
 
 The tests bypass network setup by constructing the adapter via
-``__new__`` and supplying only the bits the method touches: ``config``,
-plus a node-like object exposing ``id``, ``_schema``, and one attribute
+``__new__`` and supplying only the bits the method touches: ``config``
+and a client whose schema lookup serves the fake kinds, plus a node-like
+object exposing ``id``, ``get_kind()``, ``get_branch()`` and one attribute
 per kind. Relationship handling is out of scope here — the fixtures use
 empty ``relationships`` so the method's relationship branch is a no-op.
 """
@@ -49,7 +50,7 @@ class FakeAttr:
 
 @dataclass
 class FakeSchema:
-    """Stand-in for ``node._schema``."""
+    """Stand-in for the kind schema the adapter reads through ``client.schema.get``."""
 
     kind: str
     attribute_names: list[str] = field(default_factory=list)
@@ -57,14 +58,44 @@ class FakeSchema:
     relationship_names: list[str] = field(default_factory=list)
 
 
+class FakeSchemaManager:
+    """Stand-in for ``client.schema`` — serves a kind's schema the way the SDK cache does."""
+
+    def __init__(self) -> None:
+        self.by_kind: dict[str, FakeSchema] = {}
+
+    def get(self, kind: str, branch: str | None = None) -> FakeSchema:  # noqa: ARG002
+        return self.by_kind[kind]
+
+
+class FakeClient:
+    """Stand-in for ``adapter.client`` — only the schema lookup is exercised here."""
+
+    def __init__(self) -> None:
+        self.schema = FakeSchemaManager()
+
+
 class FakeNode:
     """Stand-in for ``InfrahubNodeSync`` exposing the attributes by name."""
 
-    def __init__(self, node_id: str, kind: str, attrs: dict[str, Any]) -> None:
+    def __init__(self, node_id: str, kind: str, attrs: dict[str, Any], branch: str = "main") -> None:
         self.id = node_id
-        self._schema = FakeSchema(kind=kind, attribute_names=list(attrs.keys()))
+        self.branch = branch
+        self.schema = FakeSchema(kind=kind, attribute_names=list(attrs.keys()))
         for name, value in attrs.items():
             setattr(self, name, FakeAttr(value=value))
+
+    def get_kind(self) -> str:
+        return self.schema.kind
+
+    def get_branch(self) -> str:
+        return self.branch
+
+
+class FakeAdapter(InfrahubAdapter):
+    """``InfrahubAdapter`` with its client narrowed to the fake these tests supply."""
+
+    client: FakeClient
 
 
 # ---------------------------------------------------------------------------
@@ -91,28 +122,32 @@ def _make_config(kind: str, field_names: list[str]) -> SyncConfig:
     )
 
 
-def _make_adapter(kind: str, field_names: list[str]) -> InfrahubAdapter:
+def _make_adapter(kind: str, field_names: list[str]) -> FakeAdapter:
     """Build an InfrahubAdapter that bypasses network setup.
 
     ``__init__`` requires live Infrahub plumbing (client, schema fetch,
     source/owner lookup). We don't need any of that for value-transform
-    tests — only ``self.config`` is touched. Using ``__new__`` skips
-    ``__init__`` entirely.
+    tests — only ``self.config`` and the client's schema lookup are
+    touched. Using ``__new__`` skips ``__init__`` entirely.
     """
-    adapter = InfrahubAdapter.__new__(InfrahubAdapter)
+    adapter = FakeAdapter.__new__(FakeAdapter)
     adapter.config = _make_config(kind, field_names)
+    adapter.client = FakeClient()
     return adapter
 
 
-def _serialise(adapter: InfrahubAdapter, node: FakeNode) -> dict[str, Any]:
+def _serialise(adapter: FakeAdapter, node: FakeNode) -> dict[str, Any]:
     """Call ``adapter.infrahub_node_to_diffsync`` on a duck-typed fake node.
 
     The method's parameter annotation is ``InfrahubNodeSync``, but the
-    function body only reads ``node.id``, ``node._schema``, and per-name
-    attribute managers — all of which ``FakeNode`` provides. The type
-    suppression below is a single, scoped location rather than once per
-    test.
+    function body only reads ``node.id``, ``node.get_kind()``,
+    ``node.get_branch()`` and per-name attribute managers — all of which
+    ``FakeNode`` provides. The node's schema is registered with the fake
+    client first, because the adapter now looks it up there rather than on
+    the node. The type suppression below is a single, scoped location
+    rather than once per test.
     """
+    adapter.client.schema.by_kind[node.get_kind()] = node.schema
     return adapter.infrahub_node_to_diffsync(node=node)  # ty: ignore[invalid-argument-type]
 
 
