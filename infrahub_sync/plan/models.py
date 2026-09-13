@@ -167,7 +167,7 @@ class PlannedOperation(BaseModel):
             msg = f"Operation {self.operation_id!r} is a {self.action} and must carry a payload."
             raise ValueError(msg)
         # The other half of that rule: a field carried by the payload *and* a relationship reference
-        # has two competing write sources — the upsert value and the flush value.
+        # has two competing write sources — the upsert value and the relationship value.
         referenced_fields = set(reference_fields)
         doubly_sourced = sorted(referenced_fields & set(self.payload))
         if doubly_sourced:
@@ -434,10 +434,9 @@ class ApplyRecord:
     A destination rejection mid-apply carries the **partial** record on the raised
     `OperationApplyFailedError`, so the CLI can merge what was written before recording
     `failed`, and FR-025's last-applied pointer survives a partial apply. The failing
-    operation is named on the record too: applying one operation is not one destination write,
-    so a failure between the base upsert and the relationship flush leaves the destination
-    changed by an operation in neither the applied nor the skipped-delete set. Re-applying
-    converges it (AD033).
+    operation is named on the record too: its mutation may have committed before the failure
+    was observed, which would leave the destination changed by an operation in neither the
+    applied nor the skipped-delete set. Re-applying converges it (AD033).
     """
 
     applied_operations: tuple[str, ...] = ()
@@ -459,11 +458,11 @@ class ApplyRecord:
     def may_have_partially_written(self) -> bool:
         """Whether `failed_operation` may have left part of its change at the destination.
 
-        Deliberately "may". Applying one operation issues the base upsert first and the
-        cardinality-many relationship flush second, and the engine learns only that the call
-        raised — never how far it got. So the marker is true for any failed operation and
-        false otherwise, which is the reading that never understates what reached the
-        destination.
+        Deliberately "may". An operation is one destination mutation, and one mutation can
+        still commit remotely before its response — or the transport carrying it — fails; the
+        engine learns only that the call raised, never how far it got. So the marker is true
+        for any failed operation and false otherwise, which is the reading that never
+        understates what reached the destination.
         """
         return self.failed_operation is not None
 

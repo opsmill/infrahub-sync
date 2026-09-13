@@ -293,9 +293,10 @@ class OperationApplyFailedError(PlanArtifactError):
     because the CLI is the single writer of the run record (AD069) and cannot record what it
     was never handed.
 
-    Nothing is rolled back. Applying one operation is not one write either: the base upsert
-    precedes the relationship flush, so the failing operation may have changed the
-    destination as well, which is what `may_have_partially_written` marks.
+    Nothing is rolled back, and the failing operation may have changed the destination too: a
+    remote mutation can commit before its response — or the transport carrying it — fails, and
+    the engine learns only that the call raised. That is what `may_have_partially_written`
+    marks.
     """
 
     next_action = (

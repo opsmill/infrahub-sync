@@ -215,6 +215,11 @@ def live_shrink_fixture() -> Iterator[tuple[Any, InfrahubAdapter, dict[str, str]
 
     The branch is the teardown: deleting it discards the schema, the tags and the team in one
     administrative call, and nothing this fixture or the test writes can reach `main`.
+
+    Two clients, because the planned-write surface takes no branch argument: `lifecycle_client`
+    is bound to no branch and issues only `BranchCreate` and `BranchDelete`, while `client`
+    carries the branch as its `default_branch` so every schema read, node write and read-back —
+    including the adapter's own — lands on the branch instead of `main`.
     """
     address, token = _env_or_skip()
     suffix = uuid.uuid4().hex[:8]

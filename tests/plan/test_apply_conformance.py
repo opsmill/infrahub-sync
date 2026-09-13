@@ -390,25 +390,23 @@ def test_a_relationship_crossing_kind_is_refused_before_its_own_mutation() -> No
 
 
 # ---------------------------------------------------------------------------------------
-# Assertion 3 — the re-read, and the flush
+# Assertion 3 — the replace-set is the one write, and no destination read
 # ---------------------------------------------------------------------------------------
 
 
-def test_the_replace_set_flushes_an_update_with_no_destination_read() -> None:
-    """AD054/AD075/AD085: the plan's peer set reaches the destination as the flush."""
+def test_the_replace_set_is_one_upsert_with_no_destination_read() -> None:
+    """AD054/AD085: the plan's peer set reaches the destination on the one convergent upsert."""
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-9", "conf-tag-id-2"])
 
     adapter.apply_planned_operation(operation=team_operation(["tag-b", "tag-c"]), peers=peers)
 
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"], (
-        "The convergent upsert, then exactly one flush, and the flush is an update rather than a "
-        "second upsert (infrahub_sdk/node/node.py renders the latter)."
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"], (
+        "A planned operation is exactly one destination write, and it is the convergent upsert."
     )
-    _, flush = client.mutations[1]
-    assert rendered_relationship_ids(flush, "members") == ["conf-tag-id-2", "conf-tag-id-3"], (
-        f"The flush must carry exactly the plan's peer set. Rendered:\n{flush}"
+    _, upsert = client.mutations[0]
+    assert rendered_relationship_ids(upsert, "members") == ["conf-tag-id-2", "conf-tag-id-3"], (
+        f"The upsert must carry exactly the plan's peer set. Rendered:\n{upsert}"
     )
-    assert f'id: "{NODE_ID}"' in flush, "The flush must target the node the upsert converged on."
     assert issued_reads(client) == [], (
         "The planned-write path issues no destination read: the fetch-and-reconcile "
         "round trips added nothing, because the SDK renders no removal directive either way."
@@ -416,15 +414,15 @@ def test_the_replace_set_flushes_an_update_with_no_destination_read() -> None:
 
 
 def test_an_empty_peer_list_is_issued_as_an_emptied_set() -> None:
-    """AD085: `peers: []` under `cardinality: many` survives the flush as `[]`."""
+    """AD085: `peers: []` under `cardinality: many` reaches the destination as `[]`."""
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-1", "conf-tag-id-2"])
 
     adapter.apply_planned_operation(operation=team_operation([]), peers=peers)
 
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
-    _, flush = client.mutations[1]
-    assert rendered_relationship_ids(flush, "members") == [], (
-        f"The flush must carry an empty `members` list, not omit the key. Rendered:\n{flush}"
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"]
+    _, upsert = client.mutations[0]
+    assert rendered_relationship_ids(upsert, "members") == [], (
+        f"The upsert must carry an empty `members` list, not omit the key. Rendered:\n{upsert}"
     )
 
 
@@ -445,7 +443,7 @@ def test_the_upsert_names_only_the_mapped_fields_and_its_key(peer_names: list[st
 
     adapter.apply_planned_operation(operation=team_operation(peer_names), peers=peers)
 
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"]
     _, upsert = client.mutations[0]
     fields = mutation_input_fields(upsert)
     assert sorted(fields) == sorted(["name", REPLACED_RELATIONSHIP, "hfid"]), (

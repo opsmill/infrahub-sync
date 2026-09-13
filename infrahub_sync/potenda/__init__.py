@@ -735,9 +735,9 @@ class Potenda:
                 partial = ApplyRecord(
                     applied_operations=tuple(applied),
                     skipped_delete_operations=tuple(skipped_deletes),
-                    # Named on the record because applying one operation is not one write: the
-                    # base upsert precedes the relationship flush, so this operation may have
-                    # changed the destination while belonging to neither recorded set.
+                    # Named on the record because a mutation can commit remotely before its
+                    # response or transport fails, so this operation may have changed the
+                    # destination while belonging to neither recorded set.
                     failed_operation=operation.operation_id,
                 )
                 if not isinstance(exc, OPERATIONAL_APPLY_FAILURES):
