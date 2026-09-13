@@ -202,9 +202,12 @@ The destination ends holding exactly the peers the plan names. The convergent up
 does it: it carries each cardinality-many relationship as the plan's resolved peer list, and it is the
 operation's only destination write. No destination read is involved.
 
-**Surplus-peer removal is the server's replace semantics, not something the client can express.** The
-SDK renders only the surviving peer list — `[{id: …}, …]` with no removal directive — so nothing about
-a removal ever reaches the wire, and a fetch-and-reconcile round trip before the write would decide
+**Surplus-peer removal is the server's replace semantics, not something the client can express one
+peer at a time.** The SDK renders the **complete** reduced peer list the plan names — `[{id: …}, …]` —
+and that list *is* the replacement signal: the destination removes every peer absent from it. What
+never reaches the wire is an explicit per-peer removal directive, so an omitted peer means "remove
+this one", never "leave this one alone" — an adapter that treats peer omission as irrelevant keeps
+surplus peers silently. A fetch-and-reconcile round trip before the write would therefore decide
 nothing: if the destination's Upsert mutation replaces the list, the written list is the new set with
 or without it; if it merged, no in-process reconciliation could remove a peer either. The semantics
 are pinned by a live shrink test rather than hedged in code.
