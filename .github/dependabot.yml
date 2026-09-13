@@ -10,7 +10,6 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "09:00"
-    target-branch: develop
     labels:
       - "type/housekeeping"
     groups:
@@ -24,7 +23,6 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "09:00"
-    target-branch: develop
     labels:
       - "type/housekeeping"
     groups:

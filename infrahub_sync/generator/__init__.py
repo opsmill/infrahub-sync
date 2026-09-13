@@ -2,14 +2,12 @@ from __future__ import annotations
 
 import subprocess  # noqa: S404 -- fixed argv (sys.executable -m ruff), no shell, no user input
 import sys
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, Protocol
 
 import jinja2
 from infrahub_sdk.schema import (
-    AttributeSchema,
     NodeSchema,
     RelationshipKind,
-    RelationshipSchema,
 )
 
 if TYPE_CHECKING:
@@ -119,32 +117,49 @@ def get_children(node: NodeSchema, config: SyncConfig) -> str | None:
     return "{" + ", ".join(children_list) + "}"
 
 
-def get_kind(item: Union[RelationshipSchema, AttributeSchema]) -> str:
-    kind = "str"
-    if isinstance(item, AttributeSchema):
-        kind = ATTRIBUTE_KIND_MAP.get(item.kind, "str")
-        if item.optional:
-            kind = f"{kind} | None"
-            if item.default_value is not None:
-                # `repr` renders every declared default as the Python literal that
-                # evaluates back to it. Interpolating a string between quotes instead
-                # emitted invalid or differently-valued Python for any default holding a
-                # quote, a backslash, or a control character.
-                kind += f" = {item.default_value!r}"
-            else:
-                kind += " = None"
+class _AttributeLike(Protocol):
+    """Structural shape get_attribute_type_annotation() needs from an attribute-schema object."""
 
-    elif isinstance(item, RelationshipSchema) and item.cardinality == "one":
-        if item.optional:
-            kind = f"{kind} | None = None"
+    kind: Any
+    optional: bool
+    default_value: Any
 
-    elif isinstance(item, RelationshipSchema) and item.cardinality == "many":
-        kind = "list[str]"
-        if item.optional:
-            kind = f"{kind} | None"
-        kind += " = []"
 
-    return kind
+class _RelationshipLike(Protocol):
+    """Structural shape get_relationship_type_annotation() needs from a relationship-schema object."""
+
+    @property
+    def cardinality(self) -> str: ...
+
+    @property
+    def optional(self) -> bool: ...
+
+
+def get_attribute_type_annotation(item: _AttributeLike) -> str:
+    """Return type annotation of schema attribute for Diffsync model."""
+    annotation = ATTRIBUTE_KIND_MAP.get(item.kind, "str")
+    if item.optional:
+        # repr() emits a Python literal that reproduces the schema value exactly, so string
+        # defaults containing quotes, newlines or backslashes stay valid and unchanged.
+        annotation = f"{annotation} | None = {item.default_value!r}"
+
+    return annotation
+
+
+def get_relationship_type_annotation(item: _RelationshipLike) -> str:
+    """Return type annotation of schema relationship for Diffsync model."""
+    annotation = "str"
+    if item.cardinality == "one":
+        if item.optional:
+            annotation = f"{annotation} | None = None"
+
+    elif item.cardinality == "many":
+        annotation = "list[str]"
+        if item.optional:
+            annotation = f"{annotation} | None"
+        annotation += " = []"
+
+    return annotation
 
 
 def has_children(node: NodeSchema, config: SyncConfig) -> bool:
@@ -165,7 +180,8 @@ def render_template(template_file: Path, output_dir: Path, output_file: Path, co
     template_env.filters["has_node"] = has_node
     template_env.filters["has_field"] = has_field
     template_env.filters["has_children"] = has_children
-    template_env.filters["get_kind"] = get_kind
+    template_env.filters["get_attribute_type_annotation"] = get_attribute_type_annotation
+    template_env.filters["get_relationship_type_annotation"] = get_relationship_type_annotation
 
     template = template_env.get_template(str(template_file))
 
