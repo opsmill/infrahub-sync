@@ -115,9 +115,6 @@ class _SchemaEndpoint:
         self.branches.append(branch)
         return self._schema
 
-    def get(self, kind: str, branch: str | None = None) -> _NodeSchema:  # noqa: ARG002
-        return self._schema[kind]
-
 
 class _InfrahubClient:
     """The Infrahub SDK surface the destination adapter uses, and nothing else."""

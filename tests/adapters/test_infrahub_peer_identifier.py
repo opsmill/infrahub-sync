@@ -113,12 +113,13 @@ class _FakeNode:
     def __init__(self, kind: str, node_id: str) -> None:
         self.__dict__["_kind"] = kind
         self.id = node_id
+        self.branch = "main"
 
     def get_kind(self) -> str:
         return self.__dict__["_kind"]
 
-    def get_branch(self) -> str:  # noqa: PLR6301
-        return "main"
+    def get_branch(self) -> str:
+        return self.branch
 
     def __getattr__(self, name: str) -> SimpleNamespace:
         schema = _FAKE_SCHEMAS.get(self.__dict__["_kind"])
