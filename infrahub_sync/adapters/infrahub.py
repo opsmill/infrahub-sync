@@ -72,10 +72,9 @@ def resolve_peer_node(
       - If not found and fallback is enabled, use the client to fetch the node.
       - If node is found but has incomplete attributes, re-fetch from Infrahub.
 
-    `schemas` is the caller's already-loaded kind-to-schema mapping. Completeness can only
-    be judged against a schema, and reading one the caller does not already hold would mean
-    a schema request this function never used to make, so a kind missing from `schemas`
-    leaves the stored peer as it is.
+    `schemas` is the caller's already-loaded kind-to-schema mapping and is the only schema
+    source this function uses. Completeness is judged against it alone: a kind absent from
+    `schemas` is not fetched, and the stored peer is left as it is.
 
     Returns the found peer node or None.
     """
@@ -540,9 +539,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """
         data: dict[str, Any] = {"local_id": str(node.id)}
         node_kind = node.get_kind()
-        # The adapter's loaded schema is the authority for this branch. Asking the SDK's
-        # schema manager instead would fetch for any node built with an explicit schema,
-        # which never registers in that manager's cache — a request this method never made.
+        # The adapter's loaded mapping is the schema source for this branch. The SDK's
+        # schema manager is not consulted: a node built with an explicit schema never
+        # registers in that manager's cache, so a lookup there would issue a fetch.
         node_schema = self.schema[node_kind]
 
         for attr_name in node_schema.attribute_names:

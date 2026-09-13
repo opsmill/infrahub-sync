@@ -97,9 +97,8 @@ class FakeRelManager:
 class FakeNode:
     """Stand-in for ``InfrahubNodeSync`` exposing only what ``update_node`` reads.
 
-    ``schema`` and ``client`` are now handed to ``update_node`` by its caller rather
-    than read off the node, so they are held here only to keep each test's fixture in
-    one place.
+    ``update_node`` takes its ``schema`` and ``client`` as arguments, so they are held
+    here only to keep each test's fixture in one place.
     """
 
     def __init__(

@@ -3,8 +3,8 @@
 An ``InfrahubNodeSync`` built with an explicit schema — directly, or through
 ``from_graphql(..., schema=...)`` — never registers that schema in
 ``client.schema.cache``. ``SchemaManagerSync.get()`` therefore misses and issues
-``GET /api/schema``. The adapter paths exercised here previously read ``node._schema``
-and made no request at all, so reading through the schema manager would add one.
+``GET /api/schema``. The adapter paths exercised here resolve a kind's schema from the
+adapter's own loaded mapping, so they issue no request at all.
 
 Each test drives a real SDK node and a real client whose schema cache is empty and whose
 HTTP layer raises on any use, so an added schema fetch fails the test rather than passing
@@ -60,7 +60,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> InfrahubClientSync:
     """A real client whose schema cache is empty and whose transport always fails.
 
     ``_get``/``_post`` are the two methods ``SchemaManagerSync._fetch`` goes through, so
-    replacing them turns any schema request into a test failure instead of a real socket.
+    replacing them turns any schema request into a test failure rather than a real socket.
     """
     # No token: the client never reaches the network, and an unauthenticated client
     # starts with the same empty schema cache these tests depend on.

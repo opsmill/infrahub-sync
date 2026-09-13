@@ -20,7 +20,7 @@ from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError
 
 
 class _KindedNode(Protocol):
-    """The public surface a stored node has to expose — its kind, not its schema."""
+    """The public surface a stored node has to expose: its kind."""
 
     def get_kind(self) -> str: ...
 
@@ -76,7 +76,7 @@ class _Harness(InfrahubAdapter):
 
 
 def _make_node(kind: str, node_id: str, diffsync_data: dict[str, object]) -> SimpleNamespace:
-    """A fake SDK node exposing the public ``get_kind()`` the adapter now reads."""
+    """A fake SDK node exposing the public ``get_kind()`` the adapter reads."""
     return SimpleNamespace(
         id=node_id,
         get_kind=lambda: kind,
