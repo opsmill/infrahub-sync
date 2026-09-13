@@ -2,23 +2,31 @@
 # yamllint disable rule:truthy
 name: "Push on main"
 
-# Prepares a release; it does not cut one. A push to `main` opens a reviewable
+# Prepares a release; it does not cut one. Dispatching it opens a reviewable
 # `chore(release)` pull request carrying the version bump and the assembled
 # changelog, and stops there. Merging that pull request is the authorisation:
 # release-publish.yml then creates the tag and publishes the GitHub Release.
 #
-# Scoped to `main` alone. This workflow used to also fire on `stable`, but that
-# branch does not exist in this repository (`gh api
-# repos/opsmill/infrahub-sync/branches`), and the two workflows this one now
+# Preparation is deliberate. This ran on every push to `main` before, so any
+# merge re-opened or force-updated the release pull request under whoever was
+# reviewing it — the same churn the draft release had, moved into a pull
+# request. A human dispatches it when `main` is ready to ship.
+#
+# It runs against `main` alone. This workflow used to also fire on `stable`,
+# but that branch does not exist in this repository (`gh api
+# repos/opsmill/infrahub-sync/branches`), and the two workflows this one
 # co-operates with — changelog-check.yml and release-publish.yml — are both
 # `main`-only. Preparing a release pull request against a branch nothing can
 # publish would leave the version stranded.
 on:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Version to release, e.g. 2.1.0. Leave empty to calculate it from the
+          labels on the pull requests merged since the last release.
+        required: false
+        type: string
 
 # Release preparation queries, closes and creates release pull requests as one
 # unsynchronised read-modify-write. Two overlapping runs let the older one
@@ -35,103 +43,26 @@ permissions:
   pull-requests: write
 
 jobs:
-  check_commit:
-    runs-on: ubuntu-latest
-    outputs:
-      skip: ${{ steps.decide.outputs.skip }}
-      reason: ${{ steps.decide.outputs.reason }}
-      next_version: ${{ steps.version.outputs.next-version }}
-      previous_tag: ${{ steps.previoustag.outputs.tag }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
-          fetch-depth: 0
-
-      - id: commit_meta
-        shell: bash
-        run: |
-          echo "author=$(git log -1 --pretty=format:'%an')" >> $GITHUB_OUTPUT
-          echo "message=$(git log -1 --pretty=format:'%s')" >> $GITHUB_OUTPUT
-
-      - name: Get previous tag
-        id: previoustag
-        uses: WyriHaximus/github-action-get-previous-tag@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Calculate next version
-        id: version
-        uses: patrickjahns/version-drafter-action@v1.3.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Decide whether to skip downstream work:
-      - id: decide
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
-          # Read through the environment rather than interpolated into the
-          # script body: a commit subject is attacker-controlled text and
-          # `${{ }}` splices it in before bash ever sees it.
-          COMMIT_AUTHOR: ${{ steps.commit_meta.outputs.author }}
-          COMMIT_MESSAGE: ${{ steps.commit_meta.outputs.message }}
-          PREV_TAG: ${{ steps.previoustag.outputs.tag }}
-          NEXT_VERSION: ${{ steps.version.outputs.next-version }}
-        run: |
-          set -euo pipefail
-          skip=false
-          reason=""
-
-          # Normalize version strings (strip optional leading 'v')
-          prev_norm="${PREV_TAG#v}"
-          next_norm="${NEXT_VERSION#v}"
-
-          # Skip the merge of a release pull request, so preparing a release
-          # cannot trigger preparing another. That merge only says
-          # `chore(release):` when the pull request was squashed or rebased;
-          # `allow_merge_commit` is enabled on this repository and
-          # `merge_commit_title` is MERGE_MESSAGE, so a merge commit reads
-          # `Merge pull request #...` and matches neither check below. Ask the
-          # API which pull requests this commit belongs to instead, which
-          # holds for all three merge strategies.
-          RELEASE_PR=$(
-            gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
-              --jq '[.[]
-                     | select(.merged_at != null)
-                     | select(.head.ref | startswith("release/"))
-                     | .number] | first // empty'
-          )
-
-          if [ -n "${RELEASE_PR}" ]; then
-            echo "Release PR #${RELEASE_PR} merged here — not preparing another."
-            skip=true
-            reason="release-merge"
-          fi
-
-          # The author/subject checks stay as a cheap fast path: they cost no
-          # API call and still recognise in-flight commits from the previous
-          # scheme, which pushed `chore(release): ...` straight to main.
-          if [[ "${COMMIT_AUTHOR}" == "opsmill-bot" ]] && \
-             [[ "${COMMIT_MESSAGE}" =~ ^chore(:|\(release\):) ]]; then
-            skip=true
-            reason="${reason:+$reason,}bot-commit"
-          fi
-
-          # Skip when there is no new version to cut
-          if [[ "$next_norm" == "$prev_norm" || -z "$next_norm" ]]; then
-            skip=true
-            reason="${reason:+$reason,}no-new-version"
-          fi
-
-          echo "skip=$skip"     >> $GITHUB_OUTPUT
-          echo "reason=$reason" >> $GITHUB_OUTPUT
-
   prepare_release:
-    needs: check_commit
-    if: needs.check_commit.outputs.skip == 'false'
     runs-on: ubuntu-22.04
     steps:
+      # `workflow_dispatch` runs against whichever ref the dispatcher picks,
+      # and the Actions UI offers this repository's default branch first.
+      # Under the old `push` trigger the branch was implied; now it has to
+      # be checked, before anything is checked out or bumped.
+      - name: Check the branch
+        env:
+          RELEASE_BRANCH: main
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_NAME}" != "${RELEASE_BRANCH}" ]; then
+            MSG="Releases are prepared from '${RELEASE_BRANCH}', not"
+            MSG="${MSG} '${GITHUB_REF_NAME}'. Re-run this workflow with"
+            MSG="${MSG} '${RELEASE_BRANCH}' selected as the branch."
+            echo "::error::${MSG}"
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
         with:
           token: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
@@ -142,12 +73,35 @@ jobs:
         with:
           version: "latest"
 
+      - name: Get previous tag
+        id: previoustag
+        uses: WyriHaximus/github-action-get-previous-tag@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # One version string, from one of two sources. Empty input means the
+      # labels on the merged pull requests decide it, which is the default and
+      # the usual case; a value means whoever dispatched the run decided it,
+      # the way infrahub and infrahub-sdk-python decide every release. Both
+      # converge on `normalize`, so everything downstream is identical either
+      # way.
+      - name: Calculate next version
+        id: version
+        if: inputs.version == ''
+        uses: patrickjahns/version-drafter-action@v1.3.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Normalise the version
         id: normalize
         env:
-          RAW_VERSION: ${{ needs.check_commit.outputs.next_version }}
+          # Read through the environment, not spliced in with `${{ }}`: the
+          # input is free text typed into the Actions UI.
+          INPUT_VERSION: ${{ inputs.version }}
+          DRAFTED_VERSION: ${{ steps.version.outputs.next-version }}
         run: |
           set -euo pipefail
+          RAW_VERSION="${INPUT_VERSION:-${DRAFTED_VERSION}}"
 
           # Tags here are bare (`2.0.1`), not `v`-prefixed, and
           # release-publish.yml reads the tag it creates back out of
@@ -158,12 +112,36 @@ jobs:
           VERSION="${RAW_VERSION#v}"
           if ! printf '%s' "${VERSION}" \
               | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
-            MSG="Calculated version '${RAW_VERSION}' is not a usable version"
+            MSG="'${RAW_VERSION}' is not a usable version"
             MSG="${MSG} string — refusing to prepare a release from it."
             echo "::error::${MSG}"
             exit 1
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse a version that is already released
+        env:
+          VERSION: ${{ steps.normalize.outputs.version }}
+          PREV_TAG: ${{ steps.previoustag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          PREV="${PREV_TAG#v}"
+          echo "Previous: ${PREV}"
+          echo "Next:     ${VERSION}"
+
+          # Under the old push trigger this was a silent skip, because most
+          # pushes are not releases. A dispatch is someone asking for a
+          # release, so having nothing to cut is a mistake worth reporting
+          # rather than a no-op run that looks green.
+          if [ "${PREV}" = "${VERSION}" ]; then
+            MSG="${VERSION} is already the latest tag — there is nothing new"
+            MSG="${MSG} to release. Merge the pull requests you want in this"
+            MSG="${MSG} release first, or dispatch again with an explicit"
+            MSG="${MSG} version."
+            echo "::error::${MSG}"
+            exit 1
+          fi
+          echo "Version bump: ${PREV} -> ${VERSION}"
 
       - name: Update pyproject.toml version
         env:
@@ -265,8 +243,8 @@ jobs:
           git add pyproject.toml uv.lock CHANGELOG.md changelog/
           git commit -m "chore(release): ${VERSION}"
 
-          # Re-running on a later push to main refreshes the same branch
-          # rather than opening a second pull request for the same version.
+          # Dispatching again for the same version refreshes the same
+          # branch rather than opening a second pull request for it.
           # Plain --force rather than --force-with-lease: checkout does not
           # fetch this branch's remote ref, so a lease has nothing to compare
           # against. The branch is bot-owned and regenerated every run.
@@ -312,7 +290,7 @@ jobs:
           # with a PAT and not GITHUB_TOKEN — would block it. The label is the
           # opt-out that check already honours.
           cat > "${RUNNER_TEMP}/release-pr-body.md" <<EOF
-          Prepared automatically. Merging this pull request authorises the release:
+          Prepared on request. Merging this pull request authorises the release:
           \`release-publish.yml\` then creates the \`${VERSION}\` tag and publishes
           the GitHub Release using the assembled changelog section as its body.
           Publishing that Release is what triggers \`trigger-release.yml\` and the

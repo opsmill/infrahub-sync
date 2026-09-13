@@ -149,7 +149,7 @@ Use `+` as the id for a change with no issue number (`+short-slug.housekeeping.m
 
 Label a pull request `ci/skip-changelog` when it genuinely needs no entry — a dependency bump or a typo fix. Dependabot applies that label itself.
 
-**Versions and `CHANGELOG.md` are never edited by hand.** A push to `main` opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes; merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md).
+**Versions and `CHANGELOG.md` are never edited by hand.** Merging to `main` does not prepare a release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md).
 
 ## Invoke Tasks (reference)
 

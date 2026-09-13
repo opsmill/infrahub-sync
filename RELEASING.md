@@ -20,7 +20,9 @@ Before publishing, ensure:
 
 ## Method 1: Automated release (recommended)
 
-This is the standard release flow. Nothing about a release is edited by hand: a push to `main` prepares a release pull request, and merging that pull request publishes the release.
+This is the standard release flow. Nothing about a release is edited by hand: dispatching `trigger-push-stable.yml` prepares a release pull request, and merging that pull request publishes the release.
+
+Preparation is dispatched, not triggered by a merge. It used to fire on every push to `main`, which re-opened or force-updated the release pull request under whoever was reviewing it — deciding to release is a separate act from merging.
 
 ### Step 1: Label your pull requests
 
@@ -45,16 +47,24 @@ Every pull request into `main` must also carry a news fragment under `changelog/
 
 ### Step 2: Merge to main
 
-Merge your labeled PR to the `main` branch. `trigger-push-stable.yml` then:
+Merge your labeled PRs to the `main` branch. Merging does not prepare a release on its own.
 
-1. Calculates the next version from the labels on PRs merged since the last release
+### Step 3: Dispatch the release preparation
+
+When `main` holds everything you mean to ship, run **Actions → Push on main → Run workflow** with `main` selected as the branch.
+
+Leave **version** empty to have the labels on the pull requests merged since the last release decide it — that is the usual case. Fill it in to state the version yourself, the way infrahub and infrahub-sdk-python do for every release.
+
+`trigger-push-stable.yml` then:
+
+1. Resolves the version — from the input if you gave one, otherwise from the merged PR labels
 2. Updates `pyproject.toml` with the new version and regenerates `uv.lock`
 3. Assembles `CHANGELOG.md` from the news fragments with towncrier, consuming them
 4. Opens a `chore(release): {VERSION}` pull request from `release/{VERSION}` into `main`
 
-If there are no news fragments, no release pull request is prepared — the run reports this and stops. Add a fragment and push again.
+If there are no news fragments, the run **fails** rather than cut a version with an empty changelog. Add a fragment — `housekeeping` is fine — and dispatch again. It also fails when the resolved version is already the latest tag: a dispatch is someone asking for a release, so having nothing to cut is reported rather than passed over.
 
-### Step 3: Review and merge the release pull request
+### Step 4: Review and merge the release pull request
 
 The release pull request is the reviewable artefact. Read the assembled `CHANGELOG.md` section in its diff — that is what users will read — and merge when it is right.
 
@@ -160,7 +170,7 @@ Preparing a release is skipped when:
 - Changes are only in the `docs/` directory
 - There are no news fragments under `changelog/` — there is nothing to release
 
-The last case is the common one after a run of `ci/skip-changelog` pull requests. Add a fragment (`housekeeping` is fine) and push again.
+The last case is the common one after a run of `ci/skip-changelog` pull requests. Add a fragment (`housekeeping` is fine) and dispatch again.
 
 ### The release pull request failed to prepare
 
@@ -185,7 +195,7 @@ Ensure PRs have appropriate labels before merging. If labels are missing, the ve
 | Workflow | Type | Purpose |
 |----------|------|---------|
 | `changelog-check.yml` | PR into `main` | Requires a news fragment on every pull request |
-| `trigger-push-stable.yml` | Push to `main` | Calculates version, bumps `pyproject.toml`, assembles the changelog, opens the release pull request |
+| `trigger-push-stable.yml` | Dispatched on `main` | Resolves the version, bumps `pyproject.toml`, assembles the changelog, opens the release pull request |
 | `release-publish.yml` | Push to `main` | Tags and publishes the GitHub Release when a `release/*` pull request lands |
 | `trigger-release.yml` | GitHub Release published | Invokes the publish workflow |
 | `workflow-publish.yml` | Reusable (`workflow_dispatch`) | Builds and publishes package to PyPI; invoked by `trigger-release.yml` |
