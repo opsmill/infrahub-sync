@@ -15,6 +15,7 @@ from diffsync import DiffSyncModel
 from infrahub_sdk.schema import (
     AttributeSchema,
     NodeSchema,
+    RelationshipCardinality,
     RelationshipKind,
     RelationshipSchema,
 )
@@ -119,8 +120,8 @@ def test_a_mapped_component_relationship_stays_out_of_the_attributes(tmp_path: P
         namespace="Infra",
         attributes=[AttributeSchema(name="name", kind=AttributeKind.TEXT, unique=True)],
         relationships=[
-            RelationshipSchema(name="interfaces", peer="InfraInterface", cardinality="many"),
-            RelationshipSchema(name="site", peer="LocationSite", cardinality="one"),
+            RelationshipSchema(name="interfaces", peer="InfraInterface", cardinality=RelationshipCardinality.MANY),
+            RelationshipSchema(name="site", peer="LocationSite", cardinality=RelationshipCardinality.ONE),
         ],
     )
     node.relationships[0].kind = RelationshipKind.COMPONENT
@@ -296,11 +297,21 @@ def _matrix_schema() -> tuple[SchemaMapping, SyncConfig]:
         )
         field_names.extend([f"{slug}_required", f"{slug}_optional", f"{slug}_default"])
     relationships = [
-        RelationshipSchema(name="one_required", peer="LocationSite", cardinality="one", optional=False),
-        RelationshipSchema(name="one_optional", peer="LocationSite", cardinality="one", optional=True),
-        RelationshipSchema(name="many_required", peer="BuiltinTag", cardinality="many", optional=False),
-        RelationshipSchema(name="many_optional", peer="BuiltinTag", cardinality="many", optional=True),
-        RelationshipSchema(name="component_many", peer="InfraInterface", cardinality="many", optional=True),
+        RelationshipSchema(
+            name="one_required", peer="LocationSite", cardinality=RelationshipCardinality.ONE, optional=False
+        ),
+        RelationshipSchema(
+            name="one_optional", peer="LocationSite", cardinality=RelationshipCardinality.ONE, optional=True
+        ),
+        RelationshipSchema(
+            name="many_required", peer="BuiltinTag", cardinality=RelationshipCardinality.MANY, optional=False
+        ),
+        RelationshipSchema(
+            name="many_optional", peer="BuiltinTag", cardinality=RelationshipCardinality.MANY, optional=True
+        ),
+        RelationshipSchema(
+            name="component_many", peer="InfraInterface", cardinality=RelationshipCardinality.MANY, optional=True
+        ),
     ]
     relationships[-1].kind = RelationshipKind.COMPONENT
     field_names.extend(relationship.name for relationship in relationships)

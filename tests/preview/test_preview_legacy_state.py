@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 import pytest
-from invoke import Context
+from invoke import Context, Result
 
 from tasks import preview
 from tasks.preview import RESET_COMMAND, PreviewError
@@ -103,8 +103,9 @@ def _staged_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, started: list[st
     monkeypatch.setattr(preview, "_project_interpreter", lambda _context: "/preview/venv/bin/python")
 
     class _SilentContext(Context):
-        def run(self, command: str, **kwargs: Any) -> None:  # noqa: ANN401, PLR6301 - Invoke surface.
+        def run(self, command: str, **kwargs: Any) -> Result:  # noqa: ANN401, PLR6301 - Invoke surface.
             del command, kwargs
+            return Result(exited=0)
 
     cast("Task", preview.up).body(_SilentContext())
     return started
