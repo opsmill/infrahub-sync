@@ -125,7 +125,7 @@ def _run_update(node: FakeNode, attrs: dict[str, object], source: str | None = N
 
     ``update_node`` is annotated for ``InfrahubNodeSync`` but only touches members
     ``FakeNode`` provides, so the type mismatch is suppressed here once rather than
-    at every call site (mirrors ``_serialise`` in test_infrahub_node_to_diffsync).
+    at every call site.
     """
     update_node(node, attrs, node.client, node.schema, source=source, owner=owner)  # ty: ignore[invalid-argument-type]
 
