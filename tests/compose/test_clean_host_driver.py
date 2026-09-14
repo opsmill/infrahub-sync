@@ -38,7 +38,7 @@ MANDATORY_ROWS = (
     "artifact_identity",
     "cold_start_and_idempotence",
     "managed_execution",
-    "unkeyed_write_policy",
+    "keyed_write_policy",
     "schema_change",
     "status",
     "restart",
@@ -1022,12 +1022,16 @@ def test_the_unkeyed_rows_configuration_reaches_its_kind_through_a_reference() -
     assert referenced.get("site") == "CleanSite"
 
 
-def test_the_unkeyed_row_requires_the_operation_to_be_a_create() -> None:
-    """An update carries the destination node's own id, so the gate would pass on the id."""
-    source = code_of(CHECKS / "unkeyed_write_policy.py")
+def test_the_keyed_write_row_is_refused_at_the_plan_stage() -> None:
+    """The proof moved from a pre-write gate to plan derivation, so no write is reached.
 
-    assert "'create'" in source
-    assert "rather than a create" in source
+    A row that ran a `sync` here would be asserting about the retired gate: it would
+    reach an apply only if planning had already let the operation through.
+    """
+    source = code_of(CHECKS / "keyed_write_policy.py")
+
+    assert "client.plan(" in source
+    assert "client.sync(" not in source, "the refusal happens before there is anything to apply"
 
 
 def test_the_unkeyed_write_row_counts_on_the_branch_its_run_writes_to() -> None:
@@ -1036,7 +1040,7 @@ def test_the_unkeyed_write_row_counts_on_the_branch_its_run_writes_to() -> None:
     Counting there would confirm the property without ever having been able to
     contradict it.
     """
-    source = code_of(CHECKS / "unkeyed_write_policy.py")
+    source = code_of(CHECKS / "keyed_write_policy.py")
 
     # Rendered from the parsed module, so the quoting is the unparser's.
     assert "f'/graphql/{branch}'" in source
@@ -1046,7 +1050,7 @@ def test_the_unkeyed_write_row_counts_on_the_branch_its_run_writes_to() -> None:
 
 def test_the_unkeyed_write_row_registers_the_whole_package_it_declares() -> None:
     """The declared credentials are part of it, and a run without them resolves no token."""
-    source = code_of(CHECKS / "unkeyed_write_policy.py")
+    source = code_of(CHECKS / "keyed_write_policy.py")
     declared = yaml.safe_load(UNKEYED_CONFIGURATION.read_text(encoding="utf-8"))
 
     assert "credentials" in declared, "the keyed-write configuration declares no credential to resolve"
@@ -1147,24 +1151,27 @@ def test_the_unkeyed_row_settles_its_run_rather_than_awaiting_success() -> None:
     For this row the terminal failure is the expected outcome, and the check has
     to read the verdict instead of reporting it.
     """
-    source = code_of(CHECKS / "unkeyed_write_policy.py")
-    settled = [line for line in source.splitlines() if "client.sync(" in line]
+    source = code_of(CHECKS / "keyed_write_policy.py")
+    settled = [line for line in source.splitlines() if "client.plan(" in line]
 
-    assert settled, "the row runs no sync"
+    assert settled, "the row runs no plan"
     for line in settled:
         assert "settle(" in line, f"the row awaits success from a run that cannot succeed: {line.strip()}"
 
 
-def test_the_unkeyed_row_reads_the_recorded_cause_and_not_the_wrapper() -> None:
-    """Every designed apply failure is reported as one wrapper class.
+def test_the_keyed_write_row_names_the_refusal_and_asserts_nothing_to_reconcile() -> None:
+    """The plan stage raises the refusal directly, so the run's own `error_type` names it.
 
-    An assertion on the wrapper would be satisfied by an unresolvable peer, an
-    unaccounted identity component, or the destination's own rejection.
+    An assertion on a wrapper class would be satisfied by an unresolvable peer, an
+    unaccounted identity component, or the destination's own rejection. And a
+    plan-time refusal dispatched nothing, so it must also record that there is
+    nothing to reconcile -- which is what separates it from row 8's interruption.
     """
-    source = code_of(CHECKS / "unkeyed_write_policy.py")
+    source = code_of(CHECKS / "keyed_write_policy.py")
 
-    assert "failure.get('cause_type') != UNKEYED_REFUSAL" in source
+    assert "failure.get('error_type') != KEYED_CREATE_REFUSAL" in source
     assert "OperationApplyFailedError" not in source, "the row names the wrapper, which says only that something failed"
+    assert "reconciliation_required" in source, "the row does not separate a refusal from an interruption"
 
 
 def test_the_recovery_row_cannot_pass_on_the_refusal_the_unkeyed_row_induces() -> None:
@@ -1177,7 +1184,7 @@ def test_the_recovery_row_cannot_pass_on_the_refusal_the_unkeyed_row_induces() -
     source = code_of(CHECKS / "recovery.py")
 
     # Anchored to the comparison, not to the import that makes the name available.
-    compared = "recorded_failure(client, run_id).get('cause_type') == UNKEYED_REFUSAL"
+    compared = "recorded_failure(client, run_id).get('cause_type') == KEYED_CREATE_REFUSAL"
     assert compared in source, "the row does not separate an interruption from a refusal"
     assert source.index("reconciliation_required") < source.index(compared)
 
@@ -2003,7 +2010,7 @@ def test_every_row_that_plans_states_the_count_it_planted_for() -> None:
 
 def test_the_unkeyed_rows_count_survives_an_answer_it_cannot_read() -> None:
     """A GraphQL refusal is a 200 carrying `errors`, and indexing it raises."""
-    source = code_of(CHECKS / "unkeyed_write_policy.py")
+    source = code_of(CHECKS / "keyed_write_policy.py")
 
     assert "without a count" in source
     assert "answer.json()['data'][UNKEYED_KIND]['count']" not in source

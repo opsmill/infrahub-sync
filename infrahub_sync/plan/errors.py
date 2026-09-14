@@ -47,7 +47,19 @@ class PlanArtifactError(Exception):
     # Subclasses MUST override this with a non-empty, class-level declaration.
     next_action: str = ""
 
-    def __init__(self, message: str, *, next_action: str | None = None) -> None:
+    # Whether the operation this refusal belongs to reached a destination mutation (S6).
+    #
+    #   `None`  — unknown, and the reading that never understates what reached the
+    #             destination. The default, and what every failure meant before this.
+    #   `False` — the operation attempted no destination mutation, or the destination
+    #             proved it wrote nothing. Only a refusal raised *before* the SDK write, or
+    #             one carrying the server's own not-found, may claim this.
+    #
+    # `True` is deliberately not used: an operation that failed *after* dispatching is
+    # exactly the case that cannot be known, and `None` already says so.
+    wrote: bool | None = None
+
+    def __init__(self, message: str, *, next_action: str | None = None, wrote: bool | None = None) -> None:
         effective = type(self).next_action if next_action is None else next_action
         if not effective:
             msg = (
@@ -58,6 +70,8 @@ class PlanArtifactError(Exception):
             raise TypeError(msg)
         self.message = message
         self.next_action = effective
+        if wrote is not None:
+            self.wrote = wrote
         super().__init__(f"{message} Next action: {effective}")
 
 
@@ -242,11 +256,19 @@ class PeerNotFoundError(PlanArtifactError):
     different one (AD071).
     """
 
+    # Raised before the SDK write on the planned-write surface, so no mutation was
+    # attempted for the operation it refuses (S6).
+    wrote = False
+
     next_action = "Create the peer at the destination, or re-plan so the same plan creates it."
 
 
 class PeerAmbiguousError(PlanArtifactError):
     """A peer identity matches more than one object at the destination."""
+
+    # Raised before the SDK write on the planned-write surface, so no mutation was
+    # attempted for the operation it refuses (S6).
+    wrote = False
 
     next_action = (
         "The destination kind's identity is not unique for these values: de-duplicate at the "
@@ -263,29 +285,83 @@ class UnaccountedIdentityComponentError(PlanArtifactError):
     this check is defined per component rather than as a single keyedness test.
     """
 
+    # Raised before the SDK write on the planned-write surface, so no mutation was
+    # attempted for the operation it refuses (S6).
+    wrote = False
+
     next_action = (
         "Re-plan so the plan's identity for that kind supplies the named component, or add it to that "
         "kind's `identifiers` in the schema mapping."
     )
 
 
-class UnkeyedWriteRefusedError(PlanArtifactError):
-    """The rendered mutation carries no usable `id` or `hfid`.
+class UnkeyedCreateRefusedError(PlanArtifactError):
+    """A create cannot be proven to key itself, so it is refused before any write.
 
-    An unkeyed convergent write duplicates its object on a re-apply, so it is refused for
-    every destination kind. A key rendered without a value keys nothing and is refused on the
-    same terms. The refused operation attempts no destination mutation.
+    A create carries no destination id: the server matches it on the human-friendly-ID
+    components present in the payload. A payload missing one component does **not** match
+    the existing object — the server reports `ok: true` and creates a second one — so the
+    completeness has to be proven here rather than detected afterwards.
+
+    Two arms for a kind with an HFID: every component's field must be named by the
+    operation's identity, and every one of those must carry a usable value. A kind with no
+    HFID cannot converge on one at all, and is allowed only where a declared uniqueness
+    constraint is fully covered by the operation's identity — the destination refuses the
+    duplicate in that case. The refused operation attempts no destination mutation.
     """
 
+    wrote = False
+
     next_action = (
-        "Re-plan so the operation's payload carries the destination kind's identity components. A kind "
-        "whose human-friendly ID crosses a relationship, or that declares none at all, cannot render a "
-        "keyed mutation and is not supported for planned writes."
+        "Re-plan so the operation's identity names every human-friendly-ID component of the destination "
+        "kind and each one carries a value. A kind that declares no human-friendly ID needs a uniqueness "
+        "constraint its identity covers, or its objects must be created at the destination directly."
+    )
+
+
+class DestinationIdentityCollisionError(PlanArtifactError):
+    """Several planned creates project onto one destination human-friendly ID.
+
+    The sync distinguishes these source objects; the destination cannot. Applying them
+    would converge them onto a single object and lose the surplus silently, at exit 0. Only
+    creates are counted: an update is keyed by its recorded destination id and cannot
+    converge onto another operation's object.
+    """
+
+    wrote = False
+
+    next_action = (
+        "Correct the schema mapping so each source object projects onto its own destination identity — "
+        "usually by mapping the attribute that distinguishes them — then re-run `diff`."
+    )
+
+
+class StaleDestinationIdError(PlanArtifactError):
+    """An update named a destination object that no longer exists.
+
+    The destination answered the id-carrying upsert with `NODE_NOT_FOUND` /
+    `extensions.http_status` 404. That path creates nothing, so the refusal is **proven**
+    not to have written even though it is raised after the write was attempted — which is
+    why it carries `wrote = False` while an ordinary transport failure does not.
+
+    The object was deleted or replaced between the plan and the apply. Re-planning records
+    the current id, or records a create where the object is genuinely gone.
+    """
+
+    wrote = False
+
+    next_action = (
+        "Re-run `diff` for this sync to record the destination's current ids, then review and apply the "
+        "new plan. The destination was not touched."
     )
 
 
 class NullRelationshipValueError(PlanArtifactError):
     """A planned payload carries null for a mandatory cardinality-one relationship."""
+
+    # Raised before the SDK write on the planned-write surface, so no mutation was
+    # attempted for the operation it refuses (S6).
+    wrote = False
 
     next_action = (
         "Correct the mapping so the mandatory relationship resolves to a peer identity, then re-run "

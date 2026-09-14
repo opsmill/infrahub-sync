@@ -505,6 +505,12 @@ class ApplyRecord:
     applied_operations: tuple[str, ...] = ()
     skipped_delete_operations: tuple[str, ...] = ()
     failed_operation: str | None = None
+    # Whether the failing operation reached a destination mutation. `None` is "unknown",
+    # which is what every failure meant before this field existed; `False` is carried up
+    # from a refusal that attempted no mutation, or that the destination proved wrote
+    # nothing. `True` is never set — an operation that failed after dispatching is exactly
+    # the case that cannot be known.
+    failed_operation_wrote: bool | None = None
 
     @property
     def skipped_delete_count(self) -> int:
@@ -523,11 +529,17 @@ class ApplyRecord:
 
         Deliberately "may". An operation is one destination mutation, and one mutation can
         still commit remotely before its response — or the transport carrying it — fails; the
-        engine learns only that the call raised, never how far it got. So the marker is true
-        for any failed operation and false otherwise, which is the reading that never
+        engine learns only that the call raised, never how far it got. So the marker stays
+        true for any failed operation whose reach is unknown, which is the reading that never
         understates what reached the destination.
+
+        The one exception is a failure that is **proven** not to have written: a refusal
+        raised before the SDK write, or one carrying the destination's own not-found for an
+        id-keyed upsert, which creates nothing. Reporting those as possibly-partial made
+        every such refusal indistinguishable from a real interruption and sent an operator
+        to reconcile a destination that was never touched (S6).
         """
-        return self.failed_operation is not None
+        return self.failed_operation is not None and self.failed_operation_wrote is not False
 
     def as_summary_keys(self) -> dict[str, Any]:
         """Render the record as the run-summary keys, ready to merge (AD062).
@@ -543,6 +555,7 @@ class ApplyRecord:
             "skipped_delete_operations": list(self.skipped_delete_operations),
             "skipped_delete_count": self.skipped_delete_count,
             "failed_operation": self.failed_operation,
+            "failed_operation_wrote": self.failed_operation_wrote,
             "may_have_partially_written": self.may_have_partially_written,
         }
 

@@ -52,7 +52,6 @@ from infrahub_sync.plan.errors import (
     PeerNotFoundError,
     PlanVerificationError,
     UnaccountedIdentityComponentError,
-    UnkeyedWriteRefusedError,
 )
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import ApplyRecord, PlannedOperation, RelationshipReference
@@ -660,146 +659,6 @@ def test_a_payload_missing_an_identity_component_is_refused_before_any_write() -
     assert not client.mutations, "Nothing may reach the destination once the payload is refused."
 
 
-def test_an_unkeyed_render_for_an_all_direct_hfid_kind_is_refused() -> None:
-    """The gate reads the **rendered mutation**, not the assembled data."""
-    client = RecordingClient()
-    adapter = make_adapter(client)
-    operation = make_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
-    node = client.create(kind=SITE_KIND, data={"description": {"value": "carries no name at all"}})
-
-    with pytest.raises(UnkeyedWriteRefusedError) as excinfo:
-        adapter._require_keyed_render(node=node, operation=operation)
-
-    message = str(excinfo.value)
-    assert SITE_KIND in message
-    assert operation.operation_id in message
-    assert "attempted no destination mutation" in message
-    assert not client.mutations, "The gate runs before the write is issued."
-
-
-def test_a_kind_declaring_no_human_friendly_id_is_refused_before_its_own_mutation() -> None:
-    """A kind with no convergence key cannot render one, so its write is not issued."""
-    client = RecordingClient()
-    adapter = make_adapter(client)
-
-    operation = make_operation(kind=KEYLESS_KIND, identity={"name": "keyless-a"}, payload={"name": "keyless-a"})
-
-    with pytest.raises(UnkeyedWriteRefusedError):
-        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
-
-    assert not client.mutations, "The refused operation makes zero mutation calls."
-
-
-def test_a_relationship_crossing_kind_is_refused_before_its_own_mutation() -> None:
-    """A key the client cannot form from a resolved peer id is refused, not written unkeyed."""
-    client = RecordingClient()
-    adapter = make_adapter(client)
-    peers = PeerResolver(adapter)
-    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
-
-    with pytest.raises(UnkeyedWriteRefusedError):
-        adapter.apply_planned_operation(operation=device_operation("device-a"), peers=peers)
-
-    assert not client.mutations, "The refused operation makes zero mutation calls."
-
-
-@pytest.mark.parametrize("action", ["create", "update"])
-def test_the_gate_precedes_the_sdk_mutation_for_both_write_actions(action: str) -> None:
-    """Create and update route through the same upsert, so they take the same gate."""
-    client = RecordingClient()
-    adapter = make_adapter(client)
-
-    keyed = make_operation(kind=SITE_KIND, action=action, identity={"name": "site-a"}, payload={"name": "site-a"})
-    assert adapter.apply_planned_operation(operation=keyed, peers=PeerResolver(adapter)) == NODE_ID
-    assert client.mutation_names == [f"{SITE_KIND}Upsert"], "A keyed render is written."
-
-    unkeyed = make_operation(
-        kind=KEYLESS_KIND, action=action, identity={"name": "keyless-a"}, payload={"name": "keyless-a"}
-    )
-    with pytest.raises(UnkeyedWriteRefusedError):
-        adapter.apply_planned_operation(operation=unkeyed, peers=PeerResolver(adapter))
-
-    assert client.mutation_names == [f"{SITE_KIND}Upsert"], "The unkeyed operation added no mutation."
-
-
-def test_a_keyed_hfid_render_is_written_through_the_real_transport() -> None:
-    """The positive arm, end to end: a keyed render reaches the wire carrying its `hfid`.
-
-    `hfid` is the only key a planned write can genuinely render. The plan carries no destination
-    UUID — a saved-plan apply performs no destination load, so nothing can supply one — and a
-    payload field literally named `id` is not one either: `generate_payload_create` wraps it as
-    an attribute block, which is the case the next test pins.
-    """
-    client = RecordingClient()
-    adapter = make_adapter(client)
-    operation = make_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
-
-    node_id = adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
-
-    assert client.mutation_names == [f"{SITE_KIND}Upsert"], "The keyed render is issued as one convergent upsert."
-    _, query = client.mutations[0]
-    assert re.search(r'hfid:\s*\[\s*"site-a",?\s*\]', query), (
-        f"The mutation must carry the human-friendly ID. Rendered:\n{query}"
-    )
-    assert 'value: "site-a"' in query, f"The payload's attributes must reach the write. Rendered:\n{query}"
-    assert node_id == NODE_ID
-
-
-def test_a_render_carrying_a_usable_id_reaches_the_write_and_returns_its_node(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The gate's `id` arm, proven at the transport rather than at the helper.
-
-    **This is gate-contract coverage, not a saved-plan path.** A saved plan carries no
-    destination UUID — FR-012 forbids the load that would supply one — so no ordinary apply
-    reaches the gate this way. The gate nonetheless permits `id`, and the only honest way to
-    show what "permits" means is to put a node carrying one in front of it and watch the write
-    happen. The node id is injected at `client.create`, which is where a destination-aware
-    caller would supply it; nothing else about the path is replaced.
-    """
-    client = RecordingClient()
-    adapter = make_adapter(client)
-    real_create = client.create
-
-    def create_with_destination_id(*args: Any, **kwargs: Any) -> InfrahubNodeSync:  # noqa: ANN401
-        node = real_create(*args, **kwargs)
-        node.id = "keyless-node-1"
-        return node
-
-    monkeypatch.setattr(client, "create", create_with_destination_id)
-    operation = make_operation(kind=KEYLESS_KIND, identity={"name": "keyless-a"}, payload={"name": "keyless-a"})
-
-    node_id = adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
-
-    assert client.mutation_names == [f"{KEYLESS_KIND}Upsert"], (
-        "A usable 'id' permits the write, so exactly one convergent upsert is issued."
-    )
-    _, query = client.mutations[0]
-    assert 'id: "keyless-node-1"' in query, f"The mutation must carry the destination id. Rendered:\n{query}"
-    assert node_id == NODE_ID, "The write surface returns the destination node id."
-
-
-def test_a_payload_field_named_id_does_not_satisfy_the_gate() -> None:
-    """A key whose rendered value is empty keys nothing, so it is refused (the `id: {}` case).
-
-    `generate_payload_create` wraps every payload field into an attribute block, so a field
-    named `id` renders as `id: {}`. That is a present key with no value: the destination cannot
-    converge on it, and a gate testing presence alone would pass an unkeyed write.
-    """
-    client = RecordingClient()
-    adapter = make_adapter(client)
-    operation = make_operation(
-        kind=KEYLESS_KIND,
-        identity={"name": "keyless-a"},
-        payload={"name": "keyless-a", "id": "keyless-node-1"},
-    )
-
-    with pytest.raises(UnkeyedWriteRefusedError):
-        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
-
-    assert not client.mutations, "The refused operation makes zero mutation calls."
-
-
 # ---------------------------------------------------------------------------------------
 # Replace-set cases
 # ---------------------------------------------------------------------------------------
@@ -1322,10 +1181,15 @@ def test_a_mid_apply_rejection_surfaces_the_rejection_not_the_knowability_invari
 
 
 def test_a_refused_operation_stops_the_apply_and_leaves_the_prior_write_recorded(tmp_path: Path) -> None:
-    """Apply is sequential: an earlier keyed write stands, and no later operation executes."""
+    """Apply is sequential: an earlier keyed write stands, and no later operation executes.
+
+    The middle operation is refused by AD051: `TestOrphan`'s human-friendly ID is `code`,
+    which its identity does not name and its payload therefore does not carry, so the create
+    cannot be proven keyed and is refused before the SDK write.
+    """
     directory = apply_run_dir(tmp_path)
     keyed = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
-    unkeyed = operation_record(kind=KEYLESS_KIND, identity={"name": "keyless-a"})
+    unkeyed = operation_record(kind=ORPHAN_KIND, identity={"name": "orphan-a"})
     later = operation_record(kind=TAG_KIND, identity={"name": "tag-z"})
     write_artifact(directory, [keyed, unkeyed, later], run_id=APPLY_RUN_ID, source_snapshot=[])
 

@@ -19,7 +19,7 @@ WORK=${CLEAN_HOST_WORK:-$KIT/work}
 MATRIX='artifact_identity
 cold_start_and_idempotence
 managed_execution
-unkeyed_write_policy
+keyed_write_policy
 schema_change
 status
 restart
@@ -1159,12 +1159,12 @@ row_managed_execution() {
 }
 
 # ---------------------------------------------------------------------------
-# Row 4 — unkeyed write policy
+# Row 4 — keyed write policy
 # ---------------------------------------------------------------------------
-row_unkeyed_write_policy() {
-    check unkeyed_write_policy \
-        || fail "an unkeyed operation was not refused before its own mutation"
-    report "an operation whose key cannot be rendered was refused with nothing written"
+row_keyed_write_policy() {
+    check keyed_write_policy \
+        || fail "a create that cannot be proven keyed was not refused at plan time"
+    report "a create whose identity omits a human-friendly-ID component was refused with nothing written"
 }
 
 # ---------------------------------------------------------------------------

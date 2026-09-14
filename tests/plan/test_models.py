@@ -909,6 +909,7 @@ def test_an_apply_record_renders_every_summary_key() -> None:
         "skipped_delete_operations": ["op_b", "op_c"],
         "skipped_delete_count": 2,
         "failed_operation": None,
+        "failed_operation_wrote": None,
         "may_have_partially_written": False,
     }
     assert ApplyRecord().as_summary_keys() == {
@@ -916,6 +917,7 @@ def test_an_apply_record_renders_every_summary_key() -> None:
         "skipped_delete_operations": [],
         "skipped_delete_count": 0,
         "failed_operation": None,
+        "failed_operation_wrote": None,
         "may_have_partially_written": False,
     }
 

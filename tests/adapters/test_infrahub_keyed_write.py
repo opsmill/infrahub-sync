@@ -26,7 +26,7 @@ from infrahub_sdk.schema.main import BranchSchema, NodeSchemaAPI
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerResolver
 from infrahub_sync.plan.identity import canonical_identity, operation_id
-from infrahub_sync.plan.models import PlannedOperation
+from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 from tests.adapters.test_infrahub_planned_write import (
     DEVICE_KIND,
     KEYLESS_KIND,
@@ -80,6 +80,7 @@ def update_operation(
     identity: Mapping[str, Any],
     payload: Mapping[str, Any],
     destination_id: str | None = DESTINATION_ID,
+    relationships: list[RelationshipReference] | None = None,
 ) -> PlannedOperation:
     """One update operation carrying the destination id recorded for it at plan time."""
     canonical = canonical_identity(dict(identity), kind=kind)
@@ -90,6 +91,7 @@ def update_operation(
         identity=canonical,
         tier=0,
         payload=dict(payload),
+        relationships=relationships,
         destination_id=destination_id,
     )
 
@@ -130,6 +132,9 @@ def test_an_update_of_a_relationship_crossing_hfid_kind_is_keyed_by_its_recorded
         kind=DEVICE_KIND,
         identity={"name": "device-a", "site": {"peer_kind": SITE_KIND, "identity": {"name": "site-a"}}},
         payload={"name": "device-a"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": "site-a"}])
+        ],
     )
 
     adapter.apply_planned_operation(operation=operation, peers=peers)
@@ -237,8 +242,6 @@ def test_a_create_whose_identity_omits_an_hfid_component_is_refused_with_no_muta
 
     client, adapter, peers = keyed_adapter()
     peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
-    from infrahub_sync.plan.models import RelationshipReference
-
     operation = make_operation(
         kind=DEVICE_KIND,
         identity={"name": "device-a"},

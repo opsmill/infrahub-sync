@@ -20,7 +20,7 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
-from kit import UNKEYED_REFUSAL, deployment, follow, key, recorded_failure, refuse, run_request
+from kit import KEYED_CREATE_REFUSAL, deployment, follow, key, recorded_failure, refuse, run_request
 
 if TYPE_CHECKING:
     from infrahub_sync.client import SyncClient
@@ -73,7 +73,7 @@ with deployment() as client:
     # Without this the row passes on a run that provably wrote nothing, which is
     # the opposite of the state it exists to observe, and its property could never
     # fail for the reason it is about.
-    if recorded_failure(client, run_id).get("cause_type") == UNKEYED_REFUSAL:
+    if recorded_failure(client, run_id).get("cause_type") == KEYED_CREATE_REFUSAL:
         refuse("the interrupted run was refused before its write, so there is nothing ambiguous about it")
 
     fresh = follow(client, client.plan(run_request(client, "plan", "clean-host: plan after recovery"), key("after")))

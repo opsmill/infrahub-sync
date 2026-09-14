@@ -1,10 +1,17 @@
-"""An unkeyed planned operation is refused before it touches a live destination.
+"""Keyed writes, proven against a live destination.
 
-The offline harnesses prove the gate reads the SDK's rendered mutation and raises. What they
-cannot prove is that nothing reached the server: a fixture holds no destination state, so
-"zero mutation calls" is asserted against a recording transport rather than against Infrahub.
-This module closes that gap on the smallest possible fixture — one throwaway schema, one
-planned create, one count read back.
+The offline harnesses prove what the client renders. What they cannot prove is what the
+**server does with it**, and that is the whole substance of this change: a create carrying
+every human-friendly-ID component converges rather than duplicating even though the mutation
+carries no key at all, and an upsert carrying a recorded `id` updates in place. Both are
+server behaviours; a recording transport cannot settle either.
+
+Three cases, on the smallest fixture that can carry them:
+
+1. a kind whose human-friendly ID **crosses a relationship** creates, and a second identical
+   apply converges onto the same object rather than making a second one (AD067 closed);
+2. an update carrying the recorded destination id renames an attribute **in place**;
+3. a recorded id that matches no object is refused, and nothing is written.
 
 **Everything this module touches lives on one branch it creates and deletes.** The sibling
 modules load their throwaway schema onto `main`, which makes two concurrent runs — or a run
@@ -13,13 +20,13 @@ there removes objects the run does not own. Here the branch name carries a per-r
 schema is loaded onto that branch alone, every read and write names it, and the branch is
 deleted afterwards, taking its schema and its objects with it. `main` is never written.
 
-The module skips itself without a configured destination. Only the destination is needed; the
-operation is a hand-built plan record driven straight through
-`InfrahubAdapter.apply_planned_operation`, so no source adapter is involved. Run with::
+The module skips itself without a configured destination, so it is inert in an ordinary run.
+Only the destination is needed; each operation is a hand-built plan record driven straight
+through `InfrahubAdapter.apply_planned_operation`, so no source adapter is involved. Run with::
 
     INFRAHUB_ADDRESS=http://localhost:8000 \\
     INFRAHUB_API_TOKEN=<token> \\
-    uv run pytest -m integration tests/integration/test_infrahub_unkeyed_refusal_integration.py
+    uv run pytest -m integration tests/integration/test_infrahub_keyed_write_integration.py
 """
 
 from __future__ import annotations
@@ -34,7 +41,7 @@ import pytest
 import requests
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
-from infrahub_sync.plan.errors import UnkeyedWriteRefusedError
+from infrahub_sync.plan.errors import StaleDestinationIdError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
@@ -188,7 +195,7 @@ def _mount_operation(mount_name: str, device_name: str, site_name: str) -> Plann
 
 
 @dataclass(frozen=True)
-class UnkeyedScope:
+class KeyedWriteScope:
     """One run's isolated destination scope."""
 
     client: Any
@@ -220,7 +227,7 @@ def _branch_exists(address: str, token: str, branch: str) -> bool:
 
 
 @pytest.fixture
-def unkeyed_scope() -> Iterator[UnkeyedScope]:
+def keyed_write_scope() -> Iterator[KeyedWriteScope]:
     """A branch this run owns, carrying the throwaway schema, one site and one device.
 
     The branch is the unit of isolation *and* of cleanup: deleting it removes the schema and
@@ -234,7 +241,7 @@ def unkeyed_scope() -> Iterator[UnkeyedScope]:
     """
     address, token = _env_or_skip()
     suffix = uuid.uuid4().hex[:8]
-    branch = f"unkeyed-refusal-{suffix}"
+    branch = f"keyed-write-{suffix}"
     # Created through a main-scoped client; every later call uses the branch-scoped one below.
     _make_client(address, token).branch.create(branch_name=branch, sync_with_git=False)
     client = _make_client(address, token, branch)
@@ -261,7 +268,7 @@ def unkeyed_scope() -> Iterator[UnkeyedScope]:
         adapter.schema = client.schema.all(branch=branch)
         adapter.source_node = None
         adapter.owner_node = None
-        yield UnkeyedScope(client=client, adapter=adapter, branch=branch, site_name=site_name, device_name=device_name)
+        yield KeyedWriteScope(client=client, adapter=adapter, branch=branch, site_name=site_name, device_name=device_name)
     finally:
         client.branch.delete(branch_name=branch)
         assert not _branch_exists(address, token, branch), (
@@ -269,46 +276,121 @@ def unkeyed_scope() -> Iterator[UnkeyedScope]:
         )
 
 
-def test_an_unkeyed_planned_operation_is_refused_without_touching_the_destination(
-    unkeyed_scope: UnkeyedScope,
+def _device_update(device_name: str, site_name: str, *, destination_id: str, renamed: str) -> PlannedOperation:
+    """One planned update of the crossing kind, keyed by the id recorded for it."""
+    identity = canonical_identity(
+        {"name": device_name, "site": {"peer_kind": SITE_KIND, "identity": {"name": site_name}}},
+        kind=DEVICE_KIND,
+    )
+    return PlannedOperation(
+        operation_id=operation_id("update", DEVICE_KIND, identity),
+        action="update",
+        kind=DEVICE_KIND,
+        identity=identity,
+        tier=0,
+        payload={"name": renamed},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": site_name}])
+        ],
+        destination_id=destination_id,
+    )
+
+
+def test_a_relationship_crossing_create_converges_instead_of_duplicating(
+    keyed_write_scope: KeyedWriteScope,
 ) -> None:
-    """The refusal is proven against a live server, not against a recording transport.
+    """AD067 closes: the server matches on the components in `data`, with no key on the wire.
 
-    The count is read back from the destination on both sides of the refusal, so "no mutation
-    was attempted" is a statement about Infrahub's state rather than about what the client
-    chose to send. A second apply is included because the failure this gate exists to prevent
-    is a *duplicate* on re-apply: an unkeyed write that silently succeeded would show here as
-    a count that climbed.
+    The second apply is the substance. A create-shaped upsert carries neither `id` nor
+    `hfid` for this kind, so convergence is the server matching on the human-friendly-ID
+    components the payload carries. If it did not, this would show as a count that climbed —
+    which is exactly the silent duplicate the whole change exists to prevent.
     """
-    scope = unkeyed_scope
+    scope = keyed_write_scope
+    created_name = f"converged-{scope.device_name}"
+    resolver = scope.adapter.new_peer_resolver()
+
+    first = scope.adapter.apply_planned_operation(
+        operation=_device_operation(created_name, scope.site_name), peers=resolver
+    )
+    second = scope.adapter.apply_planned_operation(
+        operation=_device_operation(created_name, scope.site_name), peers=scope.adapter.new_peer_resolver()
+    )
+
+    assert second == first, "The second apply must converge onto the object the first created."
+    matching = [
+        node
+        for node in scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False)
+        if node.name.value == created_name
+    ]
+    assert len(matching) == 1, f"The re-apply duplicated {created_name!r} at the destination: {matching}"
+
+
+def test_an_update_keyed_by_its_recorded_id_renames_in_place(keyed_write_scope: KeyedWriteScope) -> None:
+    """The recorded id is the write key, and the object it names is the one that changes."""
+    scope = keyed_write_scope
     before = scope.client.count(kind=DEVICE_KIND, branch=scope.branch)
-    refused_name = f"refused-{scope.device_name}"
+    seeded = next(
+        node
+        for node in scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False)
+        if node.name.value == scope.device_name
+    )
+    renamed = f"renamed-{scope.device_name}"
 
-    for attempt in range(2):
-        with pytest.raises(UnkeyedWriteRefusedError) as refusal:
-            scope.adapter.apply_planned_operation(
-                operation=_device_operation(refused_name, scope.site_name),
-                peers=scope.adapter.new_peer_resolver(),
-            )
-        assert DEVICE_KIND in str(refusal.value), f"The refusal must name the destination kind: {refusal.value}"
-        assert scope.client.count(kind=DEVICE_KIND, branch=scope.branch) == before, (
-            f"Apply attempt {attempt + 1} changed the destination count for {DEVICE_KIND}, so the "
-            "operation mutated the destination before the gate refused it."
-        )
+    written = scope.adapter.apply_planned_operation(
+        operation=_device_update(
+            scope.device_name, scope.site_name, destination_id=seeded.id, renamed=renamed
+        ),
+        peers=scope.adapter.new_peer_resolver(),
+    )
 
-    # The fixture seeds one device as the pre-existing peer, so "nothing was written" is that the
-    # set is still exactly that one — a stronger claim than an unchanged count, which a write
-    # paired with a delete could also satisfy.
-    remaining = sorted(
+    assert written == seeded.id, "The update must write the object its recorded id names."
+    assert scope.client.count(kind=DEVICE_KIND, branch=scope.branch) == before, (
+        "An update keyed by id must change an object rather than add one."
+    )
+    reread = scope.client.get(kind=DEVICE_KIND, id=seeded.id, branch=scope.branch)
+    assert reread.name.value == renamed, "The rename did not reach the object the id named."
+
+
+def test_a_stale_recorded_id_is_refused_with_nothing_written(keyed_write_scope: KeyedWriteScope) -> None:
+    """The server answers an unknown id with `NODE_NOT_FOUND` and creates nothing.
+
+    That is what makes the refusal *proven* not to have written, rather than merely
+    suspected — which is why it is classified as not-written rather than ambiguous (S6).
+    """
+    scope = keyed_write_scope
+    before = sorted(
         node.name.value for node in scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False)
     )
-    assert remaining == [scope.device_name], (
-        f"A refused operation changed the {DEVICE_KIND} set at the destination: {remaining}"
+    seeded = next(
+        node
+        for node in scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False)
+        if node.name.value == scope.device_name
     )
+    # A well-formed id proven to match no object: the seeded one with its last hex digit moved.
+    stale = seeded.id[:-1] + ("0" if seeded.id[-1] != "0" else "1")
+    assert scope.client.get(kind=DEVICE_KIND, id=stale, branch=scope.branch, raise_when_missing=False) is None, (
+        "The stale id must be proven to match no object before the refusal is asserted."
+    )
+
+    with pytest.raises(StaleDestinationIdError) as refusal:
+        scope.adapter.apply_planned_operation(
+            operation=_device_update(
+                scope.device_name, scope.site_name, destination_id=stale, renamed="never-written"
+            ),
+            peers=scope.adapter.new_peer_resolver(),
+        )
+
+    assert stale in str(refusal.value), f"The refusal must name the id it could not find: {refusal.value}"
+    assert refusal.value.wrote is False, "The server created nothing, so this is not an ambiguous write."
+    after = sorted(
+        node.name.value for node in scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False)
+    )
+    assert after == before, f"A refused stale-id update changed the {DEVICE_KIND} set: {before} -> {after}"
 
 
 def test_a_keyed_consumer_resolves_a_crossing_peer_through_the_nested_filter(
-    unkeyed_scope: UnkeyedScope,
+    keyed_write_scope: KeyedWriteScope,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A kind that cannot be written can still be read, and resolving it is nested (AD043/PD-004).
@@ -319,7 +401,7 @@ def test_a_keyed_consumer_resolves_a_crossing_peer_through_the_nested_filter(
     the nested `{peer_kind, identity}` walk turns into a nested `<rel>__<attr>__value` filter
     against a real server, and no offline harness can settle how the destination answers it.
     """
-    scope = unkeyed_scope
+    scope = keyed_write_scope
     mount_name = f"unkeyed-mount-{scope.branch.rsplit('-', maxsplit=1)[-1]}"
     queries: list[dict[str, Any]] = []
     real_filters = scope.client.filters
@@ -354,7 +436,7 @@ def test_a_keyed_consumer_resolves_a_crossing_peer_through_the_nested_filter(
     assert scope.client.count(kind=MOUNT_KIND, branch=scope.branch) == 1
 
 
-def test_the_run_writes_nothing_outside_the_branch_it_owns(unkeyed_scope: UnkeyedScope) -> None:
+def test_the_run_writes_nothing_outside_the_branch_it_owns(keyed_write_scope: KeyedWriteScope) -> None:
     """Concurrency safety, asserted rather than described.
 
     Two of these runs must be able to share one destination. That holds only if the schema and
@@ -362,7 +444,7 @@ def test_the_run_writes_nothing_outside_the_branch_it_owns(unkeyed_scope: Unkeye
     and delete another run's objects. Asserting the kind is absent from `main`'s schema is the
     strongest form — it is not merely that no object exists, but that none could.
     """
-    scope = unkeyed_scope
+    scope = keyed_write_scope
     address, token = _env_or_skip()
 
     response = requests.get(

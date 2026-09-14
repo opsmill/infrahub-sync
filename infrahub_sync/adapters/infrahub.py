@@ -12,7 +12,7 @@ from infrahub_sdk import (
     Config,
     InfrahubClientSync,
 )
-from infrahub_sdk.exceptions import NodeNotFoundError
+from infrahub_sdk.exceptions import GraphQLError, NodeNotFoundError
 from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from infrahub_sdk.utils import compare_lists
@@ -34,8 +34,8 @@ from infrahub_sync.plan.errors import (
     PeerAmbiguousError,
     PeerNotFoundError,
     SkippedDeleteOperation,
+    StaleDestinationIdError,
     UnaccountedIdentityComponentError,
-    UnkeyedWriteRefusedError,
 )
 from infrahub_sync.plan.identity import canonical_identity
 from infrahub_sync.plan.models import DestinationBindingRecord
@@ -129,6 +129,44 @@ def resolve_peer_node(
         if not peer_node:
             logger.warning("Unable to find %s [%s] - Ignored", rel_schema.peer, key)
     return peer_node
+
+
+def _graphql_extensions(exc: GraphQLError) -> Iterator[Mapping[str, Any]]:
+    """The `extensions` mapping of each error the destination returned.
+
+    The **only** place a server verdict is read from. The HTTP transport status is 200 even
+    for a refused mutation, so it settles nothing; `extensions.http_status` is what carries
+    the server's own answer.
+    """
+    for error in getattr(exc, "errors", ()) or ():
+        if isinstance(error, Mapping):
+            extensions = error.get("extensions")
+            if isinstance(extensions, Mapping):
+                yield extensions
+
+
+def _refuse_stale_destination_id(exc: GraphQLError, *, operation: PlannedOperation) -> None:
+    """Re-raise a not-found on an id-keyed upsert as the named, proven-not-written refusal.
+
+    An upsert carrying an `id` that matches no object is answered with
+    `extensions.code` `NODE_NOT_FOUND` and `extensions.http_status` 404, and the server
+    creates nothing on that path — measured on both SDK versions. So this is raised *after*
+    the write was attempted and is still proven not to have written, which is what lets it
+    carry `wrote = False` where an ordinary transport failure cannot.
+
+    Returns without raising for anything else, leaving the caller to re-raise the original.
+    """
+    if operation.destination_id is None:
+        return
+    if not any(extensions.get("code") == "NODE_NOT_FOUND" for extensions in _graphql_extensions(exc)):
+        return
+    msg = (
+        f"Operation {operation.operation_id!r} updates {operation.kind!r} object "
+        f"{operation.identity!r} by its recorded destination id {operation.destination_id!r}, which "
+        "matches no object at the destination. The destination refused the write and created "
+        "nothing."
+    )
+    raise StaleDestinationIdError(msg) from exc
 
 
 def _relationship_input_data(peer_id: str | None, source: str | None, owner: str | None) -> dict[str, Any]:
@@ -1147,31 +1185,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         return data
 
-    def _require_keyed_render(self, *, node: InfrahubNodeSync, operation: PlannedOperation) -> None:
-        """Refuse the operation unless the rendered mutation carries a usable `id` or `hfid`.
-
-        Keyedness is a property of the rendered mutation rather than of the assembled data, so
-        it is read here, immediately before the SDK write. An unkeyed convergent write
-        duplicates its object on a re-apply whatever the kind's human-friendly-ID shape is.
-
-        The key must carry a value, not merely be present. Every payload field is rendered as
-        an attribute block, so a field named `id` renders as an empty `id: {}` that the
-        destination can converge on no better than an absent one.
-
-        Raises:
-            UnkeyedWriteRefusedError: the rendered mutation carries no usable key.
-        """
-        rendered = node._generate_input_data(exclude_hfid=False)["data"]["data"]
-        if rendered.get("id") or rendered.get("hfid"):
-            return
-        msg = (
-            f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} rendered a "
-            "mutation carrying no usable 'id' or 'hfid', so the convergent write would be unkeyed and a "
-            "re-apply would duplicate the object. The operation was refused before the SDK write and "
-            "attempted no destination mutation."
-        )
-        raise UnkeyedWriteRefusedError(msg)
-
     def new_peer_resolver(self) -> PeerResolver:
         """Build the peer resolver for one apply (FR-014, AD086).
 
@@ -1204,9 +1217,16 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         forbids. The payload is authoritative for the mapped fields it carries and touches no
         unmapped destination field.
 
-        Two checks sit before the write and they are different checks (AD066): the
-        per-component **diagnostic** below, which names *which* human-friendly-ID component
-        is unaccounted for, and `_require_keyed_render`'s **gate** on the rendered mutation.
+        How the write is keyed depends on the action, and neither way reads the SDK's
+        private pre-save render (AD066/AD067, retired). An **update** carries the
+        destination `id` recorded for it at plan time, set on the node before `save`. A
+        **create** has no id and is keyed by the destination kind's human-friendly-ID
+        components in its payload, which the server matches on — so its completeness is
+        proven here, before the mutation, by the per-component diagnostic below.
+
+        The private render was retired because it stopped agreeing with the wire: on SDK
+        1.23.2 it reports an `hfid` for a kind whose issued mutation carries no key at all,
+        so a gate reading it passes writes that are unkeyed where it matters.
 
         That upsert is the **only** destination write the operation makes. It carries every
         cardinality-many relationship as the plan's peer list, and `peers: []` means empty the
@@ -1221,8 +1241,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 limitation, not a failure), and no skip is recorded — see above.
             UnaccountedIdentityComponentError: a human-friendly-ID component of the
                 destination kind is not accounted for by the payload and the operation.
-            UnkeyedWriteRefusedError: the rendered mutation carries neither 'id' nor
-                'hfid', so no destination mutation was attempted for it.
+            StaleDestinationIdError: an update's recorded destination id matches no object
+                at the destination, which the destination proved by refusing the write and
+                creating nothing.
             NullRelationshipValueError: a mandatory cardinality-one relationship is null
                 in the planned payload.
             PeerNotFoundError: a peer identity matches no destination object.
@@ -1305,8 +1326,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
         )
         node = self.client.create(kind=operation.kind, data=create_data)
-        self._require_keyed_render(node=node, operation=operation)
-        node.save(allow_upsert=True)
+        if operation.action == "update":
+            # The recorded id, set on the node rather than put into `data`. The SDK renders
+            # `data["id"] = self.id` when the node carries one and only otherwise considers
+            # `hfid` (`infrahub_sdk/node/node.py:295-298`), so this is what makes the upsert
+            # a keyed update of that exact object. Putting `id` into `data` instead would
+            # render it as the attribute-shaped `id: {}` and key nothing.
+            node.id = operation.destination_id
+        try:
+            node.save(allow_upsert=True)
+        except GraphQLError as exc:
+            _refuse_stale_destination_id(exc, operation=operation)
+            raise
 
         node_id = _require_node_id(node, context=f"for operation {operation.operation_id!r}")
         peers.remember(operation.kind, operation.identity, node_id)

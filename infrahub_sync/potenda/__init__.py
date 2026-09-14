@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 # The destination SDK's error base, imported for the apply path's exception boundary below and
@@ -105,6 +106,42 @@ def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> Pl
     return PlanVerificationError(msg)
 
 
+# The destination's uniqueness refusal, as measured: the message begins with this and
+# `extensions.http_status` is 422. Both halves are required. The transport status is 200
+# even for a refused mutation, and `extensions.code` is the generic `UNDEFINED_ERROR`, so
+# neither of those can discriminate and neither is consulted.
+_UNIQUENESS_MESSAGE_PREFIX = "Violates uniqueness constraint"
+_UNIQUENESS_HTTP_STATUS = 422
+
+
+def _uniqueness_refusal_summary(exc: GraphQLError) -> str | None:
+    """Name a uniqueness refusal, or return `None` for every other rejection.
+
+    The single, deliberate widening of what server text this module discloses: the
+    constraint name, because an operator cannot act on "a destination GraphQL rejection"
+    when the cause is a duplicate on a kind with no human-friendly ID. Nothing else from
+    the response — not the message body, not the query, not the variables — is rendered.
+
+    Matched only on the measured signature, so a rejection that merely shares its status
+    keeps the category-only summary rather than being described as something it is not.
+    """
+    for error in getattr(exc, "errors", ()) or ():
+        if not isinstance(error, Mapping):
+            continue
+        extensions = error.get("extensions")
+        message = error.get("message")
+        if not isinstance(extensions, Mapping) or not isinstance(message, str):
+            continue
+        if extensions.get("http_status") != _UNIQUENESS_HTTP_STATUS:
+            continue
+        if not message.startswith(_UNIQUENESS_MESSAGE_PREFIX):
+            continue
+        constraint = message[len(_UNIQUENESS_MESSAGE_PREFIX) :].strip().strip(".'\" ")
+        named = f" {constraint!r}" if constraint else ""
+        return f"a destination uniqueness constraint{named} violated (HTTP status {_UNIQUENESS_HTTP_STATUS})"
+    return None
+
+
 def _operational_failure_summary(exc: Exception) -> str:
     """Return stable operator context without rendering untrusted SDK/server text.
 
@@ -117,7 +154,7 @@ def _operational_failure_summary(exc: Exception) -> str:
     if isinstance(exc, ServerNotResponsiveError):
         return "a destination timeout (ServerNotResponsiveError)"
     if isinstance(exc, GraphQLError):
-        return "a destination GraphQL rejection (GraphQLError)"
+        return _uniqueness_refusal_summary(exc) or "a destination GraphQL rejection (GraphQLError)"
     if isinstance(exc, InfrahubSDKError):
         return f"a destination SDK failure ({type(exc).__name__})"
     # PlanArtifactError and SkippedDeleteOperation are in-tree, purpose-built
@@ -775,6 +812,10 @@ class Potenda:
                     # response or transport fails, so this operation may have changed the
                     # destination while belonging to neither recorded set.
                     failed_operation=operation.operation_id,
+                    # Carried up from the refusal itself: only the write surface knows
+                    # whether it got as far as a mutation. `None` for anything that does not
+                    # say, which is the unchanged "may have written" reading (S6).
+                    failed_operation_wrote=getattr(exc, "wrote", None),
                 )
                 if not isinstance(exc, OPERATIONAL_APPLY_FAILURES):
                     # An interrupt or a defect: it propagates as itself, with its own
