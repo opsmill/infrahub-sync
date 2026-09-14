@@ -403,7 +403,12 @@ def _parse_operations(
                 found=f"unparseable text on line {number} ({exc.msg} at column {exc.colno})",
             ) from exc
         try:
-            operation = PlannedOperation.model_validate(record)
+            # The record rules that depend on the artifact's declared version — which of
+            # `destination_id`'s three states is legal — cannot be read off the record
+            # itself, so the manifest's version travels into validation as context.
+            operation = PlannedOperation.model_validate(
+                record, context={"format_version": manifest.format_version}
+            )
         except ValidationError as exc:
             # `UnsupportedOperationActionError` is **not** a `ValidationError`: it is raised
             # from `PlannedOperation`'s before-validator and pydantic propagates it

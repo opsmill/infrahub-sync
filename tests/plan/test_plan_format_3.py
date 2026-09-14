@@ -30,10 +30,15 @@ DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
 
 
 def update_record(*, destination_id: str | None = DESTINATION_ID, **overrides: Any) -> dict[str, Any]:
-    """One update operation line, carrying a recorded destination id unless told otherwise."""
-    record = operation_record(action="update", **overrides)
-    if destination_id is not None:
-        record["destination_id"] = destination_id
+    """One update operation line, carrying a recorded destination id unless told otherwise.
+
+    `destination_id=None` means the key is **absent**, which is the shape a format-2 line
+    has and the shape a format-3 update is refused for — so it is popped rather than left to
+    the fixture's own update default.
+    """
+    record = operation_record(action="update", destination_id=destination_id, **overrides)
+    if destination_id is None:
+        record.pop("destination_id", None)
     return record
 
 

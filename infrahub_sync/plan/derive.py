@@ -48,6 +48,7 @@ from diffsync.exceptions import ObjectNotFound
 
 from infrahub_sync.plan.canonical import canonical_json_bytes, canonical_value
 from infrahub_sync.plan.errors import (
+    MissingDestinationIdError,
     SourcePeerUnresolvedError,
     UnformableDestinationIdentityError,
     UnwalkedDiffChildrenError,
@@ -65,6 +66,8 @@ logger = logging.getLogger(__name__)
 # The action an element carries when the object exists at the destination and not at the
 # source. Skipped while walking the diff so deletes come from `derive_deletes` alone.
 DIFF_DELETE_ACTION = "delete"
+# The diff action whose operation is keyed by a recorded destination id (plan format 3).
+DIFF_UPDATE_ACTION = "update"
 
 # Separator between the segments of a *schema* component path — `name__value` for a direct
 # attribute, `site__name__value` for one that crosses a relationship. Named so the "never
@@ -424,12 +427,84 @@ def tier_of(kind: str, *, tiers: Sequence[set[str]] | None, top_level: Sequence[
     raise ValueError(msg)
 
 
+def _destination_ids_for_kind(destination_adapter: Any, kind: str) -> dict[str, str | None]:
+    """The destination node id each object of `kind` carries, by its DiffSync unique id.
+
+    The id lives on the destination model's `local_id`, which a live destination load sets
+    and the warm path restores from the side-B snapshot. `None` where the model carries
+    none: absent and present-but-unset are the same refusal, and telling them apart would
+    only change the wording.
+    """
+    records = destination_adapter.get_all(kind) if hasattr(destination_adapter, "get_all") else ()
+    return {record.get_unique_id(): getattr(record, "local_id", None) for record in records}
+
+
+def _require_destination_id(
+    *,
+    destination_ids: Mapping[str, str | None],
+    unique_id: str,
+    kind: str,
+    identity: Mapping[str, Any],
+) -> str:
+    """The recorded destination id for one update, or the refusal that names what is missing.
+
+    An update reaches apply keyed by this id alone. Recording the operation without one
+    would leave apply to issue the same create-shaped convergent upsert a create issues,
+    which the server matches on HFID components — and which silently creates a second object
+    when one of those components is absent from the payload (G1 M6). So a missing id is a
+    plan-time refusal rather than a warning.
+    """
+    recorded = destination_ids.get(unique_id)
+    if isinstance(recorded, str) and recorded:
+        return recorded
+    found = "no destination object for this identity" if unique_id not in destination_ids else repr(recorded)
+    msg = (
+        f"Planned update of {kind!r} object {dict(identity)!r} carries no destination id: {found}. "
+        "An update is keyed by the destination id recorded for it at plan time, so this operation "
+        "cannot be recorded."
+    )
+    raise MissingDestinationIdError(msg)
+
+
+def _warn_dropped_cardinality_one_clear(
+    *,
+    action: str,
+    kind: str,
+    identity: Mapping[str, Any],
+    candidates: Mapping[str, tuple[str, ...]],
+    values: Mapping[str, Any],
+) -> None:
+    """`[S7]` Disclose a null cardinality-one peer that the plan cannot represent.
+
+    `_resolve_references` treats a `None`-valued reference field as absent, so the derived
+    operation carries no reference for it and the apply leaves the destination relationship
+    alone. On a **create** that is the established and correct omission — there is nothing to
+    clear. On an **update** the null is a real difference between the two sides that the plan
+    silently drops, and plan format 3 adds no encoding for a clear, so the only honest thing
+    to do is say so here, where the null is still visible.
+    """
+    if action != "update":
+        return
+    dropped = sorted(field for field in candidates if field in values and values[field] is None)
+    if not dropped:
+        return
+    logger.warning(
+        "Plan: update of destination kind %s (%s) drops null cardinality-one relationship field(s) %s. "
+        "The plan format cannot represent a relationship clear, so the destination relationship is "
+        "not changed. Clear it at the destination if the clear was intended",
+        kind,
+        ", ".join(f"{name}={value!r}" for name, value in sorted(identity.items())),
+        ", ".join(dropped),
+    )
+
+
 def operations_from_diff(  # pylint: disable=redefined-outer-name
     diff: Any,
     *,
     config: SyncConfig | None,
     tier_of: Callable[[str], int],
     source_adapter: Any,
+    destination_adapter: Any,
 ) -> list[PlannedOperation]:
     """Derive the create and update operations a comparison result proposes (FR-002).
 
@@ -453,6 +528,9 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
     store = source_adapter.store
     operations: list[PlannedOperation] = []
     children = diff.children
+    # Read once per kind rather than per element: an update's id is looked up by unique id,
+    # and the destination store is already fully in memory by the time derivation runs.
+    destination_ids_by_kind: dict[str, dict[str, str | None]] = {}
     for group, elements_by_name in children.items():
         for element in elements_by_name.values():
             kind = getattr(element, "type", None) or group
@@ -477,12 +555,25 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
                 owning_kind=kind,
             )
             identity = _identity_from_keys(keys=keys, kind=kind, resolved=resolved)
+            _warn_dropped_cardinality_one_clear(
+                action=action, kind=kind, identity=identity, candidates=candidates, values=merged
+            )
             payload = {
                 name: canonical_value(value, kind=kind, field=name)
                 for name, value in merged.items()
                 if name not in candidates
             }
             references = [resolved[field].reference(field) for field in sorted(resolved)]
+            destination_id = None
+            if action == DIFF_UPDATE_ACTION:
+                if kind not in destination_ids_by_kind:
+                    destination_ids_by_kind[kind] = _destination_ids_for_kind(destination_adapter, kind)
+                destination_id = _require_destination_id(
+                    destination_ids=destination_ids_by_kind[kind],
+                    unique_id=element.name,
+                    kind=kind,
+                    identity=identity,
+                )
             operations.append(
                 PlannedOperation(
                     operation_id=operation_id(action, kind, identity),
@@ -492,6 +583,7 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
                     tier=tier_of(kind),
                     payload=payload,
                     relationships=references or None,
+                    destination_id=destination_id,
                 )
             )
     return operations

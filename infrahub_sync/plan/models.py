@@ -21,7 +21,7 @@ from pathlib import PurePath
 from typing import Any, Literal, TypeAlias, get_args
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_serializer, model_validator
 
 from infrahub_sync.plan.canonical import canonical_value
 from infrahub_sync.plan.config_version import CONFIG_VERSION_PATTERN
@@ -30,8 +30,16 @@ from infrahub_sync.plan.identity import OPERATION_ID_PATTERN, canonical_identity
 
 # `1` is reserved for the pre-existing row format the reader refuses (FR-019); no manifest
 # ever carries it.
-PLAN_FORMAT_VERSION = 2
-SUPPORTED_FORMAT_VERSIONS = frozenset({2})
+PLAN_FORMAT_VERSION = 3
+# Read and review accept both; `apply` accepts only the current one. A format-2 plan's
+# updates carry no recorded destination id, so they cannot be keyed — reviewing such a plan
+# is still useful, applying it is not safe (see `PlanFormatApplyUnsupportedError`).
+SUPPORTED_FORMAT_VERSIONS = frozenset({2, 3})
+
+# The format that introduced `PlannedOperation.destination_id`. `PlannedOperation` is
+# `extra="forbid"`, so the field's presence is itself a format discriminator: it must be
+# absent under 2 and governed by the action under 3.
+DESTINATION_ID_FORMAT_VERSION = 3
 
 PlanAction = Literal["create", "update", "delete"]
 
@@ -107,6 +115,11 @@ class PlannedOperation(BaseModel):
     tier: int = Field(ge=0)
     payload: dict[str, Any] | None = None
     relationships: list[RelationshipReference] | None = None
+    # The destination object's Infrahub `id`, recorded at plan time on updates alone and set
+    # on the node before the convergent upsert. Optional on the model because a create and a
+    # delete must not carry one; which of the three is required is decided per format
+    # version by `_validate_destination_id_for_format`, from the reader's context.
+    destination_id: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -135,6 +148,56 @@ class PlannedOperation(BaseModel):
         if isinstance(identity, Mapping):
             values["identity"] = canonical_identity(identity, kind=kind if isinstance(kind, str) else None)
         return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_destination_id_for_format(cls, data: Any, info: ValidationInfo) -> Any:
+        """Apply the format's rule for `destination_id`, reading the **raw** mapping.
+
+        Absent and null are different things here — under format 2 the field must not appear
+        at all, while under format 3 a create or delete may carry it as null — and only the
+        raw input can tell them apart, so this runs before the model exists.
+
+        The rule needs the artifact's declared version, which the record itself does not
+        carry. The reader supplies it as pydantic validation context. With **no** context the
+        check is skipped: that is in-process construction, where the writer and the model
+        agree by construction, and imposing a version on it would make every caller declare
+        one it has no reason to know.
+        """
+        if not isinstance(data, Mapping):
+            return data
+        context = info.context
+        if not isinstance(context, Mapping):
+            return data
+        format_version = context.get("format_version")
+        if not isinstance(format_version, int):
+            return data
+        recorded_id = data.get("destination_id")
+        present = "destination_id" in data
+        identifier = data.get("operation_id", "<no operation_id recorded>")
+        if format_version < DESTINATION_ID_FORMAT_VERSION:
+            if present:
+                msg = (
+                    f"Operation {identifier!r} carries 'destination_id', which plan format "
+                    f"{format_version} does not define."
+                )
+                raise ValueError(msg)
+            return data
+        if data.get("action") == "update":
+            if not isinstance(recorded_id, str) or not recorded_id:
+                msg = (
+                    f"Operation {identifier!r} is an update and carries no usable 'destination_id' "
+                    f"(found {recorded_id!r}). A format-{format_version} update is keyed by the "
+                    "destination id recorded for it at plan time."
+                )
+                raise ValueError(msg)
+        elif recorded_id is not None:
+            msg = (
+                f"Operation {identifier!r} is a {data.get('action')!r} and must carry no "
+                f"'destination_id' (found {recorded_id!r}): it names no existing destination object."
+            )
+            raise ValueError(msg)
+        return data
 
     @model_validator(mode="after")
     def _validate_record(self) -> PlannedOperation:

@@ -30,10 +30,11 @@ from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
     OperationApplyFailedError,
     PlanArtifactError,
+    PlanFormatApplyUnsupportedError,
     PlanVerificationError,
     SkippedDeleteOperation,
 )
-from infrahub_sync.plan.models import ACTIONS, ApplyRecord
+from infrahub_sync.plan.models import ACTIONS, DESTINATION_ID_FORMAT_VERSION, ApplyRecord
 from infrahub_sync.plan.write_surface import PlannedWriteDestination
 
 # Justified once here rather than per site. Nearly every `infrahub_sync`
@@ -261,10 +262,16 @@ class Potenda:
             # any required identifier field. `get_identifiers` is guarded for
             # adapter stubs that don't implement it; falling back to just
             # attributes is what the pre-fix behavior did.
+            # Side B additionally carries `local_id`, the destination node id an update is
+            # keyed by. Without it a warm run rebuilds destination models with no id and
+            # every derived update is refused. It is written as its own column and never
+            # conflated with the engine-controlled `_source_id`, which is DiffSync's
+            # unique-id string and keys nothing at the destination.
             rows = [
                 {
                     **(r.get_identifiers() if hasattr(r, "get_identifiers") else {}),
                     **r.get_attrs(),
+                    **({"local_id": getattr(r, "local_id", None)} if side == "B" else {}),
                 }
                 for r in records
             ]
@@ -292,6 +299,7 @@ class Potenda:
             hydrate_from_parquet,
             load_cursors,
             should_use_incremental,
+            snapshot_carries_local_id,
         )
 
         prev_run = self._previous_run()
@@ -324,6 +332,19 @@ class Potenda:
             if model_cls is None:
                 continue
             if cursor is None or tier_supported is CursorTier.NONE:
+                adapter.model_loader(model_name=resource, model=model_cls)  # ty: ignore[unresolved-attribute]
+                continue
+
+            # A side-B snapshot written before plan format 3 has no `local_id` column, so
+            # hydrating from it would rebuild destination models with no destination id and
+            # every derived update would be refused. Treat it as a cache miss for this
+            # resource and extract it fully instead, saying why.
+            if side == "B" and not snapshot_carries_local_id(run_dir=prev_run, side=side, resource=resource):
+                logger.info(
+                    "Incremental: the previous run's destination snapshot for %s carries no local_id column, "
+                    "so it cannot key updates; extracting this resource in full instead",
+                    resource,
+                )
                 adapter.model_loader(model_name=resource, model=model_cls)  # ty: ignore[unresolved-attribute]
                 continue
 
@@ -508,6 +529,7 @@ class Potenda:
                     config=self.config,
                     tier_of=resolve_tier,
                     source_adapter=self.source,
+                    destination_adapter=self.destination,
                 )
             )
 
@@ -700,6 +722,20 @@ class Potenda:
         # per-record validity — an unrecognized `action` above all — which is still refused
         # before the first destination write.
         loaded = parse_plan_artifact(raw, run_id=run_id)
+
+        # Readable and reviewable, but not applyable: a format-2 plan records no destination
+        # id on its updates, and an update is keyed by that id alone. Refused here — after
+        # the artifact has been read, before `ownership.before_operation` and therefore
+        # before the first dispatch — so the destination is provably untouched.
+        if loaded.manifest.format_version < DESTINATION_ID_FORMAT_VERSION:
+            msg = (
+                f"The plan artifact of run {run_id!r} declares format version "
+                f"{loaded.manifest.format_version}, which this version of infrahub-sync can read and "
+                f"review but cannot apply: its updates carry no recorded destination id, so they "
+                f"cannot be keyed. Nothing was written to the destination."
+            )
+            raise PlanFormatApplyUnsupportedError(msg)
+
         self._last_applied_plan_action_counts = {
             action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS
         }

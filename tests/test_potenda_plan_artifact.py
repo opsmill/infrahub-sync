@@ -534,6 +534,26 @@ def qualified_source() -> _FakeAdapter:
     )
 
 
+DERIVED_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
+
+
+def derivation_destination() -> _FakeAdapter:
+    """A destination holding a keyed copy of every qualified-source object.
+
+    Derivation records an **update**'s destination id from this side, so a case that derives
+    one needs the object present here carrying a `local_id`. A case that derives only creates
+    is unaffected — a create records no id — so one fixture serves both.
+    """
+    source = qualified_source()
+    records: list[_FakeRecord] = []
+    for kind in KINDS:
+        for record in source.get_all(kind):
+            keyed = _FakeRecord(kind, record.get_identifiers(), record.get_attrs())
+            keyed.local_id = DERIVED_DESTINATION_ID
+            records.append(keyed)
+    return _FakeAdapter("destination", records)
+
+
 def destination_with_orphan(*, schema: Mapping[str, Any] | None = None) -> _FakeAdapter:
     """A destination holding one object the source does not — the one derived delete."""
     return _FakeAdapter(
@@ -564,6 +584,7 @@ def test_payload_is_the_union_of_identity_keys_and_source_attributes() -> None:
         config=build_config(),
         tier_of=resolver(),
         source_adapter=source,
+        destination_adapter=derivation_destination(),
     )
 
     operation = operation_for(operations, "BuiltinTag")
@@ -589,6 +610,7 @@ def test_payload_is_not_narrowed_to_the_attribute_diff() -> None:
         config=build_config(),
         tier_of=resolver(),
         source_adapter=qualified_source(),
+        destination_adapter=derivation_destination(),
     )
 
     operation = operation_for(operations, "BuiltinTag")
@@ -621,6 +643,7 @@ def test_every_identity_key_is_in_the_payload_or_a_relationship_reference() -> N
         config=build_config(),
         tier_of=resolver(),
         source_adapter=qualified_source(),
+        destination_adapter=derivation_destination(),
     )
 
     assert len(operations) == 2
@@ -654,6 +677,7 @@ def test_relationship_reference_records_peer_kind_and_peer_identity() -> None:
         config=build_config(),
         tier_of=resolver(),
         source_adapter=qualified_source(),
+        destination_adapter=derivation_destination(),
     )
 
     reference = (operation_for(operations, "LocationRack").relationships or [])[0]
@@ -682,6 +706,7 @@ def test_cardinality_many_peers_are_canonically_ordered() -> None:
         config=build_config(),
         tier_of=resolver(),
         source_adapter=qualified_source(),
+        destination_adapter=derivation_destination(),
     )
 
     references = {
@@ -709,6 +734,7 @@ def test_nested_peer_identity_component_is_a_pair_at_two_levels() -> None:
         config=build_config(),
         tier_of=resolver(),
         source_adapter=qualified_source(),
+        destination_adapter=derivation_destination(),
     )
 
     operation = operation_for(operations, "DcimDevice")
@@ -738,7 +764,7 @@ def test_a_delete_element_in_the_diff_is_not_recorded_twice() -> None:
         "fixture error: the comparison carried no delete element to skip"
     )
 
-    from_diff = operations_from_diff(diff, config=config, tier_of=resolve, source_adapter=source)
+    from_diff = operations_from_diff(diff, config=config, tier_of=resolve, source_adapter=source, destination_adapter=derivation_destination())
     derived = derive_deletes(
         kinds=KINDS,
         source_adapter=source,
@@ -964,6 +990,7 @@ def test_warns_when_the_destination_kind_declares_no_human_friendly_id(caplog: p
         config=build_config(),
         tier_of=resolver(),
         source_adapter=qualified_source(),
+        destination_adapter=derivation_destination(),
     )
 
     with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
@@ -995,6 +1022,7 @@ def test_warns_when_the_plan_identity_misses_a_human_friendly_id_component(caplo
         config=build_config(),
         tier_of=resolver(),
         source_adapter=qualified_source(),
+        destination_adapter=derivation_destination(),
     )
 
     with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
@@ -1028,6 +1056,7 @@ def test_warns_when_no_uniqueness_constraint_covers_the_plan_identity(
         config=build_config(),
         tier_of=resolver(),
         source_adapter=qualified_source(),
+        destination_adapter=derivation_destination(),
     )
 
     with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
@@ -1454,6 +1483,7 @@ def derive_over(config: SyncInstance, source: _FakeAdapter) -> list[PlannedOpera
         config=config,
         tier_of=resolver(top_level=config.order),
         source_adapter=source,
+        destination_adapter=derivation_destination(),
     )
 
 
@@ -1974,6 +2004,7 @@ def test_an_element_carrying_children_fails_the_derivation() -> None:
             config=build_config(),
             tier_of=resolver(),
             source_adapter=qualified_source(),
+            destination_adapter=derivation_destination(),
         )
 
     message = str(caught.value)
@@ -2001,6 +2032,7 @@ def test_children_are_refused_even_when_the_parent_element_has_no_action_of_its_
             config=build_config(),
             tier_of=resolver(),
             source_adapter=qualified_source(),
+            destination_adapter=derivation_destination(),
         )
 
 
@@ -2019,6 +2051,7 @@ def test_an_element_with_an_empty_child_diff_derives_as_before() -> None:
         config=build_config(),
         tier_of=resolver(),
         source_adapter=qualified_source(),
+        destination_adapter=derivation_destination(),
     )
 
     assert operation_for(operations, "BuiltinTag").identity == {"name": "prod"}
@@ -2072,6 +2105,7 @@ def test_a_deliberately_empty_many_peer_set_derives(references: tuple[str, ...],
         config=config,
         tier_of=resolver(top_level=config.order),
         source_adapter=source,
+        destination_adapter=derivation_destination(),
     )
 
     device = operation_for(operations, "DcimDevice")
@@ -2100,6 +2134,7 @@ def test_a_non_empty_many_peer_set_under_a_multi_candidate_mapping_still_probes(
         config=config,
         tier_of=resolver(top_level=config.order),
         source_adapter=source,
+        destination_adapter=derivation_destination(),
     )
 
     reference = references_by_field(operation_for(operations, "DcimDevice"))["tags"]
@@ -2148,6 +2183,7 @@ def rack_operations(*sites: str, name: str = "Comms closet") -> list[PlannedOper
         config=build_config(),
         tier_of=resolver(),
         source_adapter=source,
+        destination_adapter=derivation_destination(),
     )
 
 
@@ -2287,6 +2323,7 @@ def test_a_none_valued_cardinality_one_reference_is_absent_from_the_plan() -> No
         config=build_config(),
         tier_of=resolver(),
         source_adapter=qualified_source(),
+        destination_adapter=derivation_destination(),
     )
 
     rack = operation_for(operations, "LocationRack")

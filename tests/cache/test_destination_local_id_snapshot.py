@@ -60,7 +60,7 @@ class _StubAdapter(Adapter):
         self.calls: list[tuple[str, object]] = []
         self.deltas = deltas or []
 
-    def model_loader(self, model_name: str, _model: Any) -> None:  # noqa: ANN401
+    def model_loader(self, model_name: str, model: Any) -> None:  # noqa: ANN401, ARG002
         self.calls.append(("model_loader", model_name))
 
     def load(self) -> None:

@@ -90,8 +90,9 @@ def _reference(
 
 def test_declared_constants() -> None:
     """The constants nine later outcomes read are exactly as the data model fixes them."""
-    assert PLAN_FORMAT_VERSION == 2
-    assert frozenset({2}) == SUPPORTED_FORMAT_VERSIONS
+    assert PLAN_FORMAT_VERSION == 3
+    # Format 2 stays readable and reviewable; only `apply` narrows to the current version.
+    assert frozenset({2, 3}) == SUPPORTED_FORMAT_VERSIONS
     assert ACTIONS == ("create", "update", "delete")
     assert CHECKSUM_EXCLUDED_FIELDS == ("plan_checksum", "run_id", "created_at")
     assert SC006_MASKED_FIELDS == ("run_id", "created_at")
@@ -662,7 +663,16 @@ def test_an_empty_many_reference_is_not_the_same_as_an_absent_reference() -> Non
 
 # The permitted field sets, enumerated so a later addition fails this test rather than
 # quietly introducing a grouping key the reader would honour.
-PLANNED_OPERATION_FIELDS = {"operation_id", "action", "kind", "identity", "tier", "payload", "relationships"}
+PLANNED_OPERATION_FIELDS = {
+    "operation_id",
+    "action",
+    "kind",
+    "identity",
+    "tier",
+    "payload",
+    "relationships",
+    "destination_id",
+}
 RELATIONSHIP_REFERENCE_FIELDS = {"field", "peer_kind", "cardinality", "peers"}
 PLAN_MANIFEST_FIELDS = {
     "format_version",

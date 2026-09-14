@@ -87,6 +87,37 @@ class PlanFormatVersionError(PlanArtifactError):
     )
 
 
+class PlanFormatApplyUnsupportedError(PlanArtifactError):
+    """The plan is readable and reviewable, but too old to apply.
+
+    A format-2 plan records no destination `id` on its updates, and an update is keyed by
+    that id. Applying one would fall back to a create-shaped convergent upsert whose
+    payload may omit an HFID component — the measured silent-duplicate case. The plan is
+    still worth reading, so the refusal happens at `apply` and not at the reader.
+
+    Raised before the first operation is dispatched, so the destination was not touched.
+    """
+
+    next_action = (
+        "Re-run `diff` for this sync to produce a plan in the current format, then review and apply "
+        "that plan. The destination was not touched."
+    )
+
+
+class MissingDestinationIdError(PlanArtifactError):
+    """An update was derived for an object whose destination id the plan cannot record.
+
+    Either the destination store holds no object for the identity, or the object it holds
+    carries no `local_id`. Recording the update without an id would leave apply to key it
+    the way a create is keyed, which is the case that silently duplicates.
+    """
+
+    next_action = (
+        "Re-run `diff` with a full destination extract so the destination objects carry their ids, and "
+        "check that the destination load populates `local_id` for this kind."
+    )
+
+
 class PlanArtifactUnreadableError(PlanArtifactError):
     """An artifact path could not be turned into the bytes or rows it should hold.
 

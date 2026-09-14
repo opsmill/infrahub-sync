@@ -27,7 +27,7 @@ class _StubAdapter(Adapter):
         self.calls: list[tuple[str, object]] = []
         self.deltas = deltas or []
 
-    def model_loader(self, model_name: str, _model: Any) -> None:  # noqa: ANN401
+    def model_loader(self, model_name: str, model: Any) -> None:  # noqa: ANN401, ARG002
         self.calls.append(("model_loader", model_name))
 
     def load(self) -> None:
@@ -119,7 +119,7 @@ def test_side_full_extract_answers_per_side_on_a_mixed_run(tmp_path: Path) -> No
         run_dir=prev_run,
         side="B",
         resource="InfraDevice",
-        rows=[{"name": "leaf-existing", "description": "old"}],
+        rows=[{"name": "leaf-existing", "description": "old", "local_id": "dest-id-1"}],
         source_ids=["leaf-existing"],
         extract_ts=datetime(2026, 5, 17, 10, tzinfo=timezone.utc),
     )
