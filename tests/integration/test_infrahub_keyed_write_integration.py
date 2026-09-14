@@ -6,12 +6,19 @@ every human-friendly-ID component converges rather than duplicating even though 
 carries no key at all, and an upsert carrying a recorded `id` updates in place. Both are
 server behaviours; a recording transport cannot settle either.
 
-Three cases, on the smallest fixture that can carry them:
+Four primary cases, on the smallest fixture that can carry them:
 
 1. a kind whose human-friendly ID **crosses a relationship** creates, and a second identical
    apply converges onto the same object rather than making a second one (AD067 closed);
-2. an update carrying the recorded destination id renames an attribute **in place**;
-3. a recorded id that matches no object is refused, and nothing is written.
+2. an update carrying the recorded destination id changes an attribute **in place**;
+3. a recorded id that matches no object is refused, and nothing is written;
+4. an update that renames the destination's **own** human-friendly ID still lands on the
+   object it means — the identifier-versus-HFID mismatch the recorded-id design was chosen
+   for, which no other case here reaches.
+
+Two supporting cases run alongside them: a peer whose own key crosses a relationship is
+resolved through the nested filter (the read half), and the run is shown to write nothing
+outside the branch it owns.
 
 **Everything this module touches lives on one branch it creates and deletes.** The sibling
 modules load their throwaway schema onto `main`, which makes two concurrent runs — or a run
@@ -103,7 +110,7 @@ _SCHEMA = {
             # The rename case the recorded-id design exists for: the sync matches these on
             # `serial` while the destination's human-friendly ID is `name`, so renaming `name`
             # is an identity change to the destination and an ordinary attribute change to the
-            # sync. Only a write keyed by the recorded id lands it on the right object.
+            # sync. Only a write keyed by the recorded id can update the intended object.
             "name": "UnkeyedRenamable",
             "namespace": "Test",
             "include_in_menu": False,
@@ -537,12 +544,16 @@ def test_a_rename_of_the_destination_key_itself_lands_on_the_right_object(
 
     `TestUnkeyedRenamable` is matched by the sync on `serial` and by the destination on `name`,
     which is the mismatch the ratified decision was chosen to cover. Renaming `name` therefore
-    changes the destination's own human-friendly ID: a create-shaped convergent upsert would
-    match nothing and add a second object, because the value it keys on is the value being
-    changed. Only the recorded id lands it on the object that already exists.
+    changes the destination's own human-friendly ID, and **the no-id path cannot update the
+    intended object at all**: the value it would key on is the value being changed, so it
+    matches nothing. What happens next depends on the kind rather than on the write — here
+    `serial` is declared unique, so the destination would refuse the resulting create; on a
+    kind without such a constraint the same write adds a second object. Neither is the update
+    that was planned. Only the recorded id reaches the object that already exists.
 
-    Asserted as a count **and** an identity: an unkeyed write would show here as two objects,
-    one under each name.
+    Asserted as a count **and** a re-read identity, so any outcome other than an in-place
+    update of that one object fails: a second object moves the count, and a write landing
+    elsewhere leaves this one's `name` alone.
     """
     scope = keyed_write_scope
     before = scope.client.count(kind=RENAMABLE_KIND, branch=scope.branch)
@@ -560,7 +571,7 @@ def test_a_rename_of_the_destination_key_itself_lands_on_the_right_object(
 
     assert written == seeded.id, "The rename must write the object its recorded id names."
     assert scope.client.count(kind=RENAMABLE_KIND, branch=scope.branch) == before, (
-        "Renaming the destination's human-friendly ID must not create a second object."
+        "Renaming the destination's human-friendly ID must update the object, not add one."
     )
     reread = scope.client.get(kind=RENAMABLE_KIND, id=seeded.id, branch=scope.branch)
     assert reread.name.value == renamed, "The rename did not reach the object the id named."
