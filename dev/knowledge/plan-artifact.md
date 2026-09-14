@@ -97,11 +97,17 @@ and encoding it requires a future `format_version` extension.
 payload = element.keys ∪ element.source_attrs   minus every key carried as a relationship reference
 ```
 
-The identity components are inside the payload, and they are not decoration. A **create** carries no
-destination id, so the server matches it on the kind's human-friendly-ID components — whose values come
-from the identity — and a create issued without them matches nothing and duplicates on every re-apply.
-An **update** records the destination object's `id` and is keyed by that, so it may omit a component and
-still write the object it means.
+Every identity component is carried by the operation, and they are not decoration. Each one comes from
+**either** a payload field **or** a `relationships[].field` reference — a component that crosses a
+relationship takes its value from the referenced peer's own identity — and no component may come from
+both, because that would give the destination field two competing write sources.
+
+A **create** carries no destination id, so the server matches it on the kind's human-friendly-ID
+components, and one issued without them all would match nothing and duplicate on every re-apply. That
+cannot happen: a create whose identity does not cover every component, or whose covered components carry
+no usable value, is refused before `client.create` and so never reaches the server. An **update**
+records the destination object's `id` and is keyed by that, so it may omit a component and still write
+the object it means.
 
 `source_attrs` alone cannot supply them. DiffSync's `get_attrs()` explicitly "does not include the
 fields in `_identifiers`", and the generator strips identifiers out of `_attributes`, so the identity
