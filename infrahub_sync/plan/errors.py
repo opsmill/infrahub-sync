@@ -47,7 +47,19 @@ class PlanArtifactError(Exception):
     # Subclasses MUST override this with a non-empty, class-level declaration.
     next_action: str = ""
 
-    def __init__(self, message: str, *, next_action: str | None = None) -> None:
+    # Whether the operation this refusal belongs to reached a destination mutation (S6).
+    #
+    #   `None`  — unknown, and the reading that never understates what reached the
+    #             destination. The default, and what every failure meant before this.
+    #   `False` — the operation attempted no destination mutation, or the destination
+    #             proved it wrote nothing. Only a refusal raised *before* the SDK write, or
+    #             one carrying the server's own not-found, may claim this.
+    #
+    # `True` is deliberately not used: an operation that failed *after* dispatching is
+    # exactly the case that cannot be known, and `None` already says so.
+    wrote: bool | None = None
+
+    def __init__(self, message: str, *, next_action: str | None = None, wrote: bool | None = None) -> None:
         effective = type(self).next_action if next_action is None else next_action
         if not effective:
             msg = (
@@ -58,6 +70,8 @@ class PlanArtifactError(Exception):
             raise TypeError(msg)
         self.message = message
         self.next_action = effective
+        if wrote is not None:
+            self.wrote = wrote
         super().__init__(f"{message} Next action: {effective}")
 
 
@@ -84,6 +98,37 @@ class PlanFormatVersionError(PlanArtifactError):
     next_action = (
         "Re-run `diff` for this sync to rebuild the plan artifact with this version of "
         "infrahub-sync, or apply it with the version that wrote it."
+    )
+
+
+class PlanFormatApplyUnsupportedError(PlanArtifactError):
+    """The plan is readable and reviewable, but too old to apply.
+
+    A format-2 plan records no destination `id` on its updates, and an update is keyed by
+    that id. Applying one would fall back to a create-shaped convergent upsert whose
+    payload may omit an HFID component — the measured silent-duplicate case. The plan is
+    still worth reading, so the refusal happens at `apply` and not at the reader.
+
+    Raised before the first operation is dispatched, so the destination was not touched.
+    """
+
+    next_action = (
+        "Re-run `diff` for this sync to produce a plan in the current format, then review and apply "
+        "that plan. The destination was not touched."
+    )
+
+
+class MissingDestinationIdError(PlanArtifactError):
+    """An update was derived for an object whose destination id the plan cannot record.
+
+    Either the destination store holds no object for the identity, or the object it holds
+    carries no `local_id`. Recording the update without an id would leave apply to key it
+    the way a create is keyed, which is the case that silently duplicates.
+    """
+
+    next_action = (
+        "Re-run `diff` with a full destination extract so the destination objects carry their ids, and "
+        "check that the destination load populates `local_id` for this kind."
     )
 
 
@@ -211,11 +256,19 @@ class PeerNotFoundError(PlanArtifactError):
     different one (AD071).
     """
 
+    # Raised before the SDK write on the planned-write surface, so no mutation was
+    # attempted for the operation it refuses (S6).
+    wrote = False
+
     next_action = "Create the peer at the destination, or re-plan so the same plan creates it."
 
 
 class PeerAmbiguousError(PlanArtifactError):
     """A peer identity matches more than one object at the destination."""
+
+    # Raised before the SDK write on the planned-write surface, so no mutation was
+    # attempted for the operation it refuses (S6).
+    wrote = False
 
     next_action = (
         "The destination kind's identity is not unique for these values: de-duplicate at the "
@@ -232,29 +285,94 @@ class UnaccountedIdentityComponentError(PlanArtifactError):
     this check is defined per component rather than as a single keyedness test.
     """
 
+    # Raised before the SDK write on the planned-write surface, so no mutation was
+    # attempted for the operation it refuses (S6).
+    wrote = False
+
     next_action = (
         "Re-plan so the plan's identity for that kind supplies the named component, or add it to that "
         "kind's `identifiers` in the schema mapping."
     )
 
 
-class UnkeyedWriteRefusedError(PlanArtifactError):
-    """The rendered mutation carries no usable `id` or `hfid`.
+class UnkeyedCreateRefusedError(PlanArtifactError):
+    """A create cannot be proven to key itself, so it is refused before **its own** write.
 
-    An unkeyed convergent write duplicates its object on a re-apply, so it is refused for
-    every destination kind. A key rendered without a value keys nothing and is refused on the
-    same terms. The refused operation attempts no destination mutation.
+    A create carries no destination id: the server matches it on the human-friendly-ID
+    components present in the payload. A payload missing one component does **not** match
+    the existing object — the server reports `ok: true` and creates a second one — so the
+    completeness has to be proven here rather than detected afterwards.
+
+    Two arms for a kind with an HFID: every component's field must be named by the
+    operation's identity, and every one of those must carry a usable value. A kind with no
+    HFID cannot converge on one at all, and is allowed only where a declared uniqueness
+    constraint is fully covered by the operation's identity — the destination refuses the
+    duplicate in that case.
+
+    The refused operation attempts no destination mutation of its own, which is what
+    `wrote = False` claims and all it claims. Operations applied **earlier in the same plan**
+    stay written and are listed in the record's `applied_operations`; the apply is sequential
+    and stops here, so the destination is not as the plan describes it. The run is `failed`
+    rather than interrupted, and needs no reconciliation — there is no uncertainty about what
+    this operation did, only a plan that was not finished.
     """
 
+    wrote = False
+
     next_action = (
-        "Re-plan so the operation's payload carries the destination kind's identity components. A kind "
-        "whose human-friendly ID crosses a relationship, or that declares none at all, cannot render a "
-        "keyed mutation and is not supported for planned writes."
+        "Re-plan so the operation's identity names every human-friendly-ID component of the destination "
+        "kind and each one carries a value. A kind that declares no human-friendly ID needs a uniqueness "
+        "constraint its identity covers, or its objects must be created at the destination directly."
+    )
+
+
+class DestinationIdentityCollisionError(PlanArtifactError):
+    """Several planned creates project onto one destination human-friendly ID.
+
+    The sync distinguishes these source objects; the destination cannot. Applying them
+    would converge them onto a single object and lose the surplus silently, at exit 0. Only
+    creates are counted: an update is keyed by its recorded destination id and cannot
+    converge onto another operation's object.
+    """
+
+    wrote = False
+
+    next_action = (
+        "Correct the schema mapping so each source object projects onto its own destination identity — "
+        "usually by mapping the attribute that distinguishes them — then re-run `diff`."
+    )
+
+
+class StaleDestinationIdError(PlanArtifactError):
+    """An update named a destination object that no longer exists.
+
+    The destination answered the id-carrying upsert with `NODE_NOT_FOUND` /
+    `extensions.http_status` 404. That path creates nothing, so the refusal is **proven**
+    not to have written even though it is raised after the write was attempted — which is
+    why it carries `wrote = False` while an ordinary transport failure does not.
+
+    The object was deleted or replaced between the plan and the apply. Re-planning records
+    the current id, or records a create where the object is genuinely gone.
+
+    As with any refusal inside the apply loop, `wrote = False` is about **this** operation.
+    Operations applied earlier in the same plan stay written and are listed in the record's
+    `applied_operations`.
+    """
+
+    wrote = False
+
+    next_action = (
+        "Re-run `diff` for this sync to record the destination's current ids, then review and apply the "
+        "new plan. This operation wrote nothing; any operation applied before it stays written."
     )
 
 
 class NullRelationshipValueError(PlanArtifactError):
     """A planned payload carries null for a mandatory cardinality-one relationship."""
+
+    # Raised before the SDK write on the planned-write surface, so no mutation was
+    # attempted for the operation it refuses (S6).
+    wrote = False
 
     next_action = (
         "Correct the mapping so the mandatory relationship resolves to a peer identity, then re-run "
@@ -306,8 +424,31 @@ class OperationApplyFailedError(PlanArtifactError):
         "in whole or in part, converges rather than duplicating."
     )
 
+    # The destination refused this operation because of an object it already holds — a
+    # uniqueness constraint. Re-applying proposes the same create and is refused identically,
+    # so "re-applying converges it" is advice that loops. The remedy is a fresh plan derived
+    # against the destination as it now is.
+    UNIQUENESS_NEXT_ACTION = (
+        "Nothing was rolled back: the operations applied before this one stay written. The destination "
+        "already holds an object this one conflicts with, so re-applying the same plan is refused the "
+        "same way — reconcile that object, or re-run `diff` to derive a plan against the destination as "
+        "it now is, and apply that."
+    )
+
+    # The same advice for an operation the record proves wrote nothing. Sending an operator
+    # to reconcile a destination this operation never touched is the failure S6 exists to
+    # remove, and the wording is half of what they act on.
+    NOT_WRITTEN_NEXT_ACTION = (
+        "Nothing was rolled back and this operation wrote nothing: the operations applied before it "
+        "stay written, and the destination is otherwise as it was. Resolve the underlying error, then "
+        "re-run `diff` and apply the new plan."
+    )
+
     def __init__(self, message: str, *, apply_record: ApplyRecord, next_action: str | None = None) -> None:
-        super().__init__(message, next_action=next_action)
+        effective = next_action
+        if effective is None and apply_record.failed_operation_wrote is False:
+            effective = self.NOT_WRITTEN_NEXT_ACTION
+        super().__init__(message, next_action=effective)
         self.apply_record = apply_record
 
 

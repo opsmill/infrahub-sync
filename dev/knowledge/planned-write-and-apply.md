@@ -65,28 +65,53 @@ Only the Infrahub adapter implements the surface today.
                             referring_operation_id=operation.operation_id)
               for p in ref.peers]
        data[ref.field] = ids[0] if ref.cardinality == "one" else ids
-3b. DIAGNOSTIC: every human-friendly-ID component of the kind is accounted for
+4a. CREATE ONLY — COVERAGE: the operation's identity names every human-friendly-ID
+       component of the kind, or, for a kind declaring none, covers a uniqueness
+       constraint            → UnkeyedCreateRefusedError
+4b. CREATE ONLY — DIAGNOSTIC (AD051): every one of those components arrives with a
+       USABLE value  → UnaccountedIdentityComponentError, naming the component
 5.  node = client.create(kind=..., data=generate_payload_create(...))
-5b. GATE: read the rendered mutation input and check it carries `id` or `hfid`
+5b. UPDATE ONLY: node.id = operation.destination_id   # the recorded key, never in `data`
 6.  node.save(allow_upsert=True)               # the convergence point, and the ONLY write
+6b. UPDATE ONLY: a NODE_NOT_FOUND + http_status 404 answer → StaleDestinationIdError
 8.  peers.remember(operation.kind, operation.identity, node.id)
 ```
+
+Both refusals at 4 happen **before** `client.create`, so a refused operation is proven to have
+attempted no destination mutation. They are different questions and stay different mechanisms:
+coverage is about the plan, and AD051 is the only check that can say *which* component is missing.
+
+Both are **creates only**. A create is matched by the destination on the human-friendly-ID
+components it carries, so their completeness is a condition of the write. An update is keyed by
+its recorded id — the server is told exactly which object to write — so it may omit, blank or
+fail to resolve a component and still land on the object it means.
 
 Creates and updates both route through the same convergent upsert. Neither routes through
 `InfrahubModel.update`, whose `local_id` keying needs a destination load an apply must not perform.
 
-Two consequences of using an upsert are accepted rather than detected: a create whose identity already
-exists converges onto the existing object without examining whether its payload differs, and an update
-whose target was deleted out-of-band materializes as a create. There is no conflict detection, freshness
-check or refusal path. Either case is reported under the operation's **original** identifier and
-**original** action, so the review-to-apply link is unaffected.
+An update is keyed by the destination `id` recorded for it at plan time; a create carries none and is
+matched by the server on the human-friendly-ID components in its payload, which is why step 4 proves
+they are all there. There is no step reading the SDK's private pre-save render: that gate is retired
+(ADR 0013) because on newer SDK versions it reported an `hfid` the issued mutation did not carry.
+
+One consequence of using an upsert is accepted rather than detected: a create whose identity already
+exists converges onto the existing object without examining whether its payload differs. There is no
+conflict detection or freshness check, and the case is reported under the operation's **original**
+identifier and **original** action, so the review-to-apply link is unaffected.
+
+An update whose target was deleted out-of-band **no longer materializes as a create**. It carries that
+object's recorded id, the destination answers `NODE_NOT_FOUND` with `extensions.http_status` 404 and
+creates nothing, and the apply raises `StaleDestinationIdError` asking for a fresh `diff`. Both halves
+of that signature are required, in one error: the code alone does not prove the id path ran, and the
+refusal claims the write never happened.
 
 ### Convergence rides on the destination kind's human-friendly ID
 
-This is the single most misread part of the path, so it is worth stating plainly: the convergence key is
-the **destination schema's** `human_friendly_id`, not the source configuration's `identifiers`. The SDK's
-upsert mutation is keyed on `data["id"]` if set, else `data["hfid"]`, and `get_human_friendly_id()`
-returns `None` if any component path resolves to `None`.
+This is the single most misread part of the path, so it is worth stating plainly: what a **create**
+converges on is the **destination schema's** `human_friendly_id`, not the source configuration's
+`identifiers`. An update converges on the destination `id` recorded for it and is not subject to this
+section. No `hfid` key is rendered on the wire for either: the SDK sets `data["id"]` when the node
+carries one, and the server matches a create on the components in `data` (ADR 0013).
 
 The two are not the same question and do not have the same answer. On the example NetBox configuration,
 **ten** mapping entries carry a reference inside their `identifiers` — a configuration-side figure — while
@@ -96,40 +121,73 @@ a keying risk read off the configuration instead of the destination schema was w
 was cited by four decisions, and survived three rounds of critique before live data exposed it. When you
 need to know how a kind converges, read the destination schema.
 
-Two checks protect the key, and they check different things:
+Two checks protect a create's key, and they check different things:
 
-- **Step 3b is the diagnostic.** A direct component (`<attr>` or `<attr>__value`) must be present and
-  non-`None` in `data`. A relationship-crossing component (`<rel>__<attr>__value`) must have `<rel>`
-  present in `data` **and** `<attr>` supplied by the operation's nested `{peer_kind, identity}` for
-  `<rel>`. An unaccounted-for component raises, naming the kind and the component. "Resolves against the
-  create data" is not implementable: by step 3b, a relationship-crossing component's slot in `data` holds
-  a resolved node-id string, and no attribute can be read out of a node id.
-- **Step 5b is the gate**, and it reads the property where it actually lives — the rendered mutation
-  input, which the SDK builds client-side, so it is checkable with no server. Read it one level deeper
-  than the render call's own `"data"` key: `_generate_input_data(...)["data"]` is `{"data": {...}}`, a
-  one-key mapping, so a check written against it would fire on every operation ever rendered.
+- **Step 4a is coverage**, read from the operation's `identity` alone: every component's mapping field
+  must be named there, or — for a kind declaring no human-friendly ID — the identity must cover a
+  declared uniqueness constraint. It is a question about the plan, and it is answered before any value
+  is examined.
+- **Step 4b is the diagnostic (AD051).** A direct component (`<attr>` or `<attr>__value`) must be
+  present in `data` with a **usable** value: absent, empty and whitespace-only all key nothing, while
+  `0` and `False` are values the destination matches on perfectly well. A relationship-crossing
+  component (`<rel>__<attr>__value`) must have `<rel>` present in `data` **and** `<attr>` supplied,
+  usably, by the operation's nested `{peer_kind, identity}` for `<rel>`. An unaccounted-for component
+  raises, naming the kind and the component. "Resolves against the create data" is not implementable:
+  by this step a relationship-crossing component's slot in `data` holds a resolved node-id string, and
+  no attribute can be read out of a node id — which is why the value comes from the peer identity.
+- **There used to be a third check, on the SDK's private pre-save render.** It is gone
+  ([ADR 0013](../adr/0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)). On infrahub-sdk
+  1.23.2 that render reports an `hfid` the issued mutation does not carry, so it passed writes that
+  were unkeyed on the wire, and it refused relationship-crossing kinds the server converges. No
+  product code reads a private SDK render.
 
-The gate applies one invariant to every kind: a render carrying no **usable** `id` or `hfid` raises
-`UnkeyedWriteRefusedError`, naming the operation and its kind. An unkeyed convergent write duplicates
-its object on a re-apply, and no HFID shape makes that safe. The key has to carry a value rather than
-merely be present, because a present-but-empty key keys nothing at the destination.
+### How each action is keyed
 
-`hfid` is the only key a planned write can genuinely render. The plan carries no destination UUID —
-FR-012 forbids the load that would supply one — and a payload field named `id` is not a substitute:
-`generate_payload_create` wraps every payload field into an attribute block, so such a field renders
-as an empty `id: {}`. That shape is refused rather than treated as keyed.
+The two actions are keyed differently, and the asymmetry is the point: an update can be keyed by
+something the plan recorded, and a create cannot.
 
-Three shapes cannot render a usable key and are therefore unsupported for planned writes:
+**An update carries the destination `id`** recorded for it at plan time (plan format 3). Apply sets it
+on the node before `save(allow_upsert=True)`; the SDK writes `data["id"] = self.id` when the node
+carries one and considers `hfid` only otherwise, so that is what makes the upsert a keyed update of
+that exact object. The id is never put into the `data` mapping handed to `client.create`, where it
+would render as the attribute-shaped `id: {}` and key nothing. An id the destination cannot find comes
+back as `NODE_NOT_FOUND` / `extensions.http_status` 404 with nothing written, raised as
+`StaleDestinationIdError` and recorded as not-written.
 
-- **A key that crosses a relationship.** The SDK cannot form an `hfid` client-side from a peer supplied
-  as a resolved id: rendering a relationship value handed in as a bare id produces `{"id": ...}` with no
-  `__typename`, so the store read that would resolve the peer is never attempted.
-- **No HFID declared.** There is no convergence key to render.
-- **A payload field named `id`.** It renders as `id: {}` — a key with no value.
+Because an id keys anything, kinds with no human-friendly ID are fully supported for updates, and a
+rename that changes the destination's human-friendly ID still updates the object it means.
 
-Apply is sequential, so the guarantee is stated per operation: an operation whose render is unkeyed makes
-zero mutation calls, and no later operation executes. Operations applied before it stay written, and the
-apply record reports them.
+**A create has no id**, so the server matches it on the human-friendly-ID components its payload
+carries. A payload missing one component does **not** match: the server answers `ok: true` and creates
+a second object, which nothing downstream can detect. Planning therefore proves the key rather than
+warning about it, and refuses with `UnkeyedCreateRefusedError` when it cannot:
+
+- every component's mapping field must be named by the operation's `identity` — a component resolvable
+  from the payload but absent from identity still refuses, because identity is what the plan proves the
+  write on and what a reviewer reads;
+- each covered component must carry a usable value, proven through the peer's own identity where the
+  component crosses a relationship;
+- a kind declaring **no** human-friendly ID is allowed only where a declared uniqueness constraint is
+  fully covered by the identity — the destination refuses the duplicate there (transport 200,
+  `extensions.http_status` 422) — and refused otherwise, because it would duplicate on every write.
+
+Several creates projecting onto **one** destination human-friendly ID are refused as
+`DestinationIdentityCollisionError`: the sync tells them apart and the destination does not, so
+applying them would converge them onto one object each and lose the rest at exit 0. Updates are
+excluded from that count, since an id-keyed write cannot converge onto another operation's object.
+
+The write surface applies the same rule, from the same function, before `client.create` — so a create
+refused at plan time and the same create arriving in a hand-built artifact are refused for the same
+reason, and neither attempts a mutation.
+
+Explicit `hfid` rendering is deliberately **not** reintroduced: `save(allow_upsert=True)` strips it on
+1.23.2 and the server matches on complete components anyway, so rendering it would assert a key the
+wire does not carry.
+
+Apply is sequential, so the guarantee is stated per operation: a create refused by either check makes
+zero mutation calls, and no later operation executes. Operations applied before it stay written, the
+apply record reports them, and the refused operation is recorded as having written nothing rather than
+as a possible partial write.
 
 ## Peer resolution
 
@@ -234,6 +292,11 @@ then parse them.**
 3. verify THOSE bytes + isinstance(destination, PlannedWriteDestination) → refuse before any write
 4. parse them; classify v1 / torn / unrecognized version.
    An action outside ACTIONS is refused HERE, before any write → run state failed
+4b. refuse a format the current version cannot APPLY → PlanFormatApplyUnsupportedError.
+   AFTER the parse, so a torn format-2 artifact still reports as torn rather than merely
+   old; BEFORE the resolver and the loop, so nothing is dispatched. A format-2 update
+   records no destination id and so cannot be keyed; the plan stays readable and
+   reviewable, and the message asks for a fresh `diff`
 5. peers = destination.new_peer_resolver()
 6. applied: list[str] = []   ;   skipped_deletes: list[str] = []      # both ORDERED
 7. for operation in stored order:
@@ -266,33 +329,52 @@ the CLI can merge it before recording `failed`. That partial record is best-effo
 required to survive abnormal process termination.
 
 The merged summary keys are `applied_operations`, `skipped_delete_operations`,
-`skipped_delete_count`, `failed_operation` and `may_have_partially_written`. All five are always
-written: "nothing was applied" and "nothing failed" have to be readable from the run rather than
-inferred from an absent key.
+`skipped_delete_count`, `failed_operation`, `failed_operation_wrote` and
+`may_have_partially_written`. All six are always written: "nothing was applied" and "nothing failed"
+have to be readable from the run rather than inferred from an absent key.
 
 A destination rejection or transport failure stops at that operation. What was written stays written;
 there is no rollback.
 
-**And the failing operation may itself have written part of its change.** An operation is one
-destination mutation, and one mutation can still commit remotely before its response — or the
-transport carrying it — fails, which leaves the destination changed by an operation that is in
-neither `applied_operations` nor `skipped_delete_operations`. The record therefore names it under
+**And the failing operation may itself have written part of its change — unless it is proven not to
+have.** An operation is one destination mutation, and one mutation can still commit remotely before
+its response, or the transport carrying it, fails; that leaves the destination changed by an
+operation in neither `applied_operations` nor `skipped_delete_operations`. The record names it under
 `failed_operation` and reports `may_have_partially_written`, and the engine's error message says the
 same in words. The marker is deliberately "may": the engine learns that the call raised, never how
 far it got, and a marker that understated the writes would be the one an operator could not recover
-from by reading the run. Convergent re-apply is what recovers it — re-applying an operation that
-already succeeded in whole or in part converges on the same object (AD033).
+from by reading the run. Convergent re-apply is what recovers it (AD033).
 
-`may_have_partially_written` is derived from `failed_operation` rather than stored beside it, as
+`failed_operation_wrote` is the exception, and it carries exactly one claim: `None` means the reach
+is unknown — what every failure meant before it existed — and `False` means the operation is **proven**
+to have written nothing. Only two things may claim it. A refusal raised before the SDK write
+(`UnkeyedCreateRefusedError`, `UnaccountedIdentityComponentError`, `NullRelationshipValueError`,
+`PeerNotFoundError`, `PeerAmbiguousError`) attempted no mutation at all. And `StaleDestinationIdError`
+carries the destination's own not-found for an id-keyed upsert, a path that creates nothing. `True` is
+never set: an operation that failed *after* dispatching is precisely the case that cannot be known.
+
+`may_have_partially_written` is then `failed_operation is not None and failed_operation_wrote is not
+False`, the engine's message drops the partial-write sentence for a proven-not-written refusal, and the
+service boundary settles such a run as `failed` rather than `interrupted`/`ambiguous`, so it does not
+set `reconciliation_required`. The claim is scoped to the **failing operation** and says nothing
+about the plan: operations applied before it stay written and are listed in `applied_operations`,
+and the apply stops there, so the destination is not as the plan describes it. What goes away is
+the *uncertainty* — reporting an operation that provably did nothing as possibly partial was
+sending operators to reconcile it (S6).
+
+`may_have_partially_written` is derived from the two stored fields rather than stored beside them, as
 `skipped_delete_count` is derived from `skipped_delete_operations`: on the record that is the only
-account of what an apply did, a second source of truth is a state that can contradict itself.
+account of what an apply did, a second source of truth is a state that can contradict itself. The
+service boundary resolves the record once, from the failure it is describing, and reads its verdict and
+its evidence from that same record for the same reason.
 
 ### The operational exception boundary
 
 Only an **operational** failure is reported as a destination refusal. `OPERATIONAL_APPLY_FAILURES`
 in `infrahub_sync/potenda/__init__.py` is the list, and it has three members: the `PlanArtifactError`
 taxonomy the write surface raises deliberately (a peer matching nothing or many, an unaccounted
-identity component, an unkeyed render), `SkippedDeleteOperation`, and `infrahub_sdk.exceptions.Error`
+identity component, a create that cannot be proven keyed, a stale recorded id),
+`SkippedDeleteOperation`, and `infrahub_sdk.exceptions.Error`
 — the destination library's own base, and therefore its transport, authentication, GraphQL and
 object-validation rejections.
 

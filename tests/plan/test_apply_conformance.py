@@ -1,17 +1,19 @@
-"""The offline apply-conformance harness (FR-013, FR-028.4, AD054, AD067, AD068).
+"""The offline apply-conformance harness (FR-013, FR-028.4, AD054, AD068; AD067 closed).
 
 What this file measures that nothing else can: **the mutation the SDK renders**. AD042's
 defect class — a payload assembled from source attributes alone, so the convergent write goes
-out unkeyed and every re-apply duplicates the object — is invisible to an assertion against
-the assembled `data`, because a relationship-crossing identity component is already a resolved
-node-id string by then. So the harness runs a **real** `InfrahubNodeSync` built from the
-committed schema fixture with only the transport edge replaced; no server is contacted.
+out carrying none of the components the destination matches on and every re-apply duplicates
+the object — is invisible to an assertion against the assembled `data`, because a
+relationship-crossing identity component is already a resolved node-id string by then. So the
+harness runs a **real** `InfrahubNodeSync` built from the committed schema fixture with only
+the transport edge replaced; no server is contacted.
 
-Five assertions: an all-direct human-friendly-ID kind renders keyed; the
-relationship-crossing kind, which cannot render keyed client-side, is refused before its own
-mutation; the replace-set is issued for every cardinality-many relationship including
-`peers: []`, with no destination read; that same upsert names only the fields the plan maps
-plus its key; and applying the same operation twice renders byte-identical inputs.
+Five assertions: an update renders the scalar top-level `id` recorded for it; the
+relationship-crossing kind is **written** as one convergent upsert, because the server matches
+on the human-friendly-ID components in `data` and needs no key on the wire (AD067 closed); the
+replace-set is issued for every cardinality-many relationship including `peers: []`, with no
+destination read; that same upsert names only the fields the plan maps plus its key; and
+applying the same operation twice renders byte-identical inputs.
 
 It deliberately does **not** assert "two applies produce one object": a fixture holds no
 destination state, so that could only pass for the wrong reason. Byte-identity is the
@@ -34,12 +36,13 @@ from infrahub_sdk.schema import NodeSchemaAPI
 from infrahub_sdk.schema.main import BranchSchema
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerResolver
-from infrahub_sync.plan.errors import UnkeyedWriteRefusedError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+CONFORMANCE_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
 
 SCHEMA_FIXTURE = Path(__file__).resolve().parents[1] / "data" / "apply_conformance_schemas.json"
 
@@ -49,7 +52,8 @@ TEAM_KIND = "ConfTeam"
 DEVICE_KIND = "ConfDevice"
 
 # The kinds whose every human-friendly-ID component is a direct attribute. Assertion 1 is a
-# universal over these and **only** these; assertion 2 carries `ConfDevice` alone (AD067).
+# the set assertion 5's byte-identity quantifies over; assertion 2 carries `ConfDevice` alone,
+# the kind whose human-friendly ID crosses a relationship.
 ALL_DIRECT_KINDS = (SITE_KIND, TAG_KIND, TEAM_KIND)
 
 # `ConfTeam`'s two relationships: the cardinality-many one the replace-set reconciles, and the
@@ -164,7 +168,11 @@ def make_operation(
     action: str = "create",
     relationships: list[RelationshipReference] | None = None,
 ) -> PlannedOperation:
-    """One planned operation, with its identifier derived the way the artifact derives it."""
+    """One planned operation, with its identifier derived the way the artifact derives it.
+
+    An update carries `CONFORMANCE_DESTINATION_ID`, because plan format 3 records one for
+    every update and the apply keys the write by it.
+    """
     canonical = canonical_identity(identity, kind=kind)
     return PlannedOperation(
         operation_id=operation_id(action, kind, canonical),
@@ -174,6 +182,7 @@ def make_operation(
         tier=0,
         payload=payload,
         relationships=relationships,
+        destination_id=CONFORMANCE_DESTINATION_ID if action == "update" else None,
     )
 
 
@@ -207,7 +216,9 @@ def team_operation(peer_names: list[str], *, action: str = "update") -> PlannedO
     )
 
 
-# The operations assertion 1 quantifies over: a create and an update on every all-direct kind.
+# Every all-direct create and update. Assertion 1 quantifies over the updates alone —
+# only an update carries a recorded destination id — while the byte-identity assertion
+# below still quantifies over both.
 ALL_DIRECT_OPERATIONS: tuple[tuple[str, PlannedOperation], ...] = (
     ("create a site", make_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})),
     (
@@ -221,6 +232,11 @@ ALL_DIRECT_OPERATIONS: tuple[tuple[str, PlannedOperation], ...] = (
     ),
     ("create a tag", make_operation(kind=TAG_KIND, identity={"name": "tag-a"}, payload={"name": "tag-a"})),
     ("update a team", team_operation(["tag-a"])),
+)
+
+# The updates alone: only an update carries a recorded destination id to key on.
+ALL_DIRECT_UPDATES: tuple[tuple[str, PlannedOperation], ...] = tuple(
+    (description, operation) for description, operation in ALL_DIRECT_OPERATIONS if operation.action == "update"
 )
 
 
@@ -267,6 +283,16 @@ def rendered_relationship_ids(query: str, rel_name: str) -> list[str] | None:
     return re.findall(r'id:\s*"([^"]+)"', match.group(1))
 
 
+def top_level_scalar_id(query: str) -> str | None:
+    """The scalar `id` of a rendered mutation's top-level `data` block, if it has one.
+
+    Depth is what makes this decidable: a relationship peer's `id` sits deeper and inside
+    braces, so it cannot be mistaken for the object's own write key.
+    """
+    match = re.search(r'^ {12}id:\s*"([^"]+)"\s*$', query, flags=re.MULTILINE)
+    return match.group(1) if match else None
+
+
 def mutation_input_fields(query: str) -> list[str]:
     """The field names inside a rendered mutation's top-level `data: { ... }` input block.
 
@@ -302,11 +328,12 @@ def seeded_adapter(**existing: list[str]) -> tuple[ConformanceClient, InfrahubAd
 
 
 def test_the_committed_fixture_holds_the_shapes_every_assertion_needs() -> None:
-    """The precondition every assertion below rests on (Trap 4, AD067).
+    """The precondition every assertion below rests on (Trap 4).
 
-    A fixture drifting to all-direct kinds only would leave assertion 2 vacuous and remove the
-    one thing that exercises AD051's second arm — while the suite stayed green. So the shapes
-    are asserted rather than assumed.
+    A fixture drifting to all-direct kinds only would leave assertion 2 vacuous — nothing would
+    exercise a human-friendly ID that crosses a relationship, which is the shape the server
+    matches component-wise and the one AD051 resolves through a peer identity — while the suite
+    stayed green. So the shapes are asserted rather than assumed.
 
     The same holds for the relationship shapes on `ConfTeam`. Assertion 4 is vacuous unless the
     kind under replace-set also carries an **optional cardinality-one** relationship no
@@ -344,47 +371,53 @@ def test_the_committed_fixture_holds_the_shapes_every_assertion_needs() -> None:
 
 
 # ---------------------------------------------------------------------------------------
-# Assertion 1 — keyedness, all-direct kinds
+# Assertion 1 — an update is keyed by its recorded destination id, on the wire
 # ---------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     ("description", "operation"),
-    ALL_DIRECT_OPERATIONS,
-    ids=[description for description, _ in ALL_DIRECT_OPERATIONS],
+    ALL_DIRECT_UPDATES,
+    ids=[description for description, _ in ALL_DIRECT_UPDATES],
 )
-def test_an_all_direct_kind_renders_a_keyed_mutation(description: str, operation: PlannedOperation) -> None:
-    """AD042's regression detector: the **rendered** mutation carries `id` or `hfid`."""
+def test_an_update_renders_a_scalar_top_level_id_equal_to_its_destination_id(
+    description: str, operation: PlannedOperation
+) -> None:
+    """The write key, read off the issued mutation rather than off any intermediate mapping.
+
+    Asserted at the wire because the SDK's pre-save private render and the mutation it
+    actually sends stopped agreeing: on 1.23.2 the render reports an `hfid` the wire does
+    not carry. What the destination acts on is the mutation.
+    """
     _ = description
-    _client, adapter, peers = seeded_adapter(members=[])
+    client, adapter, peers = seeded_adapter(members=[])
 
-    with record_rendered_inputs() as rendered:
-        adapter.apply_planned_operation(operation=operation, peers=peers)
+    adapter.apply_planned_operation(operation=operation, peers=peers)
 
-    keyed = keys_of(rendered, operation.kind)
-    assert keyed, f"nothing was rendered for {operation.kind}"
-    for index, keys in enumerate(keyed):
-        assert "id" in keys or "hfid" in keys, (
-            f"Render {index} for {operation.kind} carries neither 'id' nor 'hfid', so the convergent "
-            f"write is unkeyed and every re-apply duplicates the object. Rendered keys: {sorted(keys)}."
-        )
+    _name, query = client.mutations[0]
+    assert top_level_scalar_id(query) == CONFORMANCE_DESTINATION_ID, (
+        f"The update must key on its recorded destination id. Rendered:\n{query}"
+    )
 
 
 # ---------------------------------------------------------------------------------------
-# Assertion 2 — the relationship-crossing kind is refused (AD066)
+# Assertion 2 — a relationship-crossing human-friendly ID converges (AD067 closed)
 # ---------------------------------------------------------------------------------------
 
 
-def test_a_relationship_crossing_kind_is_refused_before_its_own_mutation() -> None:
-    """The kind that cannot render keyed is refused, not written unkeyed."""
+def test_a_relationship_crossing_kind_is_written_as_one_convergent_upsert() -> None:
+    """AD067 closes: the server matches on the HFID components in `data`, so this is keyed.
+
+    Measured on Infrahub 1.10.6 for `TestingInterface`, whose HFID crosses `device`: two
+    identical upserts carrying no key at all converge onto one object. The client cannot
+    render such an `hfid` from a resolved peer id, and it does not need to.
+    """
     client, adapter, peers = seeded_adapter()
 
-    with pytest.raises(UnkeyedWriteRefusedError):
-        adapter.apply_planned_operation(operation=device_operation(), peers=peers)
+    adapter.apply_planned_operation(operation=device_operation(), peers=peers)
 
-    assert client.mutations == [], (
-        "The refused operation makes zero mutation calls: the gate reads the rendered input "
-        "before the SDK write is issued."
+    assert client.mutation_names == [f"{DEVICE_KIND}Upsert"], (
+        "The kind is written as one convergent upsert, not refused."
     )
 
 
@@ -437,6 +470,8 @@ def test_the_upsert_names_only_the_mapped_fields_and_its_key(peer_names: list[st
     `owner` is the fixture's optional cardinality-one relationship that no operation maps — the
     shape a whole-node re-render nulls. The upsert must never name it, under a non-empty replace
     and under an emptied set alike.
+
+    `team_operation` is an update, so the key it names is the recorded destination `id`.
     """
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-9"])
 
@@ -445,9 +480,9 @@ def test_the_upsert_names_only_the_mapped_fields_and_its_key(peer_names: list[st
     assert client.mutation_names == [f"{TEAM_KIND}Upsert"]
     _, upsert = client.mutations[0]
     fields = mutation_input_fields(upsert)
-    assert sorted(fields) == sorted(["name", REPLACED_RELATIONSHIP, "hfid"]), (
+    assert sorted(fields) == sorted(["name", REPLACED_RELATIONSHIP, "id"]), (
         f"{UNMAPPED_FIELD_MESSAGE}\n\nThe upsert named {sorted(fields)}; it may name only the mapped "
-        f"destination fields 'name' and {REPLACED_RELATIONSHIP!r} plus the key 'hfid'. Rendered "
+        f"destination fields 'name' and {REPLACED_RELATIONSHIP!r} plus the key 'id'. Rendered "
         f"mutation:\n{upsert}"
     )
     assert f"{UNMAPPED_RELATIONSHIP}:" not in upsert, f"{UNMAPPED_FIELD_MESSAGE}\n\nRendered mutation:\n{upsert}"

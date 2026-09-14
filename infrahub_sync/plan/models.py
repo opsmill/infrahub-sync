@@ -21,7 +21,7 @@ from pathlib import PurePath
 from typing import Any, Literal, TypeAlias, get_args
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_serializer, model_validator
 
 from infrahub_sync.plan.canonical import canonical_value
 from infrahub_sync.plan.config_version import CONFIG_VERSION_PATTERN
@@ -30,8 +30,16 @@ from infrahub_sync.plan.identity import OPERATION_ID_PATTERN, canonical_identity
 
 # `1` is reserved for the pre-existing row format the reader refuses (FR-019); no manifest
 # ever carries it.
-PLAN_FORMAT_VERSION = 2
-SUPPORTED_FORMAT_VERSIONS = frozenset({2})
+PLAN_FORMAT_VERSION = 3
+# Read and review accept both; `apply` accepts only the current one. A format-2 plan's
+# updates carry no recorded destination id, so they cannot be keyed — reviewing such a plan
+# is still useful, applying it is not safe (see `PlanFormatApplyUnsupportedError`).
+SUPPORTED_FORMAT_VERSIONS = frozenset({2, 3})
+
+# The format that introduced `PlannedOperation.destination_id`. `PlannedOperation` is
+# `extra="forbid"`, so the field's presence is itself a format discriminator: it must be
+# absent under 2 and governed by the action under 3.
+DESTINATION_ID_FORMAT_VERSION = 3
 
 PlanAction = Literal["create", "update", "delete"]
 
@@ -107,6 +115,12 @@ class PlannedOperation(BaseModel):
     tier: int = Field(ge=0)
     payload: dict[str, Any] | None = None
     relationships: list[RelationshipReference] | None = None
+    # The destination object's Infrahub `id`, recorded at plan time on updates alone and set
+    # on the node before the convergent upsert. Optional on the model because a create and a
+    # delete must not carry one; which of the three is required is decided per format version
+    # by `_validate_destination_id_for_format` — from the reader's context when reading an
+    # artifact, and from the current version when building one in process.
+    destination_id: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -135,6 +149,63 @@ class PlannedOperation(BaseModel):
         if isinstance(identity, Mapping):
             values["identity"] = canonical_identity(identity, kind=kind if isinstance(kind, str) else None)
         return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_destination_id_for_format(cls, data: Any, info: ValidationInfo) -> Any:
+        """Apply the format's rule for `destination_id`, reading the **raw** mapping.
+
+        Absent and null are different things here — under format 2 the field must not appear
+        at all, while under format 3 a create or delete may carry it as null — and only the
+        raw input can tell them apart, so this runs before the model exists.
+
+        The rule needs the artifact's declared version, which the record itself does not
+        carry, so the reader supplies it as pydantic validation context. With **no** context
+        the record is being built in process, which can only be the **current** format — there
+        is no way to construct an older one — so the current version's rule applies.
+
+        That symmetry is the point: derivation and the artifact enforce one rule. Without it a
+        caller could build an update carrying no destination id, and the refusal would arrive
+        later and somewhere else — from a reader, against a file, naming a line number — for a
+        record that should never have existed.
+        """
+        if not isinstance(data, Mapping):
+            return data
+        context = info.context
+        format_version = context.get("format_version") if isinstance(context, Mapping) else None
+        if not isinstance(format_version, int):
+            format_version = PLAN_FORMAT_VERSION
+        recorded_id = data.get("destination_id")
+        present = "destination_id" in data
+        identifier = data.get("operation_id", "<no operation_id recorded>")
+        if format_version < DESTINATION_ID_FORMAT_VERSION:
+            if present:
+                msg = (
+                    f"Operation {identifier!r} carries 'destination_id', which plan format "
+                    f"{format_version} does not define."
+                )
+                raise ValueError(msg)
+            # A format-2 update legitimately carries none, which is exactly why such a plan is
+            # readable and reviewable but not applyable.
+            return data
+        if data.get("action") == "update":
+            # Present and non-blank is the whole rule: the plan boundary owns "there is a key",
+            # and the destination owns whether that key names anything. The value is never
+            # trimmed — the checksum covers the recorded bytes.
+            if not isinstance(recorded_id, str) or not recorded_id.strip():
+                msg = (
+                    f"Operation {identifier!r} is an update and carries no usable 'destination_id' "
+                    f"(found {recorded_id!r}). A format-{format_version} update is keyed by the "
+                    "destination id recorded for it at plan time."
+                )
+                raise ValueError(msg)
+        elif recorded_id is not None:
+            msg = (
+                f"Operation {identifier!r} is a {data.get('action')!r} and must carry no "
+                f"'destination_id' (found {recorded_id!r}): it names no existing destination object."
+            )
+            raise ValueError(msg)
+        return data
 
     @model_validator(mode="after")
     def _validate_record(self) -> PlannedOperation:
@@ -442,6 +513,12 @@ class ApplyRecord:
     applied_operations: tuple[str, ...] = ()
     skipped_delete_operations: tuple[str, ...] = ()
     failed_operation: str | None = None
+    # Whether the failing operation reached a destination mutation. `None` is "unknown",
+    # which is what every failure meant before this field existed; `False` is carried up
+    # from a refusal that attempted no mutation, or that the destination proved wrote
+    # nothing. `True` is never set — an operation that failed after dispatching is exactly
+    # the case that cannot be known.
+    failed_operation_wrote: bool | None = None
 
     @property
     def skipped_delete_count(self) -> int:
@@ -460,11 +537,17 @@ class ApplyRecord:
 
         Deliberately "may". An operation is one destination mutation, and one mutation can
         still commit remotely before its response — or the transport carrying it — fails; the
-        engine learns only that the call raised, never how far it got. So the marker is true
-        for any failed operation and false otherwise, which is the reading that never
+        engine learns only that the call raised, never how far it got. So the marker stays
+        true for any failed operation whose reach is unknown, which is the reading that never
         understates what reached the destination.
+
+        The one exception is a failure that is **proven** not to have written: a refusal
+        raised before the SDK write, or one carrying the destination's own not-found for an
+        id-keyed upsert, which creates nothing. Reporting those as possibly-partial made
+        every such refusal indistinguishable from a real interruption and sent an operator
+        to reconcile a destination that was never touched (S6).
         """
-        return self.failed_operation is not None
+        return self.failed_operation is not None and self.failed_operation_wrote is not False
 
     def as_summary_keys(self) -> dict[str, Any]:
         """Render the record as the run-summary keys, ready to merge (AD062).
@@ -480,6 +563,7 @@ class ApplyRecord:
             "skipped_delete_operations": list(self.skipped_delete_operations),
             "skipped_delete_count": self.skipped_delete_count,
             "failed_operation": self.failed_operation,
+            "failed_operation_wrote": self.failed_operation_wrote,
             "may_have_partially_written": self.may_have_partially_written,
         }
 

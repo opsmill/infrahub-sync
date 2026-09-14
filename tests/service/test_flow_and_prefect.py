@@ -37,8 +37,9 @@ from infrahub_sync.orchestration.flow import infrahub_sync_run
 from infrahub_sync.plan.errors import (
     OperationApplyFailedError,
     PeerNotFoundError,
+    StaleDestinationIdError,
     UnaccountedIdentityComponentError,
-    UnkeyedWriteRefusedError,
+    UnkeyedCreateRefusedError,
 )
 from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.review import SavedPlan
@@ -513,17 +514,20 @@ def test_service_apply_failure_retains_partial_write_evidence(
 
     stored = projection.lookup_run(run_id).value
     assert stored is not None
-    assert stored.phase == "apply-failed"
-    assert stored.outcome == "failed"
+    # The record names a failing operation whose reach is unknown, so the run says the same
+    # thing the record does. It used to say `failed` while carrying
+    # `may_have_partially_written: True` — a verdict its own evidence contradicted (S6).
+    assert stored.phase == "apply-interrupted"
+    assert stored.outcome == "ambiguous"
     assert stored.summary["may_have_partially_written"] is True
     assert stored.results["apply_failure"] == {
         "stage": "apply",
-        "outcome": "failed",
+        "outcome": "ambiguous",
         "error_type": "OperationApplyFailedError",
         "cause_type": None,
         **partial.as_summary_keys(),
     }
-    assert stored.prefect_executions[0].terminal_state == "failed"
+    assert stored.prefect_executions[0].terminal_state == "interrupted"
 
 
 @pytest.mark.usefixtures("_claimed_worker_execution")
@@ -1055,7 +1059,7 @@ async def test_prefect_extras_deployment_converges_the_service_catalogue_offline
 # wrapper is the same for all of them, so a gate whose subject is one refusal has
 # only the recorded cause to read.
 WRAPPED_APPLY_FAILURES = (
-    UnkeyedWriteRefusedError("an operation rendered no usable key"),
+    UnkeyedCreateRefusedError("a create carries no usable convergence key"),
     PeerNotFoundError("a peer identity matched nothing at the destination"),
     UnaccountedIdentityComponentError("an identity component is unaccounted for"),
     SDKGraphQLError(errors=[{"message": "the destination refused the mutation"}]),
@@ -1071,9 +1075,10 @@ def test_a_wrapped_apply_failure_records_the_class_it_was_raised_from(
 ) -> None:
     """One wrapper, and the recorded cause is what tells these apart.
 
-    Without it an unkeyed render, a peer that matched nothing and a destination's
-    own rejection are one indistinguishable `OperationApplyFailedError` in the
-    run record -- and a gate asserting that *this* refusal happened has nothing to
+    Without it a create that cannot be proven keyed, a peer that matched nothing
+    and a destination's own rejection are one indistinguishable
+    `OperationApplyFailedError` in the run record -- and a gate asserting that
+    *this* refusal happened has nothing to
     assert against.
     """
     run_id = f"run-cause-{type(cause).__name__.lower()}"
@@ -1154,3 +1159,113 @@ def test_the_recorded_cause_carries_a_class_name_and_never_a_message(
 
     assert stored.results["apply_failure"]["cause_type"] == "GraphQLError"
     assert canary not in stored.model_dump_json()
+
+
+# ---------------------------------------------------------------------------------------
+# S6 — a refusal proven not to have written is not an ambiguous run
+# ---------------------------------------------------------------------------------------
+
+
+def _apply_failure_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    run_id: str,
+    record: ApplyRecord,
+    cause: Exception,
+) -> tuple[dict[str, Any], Any]:
+    """Drive one wrapped apply failure through the service and return its evidence and run."""
+    projection = _create_product_run(tmp_path.resolve(), run_id)
+    monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+    bind_granting_guard(monkeypatch, service_flow)
+    monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
+    monkeypatch.setattr(service_flow, "resolve_runtime_instance", _instance)
+    monkeypatch.setattr(service_flow, "collect_secret_values", lambda _instance=None: ())
+    monkeypatch.setattr(service_flow, "_verify_registered_apply", lambda **_kwargs: None)
+    monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
+
+    def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
+        msg = "applying an operation failed"
+        raise OperationApplyFailedError(msg, apply_record=record) from cause
+
+    monkeypatch.setattr(service_flow, "execute_run", fail_apply)
+
+    with pytest.raises(RuntimeError):
+        service_sync_run.fn(
+            run_id,
+            "apply",
+            *_binding(projection, run_id),
+            expected_checksum="a" * 64,
+            confirm_writes=True,
+        )
+
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    return stored.results["apply_failure"], stored
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_a_refusal_proven_not_to_have_written_is_failed_and_needs_no_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """S6: sending an operator to reconcile a destination that was never touched is a defect."""
+    evidence, stored = _apply_failure_outcome(
+        monkeypatch,
+        tmp_path,
+        run_id="run-s6-not-written",
+        record=ApplyRecord(failed_operation="op-failed", failed_operation_wrote=False),
+        cause=StaleDestinationIdError("the recorded id matches no object"),
+    )
+
+    assert evidence["outcome"] == "failed"
+    assert evidence["failed_operation_wrote"] is False
+    assert evidence["may_have_partially_written"] is False
+    # `reconciliation_required` derives from exactly this verdict, so the phase is what
+    # decides it; the derivation itself is asserted in the product-store suite.
+    assert stored.phase == "apply-failed"
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_a_failure_whose_reach_is_unknown_stays_ambiguous(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A transport failure can commit remotely before it fails, so it is still ambiguous."""
+    evidence, stored = _apply_failure_outcome(
+        monkeypatch,
+        tmp_path,
+        run_id="run-s6-unknown",
+        record=ApplyRecord(failed_operation="op-failed"),
+        cause=SDKGraphQLError(errors=[{"message": "the destination refused the mutation"}]),
+    )
+
+    assert evidence["outcome"] == "ambiguous"
+    assert evidence["failed_operation_wrote"] is None
+    assert evidence["may_have_partially_written"] is True
+    assert stored.phase == "apply-interrupted"
+
+
+@pytest.mark.usefixtures("_claimed_worker_execution")
+def test_a_completed_record_is_left_to_the_dispatch_rule(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A post-write failure carries a **completed** record, which names no failing operation.
+
+    The sharper per-operation reading therefore does not apply to it, and the
+    `dispatch_started` rule decides it as before — which is why that rule is kept rather than
+    replaced. Nothing dispatched in this harness, so the rule answers `failed` here; in a real
+    apply that reached its write it answers interrupted/ambiguous.
+    """
+    evidence, stored = _apply_failure_outcome(
+        monkeypatch,
+        tmp_path,
+        run_id="run-s6-post-write",
+        record=ApplyRecord(applied_operations=("op-a", "op-b")),
+        cause=SDKGraphQLError(errors=[{"message": "the sidecar transition failed"}]),
+    )
+
+    assert evidence["failed_operation"] is None, "A completed record names no failing operation."
+    assert evidence["may_have_partially_written"] is False
+    assert stored.phase == "apply-failed"

@@ -51,8 +51,7 @@ from infrahub_sync.plan.errors import (
     PeerAmbiguousError,
     PeerNotFoundError,
     PlanVerificationError,
-    UnaccountedIdentityComponentError,
-    UnkeyedWriteRefusedError,
+    UnkeyedCreateRefusedError,
 )
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import ApplyRecord, PlannedOperation, RelationshipReference
@@ -81,6 +80,8 @@ TEAM_KIND = "TestTeam"
 GROUP_KIND = "TestGroup"
 
 NODE_ID = "written-node-1"
+# The destination id a fixture update carries unless its case is about the id itself.
+DEFAULT_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
 
 
 def _text(attr_id: str, name: str, *, optional: bool = True) -> AttributeSchemaAPI:
@@ -130,8 +131,9 @@ TAG_SCHEMA = NodeSchemaAPI(
     relationships=[],
 )
 
-# A human-friendly ID that **crosses a relationship**: the client cannot form the `hfid`
-# from a peer supplied as a resolved node id, so this kind renders unkeyed today (AD066).
+# A human-friendly ID that **crosses a relationship**: the client cannot form an `hfid` from a
+# peer supplied as a resolved node id, so this kind renders no key on the wire. The server
+# matches a create on the components in `data`, so it converges anyway (AD067 closed).
 DEVICE_SCHEMA = NodeSchemaAPI(
     id="device-schema",
     name="Device",
@@ -382,7 +384,11 @@ def make_operation(
     action: str = "create",
     relationships: list[RelationshipReference] | None = None,
 ) -> PlannedOperation:
-    """One planned operation, with its identifier derived the way the artifact derives it."""
+    """One planned operation, with its identifier derived the way the artifact derives it.
+
+    An update carries `DEFAULT_DESTINATION_ID`: plan format 3 requires one, in process exactly
+    as on disk, so a case whose subject is something else does not have to restate it.
+    """
     canonical = canonical_identity(identity, kind=kind)
     return PlannedOperation(
         operation_id=operation_id(action, kind, canonical),
@@ -392,6 +398,7 @@ def make_operation(
         tier=0,
         payload=payload,
         relationships=relationships,
+        destination_id=DEFAULT_DESTINATION_ID if action == "update" else None,
     )
 
 
@@ -644,13 +651,18 @@ def test_generate_payload_create_receives_the_source_owner_and_protection_argume
 
 
 def test_a_payload_missing_an_identity_component_is_refused_before_any_write() -> None:
-    """AD042/AD051: a payload assembled from attributes alone leaves the upsert unkeyed."""
+    """AD042: a create whose identity does not name every HFID component cannot key itself.
+
+    `TestOrphan`'s human-friendly ID is `code`, which its identity does not name, so the
+    payload assembled from that identity carries no value the destination can match on. The
+    refusal names the component rather than merely reporting that the write was unkeyed.
+    """
     client = RecordingClient()
     adapter = make_adapter(client)
 
     operation = make_operation(kind=ORPHAN_KIND, identity={"name": "orphan-a"}, payload={"name": "orphan-a"})
 
-    with pytest.raises(UnaccountedIdentityComponentError) as excinfo:
+    with pytest.raises(UnkeyedCreateRefusedError) as excinfo:
         adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
 
     message = str(excinfo.value)
@@ -658,146 +670,6 @@ def test_a_payload_missing_an_identity_component_is_refused_before_any_write() -
     assert ORPHAN_KIND in message
     assert operation.operation_id in message
     assert not client.mutations, "Nothing may reach the destination once the payload is refused."
-
-
-def test_an_unkeyed_render_for_an_all_direct_hfid_kind_is_refused() -> None:
-    """The gate reads the **rendered mutation**, not the assembled data."""
-    client = RecordingClient()
-    adapter = make_adapter(client)
-    operation = make_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
-    node = client.create(kind=SITE_KIND, data={"description": {"value": "carries no name at all"}})
-
-    with pytest.raises(UnkeyedWriteRefusedError) as excinfo:
-        adapter._require_keyed_render(node=node, operation=operation)
-
-    message = str(excinfo.value)
-    assert SITE_KIND in message
-    assert operation.operation_id in message
-    assert "attempted no destination mutation" in message
-    assert not client.mutations, "The gate runs before the write is issued."
-
-
-def test_a_kind_declaring_no_human_friendly_id_is_refused_before_its_own_mutation() -> None:
-    """A kind with no convergence key cannot render one, so its write is not issued."""
-    client = RecordingClient()
-    adapter = make_adapter(client)
-
-    operation = make_operation(kind=KEYLESS_KIND, identity={"name": "keyless-a"}, payload={"name": "keyless-a"})
-
-    with pytest.raises(UnkeyedWriteRefusedError):
-        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
-
-    assert not client.mutations, "The refused operation makes zero mutation calls."
-
-
-def test_a_relationship_crossing_kind_is_refused_before_its_own_mutation() -> None:
-    """A key the client cannot form from a resolved peer id is refused, not written unkeyed."""
-    client = RecordingClient()
-    adapter = make_adapter(client)
-    peers = PeerResolver(adapter)
-    peers.remember(SITE_KIND, {"name": "site-a"}, "site-id-1")
-
-    with pytest.raises(UnkeyedWriteRefusedError):
-        adapter.apply_planned_operation(operation=device_operation("device-a"), peers=peers)
-
-    assert not client.mutations, "The refused operation makes zero mutation calls."
-
-
-@pytest.mark.parametrize("action", ["create", "update"])
-def test_the_gate_precedes_the_sdk_mutation_for_both_write_actions(action: str) -> None:
-    """Create and update route through the same upsert, so they take the same gate."""
-    client = RecordingClient()
-    adapter = make_adapter(client)
-
-    keyed = make_operation(kind=SITE_KIND, action=action, identity={"name": "site-a"}, payload={"name": "site-a"})
-    assert adapter.apply_planned_operation(operation=keyed, peers=PeerResolver(adapter)) == NODE_ID
-    assert client.mutation_names == [f"{SITE_KIND}Upsert"], "A keyed render is written."
-
-    unkeyed = make_operation(
-        kind=KEYLESS_KIND, action=action, identity={"name": "keyless-a"}, payload={"name": "keyless-a"}
-    )
-    with pytest.raises(UnkeyedWriteRefusedError):
-        adapter.apply_planned_operation(operation=unkeyed, peers=PeerResolver(adapter))
-
-    assert client.mutation_names == [f"{SITE_KIND}Upsert"], "The unkeyed operation added no mutation."
-
-
-def test_a_keyed_hfid_render_is_written_through_the_real_transport() -> None:
-    """The positive arm, end to end: a keyed render reaches the wire carrying its `hfid`.
-
-    `hfid` is the only key a planned write can genuinely render. The plan carries no destination
-    UUID — a saved-plan apply performs no destination load, so nothing can supply one — and a
-    payload field literally named `id` is not one either: `generate_payload_create` wraps it as
-    an attribute block, which is the case the next test pins.
-    """
-    client = RecordingClient()
-    adapter = make_adapter(client)
-    operation = make_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
-
-    node_id = adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
-
-    assert client.mutation_names == [f"{SITE_KIND}Upsert"], "The keyed render is issued as one convergent upsert."
-    _, query = client.mutations[0]
-    assert re.search(r'hfid:\s*\[\s*"site-a",?\s*\]', query), (
-        f"The mutation must carry the human-friendly ID. Rendered:\n{query}"
-    )
-    assert 'value: "site-a"' in query, f"The payload's attributes must reach the write. Rendered:\n{query}"
-    assert node_id == NODE_ID
-
-
-def test_a_render_carrying_a_usable_id_reaches_the_write_and_returns_its_node(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The gate's `id` arm, proven at the transport rather than at the helper.
-
-    **This is gate-contract coverage, not a saved-plan path.** A saved plan carries no
-    destination UUID — FR-012 forbids the load that would supply one — so no ordinary apply
-    reaches the gate this way. The gate nonetheless permits `id`, and the only honest way to
-    show what "permits" means is to put a node carrying one in front of it and watch the write
-    happen. The node id is injected at `client.create`, which is where a destination-aware
-    caller would supply it; nothing else about the path is replaced.
-    """
-    client = RecordingClient()
-    adapter = make_adapter(client)
-    real_create = client.create
-
-    def create_with_destination_id(*args: Any, **kwargs: Any) -> InfrahubNodeSync:  # noqa: ANN401
-        node = real_create(*args, **kwargs)
-        node.id = "keyless-node-1"
-        return node
-
-    monkeypatch.setattr(client, "create", create_with_destination_id)
-    operation = make_operation(kind=KEYLESS_KIND, identity={"name": "keyless-a"}, payload={"name": "keyless-a"})
-
-    node_id = adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
-
-    assert client.mutation_names == [f"{KEYLESS_KIND}Upsert"], (
-        "A usable 'id' permits the write, so exactly one convergent upsert is issued."
-    )
-    _, query = client.mutations[0]
-    assert 'id: "keyless-node-1"' in query, f"The mutation must carry the destination id. Rendered:\n{query}"
-    assert node_id == NODE_ID, "The write surface returns the destination node id."
-
-
-def test_a_payload_field_named_id_does_not_satisfy_the_gate() -> None:
-    """A key whose rendered value is empty keys nothing, so it is refused (the `id: {}` case).
-
-    `generate_payload_create` wraps every payload field into an attribute block, so a field
-    named `id` renders as `id: {}`. That is a present key with no value: the destination cannot
-    converge on it, and a gate testing presence alone would pass an unkeyed write.
-    """
-    client = RecordingClient()
-    adapter = make_adapter(client)
-    operation = make_operation(
-        kind=KEYLESS_KIND,
-        identity={"name": "keyless-a"},
-        payload={"name": "keyless-a", "id": "keyless-node-1"},
-    )
-
-    with pytest.raises(UnkeyedWriteRefusedError):
-        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
-
-    assert not client.mutations, "The refused operation makes zero mutation calls."
 
 
 # ---------------------------------------------------------------------------------------
@@ -1322,12 +1194,17 @@ def test_a_mid_apply_rejection_surfaces_the_rejection_not_the_knowability_invari
 
 
 def test_a_refused_operation_stops_the_apply_and_leaves_the_prior_write_recorded(tmp_path: Path) -> None:
-    """Apply is sequential: an earlier keyed write stands, and no later operation executes."""
+    """Apply is sequential: an earlier keyed write stands, and no later operation executes.
+
+    The middle operation is refused by the create guard's coverage arm: `TestOrphan`'s
+    human-friendly ID is `code`, which its identity does not name at all, so the create cannot
+    be proven keyed and is refused before `client.create`.
+    """
     directory = apply_run_dir(tmp_path)
     keyed = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
-    unkeyed = operation_record(kind=KEYLESS_KIND, identity={"name": "keyless-a"})
+    refused = operation_record(kind=ORPHAN_KIND, identity={"name": "orphan-a"})
     later = operation_record(kind=TAG_KIND, identity={"name": "tag-z"})
-    write_artifact(directory, [keyed, unkeyed, later], run_id=APPLY_RUN_ID, source_snapshot=[])
+    write_artifact(directory, [keyed, refused, later], run_id=APPLY_RUN_ID, source_snapshot=[])
 
     client = RecordingClient()
     adapter = make_adapter(client)
@@ -1340,7 +1217,103 @@ def test_a_refused_operation_stops_the_apply_and_leaves_the_prior_write_recorded
     )
     record = outcome.apply_record
     assert list(record.applied_operations) == [keyed["operation_id"]]
-    assert record.failed_operation == unkeyed["operation_id"]
+    assert record.failed_operation == refused["operation_id"]
+
+
+def test_a_refusal_that_wrote_nothing_says_so_rather_than_claiming_a_possible_partial(tmp_path: Path) -> None:
+    """S6 reaches the operator's words, not only the run record.
+
+    The record and the message are what an operator acts on together, so a refusal the record
+    marks as having written nothing must not be described as one that may have written part
+    of its change — that is the sentence that sends someone to reconcile a destination this
+    operation never touched.
+    """
+    directory = apply_run_dir(tmp_path)
+    refused = operation_record(kind=ORPHAN_KIND, identity={"name": "orphan-a"})
+    write_artifact(directory, [refused], run_id=APPLY_RUN_ID, source_snapshot=[])
+
+    client = RecordingClient()
+    _state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert isinstance(outcome, OperationApplyFailedError)
+    assert outcome.apply_record.failed_operation_wrote is False
+    assert "attempted no destination write" in str(outcome)
+    assert "may itself have written" not in str(outcome)
+    assert "wrote nothing" in outcome.next_action
+    assert not client.mutations
+
+
+def test_a_failure_of_unknown_reach_still_warns_that_it_may_have_written(tmp_path: Path) -> None:
+    """The unchanged half: a destination rejection mid-write keeps the partial-write warning."""
+    directory = apply_run_dir(tmp_path)
+    write_artifact(
+        directory,
+        [operation_record(kind=SITE_KIND, identity={"name": "site-a"})],
+        run_id=APPLY_RUN_ID,
+        source_snapshot=[],
+    )
+
+    client = RecordingClient()
+    client.write_error = GraphQLError([{"message": "the destination rejected this object"}], query="mutation { }")
+    _state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert isinstance(outcome, OperationApplyFailedError)
+    assert outcome.apply_record.failed_operation_wrote is None
+    assert "may itself have written" in str(outcome)
+
+
+def test_a_uniqueness_refusal_is_not_described_as_something_re_applying_fixes(tmp_path: Path) -> None:
+    """The one destination rejection where "re-apply, it converges" is a loop, not a remedy.
+
+    The plan proposes a create; the destination already holds an object the constraint collides
+    with. Applying the same plan again proposes the same create and is refused identically, so
+    the advice has to be a fresh `diff` — or reconciling the object that is in the way.
+    """
+    directory = apply_run_dir(tmp_path)
+    write_artifact(
+        directory,
+        [operation_record(kind=SITE_KIND, identity={"name": "site-a"})],
+        run_id=APPLY_RUN_ID,
+        source_snapshot=[],
+    )
+    client = RecordingClient()
+    client.write_error = GraphQLError(
+        [
+            {
+                "message": "Violates uniqueness constraint 'name-scope'",
+                "extensions": {"code": "UNDEFINED_ERROR", "http_status": 422},
+            }
+        ],
+        query="mutation { }",
+    )
+
+    _state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert isinstance(outcome, OperationApplyFailedError)
+    assert "re-applying the plan converges it" not in str(outcome)
+    assert "refused the same way" in str(outcome)
+    assert "re-run `diff`" in outcome.next_action
+    assert "converges rather than duplicating" not in outcome.next_action
+    assert "uniqueness constraint 'name-scope'" in str(outcome), "The classifier still names the constraint."
+
+
+def test_an_ordinary_destination_rejection_still_advises_re_applying(tmp_path: Path) -> None:
+    """The unchanged majority: a rejection of unknown reach converges on re-apply (AD033)."""
+    directory = apply_run_dir(tmp_path)
+    write_artifact(
+        directory,
+        [operation_record(kind=SITE_KIND, identity={"name": "site-a"})],
+        run_id=APPLY_RUN_ID,
+        source_snapshot=[],
+    )
+    client = RecordingClient()
+    client.write_error = GraphQLError([{"message": "the destination rejected this object"}], query="mutation { }")
+
+    _state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert isinstance(outcome, OperationApplyFailedError)
+    assert "re-applying the plan converges it" in str(outcome)
+    assert "converges rather than duplicating" in outcome.next_action
 
 
 def test_the_reviewed_operation_identifiers_equal_the_applied_record_in_the_same_order(

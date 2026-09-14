@@ -13,8 +13,9 @@
     "              renders `<rel>: null` for exactly this shape on a node it considers existing,",
     "              so the upsert must never name it. Without the shape in the fixture the harness",
     "              cannot see that, which is how the defect reached the tree. Do not remove it;",
-    "  ConfDevice- a human-friendly ID that CROSSES A RELATIONSHIP, which cannot render keyed",
-    "              client-side, so the keyedness gate refuses its planned write (AD066)."
+    "  ConfDevice- a human-friendly ID that CROSSES A RELATIONSHIP, which renders no key on the",
+    "              wire client-side. The destination converges it on the complete HFID",
+    "              components in `data`, so it is written like any other kind (AD067 closed)."
   ],
   "nodes": [
     {

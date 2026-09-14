@@ -48,11 +48,17 @@ from diffsync.exceptions import ObjectNotFound
 
 from infrahub_sync.plan.canonical import canonical_json_bytes, canonical_value
 from infrahub_sync.plan.errors import (
+    MissingDestinationIdError,
     SourcePeerUnresolvedError,
     UnformableDestinationIdentityError,
     UnwalkedDiffChildrenError,
 )
 from infrahub_sync.plan.identity import canonical_identity, operation_id
+from infrahub_sync.plan.keying import (
+    _component_field,
+    _refuse_destination_identity_collisions,
+    refuse_unkeyed_create,
+)
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
 if TYPE_CHECKING:
@@ -65,12 +71,8 @@ logger = logging.getLogger(__name__)
 # The action an element carries when the object exists at the destination and not at the
 # source. Skipped while walking the diff so deletes come from `derive_deletes` alone.
 DIFF_DELETE_ACTION = "delete"
-
-# Separator between the segments of a *schema* component path — `name__value` for a direct
-# attribute, `site__name__value` for one that crosses a relationship. Named so the "never
-# split a unique-id on `__`" rule has something to point at: the only thing this module
-# splits on it is a schema path, in `_component_field`.
-COMPONENT_PATH_SEPARATOR = "__"
+# The diff action whose operation is keyed by a recorded destination id (plan format 3).
+DIFF_UPDATE_ACTION = "update"
 
 
 class _ResolvedReference(NamedTuple):
@@ -424,12 +426,113 @@ def tier_of(kind: str, *, tiers: Sequence[set[str]] | None, top_level: Sequence[
     raise ValueError(msg)
 
 
+def _destination_ids_for_kind(destination_adapter: Any, kind: str) -> dict[str, str | None]:
+    """The destination node id each object of `kind` carries, by its DiffSync unique id.
+
+    The id lives on the destination model's `local_id`, which a live destination load sets
+    and the warm path restores from the side-B snapshot. `None` where the model carries
+    none: absent and present-but-unset are the same refusal, and telling them apart would
+    only change the wording.
+    """
+    records = list(destination_adapter.get_all(kind)) if hasattr(destination_adapter, "get_all") else []
+    for record in records:
+        _require_shortname_is_the_unique_id(record, kind=kind)
+    return {record.get_unique_id(): getattr(record, "local_id", None) for record in records}
+
+
+def _require_shortname_is_the_unique_id(record: Any, *, kind: str) -> None:
+    """Refuse a destination model whose shortname is not its unique id.
+
+    The update's id is looked up by `element.name`, and DiffSync sets that from
+    `get_shortname()` — which its own source notes is "NOT guaranteed globally unique". It
+    equals `get_unique_id()` only while `_shortname` is unset, which is true of every model
+    the generator emits today and is the reason the lookup works at all.
+
+    A model that later declares `_shortname` would break that silently and completely: every
+    lookup would miss, every update would be refused as having no recorded destination id, and
+    the message would blame the destination load. So the assumption is checked where it is
+    relied on rather than left to be rediscovered from that symptom.
+    """
+    shortname = record.get_shortname() if hasattr(record, "get_shortname") else None
+    if shortname is None:
+        return
+    unique_id = record.get_unique_id()
+    if shortname != unique_id:
+        msg = (
+            f"Destination kind {kind!r} declares a DiffSync '_shortname', so its element name "
+            f"{shortname!r} is not its unique id {unique_id!r}. Plan derivation looks an update's "
+            "recorded destination id up by element name, so every update of this kind would be refused. "
+            "Remove '_shortname' from the model, or key this lookup by unique id on both sides."
+        )
+        raise AssertionError(msg)
+
+
+def _require_destination_id(
+    *,
+    destination_ids: Mapping[str, str | None],
+    unique_id: str,
+    kind: str,
+    identity: Mapping[str, Any],
+) -> str:
+    """The recorded destination id for one update, or the refusal that names what is missing.
+
+    An update reaches apply keyed by this id alone. Recording the operation without one
+    would leave apply to issue the same create-shaped convergent upsert a create issues,
+    which the server matches on HFID components — and which silently creates a second object
+    when one of those components is absent from the payload (G1 M6). So a missing id is a
+    plan-time refusal rather than a warning.
+    """
+    recorded = destination_ids.get(unique_id)
+    if isinstance(recorded, str) and recorded:
+        return recorded
+    found = "no destination object for this identity" if unique_id not in destination_ids else repr(recorded)
+    msg = (
+        f"Planned update of {kind!r} object {dict(identity)!r} carries no destination id: {found}. "
+        "An update is keyed by the destination id recorded for it at plan time, so this operation "
+        "cannot be recorded."
+    )
+    raise MissingDestinationIdError(msg)
+
+
+def _warn_dropped_cardinality_one_clear(
+    *,
+    action: str,
+    kind: str,
+    identity: Mapping[str, Any],
+    candidates: Mapping[str, tuple[str, ...]],
+    values: Mapping[str, Any],
+) -> None:
+    """`[S7]` Disclose a null cardinality-one peer that the plan cannot represent.
+
+    `_resolve_references` treats a `None`-valued reference field as absent, so the derived
+    operation carries no reference for it and the apply leaves the destination relationship
+    alone. On a **create** that is the established and correct omission — there is nothing to
+    clear. On an **update** the null is a real difference between the two sides that the plan
+    silently drops, and plan format 3 adds no encoding for a clear, so the only honest thing
+    to do is say so here, where the null is still visible.
+    """
+    if action != "update":
+        return
+    dropped = sorted(field for field in candidates if field in values and values[field] is None)
+    if not dropped:
+        return
+    logger.warning(
+        "Plan: update of destination kind %s (%s) drops null cardinality-one relationship field(s) %s. "
+        "The plan format cannot represent a relationship clear, so the destination relationship is "
+        "not changed. Clear it at the destination if the clear was intended",
+        kind,
+        ", ".join(f"{name}={value!r}" for name, value in sorted(identity.items())),
+        ", ".join(dropped),
+    )
+
+
 def operations_from_diff(  # pylint: disable=redefined-outer-name
     diff: Any,
     *,
     config: SyncConfig | None,
     tier_of: Callable[[str], int],
     source_adapter: Any,
+    destination_adapter: Any,
 ) -> list[PlannedOperation]:
     """Derive the create and update operations a comparison result proposes (FR-002).
 
@@ -453,6 +556,9 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
     store = source_adapter.store
     operations: list[PlannedOperation] = []
     children = diff.children
+    # Read once per kind rather than per element: an update's id is looked up by unique id,
+    # and the destination store is already fully in memory by the time derivation runs.
+    destination_ids_by_kind: dict[str, dict[str, str | None]] = {}
     for group, elements_by_name in children.items():
         for element in elements_by_name.values():
             kind = getattr(element, "type", None) or group
@@ -477,12 +583,25 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
                 owning_kind=kind,
             )
             identity = _identity_from_keys(keys=keys, kind=kind, resolved=resolved)
+            _warn_dropped_cardinality_one_clear(
+                action=action, kind=kind, identity=identity, candidates=candidates, values=merged
+            )
             payload = {
                 name: canonical_value(value, kind=kind, field=name)
                 for name, value in merged.items()
                 if name not in candidates
             }
             references = [resolved[field].reference(field) for field in sorted(resolved)]
+            destination_id = None
+            if action == DIFF_UPDATE_ACTION:
+                if kind not in destination_ids_by_kind:
+                    destination_ids_by_kind[kind] = _destination_ids_for_kind(destination_adapter, kind)
+                destination_id = _require_destination_id(
+                    destination_ids=destination_ids_by_kind[kind],
+                    unique_id=element.name,
+                    kind=kind,
+                    identity=identity,
+                )
             operations.append(
                 PlannedOperation(
                     operation_id=operation_id(action, kind, identity),
@@ -492,6 +611,7 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
                     tier=tier_of(kind),
                     payload=payload,
                     relationships=references or None,
+                    destination_id=destination_id,
                 )
             )
     return operations
@@ -560,17 +680,6 @@ def derive_deletes(  # pylint: disable=redefined-outer-name
                 )
             )
     return operations
-
-
-def _component_field(component: str) -> str:
-    """The mapping field name a schema component path starts with.
-
-    Infrahub writes a human-friendly-ID component and a uniqueness-constraint component as
-    a path — `name__value` for a direct attribute, `site__name__value` for one that crosses
-    a relationship — while the plan's destination identity is keyed by the mapping field
-    name, which is the path's first segment.
-    """
-    return component.split(COMPONENT_PATH_SEPARATOR, 1)[0]
 
 
 def _identity_attributes_by_kind(operations: Sequence[PlannedOperation]) -> dict[str, set[str]]:
@@ -681,51 +790,77 @@ def _warn_identity_finer_than_destination_key(
 
 
 def warn_missing_convergence_key(*, destination: Any, operations: Sequence[PlannedOperation]) -> None:
-    """Warn where a destination kind's convergent write may not be keyed (FR-024, AD044).
+    """Prove every create keys itself, and warn about what only an update risks (FR-024, AD044).
 
-    Three independent conditions, all read from the same cached destination schema object,
-    each warned about on the **log stream** naming the kind and what is missing:
+    A **create** is matched by the destination on the components its payload carries, so a
+    payload missing one does not match the existing object: the server reports success and
+    creates a second one, and nothing downstream can detect it. That cannot be a warning, so
+    every create is proven here, per operation, and refused where the proof fails —
+    `UnkeyedCreateRefusedError` for a create that cannot key itself, and
+    `DestinationIdentityCollisionError` where several creates project onto one destination
+    identity and would silently converge into one object.
 
-    1. the kind declares no `human_friendly_id`, or the plan's identity does not supply
-       every one of its components — what observable convergence rides on;
-    2. the kind declares no `uniqueness_constraints` entry covered by the plan's identity
-       attributes — a different condition, because a kind with a complete human-friendly ID
-       and no uniqueness constraint still duplicates silently;
+    An **update** is keyed by the destination id recorded for it at plan time, so none of
+    these conditions can make it write the wrong object. Every arm therefore stays a warning
+    for updates, which is what makes kinds with no human-friendly ID usable at all:
+
+    1. the kind declares no `human_friendly_id`, or the plan's identity does not supply every
+       one of its components;
+    2. no `uniqueness_constraints` entry is covered by the plan's identity attributes — a
+       different condition, because a kind with a complete human-friendly ID and no
+       uniqueness constraint still duplicates silently;
     3. no key the destination declares covers the plan's identity — the opposite direction,
        where source objects **merge** rather than duplicate; see
        `_warn_identity_finer_than_destination_key`.
 
     **Guarded on the destination exposing a schema at all (AD052)**, since `self.schema` is
     defined on the Infrahub adapter and on no other while derivation runs for every
-    destination. Where no schema is exposed the warning is skipped, and skipping it is never
-    an error.
+    destination. Where no schema is exposed the guard is skipped, and skipping it is never an
+    error — the same posture the warnings have always had.
 
-    Warning only, never a manifest field, so it stays outside `plan_checksum` and SC-006's
-    byte comparison. The plan run succeeds either way.
+    Warnings stay off the manifest, so they remain outside `plan_checksum` and SC-006's byte
+    comparison. A refusal fails the command instead (AD047), before any artifact is written.
     """
     schema = getattr(destination, "schema", None)
     if not schema:
         logger.debug("Plan: the destination exposes no schema, so the convergence-key warning is skipped (AD052)")
         return
 
-    for kind, supplied in sorted(_identity_attributes_by_kind(operations).items()):
+    by_kind = _identity_attributes_by_kind(operations)
+    for kind in sorted(by_kind):
         node = schema.get(kind) if hasattr(schema, "get") else None
         if node is None:
-            logger.debug("Plan: the destination schema declares no kind %s; convergence-key warning skipped", kind)
+            logger.debug("Plan: the destination schema declares no kind %s; convergence-key guard skipped", kind)
             continue
+        of_kind = [operation for operation in operations if operation.kind == kind]
+        creates = [operation for operation in of_kind if operation.action == "create"]
+        for operation in creates:
+            refuse_unkeyed_create(operation, node=node)
+        _refuse_destination_identity_collisions(kind=kind, node=node, creates=creates)
+
+        # The merge direction applies to every action: a create whose identity is finer than
+        # the destination's key converges onto an object it did not mean just as an update
+        # does, and a single such create is the case the collision refusal above deliberately
+        # leaves as a warning.
+        _warn_identity_finer_than_destination_key(kind=kind, node=node, supplied=by_kind[kind], operations=of_kind)
+
+        # The two arms below are about a write that might **duplicate**, which a create can no
+        # longer do — it was proven above — so they narrow to the operations that are still
+        # only warned about. Updates specifically, not "everything that is not a create": a
+        # delete is recorded and never executed (ADR 0004), so letting one into this set
+        # would both narrow the intersection and produce a message about how updates are
+        # keyed for a kind this plan only deletes.
+        updates = [operation for operation in of_kind if operation.action == "update"]
+        if not updates:
+            continue
+        supplied = set.intersection(*(set(operation.identity) for operation in updates))
         readable = ", ".join(sorted(supplied))
-        _warn_identity_finer_than_destination_key(
-            kind=kind,
-            node=node,
-            supplied=supplied,
-            operations=[operation for operation in operations if operation.kind == kind],
-        )
 
         human_friendly_id = getattr(node, "human_friendly_id", None)
         if not human_friendly_id:
             logger.warning(
-                "Plan: destination kind %s declares no human-friendly ID, so its convergent write is "
-                "unkeyed and a re-apply may duplicate it",
+                "Plan: destination kind %s declares no human-friendly ID, so its updates are keyed by "
+                "their recorded destination id alone",
                 kind,
             )
         else:
@@ -733,8 +868,8 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
             if missing:
                 logger.warning(
                     "Plan: the plan's identity for destination kind %s (%s) does not supply every "
-                    "human-friendly-ID component; missing: %s. Its convergent write is unkeyed and a "
-                    "re-apply may duplicate it",
+                    "human-friendly-ID component; missing: %s. Its updates are keyed by their recorded "
+                    "destination id, so they still write the object they mean",
                     kind,
                     readable,
                     ", ".join(missing),

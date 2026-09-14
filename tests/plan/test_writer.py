@@ -47,6 +47,8 @@ if TYPE_CHECKING:
 
 RUN_ID = "20260726T1804-9f3ac210"
 CONFIG_VERSION = "5f2c9b1e7a4d3c8f"
+# The destination id a fixture update carries unless its case is about the id itself.
+DEFAULT_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
 
 # The eight fields FR-027 fixes. Nine later outcomes read this manifest, so the set is the
 # contract and an addition here is a breaking change for all of them.
@@ -67,11 +69,16 @@ FR027_MANIFEST_FIELDS = frozenset(
 # either level fails this file instead of silently reaching nine consumers (FR-026).
 PERMITTED_OPERATION_KEY_SETS = frozenset(
     {
-        # create / update, no relationship values
+        # create, no relationship values
         frozenset({"operation_id", "action", "kind", "identity", "tier", "payload"}),
-        # create / update carrying relationship values
+        # create carrying relationship values
         frozenset({"operation_id", "action", "kind", "identity", "tier", "payload", "relationships"}),
-        # delete — no payload
+        # update — as a create, plus the destination id it is keyed by (plan format 3). The
+        # key is written for updates and omitted everywhere else, which is what keeps a
+        # format-3 create and delete byte-identical to their format-2 counterparts.
+        frozenset({"operation_id", "action", "kind", "identity", "tier", "payload", "destination_id"}),
+        frozenset({"operation_id", "action", "kind", "identity", "tier", "payload", "relationships", "destination_id"}),
+        # delete — no payload, no destination id
         frozenset({"operation_id", "action", "kind", "identity", "tier"}),
     }
 )
@@ -116,6 +123,9 @@ def _operation(  # noqa: PLR0913 — one builder per record field keeps each cas
         record["payload"] = dict(effective_identity) if payload is None else payload
     if relationships is not None:
         record["relationships"] = relationships
+    # Plan format 3 requires one on an update, in process exactly as on disk.
+    if action == "update":
+        record["destination_id"] = DEFAULT_DESTINATION_ID
     return PlannedOperation(**record)
 
 
@@ -694,6 +704,18 @@ def _all_shapes() -> list[PlannedOperation]:
         _rack_update(),
         _delete(),
         _operation(kind="LocationSite", identity={"name": "dc2"}, tier=1),
+        # An update with no relationship values, so both update shapes are written: the
+        # destination id has to appear with and without `relationships`.
+        _operation(action="update", kind="BuiltinTag", identity={"name": "staging"}, tier=1),
+        # A create carrying relationship values, which `_rack_update` no longer covers now
+        # that it is the update shape.
+        _operation(
+            kind="LocationRack",
+            identity=RACK_IDENTITY,
+            payload={"name": "dc1-rack-a"},
+            relationships=[{"field": "site", "peer_kind": "LocationSite", "cardinality": "one", "peers": [SITE_PEER]}],
+            tier=2,
+        ),
     ]
 
 

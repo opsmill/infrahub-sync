@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 # The destination SDK's error base, imported for the apply path's exception boundary below and
@@ -30,10 +32,11 @@ from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
     OperationApplyFailedError,
     PlanArtifactError,
+    PlanFormatApplyUnsupportedError,
     PlanVerificationError,
     SkippedDeleteOperation,
 )
-from infrahub_sync.plan.models import ACTIONS, ApplyRecord
+from infrahub_sync.plan.models import ACTIONS, DESTINATION_ID_FORMAT_VERSION, ApplyRecord
 from infrahub_sync.plan.write_surface import PlannedWriteDestination
 
 # Justified once here rather than per site. Nearly every `infrahub_sync`
@@ -52,7 +55,8 @@ logger = logging.getLogger(__name__)
 # whose remedy is to repair the destination and re-plan — only if it is one of these:
 #
 #   * `PlanArtifactError` — the plan taxonomy the write surface raises deliberately: a peer that
-#     matches nothing or matches many, an unaccounted identity component, an unkeyed render.
+#     matches nothing or matches many, an unaccounted identity component, a create that cannot
+#     be proven keyed, a stale recorded id.
 #   * `SkippedDeleteOperation` — the surface's defensive delete refusal. Unreachable on this
 #     loop's own path, which filters deletes before dispatch, and a designed limitation rather
 #     than a defect when some other caller provokes it.
@@ -104,6 +108,102 @@ def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> Pl
     return PlanVerificationError(msg)
 
 
+# The destination's uniqueness refusal, as measured: this exact message grammar, and
+# `extensions.http_status` 422. Both halves are required. The transport status is 200 even
+# for a refused mutation, and `extensions.code` is the generic `UNDEFINED_ERROR`, so neither
+# of those can discriminate and neither is consulted.
+#
+# The pattern is anchored at both ends and the name is bounded to a schema-identifier
+# charset, because the capture is the **only** server-authored text this module ever
+# renders. A destination can put anything after the quoted name — including something it was
+# sent — so a message that is not exactly the measured shape is not parsed for a name at
+# all; it takes the category-only summary instead and discloses nothing.
+_UNIQUENESS_MESSAGE_PATTERN = re.compile(r"^Violates uniqueness constraint '([A-Za-z0-9_.\-]{1,64})'$")
+_UNIQUENESS_HTTP_STATUS = 422
+
+
+def _uniqueness_refusal_summary(exc: GraphQLError) -> str | None:
+    """Name a uniqueness refusal, or return `None` for every other rejection.
+
+    The single, deliberate widening of what server text this module discloses: the
+    constraint name, because an operator cannot act on "a destination GraphQL rejection"
+    when the cause is a duplicate on a kind with no human-friendly ID. Nothing else from
+    the response — not the message body, not the query, not the variables — is rendered.
+
+    Matched only on the measured signature, so a rejection that merely shares its status
+    keeps the category-only summary rather than being described as something it is not. The
+    constraint name is taken from the pattern's capture and nowhere else, so no text the
+    destination appended can ride along with it.
+    """
+    for error in getattr(exc, "errors", ()) or ():
+        if not isinstance(error, Mapping):
+            continue
+        extensions = error.get("extensions")
+        message = error.get("message")
+        if not isinstance(extensions, Mapping) or not isinstance(message, str):
+            continue
+        if extensions.get("http_status") != _UNIQUENESS_HTTP_STATUS:
+            continue
+        matched = _UNIQUENESS_MESSAGE_PATTERN.match(message.strip())
+        if matched is None:
+            continue
+        constraint = matched.group(1)
+        return f"a destination uniqueness constraint {constraint!r} violated (HTTP status {_UNIQUENESS_HTTP_STATUS})"
+    return None
+
+
+def _require_applyable_format(manifest: PlanManifest, *, run_id: str) -> None:
+    """Refuse a plan whose format this version can read and review but not apply.
+
+    A format-2 plan records no destination id on its updates, and an update is keyed by that
+    id alone. Applying one would fall back to the create-shaped convergent upsert, whose
+    failure mode on an incomplete payload is a silent duplicate — so the plan is read,
+    rendered for review, and refused at the write.
+    """
+    if manifest.format_version >= DESTINATION_ID_FORMAT_VERSION:
+        return
+    msg = (
+        f"The plan artifact of run {run_id!r} declares format version {manifest.format_version}, which "
+        f"this version of infrahub-sync can read and review but cannot apply: its updates carry no "
+        f"recorded destination id, so they cannot be keyed. Nothing was written to the destination."
+    )
+    raise PlanFormatApplyUnsupportedError(msg)
+
+
+def _failure_reach_and_remedy(exc: Exception, *, record: ApplyRecord) -> tuple[str, str | None]:
+    """How far the failing operation got, and what the operator should do about it.
+
+    Three cases, and the message and the next action have to agree on which one it is.
+
+    A refusal the record marks `failed_operation_wrote is False` attempted no destination
+    mutation of its own, so it must not be described as a possible partial write (S6). The
+    claim is about **this** operation: operations applied earlier in the plan stay written.
+
+    A uniqueness refusal is the one destination rejection re-applying cannot fix. The plan
+    proposes a create, the destination already holds an object the constraint collides with,
+    and applying the same plan again proposes the same create and is refused identically —
+    so "re-apply, it converges" is a loop, and the remedy is a fresh `diff`.
+
+    Everything else has unknown reach and converges on re-apply (AD033), which is the
+    unchanged majority and the default `next_action`.
+    """
+    if record.failed_operation_wrote is False:
+        return (
+            "this operation attempted no destination write, so the destination is otherwise as it was",
+            OperationApplyFailedError.NOT_WRITTEN_NEXT_ACTION,
+        )
+    if isinstance(exc, GraphQLError) and _uniqueness_refusal_summary(exc) is not None:
+        return (
+            "the destination refused this operation for an existing object it conflicts with, so "
+            "re-applying the same plan is refused the same way",
+            OperationApplyFailedError.UNIQUENESS_NEXT_ACTION,
+        )
+    return (
+        "this operation may itself have written part of its change before failing — re-applying the plan converges it",
+        None,
+    )
+
+
 def _operational_failure_summary(exc: Exception) -> str:
     """Return stable operator context without rendering untrusted SDK/server text.
 
@@ -116,7 +216,7 @@ def _operational_failure_summary(exc: Exception) -> str:
     if isinstance(exc, ServerNotResponsiveError):
         return "a destination timeout (ServerNotResponsiveError)"
     if isinstance(exc, GraphQLError):
-        return "a destination GraphQL rejection (GraphQLError)"
+        return _uniqueness_refusal_summary(exc) or "a destination GraphQL rejection (GraphQLError)"
     if isinstance(exc, InfrahubSDKError):
         return f"a destination SDK failure ({type(exc).__name__})"
     # PlanArtifactError and SkippedDeleteOperation are in-tree, purpose-built
@@ -261,10 +361,16 @@ class Potenda:
             # any required identifier field. `get_identifiers` is guarded for
             # adapter stubs that don't implement it; falling back to just
             # attributes is what the pre-fix behavior did.
+            # Side B additionally carries `local_id`, the destination node id an update is
+            # keyed by. Without it a warm run rebuilds destination models with no id and
+            # every derived update is refused. It is written as its own column and never
+            # conflated with the engine-controlled `_source_id`, which is DiffSync's
+            # unique-id string and keys nothing at the destination.
             rows = [
                 {
                     **(r.get_identifiers() if hasattr(r, "get_identifiers") else {}),
                     **r.get_attrs(),
+                    **({"local_id": getattr(r, "local_id", None)} if side == "B" else {}),
                 }
                 for r in records
             ]
@@ -292,6 +398,7 @@ class Potenda:
             hydrate_from_parquet,
             load_cursors,
             should_use_incremental,
+            snapshot_carries_local_id,
         )
 
         prev_run = self._previous_run()
@@ -324,6 +431,19 @@ class Potenda:
             if model_cls is None:
                 continue
             if cursor is None or tier_supported is CursorTier.NONE:
+                adapter.model_loader(model_name=resource, model=model_cls)  # ty: ignore[unresolved-attribute]
+                continue
+
+            # A side-B snapshot written before plan format 3 has no `local_id` column, so
+            # hydrating from it would rebuild destination models with no destination id and
+            # every derived update would be refused. Treat it as a cache miss for this
+            # resource and extract it fully instead, saying why.
+            if side == "B" and not snapshot_carries_local_id(run_dir=prev_run, side=side, resource=resource):
+                logger.info(
+                    "Incremental: the previous run's destination snapshot for %s carries no local_id column, "
+                    "so it cannot key updates; extracting this resource in full instead",
+                    resource,
+                )
                 adapter.model_loader(model_name=resource, model=model_cls)  # ty: ignore[unresolved-attribute]
                 continue
 
@@ -508,6 +628,7 @@ class Potenda:
                     config=self.config,
                     tier_of=resolve_tier,
                     source_adapter=self.source,
+                    destination_adapter=self.destination,
                 )
             )
 
@@ -700,6 +821,12 @@ class Potenda:
         # per-record validity — an unrecognized `action` above all — which is still refused
         # before the first destination write.
         loaded = parse_plan_artifact(raw, run_id=run_id)
+
+        # Readable and reviewable, but not applyable. Refused after the artifact has been
+        # read, before `ownership.before_operation` and therefore before the first dispatch,
+        # so the destination is provably untouched.
+        _require_applyable_format(loaded.manifest, run_id=run_id)
+
         self._last_applied_plan_action_counts = {
             action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS
         }
@@ -739,6 +866,10 @@ class Potenda:
                     # response or transport fails, so this operation may have changed the
                     # destination while belonging to neither recorded set.
                     failed_operation=operation.operation_id,
+                    # Carried up from the refusal itself: only the write surface knows
+                    # whether it got as far as a mutation. `None` for anything that does not
+                    # say, which is the unchanged "may have written" reading (S6).
+                    failed_operation_wrote=getattr(exc, "wrote", None),
                 )
                 if not isinstance(exc, OPERATIONAL_APPLY_FAILURES):
                     # An interrupt or a defect: it propagates as itself, with its own
@@ -748,13 +879,13 @@ class Potenda:
                     # attribute on an exception type this module does not own.
                     exc.apply_record = partial  # ty: ignore[unresolved-attribute]
                     raise
+                reach, next_action = _failure_reach_and_remedy(exc, record=partial)
                 msg = (
                     f"Applying operation {operation.operation_id!r} of run {run_id!r} to the destination "
-                    f"failed with {_operational_failure_summary(exc)}. The {len(applied)} operation(s) applied before it stay written, and "
-                    f"this operation may itself have written part of its change before failing — "
-                    f"re-applying the plan converges it."
+                    f"failed with {_operational_failure_summary(exc)}. The {len(applied)} operation(s) "
+                    f"applied before it stay written, and {reach}."
                 )
-                raise OperationApplyFailedError(msg, apply_record=partial) from exc
+                raise OperationApplyFailedError(msg, apply_record=partial, next_action=next_action) from exc
             applied.append(operation.operation_id)
 
         completed = ApplyRecord(

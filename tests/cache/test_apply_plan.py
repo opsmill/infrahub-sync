@@ -144,6 +144,7 @@ def test_apply_plan_writes_no_run_file(tmp_path: Path) -> None:
         "skipped_delete_operations": [],
         "skipped_delete_count": 0,
         "failed_operation": None,
+        "failed_operation_wrote": None,
         "may_have_partially_written": False,
     }
 

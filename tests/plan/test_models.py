@@ -39,6 +39,9 @@ SITE_PEER: dict[str, Any] = {"name": "dc1"}
 # because `None` is itself one of the values under test.
 _UNSET = object()
 
+# The destination id a fixture update carries unless its case is about the id itself.
+DEFAULT_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
+
 
 def _operation(  # noqa: PLR0913 — one builder per record field keeps each case to its own concern
     *,
@@ -66,6 +69,10 @@ def _operation(  # noqa: PLR0913 — one builder per record field keeps each cas
         "tier": tier,
         "payload": effective_payload,
     }
+    # Plan format 3 requires one on an update, in process exactly as on disk, so a case that
+    # is not about the recorded id does not have to restate it.
+    if action == "update":
+        record["destination_id"] = DEFAULT_DESTINATION_ID
     if relationships is not None:
         record["relationships"] = relationships
     return record
@@ -90,8 +97,9 @@ def _reference(
 
 def test_declared_constants() -> None:
     """The constants nine later outcomes read are exactly as the data model fixes them."""
-    assert PLAN_FORMAT_VERSION == 2
-    assert frozenset({2}) == SUPPORTED_FORMAT_VERSIONS
+    assert PLAN_FORMAT_VERSION == 3
+    # Format 2 stays readable and reviewable; only `apply` narrows to the current version.
+    assert frozenset({2, 3}) == SUPPORTED_FORMAT_VERSIONS
     assert ACTIONS == ("create", "update", "delete")
     assert CHECKSUM_EXCLUDED_FIELDS == ("plan_checksum", "run_id", "created_at")
     assert SC006_MASKED_FIELDS == ("run_id", "created_at")
@@ -662,7 +670,16 @@ def test_an_empty_many_reference_is_not_the_same_as_an_absent_reference() -> Non
 
 # The permitted field sets, enumerated so a later addition fails this test rather than
 # quietly introducing a grouping key the reader would honour.
-PLANNED_OPERATION_FIELDS = {"operation_id", "action", "kind", "identity", "tier", "payload", "relationships"}
+PLANNED_OPERATION_FIELDS = {
+    "operation_id",
+    "action",
+    "kind",
+    "identity",
+    "tier",
+    "payload",
+    "relationships",
+    "destination_id",
+}
 RELATIONSHIP_REFERENCE_FIELDS = {"field", "peer_kind", "cardinality", "peers"}
 PLAN_MANIFEST_FIELDS = {
     "format_version",
@@ -899,6 +916,7 @@ def test_an_apply_record_renders_every_summary_key() -> None:
         "skipped_delete_operations": ["op_b", "op_c"],
         "skipped_delete_count": 2,
         "failed_operation": None,
+        "failed_operation_wrote": None,
         "may_have_partially_written": False,
     }
     assert ApplyRecord().as_summary_keys() == {
@@ -906,6 +924,7 @@ def test_an_apply_record_renders_every_summary_key() -> None:
         "skipped_delete_operations": [],
         "skipped_delete_count": 0,
         "failed_operation": None,
+        "failed_operation_wrote": None,
         "may_have_partially_written": False,
     }
 
