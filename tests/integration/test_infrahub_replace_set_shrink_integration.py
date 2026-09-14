@@ -162,7 +162,9 @@ def _make_client(address: str, token: str, branch: str | None = None) -> Infrahu
     return InfrahubClientSync(config=Config(**settings))
 
 
-def _team_operation(team_name: str, tag_names: list[str], *, action: PlanAction) -> PlannedOperation:
+def _team_operation(
+    team_name: str, tag_names: list[str], *, action: PlanAction, destination_id: str | None = None
+) -> PlannedOperation:
     """One planned operation reconciling the team's `members` to exactly `tag_names`.
 
     Built the way the artifact records one — canonical identity, derived identifier. `action`
@@ -170,6 +172,11 @@ def _team_operation(team_name: str, tag_names: list[str], *, action: PlanAction)
     of an existing team, not a create, and inferring it from `tag_names` would have made the
     N → 0 apply claim otherwise. The write surface routes create and update through the same
     convergent upsert either way.
+
+    `destination_id` is absent for the create — there is no destination object yet — and is the
+    id that create returned for each update, which is what plan format 3 records and what the
+    update is keyed by. Passing the real id rather than a placeholder keeps the shrink
+    assertions meaningful: each apply has to converge on the object the first one made.
     """
     identity = canonical_identity({"name": team_name}, kind=TEAM_KIND)
     return PlannedOperation(
@@ -179,6 +186,7 @@ def _team_operation(team_name: str, tag_names: list[str], *, action: PlanAction)
         identity=identity,
         tier=0,
         payload={"name": team_name},
+        destination_id=destination_id,
         relationships=[
             RelationshipReference(
                 field="members",
@@ -322,7 +330,8 @@ def test_shrinking_a_cardinality_many_peer_set_removes_surplus_peers(
     # N -> fewer: two surplus peers must be gone.
     kept = names[0]
     shrunk_id = adapter.apply_planned_operation(
-        operation=_team_operation(team_name, [kept], action="update"), peers=adapter.new_peer_resolver()
+        operation=_team_operation(team_name, [kept], action="update", destination_id=team_id),
+        peers=adapter.new_peer_resolver(),
     )
     assert shrunk_id == team_id, (
         "The shrinking apply must converge on the same destination object; a fresh duplicate "
@@ -342,7 +351,8 @@ def test_shrinking_a_cardinality_many_peer_set_removes_surplus_peers(
 
     # N -> 0: `peers: []` empties the set (AD085).
     emptied_id = adapter.apply_planned_operation(
-        operation=_team_operation(team_name, [], action="update"), peers=adapter.new_peer_resolver()
+        operation=_team_operation(team_name, [], action="update", destination_id=team_id),
+        peers=adapter.new_peer_resolver(),
     )
     assert emptied_id == team_id
     observed = _destination_peer_ids(client, team_id, branch)
