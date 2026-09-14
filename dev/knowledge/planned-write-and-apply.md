@@ -65,21 +65,40 @@ Only the Infrahub adapter implements the surface today.
                             referring_operation_id=operation.operation_id)
               for p in ref.peers]
        data[ref.field] = ids[0] if ref.cardinality == "one" else ids
-3b. DIAGNOSTIC: every human-friendly-ID component of the kind is accounted for
+4a. CREATE ONLY — COVERAGE: the operation's identity names every human-friendly-ID
+       component of the kind, or, for a kind declaring none, covers a uniqueness
+       constraint            → UnkeyedCreateRefusedError
+4b. DIAGNOSTIC (AD051): every one of those components arrives with a USABLE value
+                             → UnaccountedIdentityComponentError, naming the component
 5.  node = client.create(kind=..., data=generate_payload_create(...))
-5b. GATE: read the rendered mutation input and check it carries `id` or `hfid`
+5b. UPDATE ONLY: node.id = operation.destination_id   # the recorded key, never in `data`
 6.  node.save(allow_upsert=True)               # the convergence point, and the ONLY write
+6b. UPDATE ONLY: a NODE_NOT_FOUND + http_status 404 answer → StaleDestinationIdError
 8.  peers.remember(operation.kind, operation.identity, node.id)
 ```
+
+Both refusals at 4 happen **before** `client.create`, so a refused operation is proven to have
+attempted no destination mutation. They are different questions and stay different mechanisms:
+coverage is about the plan, and AD051 is the only check that can say *which* component is missing.
 
 Creates and updates both route through the same convergent upsert. Neither routes through
 `InfrahubModel.update`, whose `local_id` keying needs a destination load an apply must not perform.
 
-Two consequences of using an upsert are accepted rather than detected: a create whose identity already
-exists converges onto the existing object without examining whether its payload differs, and an update
-whose target was deleted out-of-band materializes as a create. There is no conflict detection, freshness
-check or refusal path. Either case is reported under the operation's **original** identifier and
-**original** action, so the review-to-apply link is unaffected.
+An update is keyed by the destination `id` recorded for it at plan time; a create carries none and is
+matched by the server on the human-friendly-ID components in its payload, which is why step 4 proves
+they are all there. There is no step reading the SDK's private pre-save render: that gate is retired
+(ADR 0013) because on newer SDK versions it reported an `hfid` the issued mutation did not carry.
+
+One consequence of using an upsert is accepted rather than detected: a create whose identity already
+exists converges onto the existing object without examining whether its payload differs. There is no
+conflict detection or freshness check, and the case is reported under the operation's **original**
+identifier and **original** action, so the review-to-apply link is unaffected.
+
+An update whose target was deleted out-of-band **no longer materializes as a create**. It carries that
+object's recorded id, the destination answers `NODE_NOT_FOUND` with `extensions.http_status` 404 and
+creates nothing, and the apply raises `StaleDestinationIdError` asking for a fresh `diff`. Both halves
+of that signature are required, in one error: the code alone does not prove the id path ran, and the
+refusal claims the write never happened.
 
 ### Convergence rides on the destination kind's human-friendly ID
 
@@ -292,33 +311,49 @@ the CLI can merge it before recording `failed`. That partial record is best-effo
 required to survive abnormal process termination.
 
 The merged summary keys are `applied_operations`, `skipped_delete_operations`,
-`skipped_delete_count`, `failed_operation` and `may_have_partially_written`. All five are always
-written: "nothing was applied" and "nothing failed" have to be readable from the run rather than
-inferred from an absent key.
+`skipped_delete_count`, `failed_operation`, `failed_operation_wrote` and
+`may_have_partially_written`. All six are always written: "nothing was applied" and "nothing failed"
+have to be readable from the run rather than inferred from an absent key.
 
 A destination rejection or transport failure stops at that operation. What was written stays written;
 there is no rollback.
 
-**And the failing operation may itself have written part of its change.** An operation is one
-destination mutation, and one mutation can still commit remotely before its response — or the
-transport carrying it — fails, which leaves the destination changed by an operation that is in
-neither `applied_operations` nor `skipped_delete_operations`. The record therefore names it under
+**And the failing operation may itself have written part of its change — unless it is proven not to
+have.** An operation is one destination mutation, and one mutation can still commit remotely before
+its response, or the transport carrying it, fails; that leaves the destination changed by an
+operation in neither `applied_operations` nor `skipped_delete_operations`. The record names it under
 `failed_operation` and reports `may_have_partially_written`, and the engine's error message says the
 same in words. The marker is deliberately "may": the engine learns that the call raised, never how
 far it got, and a marker that understated the writes would be the one an operator could not recover
-from by reading the run. Convergent re-apply is what recovers it — re-applying an operation that
-already succeeded in whole or in part converges on the same object (AD033).
+from by reading the run. Convergent re-apply is what recovers it (AD033).
 
-`may_have_partially_written` is derived from `failed_operation` rather than stored beside it, as
+`failed_operation_wrote` is the exception, and it carries exactly one claim: `None` means the reach
+is unknown — what every failure meant before it existed — and `False` means the operation is **proven**
+to have written nothing. Only two things may claim it. A refusal raised before the SDK write
+(`UnkeyedCreateRefusedError`, `UnaccountedIdentityComponentError`, `NullRelationshipValueError`,
+`PeerNotFoundError`, `PeerAmbiguousError`) attempted no mutation at all. And `StaleDestinationIdError`
+carries the destination's own not-found for an id-keyed upsert, a path that creates nothing. `True` is
+never set: an operation that failed *after* dispatching is precisely the case that cannot be known.
+
+`may_have_partially_written` is then `failed_operation is not None and failed_operation_wrote is not
+False`, the engine's message drops the partial-write sentence for a proven-not-written refusal, and the
+service boundary settles such a run as `failed` rather than `interrupted`/`ambiguous`, so it does not
+set `reconciliation_required`. Reporting a refusal that never touched the destination as possibly
+partial was sending operators to reconcile nothing (S6).
+
+`may_have_partially_written` is derived from the two stored fields rather than stored beside them, as
 `skipped_delete_count` is derived from `skipped_delete_operations`: on the record that is the only
-account of what an apply did, a second source of truth is a state that can contradict itself.
+account of what an apply did, a second source of truth is a state that can contradict itself. The
+service boundary resolves the record once, from the failure it is describing, and reads its verdict and
+its evidence from that same record for the same reason.
 
 ### The operational exception boundary
 
 Only an **operational** failure is reported as a destination refusal. `OPERATIONAL_APPLY_FAILURES`
 in `infrahub_sync/potenda/__init__.py` is the list, and it has three members: the `PlanArtifactError`
 taxonomy the write surface raises deliberately (a peer matching nothing or many, an unaccounted
-identity component, an unkeyed render), `SkippedDeleteOperation`, and `infrahub_sdk.exceptions.Error`
+identity component, a create that cannot be proven keyed, a stale recorded id),
+`SkippedDeleteOperation`, and `infrahub_sdk.exceptions.Error`
 — the destination library's own base, and therefore its transport, authentication, GraphQL and
 object-validation rejections.
 

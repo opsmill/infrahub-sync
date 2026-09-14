@@ -99,3 +99,39 @@ def test_a_plain_graphql_rejection_keeps_its_category_only_summary() -> None:
     summary = potenda._operational_failure_summary(GraphQLError([{"message": "boom"}], query="mutation { ... }"))
 
     assert summary == "a destination GraphQL rejection (GraphQLError)"
+
+
+def test_text_after_the_constraint_name_never_reaches_the_summary() -> None:
+    """The canary in the **message**, which is the half the classifier chose to read.
+
+    The other canary test puts its secret in the query and variables, which this classifier
+    never touches — so it cannot see a leak that arrives through the accepted message. A
+    destination can put anything after the quoted name, including something it was sent, so
+    only the quoted capture may be copied and a message that does not match the measured
+    grammar exactly gets no disclosure at all.
+    """
+    suffixed = uniqueness_error(message=f"Violates uniqueness constraint '{CONSTRAINT_NAME}' {SECRET}")
+
+    summary = potenda._operational_failure_summary(suffixed)
+
+    assert SECRET not in summary
+    assert summary == "a destination GraphQL rejection (GraphQLError)", (
+        "A message outside the measured grammar is not parsed at all, so it discloses nothing."
+    )
+
+
+def test_a_constraint_name_outside_the_measured_grammar_is_not_copied() -> None:
+    """An unquoted name is not the measured shape, so it is not read as one."""
+    unquoted = uniqueness_error(message=f"Violates uniqueness constraint {CONSTRAINT_NAME} {SECRET}")
+
+    summary = potenda._operational_failure_summary(unquoted)
+
+    assert SECRET not in summary
+    assert CONSTRAINT_NAME not in summary
+
+
+def test_the_measured_message_still_discloses_its_constraint_name() -> None:
+    """The positive arm, restated after the grammar tightened: the name is still reported."""
+    summary = potenda._operational_failure_summary(uniqueness_error())
+
+    assert f"'{CONSTRAINT_NAME}'" in summary

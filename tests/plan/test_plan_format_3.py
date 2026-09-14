@@ -13,15 +13,20 @@ with `PlanFormatApplyUnsupportedError` and an explicit re-plan instruction.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from infrahub_sync.plan.errors import PlanArtifactTornError
-from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, SUPPORTED_FORMAT_VERSIONS
+from infrahub_sync import cli
+from infrahub_sync.client.models import PlanOperationResource
+from infrahub_sync.plan.errors import PlanArtifactTornError, PlanFormatApplyUnsupportedError
+from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, SUPPORTED_FORMAT_VERSIONS, PlannedOperation
 from infrahub_sync.plan.reader import LoadedPlan, parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import read_saved_plan
-from tests.plan.artifact_fixtures import RUN_ID, SYNC_NAME, operation_record, write_artifact
+from infrahub_sync.potenda import Potenda
+from infrahub_sync.service.models import EmittedPlanResource
+from tests.plan.artifact_fixtures import CONFIG_VERSION, RUN_ID, SYNC_NAME, operation_record, write_artifact
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -47,6 +52,33 @@ def run_dir(tmp_path: Path) -> Path:
     directory = tmp_path / SYNC_NAME / RUN_ID
     directory.mkdir(parents=True, exist_ok=True)
     return directory
+
+
+class CountingDestination:
+    """A write surface that accepts every operation and counts them."""
+
+    def __init__(self) -> None:
+        self.applied: list[str] = []
+
+    def new_peer_resolver(self) -> object:  # noqa: PLR6301 — the write surface declares it on the instance
+        return object()
+
+    def apply_planned_operation(self, *, operation: PlannedOperation, peers: object) -> str:
+        _ = peers
+        self.applied.append(operation.operation_id)
+        return "written-node-1"
+
+
+def engine_over(directory: Path, *, destination: object | None = None) -> Potenda:
+    """A `Potenda` bound to `directory`, with no configuration and no source load."""
+    return Potenda(
+        source=SimpleNamespace(top_level=[]),  # ty: ignore[invalid-argument-type]
+        destination=destination if destination is not None else RefusingDestination(),  # ty: ignore[invalid-argument-type]
+        config=None,  # ty: ignore[invalid-argument-type]
+        top_level=["BuiltinTag"],
+        run_dir=directory,
+        run_id=RUN_ID,
+    )
 
 
 def parse(directory: Path) -> LoadedPlan:
@@ -160,3 +192,191 @@ def test_tampering_with_a_recorded_destination_id_fails_the_plan_checksum(tmp_pa
     plan = read_saved_plan(sync_name=SYNC_NAME, run_id=RUN_ID, base_directory=tmp_path)
 
     assert plan.checksum_ok is False, "A re-pointed update must not verify against the recorded checksum."
+
+
+# ---------------------------------------------------------------------------------------
+# The apply boundary: a format-2 plan reads and reviews, and is refused before any dispatch
+# ---------------------------------------------------------------------------------------
+
+
+class RecordingOwnership:
+    """A write-ownership boundary that records whether it was ever asked to prove a hold.
+
+    `before_operation` is the last thing that happens before an operation is dispatched, so
+    "it was never called" is how "nothing reached the destination" is asserted rather than
+    inferred from the absence of a mutation.
+    """
+
+    def __init__(self) -> None:
+        self.proofs = 0
+
+    def before_operation(self) -> None:
+        self.proofs += 1
+
+    def after_final_operation(self) -> None:
+        """Grant the closing proof."""
+
+
+class RefusingDestination:
+    """A write surface that fails the test if the apply ever reaches it."""
+
+    def new_peer_resolver(self) -> object:  # noqa: PLR6301 — the write surface declares it on the instance
+        return object()
+
+    def apply_planned_operation(  # noqa: PLR6301 — same
+        self, *, operation: PlannedOperation, peers: object
+    ) -> str:
+        _ = peers
+        msg = f"The apply dispatched {operation.operation_id!r}, which a format-2 refusal must prevent."
+        raise AssertionError(msg)
+
+
+def test_applying_a_format_2_plan_is_refused_with_a_re_plan_instruction(tmp_path: Path) -> None:
+    """A format-2 update carries no recorded id, so it cannot be keyed and is not applied."""
+    directory = run_dir(tmp_path)
+    write_artifact(directory, [update_record(destination_id=None)], format_version=2, source_snapshot=[])
+
+    with pytest.raises(PlanFormatApplyUnsupportedError) as excinfo:
+        engine_over(directory).apply_plan(ownership=RecordingOwnership(), config_version=CONFIG_VERSION)
+
+    message = str(excinfo.value)
+    assert "2" in message, "The refusal names the version it read."
+    assert "diff" in message, "The remedy is a fresh plan, and the message says so."
+    assert "not touched" in message
+
+
+def test_the_format_2_refusal_happens_after_the_parse_and_before_any_ownership_proof(tmp_path: Path) -> None:
+    """The ordering is the safety property, so it is asserted rather than described.
+
+    **After the parse**: a torn format-2 artifact must still report as torn, because an
+    operator fixing an artifact needs to know it is broken and not merely old. **Before
+    `ownership.before_operation`**, which is the last step before a dispatch — so the
+    destination is provably untouched rather than presumed so.
+    """
+    directory = run_dir(tmp_path)
+    write_artifact(directory, [update_record(destination_id=None)], format_version=2, source_snapshot=[])
+    ownership = RecordingOwnership()
+
+    with pytest.raises(PlanFormatApplyUnsupportedError):
+        engine_over(directory, destination=RefusingDestination()).apply_plan(
+            ownership=ownership, config_version=CONFIG_VERSION
+        )
+
+    assert ownership.proofs == 0, "No hold was proven, so no operation was dispatched."
+
+
+def test_a_torn_format_2_artifact_still_reports_as_torn_rather_than_as_an_old_format(tmp_path: Path) -> None:
+    """The parse runs first, so the refusal never masks a broken artifact."""
+    directory = run_dir(tmp_path)
+    record = update_record(destination_id=None)
+    record["tier"] = -1
+    write_artifact(directory, [record], format_version=2, source_snapshot=[])
+
+    with pytest.raises(PlanArtifactTornError):
+        engine_over(directory).apply_plan(ownership=RecordingOwnership(), config_version=CONFIG_VERSION)
+
+
+def test_applying_a_format_3_plan_reaches_the_write(tmp_path: Path) -> None:
+    """The positive arm: the refusal is about the format, not about applying at all."""
+    directory = run_dir(tmp_path)
+    write_artifact(directory, [update_record()], source_snapshot=[])
+    ownership = RecordingOwnership()
+
+    record = engine_over(directory, destination=CountingDestination()).apply_plan(
+        ownership=ownership, config_version=CONFIG_VERSION
+    )
+
+    assert ownership.proofs == 1
+    assert len(record.applied_operations) == 1
+
+
+# ---------------------------------------------------------------------------------------
+# The review surfaces carry the recorded id
+# ---------------------------------------------------------------------------------------
+#
+# A reviewer approves an apply from what these two render. An id that reached the artifact
+# but not the review would mean approving a write whose target was never shown.
+
+
+def test_the_plan_operation_resource_carries_the_recorded_id() -> None:
+    """The public review resource declares the field, so the route can return it."""
+    resource = PlanOperationResource(
+        operation_id="op_0123456789abcdef",
+        action="update",
+        kind="BuiltinTag",
+        identity={"name": "prod"},
+        tier=0,
+        payload={"name": "prod"},
+        destination_id=DESTINATION_ID,
+    )
+
+    assert resource.destination_id == DESTINATION_ID
+
+
+def test_the_service_retained_review_json_keeps_the_recorded_id() -> None:
+    """The bound twin the service emits is derived from the resource, so it keeps the field.
+
+    This is the surface a retained review is read back from long after the run, so a field
+    the twin dropped would be gone for good rather than merely unrendered.
+    """
+    emitted = EmittedPlanResource.model_validate(
+        {
+            "run_id": RUN_ID,
+            "checksum": "a" * 64,
+            "checksum_ok": True,
+            "verification_notes": (),
+            "summary": {
+                "by_action": {"update": 1},
+                "by_kind": {"BuiltinTag": 1},
+                "total": 1,
+                "delete_operations_computed": True,
+                "deletes_not_executed": 0,
+            },
+            "operations": (
+                {
+                    "operation_id": "op_0123456789abcdef",
+                    "action": "update",
+                    "kind": "BuiltinTag",
+                    "identity": {"name": "prod"},
+                    "tier": 0,
+                    "payload": {"name": "prod"},
+                    "destination_id": DESTINATION_ID,
+                },
+            ),
+        }
+    )
+
+    assert DESTINATION_ID in emitted.model_dump_json(), "The retained review JSON must carry the id."
+
+
+def test_cli_plan_detail_renders_the_recorded_id_for_an_update(capsys: pytest.CaptureFixture[str]) -> None:
+    """`runs plan --detail` shows which destination object an update will be applied to."""
+    cli._operation_detail(
+        PlanOperationResource(
+            operation_id="op_0123456789abcdef",
+            action="update",
+            kind="BuiltinTag",
+            identity={"name": "prod"},
+            tier=0,
+            payload={"name": "prod"},
+            destination_id=DESTINATION_ID,
+        )
+    )
+
+    assert DESTINATION_ID in capsys.readouterr().out
+
+
+def test_cli_plan_detail_shows_no_destination_id_for_a_create(capsys: pytest.CaptureFixture[str]) -> None:
+    """A create names no destination object, so the line is absent rather than empty."""
+    cli._operation_detail(
+        PlanOperationResource(
+            operation_id="op_0123456789abcdef",
+            action="create",
+            kind="BuiltinTag",
+            identity={"name": "prod"},
+            tier=0,
+            payload={"name": "prod"},
+        )
+    )
+
+    assert "destination id" not in capsys.readouterr().out

@@ -15,7 +15,6 @@ The rules themselves, and the measurements behind them, are recorded in
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -25,8 +24,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from infrahub_sync.plan.models import PlannedOperation
-
-logger = logging.getLogger(__name__)
 
 # Separator between the segments of a *schema* component path — `name__value` for a direct
 # attribute, `site__name__value` for one that crosses a relationship. The only thing split on
@@ -70,37 +67,43 @@ def component_value(identity: Mapping[str, Any], component: str) -> Any:
     return None
 
 
-def _usable(value: Any) -> bool:
+def is_usable_component_value(value: Any) -> bool:
     """Whether a component value can key a write.
 
-    Absent keys nothing, and so does an empty or blank string. Falsiness in general is **not**
-    the test: `0` and `False` are values the destination matches on perfectly well, and reading
-    them as missing would refuse a create that is correctly keyed.
+    Absent keys nothing, and so does an empty or **whitespace-only** string: the destination
+    matches on the value it is sent, and `"   "` matches nothing anyone meant. Falsiness in
+    general is **not** the test — `0` and `False` are values the destination matches on
+    perfectly well, and reading them as missing would refuse a create that is correctly keyed.
+
+    Public because AD051's value check at the write surface asks the same question of the
+    assembled write, and the two must answer it identically.
     """
     if value is None:
         return False
     return not (isinstance(value, str) and not value.strip())
 
 
-def unkeyed_create_reason(operation: PlannedOperation, *, node: Any) -> str | None:
-    """Why this create cannot be proven keyed, or `None` if it can.
+def _usable(value: Any) -> bool:
+    """Module-local alias for `is_usable_component_value`."""
+    return is_usable_component_value(value)
 
-    Shared by plan derivation and the write surface so the two cannot drift: a create refused
-    at plan time and the same create in a hand-built artifact must be refused for the same
-    reason. Reads the operation and the cached destination schema, and nothing else — no
-    destination is contacted.
 
-    A kind **with** a human-friendly ID has two independent arms. Identity coverage first:
-    every component's mapping field must be named by the operation's `identity`. A component
-    resolvable from the payload but absent from identity still fails, because identity is what
-    the plan proves the write on and what a reviewer reads. Then value presence: each covered
-    component must carry a usable value, proven through the peer's identity where it crosses a
-    relationship.
+def unkeyed_create_coverage_reason(operation: PlannedOperation, *, node: Any) -> str | None:
+    """Why this create's **identity** cannot key it, or `None` if it can.
 
-    A kind **without** one cannot converge by human-friendly ID at all. It is allowed only
-    where a declared uniqueness constraint is fully covered with usable values — the
-    destination refuses the duplicate in that case, measured — and refused otherwise, where
-    every write would silently add another object.
+    The first of the two create arms, and the only one both callers run. It asks a question
+    about the plan rather than about the write: does the operation's `identity` name every
+    human-friendly-ID component of the kind, and if the kind declares none, does the identity
+    cover a uniqueness constraint the destination will refuse duplicates on?
+
+    A component resolvable from the payload but absent from identity still fails, because
+    identity is what the plan proves the write on and what a reviewer reads.
+
+    Value presence is deliberately **not** asked here. At the write surface that is AD051's
+    question, asked of the assembled write and answered per component
+    (`_assert_identity_components_accounted_for`), which is the only check that can say which
+    component is missing. Plan derivation has no assembled write, so it adds
+    `unkeyed_create_value_reason` below.
     """
     identity = operation.identity
     human_friendly_id = list(getattr(node, "human_friendly_id", None) or ())
@@ -110,14 +113,6 @@ def unkeyed_create_reason(operation: PlannedOperation, *, node: Any) -> str | No
             return (
                 f"its identity ({', '.join(sorted(identity)) or 'none'}) does not name every "
                 f"human-friendly-ID component of the kind; missing: {', '.join(uncovered)}"
-            )
-        valueless = sorted(
-            component for component in human_friendly_id if not _usable(component_value(identity, component))
-        )
-        if valueless:
-            return (
-                f"its identity names every human-friendly-ID component but supplies no usable value for "
-                f"{', '.join(valueless)}"
             )
         return None
 
@@ -140,9 +135,52 @@ def unkeyed_create_reason(operation: PlannedOperation, *, node: Any) -> str | No
     )
 
 
+def unkeyed_create_value_reason(operation: PlannedOperation, *, node: Any) -> str | None:
+    """Why this create's covered components carry no usable value, or `None` if they do.
+
+    The second arm, for **plan time only**. The write surface answers the same question
+    through AD051, against the assembled write rather than the identity alone, so it does not
+    call this — see `unkeyed_create_coverage_reason`.
+
+    A component that crosses a relationship is proven from the peer's own identity, which is
+    where a plan holds it: peers are named by identity and never by a destination-assigned id.
+    """
+    identity = operation.identity
+    human_friendly_id = list(getattr(node, "human_friendly_id", None) or ())
+    if not human_friendly_id:
+        return None
+    valueless = sorted(
+        component for component in human_friendly_id if not _usable(component_value(identity, component))
+    )
+    if not valueless:
+        return None
+    return (
+        f"its identity names every human-friendly-ID component but supplies no usable value for {', '.join(valueless)}"
+    )
+
+
+def unkeyed_create_reason(operation: PlannedOperation, *, node: Any) -> str | None:
+    """Both create arms, in order: identity coverage, then value presence.
+
+    Plan derivation's entry point. The write surface composes the arms differently — coverage
+    here, then AD051 for values — so that a valueless component is diagnosed by the mechanism
+    that can name it.
+    """
+    return unkeyed_create_coverage_reason(operation, node=node) or unkeyed_create_value_reason(operation, node=node)
+
+
+def refuse_unkeyed_create_coverage(operation: PlannedOperation, *, node: Any) -> None:
+    """Raise where a create's identity cannot key it. The write surface's first arm."""
+    _refuse(unkeyed_create_coverage_reason(operation, node=node), operation)
+
+
 def refuse_unkeyed_create(operation: PlannedOperation, *, node: Any) -> None:
-    """Raise `UnkeyedCreateRefusedError` where a create cannot be proven keyed."""
-    reason = unkeyed_create_reason(operation, node=node)
+    """Raise where a create cannot be proven keyed. Plan derivation's entry point."""
+    _refuse(unkeyed_create_reason(operation, node=node), operation)
+
+
+def _refuse(reason: str | None, operation: PlannedOperation) -> None:
+    """Raise `UnkeyedCreateRefusedError` for a non-`None` reason, in one wording."""
     if reason is None:
         return
     msg = (

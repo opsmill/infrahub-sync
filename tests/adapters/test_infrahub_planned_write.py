@@ -1212,6 +1212,48 @@ def test_a_refused_operation_stops_the_apply_and_leaves_the_prior_write_recorded
     assert record.failed_operation == unkeyed["operation_id"]
 
 
+def test_a_refusal_that_wrote_nothing_says_so_rather_than_claiming_a_possible_partial(tmp_path: Path) -> None:
+    """S6 reaches the operator's words, not only the run record.
+
+    The record and the message are what an operator acts on together, so a refusal the record
+    marks as having written nothing must not be described as one that may have written part
+    of its change — that is the sentence that sends someone to reconcile a destination this
+    operation never touched.
+    """
+    directory = apply_run_dir(tmp_path)
+    refused = operation_record(kind=ORPHAN_KIND, identity={"name": "orphan-a"})
+    write_artifact(directory, [refused], run_id=APPLY_RUN_ID, source_snapshot=[])
+
+    client = RecordingClient()
+    _state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert isinstance(outcome, OperationApplyFailedError)
+    assert outcome.apply_record.failed_operation_wrote is False
+    assert "attempted no destination write" in str(outcome)
+    assert "may itself have written" not in str(outcome)
+    assert "wrote nothing" in outcome.next_action
+    assert not client.mutations
+
+
+def test_a_failure_of_unknown_reach_still_warns_that_it_may_have_written(tmp_path: Path) -> None:
+    """The unchanged half: a destination rejection mid-write keeps the partial-write warning."""
+    directory = apply_run_dir(tmp_path)
+    write_artifact(
+        directory,
+        [operation_record(kind=SITE_KIND, identity={"name": "site-a"})],
+        run_id=APPLY_RUN_ID,
+        source_snapshot=[],
+    )
+
+    client = RecordingClient()
+    client.write_error = GraphQLError([{"message": "the destination rejected this object"}], query="mutation { }")
+    _state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert isinstance(outcome, OperationApplyFailedError)
+    assert outcome.apply_record.failed_operation_wrote is None
+    assert "may itself have written" in str(outcome)
+
+
 def test_the_reviewed_operation_identifiers_equal_the_applied_record_in_the_same_order(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

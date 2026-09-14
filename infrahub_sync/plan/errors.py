@@ -413,8 +413,20 @@ class OperationApplyFailedError(PlanArtifactError):
         "in whole or in part, converges rather than duplicating."
     )
 
+    # The same advice for an operation the record proves wrote nothing. Sending an operator
+    # to reconcile a destination this operation never touched is the failure S6 exists to
+    # remove, and the wording is half of what they act on.
+    NOT_WRITTEN_NEXT_ACTION = (
+        "Nothing was rolled back and this operation wrote nothing: the operations applied before it "
+        "stay written, and the destination is otherwise as it was. Resolve the underlying error, then "
+        "re-run `diff` and apply the new plan."
+    )
+
     def __init__(self, message: str, *, apply_record: ApplyRecord, next_action: str | None = None) -> None:
-        super().__init__(message, next_action=next_action)
+        effective = next_action
+        if effective is None and apply_record.failed_operation_wrote is False:
+            effective = self.NOT_WRITTEN_NEXT_ACTION
+        super().__init__(message, next_action=effective)
         self.apply_record = apply_record
 
 

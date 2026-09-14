@@ -555,12 +555,11 @@ def derivation_destination() -> _FakeAdapter:
     is unaffected — a create records no id — so one fixture serves both.
     """
     source = qualified_source()
-    records: list[_FakeRecord] = []
-    for kind in KINDS:
-        for record in source.get_all(kind):
-            records.append(
-                _FakeRecord(kind, record.get_identifiers(), record.get_attrs(), local_id=DERIVED_DESTINATION_ID)
-            )
+    records: list[_FakeRecord] = [
+        _FakeRecord(kind, record.get_identifiers(), record.get_attrs(), local_id=DERIVED_DESTINATION_ID)
+        for kind in KINDS
+        for record in source.get_all(kind)
+    ]
     return _FakeAdapter("destination", records)
 
 
@@ -2244,13 +2243,12 @@ def rack_elements(*sites: str, name: str = "Comms closet") -> _FakeDiff:
 
 def rack_destination(*sites: str, name: str = "Comms closet") -> _FakeAdapter:
     """A destination holding each rack under the unique id its element carries."""
-    records = []
-    for site in sites:
-        records.append(
-            _FakeRecord(
-                "LocationRack", {"name": name, "site": site}, {"description": "old"}, local_id=DERIVED_DESTINATION_ID
-            )
+    records = [
+        _FakeRecord(
+            "LocationRack", {"name": name, "site": site}, {"description": "old"}, local_id=DERIVED_DESTINATION_ID
         )
+        for site in sites
+    ]
     return _FakeAdapter("destination", records)
 
 

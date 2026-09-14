@@ -46,12 +46,24 @@ shipped configurations that update objects correctly today.
 the destination store's `local_id` and records it on the operation; apply sets it on the node before
 `save(allow_upsert=True)`, which renders it as the scalar top-level `id` the server keys on. It is
 never put into the `data` mapping, where it would render as the attribute-shaped `id: {}` and key
-nothing. An id the destination cannot find is `StaleDestinationIdError`.
+nothing. An id the destination cannot find is `StaleDestinationIdError`, classified only from
+`extensions.code` `NODE_NOT_FOUND` **and** `extensions.http_status` 404 in the same error. Both halves
+are required: that refusal claims the write never happened, and a claim that suppresses reconciliation
+needs the server's own status behind it, not just its code.
 
 **A create is keyed by proving its payload carries the whole human-friendly ID.** Planning refuses
 otherwise, per operation: every component's field must be named by the operation's identity, and each
-must carry a usable value, proven through the peer's identity where the component crosses a
-relationship. A kind with no human-friendly ID is allowed only where a declared uniqueness constraint
+must carry a **usable** value, proven through the peer's identity where the component crosses a
+relationship. Usable means present and not an empty or whitespace-only string — the destination
+matches on the value it is sent, and `"   "` matches nothing anyone meant. Falsiness is deliberately
+not the test: `0` and `False` are values the destination matches on, and reading them as missing would
+refuse a correctly keyed create.
+
+The two arms are different mechanisms and stay so. Coverage is a question about the plan and is
+answered from the operation's identity; value presence at the write surface is AD051's
+`_assert_identity_components_accounted_for`, asked of the assembled write, because it is the only
+check that can say *which* component is missing. Plan derivation, which has no assembled write, asks
+both from the identity. A kind with no human-friendly ID is allowed only where a declared uniqueness constraint
 is covered — the destination refuses the duplicate there — and refused otherwise. Several creates
 projecting onto one destination human-friendly ID are refused rather than silently converged.
 

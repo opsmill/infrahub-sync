@@ -38,7 +38,7 @@ from infrahub_sync.plan.errors import (
     UnaccountedIdentityComponentError,
 )
 from infrahub_sync.plan.identity import canonical_identity
-from infrahub_sync.plan.keying import refuse_unkeyed_create
+from infrahub_sync.plan.keying import is_usable_component_value, refuse_unkeyed_create_coverage
 from infrahub_sync.plan.models import DestinationBindingRecord
 
 logger = logging.getLogger(__name__)
@@ -132,6 +132,13 @@ def resolve_peer_node(
     return peer_node
 
 
+# The destination's answer to an upsert whose `id` matches no object, as measured on both
+# SDK versions. Both values, in one error's extensions, are what prove the server created
+# nothing; the HTTP transport status is 200 here and settles nothing.
+_NODE_NOT_FOUND_CODE = "NODE_NOT_FOUND"
+_NODE_NOT_FOUND_HTTP_STATUS = 404
+
+
 def _graphql_extensions(exc: GraphQLError) -> Iterator[Mapping[str, Any]]:
     """The `extensions` mapping of each error the destination returned.
 
@@ -150,16 +157,27 @@ def _refuse_stale_destination_id(exc: GraphQLError, *, operation: PlannedOperati
     """Re-raise a not-found on an id-keyed upsert as the named, proven-not-written refusal.
 
     An upsert carrying an `id` that matches no object is answered with
-    `extensions.code` `NODE_NOT_FOUND` and `extensions.http_status` 404, and the server
+    `extensions.code` `NODE_NOT_FOUND` **and** `extensions.http_status` 404, and the server
     creates nothing on that path — measured on both SDK versions. So this is raised *after*
     the write was attempted and is still proven not to have written, which is what lets it
     carry `wrote = False` where an ordinary transport failure cannot.
+
+    **Both halves are required, in the same error's extensions.** The code alone does not
+    prove the id path was the one that ran, and `wrote = False` is a claim that suppresses
+    reconciliation: made without the server's own status it would send an operator past a
+    destination that may have been written. Anything short of the full measured signature —
+    an absent status, a different status, or the two halves arriving in different errors —
+    returns here and leaves the caller to re-raise the original, ambiguous failure.
 
     Returns without raising for anything else, leaving the caller to re-raise the original.
     """
     if operation.destination_id is None:
         return
-    if not any(extensions.get("code") == "NODE_NOT_FOUND" for extensions in _graphql_extensions(exc)):
+    proven_not_found = any(
+        extensions.get("code") == _NODE_NOT_FOUND_CODE and extensions.get("http_status") == _NODE_NOT_FOUND_HTTP_STATUS
+        for extensions in _graphql_extensions(exc)
+    )
+    if not proven_not_found:
         return
     msg = (
         f"Operation {operation.operation_id!r} updates {operation.kind!r} object "
@@ -391,23 +409,33 @@ def _hfid_component_accounted_for(
     implementable: by the time this runs, a relationship key in `data` holds a resolved
     destination node id and no attribute can be read out of it.
 
-    - a **direct** component (`<attr>` / `<attr>__value`): `data` carries `<attr>` non-null;
+    - a **direct** component (`<attr>` / `<attr>__value`): `data` carries `<attr>` with a
+      usable value;
     - a **relationship-crossing** component (`<rel>__<attr>__value`): `data` carries `<rel>`
       non-null **and** the operation's nested `{peer_kind, identity}` for `<rel>` supplies
-      `<attr>`, recursing through the nested identity for deeper paths.
+      `<attr>` with a usable value, recursing through the nested identity for deeper paths.
+
+    "Usable" rather than "present" is the whole point, and it is the same predicate plan
+    derivation applies (`plan.keying.is_usable_component_value`): a component that arrives as
+    `""` is present and keys nothing, so the destination would match no existing object and
+    create a second one — the case this check exists to make impossible.
     """
     segments = _component_segments(component)
     if not segments:
         return False
     field = segments[0]
-    if data.get(field) is None:
-        return False
+    value = data.get(field)
     if len(segments) == 1:
-        return True
+        return is_usable_component_value(value)
+    # A relationship slot holds a resolved node id by now, so only its presence is checkable
+    # here; the component's own value comes from the operation's nested peer identity.
+    if value is None:
+        return False
     nested = _operation_peer_identity(operation, field)
     if nested is None:
         return False
-    return _identity_path_value(nested, segments[1:]) is not _UNRESOLVED
+    resolved = _identity_path_value(nested, segments[1:])
+    return resolved is not _UNRESOLVED and is_usable_component_value(resolved)
 
 
 class PeerResolver:
@@ -1322,11 +1350,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             data[reference.field] = peer_ids[0] if reference.cardinality == "one" else peer_ids
 
         if operation.action == "create":
-            # The same rule plan derivation applies, from the same function, so a create
-            # refused at plan time and the same create arriving in a hand-built artifact are
-            # refused for the same reason. Before `client.create`, so a refusal is proven to
-            # have attempted no mutation. Reads the cached schema and the operation only.
-            refuse_unkeyed_create(operation, node=node_schema)
+            # Arm one, from the same function plan derivation uses, so a create refused at
+            # plan time and the same create arriving in a hand-built artifact are refused for
+            # the same reason. Identity coverage and the no-human-friendly-ID rule only;
+            # **values are AD051's**, immediately below, because that is the check that can
+            # name the component. Both run before `client.create`, so either refusal is
+            # proven to have attempted no mutation, and both read the cached schema and the
+            # operation alone.
+            refuse_unkeyed_create_coverage(operation, node=node_schema)
 
         self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
 
@@ -1362,16 +1393,17 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     ) -> None:
         """The diagnostic: every HFID component of the kind is accounted for (AD051).
 
-        FR-024 warns about the same condition at plan time; this is what stops it becoming
-        silent data duplication at apply time when that warning was ignored or the schema
-        changed since. It is the only check that can say *which* component is missing, which
-        is why it is kept alongside the rendered-mutation gate rather than replaced by it.
+        FR-024 refuses the same condition at plan time; this is what stops it becoming silent
+                data duplication at apply time when the plan was hand-built or the schema changed
+                since. It is the only check that can say *which* component is missing, which is why
+                it is the **value** arm of the create guard rather than being folded into the
+                coverage check that runs just before it.
 
-        A kind that declares no human-friendly ID has no components and so passes here; the
-        rendered-mutation gate is what refuses it.
+                A kind that declares no human-friendly ID has no components and so passes here;
+                `refuse_unkeyed_create_coverage` is what refuses it, on its uniqueness constraints.
 
-        Raises:
-            UnaccountedIdentityComponentError: naming the kind and the missing components.
+                Raises:
+                    UnaccountedIdentityComponentError: naming the kind and the missing components.
         """
         components = _hfid_components(node_schema)
         missing = [

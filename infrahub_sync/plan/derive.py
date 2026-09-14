@@ -817,8 +817,11 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
 
         # The two arms below are about a write that might **duplicate**, which a create can no
         # longer do — it was proven above — so they narrow to the operations that are still
-        # only warned about.
-        updates = [operation for operation in of_kind if operation.action != "create"]
+        # only warned about. Updates specifically, not "everything that is not a create": a
+        # delete is recorded and never executed (ADR 0004), so letting one into this set
+        # would both narrow the intersection and produce a message about how updates are
+        # keyed for a kind this plan only deletes.
+        updates = [operation for operation in of_kind if operation.action == "update"]
         if not updates:
             continue
         supplied = set.intersection(*(set(operation.identity) for operation in updates))

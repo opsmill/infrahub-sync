@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
@@ -106,11 +107,17 @@ def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> Pl
     return PlanVerificationError(msg)
 
 
-# The destination's uniqueness refusal, as measured: the message begins with this and
-# `extensions.http_status` is 422. Both halves are required. The transport status is 200
-# even for a refused mutation, and `extensions.code` is the generic `UNDEFINED_ERROR`, so
-# neither of those can discriminate and neither is consulted.
-_UNIQUENESS_MESSAGE_PREFIX = "Violates uniqueness constraint"
+# The destination's uniqueness refusal, as measured: this exact message grammar, and
+# `extensions.http_status` 422. Both halves are required. The transport status is 200 even
+# for a refused mutation, and `extensions.code` is the generic `UNDEFINED_ERROR`, so neither
+# of those can discriminate and neither is consulted.
+#
+# The pattern is anchored at both ends and the name is bounded to a schema-identifier
+# charset, because the capture is the **only** server-authored text this module ever
+# renders. A destination can put anything after the quoted name — including something it was
+# sent — so a message that is not exactly the measured shape is not parsed for a name at
+# all; it takes the category-only summary instead and discloses nothing.
+_UNIQUENESS_MESSAGE_PATTERN = re.compile(r"^Violates uniqueness constraint '([A-Za-z0-9_.\-]{1,64})'$")
 _UNIQUENESS_HTTP_STATUS = 422
 
 
@@ -123,7 +130,9 @@ def _uniqueness_refusal_summary(exc: GraphQLError) -> str | None:
     the response — not the message body, not the query, not the variables — is rendered.
 
     Matched only on the measured signature, so a rejection that merely shares its status
-    keeps the category-only summary rather than being described as something it is not.
+    keeps the category-only summary rather than being described as something it is not. The
+    constraint name is taken from the pattern's capture and nowhere else, so no text the
+    destination appended can ride along with it.
     """
     for error in getattr(exc, "errors", ()) or ():
         if not isinstance(error, Mapping):
@@ -134,11 +143,11 @@ def _uniqueness_refusal_summary(exc: GraphQLError) -> str | None:
             continue
         if extensions.get("http_status") != _UNIQUENESS_HTTP_STATUS:
             continue
-        if not message.startswith(_UNIQUENESS_MESSAGE_PREFIX):
+        matched = _UNIQUENESS_MESSAGE_PATTERN.match(message.strip())
+        if matched is None:
             continue
-        constraint = message[len(_UNIQUENESS_MESSAGE_PREFIX) :].strip().strip(".'\" ")
-        named = f" {constraint!r}" if constraint else ""
-        return f"a destination uniqueness constraint{named} violated (HTTP status {_UNIQUENESS_HTTP_STATUS})"
+        constraint = matched.group(1)
+        return f"a destination uniqueness constraint {constraint!r} violated (HTTP status {_UNIQUENESS_HTTP_STATUS})"
     return None
 
 
@@ -835,11 +844,20 @@ class Potenda:
                     # attribute on an exception type this module does not own.
                     exc.apply_record = partial  # ty: ignore[unresolved-attribute]
                     raise
+                # The reach of the failing operation is what the operator acts on, and the
+                # record already knows it: a refusal raised before the write, or one the
+                # destination proved created nothing, must not be described as a possible
+                # partial write (S6).
+                reach = (
+                    "this operation attempted no destination write, so the destination is otherwise as it was"
+                    if partial.failed_operation_wrote is False
+                    else "this operation may itself have written part of its change before failing — "
+                    "re-applying the plan converges it"
+                )
                 msg = (
                     f"Applying operation {operation.operation_id!r} of run {run_id!r} to the destination "
-                    f"failed with {_operational_failure_summary(exc)}. The {len(applied)} operation(s) applied before it stay written, and "
-                    f"this operation may itself have written part of its change before failing — "
-                    f"re-applying the plan converges it."
+                    f"failed with {_operational_failure_summary(exc)}. The {len(applied)} operation(s) "
+                    f"applied before it stay written, and {reach}."
                 )
                 raise OperationApplyFailedError(msg, apply_record=partial) from exc
             applied.append(operation.operation_id)

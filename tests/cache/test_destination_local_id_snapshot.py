@@ -26,6 +26,7 @@ from diffsync import Adapter, DiffSyncModel
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.incremental import hydrate_from_parquet
 from infrahub_sync.cache.parquet_io import write_resource_side
+from infrahub_sync.plan.derive import operations_from_diff
 from infrahub_sync.potenda import Potenda
 
 if TYPE_CHECKING:
@@ -108,21 +109,36 @@ def snapshot_columns(run_dir: Path, side: str, resource: str) -> list[str]:
     return list(read_table(str(run_dir / side / f"{resource}.parquet")).column_names)
 
 
-def write_prior_run(tmp_path: Path, rows: list[dict[str, object]], *, source_ids: list[str]) -> Path:
-    """A completed prior run whose side-B snapshot holds `rows`."""
+def write_prior_run(
+    tmp_path: Path,
+    rows: list[dict[str, object]],
+    *,
+    source_ids: list[str],
+    source_rows: list[dict[str, object]] | None = None,
+) -> Path:
+    """A completed prior run whose side-B snapshot holds `rows`.
+
+    `source_rows` additionally seeds side A, which the end-to-end case needs: a warm run that
+    derives anything has to hydrate **both** sides from the previous run.
+    """
     prev_run = tmp_path / "2026-05-17T10-00-00Z"
     prev_run.mkdir(parents=True)
-    write_resource_side(
-        run_dir=prev_run,
-        side="B",
-        resource="InfraDevice",
-        rows=rows,
-        source_ids=source_ids,
-        extract_ts=datetime(2026, 5, 17, 10, 0, tzinfo=timezone.utc),
-    )
+    sides: dict[str, list[dict[str, object]]] = {"B": rows}
+    if source_rows is not None:
+        sides["A"] = source_rows
+    for side, side_rows in sides.items():
+        write_resource_side(
+            run_dir=prev_run,
+            side=side,
+            resource="InfraDevice",
+            rows=side_rows,
+            source_ids=source_ids if side == "B" else [str(row["name"]) for row in side_rows],
+            extract_ts=datetime(2026, 5, 17, 10, 0, tzinfo=timezone.utc),
+        )
     (prev_run / "run.json").write_text(json.dumps({"status": "applied"}))
     (prev_run / "schema-sub-hash.txt").write_text("HASHFIXED")
-    (prev_run / "cursors.json").write_text(json.dumps({"B": {"InfraDevice": "TIMESTAMP:2026-05-17T10:00:00Z"}}))
+    cursors = {side: {"InfraDevice": "TIMESTAMP:2026-05-17T10:00:00Z"} for side in sides}
+    (prev_run / "cursors.json").write_text(json.dumps(cursors))
     return prev_run
 
 
@@ -200,3 +216,56 @@ def test_a_source_snapshot_is_unaffected_by_the_destination_column(tmp_path: Pat
     potenda._write_side_snapshot("A", source)
 
     assert "local_id" not in snapshot_columns(run_directory(potenda), "A", "InfraDevice")
+
+
+# ---------------------------------------------------------------------------------------
+# End to end: a warm run whose source changed and whose destination did not
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_warm_source_only_change_derives_an_update_carrying_the_hydrated_id(tmp_path: Path) -> None:
+    """The join between the two halves, which neither half's own test can settle.
+
+    The snapshot test proves the column survives a write and a hydrate; the derivation test
+    proves an update records whatever `local_id` the destination store holds. Between them
+    sits the case this change exists for and the one a warm run actually takes: the source
+    changed, the destination did **not**, so the destination is never re-read — and the id
+    the update is keyed by can only have come from the previous run's snapshot.
+
+    A broken join shows up here as `MissingDestinationIdError`, which is the refusal that
+    would have made every warm incremental plan fail.
+    """
+    potenda, source, destination = make_potenda(tmp_path)
+    potenda._schema_subhash = "HASHFIXED"
+    write_prior_run(
+        tmp_path,
+        [{"name": "device-a", "description": "first", "local_id": DESTINATION_ID}],
+        source_ids=["device-a"],
+        # Side A's snapshot holds nothing for this object, so the only place the source's
+        # view of it can come from is its changed-set — which is what makes the destination
+        # id the one thing in the derived update that had to survive from the last run.
+        source_rows=[],
+    )
+    # The source moved; the destination did not, so its changed-set is empty.
+    source.deltas = [{"name": "device-a", "description": "second"}]
+    destination.deltas = []
+
+    potenda.load_one_side(side="A", adapter=source)
+    potenda.load_one_side(side="B", adapter=destination)
+    operations = operations_from_diff(
+        destination.diff_from(source),
+        config=None,
+        tier_of=lambda _kind: 0,
+        source_adapter=source,
+        destination_adapter=destination,
+    )
+
+    assert [(operation.action, operation.destination_id) for operation in operations] == [("update", DESTINATION_ID)], (
+        "The warm update must be keyed by the id the previous run's snapshot carried."
+    )
+    assert all(call[0] != "full_load" for call in destination.calls), (
+        "A usable destination snapshot must not trigger a full extract."
+    )
+    assert all(call[0] != "model_loader" for call in destination.calls), (
+        "Nor a per-resource destination read: the whole point is that the destination is not re-read."
+    )

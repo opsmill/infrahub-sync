@@ -25,12 +25,14 @@ from infrahub_sdk.exceptions import GraphQLError
 from infrahub_sdk.schema.main import BranchSchema, NodeSchemaAPI
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerResolver
+from infrahub_sync.plan.errors import UnaccountedIdentityComponentError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 from tests.adapters.test_infrahub_planned_write import (
     DEVICE_KIND,
     KEYLESS_KIND,
     NODE_ID,
+    ORPHAN_KIND,
     SCHEMAS,
     SITE_KIND,
     RecordingClient,
@@ -170,17 +172,46 @@ def test_a_create_renders_no_top_level_id() -> None:
 # ---------------------------------------------------------------------------------------
 
 
-def node_not_found_error() -> GraphQLError:
-    """The server's answer to an upsert carrying an id that matches no object (spike M4b)."""
-    return GraphQLError(
+def not_found_error(
+    *, code: str | None = "NODE_NOT_FOUND", http_status: int | None = 404, split: bool = False
+) -> GraphQLError:
+    """The server's answer to an upsert carrying an id that matches no object (spike M4b).
+
+    The measured signature is `code` **and** `http_status` in **one** error's extensions.
+    The keyword arguments exist to build the near misses: a wrong status, an absent status,
+    and the two halves split across two errors, none of which prove the server wrote nothing.
+    """
+    extensions: dict[str, Any] = {}
+    if code is not None:
+        extensions["code"] = code
+    if http_status is not None:
+        extensions["http_status"] = http_status
+    errors: list[dict[str, Any]] = (
         [
+            {"message": "one", "extensions": {"code": code}},
+            {"message": "two", "extensions": {"http_status": http_status}},
+        ]
+        if split
+        else [
             {
                 "message": f"Unable to find the node {STALE_ID} / {SITE_KIND} in the database.",
-                "extensions": {"code": "NODE_NOT_FOUND", "http_status": 404},
+                "extensions": extensions,
                 "path": [f"{SITE_KIND}Upsert"],
             }
-        ],
-        query="mutation { ... }",
+        ]
+    )
+    return GraphQLError(errors, query="mutation { ... }")
+
+
+def node_not_found_error() -> GraphQLError:
+    """The full, measured not-found signature."""
+    return not_found_error()
+
+
+def stale_update() -> PlannedOperation:
+    """One update keyed by an id the destination will not find."""
+    return update_operation(
+        kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"}, destination_id=STALE_ID
     )
 
 
@@ -190,12 +221,9 @@ def test_a_stale_destination_id_is_refused_as_a_named_error() -> None:
 
     client, adapter, peers = keyed_adapter()
     client.write_error = node_not_found_error()
-    operation = update_operation(
-        kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"}, destination_id=STALE_ID
-    )
 
     with pytest.raises(StaleDestinationIdError) as excinfo:
-        adapter.apply_planned_operation(operation=operation, peers=peers)
+        adapter.apply_planned_operation(operation=stale_update(), peers=peers)
 
     assert STALE_ID in str(excinfo.value)
     assert SITE_KIND in str(excinfo.value)
@@ -207,14 +235,42 @@ def test_a_stale_destination_id_is_marked_as_having_written_nothing() -> None:
 
     client, adapter, peers = keyed_adapter()
     client.write_error = node_not_found_error()
-    operation = update_operation(
-        kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"}, destination_id=STALE_ID
-    )
 
     with pytest.raises(StaleDestinationIdError) as excinfo:
-        adapter.apply_planned_operation(operation=operation, peers=peers)
+        adapter.apply_planned_operation(operation=stale_update(), peers=peers)
 
     assert excinfo.value.wrote is False
+
+
+@pytest.mark.parametrize(
+    ("description", "error"),
+    [
+        ("the application status is absent", not_found_error(http_status=None)),
+        ("the application status is not 404", not_found_error(http_status=500)),
+        ("the code and the status are in different errors", not_found_error(split=True)),
+    ],
+    ids=["absent-status", "wrong-status", "split-across-errors"],
+)
+def test_a_partial_not_found_signature_is_not_classified_as_proven_not_written(
+    description: str, error: GraphQLError
+) -> None:
+    """Half the signature does not prove the server wrote nothing, so it stays ambiguous.
+
+    `NODE_NOT_FOUND` alone is not the measured evidence: what proves the id path created
+    nothing is that **and** `extensions.http_status` 404, in the same error. Anything short
+    of it must reach the operator as the ordinary GraphQL failure, whose reach is unknown —
+    claiming otherwise suppresses a reconciliation the operator needs.
+    """
+    _ = description
+    client, adapter, peers = keyed_adapter()
+    client.write_error = error
+
+    with pytest.raises(GraphQLError) as caught:
+        adapter.apply_planned_operation(operation=stale_update(), peers=peers)
+
+    assert getattr(caught.value, "wrote", None) is not False, (
+        "Only the full measured signature may be marked proven-not-written."
+    )
 
 
 def test_a_transport_failure_during_save_stays_ambiguous() -> None:
@@ -302,3 +358,64 @@ def test_a_no_hfid_kind_update_is_allowed_where_its_create_is_refused() -> None:
     operation = update_operation(kind=KEYLESS_KIND, identity={"name": "keyless-a"}, payload={"name": "keyless-a"})
 
     assert adapter.apply_planned_operation(operation=operation, peers=peers) == NODE_ID
+
+
+# ---------------------------------------------------------------------------------------
+# Test 2, apply side — coverage first, then AD051 for values
+# ---------------------------------------------------------------------------------------
+#
+# The two arms are different mechanisms and must stay so. Identity coverage answers "does
+# the operation even name every component", which is a question about the plan. AD051's
+# `_assert_identity_components_accounted_for` answers "does each named component arrive with
+# a value", which is a question about the assembled write — and it is the only check that
+# can say *which* component is missing. A guard that answered both would make AD051
+# unreachable and lose that diagnosis.
+
+
+def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refused_by_ad051() -> None:
+    """The relationship-crossing value case: identity names `site`, the peer supplies no name."""
+    client, adapter, peers = keyed_adapter()
+    peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
+    operation = make_operation(
+        kind=DEVICE_KIND,
+        identity={"name": "device-a", "site": {"peer_kind": SITE_KIND, "identity": {"code": "site-a"}}},
+        payload={"name": "device-a"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"code": "site-a"}])
+        ],
+    )
+
+    with pytest.raises(UnaccountedIdentityComponentError) as excinfo:
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert "site__name__value" in str(excinfo.value), "AD051 names the component, which is why it is kept."
+    assert client.mutation_names == [], "A refused create attempts no destination mutation."
+
+
+def test_a_create_whose_direct_component_value_is_empty_is_refused_by_ad051() -> None:
+    """A present-but-empty component keys nothing, and AD051 is what names it."""
+    client, adapter, peers = keyed_adapter()
+    operation = make_operation(kind=SITE_KIND, identity={"name": ""}, payload={"name": ""})
+
+    with pytest.raises(UnaccountedIdentityComponentError) as excinfo:
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert "name__value" in str(excinfo.value)
+    assert client.mutation_names == [], "A refused create attempts no destination mutation."
+
+
+def test_identity_coverage_is_refused_before_ad051_ever_runs() -> None:
+    """Coverage is the earlier question: a component the identity never names is not AD051's.
+
+    `TestOrphan`'s human-friendly ID is `code`, which its identity does not name at all, so
+    the operation cannot be proven keyed before any value question arises.
+    """
+    from infrahub_sync.plan.errors import UnkeyedCreateRefusedError
+
+    client, adapter, peers = keyed_adapter()
+    operation = make_operation(kind=ORPHAN_KIND, identity={"name": "orphan-a"}, payload={"name": "orphan-a"})
+
+    with pytest.raises(UnkeyedCreateRefusedError):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.mutation_names == []

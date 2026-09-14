@@ -95,6 +95,8 @@ second object and reports success. Planning therefore refuses a create it cannot
 - every HFID component of the destination kind must be named by the operation's `identity`, which
   comes from `identifiers`, so in practice `identifiers` must cover the destination HFID **for kinds
   the sync creates**;
+- each of those components must carry a *usable* value: absent, empty and whitespace-only all key
+  nothing. `0` and `False` are fine — the destination matches on them;
 - a component that crosses a relationship must be resolvable from the referenced peer's own
   identifiers, since that is where the plan holds its value;
 - a kind declaring no HFID can be created only where a declared uniqueness constraint is covered by
