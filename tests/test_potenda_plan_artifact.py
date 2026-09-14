@@ -554,6 +554,29 @@ def derivation_destination() -> _FakeAdapter:
     return _FakeAdapter("destination", records)
 
 
+def destination_mirroring_source(*, schema: Mapping[str, Any] | None = None) -> _FakeAdapter:
+    """A destination holding a keyed copy of every source object, with one attribute stale.
+
+    Every comparison against it therefore yields **updates**, which is what FR-024's warning
+    arms are about now: a create is proven rather than warned about, so a plan made of creates
+    emits no warning to assert. The stale attribute is never an identifier, so each object
+    keeps the unique id its source counterpart carries and the update finds its recorded id.
+    """
+    records: list[_FakeRecord] = []
+    for kind in KINDS:
+        for record in qualified_source().get_all(kind):
+            attrs = dict(record.get_attrs())
+            # A kind with no scalar attribute is copied unchanged: it then has no difference
+            # to derive, which leaves it out of the plan rather than in it as a create.
+            stale = next((name for name in sorted(attrs) if not isinstance(attrs[name], list)), None)
+            if stale is not None:
+                attrs[stale] = f"stale-{attrs[stale]}"
+            copied = _FakeRecord(kind, record.get_identifiers(), attrs)
+            copied.local_id = DERIVED_DESTINATION_ID
+            records.append(copied)
+    return _FakeAdapter("destination", records, schema=schema)
+
+
 def destination_with_orphan(*, schema: Mapping[str, Any] | None = None) -> _FakeAdapter:
     """A destination holding one object the source does not — the one derived delete."""
     return _FakeAdapter(
@@ -985,7 +1008,13 @@ def test_warns_when_the_destination_kind_declares_no_human_friendly_id(caplog: p
     schema = {"BuiltinTag": schema_node(human_friendly_id=None, uniqueness_constraints=[["name__value"]])}
     operations = operations_from_diff(
         _FakeDiff(
-            {"BuiltinTag": [_FakeElement(kind="BuiltinTag", name="prod", keys={"name": "prod"}, source_attrs={})]}
+            {"BuiltinTag": [_FakeElement(
+                        kind="BuiltinTag",
+                        name="prod",
+                        keys={"name": "prod"},
+                        source_attrs={"description": "new"},
+                        dest_attrs={"description": "old"},
+                    )]}
         ),
         config=build_config(),
         tier_of=resolver(),
@@ -1015,7 +1044,13 @@ def test_warns_when_the_plan_identity_misses_a_human_friendly_id_component(caplo
             {
                 "LocationRack": [
                     # Identity carries `name` only, so `site__name__value` is unsupplied.
-                    _FakeElement(kind="LocationRack", name="r1", keys={"name": "r1"}, source_attrs={})
+                    _FakeElement(
+                        kind="LocationRack",
+                        name="r1__hq",
+                        keys={"name": "r1"},
+                        source_attrs={"description": "new"},
+                        dest_attrs={"description": "old"},
+                    )
                 ]
             }
         ),
@@ -1051,7 +1086,13 @@ def test_warns_when_no_uniqueness_constraint_covers_the_plan_identity(
     }
     operations = operations_from_diff(
         _FakeDiff(
-            {"BuiltinTag": [_FakeElement(kind="BuiltinTag", name="prod", keys={"name": "prod"}, source_attrs={})]}
+            {"BuiltinTag": [_FakeElement(
+                        kind="BuiltinTag",
+                        name="prod",
+                        keys={"name": "prod"},
+                        source_attrs={"description": "new"},
+                        dest_attrs={"description": "old"},
+                    )]}
         ),
         config=build_config(),
         tier_of=resolver(),
@@ -1077,7 +1118,7 @@ def test_the_convergence_warning_stays_out_of_the_manifest_and_the_run_succeeds(
     schema = {kind: schema_node(human_friendly_id=None, uniqueness_constraints=[]) for kind in KINDS}
     config = build_config()
     source = qualified_source()
-    destination = destination_with_orphan(schema=schema)
+    destination = destination_mirroring_source(schema=schema)
 
     pin_extraction_decisions(monkeypatch, [False, False])
     potenda = build_potenda(config=config, source=source, destination=destination, run_id="20260726T1300-dddddddd")
@@ -1137,7 +1178,7 @@ def test_each_convergence_key_case_warns_and_the_plan_run_still_succeeds(
     """T099 / SC-014: all three cases, each as a plan run, each asserted to succeed."""
     config = build_config()
     source = qualified_source()
-    destination = destination_with_orphan(schema=case.schema)
+    destination = destination_mirroring_source(schema=case.schema)
 
     potenda = build_potenda(config=config, source=source, destination=destination, run_id=case.run_id)
     with caplog.at_level(logging.DEBUG, logger=DERIVE_LOGGER):
@@ -2158,7 +2199,15 @@ COARSE_RACK_SCHEMA = {
 
 
 def rack_elements(*sites: str, name: str = "Comms closet") -> _FakeDiff:
-    """One `LocationRack` element per site, all sharing one rack name."""
+    """One `LocationRack` **update** element per site, all sharing one rack name.
+
+    Updates, because the merge hazard these fixtures are about is the one arm that is still
+    a warning. The same racks as creates are refused outright now — several creates
+    projecting onto one destination human-friendly ID is `DestinationIdentityCollisionError`
+    — and that refusal is covered by `tests/plan/test_keyed_create_refusal.py`. An update is
+    keyed by its recorded destination id and cannot converge onto another operation's object,
+    so it is excluded from that count and reaches the warning.
+    """
     return _FakeDiff(
         {
             "LocationRack": [
@@ -2166,13 +2215,23 @@ def rack_elements(*sites: str, name: str = "Comms closet") -> _FakeDiff:
                     kind="LocationRack",
                     name=f"{name}__{site}",
                     keys={"name": name, "site": site},
-                    # `{}` and not `None`: the comparison's create shape, identifiers excluded.
-                    source_attrs={},
+                    source_attrs={"description": "new"},
+                    dest_attrs={"description": "old"},
                 )
                 for site in sites
             ]
         }
     )
+
+
+def rack_destination(*sites: str, name: str = "Comms closet") -> _FakeAdapter:
+    """A destination holding each rack under the unique id its element carries."""
+    records = []
+    for site in sites:
+        record = _FakeRecord("LocationRack", {"name": name, "site": site}, {"description": "old"})
+        record.local_id = DERIVED_DESTINATION_ID
+        records.append(record)
+    return _FakeAdapter("destination", records)
 
 
 def rack_operations(*sites: str, name: str = "Comms closet") -> list[PlannedOperation]:
@@ -2183,7 +2242,7 @@ def rack_operations(*sites: str, name: str = "Comms closet") -> list[PlannedOper
         config=build_config(),
         tier_of=resolver(),
         source_adapter=source,
-        destination_adapter=derivation_destination(),
+        destination_adapter=rack_destination(*sites, name=name),
     )
 
 

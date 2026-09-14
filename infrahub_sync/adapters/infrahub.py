@@ -29,6 +29,7 @@ from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.configuration.credentials import select_runtime_credential
 from infrahub_sync.generator import has_field
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.plan.derive import refuse_unkeyed_create
 from infrahub_sync.plan.errors import (
     NullRelationshipValueError,
     PeerAmbiguousError,
@@ -1317,6 +1318,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 for peer in reference.peers
             ]
             data[reference.field] = peer_ids[0] if reference.cardinality == "one" else peer_ids
+
+        if operation.action == "create":
+            # The same rule plan derivation applies, from the same function, so a create
+            # refused at plan time and the same create arriving in a hand-built artifact are
+            # refused for the same reason. Before `client.create`, so a refusal is proven to
+            # have attempted no mutation. Reads the cached schema and the operation only.
+            refuse_unkeyed_create(operation, node=node_schema)
 
         self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
 

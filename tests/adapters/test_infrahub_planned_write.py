@@ -52,6 +52,7 @@ from infrahub_sync.plan.errors import (
     PeerNotFoundError,
     PlanVerificationError,
     UnaccountedIdentityComponentError,
+    UnkeyedCreateRefusedError,
 )
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import ApplyRecord, PlannedOperation, RelationshipReference
@@ -643,13 +644,18 @@ def test_generate_payload_create_receives_the_source_owner_and_protection_argume
 
 
 def test_a_payload_missing_an_identity_component_is_refused_before_any_write() -> None:
-    """AD042/AD051: a payload assembled from attributes alone leaves the upsert unkeyed."""
+    """AD042: a create whose identity does not name every HFID component cannot key itself.
+
+    `TestOrphan`'s human-friendly ID is `code`, which its identity does not name, so the
+    payload assembled from that identity carries no value the destination can match on. The
+    refusal names the component rather than merely reporting that the write was unkeyed.
+    """
     client = RecordingClient()
     adapter = make_adapter(client)
 
     operation = make_operation(kind=ORPHAN_KIND, identity={"name": "orphan-a"}, payload={"name": "orphan-a"})
 
-    with pytest.raises(UnaccountedIdentityComponentError) as excinfo:
+    with pytest.raises(UnkeyedCreateRefusedError) as excinfo:
         adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
 
     message = str(excinfo.value)
