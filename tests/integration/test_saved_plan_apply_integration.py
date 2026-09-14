@@ -6,14 +6,16 @@ now all-direct: `BuiltinTag`, `LocationSite`, `LocationRack`, `OrganizationManuf
 of them declares `human_friendly_id: ['name__value']`, so every planned write here renders a key
 the client can form.
 
-The earlier slice qualified through `InterfaceLag` and `InterfacePhysical`, both
-`['device__name__value', 'name__value']`. A key that crosses a relationship cannot be rendered
-client-side, so the write surface refuses those kinds before they mutate and no supported slice
-can carry one. **SC-008's relationship-crossing peer premise is retired** — it required exactly
-such a kind to reach the destination — along with the nested `<rel>__<attr>__value` filter
-spelling it was the only live evidence for. The refusal itself is qualified directly by
-`tests/integration/test_infrahub_keyed_write_integration.py`; AD043's nested identity walk
-stays covered offline. Everything else the criteria asked for is preserved and runs live.
+The earlier slice also qualified through `InterfaceLag` and `InterfacePhysical`, both
+`['device__name__value', 'name__value']`. Such a key cannot be rendered client-side, but it does
+not need to be: the destination converges on the complete HFID components in `data`, so those
+kinds are written like any other (AD067 closed). This slice simply no longer carries one, which
+keeps its identity assertions direct. **SC-008's relationship-crossing peer arm moved rather
+than being retired**, together with the nested `<rel>__<attr>__value` filter spelling it was the
+only live evidence for: both are qualified directly by
+`tests/integration/test_infrahub_keyed_write_integration.py`, which writes that shape live,
+converges it, and resolves a peer through the nested filter. AD043's nested identity walk stays
+covered offline too. Everything else the criteria asked for is preserved and runs live.
 
 **Expected result: six passed, one skipped.** The skip is SC-016's live half, and it is the
 AD092 precondition skip rather than a missing environment. It is now *structural* on a keyed
@@ -1149,9 +1151,10 @@ def test_the_write_class_conformance_matrix(live_plan: LivePlan, write_class: st
     write is issued each have to leave the destination back at that same state once the plan
     is applied again. Delete is excluded because applying deletes is out of scope.
 
-    Same AD080 caveat as SC-002: for a relationship-crossing convergence key the relationship
-    class is exactly the population the narrowed keyedness guarantee excludes, so a failure
-    there is the recorded limitation surfacing rather than a regression in this code.
+    Same AD080 caveat as SC-002: the relationship class is the one whose recovery behaviour this
+    slice cannot observe, because it carries no relationship-crossing convergence key — not
+    because such a key is unsupported. The live coverage for that shape is in
+    `tests/integration/test_infrahub_keyed_write_integration.py`.
     """
     operation = _representative(live_plan, write_class)
 

@@ -235,10 +235,11 @@ def keyed_write_scope() -> Iterator[KeyedWriteScope]:
     every object created against it, so no teardown has to enumerate objects by kind and
     therefore none can remove another run's. `main` is never written.
 
-    The device is created **directly through the SDK**, not through a planned apply: its key
-    crosses a relationship, so the write surface would refuse it — which is the very thing the
-    refusal case asserts. Seeding it directly is what makes it a *pre-existing* peer, which is
-    the only state in which the nested-peer read can be exercised at all.
+    The device is created **directly through the SDK** rather than through a planned apply,
+    because the cases below need it to *pre-exist*: one converges a planned create onto it and
+    another updates it by its recorded id, and neither would be measuring anything if the
+    fixture had established the object through the very path under test. It is also the only
+    state in which the nested-peer read can be exercised at all.
     """
     address, token = _env_or_skip()
     suffix = uuid.uuid4().hex[:8]
@@ -392,13 +393,14 @@ def test_a_keyed_consumer_resolves_a_crossing_peer_through_the_nested_filter(
     keyed_write_scope: KeyedWriteScope,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A kind that cannot be written can still be read, and resolving it is nested (AD043/PD-004).
+    """Resolving a peer whose own key crosses a relationship is a nested read (AD043/PD-004).
 
-    This is the semantic half the refusal case cannot cover. The consumer's own key is
-    all-direct, so its planned write renders keyed and is issued; the peer it names is the
-    crossing kind, which pre-exists at the destination. Resolving that peer is the only place
-    the nested `{peer_kind, identity}` walk turns into a nested `<rel>__<attr>__value` filter
-    against a real server, and no offline harness can settle how the destination answers it.
+    The *read* half, which the write cases above cannot reach: they prove the destination
+    converges and updates such a kind, and this proves one can be **referenced** by identity.
+    The consumer's own key is all-direct; the peer it names is the crossing kind, which
+    pre-exists at the destination. Resolving that peer is the only place the nested
+    `{peer_kind, identity}` walk turns into a nested `<rel>__<attr>__value` filter against a
+    real server, and no offline harness can settle how the destination answers it.
     """
     scope = keyed_write_scope
     mount_name = f"unkeyed-mount-{scope.branch.rsplit('-', maxsplit=1)[-1]}"
