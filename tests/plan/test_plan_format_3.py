@@ -460,3 +460,58 @@ def test_a_format_2_artifact_update_without_an_id_still_reads() -> None:
     loaded = PlannedOperation.model_validate(record, context={"format_version": 2})
 
     assert loaded.destination_id is None
+
+
+# ---------------------------------------------------------------------------------------
+# A blank recorded id is not a recorded id
+# ---------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("blank", ["", " ", "   ", "\t", "\n"], ids=["empty", "space", "spaces", "tab", "newline"])
+def test_a_whitespace_only_destination_id_is_refused_in_process(blank: str) -> None:
+    """`"   "` keys nothing at the destination, so it is not an id the update can be applied by.
+
+    The empty string was already refused; whitespace was not, and it reaches the wire as a
+    scalar `id` the server cannot match — an update that looks keyed and is not.
+    """
+    with pytest.raises(ValidationError):
+        update_operation(destination_id=blank)
+
+
+@pytest.mark.parametrize("blank", ["", " ", "   ", "\t"], ids=["empty", "space", "spaces", "tab"])
+def test_a_whitespace_only_destination_id_is_refused_while_reading(tmp_path: Path, blank: str) -> None:
+    """The reader enforces the same rule on disk as the model does in process."""
+    directory = run_dir(tmp_path)
+    write_artifact(directory, [update_record(destination_id=blank)])
+
+    with pytest.raises(PlanArtifactTornError):
+        parse(directory)
+
+
+def test_a_destination_id_with_surrounding_whitespace_is_still_refused(tmp_path: Path) -> None:
+    """Not trimmed and accepted: a padded id is a malformed record, not one to repair.
+
+    Silently trimming would make the artifact's bytes and the value applied differ, and the
+    checksum covers the bytes.
+    """
+    directory = run_dir(tmp_path)
+    write_artifact(directory, [update_record(destination_id=f"  {DESTINATION_ID}  ")])
+
+    with pytest.raises(PlanArtifactTornError):
+        parse(directory)
+
+
+def test_a_valid_destination_id_is_unaffected(tmp_path: Path) -> None:
+    """The rule narrows what counts as blank and nothing else."""
+    directory = run_dir(tmp_path)
+    write_artifact(directory, [update_record()])
+
+    assert parse(directory).operations[0].destination_id == DESTINATION_ID
+
+
+def test_a_format_2_update_is_still_readable_under_the_blank_rule(tmp_path: Path) -> None:
+    """Format 2 records no id at all, which is absence rather than a blank one."""
+    directory = run_dir(tmp_path)
+    write_artifact(directory, [update_record(destination_id=None)], format_version=2)
+
+    assert parse(directory).operations[0].destination_id is None

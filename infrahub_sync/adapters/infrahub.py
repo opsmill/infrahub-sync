@@ -1352,14 +1352,20 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         if operation.action == "create":
             # Arm one, from the same function plan derivation uses, so a create refused at
             # plan time and the same create arriving in a hand-built artifact are refused for
-            # the same reason. Identity coverage and the no-human-friendly-ID rule only;
+            # the same reason. Identity coverage and the no-human-friendly-ID rule first;
             # **values are AD051's**, immediately below, because that is the check that can
             # name the component. Both run before `client.create`, so either refusal is
             # proven to have attempted no mutation, and both read the cached schema and the
             # operation alone.
+            #
+            # **Creates only, both of them.** An update is keyed by its recorded destination
+            # id: the server is told exactly which object to write, so the human-friendly-ID
+            # components in its payload key nothing and their completeness decides nothing.
+            # Applying these to an update refuses writes that are correctly keyed — a payload
+            # carrying only the attributes that changed, and above all the rename the
+            # recorded id exists for, where the HFID value is the thing being changed.
             refuse_unkeyed_create_coverage(operation, node=node_schema)
-
-        self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
+            self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
 
         source_id = self.source_node.id if self.source_node else None
         owner_id = self.owner_node.id if self.owner_node else None
@@ -1391,16 +1397,21 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         data: Mapping[str, Any],
         operation: PlannedOperation,
     ) -> None:
-        """The diagnostic: every HFID component of the kind is accounted for (AD051).
+        """The diagnostic: every HFID component of a **create** is accounted for (AD051).
 
         FR-024 refuses the same condition at plan time; this is what stops it becoming silent
-                data duplication at apply time when the plan was hand-built or the schema changed
-                since. It is the only check that can say *which* component is missing, which is why
-                it is the **value** arm of the create guard rather than being folded into the
-                coverage check that runs just before it.
+        data duplication at apply time when the plan was hand-built or the schema changed
+        since. It is the only check that can say *which* component is missing, which is why it
+        is the **value** arm of the create guard rather than being folded into the coverage
+        check that runs just before it.
 
-                A kind that declares no human-friendly ID has no components and so passes here;
-                `refuse_unkeyed_create_coverage` is what refuses it, on its uniqueness constraints.
+        **Creates only, and the caller enforces that.** An update is keyed by its recorded
+        destination id, so the components key nothing for it and their completeness decides
+        nothing; running this over an update refuses correctly keyed writes, including the
+        rename the recorded id exists for, where the HFID value is what is being changed.
+
+        A kind that declares no human-friendly ID has no components and so passes here;
+        `refuse_unkeyed_create_coverage` is what refuses it, on its uniqueness constraints.
 
                 Raises:
                     UnaccountedIdentityComponentError: naming the kind and the missing components.

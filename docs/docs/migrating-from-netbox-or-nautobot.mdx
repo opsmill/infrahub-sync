@@ -91,26 +91,36 @@ infrahub-sync configs register <package.yml> --reason "register migration"
 infrahub-sync diff --config-id <config-id> --version <version> --reason "review migration"
 ```
 
-:::warning Saved-plan applies require a keyed destination kind
+:::warning What a saved plan will and will not apply
 
-A saved-plan apply converges on the destination kind's `human_friendly_id`. The
-client has to render that key before the write, so two shapes cannot be applied
-and are refused before they touch Infrahub:
+**Creates must prove their own key.** A create carries no destination id, so Infrahub
+matches it on the human-friendly-ID values its payload carries — and a payload missing
+one does not match the existing object: it creates a second one and reports success.
+`diff` therefore refuses a create it cannot prove carries every component, naming the
+kind and what is missing. A kind that declares no human-friendly ID can be created only
+where a uniqueness constraint covers its identifiers.
 
-- a kind whose human-friendly ID **crosses a relationship**, because the peer is
-  supplied as a resolved node id and no key can be formed from it; and
-- a kind that **declares no human-friendly ID**, because there is no key to render.
+**Updates are not subject to that rule.** An update carries the destination object's own
+id, recorded when the plan was built, so it writes the object it means even where
+`identifiers` and the human-friendly ID differ — including a kind whose human-friendly ID
+crosses a relationship, one that declares none at all, and a rename that changes the
+human-friendly ID itself.
 
-Apply is sequential: the refused operation writes nothing, operations applied
-before it stay written, and no later operation runs. `run.json` records what was
-applied.
+Apply is sequential: a refused operation writes nothing, operations applied before it stay
+written, and no later operation runs. `run.json` records what was applied.
 
-On the current `from-netbox` mapping and schema-library revision this covers
-`IpamPrefix` and `IpamIPAddress`, whose plan identities omit the `ip_namespace`
-component the destination key requires. Separately, `LocationRack` is not
-convergent when different sites contain racks with the same name: the
-configuration identifies a rack by `name` and `site`, while the current
-schema-library revision keys it by `name` alone.
+On the current `from-netbox` mapping and schema-library revision this affects
+`IpamPrefix` and `IpamIPAddress`, whose identifiers omit the `ip_namespace` component
+their destination kinds require: their updates apply, and a fresh create under them is
+refused until the mapping or the schema is corrected. Separately, `LocationRack` is not
+convergent when different sites contain racks with the same name — the configuration
+identifies a rack by `name` and `site` while the current schema-library revision keys it
+by `name` alone — and `diff` now refuses those creates as a destination-identity collision
+rather than silently merging them.
+
+**Plans written by an earlier version cannot be applied.** The saved-plan format is now
+version 3, which records the destination id on updates. A format-2 plan can still be read
+and reviewed; `apply` refuses it and asks for a fresh `diff`.
 
 Three live qualifications exercise the saved-plan write surface.
 

@@ -419,3 +419,82 @@ def test_identity_coverage_is_refused_before_ad051_ever_runs() -> None:
         adapter.apply_planned_operation(operation=operation, peers=peers)
 
     assert client.mutation_names == []
+
+
+# ---------------------------------------------------------------------------------------
+# AD051 is a **create** check, and only a create check
+# ---------------------------------------------------------------------------------------
+#
+# An update is keyed by its recorded destination id: the server is told exactly which object
+# to write, so the human-friendly-ID components in the payload key nothing and their
+# completeness decides nothing. Running AD051 over an update therefore refuses writes that are
+# perfectly well keyed — including the case the recorded-id design exists for, where a rename
+# changes the destination's own HFID, and the ordinary one where a plan carries only the
+# attributes that changed.
+
+
+def test_an_update_missing_an_hfid_component_still_reaches_the_recorded_id_write() -> None:
+    """`TestOrphan`'s HFID is `code`, which the payload does not carry — and need not.
+
+    The recorded id names the object. Refusing here would make an id-keyed update depend on a
+    key it does not use.
+    """
+    client, adapter, peers = keyed_adapter()
+    operation = update_operation(kind=ORPHAN_KIND, identity={"name": "orphan-a"}, payload={"name": "orphan-a"})
+
+    assert adapter.apply_planned_operation(operation=operation, peers=peers) == NODE_ID
+    assert client.mutation_names == [f"{ORPHAN_KIND}Upsert"], "The update is written, not refused."
+    _name, query = client.mutations[0]
+    assert top_level_scalar_id(query) == DESTINATION_ID
+
+
+def test_an_update_whose_hfid_component_is_blank_still_reaches_the_recorded_id_write() -> None:
+    """A blank component keys nothing — which is exactly why the id is what keys this write.
+
+    Identity and payload agree on the blank value, as the record type requires; what is under
+    test is that a blank **HFID component** no longer stops an id-keyed write. The create with
+    this identical shape is refused below.
+    """
+    client, adapter, peers = keyed_adapter()
+    operation = update_operation(kind=SITE_KIND, identity={"name": "  "}, payload={"name": "  "})
+
+    assert adapter.apply_planned_operation(operation=operation, peers=peers) == NODE_ID
+    _name, query = client.mutations[0]
+    assert top_level_scalar_id(query) == DESTINATION_ID
+
+
+def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is_written() -> None:
+    """The rename shape: the peer identity supplies no HFID value, and the id carries it."""
+    client, adapter, peers = keyed_adapter()
+    peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
+    operation = update_operation(
+        kind=DEVICE_KIND,
+        identity={"name": "device-a", "site": {"peer_kind": SITE_KIND, "identity": {"code": "site-a"}}},
+        payload={"name": "device-a"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"code": "site-a"}])
+        ],
+    )
+
+    assert adapter.apply_planned_operation(operation=operation, peers=peers) == NODE_ID
+    _name, query = client.mutations[0]
+    assert top_level_scalar_id(query) == DESTINATION_ID
+
+
+def test_the_same_blank_component_as_a_create_is_still_refused_by_ad051() -> None:
+    """The discriminator, and the pair that matters: same kind, same payload, action differs.
+
+    `TestSite`'s identity names its only HFID component, so coverage passes and AD051 is the
+    check that decides. As an **update** (above) the blank value is irrelevant — the id keys
+    the write. As a **create** it is the whole question, because the components are the only
+    thing the server can match on. That asymmetry is what this change is; running AD051 over
+    both actions collapsed it.
+    """
+    client, adapter, peers = keyed_adapter()
+    operation = make_operation(kind=SITE_KIND, identity={"name": "  "}, payload={"name": "  "})
+
+    with pytest.raises(UnaccountedIdentityComponentError) as excinfo:
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert "name__value" in str(excinfo.value), "AD051 still names the component for a create."
+    assert client.mutation_names == [], "A refused create attempts no destination mutation."

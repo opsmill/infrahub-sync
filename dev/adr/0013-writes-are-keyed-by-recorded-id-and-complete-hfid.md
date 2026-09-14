@@ -88,7 +88,8 @@ this change lacks the column and is treated as a cache miss for that resource.
 
 AD067 closes: the server converges relationship-crossing human-friendly IDs, so such kinds are
 supported for creates when their components are proven present, and for updates by id. AD066's gate is
-retired; AD051's per-component check remains as the value arm.
+retired; AD051's per-component check remains as the value arm **of the create guard**, and runs
+for creates alone — an update is keyed by its recorded id, so the components key nothing for it.
 
 Explicit `hfid` wire rendering is **not** reintroduced: `save(allow_upsert=True)` strips it on 1.23.2
 and the server matches on complete components regardless, so rendering it would be a claim the wire

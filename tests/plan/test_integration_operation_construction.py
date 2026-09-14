@@ -54,6 +54,10 @@ def keyed_write_builders() -> list[tuple[str, Callable[[], PlannedOperation]]]:
             lambda: keyed_write._renamable_update("serial-a", destination_id=DESTINATION_ID, renamed="after"),
         ),
         (
+            "update omitting an HFID component, keyed only by its recorded id",
+            lambda: keyed_write._device_partial_update("device-a", destination_id=DESTINATION_ID, serial="sn-x"),
+        ),
+        (
             "create referencing a peer whose own key crosses a relationship",
             lambda: keyed_write._mount_operation("mount-a", "device-a", "site-a"),
         ),

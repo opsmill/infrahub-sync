@@ -68,8 +68,8 @@ Only the Infrahub adapter implements the surface today.
 4a. CREATE ONLY — COVERAGE: the operation's identity names every human-friendly-ID
        component of the kind, or, for a kind declaring none, covers a uniqueness
        constraint            → UnkeyedCreateRefusedError
-4b. DIAGNOSTIC (AD051): every one of those components arrives with a USABLE value
-                             → UnaccountedIdentityComponentError, naming the component
+4b. CREATE ONLY — DIAGNOSTIC (AD051): every one of those components arrives with a
+       USABLE value  → UnaccountedIdentityComponentError, naming the component
 5.  node = client.create(kind=..., data=generate_payload_create(...))
 5b. UPDATE ONLY: node.id = operation.destination_id   # the recorded key, never in `data`
 6.  node.save(allow_upsert=True)               # the convergence point, and the ONLY write
@@ -80,6 +80,13 @@ Only the Infrahub adapter implements the surface today.
 Both refusals at 4 happen **before** `client.create`, so a refused operation is proven to have
 attempted no destination mutation. They are different questions and stay different mechanisms:
 coverage is about the plan, and AD051 is the only check that can say *which* component is missing.
+
+Both are **creates only**. An update is keyed by its recorded destination id, so the server is
+told exactly which object to write and the human-friendly-ID components in its payload key
+nothing — their completeness decides nothing and cannot be a condition of the write. Applying
+either check to an update refuses writes that are correctly keyed: a payload carrying only the
+attributes that changed, and above all the rename the recorded id exists for, where the
+human-friendly-ID value is the very thing being changed.
 
 Creates and updates both route through the same convergent upsert. Neither routes through
 `InfrahubModel.update`, whose `local_id` keying needs a destination load an apply must not perform.
@@ -286,6 +293,11 @@ then parse them.**
 3. verify THOSE bytes + isinstance(destination, PlannedWriteDestination) → refuse before any write
 4. parse them; classify v1 / torn / unrecognized version.
    An action outside ACTIONS is refused HERE, before any write → run state failed
+4b. refuse a format the current version cannot APPLY → PlanFormatApplyUnsupportedError.
+   AFTER the parse, so a torn format-2 artifact still reports as torn rather than merely
+   old; BEFORE the resolver and the loop, so nothing is dispatched. A format-2 update
+   records no destination id and so cannot be keyed; the plan stays readable and
+   reviewable, and the message asks for a fresh `diff`
 5. peers = destination.new_peer_resolver()
 6. applied: list[str] = []   ;   skipped_deletes: list[str] = []      # both ORDERED
 7. for operation in stored order:

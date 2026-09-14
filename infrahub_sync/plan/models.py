@@ -189,11 +189,17 @@ class PlannedOperation(BaseModel):
             # readable and reviewable but not applyable.
             return data
         if data.get("action") == "update":
-            if not isinstance(recorded_id, str) or not recorded_id:
+            # Not merely present, and not merely non-empty: a blank or padded id reaches the
+            # wire as a scalar `id` the destination cannot match, which is an update that
+            # looks keyed and is not. It is refused rather than trimmed — trimming would make
+            # the artifact's bytes differ from the value applied, and the checksum covers the
+            # bytes.
+            if not isinstance(recorded_id, str) or recorded_id != recorded_id.strip() or not recorded_id.strip():
                 msg = (
                     f"Operation {identifier!r} is an update and carries no usable 'destination_id' "
                     f"(found {recorded_id!r}). A format-{format_version} update is keyed by the "
-                    "destination id recorded for it at plan time."
+                    "destination id recorded for it at plan time, so the id must be present and carry "
+                    "no leading or trailing whitespace."
                 )
                 raise ValueError(msg)
         elif recorded_id is not None:

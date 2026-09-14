@@ -371,6 +371,31 @@ def _renamable_update(serial: str, *, destination_id: str, renamed: str) -> Plan
     )
 
 
+def _device_partial_update(device_name: str, *, destination_id: str, serial: str) -> PlannedOperation:
+    """An update whose payload **omits an HFID component**, keyed only by its recorded id.
+
+    `TestUnkeyedDevice`'s human-friendly ID is `[site__name__value, name__value]`. This
+    operation's identity names `name` and not `site`, so neither the payload nor any
+    relationship reference carries the `site` component — the write cannot be matched on the
+    human-friendly ID at all, and the recorded id is the only thing that can land it.
+
+    That is the shape the create-side checks used to refuse for every action. They are creates
+    only now, because an update tells the server exactly which object to write: a plan that
+    carries just the attributes that changed is ordinary, and the completeness of components
+    the write does not key on cannot be a condition of it.
+    """
+    identity = canonical_identity({"name": device_name}, kind=DEVICE_KIND)
+    return PlannedOperation(
+        operation_id=operation_id("update", DEVICE_KIND, identity),
+        action="update",
+        kind=DEVICE_KIND,
+        identity=identity,
+        tier=0,
+        payload={"name": device_name, "serial": serial},
+        destination_id=destination_id,
+    )
+
+
 def test_a_relationship_crossing_create_converges_instead_of_duplicating(
     keyed_write_scope: KeyedWriteScope,
 ) -> None:
@@ -576,3 +601,49 @@ def test_a_rename_of_the_destination_key_itself_lands_on_the_right_object(
     reread = scope.client.get(kind=RENAMABLE_KIND, id=seeded.id, branch=scope.branch)
     assert reread.name.value == renamed, "The rename did not reach the object the id named."
     assert reread.serial.value == scope.renamable_serial, "The sync identity is unchanged by the rename."
+
+
+def test_an_update_omitting_an_hfid_component_writes_the_object_its_id_names(
+    keyed_write_scope: KeyedWriteScope,
+) -> None:
+    """The changed property, against a real destination rather than a recording transport.
+
+    The object is created through the planned-write surface carrying its **full** human-friendly
+    ID, so the create side is exercised exactly as before. It is then updated by an operation
+    whose payload omits the `site` component of that ID and carries only the recorded id and the
+    attribute that moved.
+
+    Four things are asserted together, because any one alone would pass for the wrong reason: the
+    write lands on the **same object** (id and count), the intended non-key change is **present**,
+    and the two things the operation never mentions — `name` and the `site` peer — are
+    **unchanged**. A write that silently created a second object moves the count; one that landed
+    elsewhere leaves `serial` alone; one that let the SDK re-render the whole node would clear
+    `site`.
+
+    If the destination refuses this update, that is a finding about the contract and not a test to
+    adjust: it would mean an id-keyed upsert still requires the human-friendly-ID components, and
+    the narrowing of the create checks would have to be reconsidered.
+    """
+    scope = keyed_write_scope
+    created_name = f"partial-{scope.device_name}"
+    created_id = scope.adapter.apply_planned_operation(
+        operation=_device_operation(created_name, scope.site_name), peers=scope.adapter.new_peer_resolver()
+    )
+    before_count = scope.client.count(kind=DEVICE_KIND, branch=scope.branch)
+    seeded_site_id = scope.client.get(kind=DEVICE_KIND, id=created_id, branch=scope.branch, include=["site"]).site.id
+
+    written = scope.adapter.apply_planned_operation(
+        operation=_device_partial_update(created_name, destination_id=created_id, serial="sn-partial"),
+        peers=scope.adapter.new_peer_resolver(),
+    )
+
+    assert written == created_id, "The update must write the object its recorded id names."
+    assert scope.client.count(kind=DEVICE_KIND, branch=scope.branch) == before_count, (
+        "An update omitting a human-friendly-ID component must change an object, not add one."
+    )
+    reread = scope.client.get(kind=DEVICE_KIND, id=created_id, branch=scope.branch, include=["site"])
+    assert reread.serial.value == "sn-partial", "The intended change did not reach the object the id named."
+    assert reread.name.value == created_name, "An attribute the operation restated unchanged must stay unchanged."
+    assert reread.site.id == seeded_site_id, (
+        "The operation never mentions `site`, so the write must leave that relationship exactly as it was."
+    )
