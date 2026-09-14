@@ -79,15 +79,36 @@ whose *convergence key* crosses a relationship is five. Taking the configuration
 keying figure overstated a keying risk by a factor of two, and the error survived several rounds of
 review because both numbers are real counts of something.
 
-Two practical consequences:
+What that means for a mapping depends on the action, because the two are keyed differently
+([ADR 0013](../adr/0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)).
 
-- A kind whose HFID crosses a relationship cannot render a client-side `hfid` at all: the SDK cannot
-  form one from a peer supplied as a resolved node id. Its planned write carries neither `id` nor
-  `hfid` and is refused before it mutates the destination.
-- A kind that declares no HFID has no convergence key to render, so its planned write is refused on
-  the same terms.
+**Updates are unaffected by the mismatch.** An update is keyed by the destination `id` recorded for it
+at plan time, so a mapping whose `identifiers` do not cover the destination HFID still updates the
+object it means — and so does a rename that changes the destination's human-friendly ID, which
+`identifiers` alone would have turned into a delete plus a create. Kinds that declare no HFID are
+supported for updates for the same reason.
 
-Both are refused by the apply keyedness gate rather than at mapping time; see
+**Creates are where the mapping has to line up.** A create carries no id, so the server matches it on
+the HFID components in its payload — and a payload missing one component does not match: it creates a
+second object and reports success. Planning therefore refuses a create it cannot prove:
+
+- every HFID component of the destination kind must be named by the operation's `identity`, which
+  comes from `identifiers`, so in practice `identifiers` must cover the destination HFID **for kinds
+  the sync creates**;
+- a component that crosses a relationship must be resolvable from the referenced peer's own
+  identifiers, since that is where the plan holds its value;
+- a kind declaring no HFID can be created only where a declared uniqueness constraint is covered by
+  its identifiers; the destination refuses the duplicate in that case.
+
+A kind whose HFID crosses a relationship is **supported** — the server matches on the components in
+the payload, so no client-side `hfid` is needed and none is rendered.
+
+Two mappings in `examples/netbox_to_infrahub/config.yml` sit exactly on this line: `IpamPrefix`
+(`identifiers: [prefix, vrf]`) and `IpamIPAddress` (`identifiers: [address, vrf]`), whose destination
+kinds require `ip_namespace`. Their updates work; a fresh create under them is refused rather than
+silently duplicated, and they need a mapping or schema fix.
+
+Refusals happen at `diff` time, and the write surface repeats the same check; see
 [Planned writes and apply](planned-write-and-apply.md).
 
 ## Filters

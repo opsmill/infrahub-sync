@@ -1264,11 +1264,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             raise TypeError(msg)
 
         # The payload is `keys` union `source_attrs`, so it already carries the identity
-        # components the convergent write keys on (AD042). The v1 plan contract cannot
-        # distinguish an absent optional to-one relationship from an intended clear. Keep
-        # create's established omission behavior; on update, disclose that the null is a
-        # no-op rather than silently claiming convergence. A mandatory null is invalid and
-        # must stop here before the SDK can render it as a relationship id.
+        # components the convergent write keys on (AD042). No plan format distinguishes an
+        # absent optional to-one relationship from an intended clear. Keep create's
+        # established omission behavior; on update, disclose that the null is a no-op rather
+        # than silently claiming convergence. Derivation drops a null cardinality-one peer
+        # before the operation is recorded and warns there (S7), so this arm is reached only
+        # by a hand-built artifact that carries one — which is why it is kept rather than
+        # removed. A mandatory null is invalid and must stop here before the SDK can render
+        # it as a relationship id.
         payload = operation.payload or {}
         null_to_one_relationships = [
             relationship
@@ -1293,10 +1296,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         if operation.action == "update" and optional_null_fields:
             logger.warning(
                 "Planned update %s for destination kind %s carries null for optional cardinality-one "
-                "relationship field(s) %s. Plan format v1 cannot distinguish an absent relationship "
+                "relationship field(s) %s. The plan format cannot distinguish an absent relationship "
                 "from an intended clear, so the field is omitted and the destination relationship is "
-                "not cleared. Clear it directly at the destination, or use a plan format that represents "
-                "relationship clears, if the clear was intended.",
+                "not cleared. Clear it directly at the destination if the clear was intended.",
                 operation.operation_id,
                 operation.kind,
                 ", ".join(optional_null_fields),

@@ -12,7 +12,7 @@ client-side, so the write surface refuses those kinds before they mutate and no 
 can carry one. **SC-008's relationship-crossing peer premise is retired** — it required exactly
 such a kind to reach the destination — along with the nested `<rel>__<attr>__value` filter
 spelling it was the only live evidence for. The refusal itself is qualified directly by
-`tests/integration/test_infrahub_unkeyed_refusal_integration.py`; AD043's nested identity walk
+`tests/integration/test_infrahub_keyed_write_integration.py`; AD043's nested identity walk
 stays covered offline. Everything else the criteria asked for is preserved and runs live.
 
 **Expected result: six passed, one skipped.** The skip is SC-016's live half, and it is the
@@ -137,11 +137,12 @@ RACK_KIND = "LocationRack"
 DEVICE_KIND = "DcimDevice"
 
 # Every kind in the slice declares an all-direct destination human-friendly ID
-# (`['name__value']`), so every planned write here renders a key the client can form. The two
-# interface kinds the earlier slice carried — `InterfaceLag` and `InterfacePhysical`, both
-# `['device__name__value', 'name__value']` — cannot, and the write surface refuses them before
-# they mutate. `tests/integration/test_infrahub_unkeyed_refusal_integration.py` qualifies that
-# refusal directly; nothing here may depend on such a kind reaching the destination.
+# (`['name__value']`), which keeps this slice's identities direct and its assertions simple. The
+# two interface kinds the earlier slice carried — `InterfaceLag` and `InterfacePhysical`, both
+# `['device__name__value', 'name__value']` — are supported again: the server matches a
+# relationship-crossing human-friendly ID on the components in the payload.
+# `tests/integration/test_infrahub_keyed_write_integration.py` qualifies that convergence
+# directly, so nothing here needs to depend on such a kind reaching the destination.
 SEED_KINDS = (
     TAG_KIND,
     SITE_KIND,

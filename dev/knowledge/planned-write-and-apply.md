@@ -104,28 +104,54 @@ Two checks protect the key, and they check different things:
   `<rel>`. An unaccounted-for component raises, naming the kind and the component. "Resolves against the
   create data" is not implementable: by step 3b, a relationship-crossing component's slot in `data` holds
   a resolved node-id string, and no attribute can be read out of a node id.
-- **Step 5b is the gate**, and it reads the property where it actually lives — the rendered mutation
-  input, which the SDK builds client-side, so it is checkable with no server. Read it one level deeper
-  than the render call's own `"data"` key: `_generate_input_data(...)["data"]` is `{"data": {...}}`, a
-  one-key mapping, so a check written against it would fire on every operation ever rendered.
+- **Step 5b used to be a gate on the SDK's private pre-save render.** It is gone
+  ([ADR 0013](../adr/0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)). On infrahub-sdk
+  1.23.2 that render reports an `hfid` the issued mutation does not carry, so it passed writes that
+  were unkeyed on the wire, and it refused relationship-crossing kinds the server converges. No
+  product code reads a private SDK render.
 
-The gate applies one invariant to every kind: a render carrying no **usable** `id` or `hfid` raises
-`UnkeyedWriteRefusedError`, naming the operation and its kind. An unkeyed convergent write duplicates
-its object on a re-apply, and no HFID shape makes that safe. The key has to carry a value rather than
-merely be present, because a present-but-empty key keys nothing at the destination.
+### How each action is keyed
 
-`hfid` is the only key a planned write can genuinely render. The plan carries no destination UUID —
-FR-012 forbids the load that would supply one — and a payload field named `id` is not a substitute:
-`generate_payload_create` wraps every payload field into an attribute block, so such a field renders
-as an empty `id: {}`. That shape is refused rather than treated as keyed.
+The two actions are keyed differently, and the asymmetry is the point: an update can be keyed by
+something the plan recorded, and a create cannot.
 
-Three shapes cannot render a usable key and are therefore unsupported for planned writes:
+**An update carries the destination `id`** recorded for it at plan time (plan format 3). Apply sets it
+on the node before `save(allow_upsert=True)`; the SDK writes `data["id"] = self.id` when the node
+carries one and considers `hfid` only otherwise, so that is what makes the upsert a keyed update of
+that exact object. The id is never put into the `data` mapping handed to `client.create`, where it
+would render as the attribute-shaped `id: {}` and key nothing. An id the destination cannot find comes
+back as `NODE_NOT_FOUND` / `extensions.http_status` 404 with nothing written, raised as
+`StaleDestinationIdError` and recorded as not-written.
 
-- **A key that crosses a relationship.** The SDK cannot form an `hfid` client-side from a peer supplied
-  as a resolved id: rendering a relationship value handed in as a bare id produces `{"id": ...}` with no
-  `__typename`, so the store read that would resolve the peer is never attempted.
-- **No HFID declared.** There is no convergence key to render.
-- **A payload field named `id`.** It renders as `id: {}` — a key with no value.
+Because an id keys anything, kinds with no human-friendly ID are fully supported for updates, and a
+rename that changes the destination's human-friendly ID still updates the object it means.
+
+**A create has no id**, so the server matches it on the human-friendly-ID components its payload
+carries. A payload missing one component does **not** match: the server answers `ok: true` and creates
+a second object, which nothing downstream can detect. Planning therefore proves the key rather than
+warning about it, and refuses with `UnkeyedCreateRefusedError` when it cannot:
+
+- every component's mapping field must be named by the operation's `identity` — a component resolvable
+  from the payload but absent from identity still refuses, because identity is what the plan proves the
+  write on and what a reviewer reads;
+- each covered component must carry a usable value, proven through the peer's own identity where the
+  component crosses a relationship;
+- a kind declaring **no** human-friendly ID is allowed only where a declared uniqueness constraint is
+  fully covered by the identity — the destination refuses the duplicate there (transport 200,
+  `extensions.http_status` 422) — and refused otherwise, because it would duplicate on every write.
+
+Several creates projecting onto **one** destination human-friendly ID are refused as
+`DestinationIdentityCollisionError`: the sync tells them apart and the destination does not, so
+applying them would converge them onto one object each and lose the rest at exit 0. Updates are
+excluded from that count, since an id-keyed write cannot converge onto another operation's object.
+
+The write surface applies the same rule, from the same function, before `client.create` — so a create
+refused at plan time and the same create arriving in a hand-built artifact are refused for the same
+reason, and neither attempts a mutation.
+
+Explicit `hfid` rendering is deliberately **not** reintroduced: `save(allow_upsert=True)` strips it on
+1.23.2 and the server matches on complete components anyway, so rendering it would assert a key the
+wire does not carry.
 
 Apply is sequential, so the guarantee is stated per operation: an operation whose render is unkeyed makes
 zero mutation calls, and no later operation executes. Operations applied before it stay written, and the

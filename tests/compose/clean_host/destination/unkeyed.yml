@@ -1,7 +1,7 @@
 ---
-# The two destination kinds the unkeyed-write row needs, and why each field is what
-# it is. Ported from `tests/integration/test_infrahub_unkeyed_refusal_integration.py`,
-# which proves this shape induces the refusal against a live Infrahub. It is not
+# The two destination kinds the keyed-write row needs, and why each field is what
+# it is. The shape is the one `tests/integration/test_infrahub_keyed_write_integration.py`
+# exercises against a live Infrahub. It is not
 # ported from the offline adapter suite: that drives a recording client with a
 # locally constructed `NodeSchemaAPI`, whose `human_friendly_id` stays unset
 # forever, while a live destination reports whatever it computed instead.

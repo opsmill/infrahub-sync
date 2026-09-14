@@ -38,6 +38,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0012 — The convergent upsert is the replace-set write](0012-the-convergent-upsert-is-the-replace-set-write.md)
   — why the targeted relationship flush was deleted, what the live shrink test now pins on the
   Upsert mutation, and the escalation that is unchanged. Supersedes 0003.
+- [0013 — Writes are keyed by a recorded id and a complete human-friendly ID](0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)
+  — why the private-render gate was retired, how an update is keyed by an id recorded at plan
+  time and a create by proving its own payload, and what plan format 3 carries. Closes AD067.
 
 ## Related
 
