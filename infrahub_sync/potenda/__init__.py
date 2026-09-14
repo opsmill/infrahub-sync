@@ -170,6 +170,40 @@ def _require_applyable_format(manifest: PlanManifest, *, run_id: str) -> None:
     raise PlanFormatApplyUnsupportedError(msg)
 
 
+def _failure_reach_and_remedy(exc: Exception, *, record: ApplyRecord) -> tuple[str, str | None]:
+    """How far the failing operation got, and what the operator should do about it.
+
+    Three cases, and the message and the next action have to agree on which one it is.
+
+    A refusal the record marks `failed_operation_wrote is False` attempted no destination
+    mutation of its own, so it must not be described as a possible partial write (S6). The
+    claim is about **this** operation: operations applied earlier in the plan stay written.
+
+    A uniqueness refusal is the one destination rejection re-applying cannot fix. The plan
+    proposes a create, the destination already holds an object the constraint collides with,
+    and applying the same plan again proposes the same create and is refused identically —
+    so "re-apply, it converges" is a loop, and the remedy is a fresh `diff`.
+
+    Everything else has unknown reach and converges on re-apply (AD033), which is the
+    unchanged majority and the default `next_action`.
+    """
+    if record.failed_operation_wrote is False:
+        return (
+            "this operation attempted no destination write, so the destination is otherwise as it was",
+            OperationApplyFailedError.NOT_WRITTEN_NEXT_ACTION,
+        )
+    if isinstance(exc, GraphQLError) and _uniqueness_refusal_summary(exc) is not None:
+        return (
+            "the destination refused this operation for an existing object it conflicts with, so "
+            "re-applying the same plan is refused the same way",
+            OperationApplyFailedError.UNIQUENESS_NEXT_ACTION,
+        )
+    return (
+        "this operation may itself have written part of its change before failing — re-applying the plan converges it",
+        None,
+    )
+
+
 def _operational_failure_summary(exc: Exception) -> str:
     """Return stable operator context without rendering untrusted SDK/server text.
 
@@ -845,22 +879,13 @@ class Potenda:
                     # attribute on an exception type this module does not own.
                     exc.apply_record = partial  # ty: ignore[unresolved-attribute]
                     raise
-                # The reach of the failing operation is what the operator acts on, and the
-                # record already knows it: a refusal raised before the write, or one the
-                # destination proved created nothing, must not be described as a possible
-                # partial write (S6).
-                reach = (
-                    "this operation attempted no destination write, so the destination is otherwise as it was"
-                    if partial.failed_operation_wrote is False
-                    else "this operation may itself have written part of its change before failing — "
-                    "re-applying the plan converges it"
-                )
+                reach, next_action = _failure_reach_and_remedy(exc, record=partial)
                 msg = (
                     f"Applying operation {operation.operation_id!r} of run {run_id!r} to the destination "
                     f"failed with {_operational_failure_summary(exc)}. The {len(applied)} operation(s) "
                     f"applied before it stay written, and {reach}."
                 )
-                raise OperationApplyFailedError(msg, apply_record=partial) from exc
+                raise OperationApplyFailedError(msg, apply_record=partial, next_action=next_action) from exc
             applied.append(operation.operation_id)
 
         completed = ApplyRecord(

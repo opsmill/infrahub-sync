@@ -80,6 +80,8 @@ TEAM_KIND = "TestTeam"
 GROUP_KIND = "TestGroup"
 
 NODE_ID = "written-node-1"
+# The destination id a fixture update carries unless its case is about the id itself.
+DEFAULT_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
 
 
 def _text(attr_id: str, name: str, *, optional: bool = True) -> AttributeSchemaAPI:
@@ -381,7 +383,11 @@ def make_operation(
     action: str = "create",
     relationships: list[RelationshipReference] | None = None,
 ) -> PlannedOperation:
-    """One planned operation, with its identifier derived the way the artifact derives it."""
+    """One planned operation, with its identifier derived the way the artifact derives it.
+
+    An update carries `DEFAULT_DESTINATION_ID`: plan format 3 requires one, in process exactly
+    as on disk, so a case whose subject is something else does not have to restate it.
+    """
     canonical = canonical_identity(identity, kind=kind)
     return PlannedOperation(
         operation_id=operation_id(action, kind, canonical),
@@ -391,6 +397,7 @@ def make_operation(
         tier=0,
         payload=payload,
         relationships=relationships,
+        destination_id=DEFAULT_DESTINATION_ID if action == "update" else None,
     )
 
 
@@ -1252,6 +1259,60 @@ def test_a_failure_of_unknown_reach_still_warns_that_it_may_have_written(tmp_pat
     assert isinstance(outcome, OperationApplyFailedError)
     assert outcome.apply_record.failed_operation_wrote is None
     assert "may itself have written" in str(outcome)
+
+
+def test_a_uniqueness_refusal_is_not_described_as_something_re_applying_fixes(tmp_path: Path) -> None:
+    """The one destination rejection where "re-apply, it converges" is a loop, not a remedy.
+
+    The plan proposes a create; the destination already holds an object the constraint collides
+    with. Applying the same plan again proposes the same create and is refused identically, so
+    the advice has to be a fresh `diff` — or reconciling the object that is in the way.
+    """
+    directory = apply_run_dir(tmp_path)
+    write_artifact(
+        directory,
+        [operation_record(kind=SITE_KIND, identity={"name": "site-a"})],
+        run_id=APPLY_RUN_ID,
+        source_snapshot=[],
+    )
+    client = RecordingClient()
+    client.write_error = GraphQLError(
+        [
+            {
+                "message": "Violates uniqueness constraint 'name-scope'",
+                "extensions": {"code": "UNDEFINED_ERROR", "http_status": 422},
+            }
+        ],
+        query="mutation { }",
+    )
+
+    _state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert isinstance(outcome, OperationApplyFailedError)
+    assert "re-applying the plan converges it" not in str(outcome)
+    assert "refused the same way" in str(outcome)
+    assert "re-run `diff`" in outcome.next_action
+    assert "converges rather than duplicating" not in outcome.next_action
+    assert "uniqueness constraint 'name-scope'" in str(outcome), "The classifier still names the constraint."
+
+
+def test_an_ordinary_destination_rejection_still_advises_re_applying(tmp_path: Path) -> None:
+    """The unchanged majority: a rejection of unknown reach converges on re-apply (AD033)."""
+    directory = apply_run_dir(tmp_path)
+    write_artifact(
+        directory,
+        [operation_record(kind=SITE_KIND, identity={"name": "site-a"})],
+        run_id=APPLY_RUN_ID,
+        source_snapshot=[],
+    )
+    client = RecordingClient()
+    client.write_error = GraphQLError([{"message": "the destination rejected this object"}], query="mutation { }")
+
+    _state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert isinstance(outcome, OperationApplyFailedError)
+    assert "re-applying the plan converges it" in str(outcome)
+    assert "converges rather than duplicating" in outcome.next_action
 
 
 def test_the_reviewed_operation_identifiers_equal_the_applied_record_in_the_same_order(

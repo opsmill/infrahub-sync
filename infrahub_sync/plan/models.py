@@ -117,8 +117,9 @@ class PlannedOperation(BaseModel):
     relationships: list[RelationshipReference] | None = None
     # The destination object's Infrahub `id`, recorded at plan time on updates alone and set
     # on the node before the convergent upsert. Optional on the model because a create and a
-    # delete must not carry one; which of the three is required is decided per format
-    # version by `_validate_destination_id_for_format`, from the reader's context.
+    # delete must not carry one; which of the three is required is decided per format version
+    # by `_validate_destination_id_for_format` — from the reader's context when reading an
+    # artifact, and from the current version when building one in process.
     destination_id: str | None = None
 
     @model_validator(mode="before")
@@ -159,19 +160,21 @@ class PlannedOperation(BaseModel):
         raw input can tell them apart, so this runs before the model exists.
 
         The rule needs the artifact's declared version, which the record itself does not
-        carry. The reader supplies it as pydantic validation context. With **no** context the
-        check is skipped: that is in-process construction, where the writer and the model
-        agree by construction, and imposing a version on it would make every caller declare
-        one it has no reason to know.
+        carry, so the reader supplies it as pydantic validation context. With **no** context
+        the record is being built in process, which can only be the **current** format — there
+        is no way to construct an older one — so the current version's rule applies.
+
+        That symmetry is the point: derivation and the artifact enforce one rule. Without it a
+        caller could build an update carrying no destination id, and the refusal would arrive
+        later and somewhere else — from a reader, against a file, naming a line number — for a
+        record that should never have existed.
         """
         if not isinstance(data, Mapping):
             return data
         context = info.context
-        if not isinstance(context, Mapping):
-            return data
-        format_version = context.get("format_version")
+        format_version = context.get("format_version") if isinstance(context, Mapping) else None
         if not isinstance(format_version, int):
-            return data
+            format_version = PLAN_FORMAT_VERSION
         recorded_id = data.get("destination_id")
         present = "destination_id" in data
         identifier = data.get("operation_id", "<no operation_id recorded>")
@@ -182,6 +185,8 @@ class PlannedOperation(BaseModel):
                     f"{format_version} does not define."
                 )
                 raise ValueError(msg)
+            # A format-2 update legitimately carries none, which is exactly why such a plan is
+            # readable and reviewable but not applyable.
             return data
         if data.get("action") == "update":
             if not isinstance(recorded_id, str) or not recorded_id:

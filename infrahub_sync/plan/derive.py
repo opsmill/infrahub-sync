@@ -434,8 +434,37 @@ def _destination_ids_for_kind(destination_adapter: Any, kind: str) -> dict[str, 
     none: absent and present-but-unset are the same refusal, and telling them apart would
     only change the wording.
     """
-    records = destination_adapter.get_all(kind) if hasattr(destination_adapter, "get_all") else ()
+    records = list(destination_adapter.get_all(kind)) if hasattr(destination_adapter, "get_all") else []
+    for record in records:
+        _require_shortname_is_the_unique_id(record, kind=kind)
     return {record.get_unique_id(): getattr(record, "local_id", None) for record in records}
+
+
+def _require_shortname_is_the_unique_id(record: Any, *, kind: str) -> None:
+    """Refuse a destination model whose shortname is not its unique id.
+
+    The update's id is looked up by `element.name`, and DiffSync sets that from
+    `get_shortname()` — which its own source notes is "NOT guaranteed globally unique". It
+    equals `get_unique_id()` only while `_shortname` is unset, which is true of every model
+    the generator emits today and is the reason the lookup works at all.
+
+    A model that later declares `_shortname` would break that silently and completely: every
+    lookup would miss, every update would be refused as having no recorded destination id, and
+    the message would blame the destination load. So the assumption is checked where it is
+    relied on rather than left to be rediscovered from that symptom.
+    """
+    shortname = record.get_shortname() if hasattr(record, "get_shortname") else None
+    if shortname is None:
+        return
+    unique_id = record.get_unique_id()
+    if shortname != unique_id:
+        msg = (
+            f"Destination kind {kind!r} declares a DiffSync '_shortname', so its element name "
+            f"{shortname!r} is not its unique id {unique_id!r}. Plan derivation looks an update's "
+            "recorded destination id up by element name, so every update of this kind would be refused. "
+            "Remove '_shortname' from the model, or key this lookup by unique id on both sides."
+        )
+        raise AssertionError(msg)
 
 
 def _require_destination_id(

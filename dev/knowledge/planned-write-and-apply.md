@@ -345,8 +345,11 @@ never set: an operation that failed *after* dispatching is precisely the case th
 `may_have_partially_written` is then `failed_operation is not None and failed_operation_wrote is not
 False`, the engine's message drops the partial-write sentence for a proven-not-written refusal, and the
 service boundary settles such a run as `failed` rather than `interrupted`/`ambiguous`, so it does not
-set `reconciliation_required`. Reporting a refusal that never touched the destination as possibly
-partial was sending operators to reconcile nothing (S6).
+set `reconciliation_required`. The claim is scoped to the **failing operation** and says nothing
+about the plan: operations applied before it stay written and are listed in `applied_operations`,
+and the apply stops there, so the destination is not as the plan describes it. What goes away is
+the *uncertainty* — reporting an operation that provably did nothing as possibly partial was
+sending operators to reconcile it (S6).
 
 `may_have_partially_written` is derived from the two stored fields rather than stored beside them, as
 `skipped_delete_count` is derived from `skipped_delete_operations`: on the record that is the only

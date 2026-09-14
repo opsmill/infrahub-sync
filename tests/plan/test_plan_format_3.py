@@ -16,10 +16,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from pydantic import ValidationError
 
 from infrahub_sync import cli
 from infrahub_sync.client.models import PlanOperationResource
 from infrahub_sync.plan.errors import PlanArtifactTornError, PlanFormatApplyUnsupportedError
+from infrahub_sync.plan.identity import operation_id
 from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, SUPPORTED_FORMAT_VERSIONS, PlannedOperation
 from infrahub_sync.plan.reader import LoadedPlan, parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import read_saved_plan
@@ -381,3 +383,80 @@ def test_cli_plan_detail_shows_no_destination_id_for_a_create(capsys: pytest.Cap
     )
 
     assert "destination id" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------------------
+# The same rule in process as on disk
+# ---------------------------------------------------------------------------------------
+
+
+def update_operation(*, destination_id: str | None = DESTINATION_ID) -> PlannedOperation:
+    """One update built the way derivation builds it, in process and with no context."""
+    identity = {"name": "prod"}
+    return PlannedOperation(
+        operation_id=operation_id("update", "BuiltinTag", identity),
+        action="update",
+        kind="BuiltinTag",
+        identity=identity,
+        tier=0,
+        payload=dict(identity),
+        destination_id=destination_id,
+    )
+
+
+def test_an_in_process_update_without_a_destination_id_is_refused_at_construction() -> None:
+    """Derivation and the artifact enforce one rule, so a bad record cannot be built at all.
+
+    An in-process record can only be the **current** format — there is no way to construct an
+    older one — so the current version's rule applies with no context supplied. Without this,
+    a caller could build an unkeyable update, and the refusal would arrive only later and
+    somewhere else: from a reader, against a file, naming a line number.
+    """
+    with pytest.raises(ValidationError):
+        update_operation(destination_id=None)
+
+
+def test_an_in_process_update_with_an_empty_destination_id_is_refused_at_construction() -> None:
+    """An empty string keys nothing, in process exactly as on disk."""
+    with pytest.raises(ValidationError):
+        update_operation(destination_id="")
+
+
+def test_an_in_process_update_carrying_a_destination_id_is_built() -> None:
+    """The positive arm: the rule refuses the unkeyable record and nothing else."""
+    assert update_operation().destination_id == DESTINATION_ID
+
+
+def test_an_in_process_create_still_carries_no_destination_id() -> None:
+    """A create names no destination object, and building one is unaffected by the rule."""
+    identity = {"name": "prod"}
+    created = PlannedOperation(
+        operation_id=operation_id("create", "BuiltinTag", identity),
+        action="create",
+        kind="BuiltinTag",
+        identity=identity,
+        tier=0,
+        payload=dict(identity),
+    )
+
+    assert created.destination_id is None
+
+
+def test_a_format_2_artifact_update_without_an_id_still_reads() -> None:
+    """The reader's context still governs an artifact: a format-2 update legitimately has none.
+
+    This is what keeps a format-2 plan reviewable. The in-process rule must not leak into it.
+    """
+    identity = {"name": "prod"}
+    record = {
+        "operation_id": operation_id("update", "BuiltinTag", identity),
+        "action": "update",
+        "kind": "BuiltinTag",
+        "identity": identity,
+        "tier": 0,
+        "payload": dict(identity),
+    }
+
+    loaded = PlannedOperation.model_validate(record, context={"format_version": 2})
+
+    assert loaded.destination_id is None

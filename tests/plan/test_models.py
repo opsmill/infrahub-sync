@@ -39,6 +39,9 @@ SITE_PEER: dict[str, Any] = {"name": "dc1"}
 # because `None` is itself one of the values under test.
 _UNSET = object()
 
+# The destination id a fixture update carries unless its case is about the id itself.
+DEFAULT_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
+
 
 def _operation(  # noqa: PLR0913 — one builder per record field keeps each case to its own concern
     *,
@@ -66,6 +69,10 @@ def _operation(  # noqa: PLR0913 — one builder per record field keeps each cas
         "tier": tier,
         "payload": effective_payload,
     }
+    # Plan format 3 requires one on an update, in process exactly as on disk, so a case that
+    # is not about the recorded id does not have to restate it.
+    if action == "update":
+        record["destination_id"] = DEFAULT_DESTINATION_ID
     if relationships is not None:
         record["relationships"] = relationships
     return record

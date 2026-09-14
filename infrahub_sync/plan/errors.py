@@ -296,7 +296,7 @@ class UnaccountedIdentityComponentError(PlanArtifactError):
 
 
 class UnkeyedCreateRefusedError(PlanArtifactError):
-    """A create cannot be proven to key itself, so it is refused before any write.
+    """A create cannot be proven to key itself, so it is refused before **its own** write.
 
     A create carries no destination id: the server matches it on the human-friendly-ID
     components present in the payload. A payload missing one component does **not** match
@@ -307,7 +307,14 @@ class UnkeyedCreateRefusedError(PlanArtifactError):
     operation's identity, and every one of those must carry a usable value. A kind with no
     HFID cannot converge on one at all, and is allowed only where a declared uniqueness
     constraint is fully covered by the operation's identity — the destination refuses the
-    duplicate in that case. The refused operation attempts no destination mutation.
+    duplicate in that case.
+
+    The refused operation attempts no destination mutation of its own, which is what
+    `wrote = False` claims and all it claims. Operations applied **earlier in the same plan**
+    stay written and are listed in the record's `applied_operations`; the apply is sequential
+    and stops here, so the destination is not as the plan describes it. The run is `failed`
+    rather than interrupted, and needs no reconciliation — there is no uncertainty about what
+    this operation did, only a plan that was not finished.
     """
 
     wrote = False
@@ -346,13 +353,17 @@ class StaleDestinationIdError(PlanArtifactError):
 
     The object was deleted or replaced between the plan and the apply. Re-planning records
     the current id, or records a create where the object is genuinely gone.
+
+    As with any refusal inside the apply loop, `wrote = False` is about **this** operation.
+    Operations applied earlier in the same plan stay written and are listed in the record's
+    `applied_operations`.
     """
 
     wrote = False
 
     next_action = (
         "Re-run `diff` for this sync to record the destination's current ids, then review and apply the "
-        "new plan. The destination was not touched."
+        "new plan. This operation wrote nothing; any operation applied before it stays written."
     )
 
 
@@ -411,6 +422,17 @@ class OperationApplyFailedError(PlanArtifactError):
         "may have written part of its own change. Resolve the underlying error at the destination, "
         "then re-run `diff` and apply the new plan — re-applying an operation that already succeeded, "
         "in whole or in part, converges rather than duplicating."
+    )
+
+    # The destination refused this operation because of an object it already holds — a
+    # uniqueness constraint. Re-applying proposes the same create and is refused identically,
+    # so "re-applying converges it" is advice that loops. The remedy is a fresh plan derived
+    # against the destination as it now is.
+    UNIQUENESS_NEXT_ACTION = (
+        "Nothing was rolled back: the operations applied before this one stay written. The destination "
+        "already holds an object this one conflicts with, so re-applying the same plan is refused the "
+        "same way — reconcile that object, or re-run `diff` to derive a plan against the destination as "
+        "it now is, and apply that."
     )
 
     # The same advice for an operation the record proves wrote nothing. Sending an operator

@@ -99,9 +99,13 @@ cover their destination kind's human-friendly ID. Their **updates** are unaffect
 id — but a fresh **create** under them is now refused rather than silently duplicated. They need a
 mapping or schema fix, which is a separate decision and is not made here.
 
-A refusal raised before the write, and the stale-id refusal the server proves wrote nothing, are
-recorded as not-written rather than as possibly-partial, so they no longer send an operator to
-reconcile a destination that was never touched.
+A refusal raised before its own write, and the stale-id refusal the server proves wrote nothing,
+are recorded as not-written rather than as possibly-partial. The claim is scoped to the **failing
+operation**: operations applied earlier in the same plan stay written and are listed in the
+record's `applied_operations`, and the apply stops there, so the destination is not as the plan
+describes it. What changes is that there is no *uncertainty* about the failing operation, so the
+run settles `failed` rather than interrupted/ambiguous and sets no `reconciliation_required` —
+an operator is no longer sent to reconcile an operation that did nothing.
 
 ## Evidence
 
