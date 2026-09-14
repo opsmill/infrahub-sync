@@ -53,6 +53,7 @@ pytestmark = pytest.mark.integration
 SITE_KIND = "TestUnkeyedSite"
 DEVICE_KIND = "TestUnkeyedDevice"
 MOUNT_KIND = "TestUnkeyedMount"
+RENAMABLE_KIND = "TestUnkeyedRenamable"
 
 # `TestUnkeyedDevice`'s human-friendly ID crosses the `site` relationship. The SDK renders no
 # key at all for that shape — a peer supplied as a resolved node id renders as `{"id": ...}`
@@ -81,7 +82,13 @@ _SCHEMA = {
             "namespace": "Test",
             "include_in_menu": False,
             "human_friendly_id": ["site__name__value", "name__value"],
-            "attributes": [{"name": "name", "kind": "Text", "unique": False}],
+            # `serial` is deliberately **not** an identity component or an HFID component: it
+            # is what the in-place update changes. Changing `name` here would contradict the
+            # operation's own identity, which the record refuses before any write.
+            "attributes": [
+                {"name": "name", "kind": "Text", "unique": False},
+                {"name": "serial", "kind": "Text", "unique": False, "optional": True},
+            ],
             "relationships": [
                 {
                     "name": "site",
@@ -90,6 +97,20 @@ _SCHEMA = {
                     "kind": "Attribute",
                     "optional": False,
                 },
+            ],
+        },
+        {
+            # The rename case the recorded-id design exists for: the sync matches these on
+            # `serial` while the destination's human-friendly ID is `name`, so renaming `name`
+            # is an identity change to the destination and an ordinary attribute change to the
+            # sync. Only a write keyed by the recorded id lands it on the right object.
+            "name": "UnkeyedRenamable",
+            "namespace": "Test",
+            "include_in_menu": False,
+            "human_friendly_id": ["name__value"],
+            "attributes": [
+                {"name": "serial", "kind": "Text", "unique": True},
+                {"name": "name", "kind": "Text", "unique": True},
             ],
         },
         {
@@ -204,6 +225,8 @@ class KeyedWriteScope:
     branch: str
     site_name: str
     device_name: str
+    renamable_serial: str
+    renamable_name: str
 
 
 def _raise_for_status_without_redirect(response: requests.Response) -> None:
@@ -256,14 +279,22 @@ def keyed_write_scope() -> Iterator[KeyedWriteScope]:
             allow_redirects=False,
         )
         _raise_for_status_without_redirect(schema_response)
-        _await_schema_kinds(client, branch, (SITE_KIND, DEVICE_KIND, MOUNT_KIND))
+        _await_schema_kinds(client, branch, (SITE_KIND, DEVICE_KIND, MOUNT_KIND, RENAMABLE_KIND))
 
         site_name = f"unkeyed-site-{suffix}"
         site = client.create(kind=SITE_KIND, branch=branch, data={"name": site_name})
         site.save()
         device_name = f"unkeyed-device-{suffix}"
-        device = client.create(kind=DEVICE_KIND, branch=branch, data={"name": device_name, "site": site.id})
+        device = client.create(
+            kind=DEVICE_KIND, branch=branch, data={"name": device_name, "site": site.id, "serial": "sn-first"}
+        )
         device.save()
+        renamable_serial = f"unkeyed-serial-{suffix}"
+        renamable_name = f"unkeyed-before-{suffix}"
+        renamable = client.create(
+            kind=RENAMABLE_KIND, branch=branch, data={"serial": renamable_serial, "name": renamable_name}
+        )
+        renamable.save()
 
         adapter = InfrahubAdapter.__new__(InfrahubAdapter)
         adapter.client = client
@@ -271,7 +302,13 @@ def keyed_write_scope() -> Iterator[KeyedWriteScope]:
         adapter.source_node = None
         adapter.owner_node = None
         yield KeyedWriteScope(
-            client=client, adapter=adapter, branch=branch, site_name=site_name, device_name=device_name
+            client=client,
+            adapter=adapter,
+            branch=branch,
+            site_name=site_name,
+            device_name=device_name,
+            renamable_serial=renamable_serial,
+            renamable_name=renamable_name,
         )
     finally:
         client.branch.delete(branch_name=branch)
@@ -280,8 +317,14 @@ def keyed_write_scope() -> Iterator[KeyedWriteScope]:
         )
 
 
-def _device_update(device_name: str, site_name: str, *, destination_id: str, renamed: str) -> PlannedOperation:
-    """One planned update of the crossing kind, keyed by the id recorded for it."""
+def _device_update(device_name: str, site_name: str, *, destination_id: str, serial: str) -> PlannedOperation:
+    """One planned update of the crossing kind, keyed by the id recorded for it.
+
+    The payload restates `name` unchanged and varies `serial`. `name` is an identity component
+    of this kind, and a record whose payload contradicts its own identity is refused at
+    construction — correctly: the identity a reviewer approved would not be the value written.
+    So the attribute that moves has to be one the identity does not carry.
+    """
     identity = canonical_identity(
         {"name": device_name, "site": {"peer_kind": SITE_KIND, "identity": {"name": site_name}}},
         kind=DEVICE_KIND,
@@ -292,10 +335,31 @@ def _device_update(device_name: str, site_name: str, *, destination_id: str, ren
         kind=DEVICE_KIND,
         identity=identity,
         tier=0,
-        payload={"name": renamed},
+        payload={"name": device_name, "serial": serial},
         relationships=[
             RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": site_name}])
         ],
+        destination_id=destination_id,
+    )
+
+
+def _renamable_update(serial: str, *, destination_id: str, renamed: str) -> PlannedOperation:
+    """One planned update that renames the destination's human-friendly ID itself.
+
+    The sync's identity for this kind is `serial`; the destination's human-friendly ID is
+    `name`. Renaming `name` therefore leaves the operation's identity untouched, so the record
+    is coherent — and the write cannot be keyed by the human-friendly ID, because the value it
+    would key on is the one being changed. The recorded id is the only thing that can land it
+    on the right object.
+    """
+    identity = canonical_identity({"serial": serial}, kind=RENAMABLE_KIND)
+    return PlannedOperation(
+        operation_id=operation_id("update", RENAMABLE_KIND, identity),
+        action="update",
+        kind=RENAMABLE_KIND,
+        identity=identity,
+        tier=0,
+        payload={"serial": serial, "name": renamed},
         destination_id=destination_id,
     )
 
@@ -339,10 +403,9 @@ def test_an_update_keyed_by_its_recorded_id_renames_in_place(keyed_write_scope: 
         for node in scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False)
         if node.name.value == scope.device_name
     )
-    renamed = f"renamed-{scope.device_name}"
 
     written = scope.adapter.apply_planned_operation(
-        operation=_device_update(scope.device_name, scope.site_name, destination_id=seeded.id, renamed=renamed),
+        operation=_device_update(scope.device_name, scope.site_name, destination_id=seeded.id, serial="sn-second"),
         peers=scope.adapter.new_peer_resolver(),
     )
 
@@ -351,7 +414,8 @@ def test_an_update_keyed_by_its_recorded_id_renames_in_place(keyed_write_scope: 
         "An update keyed by id must change an object rather than add one."
     )
     reread = scope.client.get(kind=DEVICE_KIND, id=seeded.id, branch=scope.branch)
-    assert reread.name.value == renamed, "The rename did not reach the object the id named."
+    assert reread.serial.value == "sn-second", "The change did not reach the object the id named."
+    assert reread.name.value == scope.device_name, "The identity components must be written back unchanged."
 
 
 def test_a_stale_recorded_id_is_refused_with_nothing_written(keyed_write_scope: KeyedWriteScope) -> None:
@@ -377,7 +441,7 @@ def test_a_stale_recorded_id_is_refused_with_nothing_written(keyed_write_scope: 
 
     with pytest.raises(StaleDestinationIdError) as refusal:
         scope.adapter.apply_planned_operation(
-            operation=_device_update(scope.device_name, scope.site_name, destination_id=stale, renamed="never-written"),
+            operation=_device_update(scope.device_name, scope.site_name, destination_id=stale, serial="never-written"),
             peers=scope.adapter.new_peer_resolver(),
         )
 
@@ -464,3 +528,40 @@ def test_the_run_writes_nothing_outside_the_branch_it_owns(keyed_write_scope: Ke
     assert scope.client.count(kind=SITE_KIND, branch=scope.branch) == 1, (
         "The site this run created must be visible on its own branch, or the test above proves nothing."
     )
+
+
+def test_a_rename_of_the_destination_key_itself_lands_on_the_right_object(
+    keyed_write_scope: KeyedWriteScope,
+) -> None:
+    """The case the recorded-id design exists for, end to end against the destination.
+
+    `TestUnkeyedRenamable` is matched by the sync on `serial` and by the destination on `name`,
+    which is the mismatch the ratified decision was chosen to cover. Renaming `name` therefore
+    changes the destination's own human-friendly ID: a create-shaped convergent upsert would
+    match nothing and add a second object, because the value it keys on is the value being
+    changed. Only the recorded id lands it on the object that already exists.
+
+    Asserted as a count **and** an identity: an unkeyed write would show here as two objects,
+    one under each name.
+    """
+    scope = keyed_write_scope
+    before = scope.client.count(kind=RENAMABLE_KIND, branch=scope.branch)
+    seeded = next(
+        node
+        for node in scope.client.filters(kind=RENAMABLE_KIND, branch=scope.branch, populate_store=False)
+        if node.serial.value == scope.renamable_serial
+    )
+    renamed = f"renamed-{scope.renamable_name}"
+
+    written = scope.adapter.apply_planned_operation(
+        operation=_renamable_update(scope.renamable_serial, destination_id=seeded.id, renamed=renamed),
+        peers=scope.adapter.new_peer_resolver(),
+    )
+
+    assert written == seeded.id, "The rename must write the object its recorded id names."
+    assert scope.client.count(kind=RENAMABLE_KIND, branch=scope.branch) == before, (
+        "Renaming the destination's human-friendly ID must not create a second object."
+    )
+    reread = scope.client.get(kind=RENAMABLE_KIND, id=seeded.id, branch=scope.branch)
+    assert reread.name.value == renamed, "The rename did not reach the object the id named."
+    assert reread.serial.value == scope.renamable_serial, "The sync identity is unchanged by the rename."
