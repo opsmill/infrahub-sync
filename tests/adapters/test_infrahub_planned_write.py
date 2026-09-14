@@ -51,7 +51,6 @@ from infrahub_sync.plan.errors import (
     PeerAmbiguousError,
     PeerNotFoundError,
     PlanVerificationError,
-    UnaccountedIdentityComponentError,
     UnkeyedCreateRefusedError,
 )
 from infrahub_sync.plan.identity import canonical_identity, operation_id

@@ -49,20 +49,21 @@ def planned(
     action: str = "create",
     payload: Mapping[str, Any] | None = None,
     relationships: list[RelationshipReference] | None = None,
-    destination_id: str | None = None,
 ) -> PlannedOperation:
-    """One planned operation, built the way derivation builds it."""
+    """One planned operation, built the way derivation builds it.
+
+    An update carries a recorded destination id, because plan format 3 records one for every
+    update; a create carries none, because there is no destination object to name yet.
+    """
     canonical = canonical_identity(dict(identity), kind=kind)
-    effective_id = destination_id if action != "create" else None
-    if action == "update" and effective_id is None:
-        effective_id = DESTINATION_ID
+    effective_id = DESTINATION_ID if action == "update" else None
     return PlannedOperation(
         operation_id=operation_id(action, kind, canonical),
         action=action,  # ty: ignore[invalid-argument-type]
         kind=kind,
         identity=canonical,
         tier=0,
-        payload=dict(payload) if payload is not None else {key: value for key, value in canonical.items()},
+        payload=dict(payload) if payload is not None else dict(canonical),
         relationships=relationships,
         destination_id=effective_id,
     )

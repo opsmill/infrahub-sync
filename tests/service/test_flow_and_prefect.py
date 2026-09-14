@@ -37,8 +37,8 @@ from infrahub_sync.orchestration.flow import infrahub_sync_run
 from infrahub_sync.plan.errors import (
     OperationApplyFailedError,
     PeerNotFoundError,
-    UnaccountedIdentityComponentError,
     StaleDestinationIdError,
+    UnaccountedIdentityComponentError,
     UnkeyedCreateRefusedError,
 )
 from infrahub_sync.plan.models import ApplyRecord, PlanManifest

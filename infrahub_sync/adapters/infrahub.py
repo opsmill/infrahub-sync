@@ -29,7 +29,6 @@ from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.configuration.credentials import select_runtime_credential
 from infrahub_sync.generator import has_field
 from infrahub_sync.plan.canonical import canonical_json_bytes
-from infrahub_sync.plan.derive import refuse_unkeyed_create
 from infrahub_sync.plan.errors import (
     NullRelationshipValueError,
     PeerAmbiguousError,
@@ -39,6 +38,7 @@ from infrahub_sync.plan.errors import (
     UnaccountedIdentityComponentError,
 )
 from infrahub_sync.plan.identity import canonical_identity
+from infrahub_sync.plan.keying import refuse_unkeyed_create
 from infrahub_sync.plan.models import DestinationBindingRecord
 
 logger = logging.getLogger(__name__)

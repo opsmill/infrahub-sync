@@ -99,10 +99,20 @@ class _FakeRecord:
     has to resolve rather than parse.
     """
 
-    def __init__(self, kind: str, identifiers: Mapping[str, Any], attrs: Mapping[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        kind: str,
+        identifiers: Mapping[str, Any],
+        attrs: Mapping[str, Any] | None = None,
+        *,
+        local_id: str | None = None,
+    ) -> None:
         self.kind = kind
         self._identifiers = dict(identifiers)
         self._attrs = dict(attrs or {})
+        # The destination node id a live destination load leaves on the model, and what
+        # derivation records on an update. `None` on a source record, which has none.
+        self.local_id = local_id
 
     def get_identifiers(self) -> dict[str, Any]:
         return dict(self._identifiers)
@@ -548,9 +558,9 @@ def derivation_destination() -> _FakeAdapter:
     records: list[_FakeRecord] = []
     for kind in KINDS:
         for record in source.get_all(kind):
-            keyed = _FakeRecord(kind, record.get_identifiers(), record.get_attrs())
-            keyed.local_id = DERIVED_DESTINATION_ID
-            records.append(keyed)
+            records.append(
+                _FakeRecord(kind, record.get_identifiers(), record.get_attrs(), local_id=DERIVED_DESTINATION_ID)
+            )
     return _FakeAdapter("destination", records)
 
 
@@ -571,9 +581,7 @@ def destination_mirroring_source(*, schema: Mapping[str, Any] | None = None) -> 
             stale = next((name for name in sorted(attrs) if not isinstance(attrs[name], list)), None)
             if stale is not None:
                 attrs[stale] = f"stale-{attrs[stale]}"
-            copied = _FakeRecord(kind, record.get_identifiers(), attrs)
-            copied.local_id = DERIVED_DESTINATION_ID
-            records.append(copied)
+            records.append(_FakeRecord(kind, record.get_identifiers(), attrs, local_id=DERIVED_DESTINATION_ID))
     return _FakeAdapter("destination", records, schema=schema)
 
 
@@ -787,7 +795,9 @@ def test_a_delete_element_in_the_diff_is_not_recorded_twice() -> None:
         "fixture error: the comparison carried no delete element to skip"
     )
 
-    from_diff = operations_from_diff(diff, config=config, tier_of=resolve, source_adapter=source, destination_adapter=derivation_destination())
+    from_diff = operations_from_diff(
+        diff, config=config, tier_of=resolve, source_adapter=source, destination_adapter=derivation_destination()
+    )
     derived = derive_deletes(
         kinds=KINDS,
         source_adapter=source,
@@ -1008,13 +1018,17 @@ def test_warns_when_the_destination_kind_declares_no_human_friendly_id(caplog: p
     schema = {"BuiltinTag": schema_node(human_friendly_id=None, uniqueness_constraints=[["name__value"]])}
     operations = operations_from_diff(
         _FakeDiff(
-            {"BuiltinTag": [_FakeElement(
+            {
+                "BuiltinTag": [
+                    _FakeElement(
                         kind="BuiltinTag",
                         name="prod",
                         keys={"name": "prod"},
                         source_attrs={"description": "new"},
                         dest_attrs={"description": "old"},
-                    )]}
+                    )
+                ]
+            }
         ),
         config=build_config(),
         tier_of=resolver(),
@@ -1086,13 +1100,17 @@ def test_warns_when_no_uniqueness_constraint_covers_the_plan_identity(
     }
     operations = operations_from_diff(
         _FakeDiff(
-            {"BuiltinTag": [_FakeElement(
+            {
+                "BuiltinTag": [
+                    _FakeElement(
                         kind="BuiltinTag",
                         name="prod",
                         keys={"name": "prod"},
                         source_attrs={"description": "new"},
                         dest_attrs={"description": "old"},
-                    )]}
+                    )
+                ]
+            }
         ),
         config=build_config(),
         tier_of=resolver(),
@@ -2228,9 +2246,11 @@ def rack_destination(*sites: str, name: str = "Comms closet") -> _FakeAdapter:
     """A destination holding each rack under the unique id its element carries."""
     records = []
     for site in sites:
-        record = _FakeRecord("LocationRack", {"name": name, "site": site}, {"description": "old"})
-        record.local_id = DERIVED_DESTINATION_ID
-        records.append(record)
+        records.append(
+            _FakeRecord(
+                "LocationRack", {"name": name, "site": site}, {"description": "old"}, local_id=DERIVED_DESTINATION_ID
+            )
+        )
     return _FakeAdapter("destination", records)
 
 

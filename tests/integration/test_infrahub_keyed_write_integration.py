@@ -268,7 +268,9 @@ def keyed_write_scope() -> Iterator[KeyedWriteScope]:
         adapter.schema = client.schema.all(branch=branch)
         adapter.source_node = None
         adapter.owner_node = None
-        yield KeyedWriteScope(client=client, adapter=adapter, branch=branch, site_name=site_name, device_name=device_name)
+        yield KeyedWriteScope(
+            client=client, adapter=adapter, branch=branch, site_name=site_name, device_name=device_name
+        )
     finally:
         client.branch.delete(branch_name=branch)
         assert not _branch_exists(address, token, branch), (
@@ -338,9 +340,7 @@ def test_an_update_keyed_by_its_recorded_id_renames_in_place(keyed_write_scope: 
     renamed = f"renamed-{scope.device_name}"
 
     written = scope.adapter.apply_planned_operation(
-        operation=_device_update(
-            scope.device_name, scope.site_name, destination_id=seeded.id, renamed=renamed
-        ),
+        operation=_device_update(scope.device_name, scope.site_name, destination_id=seeded.id, renamed=renamed),
         peers=scope.adapter.new_peer_resolver(),
     )
 
@@ -375,9 +375,7 @@ def test_a_stale_recorded_id_is_refused_with_nothing_written(keyed_write_scope: 
 
     with pytest.raises(StaleDestinationIdError) as refusal:
         scope.adapter.apply_planned_operation(
-            operation=_device_update(
-                scope.device_name, scope.site_name, destination_id=stale, renamed="never-written"
-            ),
+            operation=_device_update(scope.device_name, scope.site_name, destination_id=stale, renamed="never-written"),
             peers=scope.adapter.new_peer_resolver(),
         )
 

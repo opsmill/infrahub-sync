@@ -223,7 +223,7 @@ def test_a_transport_failure_during_save_stays_ambiguous() -> None:
     client.write_error = GraphQLError([{"message": "the destination rejected this object"}], query="mutation { ... }")
     operation = update_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
 
-    with pytest.raises(Exception) as excinfo:  # noqa: PT011 — the class is the operational wrapper, not the claim
+    with pytest.raises(Exception) as excinfo:
         adapter.apply_planned_operation(operation=operation, peers=peers)
 
     assert getattr(excinfo.value, "wrote", None) is not False, (
@@ -298,7 +298,7 @@ def test_a_create_on_a_no_hfid_kind_with_a_partially_covered_constraint_is_refus
 
 def test_a_no_hfid_kind_update_is_allowed_where_its_create_is_refused() -> None:
     """The asymmetry is the point: `id` keys an update that no HFID could key."""
-    client, adapter, peers = keyed_adapter()
+    _client, adapter, peers = keyed_adapter()
     operation = update_operation(kind=KEYLESS_KIND, identity={"name": "keyless-a"}, payload={"name": "keyless-a"})
 
     assert adapter.apply_planned_operation(operation=operation, peers=peers) == NODE_ID

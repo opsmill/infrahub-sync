@@ -142,6 +142,24 @@ def _uniqueness_refusal_summary(exc: GraphQLError) -> str | None:
     return None
 
 
+def _require_applyable_format(manifest: PlanManifest, *, run_id: str) -> None:
+    """Refuse a plan whose format this version can read and review but not apply.
+
+    A format-2 plan records no destination id on its updates, and an update is keyed by that
+    id alone. Applying one would fall back to the create-shaped convergent upsert, whose
+    failure mode on an incomplete payload is a silent duplicate — so the plan is read,
+    rendered for review, and refused at the write.
+    """
+    if manifest.format_version >= DESTINATION_ID_FORMAT_VERSION:
+        return
+    msg = (
+        f"The plan artifact of run {run_id!r} declares format version {manifest.format_version}, which "
+        f"this version of infrahub-sync can read and review but cannot apply: its updates carry no "
+        f"recorded destination id, so they cannot be keyed. Nothing was written to the destination."
+    )
+    raise PlanFormatApplyUnsupportedError(msg)
+
+
 def _operational_failure_summary(exc: Exception) -> str:
     """Return stable operator context without rendering untrusted SDK/server text.
 
@@ -760,18 +778,10 @@ class Potenda:
         # before the first destination write.
         loaded = parse_plan_artifact(raw, run_id=run_id)
 
-        # Readable and reviewable, but not applyable: a format-2 plan records no destination
-        # id on its updates, and an update is keyed by that id alone. Refused here — after
-        # the artifact has been read, before `ownership.before_operation` and therefore
-        # before the first dispatch — so the destination is provably untouched.
-        if loaded.manifest.format_version < DESTINATION_ID_FORMAT_VERSION:
-            msg = (
-                f"The plan artifact of run {run_id!r} declares format version "
-                f"{loaded.manifest.format_version}, which this version of infrahub-sync can read and "
-                f"review but cannot apply: its updates carry no recorded destination id, so they "
-                f"cannot be keyed. Nothing was written to the destination."
-            )
-            raise PlanFormatApplyUnsupportedError(msg)
+        # Readable and reviewable, but not applyable. Refused after the artifact has been
+        # read, before `ownership.before_operation` and therefore before the first dispatch,
+        # so the destination is provably untouched.
+        _require_applyable_format(loaded.manifest, run_id=run_id)
 
         self._last_applied_plan_action_counts = {
             action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS

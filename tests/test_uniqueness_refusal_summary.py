@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from infrahub_sdk.exceptions import GraphQLError
 
-from infrahub_sync.potenda import _operational_failure_summary
+from infrahub_sync import potenda
 
 CONSTRAINT_NAME = "name-scope"
 SECRET = "SYNTHETIC_SECRET_CANARY"  # noqa: S105 - a deliberate redaction canary
@@ -44,7 +44,7 @@ def uniqueness_error(*, message: str | None = None, http_status: int = 422) -> G
 
 def test_the_measured_uniqueness_signature_is_classified_as_a_uniqueness_refusal() -> None:
     """The one server refusal an operator has to be able to act on."""
-    summary = _operational_failure_summary(uniqueness_error())
+    summary = potenda._operational_failure_summary(uniqueness_error())
 
     assert "uniqueness constraint" in summary
     assert CONSTRAINT_NAME in summary
@@ -52,7 +52,7 @@ def test_the_measured_uniqueness_signature_is_classified_as_a_uniqueness_refusal
 
 def test_the_uniqueness_summary_reports_the_server_status_and_not_the_transport_status() -> None:
     """G1 F2: the transport says 200 for a refused mutation, so 422 must come from extensions."""
-    summary = _operational_failure_summary(uniqueness_error())
+    summary = potenda._operational_failure_summary(uniqueness_error())
 
     assert "422" in summary
     assert "200" not in summary
@@ -60,7 +60,7 @@ def test_the_uniqueness_summary_reports_the_server_status_and_not_the_transport_
 
 def test_the_uniqueness_summary_carries_no_other_server_or_request_text() -> None:
     """The classifier widens disclosure by exactly one constraint name, and no further."""
-    summary = _operational_failure_summary(uniqueness_error())
+    summary = potenda._operational_failure_summary(uniqueness_error())
 
     assert SECRET not in summary
     assert "api_token" not in summary
@@ -79,7 +79,7 @@ def test_a_rejection_without_the_measured_signature_is_not_classified() -> None:
         query="mutation { ... }",
     )
 
-    summary = _operational_failure_summary(other)
+    summary = potenda._operational_failure_summary(other)
 
     assert "uniqueness constraint" not in summary
     assert "GraphQLError" in summary
@@ -88,7 +88,7 @@ def test_a_rejection_without_the_measured_signature_is_not_classified() -> None:
 
 def test_a_uniqueness_message_without_the_measured_status_is_not_classified() -> None:
     """Both halves of the signature are required: the status alone does not decide it."""
-    summary = _operational_failure_summary(uniqueness_error(http_status=500))
+    summary = potenda._operational_failure_summary(uniqueness_error(http_status=500))
 
     assert "uniqueness constraint" not in summary
     assert "GraphQLError" in summary
@@ -96,6 +96,6 @@ def test_a_uniqueness_message_without_the_measured_status_is_not_classified() ->
 
 def test_a_plain_graphql_rejection_keeps_its_category_only_summary() -> None:
     """The established behaviour for everything the classifier does not recognise."""
-    summary = _operational_failure_summary(GraphQLError([{"message": "boom"}], query="mutation { ... }"))
+    summary = potenda._operational_failure_summary(GraphQLError([{"message": "boom"}], query="mutation { ... }"))
 
     assert summary == "a destination GraphQL rejection (GraphQLError)"

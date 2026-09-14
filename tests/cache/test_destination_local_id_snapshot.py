@@ -74,6 +74,12 @@ class _StubAdapter(Adapter):
         return list(self.deltas)
 
 
+def run_directory(potenda: Potenda) -> Path:
+    """`Potenda.run_dir` narrowed: these fixtures always set one."""
+    assert potenda.run_dir is not None
+    return potenda.run_dir
+
+
 def make_potenda(tmp_path: Path) -> tuple[Potenda, _StubAdapter, _StubAdapter]:
     """A `Potenda` over two stub adapters, with its run directory prepared."""
     from types import SimpleNamespace
@@ -127,7 +133,7 @@ def test_a_destination_snapshot_written_now_retains_local_id(tmp_path: Path) -> 
 
     potenda._write_side_snapshot("B", destination)
 
-    assert "local_id" in snapshot_columns(potenda.run_dir, "B", "InfraDevice")
+    assert "local_id" in snapshot_columns(run_directory(potenda), "B", "InfraDevice")
 
 
 def test_the_destination_local_id_is_not_the_diffsync_source_id(tmp_path: Path) -> None:
@@ -139,7 +145,7 @@ def test_the_destination_local_id_is_not_the_diffsync_source_id(tmp_path: Path) 
 
     rehydrated: list[dict[str, Any]] = []
     hydrate_from_parquet(
-        run_dir=potenda.run_dir,
+        run_dir=run_directory(potenda),
         side="B",
         resource="InfraDevice",
         add_row=lambda _resource, payload: rehydrated.append(payload),
@@ -161,7 +167,9 @@ def test_a_warm_destination_load_rebuilds_models_carrying_their_local_id(tmp_pat
 
     potenda.load_one_side(side="B", adapter=destination)
 
-    assert destination.get(_Device, "device-a").local_id == DESTINATION_ID
+    hydrated = destination.get(_Device, "device-a")
+    assert isinstance(hydrated, _Device)
+    assert hydrated.local_id == DESTINATION_ID
     assert ("full_load", None) not in destination.calls, "A usable snapshot must not force a full extract."
 
 
@@ -191,4 +199,4 @@ def test_a_source_snapshot_is_unaffected_by_the_destination_column(tmp_path: Pat
 
     potenda._write_side_snapshot("A", source)
 
-    assert "local_id" not in snapshot_columns(potenda.run_dir, "A", "InfraDevice")
+    assert "local_id" not in snapshot_columns(run_directory(potenda), "A", "InfraDevice")

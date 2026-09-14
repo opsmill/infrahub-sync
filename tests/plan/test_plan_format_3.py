@@ -19,7 +19,7 @@ import pytest
 
 from infrahub_sync.plan.errors import PlanArtifactTornError
 from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, SUPPORTED_FORMAT_VERSIONS
-from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
+from infrahub_sync.plan.reader import LoadedPlan, parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import read_saved_plan
 from tests.plan.artifact_fixtures import RUN_ID, SYNC_NAME, operation_record, write_artifact
 
@@ -29,14 +29,14 @@ if TYPE_CHECKING:
 DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
 
 
-def update_record(*, destination_id: str | None = DESTINATION_ID, **overrides: Any) -> dict[str, Any]:
+def update_record(*, destination_id: str | None = DESTINATION_ID, kind: str = "BuiltinTag") -> dict[str, Any]:
     """One update operation line, carrying a recorded destination id unless told otherwise.
 
     `destination_id=None` means the key is **absent**, which is the shape a format-2 line
     has and the shape a format-3 update is refused for — so it is popped rather than left to
     the fixture's own update default.
     """
-    record = operation_record(action="update", destination_id=destination_id, **overrides)
+    record = operation_record(action="update", kind=kind, destination_id=destination_id)
     if destination_id is None:
         record.pop("destination_id", None)
     return record
@@ -49,7 +49,7 @@ def run_dir(tmp_path: Path) -> Path:
     return directory
 
 
-def parse(directory: Path) -> Any:
+def parse(directory: Path) -> LoadedPlan:
     """Read and validate the artifact written at `directory`."""
     return parse_plan_artifact(read_plan_artifact_bytes(directory), run_id=RUN_ID)
 
@@ -57,7 +57,7 @@ def parse(directory: Path) -> Any:
 def test_the_current_plan_format_is_3_and_2_stays_readable() -> None:
     """Format 3 is what `diff` writes; format 2 stays readable for review (ADR 0001)."""
     assert PLAN_FORMAT_VERSION == 3, "A new operation field is a hard format change (extra='forbid')."
-    assert SUPPORTED_FORMAT_VERSIONS == frozenset({2, 3}), "Format-2 plans stay readable and reviewable."
+    assert frozenset({2, 3}) == SUPPORTED_FORMAT_VERSIONS, "Format-2 plans stay readable and reviewable."
 
 
 def test_a_format_3_update_round_trips_its_destination_id(tmp_path: Path) -> None:
