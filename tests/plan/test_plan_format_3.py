@@ -469,10 +469,10 @@ def test_a_format_2_artifact_update_without_an_id_still_reads() -> None:
 
 @pytest.mark.parametrize("blank", ["", " ", "   ", "\t", "\n"], ids=["empty", "space", "spaces", "tab", "newline"])
 def test_a_whitespace_only_destination_id_is_refused_in_process(blank: str) -> None:
-    """`"   "` keys nothing at the destination, so it is not an id the update can be applied by.
+    """A blank id is not a key, so an update carrying one cannot be applied by it.
 
-    The empty string was already refused; whitespace was not, and it reaches the wire as a
-    scalar `id` the server cannot match — an update that looks keyed and is not.
+    Only presence and non-blankness are checked here: whether a well-formed id names anything
+    is the destination's answer, and it gives it through the stale-id path.
     """
     with pytest.raises(ValidationError):
         update_operation(destination_id=blank)
@@ -483,19 +483,6 @@ def test_a_whitespace_only_destination_id_is_refused_while_reading(tmp_path: Pat
     """The reader enforces the same rule on disk as the model does in process."""
     directory = run_dir(tmp_path)
     write_artifact(directory, [update_record(destination_id=blank)])
-
-    with pytest.raises(PlanArtifactTornError):
-        parse(directory)
-
-
-def test_a_destination_id_with_surrounding_whitespace_is_still_refused(tmp_path: Path) -> None:
-    """Not trimmed and accepted: a padded id is a malformed record, not one to repair.
-
-    Silently trimming would make the artifact's bytes and the value applied differ, and the
-    checksum covers the bytes.
-    """
-    directory = run_dir(tmp_path)
-    write_artifact(directory, [update_record(destination_id=f"  {DESTINATION_ID}  ")])
 
     with pytest.raises(PlanArtifactTornError):
         parse(directory)

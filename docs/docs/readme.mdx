@@ -56,8 +56,8 @@ operations. When `order` is omitted, the engine derives dependency tiers from th
 mapping. When `order` is present, the configured sequence is used.
 
 After a failed write, inspect the run record and destination before calculating a fresh
-plan. A failed operation can have written part of its change, and safe re-application is
-not established for destination kinds whose identity crosses a relationship. See
+plan. A failed operation can have written part of its change — unless the run records that
+it wrote nothing, which a refusal raised before its own write does. See
 [Run a sync](./running-a-sync.mdx) for recovery and convergence details.
 
 Three `diffsync_flags` (`SKIP_UNMATCHED_DST` by default, `SKIP_UNMATCHED_SRC`, `SKIP_MODIFIED`) and per-mapping filters control what each run is allowed to change.
@@ -144,8 +144,8 @@ No. Infrahub Sync runs as a CLI and is designed to plug into whatever scheduling
 
 **What happens if a sync run fails partway through?**
 Inspect the run record and destination before retrying. Calculate a fresh plan after a
-failed write. A failed operation can have written part of its change, and destination
-kinds whose identity crosses a relationship may not converge safely when reapplied. The
+failed write. A failed operation can have written part of its change, unless the run
+records that it wrote nothing. The
 [run recovery guidance](./running-a-sync.mdx) explains how to interpret partial-write
 evidence and when to inspect the destination.
 

@@ -68,9 +68,10 @@ source primary key that reference resolution matches against.
 ### `identifiers` is not the convergence key
 
 `identifiers` is the **DiffSync natural key**: it decides which source object is "the same object" as
-which destination object during the comparison. It is not what makes a write converge. A convergent
-write against Infrahub is keyed on the **destination kind's `human_friendly_id`**, read from the
-destination schema — the upsert mutation carries `data["id"]` if known, else `data["hfid"]`.
+which destination object during the comparison. It is not what makes a write converge. An **update** is
+keyed by the destination object's `id`, recorded at plan time. A **create** has no id, and the server
+matches it on the **destination kind's `human_friendly_id`** components present in the payload, read
+from the destination schema — no `hfid` key is rendered on the wire (ADR 0013).
 
 The two answer different questions and routinely give different answers, so read keying behaviour off
 the destination schema and never off `config.yml`. On `examples/netbox_to_infrahub/config.yml`, ten

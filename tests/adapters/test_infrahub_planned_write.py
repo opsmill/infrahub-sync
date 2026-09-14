@@ -131,8 +131,9 @@ TAG_SCHEMA = NodeSchemaAPI(
     relationships=[],
 )
 
-# A human-friendly ID that **crosses a relationship**: the client cannot form the `hfid`
-# from a peer supplied as a resolved node id, so this kind renders unkeyed today (AD066).
+# A human-friendly ID that **crosses a relationship**: the client cannot form an `hfid` from a
+# peer supplied as a resolved node id, so this kind renders no key on the wire. The server
+# matches a create on the components in `data`, so it converges anyway (AD067 closed).
 DEVICE_SCHEMA = NodeSchemaAPI(
     id="device-schema",
     name="Device",

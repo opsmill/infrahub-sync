@@ -1350,20 +1350,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             data[reference.field] = peer_ids[0] if reference.cardinality == "one" else peer_ids
 
         if operation.action == "create":
-            # Arm one, from the same function plan derivation uses, so a create refused at
-            # plan time and the same create arriving in a hand-built artifact are refused for
-            # the same reason. Identity coverage and the no-human-friendly-ID rule first;
-            # **values are AD051's**, immediately below, because that is the check that can
-            # name the component. Both run before `client.create`, so either refusal is
-            # proven to have attempted no mutation, and both read the cached schema and the
-            # operation alone.
-            #
-            # **Creates only, both of them.** An update is keyed by its recorded destination
-            # id: the server is told exactly which object to write, so the human-friendly-ID
-            # components in its payload key nothing and their completeness decides nothing.
-            # Applying these to an update refuses writes that are correctly keyed — a payload
-            # carrying only the attributes that changed, and above all the rename the
-            # recorded id exists for, where the HFID value is the thing being changed.
+            # Creates only. A create is matched by the destination on the human-friendly-ID
+            # components it carries, so both checks are conditions of the write; an update is
+            # keyed by its recorded id and those components key nothing for it. Coverage
+            # first, from the same function plan derivation uses; then AD051 for values,
+            # because it is the check that can name the missing component. Both run before
+            # `client.create` and read the cached schema and the operation alone.
             refuse_unkeyed_create_coverage(operation, node=node_schema)
             self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
 
@@ -1405,16 +1397,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         is the **value** arm of the create guard rather than being folded into the coverage
         check that runs just before it.
 
-        **Creates only, and the caller enforces that.** An update is keyed by its recorded
-        destination id, so the components key nothing for it and their completeness decides
-        nothing; running this over an update refuses correctly keyed writes, including the
-        rename the recorded id exists for, where the HFID value is what is being changed.
+        Creates only, which the caller enforces: a recorded-id update may omit, blank or fail
+        to resolve a component, because the id is what keys it.
 
         A kind that declares no human-friendly ID has no components and so passes here;
         `refuse_unkeyed_create_coverage` is what refuses it, on its uniqueness constraints.
 
-                Raises:
-                    UnaccountedIdentityComponentError: naming the kind and the missing components.
+        Raises:
+            UnaccountedIdentityComponentError: naming the kind and the missing components.
         """
         components = _hfid_components(node_schema)
         missing = [

@@ -6,7 +6,7 @@ every human-friendly-ID component converges rather than duplicating even though 
 carries no key at all, and an upsert carrying a recorded `id` updates in place. Both are
 server behaviours; a recording transport cannot settle either.
 
-Four primary cases, on the smallest fixture that can carry them:
+Five primary cases, on the smallest fixture that can carry them:
 
 1. a kind whose human-friendly ID **crosses a relationship** creates, and a second identical
    apply converges onto the same object rather than making a second one (AD067 closed);
@@ -14,7 +14,9 @@ Four primary cases, on the smallest fixture that can carry them:
 3. a recorded id that matches no object is refused, and nothing is written;
 4. an update that renames the destination's **own** human-friendly ID still lands on the
    object it means — the identifier-versus-HFID mismatch the recorded-id design was chosen
-   for, which no other case here reaches.
+   for, which no other case here reaches;
+5. an update whose payload omits a human-friendly-ID component still lands on the object its
+   recorded id names.
 
 Two supporting cases run alongside them: a peer whose own key crosses a relationship is
 resolved through the nested filter (the read half), and the run is shown to write nothing
@@ -372,17 +374,11 @@ def _renamable_update(serial: str, *, destination_id: str, renamed: str) -> Plan
 
 
 def _device_partial_update(device_name: str, *, destination_id: str, serial: str) -> PlannedOperation:
-    """An update whose payload **omits an HFID component**, keyed only by its recorded id.
+    """An update whose payload omits an HFID component, keyed only by its recorded id.
 
     `TestUnkeyedDevice`'s human-friendly ID is `[site__name__value, name__value]`. This
-    operation's identity names `name` and not `site`, so neither the payload nor any
-    relationship reference carries the `site` component — the write cannot be matched on the
-    human-friendly ID at all, and the recorded id is the only thing that can land it.
-
-    That is the shape the create-side checks used to refuse for every action. They are creates
-    only now, because an update tells the server exactly which object to write: a plan that
-    carries just the attributes that changed is ordinary, and the completeness of components
-    the write does not key on cannot be a condition of it.
+    operation's identity names `name` and not `site`, so nothing it carries supplies the `site`
+    component: the recorded id is the only thing that can land the write.
     """
     identity = canonical_identity({"name": device_name}, kind=DEVICE_KIND)
     return PlannedOperation(
@@ -606,23 +602,19 @@ def test_a_rename_of_the_destination_key_itself_lands_on_the_right_object(
 def test_an_update_omitting_an_hfid_component_writes_the_object_its_id_names(
     keyed_write_scope: KeyedWriteScope,
 ) -> None:
-    """The changed property, against a real destination rather than a recording transport.
+    """A recorded-id update may omit a human-friendly-ID component, proven at the destination.
 
-    The object is created through the planned-write surface carrying its **full** human-friendly
-    ID, so the create side is exercised exactly as before. It is then updated by an operation
-    whose payload omits the `site` component of that ID and carries only the recorded id and the
-    attribute that moved.
+    The object is created carrying its **full** human-friendly ID, then updated by an operation
+    that omits the `site` component: `serial` changes, `name` is restated unchanged, and `site`
+    is not mentioned at all.
 
-    Four things are asserted together, because any one alone would pass for the wrong reason: the
-    write lands on the **same object** (id and count), the intended non-key change is **present**,
-    and the two things the operation never mentions — `name` and the `site` peer — are
-    **unchanged**. A write that silently created a second object moves the count; one that landed
-    elsewhere leaves `serial` alone; one that let the SDK re-render the whole node would clear
-    `site`.
+    The four assertions are independent. Same id and unchanged count: the write landed on that
+    object rather than adding one. `serial`: the intended change arrived. `name`: a restated
+    value is written back as given. `site`: a relationship the operation never mentions is left
+    alone, which a whole-node re-render would not do.
 
-    If the destination refuses this update, that is a finding about the contract and not a test to
-    adjust: it would mean an id-keyed upsert still requires the human-friendly-ID components, and
-    the narrowing of the create checks would have to be reconsidered.
+    A refusal here is a contract finding, not a test to adjust: it would mean an id-keyed upsert
+    still requires the human-friendly-ID components.
     """
     scope = keyed_write_scope
     created_name = f"partial-{scope.device_name}"

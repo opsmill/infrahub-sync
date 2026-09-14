@@ -81,12 +81,10 @@ Both refusals at 4 happen **before** `client.create`, so a refused operation is 
 attempted no destination mutation. They are different questions and stay different mechanisms:
 coverage is about the plan, and AD051 is the only check that can say *which* component is missing.
 
-Both are **creates only**. An update is keyed by its recorded destination id, so the server is
-told exactly which object to write and the human-friendly-ID components in its payload key
-nothing — their completeness decides nothing and cannot be a condition of the write. Applying
-either check to an update refuses writes that are correctly keyed: a payload carrying only the
-attributes that changed, and above all the rename the recorded id exists for, where the
-human-friendly-ID value is the very thing being changed.
+Both are **creates only**. A create is matched by the destination on the human-friendly-ID
+components it carries, so their completeness is a condition of the write. An update is keyed by
+its recorded id — the server is told exactly which object to write — so it may omit, blank or
+fail to resolve a component and still land on the object it means.
 
 Creates and updates both route through the same convergent upsert. Neither routes through
 `InfrahubModel.update`, whose `local_id` keying needs a destination load an apply must not perform.
@@ -109,10 +107,11 @@ refusal claims the write never happened.
 
 ### Convergence rides on the destination kind's human-friendly ID
 
-This is the single most misread part of the path, so it is worth stating plainly: the convergence key is
-the **destination schema's** `human_friendly_id`, not the source configuration's `identifiers`. The SDK's
-upsert mutation is keyed on `data["id"]` if set, else `data["hfid"]`, and `get_human_friendly_id()`
-returns `None` if any component path resolves to `None`.
+This is the single most misread part of the path, so it is worth stating plainly: what a **create**
+converges on is the **destination schema's** `human_friendly_id`, not the source configuration's
+`identifiers`. An update converges on the destination `id` recorded for it and is not subject to this
+section. No `hfid` key is rendered on the wire for either: the SDK sets `data["id"]` when the node
+carries one, and the server matches a create on the components in `data` (ADR 0013).
 
 The two are not the same question and do not have the same answer. On the example NetBox configuration,
 **ten** mapping entries carry a reference inside their `identifiers` — a configuration-side figure — while

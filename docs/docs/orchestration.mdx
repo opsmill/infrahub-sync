@@ -91,9 +91,9 @@ Whatever scheduling tool you use, plan for these operational concerns:
   records include structured run, operation, stage, and outcome attributes.
 - **Failure detection.** The CLI returns a non-zero exit code on failure. Wire the scheduling tool to catch this and alert the appropriate channel.
 - **Failure recovery.** Inspect the run record and destination after a failed write, then
-  calculate a fresh plan. A failed operation can have written part of its change. Safe
-  re-application is not established for destination kinds whose identity crosses a
-  relationship; follow the [run recovery guidance](./running-a-sync.mdx).
+  calculate a fresh plan. A failed operation can have written part of its change, unless the
+  run records that it wrote nothing; follow the
+  [run recovery guidance](./running-a-sync.mdx).
 - **Run isolation.** Avoid overlapping runs of the same sync project. Set the cadence longer than the run time, or have the scheduler skip a run if the previous one is still active.
 - **Sync project versioning.** Store sync project directories in version control. Tag or release configuration changes the same way you handle infrastructure code.
 
