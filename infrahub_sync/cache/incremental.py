@@ -12,7 +12,7 @@ from datetime import datetime  # noqa: TC003
 from typing import TYPE_CHECKING
 
 from infrahub_sync.cache.cursors import CursorState, CursorTier
-from infrahub_sync.cache.parquet_io import SNAPSHOT_INTERNAL_COLUMNS, read_table
+from infrahub_sync.cache.parquet_io import SNAPSHOT_INTERNAL_COLUMNS, read_schema, read_table
 from infrahub_sync.cache.sidecars import CursorsFile
 
 if TYPE_CHECKING:
@@ -133,6 +133,23 @@ def persist_cursors(
     for model_name, state in cursors.items():
         bucket[model_name] = f"{state.tier.name}:{state.value or ''}"
     sidecar.save()
+
+
+def snapshot_carries_local_id(*, run_dir: Path, side: str, resource: str) -> bool:
+    """Whether one side's snapshot holds the destination node id column.
+
+    Destination snapshots written before plan format 3 carry identifiers and attributes
+    only. Hydrating from one rebuilds destination models with no `local_id`, and an update
+    derived against such a model has no key — so the caller treats a snapshot without the
+    column as a cache miss rather than planning unkeyed updates from it.
+
+    A **missing** snapshot answers `False` as well: there is nothing to hydrate either way,
+    and the caller's response — extract the resource in full — is the same.
+    """
+    parquet_path = run_dir / side / f"{resource}.parquet"
+    if not parquet_path.exists():
+        return False
+    return "local_id" in read_schema(str(parquet_path)).names
 
 
 def hydrate_from_parquet(

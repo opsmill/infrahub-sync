@@ -135,11 +135,13 @@ def run_request(client: SyncClient, operation: Operation, reason: str) -> Create
 # destination, which is not this gate's to report.
 FAILURE_STAGES = ("plan", "verify", "apply", "sync")
 
-# The typed refusal the write surface raises immediately before an SDK write, as
-# the run record now names it. Every designed apply failure is reported as one
-# `OperationApplyFailedError`, so the wrapper says only that an operation failed;
-# the recorded cause is what says which refusal it was.
-UNKEYED_REFUSAL = "UnkeyedWriteRefusedError"
+# The typed refusal raised for a create that cannot be proven to carry every
+# human-friendly-ID component the destination matches on. Raised directly by the
+# plan stage, where it is the run's own `error_type`, and by the write surface
+# before an SDK write, where it is the recorded cause under one
+# `OperationApplyFailedError` wrapper -- so which field names it says which stage
+# refused.
+KEYED_CREATE_REFUSAL = "UnkeyedCreateRefusedError"
 
 # The bound the CLI already applies to the one recorded field that is free-form
 # in principle: a class name, or nothing.

@@ -97,10 +97,8 @@ It must also **write only the fields the operation maps**. The payload is author
 fields and for nothing else: an unmapped destination field must come out of the apply untouched.
 That rule is easy to break by accident on the relationship path, because an SDK that re-renders a
 whole node it considers existing emits `<rel>: null` for every optional cardinality-one
-relationship left uninitialized — so on the Infrahub adapter the cardinality-many replace-set is
-flushed by a **targeted relationship write** naming `id` plus only the fields being replaced,
-never by a whole-node update. If your destination client re-renders whole objects on write, check
-what it does with the fields you did not set.
+relationship left uninitialized. If your destination client re-renders whole objects on write,
+check what it does with the fields you did not set.
 
 The full contract lives in
 [the destination write surface contract](../specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md);

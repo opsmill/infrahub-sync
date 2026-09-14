@@ -141,17 +141,24 @@ def _operation_line_mapping(operation: PlannedOperation) -> dict[str, Any]:
     normalizer for the whole artifact rather than pydantic's JSON mode for some values and
     `canonical_value` for the rest.
 
-    Two keys are **omitted** rather than encoded as `null`: `payload` on a delete, and
-    `relationships` when the operation carries no reference. `relationships` is omitted for
-    an empty list too, because the wire format admits "absent" and never `[]` for that key
-    — the absent-versus-empty distinction FR-028.2 makes load-bearing is one level down, in
-    a reference's own `peers`.
+    Three keys are **omitted** rather than encoded as `null`: `payload` on a delete,
+    `relationships` when the operation carries no reference, and `destination_id` on
+    anything that is not an update. `relationships` is omitted for an empty list too,
+    because the wire format admits "absent" and never `[]` for that key — the
+    absent-versus-empty distinction FR-028.2 makes load-bearing is one level down, in a
+    reference's own `peers`.
+
+    Omitting `destination_id` is what keeps a format-3 create and delete byte-identical to
+    the format-2 line for the same operation: only an update's encoding changes, which is
+    exactly the set of operations the format bump is about.
     """
     record = operation.model_dump()
     if record.get("payload") is None:
         record.pop("payload", None)
     if not record.get("relationships"):
         record.pop("relationships", None)
+    if record.get("destination_id") is None:
+        record.pop("destination_id", None)
     return record
 
 

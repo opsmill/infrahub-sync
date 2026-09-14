@@ -79,6 +79,17 @@ def read_table(uri: str) -> pa.Table:
         return pq.read_table(fh)
 
 
+def read_schema(uri: str) -> pa.Schema:
+    """Read only a Parquet file's schema from `uri`.
+
+    Enough to answer which columns a snapshot carries without paying for its rows, which is
+    what the destination-side `local_id` check needs.
+    """
+    fs, path = fsspec.core.url_to_fs(uri)
+    with fs.open(path, "rb") as fh:
+        return pq.read_schema(fh)
+
+
 def iter_row_batches(
     uri: str,
     *,

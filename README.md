@@ -89,10 +89,10 @@ operation, stage, and outcome. Forward these records to the logging system used 
 scheduler or runtime.
 
 **Failure handling.** After a failed write, inspect the run record and destination, then
-calculate a fresh plan. A failed operation can have written part of its change, and safe
-re-application is not established for destination kinds whose identity crosses a
-relationship. See [Run a sync](https://docs.infrahub.app/sync/running-a-sync) for the
-recovery and convergence boundaries. The three `diffsync_flags` (`SKIP_UNMATCHED_DST`,
+calculate a fresh plan. A failed operation can have written part of its change, unless the
+run records that it wrote nothing. See
+[Run a sync](https://docs.infrahub.app/sync/running-a-sync) for the recovery and
+convergence boundaries. The three `diffsync_flags` (`SKIP_UNMATCHED_DST`,
 `SKIP_UNMATCHED_SRC`, `SKIP_MODIFIED`) and per-mapping filters control what each project
 may change.
 

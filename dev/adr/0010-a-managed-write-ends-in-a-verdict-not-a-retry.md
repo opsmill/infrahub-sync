@@ -12,8 +12,8 @@ a reviewed plan could be applied against a destination another writer was still 
 and the schema snapshot the plan was validated against could describe a destination that no
 longer existed by the time the first operation was dispatched.
 
-Failure made the same problem worse in the other direction. Applying one recorded operation
-is not one write: the base upsert precedes the relationship flush, so an operation can change
+Failure made the same problem worse in the other direction. An operation's mutation can commit
+remotely before the response — or the transport carrying it — fails, so an operation can change
 the destination and belong to neither the applied nor the skipped set. A worker that fails,
 loses its session, is cancelled, or disappears entirely therefore cannot say what reached the
 destination. Recording that as an ordinary failure invites the obvious next step — apply

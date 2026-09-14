@@ -1,21 +1,31 @@
-"""A convergent write whose key cannot be rendered is refused before it mutates anything.
+"""A create that cannot be proven keyed is refused at plan time, against a live destination.
 
-The mechanism is ported from `tests/integration/test_infrahub_unkeyed_refusal_integration.py`,
-which proves this shape against a live Infrahub, rather than from the offline
-adapter suite: that drives a recording client with a locally constructed schema
-whose `human_friendly_id` stays unset, and a live destination reports whatever it
-computed instead. A mechanism taken from the offline suite does not survive
-contact with a real destination -- this row's previous one did not.
+`CleanDevice`'s human-friendly ID is `[site__name__value, name__value]` while the
+configuration's identifiers name `name` alone. `site` is resolvable from the
+payload and still absent from the operation's identity, so the create cannot be
+proven to carry every component the destination matches on -- and a payload
+missing one component does not match the existing object: the server reports
+`ok: true` and creates a second one. That is the case this row exists to keep
+unreachable.
 
-`CleanDevice`'s identifier crosses the `site` relationship. At apply the peer is a
-resolved node id, `get_path_value` cannot walk to `site__name__value`, so the
-component resolves to None and no `hfid` renders; a create carries no `id` either,
-and the pre-write gate refuses with nothing sent.
+The refusal moved. It used to be a pre-write gate reading the SDK's private render,
+which is retired: on newer SDKs that render reports an `hfid` the wire does not
+carry, so it passed writes that were unkeyed where it mattered. The proof is now
+made where the plan is built, so the run never reaches a write at all and settles
+at the **plan** stage.
+
+That makes this row's verdict sharper than the one it replaces. A refusal raised
+before any dispatch leaves nothing to reconcile, so the run is `failed` rather than
+`interrupted`/`ambiguous`, and `reconciliation_required` must be false. Row 8 asserts
+the opposite for a genuine interruption; the two must not be satisfiable by the same
+state.
+
+The plan stage raises the refusal directly, so the run's own `error_type` names it.
+There is no apply wrapper here and therefore no `cause_type` to read.
 
 The precondition and the property are asserted apart. A negative assertion is
-satisfied by a mechanism that never fired, so this first proves the operation
-reached apply, and only then that it wrote nothing. That split is what told us the
-previous mechanism had died rather than the property failing.
+satisfied by a mechanism that never fired, so this first proves the configuration
+really does propose this kind, and only then that nothing was written.
 
 Negative destination-state assertions are read from the destination, on the branch
 the run writes to, independently of the deployment client.
@@ -29,12 +39,11 @@ from typing import TYPE_CHECKING
 
 import yaml
 from kit import (
-    UNKEYED_REFUSAL,
+    KEYED_CREATE_REFUSAL,
     Operation,
     create_run,
     deployment,
     destination,
-    follow,
     key,
     recorded_failure,
     refuse,
@@ -46,7 +55,7 @@ from infrahub_sync.client.models import ConfigMutationRequest, CreateRunRequest
 if TYPE_CHECKING:
     from infrahub_sync.client import SyncClient
 
-# The kind whose convergent write cannot be keyed.
+# The kind whose create cannot be proven keyed: its identity omits an HFID component.
 UNKEYED_KIND = "CleanDevice"
 CONFIGURATION = "/checks/unkeyed-configuration.yaml"
 
@@ -111,35 +120,18 @@ with deployment() as client:
         """
         return create_run(operation, config_id=config_id, registry_version=registry_version, reason=reason)
 
-    planned = follow(client, client.plan(request("plan", "clean-host: unkeyed plan"), key("unkeyed")))
-    plan = client.get_plan(planned.run.run_id)
+    # Settled rather than followed: planning refuses this configuration, so awaiting
+    # success could never pass. For this row the terminal failure is the expected
+    # outcome and the verdict is what it reads.
+    planned = settle(client, client.plan(request("plan", "clean-host: unkeyed plan"), key("unkeyed")))
 
-    # Precondition: the operation survived planning and is a create. Refused at
-    # plan time it would never reach the render gate; proposed as an update it
-    # would carry the destination node's own id and be keyed by it, so the gate
-    # would pass for a reason that says nothing about this row.
-    proposed = [operation for operation in plan.operations if operation.kind == UNKEYED_KIND]
-    if not proposed:
-        refuse(f"planning produced no {UNKEYED_KIND} operation, so the render gate was never reached")
-    if {operation.action for operation in proposed} != {"create"}:
-        refuse(f"planning proposed {sorted({operation.action for operation in proposed})} rather than a create")
-
-    # Settled rather than followed: a refused operation cannot produce a
-    # successful run, so awaiting success here could never pass. For this row the
-    # terminal failure is the expected outcome and the verdict is what it reads.
-    applied = settle(client, client.sync(request("sync", "clean-host: unkeyed apply"), key("unkeyed-apply")))
-
-    # Property: the run was refused for being unkeyed, and the branch it writes to
-    # is unchanged. The wrapper is the same class for every designed apply failure
-    # -- an unresolvable peer, an unaccounted identity component, a destination's
-    # own rejection -- so the recorded cause is what makes this a statement about
-    # this refusal rather than about any failure at all.
-    failure = recorded_failure(client, applied.run.run_id)
-    if failure.get("cause_type") != UNKEYED_REFUSAL:
-        refuse(
-            f"the run recorded {failure.get('error_type')!r} raised from"
-            f" {failure.get('cause_type')!r}, rather than a {UNKEYED_REFUSAL}"
-        )
+    # Property: the run was refused for a create that cannot be proven keyed, it was
+    # refused before anything was dispatched, and the branch it writes to is unchanged.
+    failure = recorded_failure(client, planned.run.run_id)
+    if failure.get("error_type") != KEYED_CREATE_REFUSAL:
+        refuse(f"the run recorded {failure.get('error_type')!r}, rather than a {KEYED_CREATE_REFUSAL}")
+    if planned.run.reconciliation_required:
+        refuse("a plan-time refusal dispatched nothing, so it must not require reconciliation")
     after = unkeyed_objects(written_branch)
     if after != before:
         refuse(f"a refused unkeyed operation changed {written_branch} from {before} to {after} objects")

@@ -24,7 +24,7 @@ procedures see [`dev/guides/`](../guides/README.md).
   a stored plan is read and verified.
 - [Planned writes and apply](planned-write-and-apply.md) — the second write path: the
   destination write surface and what its type does and does not enforce, apply-time peer
-  resolution, replace-set flush semantics, and how deletes are recorded but not executed.
+  resolution, replace-set semantics, and how deletes are recorded but not executed.
 - [The configuration write guard](apply-guard.md) — the PostgreSQL session advisory lock
   that serializes one configuration's writes across processes: its direct-connection
   requirement, key derivation, deadline bounds, ownership proof, and failure sanitizing.

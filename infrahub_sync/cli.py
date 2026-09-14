@@ -486,6 +486,10 @@ def _operation_detail(operation: PlanOperationResource) -> None:
     typer.echo(
         f"{operation.operation_id} {operation.action} {operation.kind} {_identity_text(operation.identity)}{marker}"
     )
+    # Only an update carries one, and it is what the apply will key that write by, so a
+    # reviewer sees which destination object the operation names before approving it.
+    if operation.destination_id is not None:
+        typer.echo(f"  destination id: {operation.destination_id}")
     payload = operation.payload
     if payload is not None:
         typer.echo(f"  payload: {json.dumps(payload, sort_keys=True, separators=(',', ':'))}")

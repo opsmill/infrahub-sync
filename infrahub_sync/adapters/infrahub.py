@@ -12,8 +12,7 @@ from infrahub_sdk import (
     Config,
     InfrahubClientSync,
 )
-from infrahub_sdk.exceptions import NodeNotFoundError
-from infrahub_sdk.graphql import Mutation
+from infrahub_sdk.exceptions import GraphQLError, NodeNotFoundError
 from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from infrahub_sdk.utils import compare_lists
@@ -35,10 +34,11 @@ from infrahub_sync.plan.errors import (
     PeerAmbiguousError,
     PeerNotFoundError,
     SkippedDeleteOperation,
+    StaleDestinationIdError,
     UnaccountedIdentityComponentError,
-    UnkeyedWriteRefusedError,
 )
 from infrahub_sync.plan.identity import canonical_identity
+from infrahub_sync.plan.keying import is_usable_component_value, refuse_unkeyed_create_coverage
 from infrahub_sync.plan.models import DestinationBindingRecord
 
 logger = logging.getLogger(__name__)
@@ -73,9 +73,9 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.models import PlannedOperation
 
 
-def _node_has_complete_attributes(node: InfrahubNodeSync) -> bool:
+def _node_has_complete_attributes(node: InfrahubNodeSync, node_schema: MainSchemaTypesAPI) -> bool:
     """Check if a node has all its non-optional attributes populated."""
-    for attr_schema in node._schema.attributes:
+    for attr_schema in node_schema.attributes:
         if attr_schema.optional:
             continue
         attr = getattr(node, attr_schema.name, None)
@@ -91,6 +91,7 @@ def resolve_peer_node(
     store: NodeStoreSync,
     client: InfrahubClientSync | None = None,
     fallback: bool | None = False,
+    schemas: Mapping[str, MainSchemaTypesAPI] | None = None,
 ) -> InfrahubNodeSync | None:
     """
     Resolve a peer node given a key.
@@ -100,6 +101,11 @@ def resolve_peer_node(
       - If it is a GenericSchemaAPI, iterate over its `used_by` list and return the first matching node.
       - If not found and fallback is enabled, use the client to fetch the node.
       - If node is found but has incomplete attributes, re-fetch from Infrahub.
+
+    `schemas` is the caller's already-loaded kind-to-schema mapping and the only schema
+    source this function consults. Completeness is judged against the peer's own kind; a
+    kind absent from `schemas` leaves the stored peer as it is, so resolving a peer issues
+    no schema request.
 
     Returns the found peer node or None.
     """
@@ -113,8 +119,10 @@ def resolve_peer_node(
                 break
 
     # Check if the node from store has incomplete attributes and needs re-fetching
-    if peer_node and fallback and client and not _node_has_complete_attributes(peer_node):
-        peer_node = client.get(id=key, kind=peer_node.get_kind(), populate_store=True)
+    if peer_node and fallback and client and schemas is not None:
+        peer_node_schema = schemas.get(peer_node.get_kind())
+        if peer_node_schema is not None and not _node_has_complete_attributes(peer_node, peer_node_schema):
+            peer_node = client.get(id=key, kind=peer_node.get_kind(), populate_store=True)
 
     if not peer_node and fallback and client is not None:
         logger.warning("Unable to find %s [%s] in Store - Fallback to Infrahub", rel_schema.peer, key)
@@ -122,6 +130,62 @@ def resolve_peer_node(
         if not peer_node:
             logger.warning("Unable to find %s [%s] - Ignored", rel_schema.peer, key)
     return peer_node
+
+
+# The destination's answer to an upsert whose `id` matches no object, as measured on both
+# SDK versions. Both values, in one error's extensions, are what prove the server created
+# nothing; the HTTP transport status is 200 here and settles nothing.
+_NODE_NOT_FOUND_CODE = "NODE_NOT_FOUND"
+_NODE_NOT_FOUND_HTTP_STATUS = 404
+
+
+def _graphql_extensions(exc: GraphQLError) -> Iterator[Mapping[str, Any]]:
+    """The `extensions` mapping of each error the destination returned.
+
+    The **only** place a server verdict is read from. The HTTP transport status is 200 even
+    for a refused mutation, so it settles nothing; `extensions.http_status` is what carries
+    the server's own answer.
+    """
+    for error in getattr(exc, "errors", ()) or ():
+        if isinstance(error, Mapping):
+            extensions = error.get("extensions")
+            if isinstance(extensions, Mapping):
+                yield extensions
+
+
+def _refuse_stale_destination_id(exc: GraphQLError, *, operation: PlannedOperation) -> None:
+    """Re-raise a not-found on an id-keyed upsert as the named, proven-not-written refusal.
+
+    An upsert carrying an `id` that matches no object is answered with
+    `extensions.code` `NODE_NOT_FOUND` **and** `extensions.http_status` 404, and the server
+    creates nothing on that path — measured on both SDK versions. So this is raised *after*
+    the write was attempted and is still proven not to have written, which is what lets it
+    carry `wrote = False` where an ordinary transport failure cannot.
+
+    **Both halves are required, in the same error's extensions.** The code alone does not
+    prove the id path was the one that ran, and `wrote = False` is a claim that suppresses
+    reconciliation: made without the server's own status it would send an operator past a
+    destination that may have been written. Anything short of the full measured signature —
+    an absent status, a different status, or the two halves arriving in different errors —
+    returns here and leaves the caller to re-raise the original, ambiguous failure.
+
+    Returns without raising for anything else, leaving the caller to re-raise the original.
+    """
+    if operation.destination_id is None:
+        return
+    proven_not_found = any(
+        extensions.get("code") == _NODE_NOT_FOUND_CODE and extensions.get("http_status") == _NODE_NOT_FOUND_HTTP_STATUS
+        for extensions in _graphql_extensions(exc)
+    )
+    if not proven_not_found:
+        return
+    msg = (
+        f"Operation {operation.operation_id!r} updates {operation.kind!r} object "
+        f"{operation.identity!r} by its recorded destination id {operation.destination_id!r}, which "
+        "matches no object at the destination. The destination refused the write and created "
+        "nothing."
+    )
+    raise StaleDestinationIdError(msg) from exc
 
 
 def _relationship_input_data(peer_id: str | None, source: str | None, owner: str | None) -> dict[str, Any]:
@@ -137,6 +201,8 @@ def _relationship_input_data(peer_id: str | None, source: str | None, owner: str
 def update_node(
     node: InfrahubNodeSync,
     attrs: Mapping[str, Any],
+    client: InfrahubClientSync,
+    node_schema: MainSchemaTypesAPI,
     source: str | None = None,
     owner: str | None = None,
 ) -> InfrahubNodeSync:
@@ -149,12 +215,14 @@ def update_node(
     Args:
         node: The node to update.
         attrs: The attributes and relationships to update.
+        client: The client that owns `node`, used for schema and store lookups.
+        node_schema: The schema of `node`, read once by the caller.
         source: Optional source ID to set on updated attributes and relationships.
         owner: Optional owner ID to set on updated attributes and relationships.
     """
-    schemas: Mapping[str, MainSchemaTypesAPI] = node._client.schema.all(branch=node._branch)
+    schemas: Mapping[str, MainSchemaTypesAPI] = client.schema.all(branch=node.get_branch())
     for attr_name, attr_value in attrs.items():
-        if attr_name in node._schema.attribute_names:
+        if attr_name in node_schema.attribute_names:
             attr = getattr(node, attr_name)
             attr.value = attr_value
             if source:
@@ -162,8 +230,8 @@ def update_node(
             if owner:
                 attr.owner = NodeProperty(data=owner)
 
-        if attr_name in node._schema.relationship_names:
-            for rel_schema in node._schema.relationships:
+        if attr_name in node_schema.relationship_names:
+            for rel_schema in node_schema.relationships:
                 peer_schema = schemas.get(rel_schema.peer)
                 if attr_name != rel_schema.name or peer_schema is None:
                     continue
@@ -174,9 +242,10 @@ def update_node(
                             key=attr_value,
                             rel_schema=rel_schema,
                             peer_schema=peer_schema,
-                            store=node._client.store,
-                            client=node._client,
+                            store=client.store,
+                            client=client,
                             fallback=False,
+                            schemas=schemas,
                         )
                         if not peer_node:
                             logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
@@ -205,9 +274,10 @@ def update_node(
                             key=value,
                             rel_schema=rel_schema,
                             peer_schema=peer_schema,
-                            store=node._client.store,
-                            client=node._client,
+                            store=client.store,
+                            client=client,
                             fallback=False,
+                            schemas=schemas,
                         )
                         if peer_node:
                             new_peer_ids.append(peer_node.id)
@@ -224,74 +294,6 @@ def update_node(
                         attr_manager.add(_relationship_input_data(new_id, source, owner))
 
     return node
-
-
-def _flush_replaced_relationship_sets(node: InfrahubNodeSync, rel_names: Sequence[str]) -> None:
-    """Issue the plan's cardinality-many peer sets on `node`, and nothing else (AD088).
-
-    THE FLUSH. A **targeted relationship write**: a hand-built `<kind>Update` carrying the
-    node's `id` plus only the fields named in `rel_names`, each rendered from the manager the
-    create payload built — which already holds exactly the plan's resolved peer set, with the
-    same per-peer `source`/`owner`/`is_protected` metadata the upsert carried.
-
-    **Peer removal relies on the destination Update mutation's replace semantics, pinned by
-    the live shrink test** (`tests/integration/test_infrahub_replace_set_shrink_integration.py`).
-    Nothing about a *removal* can reach the wire from here: the SDK's
-    `RelationshipManagerBase._generate_input_data` renders only the surviving peer list —
-    `[{id: ...}, ...]` with no removal directive — so a fetch-and-reconcile round trip before
-    this write added nothing. Under replace semantics the written list *is* the destination's
-    new set (AD085's `peers: []` empties it); if the destination ever merged instead, no
-    in-process reconciliation could have removed a peer either, and the pinned test is what
-    would catch the change. The round trips were therefore simplified away: this path issues
-    **no destination read** — which also removes the SDK's `populate_store=True` peer-hydration
-    batch the forced-cold `fetch()` used to trigger.
-
-    **Why it does not re-render the node.** The obvious flush — `node.update(...)` — renders the
-    whole node through `InfrahubNodeBase._generate_input_data`, and that render emits
-    `data[<rel>] = None` for **every** uninitialized optional cardinality-one relationship once
-    the node is marked existing (the SDK's own comment says
-    it is there "to allow clearing relationships"). The convergent upsert marks the node existing,
-    so any re-render clears every optional cardinality-one relationship the plan never mapped —
-    and FR-013 requires an update payload to touch no unmapped destination field. The null goes
-    out under both render modes: with unmodified-field stripping **off** nothing is stripped at
-    all, and with it **on** the field survives both stripping loops anyway — the first loop does
-    not pop it, and the second never visits it because an unmapped field is absent from the
-    original data it compares against. So no flag on `update()` avoids this; only not re-rendering
-    does.
-
-    Restoring or pre-initialising the unmapped relationships before the flush would treat the
-    symptom, and would have to read every one of them from the destination to do it. Writing only
-    the fields being replaced removes the exposure instead.
-
-    **The peer list is still rendered by the SDK.** `RelationshipManagerBase._generate_input_data`
-    is what `_generate_input_data` would have called for these same fields, so the value written
-    here is byte-identical to what the full render produced for them — including `[]` for a peer
-    set the plan records as empty, which is the case AD085 exists for. `id` is set last, mirroring the
-    SDK's own ordering, so the write targets this node.
-
-    The mutation is built and issued the way `InfrahubNodeSync.update` builds and issues its own
-    and the response is handed back to the SDK, so nothing about transport,
-    error handling or the mutation's response shape changes.
-    """
-    node_id = _require_node_id(node, context="for the replace-set flush")
-    data: dict[str, Any] = {}
-    for rel_name in rel_names:
-        manager: RelationshipManagerSync = getattr(node, rel_name)
-        data[rel_name] = manager._generate_input_data()
-    data["id"] = node_id
-
-    mutation_name = f"{node._schema.kind}Update"
-    query = Mutation(
-        mutation=mutation_name,
-        input_data={"data": data},
-        query=node._generate_mutation_query(),
-    )
-    response = node._client.execute_graphql(
-        query=query.render(),
-        branch_name=node._branch,
-        tracker=f"mutation-{str(node._schema.kind).lower()}-update",
-    )
-    node._process_mutation_result(mutation_name=mutation_name, response=response)
 
 
 # An Infrahub schema component path — a human-friendly-ID or uniqueness-constraint entry —
@@ -407,23 +409,33 @@ def _hfid_component_accounted_for(
     implementable: by the time this runs, a relationship key in `data` holds a resolved
     destination node id and no attribute can be read out of it.
 
-    - a **direct** component (`<attr>` / `<attr>__value`): `data` carries `<attr>` non-null;
+    - a **direct** component (`<attr>` / `<attr>__value`): `data` carries `<attr>` with a
+      usable value;
     - a **relationship-crossing** component (`<rel>__<attr>__value`): `data` carries `<rel>`
       non-null **and** the operation's nested `{peer_kind, identity}` for `<rel>` supplies
-      `<attr>`, recursing through the nested identity for deeper paths.
+      `<attr>` with a usable value, recursing through the nested identity for deeper paths.
+
+    "Usable" rather than "present" is the whole point, and it is the same predicate plan
+    derivation applies (`plan.keying.is_usable_component_value`): a component that arrives as
+    `""` is present and keys nothing, so the destination would match no existing object and
+    create a second one — the case this check exists to make impossible.
     """
     segments = _component_segments(component)
     if not segments:
         return False
     field = segments[0]
-    if data.get(field) is None:
-        return False
+    value = data.get(field)
     if len(segments) == 1:
-        return True
+        return is_usable_component_value(value)
+    # A relationship slot holds a resolved node id by now, so only its presence is checkable
+    # here; the component's own value comes from the operation's nested peer identity.
+    if value is None:
+        return False
     nested = _operation_peer_identity(operation, field)
     if nested is None:
         return False
-    return _identity_path_value(nested, segments[1:]) is not _UNRESOLVED
+    resolved = _identity_path_value(nested, segments[1:])
+    return resolved is not _UNRESOLVED and is_usable_component_value(resolved)
 
 
 class PeerResolver:
@@ -725,9 +737,15 @@ class PeerIdentifierError(ValueError):
         super().__init__(msg)
 
 
-def _sdk_node_has_identifiers(node: object, identifiers: tuple[str, ...]) -> bool:
-    """Return whether an SDK node carries every DiffSync identifier value."""
-    schema = getattr(node, "_schema", None)
+def _sdk_node_has_identifiers(
+    node: InfrahubNodeSync, identifiers: tuple[str, ...], schema: MainSchemaTypesAPI | None
+) -> bool:
+    """Return whether an SDK node carries every DiffSync identifier value.
+
+    `schema` is the node's kind schema, or None when the caller holds none for that kind.
+    A None schema declares no attributes and no relationships, so a non-empty `identifiers`
+    fails closed.
+    """
     attributes = {attribute.name for attribute in getattr(schema, "attributes", ())}
     relationships = {relationship.name: relationship for relationship in getattr(schema, "relationships", ())}
     for identifier in identifiers:
@@ -969,7 +987,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         Raises ``PeerIdentifierError`` otherwise so the operator sees actionable
         context instead of a bare ``KeyError``.
         """
-        peer_kind = peer_node._schema.kind
+        peer_kind = peer_node.get_kind()
         peer_model = getattr(self, peer_kind, None)
         if not peer_model:
             logger.warning("Unable to map '%s' with kind '%s' - Ignored", peer_node, peer_kind)
@@ -1011,7 +1029,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if hydrated_peer is not None:
                 hydrated = True
                 hydrated_peer_data = self.infrahub_node_to_diffsync(hydrated_peer)
-                attribute_names = {attribute.name for attribute in getattr(hydrated_peer._schema, "attributes", ())}
+                hydrated_peer_schema = self.schema.get(hydrated_peer.get_kind())
+                attribute_names = {attribute.name for attribute in getattr(hydrated_peer_schema, "attributes", ())}
                 # Top-level model loads are full fetches. Peer payloads may be shallow,
                 # so only this successful hydration can verify a nullable attribute.
                 verified_null_identifiers = frozenset(
@@ -1034,7 +1053,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             )
         if missing:
             err = PeerIdentifierError(
-                parent_kind=parent_node._schema.kind,
+                parent_kind=parent_node.get_kind(),
                 parent_id=str(getattr(parent_node, "id", None)),
                 rel_name=rel_name,
                 peer_kind=peer_kind,
@@ -1095,7 +1114,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             (
                 peer
                 for peer in (sdk_peer_by_uuid, sdk_peer_by_identity, fallback_node)
-                if peer is not None and _sdk_node_has_identifiers(peer, identifiers)
+                if peer is not None and _sdk_node_has_identifiers(peer, identifiers, self.schema.get(peer.get_kind()))
             ),
             None,
         )
@@ -1114,9 +1133,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         Handles attribute conversion and relationship resolution.
         """
         data: dict[str, Any] = {"local_id": str(node.id)}
+        node_kind = node.get_kind()
+        # Schema comes from the adapter's loaded mapping; the SDK schema manager is not
+        # consulted because a node built with an explicit schema is absent from its cache
+        # and a lookup there could fetch.
+        node_schema = self.schema[node_kind]
 
-        for attr_name in node._schema.attribute_names:
-            if has_field(config=self.config, name=node._schema.kind, field=attr_name):
+        for attr_name in node_schema.attribute_names:
+            if has_field(config=self.config, name=node_kind, field=attr_name):
                 attr = getattr(node, attr_name)
                 val = attr.value
                 # IP types come back from the Infrahub SDK as ipaddress
@@ -1134,8 +1158,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 else:
                     data[attr_name] = val
 
-        for rel_schema in node._schema.relationships:
-            if not has_field(config=self.config, name=node._schema.kind, field=rel_schema.name):
+        for rel_schema in node_schema.relationships:
+            if not has_field(config=self.config, name=node_kind, field=rel_schema.name):
                 continue
             peer_schema = self.schema.get(rel_schema.peer)
             if peer_schema is None:
@@ -1152,6 +1176,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                     store=self.client.store,
                     client=self.client,
                     fallback=True,
+                    schemas=self.schema,
                 )
                 if not peer_node:
                     continue
@@ -1175,6 +1200,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                         store=self.client.store,
                         client=self.client,
                         fallback=True,
+                        schemas=self.schema,
                     )
                     if not peer_node:
                         continue
@@ -1187,31 +1213,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 data[rel_schema.name] = sorted(values)
 
         return data
-
-    def _require_keyed_render(self, *, node: InfrahubNodeSync, operation: PlannedOperation) -> None:
-        """Refuse the operation unless the rendered mutation carries a usable `id` or `hfid`.
-
-        Keyedness is a property of the rendered mutation rather than of the assembled data, so
-        it is read here, immediately before the SDK write. An unkeyed convergent write
-        duplicates its object on a re-apply whatever the kind's human-friendly-ID shape is.
-
-        The key must carry a value, not merely be present. Every payload field is rendered as
-        an attribute block, so a field named `id` renders as an empty `id: {}` that the
-        destination can converge on no better than an absent one.
-
-        Raises:
-            UnkeyedWriteRefusedError: the rendered mutation carries no usable key.
-        """
-        rendered = node._generate_input_data(exclude_hfid=False)["data"]["data"]
-        if rendered.get("id") or rendered.get("hfid"):
-            return
-        msg = (
-            f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} rendered a "
-            "mutation carrying no usable 'id' or 'hfid', so the convergent write would be unkeyed and a "
-            "re-apply would duplicate the object. The operation was refused before the SDK write and "
-            "attempted no destination mutation."
-        )
-        raise UnkeyedWriteRefusedError(msg)
 
     def new_peer_resolver(self) -> PeerResolver:
         """Build the peer resolver for one apply (FR-014, AD086).
@@ -1245,22 +1246,33 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         forbids. The payload is authoritative for the mapped fields it carries and touches no
         unmapped destination field.
 
-        Two checks sit before the write and they are different checks (AD066): the
-        per-component **diagnostic** below, which names *which* human-friendly-ID component
-        is unaccounted for, and `_require_keyed_render`'s **gate** on the rendered mutation.
+        How the write is keyed depends on the action, and neither way reads the SDK's
+        private pre-save render (AD066/AD067, retired). An **update** carries the
+        destination `id` recorded for it at plan time, set on the node before `save`. A
+        **create** has no id and is keyed by the destination kind's human-friendly-ID
+        components in its payload, which the server matches on — so its completeness is
+        proven here, before the mutation, by the per-component diagnostic below.
 
-        The write is not the last destination interaction: every cardinality-many
-        relationship is then written explicitly as a replace-set by a single targeted
-        relationship write (AD075, amended by AD085 and AD088), whose surplus-peer removal
-        relies on the destination Update mutation's replace semantics.
+        The private render was retired because it stopped agreeing with the wire: on SDK
+        1.23.2 it reports an `hfid` for a kind whose issued mutation carries no key at all,
+        so a gate reading it passes writes that are unkeyed where it matters.
+
+        That upsert is the **only** destination write the operation makes. It carries every
+        cardinality-many relationship as the plan's peer list, and `peers: []` means empty the
+        set rather than leave it alone. Surplus peers go because the destination's Upsert
+        mutation replaces a relationship list rather than merging it — a property of the
+        server, pinned by the live shrink test
+        (`tests/integration/test_infrahub_replace_set_shrink_integration.py`) and recorded in
+        ADR 0012.
 
         Raises:
             SkippedDeleteOperation: the operation is a recorded delete (a designed
                 limitation, not a failure), and no skip is recorded — see above.
             UnaccountedIdentityComponentError: a human-friendly-ID component of the
                 destination kind is not accounted for by the payload and the operation.
-            UnkeyedWriteRefusedError: the rendered mutation carries neither 'id' nor
-                'hfid', so no destination mutation was attempted for it.
+            StaleDestinationIdError: an update's recorded destination id matches no object
+                at the destination, which the destination proved by refusing the write and
+                creating nothing.
             NullRelationshipValueError: a mandatory cardinality-one relationship is null
                 in the planned payload.
             PeerNotFoundError: a peer identity matches no destination object.
@@ -1280,11 +1292,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             raise TypeError(msg)
 
         # The payload is `keys` union `source_attrs`, so it already carries the identity
-        # components the convergent write keys on (AD042). The v1 plan contract cannot
-        # distinguish an absent optional to-one relationship from an intended clear. Keep
-        # create's established omission behavior; on update, disclose that the null is a
-        # no-op rather than silently claiming convergence. A mandatory null is invalid and
-        # must stop here before the SDK can render it as a relationship id.
+        # components the convergent write keys on (AD042). No plan format distinguishes an
+        # absent optional to-one relationship from an intended clear. Keep create's
+        # established omission behavior; on update, disclose that the null is a no-op rather
+        # than silently claiming convergence. Derivation drops a null cardinality-one peer
+        # before the operation is recorded and warns there (S7), so this arm is reached only
+        # by a hand-built artifact that carries one — which is why it is kept rather than
+        # removed. A mandatory null is invalid and must stop here before the SDK can render
+        # it as a relationship id.
         payload = operation.payload or {}
         null_to_one_relationships = [
             relationship
@@ -1309,10 +1324,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         if operation.action == "update" and optional_null_fields:
             logger.warning(
                 "Planned update %s for destination kind %s carries null for optional cardinality-one "
-                "relationship field(s) %s. Plan format v1 cannot distinguish an absent relationship "
+                "relationship field(s) %s. The plan format cannot distinguish an absent relationship "
                 "from an intended clear, so the field is omitted and the destination relationship is "
-                "not cleared. Clear it directly at the destination, or use a plan format that represents "
-                "relationship clears, if the clear was intended.",
+                "not cleared. Clear it directly at the destination if the clear was intended.",
                 operation.operation_id,
                 operation.kind,
                 ", ".join(optional_null_fields),
@@ -1335,7 +1349,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             ]
             data[reference.field] = peer_ids[0] if reference.cardinality == "one" else peer_ids
 
-        self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
+        if operation.action == "create":
+            # Creates only. A create is matched by the destination on the human-friendly-ID
+            # components it carries, so both checks are conditions of the write; an update is
+            # keyed by its recorded id and those components key nothing for it. Coverage
+            # first, from the same function plan derivation uses; then AD051 for values,
+            # because it is the check that can name the missing component. Both run before
+            # `client.create` and read the cached schema and the operation alone.
+            refuse_unkeyed_create_coverage(operation, node=node_schema)
+            self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
 
         source_id = self.source_node.id if self.source_node else None
         owner_id = self.owner_node.id if self.owner_node else None
@@ -1343,17 +1365,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
         )
         node = self.client.create(kind=operation.kind, data=create_data)
-        self._require_keyed_render(node=node, operation=operation)
-        node.save(allow_upsert=True)
-
-        # Every cardinality-many relationship is written explicitly as a replace-set rather
-        # than left to the upsert alone (PD-005), and `peers: []` means empty the set.
-        many_references = [reference for reference in references if reference.cardinality == "many"]
-        if many_references:
-            # One write per operation, not one per relationship, and targeted rather than a
-            # re-render of the node — a re-render nulls every unmapped optional cardinality-one
-            # relationship. See `_flush_replaced_relationship_sets` (AD075, AD085, AD088).
-            _flush_replaced_relationship_sets(node, [reference.field for reference in many_references])
+        if operation.action == "update":
+            # The recorded id, set on the node rather than put into `data`. The SDK renders
+            # `data["id"] = self.id` when the node carries one and only otherwise considers
+            # `hfid` (`infrahub_sdk/node/node.py:295-298`), so this is what makes the upsert
+            # a keyed update of that exact object. Putting `id` into `data` instead would
+            # render it as the attribute-shaped `id: {}` and key nothing.
+            node.id = operation.destination_id
+        try:
+            node.save(allow_upsert=True)
+        except GraphQLError as exc:
+            _refuse_stale_destination_id(exc, operation=operation)
+            raise
 
         node_id = _require_node_id(node, context=f"for operation {operation.operation_id!r}")
         peers.remember(operation.kind, operation.identity, node_id)
@@ -1366,15 +1389,19 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         data: Mapping[str, Any],
         operation: PlannedOperation,
     ) -> None:
-        """The diagnostic: every HFID component of the kind is accounted for (AD051).
+        """The diagnostic: every HFID component of a **create** is accounted for (AD051).
 
-        FR-024 warns about the same condition at plan time; this is what stops it becoming
-        silent data duplication at apply time when that warning was ignored or the schema
-        changed since. It is the only check that can say *which* component is missing, which
-        is why it is kept alongside the rendered-mutation gate rather than replaced by it.
+        FR-024 refuses the same condition at plan time; this is what stops it becoming silent
+        data duplication at apply time when the plan was hand-built or the schema changed
+        since. It is the only check that can say *which* component is missing, which is why it
+        is the **value** arm of the create guard rather than being folded into the coverage
+        check that runs just before it.
 
-        A kind that declares no human-friendly ID has no components and so passes here; the
-        rendered-mutation gate is what refuses it.
+        Creates only, which the caller enforces: a recorded-id update may omit, blank or fail
+        to resolve a component, because the id is what keys it.
+
+        A kind that declares no human-friendly ID has no components and so passes here;
+        `refuse_unkeyed_create_coverage` is what refuses it, on its uniqueness constraints.
 
         Raises:
             UnaccountedIdentityComponentError: naming the kind and the missing components.
@@ -1435,7 +1462,15 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
         node = adapter.client.get(id=self.local_id, kind=self.__class__.__name__)
         source_id = adapter.source_node.id if adapter.source_node else None
         owner_id = adapter.owner_node.id if adapter.owner_node else None
-        node = update_node(node=node, attrs=attrs, source=source_id, owner=owner_id)
+        node_schema = adapter.schema[node.get_kind()]
+        node = update_node(
+            node=node,
+            attrs=attrs,
+            client=adapter.client,
+            node_schema=node_schema,
+            source=source_id,
+            owner=owner_id,
+        )
         node.save(allow_upsert=True)
 
         return super().update(attrs=attrs)

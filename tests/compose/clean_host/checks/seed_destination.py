@@ -115,8 +115,10 @@ def seed_unkeyed_peer() -> str:
     """Create the peer the unkeyed row's kind references, on `main`, and return its id.
 
     Through the SDK rather than through a planned apply, and the same is true of
-    the subject below: the write surface refuses the very operation this row
-    exists to observe, so a planned apply could not establish either object.
+    the subject below: this row's configuration is refused at **plan** time — its
+    identifiers omit an HFID component, which is the very thing the row exists to
+    observe — so a planned apply never produces an artifact that could establish
+    either object.
     """
     site = sdk().create(kind="CleanSite", branch="main", data={"name": SEEDED_SITE})
     site.save()

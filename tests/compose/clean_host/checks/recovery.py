@@ -8,10 +8,14 @@ it completes normally.
 Nothing here retries the interrupted run. That is the property — a write whose
 outcome is unknown is not repeated on the chance that it failed.
 
-The reconciliation flag alone does not say a write was uncertain: it derives from
-a dispatch having been proven, not from bytes having reached the destination, so
-a refusal that sent nothing raises it as well. What separates the two is the
-recorded cause, and this row requires the interruption not to be one.
+The reconciliation flag is set for a run whose verdict is interrupted/ambiguous. A
+refusal the write surface raised before its write is **not** that: it is recorded
+as proven-not-written, settles as `failed`, and sets no reconciliation state (S6).
+So the flag and the refusal are no longer two readings of one state, and this row
+keeps its guard on the recorded cause anyway — as a rejection rather than a
+disambiguation. If an interruption ever arrives carrying a refusal's cause, the two
+rows have stopped observing different things and this one should fail rather than
+quietly assert what row 4 already covers.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
-from kit import UNKEYED_REFUSAL, deployment, follow, key, recorded_failure, refuse, run_request
+from kit import KEYED_CREATE_REFUSAL, deployment, follow, key, recorded_failure, refuse, run_request
 
 if TYPE_CHECKING:
     from infrahub_sync.client import SyncClient
@@ -67,13 +71,13 @@ with deployment() as client:
         refuse(f"the interrupted run reports {interrupted.phase}, so no ambiguous write was induced")
 
     # And it is not a refusal. Every apply or sync failure after the first
-    # operation sets `reconciliation_required`, because the flag derives from a
-    # dispatch having been proven rather than from bytes having been sent -- so an
-    # operation the write surface refused before sending anything sets it too.
-    # Without this the row passes on a run that provably wrote nothing, which is
-    # the opposite of the state it exists to observe, and its property could never
-    # fail for the reason it is about.
-    if recorded_failure(client, run_id).get("cause_type") == UNKEYED_REFUSAL:
+    # operation is the state this row is about: a worker that reached its write and
+    # was interrupted, whose outcome nobody can determine. A refusal raised before
+    # the write is the opposite state and now settles as `failed` with no
+    # reconciliation required, so it cannot satisfy this row -- but the guard stays,
+    # because a run arriving here with a refusal's cause would mean the two rows had
+    # stopped observing different things.
+    if recorded_failure(client, run_id).get("cause_type") == KEYED_CREATE_REFUSAL:
         refuse("the interrupted run was refused before its write, so there is nothing ambiguous about it")
 
     fresh = follow(client, client.plan(run_request(client, "plan", "clean-host: plan after recovery"), key("after")))

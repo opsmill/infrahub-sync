@@ -65,6 +65,23 @@ The exact order depends on your schema. See [Sync instance configuration](./refe
 
 For each model, define how source fields map to Infrahub fields. The schema mapping section of the YAML handles direct field mappings, identifier mappings, references to other models, and static values. For detail on each mapping pattern, see [Schema mapping reference](./reference/schema-mapping.mdx).
 
+:::important
+
+**For models the sync will create, `identifiers` must cover the destination kind's human-friendly ID.**
+Infrahub matches a newly created object on the human-friendly-ID values the write carries, and a write
+that omits one does not match an existing object — it creates a second one and reports success. `diff`
+therefore refuses a create it cannot prove carries every component, naming the kind and what is missing,
+rather than letting the duplicate happen.
+
+Objects that already exist are unaffected: an update is keyed by the destination object's own id,
+recorded when the plan is built, so it changes the object it means even where `identifiers` and the
+human-friendly ID differ — including when a rename changes the human-friendly ID itself.
+
+If a refusal names one of your models, either add the missing field to that model's `identifiers` or
+adjust the human-friendly ID in the destination schema.
+
+:::
+
 ## Phase 3 — Seed Infrahub with initial data
 
 Register the package, then use its immutable identity to verify what the sync will do:
@@ -74,26 +91,37 @@ infrahub-sync configs register <package.yml> --reason "register migration"
 infrahub-sync diff --config-id <config-id> --version <version> --reason "review migration"
 ```
 
-:::warning Saved-plan applies require a keyed destination kind
+:::warning What a saved plan will and will not apply
 
-A saved-plan apply converges on the destination kind's `human_friendly_id`. The
-client has to render that key before the write, so two shapes cannot be applied
-and are refused before they touch Infrahub:
+**Creates must prove their own key.** For a destination kind with a human-friendly ID,
+Infrahub matches the write using its complete human-friendly ID. Sync requires a usable
+value for every component, supplied by a mapped field or a relationship reference; a
+relationship-crossing component comes from the referenced peer's identifiers. For a kind
+without a human-friendly ID, the model's identifiers must cover at least one declared
+uniqueness constraint so the destination refuses duplicates. `diff` refuses missing
+coverage or unusable values, naming the kind and what is missing.
 
-- a kind whose human-friendly ID **crosses a relationship**, because the peer is
-  supplied as a resolved node id and no key can be formed from it; and
-- a kind that **declares no human-friendly ID**, because there is no key to render.
+**Updates are not subject to that rule.** An update carries the destination object's own
+id, recorded when the plan was built, so it writes the object it means even where
+`identifiers` and the human-friendly ID differ — including a kind whose human-friendly ID
+crosses a relationship, one that declares none at all, and a rename that changes the
+human-friendly ID itself.
 
-Apply is sequential: the refused operation writes nothing, operations applied
-before it stay written, and no later operation runs. `run.json` records what was
-applied.
+Apply is sequential: a refused operation writes nothing, operations applied before it stay
+written, and no later operation runs. `run.json` records what was applied.
 
-On the current `from-netbox` mapping and schema-library revision this covers
-`IpamPrefix` and `IpamIPAddress`, whose plan identities omit the `ip_namespace`
-component the destination key requires. Separately, `LocationRack` is not
-convergent when different sites contain racks with the same name: the
-configuration identifies a rack by `name` and `site`, while the current
-schema-library revision keys it by `name` alone.
+On the current `from-netbox` mapping and schema-library revision this affects
+`IpamPrefix` and `IpamIPAddress`, whose identifiers omit the `ip_namespace` component
+their destination kinds require: their updates apply, and a fresh create under them is
+refused until the mapping or the schema is corrected. Separately, `LocationRack` is not
+convergent when different sites contain racks with the same name — the configuration
+identifies a rack by `name` and `site` while the current schema-library revision keys it
+by `name` alone — and `diff` now refuses those creates as a destination-identity collision
+rather than silently merging them.
+
+**Plans written by an earlier version cannot be applied.** The saved-plan format is now
+version 3, which records the destination id on updates. A format-2 plan can still be read
+and reviewed; `apply` refuses it and asks for a fresh `diff`.
 
 Three live qualifications exercise the saved-plan write surface.
 
@@ -122,12 +150,14 @@ Two further qualifications need no source system, only `INFRAHUB_ADDRESS` and
 
 - `tests/integration/test_infrahub_replace_set_shrink_integration.py` — keyed
   planned writes, applied and re-applied with the same result;
-- `tests/integration/test_infrahub_unkeyed_refusal_integration.py` — an operation
-  without a usable key, refused with the destination count unchanged on a branch
-  the run creates and deletes.
+- `tests/integration/test_infrahub_keyed_write_integration.py` — a kind whose
+  human-friendly ID crosses a relationship, created and then re-applied to prove it
+  converges rather than duplicating; an update keyed by its recorded id, renaming in
+  place; and a recorded id the destination cannot find, refused with nothing written.
+  Each runs on a branch the test creates and deletes.
 
-The interface kinds are covered by that refusal rather than by an apply: they are
-the shapes this contract does not write.
+The interface kinds are covered there: they are written like any other kind now, and
+what the test pins is that the destination converges them.
 
 :::
 

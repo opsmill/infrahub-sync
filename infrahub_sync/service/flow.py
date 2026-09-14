@@ -700,11 +700,23 @@ def _failure_evidence(
         # this process's own taxonomy carries one identifier.
         "cause_type": None if exc.__cause__ is None else type(exc.__cause__).__name__,
     }
-    carried = getattr(exc, "apply_record", None)
-    written = carried if isinstance(carried, ApplyRecord) else record
+    written = effective_apply_record(exc, record)
     if written is not None:
         evidence.update(written.as_summary_keys())
     return evidence
+
+
+def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyRecord | None:
+    """The record that describes this failure: the one the error carries, else the scope's.
+
+    A failure raised by the engine carries its own partial record; one raised after the
+    engine returned carries none, and the scope's record is what that one wrote. Resolved in
+    one place because the ambiguity verdict and the recorded evidence must agree about what
+    was written — reading different records is how a run gets an outcome its own evidence
+    contradicts.
+    """
+    carried = getattr(exc, "apply_record", None)
+    return carried if isinstance(carried, ApplyRecord) else record
 
 
 def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
@@ -727,12 +739,26 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
     that point a failure is an ordinary failed run; after it, nothing can claim the
     destination was left untouched, so the verdict is interrupted/ambiguous and the store
     records that the run requires reconciliation in the same transaction.
+
+    A record that **names a failing operation** is the sharper account, and it overrides
+    `dispatch_started` for exactly that case: the write surface knows whether that operation
+    reached a mutation, and a refusal it raised before the write leaves nothing to
+    reconcile. So a named failing operation is ambiguous only where its reach is unknown
+    (S6). Everything else keeps the `dispatch_started` rule — including a **completed**
+    record attached to a post-write failure, where the operations did write and the
+    interruption came afterwards, in `record_applied`, the sidecar transition, the product
+    commit or the final ownership proof.
     """
     try:
         stored = projection.lookup_run(run_id).value
         if stored is None:
             return
-        terminal_state, terminal_outcome = ("interrupted", "ambiguous") if dispatch_started else ("failed", "failed")
+        described = effective_apply_record(exc, record)
+        if described is not None and described.failed_operation is not None:
+            ambiguous = described.failed_operation_wrote is not False
+        else:
+            ambiguous = dispatch_started
+        terminal_state, terminal_outcome = ("interrupted", "ambiguous") if ambiguous else ("failed", "failed")
         evidence = _failure_evidence(stage, exc, outcome=terminal_outcome, record=record)
         results: dict[str, Any] = {f"{stage}_failure": evidence}
         if stage == "verify":
@@ -745,12 +771,13 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
                     "skipped_delete_operations",
                     "skipped_delete_count",
                     "failed_operation",
+                    "failed_operation_wrote",
                     "may_have_partially_written",
                 )
                 if key in evidence
             }
             writeback = ExecutionFinishWriteback(
-                phase=f"{stage}-interrupted" if dispatch_started else f"{stage}-failed",
+                phase=f"{stage}-interrupted" if ambiguous else f"{stage}-failed",
                 outcome=terminal_outcome,
                 finished_at=datetime.now(timezone.utc),
                 summary={**stored.summary, "failed_stage": stage, **partial},

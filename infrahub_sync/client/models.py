@@ -332,6 +332,10 @@ class PlanOperationResource(_ResourceModel):
     tier: int = Field(ge=0)
     payload: dict[str, Any] | None = None
     relationships: tuple[dict[str, Any], ...] | None = None
+    # The destination object an update will be keyed by, recorded at plan time. `None` on a
+    # create or a delete, and on every operation of a format-2 plan. A reviewer reads it to
+    # see which destination object each update names before approving the apply.
+    destination_id: str | None = None
 
 
 class PlanResource(_ResourceModel):

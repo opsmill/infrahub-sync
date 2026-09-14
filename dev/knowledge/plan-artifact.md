@@ -97,9 +97,18 @@ and encoding it requires a future `format_version` extension.
 payload = element.keys ∪ element.source_attrs   minus every key carried as a relationship reference
 ```
 
-The identity components are inside the payload, and they are not decoration: the destination's
-convergent write is keyed on the kind's human-friendly ID, whose components come from the identity, so
-a write issued without them carries no key and duplicates on every re-apply.
+Every identity component is carried by the operation, and they are not decoration. Each one comes from
+**either** a payload field **or** a `relationships[].field` reference — a component that crosses a
+relationship takes its value from the referenced peer's own identity — and no component may come from
+both, because that would give the destination field two competing write sources.
+
+A **create** carries no recorded destination id. For a kind with a human-friendly ID,
+Infrahub matches the write on the complete components; Sync requires usable values from
+identity fields or relationship references. For a kind without a human-friendly ID,
+Sync requires usable identity values covering at least one declared uniqueness constraint
+so the destination refuses duplicates. Sync refuses missing coverage or unusable values
+before `client.create`. An **update** records the destination object's `id` and is keyed
+by that, so it may omit a human-friendly-ID component and still write the intended object.
 
 `source_attrs` alone cannot supply them. DiffSync's `get_attrs()` explicitly "does not include the
 fields in `_identifiers`", and the generator strips identifiers out of `_attributes`, so the identity

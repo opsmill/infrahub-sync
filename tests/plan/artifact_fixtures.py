@@ -42,6 +42,9 @@ SYNC_NAME = "demo"
 # `tamperable_operation`.
 TAMPERABLE_VALUE = "production"
 
+# The destination id a fixture update carries unless its case is about the id itself.
+DEFAULT_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
+
 
 def operation_record(  # noqa: PLR0913 — one parameter per operation-record field the fixtures vary
     *,
@@ -51,12 +54,18 @@ def operation_record(  # noqa: PLR0913 — one parameter per operation-record fi
     payload: Mapping[str, Any] | None = None,
     relationships: Sequence[Mapping[str, Any]] | None = None,
     tier: int = 0,
+    destination_id: str | None = None,
 ) -> dict[str, Any]:
     """Build one operation line as a mapping, with a correctly derived identifier.
 
     The payload defaults to the identity, so the AD042 identity-in-payload guard is satisfied
     without every case restating it. `action` is a plain `str` rather than the `Literal`,
     because the point of some fixtures is an action the vocabulary does not admit.
+
+    An **update** defaults to carrying `DEFAULT_DESTINATION_ID`, because plan format 3
+    requires one and a fixture whose point is something else should not have to restate it.
+    Pass `destination_id` explicitly to vary it; a case about the missing-id refusal builds
+    its record without this helper, or deletes the key afterwards.
     """
     effective_identity = {"name": "prod"} if identity is None else dict(identity)
     record: dict[str, Any] = {
@@ -70,6 +79,11 @@ def operation_record(  # noqa: PLR0913 — one parameter per operation-record fi
         record["payload"] = dict(effective_identity) if payload is None else dict(payload)
     if relationships:
         record["relationships"] = [dict(reference) for reference in relationships]
+    effective_destination_id = (
+        (DEFAULT_DESTINATION_ID if destination_id is None else destination_id) if action == "update" else destination_id
+    )
+    if effective_destination_id is not None:
+        record["destination_id"] = effective_destination_id
     return record
 
 

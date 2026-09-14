@@ -91,6 +91,31 @@ the rules, not the roster. An unrecognized `format_version` is a gate: it
 short-circuits the remaining pre-apply checks, because a reader that does not know what the fields
 mean would otherwise report failures that are artifacts of its own ignorance.
 
+### Amendment, 2026-09-14 (ADP-6-S2): format 3
+
+`PlannedOperation` is a **closed** field set, so adding one to it is a bump rather than an additive
+manifest field. `destination_id` — the destination object an update is keyed by, recorded at plan time
+— makes the current version **3**
+([ADR 0013](0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)).
+
+The read and apply postures deliberately differ. **Reading and review accept 2 and 3**: an older plan
+is still worth opening, and refusing to render it would destroy evidence about a run that already
+happened. **`apply` accepts 3 alone**, and refuses a format-2 plan with
+`PlanFormatApplyUnsupportedError` and an instruction to re-run `diff`, because a format-2 update
+carries no recorded id and applying it would fall back to the create-shaped write whose failure mode is
+a silent duplicate. The refusal is raised after the artifact is parsed and before the first ownership
+proof, so the destination is provably untouched.
+
+Which of the field's three states is legal depends on the declared version, which the record itself
+does not carry, so the reader passes the manifest's `format_version` into record validation as
+context. Under 3 an update must carry a non-empty id and a create or delete must carry none; under 2
+the field must be absent. A violation is refused while reading.
+
+The checksum mechanism and the SC-006 mask are unchanged, so a format-3 plan's checksum covers its
+recorded ids and re-pointing an update to another object fails verification. The writer omits the key
+where it is `None`, so a format-3 create and delete encode byte-identically to their format-2
+counterparts: only an update's bytes change, which is exactly the set of operations the bump is about.
+
 Two costs are real. Verification decodes the snapshot Parquet rather than digesting bytes, and a
 benign reformat of the configuration that the parse is not sensitive to is the only reformat that
 does not invalidate saved plans — key order, comments and whitespace are absorbed, but a semantic

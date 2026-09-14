@@ -1,7 +1,10 @@
 # 3. The replace-set flush is a targeted relationship write
 
-**Status**: Accepted — amended 2026-07-30: the replace semantics this record depends on are now
-pinned by a live test that passed, and the fetch/reconcile round-trips are removed
+**Status**: Superseded on 2026-09-13 by
+[ADR 0012](0012-the-convergent-upsert-is-the-replace-set-write.md) — the flush is deleted and the
+convergent upsert is the whole write. Previously amended 2026-07-30: the replace semantics this
+record depends on are pinned by a live test that passed, and the fetch/reconcile round-trips are
+removed. The body below is unchanged; it is the record of why the earlier forms were wrong
 **Date**: 2026-07-28
 **Source**: `dev/specs/archive/001-plan-artifact-saved-apply/research.md` (PD-005),
 `dev/specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md`
