@@ -612,9 +612,6 @@ def test_an_update_omitting_an_hfid_component_writes_the_object_its_id_names(
     object rather than adding one. `serial`: the intended change arrived. `name`: a restated
     value is written back as given. `site`: a relationship the operation never mentions is left
     alone, which a whole-node re-render would not do.
-
-    A refusal here is a contract finding, not a test to adjust: it would mean an id-keyed upsert
-    still requires the human-friendly-ID components.
     """
     scope = keyed_write_scope
     created_name = f"partial-{scope.device_name}"

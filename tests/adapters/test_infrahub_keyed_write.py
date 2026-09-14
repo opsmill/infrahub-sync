@@ -422,15 +422,8 @@ def test_identity_coverage_is_refused_before_ad051_ever_runs() -> None:
 
 
 # ---------------------------------------------------------------------------------------
-# AD051 is a **create** check, and only a create check
+# Recorded-id updates do not require complete human-friendly-ID components.
 # ---------------------------------------------------------------------------------------
-#
-# An update is keyed by its recorded destination id: the server is told exactly which object
-# to write, so the human-friendly-ID components in the payload key nothing and their
-# completeness decides nothing. Running AD051 over an update therefore refuses writes that are
-# perfectly well keyed — including the case the recorded-id design exists for, where a rename
-# changes the destination's own HFID, and the ordinary one where a plan carries only the
-# attributes that changed.
 
 
 def test_an_update_missing_an_hfid_component_still_reaches_the_recorded_id_write() -> None:
@@ -464,7 +457,7 @@ def test_an_update_whose_hfid_component_is_blank_still_reaches_the_recorded_id_w
 
 
 def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is_written() -> None:
-    """The rename shape: the peer identity supplies no HFID value, and the id carries it."""
+    """A crossing component the peer identity cannot supply: the recorded id keys the write."""
     client, adapter, peers = keyed_adapter()
     peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
     operation = update_operation(
@@ -482,13 +475,10 @@ def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is
 
 
 def test_the_same_blank_component_as_a_create_is_still_refused_by_ad051() -> None:
-    """The discriminator, and the pair that matters: same kind, same payload, action differs.
+    """The same kind and payload as the update above: a create is refused where an update is not.
 
-    `TestSite`'s identity names its only HFID component, so coverage passes and AD051 is the
-    check that decides. As an **update** (above) the blank value is irrelevant — the id keys
-    the write. As a **create** it is the whole question, because the components are the only
-    thing the server can match on. That asymmetry is what this change is; running AD051 over
-    both actions collapsed it.
+    A create is matched on the components it carries, so a blank one is refused; an update is
+    keyed by its recorded id, so the same blank value is irrelevant to it.
     """
     client, adapter, peers = keyed_adapter()
     operation = make_operation(kind=SITE_KIND, identity={"name": "  "}, payload={"name": "  "})
