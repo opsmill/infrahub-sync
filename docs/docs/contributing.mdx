@@ -130,6 +130,24 @@ npx markdownlint-cli "docs/docs/**/*.{md,mdx}"
 npx markdownlint-cli --fix "docs/docs/**/*.{md,mdx}"
 ```
 
+## Changelog entries
+
+Release notes are written by contributors rather than generated from pull request titles, so every pull request into `main` must add a news fragment under `changelog/`. CI fails the pull request if it does not.
+
+Create one with towncrier, naming it after the issue or pull request number:
+
+```bash
+uv run --extra dev towncrier create -c "Short description of what changed." 123.fixed.md
+```
+
+The file must be a direct child of `changelog/` named `<id>.<type>.md`, where the type is one of `security`, `removed`, `deprecated`, `added`, `changed`, `fixed`, or `housekeeping`. Use `+` as the identifier when the change has no issue number, for example `+short-slug.housekeeping.md`.
+
+Nested paths and unknown types are ignored by towncrier, so the check rejects them rather than let your entry disappear at release time.
+
+If a change genuinely needs no entry — a dependency bump or a typo fix — a maintainer can label the pull request `ci/skip-changelog`.
+
+Do not edit `CHANGELOG.md` or the version in `pyproject.toml` by hand. Both are generated when a release is prepared; see [RELEASING.md](https://github.com/opsmill/infrahub-sync/blob/main/RELEASING.md).
+
 ## Adding a new adapter
 
 1. Create `infrahub_sync/adapters/<name>.py` following existing adapter patterns
