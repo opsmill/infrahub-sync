@@ -127,7 +127,7 @@ schema_mapping:
         reference: LocationSite
       - name: height
         mapping: u_height
-      - name: facility_id
+      - name: facility
         mapping: facility_id
       - name: status
         mapping: status.value
@@ -215,7 +215,7 @@ schema_mapping:
     fields:
       - name: name # /!\ Netbox allows duplicate device names within a virtual-chassis.
         mapping: name
-      - name: serial
+      - name: serial_number
         mapping: serial
       - name: description
         mapping: description
@@ -257,7 +257,7 @@ schema_mapping:
     fields:
       - name: name
         mapping: name
-      - name: serial
+      - name: serial_number
         mapping: serial
       - name: description
         mapping: description
@@ -614,7 +614,7 @@ schema_mapping:
         mapping: name
       - name: description
         mapping: description
-      - name: is_private
+      - name: private
         mapping: is_private
       - name: tags
         mapping: tags
