@@ -2,8 +2,8 @@
 
 The engine's own contract over the write surface: the plan is read from `<run_dir>/plan/`,
 verified as one pre-write gate, and executed in **stored order** through the destination's
-`apply_planned_operation`. The deep behavioural matrix — peer resolution, the replace-set
-flush, rendered-mutation conformance — belongs to `tests/adapters/test_infrahub_planned_write.py`
+`apply_planned_operation`. The deep behavioural matrix — peer resolution, the replace-set,
+rendered-mutation conformance — belongs to `tests/adapters/test_infrahub_planned_write.py`
 and `tests/plan/test_apply_conformance.py`.
 
 The destination double is a plain recording object rather than a `MagicMock`, deliberately: a
@@ -424,27 +424,27 @@ def test_an_artifact_substituted_after_verification_is_not_what_gets_applied(tmp
 
 
 class PartiallyWritingDestination(RecordingDestination):
-    """A destination whose second operation fails **after** issuing part of its own write.
+    """A destination whose second operation fails **after** part of its write reached the server.
 
-    The in-tree shape of the problem: `apply_planned_operation` issues the base upsert and only
-    then flushes the cardinality-many relationship sets, so a failure in the flush leaves the
-    destination changed by an operation the engine never counted as applied. The double
-    records the base write separately from the dispatch list so the case can assert the
-    destination changed while the applied set does not name the operation.
+    The shape of the problem the record has to survive: a destination mutation can commit
+    remotely and the operation still fail — the response, or the transport carrying it, goes
+    missing — leaving the destination changed by an operation the engine never counted as
+    applied. The double records the attempted write separately from the dispatch list so the
+    case can assert the destination changed while the applied set does not name the operation.
     """
 
     def __init__(self) -> None:
         super().__init__()
-        self.base_writes: list[str] = []
+        self.attempted_writes: list[str] = []
 
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401
-        self.base_writes.append(operation.operation_id)
-        if len(self.base_writes) > 1:
-            raise GraphQLError([{"message": f"the relationship flush for {operation.operation_id!r} was rejected"}])
+        self.attempted_writes.append(operation.operation_id)
+        if len(self.attempted_writes) > 1:
+            raise GraphQLError([{"message": f"the write for {operation.operation_id!r} failed after dispatch"}])
         return super().apply_planned_operation(operation=operation, peers=peers)
 
 
-def test_a_failure_after_the_base_write_names_the_operation_and_marks_the_partial_write(tmp_path: Path) -> None:
+def test_a_failure_after_part_of_a_write_names_the_operation_and_marks_the_partial_write(tmp_path: Path) -> None:
     """The record must not imply the failing operation wrote nothing."""
     directory = _run_dir(tmp_path)
     records = [operation_record(identity={"name": "first"}), operation_record(identity={"name": "second"})]
@@ -455,8 +455,8 @@ def test_a_failure_after_the_base_write_names_the_operation_and_marks_the_partia
         _potenda(directory, destination).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
 
     failing_id = str(records[1]["operation_id"])
-    assert destination.base_writes == [str(records[0]["operation_id"]), failing_id], (
-        "the double must have issued the failing operation's base write"
+    assert destination.attempted_writes == [str(records[0]["operation_id"]), failing_id], (
+        "the double must have attempted the failing operation's write"
     )
     record = caught.value.apply_record
     assert record.applied_operations == (str(records[0]["operation_id"]),)

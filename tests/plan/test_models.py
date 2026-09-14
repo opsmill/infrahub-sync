@@ -384,7 +384,7 @@ def test_duplicate_reference_fields_are_rejected_even_when_the_references_are_id
 
 
 def test_a_field_in_both_payload_and_relationships_is_rejected() -> None:
-    """One field, two competing write sources: the upsert value and the flush value."""
+    """One field, two competing write sources: the payload value and the relationship-reference value."""
     with pytest.raises(ValidationError) as excinfo:
         PlannedOperation(
             **_operation(

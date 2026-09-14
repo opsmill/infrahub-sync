@@ -940,7 +940,7 @@ def live_plan(tmp_path_factory: pytest.TempPathFactory) -> Iterator[LivePlan]:
             msg = (
                 f"The {DEVICE_KIND!r} operations carry reference cardinalities {sorted(cardinalities)}, not both "
                 "'one' and 'many'. The cardinality-one path (peer resolution) and the cardinality-many path "
-                "(the replace-set flush) are different code, and one of them would go unmeasured."
+                "(peer-set replacement) are different code, and one of them would go unmeasured."
             )
             raise LivePlanPreconditionError(msg)
 

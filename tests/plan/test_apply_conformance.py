@@ -10,8 +10,8 @@ committed schema fixture with only the transport edge replaced; no server is con
 Five assertions: an all-direct human-friendly-ID kind renders keyed; the
 relationship-crossing kind, which cannot render keyed client-side, is refused before its own
 mutation; the replace-set is issued for every cardinality-many relationship including
-`peers: []`, with no destination read; the flush names only the relationship fields
-being replaced (AD088); and applying the same operation twice renders byte-identical inputs.
+`peers: []`, with no destination read; that same upsert names only the fields the plan maps
+plus its key; and applying the same operation twice renders byte-identical inputs.
 
 It deliberately does **not** assert "two applies produce one object": a fixture holds no
 destination state, so that could only pass for the wrong reason. Byte-identity is the
@@ -53,25 +53,25 @@ DEVICE_KIND = "ConfDevice"
 ALL_DIRECT_KINDS = (SITE_KIND, TAG_KIND, TEAM_KIND)
 
 # `ConfTeam`'s two relationships: the cardinality-many one the replace-set reconciles, and the
-# optional cardinality-one one no operation here maps — assertion 4's subject (AD088).
+# optional cardinality-one one no operation here maps — assertion 4's subject.
 REPLACED_RELATIONSHIP = "members"
 UNMAPPED_RELATIONSHIP = "owner"
 
 NODE_ID = "conformance-node-1"
 
-# What assertion 4 says when the flush stops being a targeted relationship write.
+# What assertion 4 says when the convergent upsert names a field the plan never mapped.
 UNMAPPED_FIELD_MESSAGE = (
-    "The replace-set flush wrote a destination field the plan never mapped. This is the SECOND defect on "
-    "this one path caused by depending on how the infrahub-sdk renders a node, and `pyproject.toml` pins "
+    "The convergent upsert wrote a destination field the plan never mapped. This defect class comes from "
+    "depending on how the infrahub-sdk renders a node, and `pyproject.toml` pins "
     "`infrahub-sdk[all]>=1.17,<2` — a range — so a permitted upgrade can move that rendering with no other "
-    "signal. The library's render behaviour has changed, or the flush has gone back to re-rendering the "
-    "whole node. Either way `InfrahubNodeBase._generate_input_data` emits `data[<rel>] = None` for every "
-    "uninitialized OPTIONAL CARDINALITY-ONE relationship once the node is marked existing "
-    "(`infrahub_sdk/node/node.py`, 'to allow clearing relationships'), and the convergent upsert "
-    "marks it existing. AD088 depends on this: the flush must issue a mutation carrying `id` plus ONLY the "
-    "cardinality-many fields being replaced, never a re-render of the node. AD075 (the flush exists at all) "
-    "and AD085 (the emptied peer set must survive it) depend on it too. Re-derive AD088 against the new SDK "
-    "before changing this test."
+    "signal. `InfrahubNodeBase._generate_input_data` emits `data[<rel>] = None` for every uninitialized "
+    "OPTIONAL CARDINALITY-ONE relationship once the node is marked existing "
+    "(`infrahub_sdk/node/node.py`, 'to allow clearing relationships'). The upsert render is safe only "
+    "because it runs while the node is still marked new: `_process_mutation_result` marks it existing "
+    "afterwards. So either the library's render behaviour has changed, or a render now runs after the "
+    "upsert. FR-013 — the payload is authoritative for the fields it carries and touches no other — "
+    "depends on this, and so does the emptied peer set surviving as `[]`. Re-derive both against the new "
+    "SDK before changing this test."
 )
 
 
@@ -92,9 +92,9 @@ SCHEMAS = _load_schemas()
 class ConformanceClient(InfrahubClientSync):
     """A real client whose transport edge alone is replaced, recording one ordered event log.
 
-    One log rather than separate lists: the flush's ordering after the upsert (AD075) and the
-    **absence** of any destination read on the planned-write path are both read off
-    the same log, so neither can be satisfied by an unrelated call.
+    One log rather than separate lists: that the operation makes exactly one write, and the
+    **absence** of any destination read on the planned-write path, are both read off the same
+    log, so neither can be satisfied by an unrelated call.
     """
 
     def __init__(self) -> None:
@@ -142,7 +142,7 @@ class ConformanceClient(InfrahubClientSync):
 
     @property
     def mutation_names(self) -> list[str]:
-        """Just the names, which is what separates an upsert flush from an update flush."""
+        """Just the names, which is what separates the convergent upsert from any other write."""
         return [name for name, _ in self.mutations]
 
 
@@ -234,8 +234,8 @@ def record_rendered_inputs() -> Iterator[list[tuple[str, dict[str, Any]]]]:
     `id:` also occurs inside every relationship value, so a text search cannot tell a keyed
     mutation from an unkeyed one that happens to carry a resolved peer.
 
-    The replace-set flush does **not** render through here (AD088): re-rendering the whole node
-    is exactly what it must not do. Assertion 4 reads the flush off the wire instead.
+    Assertion 4 reads the upsert off the wire rather than through this spy, because its claim is
+    about the fields the issued mutation **names**, which is what the destination acts on.
     """
     rendered: list[tuple[str, dict[str, Any]]] = []
     real = InfrahubNodeSync._generate_input_data
@@ -274,8 +274,7 @@ def mutation_input_fields(query: str) -> list[str]:
     of that block at twelve (`infrahub_sdk/graphql/query.py` with
     `render_input_block`), so the field names are the keys at exactly that depth. Reading them
     off the wire rather than off `_generate_input_data` is the point: assertion 4's claim is
-    about the mutation the flush **issues**, and after AD088 the flush does not render through
-    `_generate_input_data` at all.
+    about the mutation the planned write **issues**, not about any intermediate mapping.
     """
     return re.findall(r"^ {12}(\w+):", query, flags=re.MULTILINE)
 
@@ -303,7 +302,7 @@ def seeded_adapter(**existing: list[str]) -> tuple[ConformanceClient, InfrahubAd
 
 
 def test_the_committed_fixture_holds_the_shapes_every_assertion_needs() -> None:
-    """The precondition every assertion below rests on (Trap 4, AD067, AD088).
+    """The precondition every assertion below rests on (Trap 4, AD067).
 
     A fixture drifting to all-direct kinds only would leave assertion 2 vacuous and remove the
     one thing that exercises AD051's second arm — while the suite stayed green. So the shapes
@@ -312,7 +311,7 @@ def test_the_committed_fixture_holds_the_shapes_every_assertion_needs() -> None:
     The same holds for the relationship shapes on `ConfTeam`. Assertion 4 is vacuous unless the
     kind under replace-set also carries an **optional cardinality-one** relationship no
     operation maps: that is the shape the destination library nulls, and a fixture without it
-    is why the defect AD088 fixes was invisible here for a whole delivery.
+    is why the defect it guards against was invisible here for a whole delivery.
     """
     for kind in ALL_DIRECT_KINDS:
         components = SCHEMAS[kind].human_friendly_id or []
@@ -333,7 +332,7 @@ def test_the_committed_fixture_holds_the_shapes_every_assertion_needs() -> None:
     unmapped = team_relationships[UNMAPPED_RELATIONSHIP]
     shape_message = (
         f"{TEAM_KIND}.{UNMAPPED_RELATIONSHIP} must be an OPTIONAL CARDINALITY-ONE relationship — the shape "
-        f"assertion 4 exists for (AD088) — got cardinality={unmapped.cardinality!r} optional={unmapped.optional!r}."
+        f"assertion 4 exists for — got cardinality={unmapped.cardinality!r} optional={unmapped.optional!r}."
     )
     assert unmapped.cardinality == "one", shape_message
     assert unmapped.optional, shape_message
@@ -390,25 +389,23 @@ def test_a_relationship_crossing_kind_is_refused_before_its_own_mutation() -> No
 
 
 # ---------------------------------------------------------------------------------------
-# Assertion 3 — the re-read, and the flush
+# Assertion 3 — the replace-set is the one write, and no destination read
 # ---------------------------------------------------------------------------------------
 
 
-def test_the_replace_set_flushes_an_update_with_no_destination_read() -> None:
-    """AD054/AD075/AD085: the plan's peer set reaches the destination as the flush."""
+def test_the_replace_set_is_one_upsert_with_no_destination_read() -> None:
+    """AD054/AD085: the plan's peer set reaches the destination on the one convergent upsert."""
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-9", "conf-tag-id-2"])
 
     adapter.apply_planned_operation(operation=team_operation(["tag-b", "tag-c"]), peers=peers)
 
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"], (
-        "The convergent upsert, then exactly one flush, and the flush is an update rather than a "
-        "second upsert (infrahub_sdk/node/node.py renders the latter)."
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"], (
+        "A planned operation is exactly one destination write, and it is the convergent upsert."
     )
-    _, flush = client.mutations[1]
-    assert rendered_relationship_ids(flush, "members") == ["conf-tag-id-2", "conf-tag-id-3"], (
-        f"The flush must carry exactly the plan's peer set. Rendered:\n{flush}"
+    _, upsert = client.mutations[0]
+    assert rendered_relationship_ids(upsert, "members") == ["conf-tag-id-2", "conf-tag-id-3"], (
+        f"The upsert must carry exactly the plan's peer set. Rendered:\n{upsert}"
     )
-    assert f'id: "{NODE_ID}"' in flush, "The flush must target the node the upsert converged on."
     assert issued_reads(client) == [], (
         "The planned-write path issues no destination read: the fetch-and-reconcile "
         "round trips added nothing, because the SDK renders no removal directive either way."
@@ -416,38 +413,44 @@ def test_the_replace_set_flushes_an_update_with_no_destination_read() -> None:
 
 
 def test_an_empty_peer_list_is_issued_as_an_emptied_set() -> None:
-    """AD085: `peers: []` under `cardinality: many` survives the flush as `[]`."""
+    """AD085: `peers: []` under `cardinality: many` reaches the destination as `[]`."""
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-1", "conf-tag-id-2"])
 
     adapter.apply_planned_operation(operation=team_operation([]), peers=peers)
 
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
-    _, flush = client.mutations[1]
-    assert rendered_relationship_ids(flush, "members") == [], (
-        f"The flush must carry an empty `members` list, not omit the key. Rendered:\n{flush}"
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"]
+    _, upsert = client.mutations[0]
+    assert rendered_relationship_ids(upsert, "members") == [], (
+        f"The upsert must carry an empty `members` list, not omit the key. Rendered:\n{upsert}"
     )
 
 
 # ---------------------------------------------------------------------------------------
-# Assertion 4 — the flush touches no unmapped destination field (AD088)
+# Assertion 4 — the upsert touches no unmapped destination field
 # ---------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("peer_names", [["tag-b", "tag-c"], []], ids=["a non-empty replace", "an emptied set"])
-def test_the_flush_names_only_the_relationship_fields_being_replaced(peer_names: list[str]) -> None:
-    """AD088: the flush is a **targeted** relationship write, not a re-render of the node."""
+def test_the_upsert_names_only_the_mapped_fields_and_its_key(peer_names: list[str]) -> None:
+    """The upsert's input is the plan's mapped destination fields plus the SDK key, and no more.
+
+    `owner` is the fixture's optional cardinality-one relationship that no operation maps — the
+    shape a whole-node re-render nulls. The upsert must never name it, under a non-empty replace
+    and under an emptied set alike.
+    """
     client, adapter, peers = seeded_adapter(members=["conf-tag-id-9"])
 
     adapter.apply_planned_operation(operation=team_operation(peer_names), peers=peers)
 
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
-    _, flush = client.mutations[1]
-    fields = mutation_input_fields(flush)
-    assert sorted(fields) == sorted(["id", REPLACED_RELATIONSHIP]), (
-        f"{UNMAPPED_FIELD_MESSAGE}\n\nThe flush named {sorted(fields)}; it may name only 'id' and "
-        f"{REPLACED_RELATIONSHIP!r}. Rendered mutation:\n{flush}"
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"]
+    _, upsert = client.mutations[0]
+    fields = mutation_input_fields(upsert)
+    assert sorted(fields) == sorted(["name", REPLACED_RELATIONSHIP, "hfid"]), (
+        f"{UNMAPPED_FIELD_MESSAGE}\n\nThe upsert named {sorted(fields)}; it may name only the mapped "
+        f"destination fields 'name' and {REPLACED_RELATIONSHIP!r} plus the key 'hfid'. Rendered "
+        f"mutation:\n{upsert}"
     )
-    assert f"{UNMAPPED_RELATIONSHIP}:" not in flush, f"{UNMAPPED_FIELD_MESSAGE}\n\nRendered mutation:\n{flush}"
+    assert f"{UNMAPPED_RELATIONSHIP}:" not in upsert, f"{UNMAPPED_FIELD_MESSAGE}\n\nRendered mutation:\n{upsert}"
 
 
 # ---------------------------------------------------------------------------------------

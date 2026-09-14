@@ -13,7 +13,6 @@ from infrahub_sdk import (
     InfrahubClientSync,
 )
 from infrahub_sdk.exceptions import NodeNotFoundError
-from infrahub_sdk.graphql import Mutation
 from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from infrahub_sdk.utils import compare_lists
@@ -238,77 +237,6 @@ def update_node(
                         attr_manager.add(_relationship_input_data(new_id, source, owner))
 
     return node
-
-
-def _flush_replaced_relationship_sets(
-    node: InfrahubNodeSync, rel_names: Sequence[str], client: InfrahubClientSync
-) -> None:
-    """Issue the plan's cardinality-many peer sets on `node`, and nothing else (AD088).
-
-    THE FLUSH. A **targeted relationship write**: a hand-built `<kind>Update` carrying the
-    node's `id` plus only the fields named in `rel_names`, each rendered from the manager the
-    create payload built — which already holds exactly the plan's resolved peer set, with the
-    same per-peer `source`/`owner`/`is_protected` metadata the upsert carried.
-
-    **Peer removal relies on the destination Update mutation's replace semantics, pinned by
-    the live shrink test** (`tests/integration/test_infrahub_replace_set_shrink_integration.py`).
-    Nothing about a *removal* can reach the wire from here: the SDK's
-    `RelationshipManagerBase._generate_input_data` renders only the surviving peer list —
-    `[{id: ...}, ...]` with no removal directive — so a fetch-and-reconcile round trip before
-    this write added nothing. Under replace semantics the written list *is* the destination's
-    new set (AD085's `peers: []` empties it); if the destination ever merged instead, no
-    in-process reconciliation could have removed a peer either, and the pinned test is what
-    would catch the change. The round trips were therefore simplified away: this path issues
-    **no destination read** — which also removes the SDK's `populate_store=True` peer-hydration
-    batch the forced-cold `fetch()` used to trigger.
-
-    **Why it does not re-render the node.** The obvious flush — `node.update(...)` — renders the
-    whole node through `InfrahubNodeBase._generate_input_data`, and that render emits
-    `data[<rel>] = None` for **every** uninitialized optional cardinality-one relationship once
-    the node is marked existing (the SDK's own comment says
-    it is there "to allow clearing relationships"). The convergent upsert marks the node existing,
-    so any re-render clears every optional cardinality-one relationship the plan never mapped —
-    and FR-013 requires an update payload to touch no unmapped destination field. The null goes
-    out under both render modes: with unmodified-field stripping **off** nothing is stripped at
-    all, and with it **on** the field survives both stripping loops anyway — the first loop does
-    not pop it, and the second never visits it because an unmapped field is absent from the
-    original data it compares against. So no flag on `update()` avoids this; only not re-rendering
-    does.
-
-    Restoring or pre-initialising the unmapped relationships before the flush would treat the
-    symptom, and would have to read every one of them from the destination to do it. Writing only
-    the fields being replaced removes the exposure instead.
-
-    **The peer list is still rendered by the SDK.** `RelationshipManagerBase._generate_input_data`
-    is what `_generate_input_data` would have called for these same fields, so the value written
-    here is byte-identical to what the full render produced for them — including `[]` for a peer
-    set the plan records as empty, which is the case AD085 exists for. `id` is set last, mirroring the
-    SDK's own ordering, so the write targets this node.
-
-    The mutation is built and issued the way `InfrahubNodeSync.update` builds and issues its own
-    and the response is handed back to the SDK, so nothing about transport,
-    error handling or the mutation's response shape changes.
-    """
-    node_id = _require_node_id(node, context="for the replace-set flush")
-    data: dict[str, Any] = {}
-    for rel_name in rel_names:
-        manager: RelationshipManagerSync = getattr(node, rel_name)
-        data[rel_name] = manager._generate_input_data()
-    data["id"] = node_id
-
-    kind = node.get_kind()
-    mutation_name = f"{kind}Update"
-    query = Mutation(
-        mutation=mutation_name,
-        input_data={"data": data},
-        query=node._generate_mutation_query(),
-    )
-    response = client.execute_graphql(
-        query=query.render(),
-        branch_name=node.get_branch(),
-        tracker=f"mutation-{kind.lower()}-update",
-    )
-    node._process_mutation_result(mutation_name=mutation_name, response=response)
 
 
 # An Infrahub schema component path — a human-friendly-ID or uniqueness-constraint entry —
@@ -1280,10 +1208,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         per-component **diagnostic** below, which names *which* human-friendly-ID component
         is unaccounted for, and `_require_keyed_render`'s **gate** on the rendered mutation.
 
-        The write is not the last destination interaction: every cardinality-many
-        relationship is then written explicitly as a replace-set by a single targeted
-        relationship write (AD075, amended by AD085 and AD088), whose surplus-peer removal
-        relies on the destination Update mutation's replace semantics.
+        That upsert is the **only** destination write the operation makes. It carries every
+        cardinality-many relationship as the plan's peer list, and `peers: []` means empty the
+        set rather than leave it alone. Surplus peers go because the destination's Upsert
+        mutation replaces a relationship list rather than merging it — a property of the
+        server, pinned by the live shrink test
+        (`tests/integration/test_infrahub_replace_set_shrink_integration.py`) and recorded in
+        ADR 0012.
 
         Raises:
             SkippedDeleteOperation: the operation is a recorded delete (a designed
@@ -1376,15 +1307,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         node = self.client.create(kind=operation.kind, data=create_data)
         self._require_keyed_render(node=node, operation=operation)
         node.save(allow_upsert=True)
-
-        # Every cardinality-many relationship is written explicitly as a replace-set rather
-        # than left to the upsert alone (PD-005), and `peers: []` means empty the set.
-        many_references = [reference for reference in references if reference.cardinality == "many"]
-        if many_references:
-            # One write per operation, not one per relationship, and targeted rather than a
-            # re-render of the node — a re-render nulls every unmapped optional cardinality-one
-            # relationship. See `_flush_replaced_relationship_sets` (AD075, AD085, AD088).
-            _flush_replaced_relationship_sets(node, [reference.field for reference in many_references], self.client)
 
         node_id = _require_node_id(node, context=f"for operation {operation.operation_id!r}")
         peers.remember(operation.kind, operation.identity, node_id)

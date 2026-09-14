@@ -9,10 +9,10 @@ Recording the rendered mutation rather than a mock call is load-bearing, because
 properties under test are invisible to an assertion made against a `MagicMock`: **keyedness**
 is a property of the rendered mutation and not of the assembled `data` (AD054, AD066); the
 **replace-set** is only real if it is *issued*, and surplus-peer removal rests on the
-destination's replace semantics, which only the live shrink test can pin (AD075); and
-the **flush** is a targeted `<kind>Update` that only the rendered mutation name separates from
-a second upsert (AD085, AD088). That the flush names no *unmapped* field is asserted in
-`tests/plan/test_apply_conformance.py`, against a fixture kind declaring one.
+destination's replace semantics, which only the live shrink test can pin (AD075); and **one
+write per operation** is a claim about the mutations that reach the transport, which only the
+recorded mutation names can settle (AD085). That the upsert names no *unmapped* field is
+asserted in `tests/plan/test_apply_conformance.py`, against a fixture kind declaring one.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from unittest.mock import patch
 import pytest
 from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, ServerNotResponsiveError
-from infrahub_sdk.node import InfrahubNodeSync, RelationshipManagerSync
+from infrahub_sdk.node import InfrahubNodeSync
 from infrahub_sdk.schema import NodeSchemaAPI
 from infrahub_sdk.schema.main import (
     AttributeKind,
@@ -203,8 +203,8 @@ ORPHAN_SCHEMA = NodeSchemaAPI(
 
 # One cardinality-many relationship: the replace-set cases. `owner` is mapped by no
 # operation here and is **load-bearing**: an unmapped optional cardinality-one relationship is
-# the shape the SDK's whole-node render nulls, which is what the AD088 tripwire at the end of
-# this module pins. Do not remove it.
+# the shape the SDK's whole-node render nulls, so it is what makes "the upsert names no unmapped
+# destination field" decidable. Do not remove it.
 TEAM_SCHEMA = NodeSchemaAPI(
     id="team-schema",
     name="Team",
@@ -227,7 +227,7 @@ TEAM_SCHEMA = NodeSchemaAPI(
     ],
 )
 
-# Two cardinality-many relationships, so "one flush per operation, not one per
+# Two cardinality-many relationships, so "one write per operation, not one per
 # relationship" (V40) is decidable.
 GROUP_SCHEMA = NodeSchemaAPI(
     id="group-schema",
@@ -255,9 +255,9 @@ SCHEMAS: dict[str, NodeSchemaAPI] = {
 class RecordingClient(InfrahubClientSync):
     """A real client whose destination calls are recorded on one ordered event log.
 
-    One log rather than three lists: the flush's ordering after the upsert (AD075) and the
-    **absence** of any destination read on the planned-write path
-    are both read off the same log, so neither can be satisfied by an unrelated call.
+    One log rather than three lists: that the operation makes exactly one write, and the
+    **absence** of any destination read on the planned-write path, are both read off the same
+    log, so neither can be satisfied by an unrelated call.
     """
 
     def __init__(self) -> None:
@@ -468,9 +468,9 @@ def record_payload_create(client: RecordingClient) -> Iterator[list[dict[str, An
 def issued_reads(client: RecordingClient) -> list[dict[str, Any]]:
     """Every destination read (`client.get`) on the client's event log.
 
-    The planned-write path must issue none: the flush writes the plan's peer set
-    directly, and surplus-peer removal is the destination Update mutation's replace
-    semantics, pinned live — not a fetch-and-reconcile round trip.
+    The planned-write path must issue none: the upsert carries the plan's peer set directly,
+    and surplus-peer removal is the destination Upsert mutation's replace semantics, pinned
+    live — not a fetch-and-reconcile round trip.
     """
     return [payload for name, payload in client.events if name == "get"]
 
@@ -805,8 +805,8 @@ def test_a_payload_field_named_id_does_not_satisfy_the_gate() -> None:
 # ---------------------------------------------------------------------------------------
 
 
-def test_the_flush_carries_exactly_the_plans_peer_set_with_no_destination_read() -> None:
-    """AD038/AD075/AD085: the plan's peer set reaches the destination as the flush."""
+def test_the_upsert_carries_exactly_the_plans_peer_set_with_no_destination_read() -> None:
+    """AD038/AD085: the plan's peer set reaches the destination on the one convergent upsert."""
     client = RecordingClient()
     client.existing_peers[TEAM_KIND, "members"] = ["tag-id-1", "tag-id-2"]
     adapter = make_adapter(client)
@@ -816,22 +816,21 @@ def test_the_flush_carries_exactly_the_plans_peer_set_with_no_destination_read()
 
     adapter.apply_planned_operation(operation=team_operation(["tag-b", "tag-c"]), peers=peers)
 
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"], (
-        "The convergent upsert, then exactly one flush, and the flush is an update."
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"], (
+        "A planned operation is exactly one destination write, and it is the convergent upsert."
     )
-    _, flush = client.mutations[1]
-    assert rendered_relationship_ids(flush, "members") == ["tag-id-2", "tag-id-3"], (
-        f"The flush must carry exactly the plan's peer set. Rendered:\n{flush}"
+    _, upsert = client.mutations[0]
+    assert rendered_relationship_ids(upsert, "members") == ["tag-id-2", "tag-id-3"], (
+        f"The upsert must carry exactly the plan's peer set. Rendered:\n{upsert}"
     )
-    assert f'id: "{NODE_ID}"' in flush, "The flush must target the node the upsert converged on (AD075)."
     assert issued_reads(client) == [], (
-        "The planned-write path issues no destination read: the fetch-and-reconcile round trips were "
-        "simplified away because the SDK renders no removal directive either way, and removal is the "
-        "destination Update mutation's replace semantics."
+        "The planned-write path issues no destination read: the SDK renders no removal directive "
+        "either way, so surplus-peer removal is the destination Upsert mutation's replace semantics "
+        "rather than anything a fetch-and-reconcile round trip could have computed."
     )
 
 
-def test_an_empty_peer_list_empties_the_set_in_the_issued_flush() -> None:
+def test_an_empty_peer_list_empties_the_set_in_the_issued_upsert() -> None:
     """AD085: `peers: []` under `cardinality: many` reaches the destination."""
     client = RecordingClient()
     client.existing_peers[TEAM_KIND, "members"] = ["tag-id-1", "tag-id-2"]
@@ -839,15 +838,15 @@ def test_an_empty_peer_list_empties_the_set_in_the_issued_flush() -> None:
 
     adapter.apply_planned_operation(operation=team_operation([]), peers=PeerResolver(adapter))
 
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
-    _, flush = client.mutations[1]
-    assert rendered_relationship_ids(flush, "members") == [], (
-        f"The flush must carry an empty `members` list, not omit the key. Rendered:\n{flush}"
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"]
+    _, upsert = client.mutations[0]
+    assert rendered_relationship_ids(upsert, "members") == [], (
+        f"The upsert must carry an empty `members` list, not omit the key. Rendered:\n{upsert}"
     )
 
 
-def test_a_peer_set_the_destination_already_holds_is_flushed_unchanged() -> None:
-    """AD038: when the destination already holds the plan's set, the flush is a no-op write."""
+def test_a_peer_set_the_destination_already_holds_is_written_unchanged() -> None:
+    """AD038: when the destination already holds the plan's set, the upsert is a no-op write."""
     client = RecordingClient()
     client.existing_peers[TEAM_KIND, "members"] = ["tag-id-2"]
     adapter = make_adapter(client)
@@ -856,14 +855,18 @@ def test_a_peer_set_the_destination_already_holds_is_flushed_unchanged() -> None
 
     adapter.apply_planned_operation(operation=team_operation(["tag-b"]), peers=peers)
 
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
-    _, flush = client.mutations[1]
-    assert rendered_relationship_ids(flush, "members") == ["tag-id-2"]
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"]
+    _, upsert = client.mutations[0]
+    assert rendered_relationship_ids(upsert, "members") == ["tag-id-2"]
     assert issued_reads(client) == []
 
 
-def test_the_flush_retains_the_peer_lineage_metadata_the_upsert_carried() -> None:
-    """Planned-apply-managed peers keep their lineage metadata through the flush."""
+def test_the_upsert_carries_the_per_peer_write_metadata() -> None:
+    """The convergent upsert alone carries every peer's `is_protected`, `source` and `owner`.
+
+    Read off `client.mutations[0]` and nothing else: what makes the per-peer write metadata
+    reach the destination is the upsert's own peer list, not any later write.
+    """
     client = RecordingClient()
     adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
     peers = PeerResolver(adapter)
@@ -871,24 +874,24 @@ def test_the_flush_retains_the_peer_lineage_metadata_the_upsert_carried() -> Non
 
     adapter.apply_planned_operation(operation=team_operation(["tag-b"]), peers=peers)
 
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert", f"{TEAM_KIND}Update"]
-    for role, (_, query) in zip(("upsert", "flush"), client.mutations):
-        members_block = re.search(r"members:\s*\[(.*?)\]", query, flags=re.DOTALL)
-        assert members_block is not None, f"The {role} must render the `members` peer list:\n{query}"
-        rendered = members_block.group(1)
-        assert "_relation__is_protected: true" in rendered, (
-            f"The {role} must carry the peer's protection flag. Rendered:\n{query}"
-        )
-        assert '_relation__source: "source-account-1"' in rendered, (
-            f"The {role} must carry the peer's source attribution. Rendered:\n{query}"
-        )
-        assert '_relation__owner: "owner-account-1"' in rendered, (
-            f"The {role} must carry the peer's owner attribution. Rendered:\n{query}"
-        )
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"]
+    _, upsert = client.mutations[0]
+    members_block = re.search(r"members:\s*\[(.*?)\]", upsert, flags=re.DOTALL)
+    assert members_block is not None, f"The upsert must render the `members` peer list:\n{upsert}"
+    rendered = members_block.group(1)
+    assert "_relation__is_protected: true" in rendered, (
+        f"The upsert must carry the peer's protection flag. Rendered:\n{upsert}"
+    )
+    assert '_relation__source: "source-account-1"' in rendered, (
+        f"The upsert must carry the peer's source attribution. Rendered:\n{upsert}"
+    )
+    assert '_relation__owner: "owner-account-1"' in rendered, (
+        f"The upsert must carry the peer's owner attribution. Rendered:\n{upsert}"
+    )
 
 
-def test_one_flush_is_issued_per_operation_not_one_per_relationship() -> None:
-    """V40: the flush follows the whole reconciliation loop, once."""
+def test_one_write_is_issued_per_operation_not_one_per_relationship() -> None:
+    """V40: two cardinality-many relationships are still one destination write."""
     client = RecordingClient()
     client.existing_peers[GROUP_KIND, "members"] = ["tag-id-1"]
     client.existing_peers[GROUP_KIND, "watchers"] = ["tag-id-9"]
@@ -909,12 +912,12 @@ def test_one_flush_is_issued_per_operation_not_one_per_relationship() -> None:
     )
     adapter.apply_planned_operation(operation=operation, peers=peers)
 
-    assert client.mutation_names == [f"{GROUP_KIND}Upsert", f"{GROUP_KIND}Update"], (
-        "Two cardinality-many relationships are still one flush, issued after the loop."
+    assert client.mutation_names == [f"{GROUP_KIND}Upsert"], (
+        "Two cardinality-many relationships are still one write: the convergent upsert carries both."
     )
-    _, flush = client.mutations[1]
-    assert rendered_relationship_ids(flush, "members") == ["tag-id-2"]
-    assert rendered_relationship_ids(flush, "watchers") == ["tag-id-3"]
+    _, upsert = client.mutations[0]
+    assert rendered_relationship_ids(upsert, "members") == ["tag-id-2"]
+    assert rendered_relationship_ids(upsert, "watchers") == ["tag-id-3"]
 
 
 # ---------------------------------------------------------------------------------------
@@ -935,8 +938,11 @@ def test_a_completed_operation_resolves_a_later_reference_with_no_destination_qu
     assert client.resolver_queries == [], (
         "The peer was created by this same apply, so its identity must resolve from the memo."
     )
-    _, query = client.mutations[1]
-    assert rendered_related_id(query, "site") == NODE_ID
+    (site_mutation, _site_query), (server_mutation, server_query) = client.mutations
+    assert [site_mutation, server_mutation] == [f"{SITE_KIND}Upsert", f"{SERVER_KIND}Upsert"], (
+        "Each operation is one convergent upsert, issued in the order the operations were applied."
+    )
+    assert rendered_related_id(server_query, "site") == NODE_ID
 
 
 def test_a_failed_lookup_is_not_memoized_and_the_next_reference_reattempts() -> None:
@@ -1486,7 +1492,7 @@ def test_the_gate_verifies_member_presence_only_and_is_no_stronger_than_hasattr(
 #
 # Constitution V asks for adapter edge-case tests covering timeouts and 401/403. The two
 # surfaces this outcome adds both issue live destination calls during an apply — the planned
-# write itself (`client.create` → `save(allow_upsert=True)` → the targeted flush) and the
+# write itself (`client.create` → `save(allow_upsert=True)`) and the
 # apply-time peer resolver (`client.filters`) — and their *resolution* edges are covered above
 # (a zero-match and a multi-match peer each refuse and dispatch nothing), while their
 # transport and auth edges were not. plan.md's Principle V row disclosed that as owed; these
@@ -1664,62 +1670,3 @@ def test_a_failing_transport_or_auth_on_peer_resolution_is_named_and_actionable(
         "The failing operation's own write must not have been attempted: the resolver runs first, so "
         "only the preceding operation's upsert reached the transport."
     )
-
-
-# ======================================================================================
-# The SDK-boundary tripwire for AD088 (folded in from test_infrahub_empty_peer_set_flush)
-# ======================================================================================
-
-SDK_BOUNDARY_MESSAGE = (
-    "The infrahub-sdk's node render behaviour has changed. `pyproject.toml` pins "
-    "`infrahub-sdk[all]>=1.17,<2`, a range, and this behaviour is undocumented internals, so a "
-    "permitted upgrade can move it without any other signal — and this one render has already "
-    "produced two defects on the planned-write flush, which is why it is pinned here. AD088 "
-    "depends on it: the flush in `InfrahubAdapter.apply_planned_operation` is a targeted "
-    "relationship write, issuing `id` plus only the cardinality-many fields being replaced, "
-    "precisely because rendering the whole node emits `<rel>: null` for every unmapped optional "
-    "cardinality-one relationship and so clears destination fields the plan never mapped. AD075 "
-    "(the flush exists at all) and AD085 (the emptied peer set must survive it) depend on the same "
-    "render. Re-derive AD088 against the new SDK before changing this test."
-)
-
-
-def test_the_sdk_nulls_an_unmapped_optional_relationship_under_both_render_modes() -> None:
-    """SDK-boundary tripwire for AD088: why no re-render of the node can be the flush.
-
-    Straight at the SDK, no adapter code involved. Rendering a node the SDK considers existing
-    emits `owner: None` for the unmapped optional cardinality-one relationship, and it does so
-    **under both render modes** — which is what makes the defect AD088 fixes older than AD085
-    and independent of it:
-
-    - stripping **on** (`exclude_unmodified=True`, a plain `node.save()`): the field survives
-      both stripping loops. The first does not pop it — the pop needs a non-optional
-      `RelatedNodeBase` or a `RelationshipManagerBase`, and an uninitialized optional
-      cardinality-one relationship is neither. The second never visits it, because an unmapped
-      field is absent from the original data the comparison walks.
-    - stripping **off** (`exclude_unmodified=False`, `node.update(do_full_update=True)`):
-      nothing is stripped at all.
-
-    If either arm stops holding, AD088's ground has moved.
-    """
-    client = RecordingClient()
-    create_data = client.schema.generate_payload_create(schema=TEAM_SCHEMA, data={"name": "team-a", "members": []})
-    assert "owner" not in create_data, "Precondition: the plan maps no `owner`, so the payload carries none."
-
-    node = InfrahubNodeSync(client=client, schema=TEAM_SCHEMA, data=create_data)
-    node.id = NODE_ID
-    node._existing = True
-
-    manager = node.members
-    assert isinstance(manager, RelationshipManagerSync)
-    manager.add("tag-id-1")
-    assert manager.peer_ids == ["tag-id-1"], "Precondition: the manager is reconciled."
-
-    for exclude_unmodified in (True, False):
-        rendered = node._generate_input_data(exclude_unmodified=exclude_unmodified)["data"]["data"]
-        message = (
-            f"{SDK_BOUNDARY_MESSAGE}\n\nWith exclude_unmodified={exclude_unmodified} the render produced "
-            f"{rendered!r}, which no longer nulls the unmapped optional cardinality-one relationship."
-        )
-        assert "owner" in rendered, message
-        assert rendered["owner"] is None, message
