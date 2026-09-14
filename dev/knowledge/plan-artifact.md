@@ -102,12 +102,13 @@ Every identity component is carried by the operation, and they are not decoratio
 relationship takes its value from the referenced peer's own identity — and no component may come from
 both, because that would give the destination field two competing write sources.
 
-A **create** carries no destination id, so the destination matches it on what the write carries. For a
-kind with a human-friendly ID that means every component, each with a usable value, from an identity
-field or a relationship reference. For a kind without one it means the identity covering at least one
-declared uniqueness constraint. Sync refuses a create whose coverage is missing or whose values are
-unusable before `client.create`. An **update** records the destination object's `id` and is keyed by
-that, so it may omit a component and still write the object it means.
+A **create** carries no recorded destination id. For a kind with a human-friendly ID,
+Infrahub matches the write on the complete components; Sync requires usable values from
+identity fields or relationship references. For a kind without a human-friendly ID,
+Sync requires usable identity values covering at least one declared uniqueness constraint
+so the destination refuses duplicates. Sync refuses missing coverage or unusable values
+before `client.create`. An **update** records the destination object's `id` and is keyed
+by that, so it may omit a human-friendly-ID component and still write the intended object.
 
 `source_attrs` alone cannot supply them. DiffSync's `get_attrs()` explicitly "does not include the
 fields in `_identifiers`", and the generator strips identifiers out of `_attributes`, so the identity

@@ -93,13 +93,13 @@ infrahub-sync diff --config-id <config-id> --version <version> --reason "review 
 
 :::warning What a saved plan will and will not apply
 
-**Creates must prove their own key.** A create carries no destination id, so Infrahub
-matches it on what the write carries. For a destination kind with a human-friendly ID the
-write needs every component, each with a usable value, taken from a mapped field or from a
-reference to another model — where the component is read from the referenced peer's own
-identifiers. For a kind that declares none, the model's identifiers must cover at least one
-of the destination kind's declared uniqueness constraints. `diff` refuses a create whose
-coverage is missing or whose values are unusable, naming the kind and what is missing.
+**Creates must prove their own key.** For a destination kind with a human-friendly ID,
+Infrahub matches the write using its complete human-friendly ID. Sync requires a usable
+value for every component, supplied by a mapped field or a relationship reference; a
+relationship-crossing component comes from the referenced peer's identifiers. For a kind
+without a human-friendly ID, the model's identifiers must cover at least one declared
+uniqueness constraint so the destination refuses duplicates. `diff` refuses missing
+coverage or unusable values, naming the kind and what is missing.
 
 **Updates are not subject to that rule.** An update carries the destination object's own
 id, recorded when the plan was built, so it writes the object it means even where
