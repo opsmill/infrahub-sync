@@ -13,7 +13,6 @@ with `PlanFormatApplyUnsupportedError` and an explicit re-plan instruction.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -24,12 +23,14 @@ from infrahub_sync.plan.errors import PlanArtifactTornError, PlanFormatApplyUnsu
 from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, SUPPORTED_FORMAT_VERSIONS, PlannedOperation
 from infrahub_sync.plan.reader import LoadedPlan, parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import read_saved_plan
-from infrahub_sync.potenda import Potenda
 from infrahub_sync.service.models import EmittedPlanResource
+from tests.adapters.test_infrahub_planned_write import engine_over as planned_write_engine_over
 from tests.plan.artifact_fixtures import CONFIG_VERSION, RUN_ID, SYNC_NAME, operation_record, write_artifact
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from infrahub_sync.potenda import Potenda
 
 DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
 
@@ -70,14 +71,14 @@ class CountingDestination:
 
 
 def engine_over(directory: Path, *, destination: object | None = None) -> Potenda:
-    """A `Potenda` bound to `directory`, with no configuration and no source load."""
-    return Potenda(
-        source=SimpleNamespace(top_level=[]),  # ty: ignore[invalid-argument-type]
-        destination=destination if destination is not None else RefusingDestination(),  # ty: ignore[invalid-argument-type]
-        config=None,  # ty: ignore[invalid-argument-type]
-        top_level=["BuiltinTag"],
-        run_dir=directory,
-        run_id=RUN_ID,
+    """A `Potenda` bound to `directory`, with no configuration and no source load.
+
+    The engine is built by the apply suite's own constructor rather than a second one here:
+    one place already carries the source/config narrowing an apply-only engine needs, and a
+    duplicate would have to repeat its suppressions to say the same thing.
+    """
+    return planned_write_engine_over(
+        directory, destination if destination is not None else RefusingDestination(), run_id=RUN_ID
     )
 
 

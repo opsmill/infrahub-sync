@@ -55,7 +55,8 @@ logger = logging.getLogger(__name__)
 # whose remedy is to repair the destination and re-plan — only if it is one of these:
 #
 #   * `PlanArtifactError` — the plan taxonomy the write surface raises deliberately: a peer that
-#     matches nothing or matches many, an unaccounted identity component, an unkeyed render.
+#     matches nothing or matches many, an unaccounted identity component, a create that cannot
+#     be proven keyed, a stale recorded id.
 #   * `SkippedDeleteOperation` — the surface's defensive delete refusal. Unreachable on this
 #     loop's own path, which filters deletes before dispatch, and a designed limitation rather
 #     than a defect when some other caller provokes it.

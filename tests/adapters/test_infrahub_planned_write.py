@@ -1188,15 +1188,15 @@ def test_a_mid_apply_rejection_surfaces_the_rejection_not_the_knowability_invari
 def test_a_refused_operation_stops_the_apply_and_leaves_the_prior_write_recorded(tmp_path: Path) -> None:
     """Apply is sequential: an earlier keyed write stands, and no later operation executes.
 
-    The middle operation is refused by AD051: `TestOrphan`'s human-friendly ID is `code`,
-    which its identity does not name and its payload therefore does not carry, so the create
-    cannot be proven keyed and is refused before the SDK write.
+    The middle operation is refused by the create guard's coverage arm: `TestOrphan`'s
+    human-friendly ID is `code`, which its identity does not name at all, so the create cannot
+    be proven keyed and is refused before `client.create`.
     """
     directory = apply_run_dir(tmp_path)
     keyed = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
-    unkeyed = operation_record(kind=ORPHAN_KIND, identity={"name": "orphan-a"})
+    refused = operation_record(kind=ORPHAN_KIND, identity={"name": "orphan-a"})
     later = operation_record(kind=TAG_KIND, identity={"name": "tag-z"})
-    write_artifact(directory, [keyed, unkeyed, later], run_id=APPLY_RUN_ID, source_snapshot=[])
+    write_artifact(directory, [keyed, refused, later], run_id=APPLY_RUN_ID, source_snapshot=[])
 
     client = RecordingClient()
     adapter = make_adapter(client)
@@ -1209,7 +1209,7 @@ def test_a_refused_operation_stops_the_apply_and_leaves_the_prior_write_recorded
     )
     record = outcome.apply_record
     assert list(record.applied_operations) == [keyed["operation_id"]]
-    assert record.failed_operation == unkeyed["operation_id"]
+    assert record.failed_operation == refused["operation_id"]
 
 
 def test_a_refusal_that_wrote_nothing_says_so_rather_than_claiming_a_possible_partial(tmp_path: Path) -> None:

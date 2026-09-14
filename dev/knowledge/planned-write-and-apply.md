@@ -115,15 +115,21 @@ a keying risk read off the configuration instead of the destination schema was w
 was cited by four decisions, and survived three rounds of critique before live data exposed it. When you
 need to know how a kind converges, read the destination schema.
 
-Two checks protect the key, and they check different things:
+Two checks protect a create's key, and they check different things:
 
-- **Step 3b is the diagnostic.** A direct component (`<attr>` or `<attr>__value`) must be present and
-  non-`None` in `data`. A relationship-crossing component (`<rel>__<attr>__value`) must have `<rel>`
-  present in `data` **and** `<attr>` supplied by the operation's nested `{peer_kind, identity}` for
-  `<rel>`. An unaccounted-for component raises, naming the kind and the component. "Resolves against the
-  create data" is not implementable: by step 3b, a relationship-crossing component's slot in `data` holds
-  a resolved node-id string, and no attribute can be read out of a node id.
-- **Step 5b used to be a gate on the SDK's private pre-save render.** It is gone
+- **Step 4a is coverage**, read from the operation's `identity` alone: every component's mapping field
+  must be named there, or — for a kind declaring no human-friendly ID — the identity must cover a
+  declared uniqueness constraint. It is a question about the plan, and it is answered before any value
+  is examined.
+- **Step 4b is the diagnostic (AD051).** A direct component (`<attr>` or `<attr>__value`) must be
+  present in `data` with a **usable** value: absent, empty and whitespace-only all key nothing, while
+  `0` and `False` are values the destination matches on perfectly well. A relationship-crossing
+  component (`<rel>__<attr>__value`) must have `<rel>` present in `data` **and** `<attr>` supplied,
+  usably, by the operation's nested `{peer_kind, identity}` for `<rel>`. An unaccounted-for component
+  raises, naming the kind and the component. "Resolves against the create data" is not implementable:
+  by this step a relationship-crossing component's slot in `data` holds a resolved node-id string, and
+  no attribute can be read out of a node id — which is why the value comes from the peer identity.
+- **There used to be a third check, on the SDK's private pre-save render.** It is gone
   ([ADR 0013](../adr/0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)). On infrahub-sdk
   1.23.2 that render reports an `hfid` the issued mutation does not carry, so it passed writes that
   were unkeyed on the wire, and it refused relationship-crossing kinds the server converges. No
@@ -172,9 +178,10 @@ Explicit `hfid` rendering is deliberately **not** reintroduced: `save(allow_upse
 1.23.2 and the server matches on complete components anyway, so rendering it would assert a key the
 wire does not carry.
 
-Apply is sequential, so the guarantee is stated per operation: an operation whose render is unkeyed makes
-zero mutation calls, and no later operation executes. Operations applied before it stay written, and the
-apply record reports them.
+Apply is sequential, so the guarantee is stated per operation: a create refused by either check makes
+zero mutation calls, and no later operation executes. Operations applied before it stay written, the
+apply record reports them, and the refused operation is recorded as having written nothing rather than
+as a possible partial write.
 
 ## Peer resolution
 

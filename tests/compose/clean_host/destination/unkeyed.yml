@@ -6,11 +6,13 @@
 # locally constructed `NodeSchemaAPI`, whose `human_friendly_id` stays unset
 # forever, while a live destination reports whatever it computed instead.
 #
-# `CleanDevice`'s human-friendly ID crosses the `site` relationship. That is the
-# one shape the SDK cannot render a key for: the peer arrives as a resolved node
-# id, `get_path_value` cannot walk to `site__name__value`, the component resolves
-# to None, and no `hfid` is rendered. On a create the node carries no `id` either,
-# so the pre-write gate refuses before any mutation is attempted.
+# `CleanDevice`'s human-friendly ID crosses the `site` relationship, and the SDK
+# renders no key for that shape: the peer arrives as a resolved node id,
+# `get_path_value` cannot walk to `site__name__value`, and no `hfid` is rendered.
+# That alone is fine — the server matches on the components in `data`. What this
+# row induces is the case that is not: the configuration's identifiers name `name`
+# only, so `site` is never in the operation's identity, the create cannot be proven
+# to carry every component, and planning refuses it before a run reaches a write.
 #
 # `CleanSite`'s own identifier is all-direct, so it renders a key and is writable.
 # The refusal under test is `CleanDevice`'s alone.
@@ -39,7 +41,7 @@ nodes:
   - name: Device
     namespace: Clean
     label: Device
-    description: The kind whose convergent write cannot be keyed, because its identifier crosses a relationship.
+    description: The kind whose create cannot be proven keyed, because its identifiers omit an HFID component.
     include_in_menu: false
     human_friendly_id:
       - site__name__value

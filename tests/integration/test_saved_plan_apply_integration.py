@@ -849,8 +849,9 @@ def _require_preexisting_peer(plan: SavedPlan, operations: Sequence[PlannedOpera
     absence is a setup error rather than a failing assertion about the product.
 
     This no longer requires a peer whose destination human-friendly ID **crosses a
-    relationship**. That premise is retired: such a kind cannot render a keyed mutation, so
-    the write surface refuses it before it mutates, and no supported slice can carry one.
+    relationship**. That premise is retired for a different reason than it once was: such a
+    kind is written like any other now, and this slice simply does not carry one, so the
+    criterion is measured on the kinds it does hold.
     """
     candidates = _referenced_peers_absent_from_the_plan(plan, operations)
     if not candidates:
@@ -1066,10 +1067,11 @@ def test_applying_a_stored_plan_runs_no_extraction(live_plan: LivePlan) -> None:
 def test_re_applying_an_identical_plan_converges(live_plan: LivePlan) -> None:
     """SC-002: the same object, the same identity, no duplicate, for every kind in the plan.
 
-    A destination kind whose convergence key crosses a relationship cannot render keyed, and
-    its operation is now refused before it writes rather than duplicating. The apply therefore
-    stops at such a kind instead of converging past it, and this criterion measures the kinds
-    that do write. The assertion is not weakened for it.
+    A destination kind whose convergence key crosses a relationship converges like any other:
+    the server matches on the human-friendly-ID components the payload carries, so no key on
+    the wire is needed. This slice happens to hold only all-direct kinds, which keeps its
+    identity assertions simple; the crossing shape is qualified directly by
+    `tests/integration/test_infrahub_keyed_write_integration.py`.
     """
     writes = [operation for operation in live_plan.plan.operations() if operation.action != "delete"]
 
@@ -1194,12 +1196,13 @@ def test_reference_peer_sets_match_the_plan(live_plan: LivePlan) -> None:
       asserted to have been issued.
     - the peer sets the destination actually holds afterwards.
 
-    **SC-008's relationship-crossing arm is retired.** It required a pre-existing peer whose
-    destination human-friendly ID crosses a relationship, so that resolving it exercised
-    PD-004's nested `<rel>__<attr>__value` filter spelling. Such a kind cannot render a keyed
-    mutation, so the write surface now refuses it before it mutates and no supported slice can
-    carry one. AD043's nested identity walk is still covered offline; what is no longer claimed
-    live is the nested filter spelling.
+    **SC-008's relationship-crossing arm is not measured here.** It required a pre-existing
+    peer whose destination human-friendly ID crosses a relationship, so that resolving it
+    exercised PD-004's nested `<rel>__<attr>__value` filter spelling. This slice carries no
+    such kind, so the arm moved rather than disappeared:
+    `tests/integration/test_infrahub_keyed_write_integration.py` writes that shape live and
+    resolves a peer through the nested filter. AD043's nested identity walk is also covered
+    offline.
     """
     operations = [operation for operation in live_plan.plan.operations(kind=DEVICE_KIND) if operation.relationships]
     assert operations, f"The plan holds no reference-bearing {DEVICE_KIND} operation."

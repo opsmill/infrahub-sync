@@ -1075,9 +1075,10 @@ def test_a_wrapped_apply_failure_records_the_class_it_was_raised_from(
 ) -> None:
     """One wrapper, and the recorded cause is what tells these apart.
 
-    Without it an unkeyed render, a peer that matched nothing and a destination's
-    own rejection are one indistinguishable `OperationApplyFailedError` in the
-    run record -- and a gate asserting that *this* refusal happened has nothing to
+    Without it a create that cannot be proven keyed, a peer that matched nothing
+    and a destination's own rejection are one indistinguishable
+    `OperationApplyFailedError` in the run record -- and a gate asserting that
+    *this* refusal happened has nothing to
     assert against.
     """
     run_id = f"run-cause-{type(cause).__name__.lower()}"

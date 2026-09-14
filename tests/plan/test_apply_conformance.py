@@ -1,17 +1,19 @@
-"""The offline apply-conformance harness (FR-013, FR-028.4, AD054, AD067, AD068).
+"""The offline apply-conformance harness (FR-013, FR-028.4, AD054, AD068; AD067 closed).
 
 What this file measures that nothing else can: **the mutation the SDK renders**. AD042's
 defect class — a payload assembled from source attributes alone, so the convergent write goes
-out unkeyed and every re-apply duplicates the object — is invisible to an assertion against
-the assembled `data`, because a relationship-crossing identity component is already a resolved
-node-id string by then. So the harness runs a **real** `InfrahubNodeSync` built from the
-committed schema fixture with only the transport edge replaced; no server is contacted.
+out carrying none of the components the destination matches on and every re-apply duplicates
+the object — is invisible to an assertion against the assembled `data`, because a
+relationship-crossing identity component is already a resolved node-id string by then. So the
+harness runs a **real** `InfrahubNodeSync` built from the committed schema fixture with only
+the transport edge replaced; no server is contacted.
 
-Five assertions: an all-direct human-friendly-ID kind renders keyed; the
-relationship-crossing kind, which cannot render keyed client-side, is refused before its own
-mutation; the replace-set is issued for every cardinality-many relationship including
-`peers: []`, with no destination read; that same upsert names only the fields the plan maps
-plus its key; and applying the same operation twice renders byte-identical inputs.
+Five assertions: an update renders the scalar top-level `id` recorded for it; the
+relationship-crossing kind is **written** as one convergent upsert, because the server matches
+on the human-friendly-ID components in `data` and needs no key on the wire (AD067 closed); the
+replace-set is issued for every cardinality-many relationship including `peers: []`, with no
+destination read; that same upsert names only the fields the plan maps plus its key; and
+applying the same operation twice renders byte-identical inputs.
 
 It deliberately does **not** assert "two applies produce one object": a fixture holds no
 destination state, so that could only pass for the wrong reason. Byte-identity is the
@@ -50,7 +52,8 @@ TEAM_KIND = "ConfTeam"
 DEVICE_KIND = "ConfDevice"
 
 # The kinds whose every human-friendly-ID component is a direct attribute. Assertion 1 is a
-# universal over these and **only** these; assertion 2 carries `ConfDevice` alone (AD067).
+# the set assertion 5's byte-identity quantifies over; assertion 2 carries `ConfDevice` alone,
+# the kind whose human-friendly ID crosses a relationship.
 ALL_DIRECT_KINDS = (SITE_KIND, TAG_KIND, TEAM_KIND)
 
 # `ConfTeam`'s two relationships: the cardinality-many one the replace-set reconciles, and the
@@ -325,11 +328,12 @@ def seeded_adapter(**existing: list[str]) -> tuple[ConformanceClient, InfrahubAd
 
 
 def test_the_committed_fixture_holds_the_shapes_every_assertion_needs() -> None:
-    """The precondition every assertion below rests on (Trap 4, AD067).
+    """The precondition every assertion below rests on (Trap 4).
 
-    A fixture drifting to all-direct kinds only would leave assertion 2 vacuous and remove the
-    one thing that exercises AD051's second arm — while the suite stayed green. So the shapes
-    are asserted rather than assumed.
+    A fixture drifting to all-direct kinds only would leave assertion 2 vacuous — nothing would
+    exercise a human-friendly ID that crosses a relationship, which is the shape the server
+    matches component-wise and the one AD051 resolves through a peer identity — while the suite
+    stayed green. So the shapes are asserted rather than assumed.
 
     The same holds for the relationship shapes on `ConfTeam`. Assertion 4 is vacuous unless the
     kind under replace-set also carries an **optional cardinality-one** relationship no

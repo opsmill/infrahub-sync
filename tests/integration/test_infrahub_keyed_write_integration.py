@@ -54,17 +54,18 @@ SITE_KIND = "TestUnkeyedSite"
 DEVICE_KIND = "TestUnkeyedDevice"
 MOUNT_KIND = "TestUnkeyedMount"
 
-# `TestUnkeyedDevice`'s human-friendly ID crosses the `site` relationship, which is exactly the
-# shape the SDK cannot render a key for: a peer supplied as a resolved node id renders as
-# `{"id": ...}` with no `__typename`, so `get_human_friendly_id()` resolves to None. The site is
-# all-direct so the peer it references is itself writable and the refusal under test is the
-# device's alone.
+# `TestUnkeyedDevice`'s human-friendly ID crosses the `site` relationship. The SDK renders no
+# key at all for that shape — a peer supplied as a resolved node id renders as `{"id": ...}`
+# with no `__typename`, so `get_human_friendly_id()` resolves to None — and it does not need
+# to: the server matches on the components in `data`. That the destination really converges it
+# is the first case below, and it is why AD067 is closed rather than worked around. The site is
+# all-direct, so the peer it references is itself writable and the device's own keying is what
+# each case measures.
 #
 # `TestUnkeyedMount` is the third shape, and it is what keeps the nested-peer *read* covered.
-# Its own human-friendly ID is all-direct, so it renders a key and is written; the peer it
-# references is the crossing kind. Resolving that peer is the only place PD-004's nested
-# `<rel>__<attr>__value` filter spelling and AD043's nested `{peer_kind, identity}` walk run
-# against a real destination — a kind may be unwritable and still be perfectly readable.
+# Its own human-friendly ID is all-direct; the peer it references is the crossing kind.
+# Resolving that peer is the only place PD-004's nested `<rel>__<attr>__value` filter spelling
+# and AD043's nested `{peer_kind, identity}` walk run against a real destination.
 _SCHEMA = {
     "version": "1.0",
     "nodes": [
