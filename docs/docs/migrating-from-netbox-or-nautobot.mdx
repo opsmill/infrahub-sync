@@ -53,13 +53,16 @@ match the schema you chose in Phase 1.
 Models must be synced in dependency order: anything referenced by another model must be synced first. A typical order:
 
 1. Independent objects: tags, locations, manufacturers, device roles, platforms
-2. Rack and site data (depends on locations)
-3. Devices (depends on locations, roles, manufacturers, platforms)
-4. Interfaces (depends on devices)
-5. IP addresses and prefixes (depends on interfaces, VRFs)
-6. VLANs and VLAN groups
+2. IP namespaces (nothing else has to exist first)
+3. Rack and site data (depends on locations)
+4. Devices (depends on locations, roles, manufacturers, platforms)
+5. Interfaces (depends on devices)
+6. IP addresses and prefixes (depends on IP namespaces, interfaces, VRFs)
+7. VLANs and VLAN groups
 
 The exact order depends on your schema. See [Sync instance configuration](./reference/config.mdx) for the syntax of the `order` key.
+
+IP namespaces are on that list because Infrahub identifies a prefix by namespace plus prefix, and an IP address by namespace plus address. Neither NetBox nor Nautobot's NetBox-style model has a namespace object, so the NetBox example creates one Infrahub IP namespace per VRF and sends objects with no VRF to Infrahub's built-in `default` namespace. Do the same in your own mapping if your source can hold the same prefix in more than one VRF — otherwise those prefixes all collapse into one Infrahub object and overwrite each other.
 
 ### Map fields between the source system and Infrahub
 
@@ -110,10 +113,12 @@ human-friendly ID itself.
 Apply is sequential: a refused operation writes nothing, operations applied before it stay
 written, and no later operation runs. `run.json` records what was applied.
 
-On the current `from-netbox` mapping and schema-library revision this affects
-`IpamPrefix` and `IpamIPAddress`, whose identifiers omit the `ip_namespace` component
-their destination kinds require: their updates apply, and a fresh create under them is
-refused until the mapping or the schema is corrected. Separately, `LocationRack` is not
+On the current `from-netbox` mapping and schema-library revision `IpamPrefix` and
+`IpamIPAddress` satisfy that rule: their identifiers include `ip_namespace`, so their
+creates key themselves. A namespace backed by a NetBox VRF resolves from the source plan
+like any other peer, and Infrahub's built-in `default` namespace — which no NetBox extract
+can produce — is recorded as a literal identity and resolved at apply against the
+destination's human-friendly ID for that kind. Separately, `LocationRack` is not
 convergent when different sites contain racks with the same name — the configuration
 identifies a rack by `name` and `site` while the current schema-library revision keys it
 by `name` alone — and `diff` now refuses those creates as a destination-identity collision
