@@ -15,6 +15,9 @@ strings, is left to GitHub.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess  # noqa: S404 — running the guard's own script is how its refusal is measured
+import tempfile
 from collections.abc import Callable
 from fnmatch import fnmatch
 from pathlib import Path
@@ -106,6 +109,9 @@ TWO_LINE_AUTOMATION = "trigger-push-stable.yml"
 # variable GitHub puts the dispatched ref in.
 RELEASE_BRANCH_ENV = "RELEASE_BRANCH"
 DISPATCHED_REF = "GITHUB_REF_NAME"
+# The only ref that step may admit, and a bound on running its few lines of shell.
+RELEASE_BRANCH = "main"
+GUARD_TIMEOUT_SECONDS = 30
 
 # The events a workflow answers without anyone choosing what it acts on. Only a
 # dispatch, and a call from one, carry a person's decision about a candidate.
@@ -694,25 +700,65 @@ def v3_reachable() -> set[Path]:
     return reachable(_selects_v3)
 
 
-def _refuses_a_foreign_ref(step: dict) -> bool:
-    """Report whether one step stops the run unless the dispatched ref is the release branch."""
+def _names_a_ref_guard(step: dict) -> bool:
+    """Report whether one step is shaped like the ref guard, before asking what it does."""
     run = str(step.get("run", ""))
     env = step.get("env") or {}
-    return RELEASE_BRANCH_ENV in env and DISPATCHED_REF in run and "exit 1" in run
+    return RELEASE_BRANCH_ENV in env and DISPATCHED_REF in run
+
+
+def _guard_verdicts(step: dict) -> tuple[int, int]:
+    """Run the guard's own script against the release ref and a foreign one.
+
+    Reading the script cannot tell a refusal from a permission: inverting the one
+    comparison in it leaves every word the reader matched on in place. So the script
+    is executed, in a scratch directory with nothing in its environment but the two
+    variables it reads, and judged by what it exits with.
+    """
+    script = str(step.get("run", ""))
+    release_branch = str((step.get("env") or {})[RELEASE_BRANCH_ENV])
+    bash = shutil.which("bash")
+    assert bash, "a POSIX shell is needed to run the guard the way the runner does"
+
+    def exit_code(ref: str) -> int:
+        with tempfile.TemporaryDirectory() as scratch:
+            return subprocess.run(  # noqa: S603
+                [bash, "-c", script],
+                env={RELEASE_BRANCH_ENV: release_branch, DISPATCHED_REF: ref},
+                cwd=scratch,
+                capture_output=True,
+                check=False,
+                timeout=GUARD_TIMEOUT_SECONDS,
+            ).returncode
+
+    return exit_code(release_branch), exit_code(V3_BRANCH)
+
+
+def _refuses_a_foreign_ref(step: dict) -> bool:
+    """Report whether one step really stops a run dispatched against a foreign ref."""
+    if not _names_a_ref_guard(step):
+        return False
+    if str((step.get("env") or {})[RELEASE_BRANCH_ENV]) != RELEASE_BRANCH:
+        return False
+    admitted, refused = _guard_verdicts(step)
+    return admitted == 0 and refused != 0
 
 
 def _guards_its_ref_before_typing_anything(path: Path) -> bool:
     """Report whether a workflow refuses a foreign ref before it can retype an identity.
 
     A dispatch runs against whichever ref the dispatcher picked, so a workflow that
-    prepares a release has to check that ref itself. Ordering is the whole of it: a
-    guard that runs after the version is typed has already let the run type it.
+    prepares a release has to check that ref itself. Ordering is half of it: a guard
+    that runs after the version is typed has already let the run type it. What the
+    guard does when it runs is the other half, and is measured rather than read.
     """
     for definition in load(path).get("jobs", {}).items():
         steps = definition[1].get("steps") or []
-        guarded = next((index for index, step in enumerate(steps) if _refuses_a_foreign_ref(step)), None)
         typed = next((index for index, step in enumerate(steps) if _retypes_identity(step)), None)
-        if typed is not None and (guarded is None or guarded > typed):
+        if typed is None:
+            continue
+        named = next((index for index, step in enumerate(steps) if _names_a_ref_guard(step)), None)
+        if named is None or named > typed or not _refuses_a_foreign_ref(steps[named]):
             return False
     return True
 
