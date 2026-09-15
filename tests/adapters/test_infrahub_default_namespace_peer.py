@@ -1,11 +1,13 @@
 """Tests that Infrahub's built-in `default` namespace resolves from the store.
 
 The NetBox example sends every prefix and address to an IP namespace, using
-`default` for objects with no VRF. NetBox has no VRF called `default`, so that
-peer never exists in the *source* store. It does not have to: because
-`IpamNamespace` is a mapped kind, the Infrahub adapter loads every namespace
-from the destination — the built-in `default` included — and stores it under
-its DiffSync unique id before any prefix or address is written.
+`default` for objects with no VRF. It builds those namespaces from the VRFs
+NetBox returns, so in the scenario tested here — a source with no VRF named
+`default` — the `default` peer is absent from the *source* store. (A NetBox
+VRF actually named `default` would populate it.) It does not have to be there:
+because `IpamNamespace` is a mapped kind, the Infrahub adapter loads every
+namespace from the destination — the built-in `default` included — and stores
+it under its DiffSync unique id before any prefix or address is written.
 
 `diffsync_to_infrahub` is the write path that consumes that store. It calls
 `resolve_peer_node` with no client and with `fallback` left at its default of
