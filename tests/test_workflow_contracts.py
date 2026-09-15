@@ -1395,3 +1395,64 @@ def test_the_image_filter_routes_the_document_that_declares_it() -> None:
     assert routed(FILE_FILTERS, image_filter_patterns()), (
         f"{FILE_FILTERS.name} selects the image and clean-host jobs, and image_all does not name it"
     )
+
+
+# The SDK update workflow runs unattended: it checks a branch out, moves the locked
+# infrahub-sdk version and opens a pull request back to that same branch. All three
+# parts read `matrix.branch-name`, so they have to keep agreeing, and the update has
+# to stay lock-only or a bot rewrites the declared range in `pyproject.toml`.
+SDK_UPDATE_WORKFLOW = WORKFLOWS / "update-infrahub-sdk.yml"
+SDK_UPDATE_JOB = "update-dependencies"
+SDK_LOCK_COMMAND = 'uv lock --upgrade-package "infrahub-sdk==${INFRAHUB_SDK_VERSION}"'
+MATRIX_BRANCH = "${{ matrix.branch-name }}"
+
+
+def sdk_update_steps() -> list[dict]:
+    """The steps of the SDK update job."""
+    return job_of(SDK_UPDATE_WORKFLOW, SDK_UPDATE_JOB)["steps"]
+
+
+def _one_step(what: str, matches: Callable[[dict], bool]) -> dict:
+    """The single step of the SDK update job that does something, located by what it does.
+
+    Steps are found by the action they use or the command they run, not by their
+    display name, so renaming a step does not change what these cases assert.
+    """
+    found = [step for step in sdk_update_steps() if matches(step)]
+    assert len(found) == 1, f"{len(found)} steps of {SDK_UPDATE_JOB} {what}"
+    return found[0]
+
+
+def test_the_sdk_update_targets_main_only() -> None:
+    """A second branch in the matrix would open a bot pull request against a line nobody asked it to."""
+    matrix = job_of(SDK_UPDATE_WORKFLOW, SDK_UPDATE_JOB)["strategy"]["matrix"]
+
+    assert matrix["branch-name"] == ["main"]
+
+
+def test_the_sdk_update_checkout_takes_the_matrix_branch() -> None:
+    """Without an explicit ref the run updates whatever the dispatch defaulted to."""
+    declared = _one_step("check something out", lambda step: str(step.get("uses", "")).startswith(CHECKOUT_ACTION))[
+        "with"
+    ]
+
+    assert declared["ref"] == MATRIX_BRANCH, f"the checkout takes {declared.get('ref')!r}"
+    assert declared[PERSISTED_CREDENTIALS] is False
+
+
+def test_the_sdk_update_only_moves_the_lockfile() -> None:
+    """`uv add` pins the declared range; `uv lock` rewrites only `uv.lock`."""
+    lock_step = _one_step("lock the SDK version", lambda step: "uv lock" in str(step.get("run", "")))
+
+    assert SDK_LOCK_COMMAND in lock_step["run"]
+    assert not [step for step in sdk_update_steps() if "uv add" in str(step.get("run", ""))], (
+        f"a step of {SDK_UPDATE_JOB} still pins the declared range with `uv add`"
+    )
+
+
+def test_the_sdk_update_pull_request_targets_the_matrix_branch() -> None:
+    """The pull request has to land on the branch the run checked out and locked."""
+    create_pr = _one_step("open the pull request", lambda step: "gh pr create" in str(step.get("run", "")))
+
+    assert create_pr["env"]["MATRIX_BRANCH"] == MATRIX_BRANCH
+    assert '--base "${MATRIX_BRANCH}"' in create_pr["run"]
