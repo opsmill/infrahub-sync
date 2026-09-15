@@ -83,6 +83,9 @@ jobs:
         uses: "astral-sh/setup-uv@v4"
         with:
           version: "latest"
+          # Pinned because the lifecycle fixture runs `infrahubctl` out of this
+          # host environment, and the SDK's `[ctl]` extra is `python_version >= '3.11'`.
+          python-version: "3.13"
 
       - name: "Install dependencies"
         run: uv sync --frozen --extra dev --extra prefect --extra service
