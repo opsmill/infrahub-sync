@@ -31,12 +31,11 @@ COPY pyproject.toml uv.lock README.md LICENSE.txt ./
 # Third-party dependencies come from the committed lock and change only when that
 # lock does, so they install from their own layer against the shared uv cache.
 #
-# pytest arrives through `infrahub-sdk[all]`, which the project depends on for its
-# runtime. Skipping it here keeps a test framework out of the shipped image without
-# touching what a consumer of the published package resolves; nothing the image runs
-# imports it.
+# The project depends on a bare `infrahub-sdk` and takes `infrahub-sdk[ctl]` only in
+# the `service` extra, so no test framework reaches this profile and nothing has to
+# be excluded from it. `tests/image/` holds that to the built image.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project --no-install-package pytest --extra service
+    uv sync --frozen --no-dev --no-install-project --extra service
 
 COPY infrahub_sync ./infrahub_sync
 COPY opsmill_prefect_extras ./opsmill_prefect_extras
@@ -51,7 +50,7 @@ COPY opsmill_prefect_extras ./opsmill_prefect_extras
 # resolves `infrahub_sync` — and the worker's managed flow — by installed dotted
 # identity rather than from a source tree the image would then have to carry.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-editable --no-install-package pytest --extra service \
+    uv sync --frozen --no-dev --no-editable --extra service \
         --refresh-package infrahub-sync --reinstall-package infrahub-sync
 
 # ---------------------------------------------------------------------------
