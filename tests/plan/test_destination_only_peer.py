@@ -25,14 +25,16 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
-from infrahub_sync.plan.derive import operations_from_diff
+from infrahub_sync.plan.derive import operations_from_diff, warn_missing_convergence_key
 from infrahub_sync.plan.errors import PeerNotFoundError, SourcePeerUnresolvedError
+from infrahub_sync.utils import get_instance
 from tests.adapters.test_infrahub_planned_write import (
     PeerResolver,
     RecordingClient,
     make_adapter,
     server_operation,
 )
+from tests.test_generated_examples import REPO_ROOT, _load_snapshot
 from tests.test_potenda_plan_artifact import (
     _FakeAdapter,
     _FakeDiff,
@@ -460,3 +462,104 @@ def test_a_literal_identity_the_destination_cannot_match_fails_before_any_mutati
         )
 
     assert client.mutations == [], "No mutation may be issued once a recorded peer cannot be resolved."
+
+
+# =======================================================================================
+# The shipped NetBox example, against its own committed destination schema
+# =======================================================================================
+
+# The example's two namespaced kinds, with the NetBox field each is keyed on and a value.
+EXAMPLE_NAMESPACED_KINDS = [
+    pytest.param("IpamPrefix", "prefix", "10.0.0.0/24", id="prefix"),
+    pytest.param("IpamIPAddress", "address", "10.0.0.1/32", id="address"),
+]
+
+
+def example_config() -> SyncInstance:
+    """The shipped `from-netbox` configuration, parsed as the engine parses it."""
+    instance = get_instance(name="from-netbox", directory=str(REPO_ROOT / "examples"))
+    assert instance is not None
+    return instance
+
+
+def example_destination() -> _FakeAdapter:
+    """A destination exposing the example's committed schema snapshot.
+
+    The snapshot is the capture the generator is pinned against, so the human-friendly IDs
+    the rule reads here are Infrahub's own rather than a double's.
+    """
+    return _FakeAdapter("destination", schema=_load_snapshot("netbox_example_schema.json"))
+
+
+def example_element(kind: str, key_field: str, key_value: str, namespace: str) -> _FakeElement:
+    """A create of one prefix or address in `namespace`, as the comparison yields it."""
+    return _FakeElement(
+        kind=kind,
+        name=f"{key_value}__{namespace}",
+        keys={key_field: key_value, "ip_namespace": namespace},
+        source_attrs={"description": "from the demo dataset", "status": "active"},
+    )
+
+
+def derive_example(kind: str, key_field: str, key_value: str, namespace: str, *, in_source: bool) -> PlannedOperation:
+    """Derive that one operation, with the namespace present in the source store or not."""
+    records = [_FakeRecord("IpamNamespace", {"name": namespace}, {"description": "a VRF"})] if in_source else []
+    source = _FakeAdapter("source", records)
+    (operation,) = operations_from_diff(
+        _FakeDiff({kind: [example_element(kind, key_field, key_value, namespace)]}),
+        config=example_config(),
+        tier_of=resolver(top_level=("IpamNamespace", "IpamVRF", kind)),
+        source_adapter=source,
+        destination_adapter=example_destination(),
+    )
+    return operation
+
+
+@pytest.mark.parametrize(("kind", "key_field", "key_value"), EXAMPLE_NAMESPACED_KINDS)
+def test_the_example_records_the_built_in_namespace_literally_for_a_record_with_no_vrf(
+    kind: str,
+    key_field: str,
+    key_value: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The case that refused before: no NetBox VRF means no source `IpamNamespace/default`."""
+    with caplog.at_level(logging.DEBUG, logger=RULE_LOGGER):
+        operation = derive_example(kind, key_field, key_value, BUILT_IN_NAMESPACE, in_source=False)
+
+    assert operation.identity["ip_namespace"] == {
+        "peer_kind": "IpamNamespace",
+        "identity": {"name": BUILT_IN_NAMESPACE},
+    }
+    assert len(literal_peer_warnings(caplog)) == 1
+
+
+@pytest.mark.parametrize(("kind", "key_field", "key_value"), EXAMPLE_NAMESPACED_KINDS)
+def test_the_example_records_a_vrf_backed_namespace_from_the_source_store(
+    kind: str,
+    key_field: str,
+    key_value: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A record in a VRF names a namespace the mapping loads, so it resolves as a stored peer."""
+    with caplog.at_level(logging.DEBUG, logger=RULE_LOGGER):
+        operation = derive_example(kind, key_field, key_value, "mgmt", in_source=True)
+
+    assert operation.identity["ip_namespace"] == {"peer_kind": "IpamNamespace", "identity": {"name": "mgmt"}}
+    assert literal_peer_warnings(caplog) == []
+
+
+@pytest.mark.parametrize(("kind", "key_field", "key_value"), EXAMPLE_NAMESPACED_KINDS)
+def test_the_example_create_keys_itself_with_the_literal_namespace(
+    kind: str,
+    key_field: str,
+    key_value: str,
+) -> None:
+    """The create proof is where `UnkeyedCreateRefusedError` is raised, so it has to run.
+
+    Deriving the operation is not enough: the destination matches a create on the components
+    its identity supplies, and the example's human-friendly ID for both kinds crosses the
+    namespace relationship. A literal that did not satisfy that key would be refused here.
+    """
+    operation = derive_example(kind, key_field, key_value, BUILT_IN_NAMESPACE, in_source=False)
+
+    warn_missing_convergence_key(destination=example_destination(), operations=[operation])

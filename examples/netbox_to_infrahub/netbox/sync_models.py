@@ -155,22 +155,32 @@ class IpamAggregate(_GeneratedModelBase):
 
 class IpamIPAddress(_GeneratedModelBase):
     _modelname = "IpamIPAddress"
-    _identifiers = ("address", "vrf")
-    _attributes = ("description", "status")
+    _identifiers = ("address", "ip_namespace")
+    _attributes = ("description", "status", "vrf")
     address: str
     description: str | None = None
     status: str | None = "active"
+    ip_namespace: str | None = None
     vrf: str | None = None
+
+
+class IpamNamespace(_GeneratedModelBase):
+    _modelname = "IpamNamespace"
+    _identifiers = ("name",)
+    _attributes = ("description",)
+    description: str | None = None
+    name: str
 
 
 class IpamPrefix(_GeneratedModelBase):
     _modelname = "IpamPrefix"
-    _identifiers = ("prefix", "vrf")
-    _attributes = ("description", "member_type", "status")
+    _identifiers = ("prefix", "ip_namespace")
+    _attributes = ("description", "member_type", "status", "vrf")
     description: str | None = None
     member_type: str | None = "address"
     prefix: str
     status: str | None = "active"
+    ip_namespace: str | None = None
     vrf: str | None = None
 
 
