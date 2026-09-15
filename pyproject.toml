@@ -15,7 +15,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "infrahub-sdk[all]>=1.17,<2",
+    "infrahub-sdk>=1.17,<2",
     "structlog>=25.1,<27.0",
     "typing-extensions>=4.4",
     "httpx>=0.27,<1",
@@ -81,6 +81,11 @@ prefect = [
 service = [
     "boto3>=1.35,<2; python_version >= '3.11'",
     "fastapi>=0.115,<1; python_version >= '3.11'",
+    # `infrahubctl` ships in the SDK's `[ctl]` extra. It belongs to this profile,
+    # not to `dev`: the image installs `--no-dev --extra service`, and a dev-only
+    # placement leaves `infrahubctl` unable to start there for a missing
+    # `ariadne_codegen`. The base install stays free of it.
+    "infrahub-sdk[ctl]>=1.17,<2; python_version >= '3.11'",
     "prefect==3.8.1; python_version >= '3.11'",
     "psycopg[binary]>=3.2,<4; python_version >= '3.11'",
     # The SDKs the bundled NetBox and Nautobot source adapters import at module
