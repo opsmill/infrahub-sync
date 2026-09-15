@@ -1033,7 +1033,7 @@ ctl = [
 
 [[package]]
 name = "infrahub-sync"
-version = "3.0.0a3"
+version = "3.0.0a4"
 source = { editable = "." }
 dependencies = [
     { name = "diffsync" },
