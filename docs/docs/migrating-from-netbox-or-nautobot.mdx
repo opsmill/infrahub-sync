@@ -62,7 +62,17 @@ Models must be synced in dependency order: anything referenced by another model 
 
 The exact order depends on your schema. See [Sync instance configuration](./reference/config.mdx) for the syntax of the `order` key.
 
-IP namespaces are on that list because Infrahub identifies a prefix by namespace plus prefix, and an IP address by namespace plus address. Neither NetBox nor Nautobot's NetBox-style model has a namespace object, so the NetBox example creates one Infrahub IP namespace per VRF and sends objects with no VRF to Infrahub's built-in `default` namespace. Do the same in your own mapping if your source can hold the same prefix in more than one VRF — otherwise those prefixes all collapse into one Infrahub object and overwrite each other.
+IP namespaces are on that list because Infrahub identifies a prefix by namespace plus prefix, and an IP address by namespace plus address. Neither NetBox nor Nautobot's NetBox-style model has a namespace object, so the NetBox example creates one Infrahub IP namespace per VRF name and sends objects with no VRF to Infrahub's built-in `default` namespace. Do the same in your own mapping if your source can hold the same prefix in more than one VRF — otherwise those prefixes all collapse into one Infrahub object and overwrite each other.
+
+The namespace is keyed by that name, so the separation holds only while the names are distinct. Two VRFs sharing a name resolve to a single namespace, and a VRF named `default` shares the built-in namespace with every object that has no VRF. Check your source for repeated VRF names before you depend on the split.
+
+### Adopt namespaces in an Infrahub that already holds imported data
+
+Changing a mapping or its `identifiers` changes what later runs create and match. It does not move objects an earlier sync already wrote. Only the objects whose resolved namespace changes take on a new identity: a prefix or address that was imported into `default` and still resolves to `default` goes on matching the object already there, while one that now resolves to a VRF-named namespace is created as a new object beside the old one.
+
+Nothing retires the superseded objects for you. A saved plan records a `delete` for every destination object the source no longer accounts for, whatever `diffsync_flags` are set, but `apply` never executes one: it reports how many deletes it skipped and completes. The old records therefore stay exactly where they are, still carrying their relationships.
+
+Review the plan before you write, and into a branch. Plan the run with `infrahub-sync diff --config-id <config-id> --version <version> --branch <branch> --reason "..."`, read it with `infrahub-sync runs plan <run-id> --detail`, and apply it by checksum with `infrahub-sync apply <run-id> --expected-checksum <checksum> --reason "..."`. The saved plan names every create it intends, so you can see which prefixes and addresses are about to appear under a new namespace before any of them exists. Afterwards, audit the old objects and everything pointing at them — interfaces, devices and any other relationship bound to the prefix or address — and retire or re-point them deliberately. Infrahub Sync does not migrate them for you, and wiping the destination is not a substitute: it discards Infrahub-only data the sync never owned.
 
 ### Map fields between the source system and Infrahub
 
@@ -116,9 +126,10 @@ written, and no later operation runs. `run.json` records what was applied.
 On the current `from-netbox` mapping and schema-library revision `IpamPrefix` and
 `IpamIPAddress` satisfy that rule: their identifiers include `ip_namespace`, so their
 creates key themselves. A namespace backed by a NetBox VRF resolves from the source plan
-like any other peer, and Infrahub's built-in `default` namespace — which no NetBox extract
-can produce — is recorded as a literal identity and resolved at apply against the
-destination's human-friendly ID for that kind. Separately, `LocationRack` is not
+like any other peer, including a VRF named `default`. Where the source holds no namespace of
+that name — the usual case for objects with no VRF — the built-in `default` is recorded as a
+literal identity and resolved at apply against the destination's human-friendly ID for that
+kind. Separately, `LocationRack` is not
 convergent when different sites contain racks with the same name — the configuration
 identifies a rack by `name` and `site` while the current schema-library revision keys it
 by `name` alone — and `diff` now refuses those creates as a destination-identity collision
