@@ -62,9 +62,13 @@ Models must be synced in dependency order: anything referenced by another model 
 
 The exact order depends on your schema. See [Sync instance configuration](./reference/config.mdx) for the syntax of the `order` key.
 
-IP namespaces are on that list because Infrahub identifies a prefix by namespace plus prefix, and an IP address by namespace plus address. Neither NetBox nor Nautobot's NetBox-style model has a namespace object, so the NetBox example creates one Infrahub IP namespace per VRF name and sends objects with no VRF to Infrahub's built-in `default` namespace. Do the same in your own mapping if your source can hold the same prefix in more than one VRF — otherwise those prefixes all collapse into one Infrahub object and overwrite each other.
+IP namespaces are on that list because Infrahub identifies a prefix by namespace plus prefix, and an IP address by namespace plus address. Which mapping you need depends on whether your source has a namespace object of its own.
 
-The namespace is keyed by that name, so the separation holds only while the names are distinct. Two VRFs sharing a name resolve to a single namespace, and a VRF named `default` shares the built-in namespace with every object that has no VRF. Check your source for repeated VRF names before you depend on the split.
+**NetBox and Nautobot 1.x** have none, so the namespace has to be derived. The NetBox example creates one Infrahub IP namespace per VRF name and sends objects with no VRF to Infrahub's built-in `default` namespace. Do the same in your own mapping if your source can hold the same prefix in more than one VRF — otherwise those prefixes all collapse into one Infrahub object and overwrite each other.
+
+**Nautobot 2.0 and later** have [native IPAM namespaces](https://docs.nautobot.com/projects/core/en/stable/user-guide/core-data-model/ipam/namespace/), added in 2.0.0. Map those directly and carry them into the prefix and address identities, as `examples/nautobot-v2_to_infrahub/` does with its `NautobotNamespace` entry mapped from `ipam.namespaces`. Do not derive the namespace from the VRF name there: the source already separates the objects, and keying on the VRF name instead would merge two namespaces whose VRFs happen to share one.
+
+Under the VRF-derived pattern the namespace is keyed by that name, so the separation holds only while the names are distinct. Two VRFs sharing a name resolve to a single namespace, and a VRF named `default` shares the built-in namespace with every object that has no VRF. Check your source for repeated VRF names before you depend on the split. A source with native namespaces is not affected, because its namespaces are carried rather than derived.
 
 ### Adopt namespaces in an Infrahub that already holds imported data
 

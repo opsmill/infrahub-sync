@@ -30,7 +30,11 @@ from diffsync import Adapter, DiffSyncModel
 from infrahub_sync import SchemaMappingField, SchemaMappingModel
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.derive import operations_from_diff, warn_missing_convergence_key
-from infrahub_sync.plan.errors import PeerNotFoundError, SourcePeerUnresolvedError
+from infrahub_sync.plan.errors import (
+    PeerNotFoundError,
+    SourcePeerUnresolvedError,
+    UnserializablePayloadValueError,
+)
 from infrahub_sync.utils import get_instance
 from tests.adapters.test_infrahub_planned_write import (
     PeerResolver,
@@ -382,7 +386,7 @@ def test_the_non_finite_floats_this_rule_refuses_are_the_ones_the_encoder_refuse
     """The predicate and the encoder must agree, or the refusal moves somewhere unhelpful."""
     for value in (float("nan"), float("inf"), float("-inf")):
         assert not math.isfinite(value)
-        with pytest.raises(Exception, match="non-finite float"):
+        with pytest.raises(UnserializablePayloadValueError, match="non-finite float"):
             canonical_json_bytes(value)
 
 
