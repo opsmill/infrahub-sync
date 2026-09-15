@@ -29,6 +29,7 @@ datastore
 declaratively
 default_branch
 default_filter
+Dependabot
 deserialized
 dev
 devcontainer
