@@ -147,15 +147,27 @@ def test_get_attribute_type_annotation_against_real_sdk_read_side_schema_classes
     assert get_attribute_type_annotation(boolean_attr) == "bool"
 
 
-def test_every_sdk_attribute_kind_renders_an_annotation() -> None:
-    """Every kind the SDK can report must produce a usable annotation.
+# The SDK kinds whose generated annotation differs from the `str` fallback. Every
+# other kind renders as `str`, which is also what an unmapped kind falls back to.
+NON_DEFAULT_KIND_ANNOTATIONS = {
+    "Number": "int",
+    "Boolean": "bool",
+    "Checkbox": "bool",
+    "List": "list[Any]",
+}
 
-    Kinds the map does not name fall back to ``str``, so the map only needs to hold
-    the kinds whose annotation differs from that default.
+
+@pytest.mark.parametrize("kind", list(AttributeKind), ids=lambda kind: kind.value)
+def test_every_sdk_attribute_kind_renders_its_expected_annotation(kind: AttributeKind) -> None:
+    """Each kind the SDK can report renders the exact annotation it is owed.
+
+    Dropping `Number`, `Boolean`, `Checkbox` or `List` from ATTRIBUTE_KIND_MAP makes
+    that kind fall back to `str` and fails here. Dropping one of the map's `str`
+    entries changes nothing, because `str` is already the fallback.
     """
-    for kind in AttributeKind:
-        attr = AttributeSchemaAPI(id=kind.value, name="field", kind=kind, optional=False)
-        assert get_attribute_type_annotation(attr)
+    attr = AttributeSchemaAPI(id=kind.value, name="field", kind=kind, optional=False)
+
+    assert get_attribute_type_annotation(attr) == NON_DEFAULT_KIND_ANNOTATIONS.get(kind.value, "str")
 
 
 def test_attribute_kind_map_names_only_kinds_the_sdk_reports() -> None:
