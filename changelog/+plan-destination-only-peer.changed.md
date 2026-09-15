@@ -1,0 +1,1 @@
+A saved plan now records a relationship peer that exists only at the destination — such as Infrahub's built-in `default` IP namespace — as a literal identity resolved at apply, instead of refusing the plan, when the mapping identifies that peer kind by a single direct field matching the destination's human-friendly ID.

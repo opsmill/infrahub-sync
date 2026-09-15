@@ -47,6 +47,11 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from diffsync.exceptions import ObjectNotFound
 
 from infrahub_sync.plan.canonical import canonical_json_bytes, canonical_value
+from infrahub_sync.plan.destination_only_peer import (
+    DestinationOnlyPeers,
+    destination_only_identity,
+    destination_only_peers,
+)
 from infrahub_sync.plan.errors import (
     MissingDestinationIdError,
     SourcePeerUnresolvedError,
@@ -126,7 +131,7 @@ def _probe_peer_kind(
     unique_id: Any,
     owning_kind: str,
     field: str,
-) -> tuple[str, Any]:
+) -> tuple[str, Any] | None:
     """Probe `candidates` in `store` for `unique_id` and return the single hit (AD050).
 
     `BaseStore.get` and `LocalStore.get` both require a `model` and select the per-model
@@ -134,12 +139,14 @@ def _probe_peer_kind(
     `get_all_model_names()`, enumerates kinds rather than answering for a unique-id — so an
     entry cannot be asked for its own kind and the candidate set has to be probed.
 
+    `None` where no candidate holds the peer. That outcome is returned rather than raised
+    because the caller, not the probe, decides what it means: a peer that exists only at the
+    destination can still be recorded literally, and every other absent peer refuses there.
+
     Raises:
-        SourcePeerUnresolvedError: no candidate holds the peer (the **absent** arm), or more
-            than one does (the **ambiguous** arm). The two remedies differ, so each arm
-            carries its own next action (AD082).
+        SourcePeerUnresolvedError: more than one candidate holds the peer (the **ambiguous**
+            arm), so its kind cannot be established.
     """
-    tried = ", ".join(candidates) if candidates else "<none declared by the schema mapping>"
     hits: list[tuple[str, Any]] = []
     for candidate in candidates:
         try:
@@ -148,13 +155,9 @@ def _probe_peer_kind(
             continue
 
     if not hits:
-        msg = (
-            f"The peer {unique_id!r} referenced by field {field!r} of kind {owning_kind!r} is not "
-            f"present in the loaded store under any candidate peer kind. Candidate peer kinds "
-            f"tried: {tried}."
-        )
-        raise SourcePeerUnresolvedError.absent(msg)
+        return None
     if len(hits) > 1:
+        tried = ", ".join(candidates) if candidates else "<none declared by the schema mapping>"
         found = ", ".join(candidate for candidate, _peer in hits)
         msg = (
             f"The peer {unique_id!r} referenced by field {field!r} of kind {owning_kind!r} is present "
@@ -174,6 +177,7 @@ def _peer_pair(
     candidates: tuple[str, ...],
     unique_id: Any,
     chain: tuple[tuple[str, Any], ...],
+    peers: DestinationOnlyPeers | None,
 ) -> dict[str, Any]:
     """Return the nested `{"peer_kind", "identity"}` pair naming one peer (AD043).
 
@@ -181,14 +185,38 @@ def _peer_pair(
     another nested pair, to whatever depth the configuration nests. `chain` carries the
     `(kind, unique_id)` pairs already open, so a configuration whose identifiers reference
     each other in a cycle fails with a message rather than a `RecursionError`.
+
+    Raises:
+        SourcePeerUnresolvedError: the peer is in none of the candidate kinds' buckets and
+            `destination_only_identity` does not admit it (the **absent** arm).
     """
-    peer_kind, peer = _probe_peer_kind(
+    probed = _probe_peer_kind(
         store=store,
         candidates=candidates,
         unique_id=unique_id,
         owning_kind=owning_kind,
         field=field,
     )
+    if probed is None:
+        if len(candidates) == 1:
+            literal = destination_only_identity(
+                config=config,
+                peer_kind=candidates[0],
+                unique_id=unique_id,
+                owning_kind=owning_kind,
+                field=field,
+                peers=peers,
+            )
+            if literal is not None:
+                return literal
+        tried = ", ".join(candidates) if candidates else "<none declared by the schema mapping>"
+        msg = (
+            f"The peer {unique_id!r} referenced by field {field!r} of kind {owning_kind!r} is not "
+            f"present in the loaded store under any candidate peer kind. Candidate peer kinds "
+            f"tried: {tried}."
+        )
+        raise SourcePeerUnresolvedError.absent(msg)
+    peer_kind, peer = probed
     if (peer_kind, unique_id) in chain:
         opened = " -> ".join(f"{kind}:{uid!r}" for kind, uid in (*chain, (peer_kind, unique_id)))
         msg = (
@@ -218,6 +246,7 @@ def _peer_pair(
         config=config,
         owning_kind=peer_kind,
         chain=(*chain, (peer_kind, unique_id)),
+        peers=peers,
     )
     return {
         "peer_kind": peer_kind,
@@ -234,6 +263,7 @@ def _resolve_one_reference(
     field: str,
     candidates: tuple[str, ...],
     chain: tuple[tuple[str, Any], ...],
+    peers: DestinationOnlyPeers | None,
 ) -> _ResolvedReference:
     """Resolve one reference-bearing field's value into a peer kind and peer identities.
 
@@ -257,6 +287,7 @@ def _resolve_one_reference(
             candidates=candidates,
             unique_id=unique_id,
             chain=chain,
+            peers=peers,
         )
         for unique_id in unique_ids
     ]
@@ -298,12 +329,18 @@ def _resolve_references(
     config: SyncConfig | None,
     owning_kind: str,
     chain: tuple[tuple[str, Any], ...] = (),
+    peers: DestinationOnlyPeers | None = None,
 ) -> dict[str, _ResolvedReference]:
     """Resolve every reference-bearing field of `values` that carries a value.
 
     A field whose value is `None` is **absent** and resolves to nothing: it enters neither
     the payload nor the relationship set. An empty list is a different thing — a
     deliberately empty peer set — and is resolved (FR-028.2).
+
+    `peers` defaults to unavailable, which refuses every peer the store does not hold. A
+    derived delete leaves it there deliberately: its peers are destination-only by
+    construction and probed against the destination store, so the rule has nothing to add
+    and enabling it would only widen what a delete admits (AD049).
     """
     resolved: dict[str, _ResolvedReference] = {}
     for field in sorted(candidates):
@@ -320,6 +357,7 @@ def _resolve_references(
             field=field,
             candidates=candidates[field],
             chain=chain,
+            peers=peers,
         )
     return resolved
 
@@ -556,6 +594,9 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
     store = source_adapter.store
     operations: list[PlannedOperation] = []
     children = diff.children
+    # Read once per derivation: the destination key a destination-only peer is recorded
+    # against does not change mid-plan, and the warning is de-duplicated across the whole run.
+    peers = destination_only_peers(destination_adapter)
     # Read once per kind rather than per element: an update's id is looked up by unique id,
     # and the destination store is already fully in memory by the time derivation runs.
     destination_ids_by_kind: dict[str, dict[str, str | None]] = {}
@@ -581,6 +622,7 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
                 store=store,
                 config=config,
                 owning_kind=kind,
+                peers=peers,
             )
             identity = _identity_from_keys(keys=keys, kind=kind, resolved=resolved)
             _warn_dropped_cardinality_one_clear(
