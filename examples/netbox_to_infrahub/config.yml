@@ -479,9 +479,22 @@ schema_mapping:
         mapping: provider
         reference: OrganizationProvider
 
-  # IPAM (VRF, Route Targets, VLAN Groups, VLANs, Prefixes, IPs)
+  # IPAM (Namespaces, VRF, Route Targets, VLAN Groups, VLANs, Prefixes, IPs)
   - name: IpamRouteTarget
     mapping: ipam.route-targets
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+      - name: description
+        mapping: description
+
+  # Infrahub identifies a prefix or an address by namespace + value, so every
+  # NetBox VRF is also loaded as an IP namespace. Without it, two prefixes with
+  # the same address in different VRFs collapse into one Infrahub object.
+  # IpamNamespace is part of Infrahub's core schema — nothing to add to yours.
+  - name: IpamNamespace
+    mapping: ipam.vrfs
     identifiers: ["name"]
     fields:
       - name: name
@@ -553,7 +566,7 @@ schema_mapping:
 
   - name: IpamPrefix
     mapping: ipam.prefixes
-    identifiers: ["prefix", "vrf"]
+    identifiers: ["prefix", "ip_namespace"]
     fields:
       - name: prefix
         mapping: prefix
@@ -566,6 +579,9 @@ schema_mapping:
       # NOTE: schema changes are required to support role sync (see related note)
       # - name: role
       #   mapping: role.slug
+      - name: ip_namespace
+        mapping: namespace_name
+        reference: IpamNamespace
       - name: vrf
         mapping: vrf
         reference: IpamVRF
@@ -583,10 +599,22 @@ schema_mapping:
         expression: "{{ 'active' if status.value == 'container' else status.value }}"
       - field: resolved_member_type
         expression: "{{ 'prefix' if status.value == 'container' else 'address' }}"
+      # Infrahub identifies a prefix by namespace + prefix. A NetBox object in a
+      # VRF goes to the namespace named after that VRF; one with no VRF goes to
+      # Infrahub's built-in `default` namespace, which is where Infrahub puts an
+      # object written without a namespace anyway.
+      # `vrf is defined` keeps StrictUndefined from failing on a payload that
+      # omits the key entirely. `%r` keeps the namespace a string: transforms
+      # render through Jinja's NativeEnvironment, which evaluates the rendered
+      # text as a Python literal, so a VRF named `123` or `None` would otherwise
+      # reach Infrahub as a number or a null rather than as that name.
+      - &netbox_ip_namespace_transform
+        field: namespace_name
+        expression: '{{ "%r" % (vrf.name if vrf is defined and vrf else "default") }}'
 
   - name: IpamIPAddress
     mapping: ipam.ip-addresses
-    identifiers: ["address", "vrf"]
+    identifiers: ["address", "ip_namespace"]
     fields:
       - name: address
         mapping: address
@@ -595,6 +623,9 @@ schema_mapping:
       - name: status
         mapping: status.value
         # NOTE: Netbox also has dhcp/slaac statuses with no schema equivalent.
+      - name: ip_namespace
+        mapping: namespace_name
+        reference: IpamNamespace
       - name: vrf
         mapping: vrf
         reference: IpamVRF
@@ -604,6 +635,8 @@ schema_mapping:
       # NOTE: schema changes are required to support role sync (see related note)
       # - name: role
       #   mapping: role.value
+    transforms:
+      - *netbox_ip_namespace_transform
 
   # IPAM — Aggregates / RIRs (new in schema, no prior mapping existed)
   - name: OrganizationRIR
