@@ -93,13 +93,19 @@ IDENTITY_REWRITING = ("uv version", "poetry version", "hatch version", "git tag 
 # Reading the tags back is not creating one.
 TAG_READ = re.compile(r"git tag\s+(?:-l\b|--list\b)")
 
-# `trigger-push-stable.yml` runs both, and the case below leaves it alone because
-# its `on` selects `stable` and `main` and nothing else: it is the 2.x line's
-# release automation, and the version it types is the one that line cuts. What
-# keeps it out is that branch filter rather than its name, so adding the V3 branch
-# to its triggers puts it back in scope and fails, instead of quietly retyping
-# this line's version and tagging a release it never qualified.
+# `trigger-push-stable.yml` runs both, and the case below leaves it alone because it
+# refuses every ref but the release branch before it types anything: it is the 2.x
+# line's release automation, and the version it types is the one that line cuts. It
+# is dispatched rather than pushed, and a dispatch carries no branch filter to read,
+# so the guard is a step instead. What keeps the workflow out of scope is therefore
+# that step rather than its name, and deleting it puts the workflow back in scope and
+# fails, instead of quietly retyping this line's version and tagging a release it
+# never qualified.
 TWO_LINE_AUTOMATION = "trigger-push-stable.yml"
+# The environment name that step reads the permitted ref out of, and the shell
+# variable GitHub puts the dispatched ref in.
+RELEASE_BRANCH_ENV = "RELEASE_BRANCH"
+DISPATCHED_REF = "GITHUB_REF_NAME"
 
 # The events a workflow answers without anyone choosing what it acts on. Only a
 # dispatch, and a call from one, carry a person's decision about a candidate.
@@ -688,26 +694,62 @@ def v3_reachable() -> set[Path]:
     return reachable(_selects_v3)
 
 
+def _refuses_a_foreign_ref(step: dict) -> bool:
+    """Report whether one step stops the run unless the dispatched ref is the release branch."""
+    run = str(step.get("run", ""))
+    env = step.get("env") or {}
+    return RELEASE_BRANCH_ENV in env and DISPATCHED_REF in run and "exit 1" in run
+
+
+def _guards_its_ref_before_typing_anything(path: Path) -> bool:
+    """Report whether a workflow refuses a foreign ref before it can retype an identity.
+
+    A dispatch runs against whichever ref the dispatcher picked, so a workflow that
+    prepares a release has to check that ref itself. Ordering is the whole of it: a
+    guard that runs after the version is typed has already let the run type it.
+    """
+    for definition in load(path).get("jobs", {}).items():
+        steps = definition[1].get("steps") or []
+        guarded = next((index for index, step in enumerate(steps) if _refuses_a_foreign_ref(step)), None)
+        typed = next((index for index, step in enumerate(steps) if _retypes_identity(step)), None)
+        if typed is not None and (guarded is None or guarded > typed):
+            return False
+    return True
+
+
 def test_nothing_the_v3_line_reaches_retypes_its_version_or_creates_its_tag() -> None:
     """One recorded identity survives only while nothing else can type a second one.
 
     A version retyped mid-run, or a tag computed from something other than the
     candidate, produces a release naming bytes nobody qualified under that name.
+
+    A dispatched workflow answers every ref, so the release automation cannot be
+    excluded by a branch filter the way a pushed one was. It is excluded by proving
+    it refuses a foreign ref first; the case below holds that proof to its subject.
     """
-    offending = sorted(step for path in v3_reachable() for step in identity_rewriting_steps(path))
+    offending = sorted(
+        step
+        for path in v3_reachable()
+        if not _guards_its_ref_before_typing_anything(path)
+        for step in identity_rewriting_steps(path)
+    )
 
     assert offending == []
 
 
 def test_the_two_line_release_automation_is_what_the_case_above_would_otherwise_name() -> None:
-    """Without this the case above would pass on a repository that types no version anywhere."""
+    """Without this the case above would pass on a repository that types no version anywhere.
+
+    It also pins what earns the exemption. The release automation is the only
+    workflow allowed to type an identity, and only because it refuses every ref but
+    its release branch before doing so.
+    """
     excluded = WORKFLOWS / TWO_LINE_AUTOMATION
-    drafter = {called for job in load(excluded)["jobs"].values() if (called := called_workflow(job))}
+    exempted = {path for path in v3_reachable() if identity_rewriting_steps(path)}
 
     assert identity_rewriting_steps(excluded)
-    assert [step for path in drafter for step in identity_rewriting_steps(path)]
-    assert excluded not in v3_reachable()
-    assert not (drafter & v3_reachable())
+    assert _guards_its_ref_before_typing_anything(excluded)
+    assert exempted == {excluded}, f"{sorted(path.name for path in exempted)} type an identity, not just the one"
 
 
 def job_of(workflow: Path, name: str) -> dict:
