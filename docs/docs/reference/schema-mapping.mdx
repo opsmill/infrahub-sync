@@ -128,7 +128,7 @@ identifiers: ["address", "ip_namespace"]
 
 All listed fields must be present and unique together. Each identifier field must also be mapped in the `fields` list.
 
-Pick the identifiers your destination actually uses, not the ones the source happens to have. Infrahub keys an address by address plus namespace, while NetBox groups addresses by VRF without requiring them to be unique inside one, so the shipped `examples/netbox_to_infrahub/` mapping turns each VRF name into an IP namespace and identifies on that. Identify on the VRF instead and two addresses that Infrahub would keep apart end up sharing one object.
+Pick the identifiers your destination actually uses, not the ones the source happens to have. Infrahub keys an address by address plus namespace, while NetBox groups addresses by VRF without requiring them to be unique inside one, so the shipped `examples/netbox_to_infrahub/` mapping turns each VRF name into an IP namespace and identifies on that. Using the VRF as a sync identifier can keep source records distinct even when they map to the same destination object. For example, an address in a VRF named `default` and the same address without a VRF both map to Infrahub's `default` namespace.
 
 ## Filters
 

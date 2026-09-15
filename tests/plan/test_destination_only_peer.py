@@ -166,7 +166,7 @@ def derive(
 
 
 def test_a_destination_only_peer_is_recorded_as_a_literal_identity(caplog: pytest.LogCaptureFixture) -> None:
-    """The peer the source cannot hold is named by the one field its destination key uses."""
+    """The peer absent from the loaded source store is named by the one field its key uses."""
     with caplog.at_level(logging.DEBUG, logger=RULE_LOGGER):
         operations = derive(
             elements=[prefix_element(BUILT_IN_NAMESPACE)],
