@@ -15,7 +15,17 @@ strict response is a boundary model of a future server/SDK contract, not a claim
 about what 1.23.2 returns today.
 
 The fake node here exposes exactly the requested fields: unrequested attributes
-are absent from the node and from its schema's ``attribute_names``.
+are absent from the node and from its schema's ``attribute_names``. This adapter
+converts through ``self.schema[kind]`` rather than through the node's own schema,
+so the client publishes the kinds it answered with and the harness reads that same
+mapping.
+
+The main-line suite also carried a guard asserting that an attributes-only peer
+request leaves the peer unresolvable. It is not reproduced here: this adapter's
+bounded peer hydration re-fetches a peer's identifiers by uuid, so the failure that
+guard describes does not occur regardless of the request shape, and the resulting
+``PeerIdentifierError`` contract is already covered by
+``tests/adapters/test_infrahub_peer_identifier.py``.
 """
 
 from __future__ import annotations
@@ -23,7 +33,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
-import pytest
 from diffsync import Adapter
 
 from infrahub_sync import (
@@ -32,7 +41,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
-from infrahub_sync.adapters.infrahub import InfrahubAdapter, InfrahubModel, PeerIdentifierError
+from infrahub_sync.adapters.infrahub import InfrahubAdapter, InfrahubModel
 
 # ---------------------------------------------------------------------------
 # DiffSync models. Identifiers are deliberately absent from the attribute lists,
@@ -197,6 +206,19 @@ class _Row:
     relationships: dict[str, str] = field(default_factory=dict)
 
 
+def _node_schema(kind: str, rows: list[_Row], rel_schemas: list[FakeRelSchema]) -> FakeNodeSchema:
+    """The schema entry for ``kind``, built from the fields its rows carry."""
+
+    names = list(dict.fromkeys(name for row in rows for name in row.attributes))
+    return FakeNodeSchema(
+        kind=kind,
+        attribute_names=names,
+        attributes=[FakeAttrSchema(name=name) for name in names],
+        relationships=rel_schemas,
+        relationship_names=[rel.name for rel in rel_schemas],
+    )
+
+
 class StrictClient:
     """Client stand-in whose ``all`` honours ``include`` strictly."""
 
@@ -205,6 +227,14 @@ class StrictClient:
         self._rows = rows
         self._rel_schemas = rel_schemas or {}
         self.all_calls: list[dict[str, Any]] = []
+        # The adapter converts a node through `self.schema[kind]`, not through the
+        # node's own schema, and `list_existing_ids` refuses a kind missing from it.
+        # So the same fake node schemas the rows produce are published here, and the
+        # harness reads this mapping as its schema.
+        self.schemas: dict[str, FakeNodeSchema] = {
+            kind: _node_schema(kind, rows_for_kind, self._rel_schemas.get(kind, []))
+            for kind, rows_for_kind in rows.items()
+        }
 
     def all(self, *, kind: str, include: list[str] | None = None, populate_store: bool = True) -> list[StrictNode]:
         self.all_calls.append({"kind": kind, "include": include, "populate_store": populate_store})
@@ -240,15 +270,17 @@ class StrictClient:
 class _Harness(InfrahubAdapter):
     """InfrahubAdapter with a real DiffSync store and no network setup."""
 
-    def __init__(self, *, config: SyncConfig, client: StrictClient, schema: dict[str, FakeNodeSchema]) -> None:
+    def __init__(self, *, config: SyncConfig, client: StrictClient) -> None:
         Adapter.__init__(self)
         self.target = "test"
         self.config = config
         self.client = client
-        self.schema = schema  # ty: ignore[invalid-assignment]
+        self.schema = client.schemas  # ty: ignore[invalid-assignment]
         self.source_node = None
         self.owner_node = None
         self.continue_on_error = False
+        # Normally set by `InfrahubAdapter.__init__`, which this harness bypasses.
+        self._peer_unique_ids = {}
 
 
 def _config(entries: dict[str, list[str]]) -> SyncConfig:
@@ -300,7 +332,6 @@ def test_model_loader_requests_identifiers_alongside_attributes() -> None:
     adapter = _Harness(
         config=_config({"LocationSite": ["name", "description"]}),
         client=client,
-        schema={"LocationSite": FakeNodeSchema(kind="LocationSite")},
     )
 
     adapter.model_loader(model_name="LocationSite", model=LocationSite)
@@ -314,7 +345,6 @@ def test_model_loader_keeps_identifier_and_local_id_under_a_strict_response() ->
     adapter = _Harness(
         config=_config({"LocationSite": ["name", "description"]}),
         client=client,
-        schema={"LocationSite": FakeNodeSchema(kind="LocationSite")},
     )
 
     adapter.model_loader(model_name="LocationSite", model=LocationSite)
@@ -333,7 +363,6 @@ def test_model_loader_keeps_identifier_order_for_a_multi_identifier_model() -> N
     adapter = _Harness(
         config=_config({"InfraCircuit": ["name", "site", "description"]}),
         client=client,
-        schema={"InfraCircuit": FakeNodeSchema(kind="InfraCircuit")},
     )
 
     adapter.model_loader(model_name="InfraCircuit", model=InfraCircuit)
@@ -347,7 +376,6 @@ def test_model_loader_requests_identifiers_for_an_identifier_only_model() -> Non
     adapter = _Harness(
         config=_config({"InfraTag": ["name"]}),
         client=client,
-        schema={"InfraTag": FakeNodeSchema(kind="InfraTag")},
     )
 
     adapter.model_loader(model_name="InfraTag", model=InfraTag)
@@ -378,10 +406,6 @@ def test_model_loader_resolves_a_relationship_peer_identifier_under_a_strict_res
     adapter = _Harness(
         config=_config({"LocationSite": ["name", "description"], "InfraDevice": ["name", "description", "site"]}),
         client=client,
-        schema={
-            "LocationSite": FakeNodeSchema(kind="LocationSite"),
-            "InfraDevice": FakeNodeSchema(kind="InfraDevice"),
-        },
     )
     adapter.LocationSite = LocationSite  # ty: ignore[unresolved-attribute]
 
@@ -389,40 +413,6 @@ def test_model_loader_resolves_a_relationship_peer_identifier_under_a_strict_res
     adapter.model_loader(model_name="InfraDevice", model=InfraDevice)
 
     assert _loaded(adapter, InfraDevice, "leaf1").site == "dc-east"
-
-
-def test_model_loader_reports_a_peer_whose_identifier_was_never_requested() -> None:
-    """Guard on the failure this request shape removes.
-
-    The peer is pre-loaded with the attributes-only request, so its identifier is
-    missing from the stored node and peer resolution has nothing to key on.
-    """
-
-    client = StrictClient(
-        rows={
-            "LocationSite": [_Row("site-1", {"name": "dc-east", "description": "east"})],
-            "InfraDevice": [
-                _Row("dev-1", {"name": "leaf1", "description": "leaf"}, relationships={"site": "site-1"}),
-            ],
-        },
-        rel_schemas={"InfraDevice": [FakeRelSchema(name="site", peer="LocationSite")]},
-    )
-    adapter = _Harness(
-        config=_config({"LocationSite": ["name", "description"], "InfraDevice": ["name", "description", "site"]}),
-        client=client,
-        schema={
-            "LocationSite": FakeNodeSchema(kind="LocationSite"),
-            "InfraDevice": FakeNodeSchema(kind="InfraDevice"),
-        },
-    )
-    adapter.LocationSite = LocationSite  # ty: ignore[unresolved-attribute]
-
-    client.all(kind="LocationSite", include=list(LocationSite._attributes), populate_store=True)
-
-    with pytest.raises(PeerIdentifierError) as excinfo:
-        adapter.model_loader(model_name="InfraDevice", model=InfraDevice)
-
-    assert excinfo.value.missing_keys == ("name",)
 
 
 # ---------------------------------------------------------------------------
@@ -444,7 +434,6 @@ def test_list_existing_ids_requests_every_field_its_converter_reads() -> None:
     adapter = _Harness(
         config=_config({"InfraCircuit": ["name", "site", "description"]}),
         client=client,
-        schema={"InfraCircuit": FakeNodeSchema(kind="InfraCircuit")},
     )
     adapter.InfraCircuit = InfraCircuit  # ty: ignore[unresolved-attribute]
 
