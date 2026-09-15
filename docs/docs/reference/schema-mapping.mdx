@@ -109,13 +109,15 @@ identifiers: ["name"]
 
 ### Composite identifiers
 
-Some models need multiple fields to be uniquely identified. For example, an IP address is unique by address plus VRF:
+Some models need multiple fields to be uniquely identified. For example, Infrahub identifies an IP address by the address plus the IP namespace it belongs to:
 
 ```yaml
-identifiers: ["address", "vrf"]
+identifiers: ["address", "ip_namespace"]
 ```
 
 All listed fields must be present and unique together. Each identifier field must also be mapped in the `fields` list.
+
+Pick the identifiers your destination actually uses, not the ones the source happens to have. Infrahub keys an address by address plus namespace, while NetBox groups addresses by VRF without requiring them to be unique inside one, so the shipped `examples/netbox_to_infrahub/` mapping turns each VRF name into an IP namespace and identifies on that. Using the VRF as a sync identifier can keep source records distinct even when they map to the same destination object. For example, an address in a VRF named `default` and the same address without a VRF both map to Infrahub's `default` namespace.
 
 ## Filters
 
@@ -259,15 +261,22 @@ The patterns below cover the most common NetBox → Infrahub mappings. Adapt the
       mapping: type.value
 ```
 
-### IP addresses with VRF reference
+### IP addresses with namespace and VRF references
+
+The namespace is what identifies the address; the VRF is kept as an ordinary relationship. `namespace_name` is produced by a transform that reads the source VRF name and falls back to Infrahub's built-in `default` namespace when there is no VRF — see the shipped `examples/netbox_to_infrahub/config.yml` for the exact expression.
+
+Because the namespace is keyed by that name, two VRFs sharing a name share one namespace, and a VRF named `default` shares the built-in namespace with every object that has no VRF. Adding this mapping to an Infrahub that already holds imported data does not move the objects a previous sync created; see [Migrate from NetBox or Nautobot](../migrating-from-netbox-or-nautobot.mdx) for how to handle that.
 
 ```yaml
 - name: IPAddress
   mapping: ipam.ip-address
-  identifiers: ["address", "vrf"]
+  identifiers: ["address", "ip_namespace"]
   fields:
     - name: address
       mapping: address
+    - name: ip_namespace
+      mapping: namespace_name
+      reference: IPNamespace
     - name: vrf
       mapping: vrf.name
       reference: VRF

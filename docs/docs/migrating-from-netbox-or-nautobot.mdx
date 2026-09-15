@@ -42,13 +42,24 @@ The Infrahub Sync repository includes working examples at `examples/netbox_to_in
 Models must be synced in dependency order: anything referenced by another model must be synced first. A typical order:
 
 1. Independent objects: tags, locations, manufacturers, device roles, platforms
-2. Rack and site data (depends on locations)
-3. Devices (depends on locations, roles, manufacturers, platforms)
-4. Interfaces (depends on devices)
-5. IP addresses and prefixes (depends on interfaces, VRFs)
-6. VLANs and VLAN groups
+2. IP namespaces (nothing else has to exist first)
+3. Rack and site data (depends on locations)
+4. Devices (depends on locations, roles, manufacturers, platforms)
+5. Interfaces (depends on devices)
+6. IP addresses and prefixes (depends on IP namespaces, interfaces, VRFs)
+7. VLANs and VLAN groups
 
 The exact order depends on your schema. See [Sync instance configuration](./reference/config.mdx) for the syntax of the `order` key.
+
+IP namespaces are on that list because Infrahub identifies a prefix by namespace plus prefix, and an IP address by namespace plus address. Neither NetBox nor Nautobot's NetBox-style model has a namespace object, so the NetBox example creates one Infrahub IP namespace per VRF name and sends objects with no VRF to Infrahub's built-in `default` namespace. Do the same in your own mapping if your source can hold the same prefix in more than one VRF — otherwise those prefixes all collapse into one Infrahub object and overwrite each other.
+
+The namespace is keyed by that name, so the separation holds only while the names are distinct. Two VRFs sharing a name resolve to a single namespace, and a VRF named `default` shares the built-in namespace with every object that has no VRF. Check your source for repeated VRF names before you depend on the split.
+
+### Adopt namespaces in an Infrahub that already holds imported data
+
+Changing a mapping or its `identifiers` changes what later runs create and match. It does not move objects an earlier sync already wrote. Only the objects whose resolved namespace changes take on a new identity: a prefix or address that was imported into `default` and still resolves to `default` goes on matching the object already there, while one that now resolves to a VRF-named namespace is created as a new object beside the old one.
+
+The default `SKIP_UNMATCHED_DST` flag leaves those older records in place. Run `infrahub-sync diff` and sync into a branch first, then audit the old objects and the relationships pointing at them before retiring or re-pointing any of them. Infrahub Sync does not migrate them for you, and wiping the destination is not a substitute: it discards Infrahub-only data the sync never owned.
 
 ### Map fields between the source system and Infrahub
 
