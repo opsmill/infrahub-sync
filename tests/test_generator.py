@@ -33,6 +33,7 @@ from pydantic import ValidationError
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
 from infrahub_sync.generator import (
+    ATTRIBUTE_KIND_MAP,
     get_attribute_type_annotation,
     get_relationship_type_annotation,
     render_template,
@@ -144,6 +145,28 @@ def test_get_attribute_type_annotation_against_real_sdk_read_side_schema_classes
 
     boolean_attr = AttributeSchemaAPI(id="4", name="enabled", kind=AttributeKind.BOOLEAN, optional=False)
     assert get_attribute_type_annotation(boolean_attr) == "bool"
+
+
+def test_every_sdk_attribute_kind_renders_an_annotation() -> None:
+    """Every kind the SDK can report must produce a usable annotation.
+
+    Kinds the map does not name fall back to ``str``, so the map only needs to hold
+    the kinds whose annotation differs from that default.
+    """
+    for kind in AttributeKind:
+        attr = AttributeSchemaAPI(id=kind.value, name="field", kind=kind, optional=False)
+        assert get_attribute_type_annotation(attr)
+
+
+def test_attribute_kind_map_names_only_kinds_the_sdk_reports() -> None:
+    """`Text` and `Number` are the real kinds; `String` and `Integer` never existed."""
+    sdk_kinds = {kind.value for kind in AttributeKind}
+
+    assert set(ATTRIBUTE_KIND_MAP) <= sdk_kinds
+    assert ATTRIBUTE_KIND_MAP["Text"] == "str"
+    assert ATTRIBUTE_KIND_MAP["Number"] == "int"
+    assert "String" not in sdk_kinds
+    assert "Integer" not in sdk_kinds
 
 
 def test_get_relationship_type_annotation_against_real_sdk_read_side_schema_classes() -> None:
