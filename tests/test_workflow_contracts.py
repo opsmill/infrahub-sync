@@ -1404,7 +1404,7 @@ def test_the_image_filter_routes_the_document_that_declares_it() -> None:
 SDK_UPDATE_WORKFLOW = WORKFLOWS / "update-infrahub-sdk.yml"
 SDK_UPDATE_JOB = "update-dependencies"
 SDK_LOCK_COMMAND = 'uv lock --upgrade-package "infrahub-sdk==${INFRAHUB_SDK_VERSION}"'
-MATRIX_BRANCH = "${{ matrix.branch-name }}"
+SDK_MATRIX_BRANCH = "${{ matrix.branch-name }}"
 
 
 def sdk_update_steps() -> list[dict]:
@@ -1436,7 +1436,7 @@ def test_the_sdk_update_checkout_takes_the_matrix_branch() -> None:
         "with"
     ]
 
-    assert declared["ref"] == MATRIX_BRANCH, f"the checkout takes {declared.get('ref')!r}"
+    assert declared["ref"] == SDK_MATRIX_BRANCH, f"the checkout takes {declared.get('ref')!r}"
     assert declared[PERSISTED_CREDENTIALS] is False
 
 
@@ -1454,5 +1454,5 @@ def test_the_sdk_update_pull_request_targets_the_matrix_branch() -> None:
     """The pull request has to land on the branch the run checked out and locked."""
     create_pr = _one_step("open the pull request", lambda step: "gh pr create" in str(step.get("run", "")))
 
-    assert create_pr["env"]["MATRIX_BRANCH"] == MATRIX_BRANCH
+    assert create_pr["env"]["MATRIX_BRANCH"] == SDK_MATRIX_BRANCH
     assert '--base "${MATRIX_BRANCH}"' in create_pr["run"]
