@@ -15,6 +15,9 @@ strings, is left to GitHub.
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess  # noqa: S404 — running the guard's own script is how its refusal is measured
+import tempfile
 from collections.abc import Callable
 from fnmatch import fnmatch
 from pathlib import Path
@@ -93,13 +96,22 @@ IDENTITY_REWRITING = ("uv version", "poetry version", "hatch version", "git tag 
 # Reading the tags back is not creating one.
 TAG_READ = re.compile(r"git tag\s+(?:-l\b|--list\b)")
 
-# `trigger-push-stable.yml` runs both, and the case below leaves it alone because
-# its `on` selects `stable` and `main` and nothing else: it is the 2.x line's
-# release automation, and the version it types is the one that line cuts. What
-# keeps it out is that branch filter rather than its name, so adding the V3 branch
-# to its triggers puts it back in scope and fails, instead of quietly retyping
-# this line's version and tagging a release it never qualified.
+# `trigger-push-stable.yml` runs both, and the case below leaves it alone because it
+# refuses every ref but the release branch before it types anything: it is the 2.x
+# line's release automation, and the version it types is the one that line cuts. It
+# is dispatched rather than pushed, and a dispatch carries no branch filter to read,
+# so the guard is a step instead. What keeps the workflow out of scope is therefore
+# that step rather than its name, and deleting it puts the workflow back in scope and
+# fails, instead of quietly retyping this line's version and tagging a release it
+# never qualified.
 TWO_LINE_AUTOMATION = "trigger-push-stable.yml"
+# The environment name that step reads the permitted ref out of, and the shell
+# variable GitHub puts the dispatched ref in.
+RELEASE_BRANCH_ENV = "RELEASE_BRANCH"
+DISPATCHED_REF = "GITHUB_REF_NAME"
+# The only ref that step may admit, and a bound on running its few lines of shell.
+RELEASE_BRANCH = "main"
+GUARD_TIMEOUT_SECONDS = 30
 
 # The events a workflow answers without anyone choosing what it acts on. Only a
 # dispatch, and a call from one, carry a person's decision about a candidate.
@@ -688,26 +700,102 @@ def v3_reachable() -> set[Path]:
     return reachable(_selects_v3)
 
 
+def _names_a_ref_guard(step: dict) -> bool:
+    """Report whether one step is shaped like the ref guard, before asking what it does."""
+    run = str(step.get("run", ""))
+    env = step.get("env") or {}
+    return RELEASE_BRANCH_ENV in env and DISPATCHED_REF in run
+
+
+def _guard_verdicts(step: dict) -> tuple[int, int]:
+    """Run the guard's own script against the release ref and a foreign one.
+
+    Reading the script cannot tell a refusal from a permission: inverting the one
+    comparison in it leaves every word the reader matched on in place. So the script
+    is executed, in a scratch directory with nothing in its environment but the two
+    variables it reads, and judged by what it exits with.
+    """
+    script = str(step.get("run", ""))
+    release_branch = str((step.get("env") or {})[RELEASE_BRANCH_ENV])
+    bash = shutil.which("bash")
+    assert bash, "a POSIX shell is needed to run the guard the way the runner does"
+
+    def exit_code(ref: str) -> int:
+        with tempfile.TemporaryDirectory() as scratch:
+            return subprocess.run(  # noqa: S603
+                [bash, "-c", script],
+                env={RELEASE_BRANCH_ENV: release_branch, DISPATCHED_REF: ref},
+                cwd=scratch,
+                capture_output=True,
+                check=False,
+                timeout=GUARD_TIMEOUT_SECONDS,
+            ).returncode
+
+    return exit_code(release_branch), exit_code(V3_BRANCH)
+
+
+def _refuses_a_foreign_ref(step: dict) -> bool:
+    """Report whether one step really stops a run dispatched against a foreign ref."""
+    if not _names_a_ref_guard(step):
+        return False
+    if str((step.get("env") or {})[RELEASE_BRANCH_ENV]) != RELEASE_BRANCH:
+        return False
+    admitted, refused = _guard_verdicts(step)
+    return admitted == 0 and refused != 0
+
+
+def _guards_its_ref_before_typing_anything(path: Path) -> bool:
+    """Report whether a workflow refuses a foreign ref before it can retype an identity.
+
+    A dispatch runs against whichever ref the dispatcher picked, so a workflow that
+    prepares a release has to check that ref itself. Ordering is half of it: a guard
+    that runs after the version is typed has already let the run type it. What the
+    guard does when it runs is the other half, and is measured rather than read.
+    """
+    for definition in load(path).get("jobs", {}).items():
+        steps = definition[1].get("steps") or []
+        typed = next((index for index, step in enumerate(steps) if _retypes_identity(step)), None)
+        if typed is None:
+            continue
+        named = next((index for index, step in enumerate(steps) if _names_a_ref_guard(step)), None)
+        if named is None or named > typed or not _refuses_a_foreign_ref(steps[named]):
+            return False
+    return True
+
+
 def test_nothing_the_v3_line_reaches_retypes_its_version_or_creates_its_tag() -> None:
     """One recorded identity survives only while nothing else can type a second one.
 
     A version retyped mid-run, or a tag computed from something other than the
     candidate, produces a release naming bytes nobody qualified under that name.
+
+    A dispatched workflow answers every ref, so the release automation cannot be
+    excluded by a branch filter the way a pushed one was. It is excluded by proving
+    it refuses a foreign ref first; the case below holds that proof to its subject.
     """
-    offending = sorted(step for path in v3_reachable() for step in identity_rewriting_steps(path))
+    offending = sorted(
+        step
+        for path in v3_reachable()
+        if not _guards_its_ref_before_typing_anything(path)
+        for step in identity_rewriting_steps(path)
+    )
 
     assert offending == []
 
 
 def test_the_two_line_release_automation_is_what_the_case_above_would_otherwise_name() -> None:
-    """Without this the case above would pass on a repository that types no version anywhere."""
+    """Without this the case above would pass on a repository that types no version anywhere.
+
+    It also pins what earns the exemption. The release automation is the only
+    workflow allowed to type an identity, and only because it refuses every ref but
+    its release branch before doing so.
+    """
     excluded = WORKFLOWS / TWO_LINE_AUTOMATION
-    drafter = {called for job in load(excluded)["jobs"].values() if (called := called_workflow(job))}
+    exempted = {path for path in v3_reachable() if identity_rewriting_steps(path)}
 
     assert identity_rewriting_steps(excluded)
-    assert [step for path in drafter for step in identity_rewriting_steps(path)]
-    assert excluded not in v3_reachable()
-    assert not (drafter & v3_reachable())
+    assert _guards_its_ref_before_typing_anything(excluded)
+    assert exempted == {excluded}, f"{sorted(path.name for path in exempted)} type an identity, not just the one"
 
 
 def job_of(workflow: Path, name: str) -> dict:
@@ -1395,3 +1483,64 @@ def test_the_image_filter_routes_the_document_that_declares_it() -> None:
     assert routed(FILE_FILTERS, image_filter_patterns()), (
         f"{FILE_FILTERS.name} selects the image and clean-host jobs, and image_all does not name it"
     )
+
+
+# The SDK update workflow runs unattended: it checks a branch out, moves the locked
+# infrahub-sdk version and opens a pull request back to that same branch. All three
+# parts read `matrix.branch-name`, so they have to keep agreeing, and the update has
+# to stay lock-only or a bot rewrites the declared range in `pyproject.toml`.
+SDK_UPDATE_WORKFLOW = WORKFLOWS / "update-infrahub-sdk.yml"
+SDK_UPDATE_JOB = "update-dependencies"
+SDK_LOCK_COMMAND = 'uv lock --upgrade-package "infrahub-sdk==${INFRAHUB_SDK_VERSION}"'
+SDK_MATRIX_BRANCH = "${{ matrix.branch-name }}"
+
+
+def sdk_update_steps() -> list[dict]:
+    """The steps of the SDK update job."""
+    return job_of(SDK_UPDATE_WORKFLOW, SDK_UPDATE_JOB)["steps"]
+
+
+def _one_step(what: str, matches: Callable[[dict], bool]) -> dict:
+    """The single step of the SDK update job that does something, located by what it does.
+
+    Steps are found by the action they use or the command they run, not by their
+    display name, so renaming a step does not change what these cases assert.
+    """
+    found = [step for step in sdk_update_steps() if matches(step)]
+    assert len(found) == 1, f"{len(found)} steps of {SDK_UPDATE_JOB} {what}"
+    return found[0]
+
+
+def test_the_sdk_update_targets_main_only() -> None:
+    """A second branch in the matrix would open a bot pull request against a line nobody asked it to."""
+    matrix = job_of(SDK_UPDATE_WORKFLOW, SDK_UPDATE_JOB)["strategy"]["matrix"]
+
+    assert matrix["branch-name"] == ["main"]
+
+
+def test_the_sdk_update_checkout_takes_the_matrix_branch() -> None:
+    """Without an explicit ref the run updates whatever the dispatch defaulted to."""
+    declared = _one_step("check something out", lambda step: str(step.get("uses", "")).startswith(CHECKOUT_ACTION))[
+        "with"
+    ]
+
+    assert declared["ref"] == SDK_MATRIX_BRANCH, f"the checkout takes {declared.get('ref')!r}"
+    assert declared[PERSISTED_CREDENTIALS] is False
+
+
+def test_the_sdk_update_only_moves_the_lockfile() -> None:
+    """`uv add` pins the declared range; `uv lock` rewrites only `uv.lock`."""
+    lock_step = _one_step("lock the SDK version", lambda step: "uv lock" in str(step.get("run", "")))
+
+    assert SDK_LOCK_COMMAND in lock_step["run"]
+    assert not [step for step in sdk_update_steps() if "uv add" in str(step.get("run", ""))], (
+        f"a step of {SDK_UPDATE_JOB} still pins the declared range with `uv add`"
+    )
+
+
+def test_the_sdk_update_pull_request_targets_the_matrix_branch() -> None:
+    """The pull request has to land on the branch the run checked out and locked."""
+    create_pr = _one_step("open the pull request", lambda step: "gh pr create" in str(step.get("run", "")))
+
+    assert create_pr["env"]["MATRIX_BRANCH"] == SDK_MATRIX_BRANCH
+    assert '--base "${MATRIX_BRANCH}"' in create_pr["run"]

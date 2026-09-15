@@ -55,7 +55,7 @@ class DcimDevice(_GeneratedModelBase):
         "position",
         "primary_address",
         "rack_face",
-        "serial",
+        "serial_number",
         "status",
         "tags",
     )
@@ -63,7 +63,7 @@ class DcimDevice(_GeneratedModelBase):
     name: str
     position: int | None = None
     rack_face: str | None = "front"
-    serial: str | None = None
+    serial_number: str | None = None
     status: str | None = "active"
     device_type: str | None = None
     location: str
@@ -216,9 +216,9 @@ class IpamVRF(_GeneratedModelBase):
 class LocationRack(_GeneratedModelBase):
     _modelname = "LocationRack"
     _identifiers = ("name", "site")
-    _attributes = ("asset_tag", "facility_id", "height", "serial_number", "status", "tags")
+    _attributes = ("asset_tag", "facility", "height", "serial_number", "status", "tags")
     asset_tag: str | None = None
-    facility_id: str | None = None
+    facility: str | None = None
     height: int | None = 42
     name: str
     serial_number: str | None = None
@@ -261,8 +261,8 @@ class OrganizationProvider(_GeneratedModelBase):
 class OrganizationRIR(_GeneratedModelBase):
     _modelname = "OrganizationRIR"
     _identifiers = ("name",)
-    _attributes = ("description", "is_private", "tags")
+    _attributes = ("description", "private", "tags")
     description: str | None = None
-    is_private: bool | None = False
     name: str
+    private: bool | None = False
     tags: list[str] | None = []

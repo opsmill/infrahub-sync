@@ -33,6 +33,7 @@ from pydantic import ValidationError
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
 from infrahub_sync.generator import (
+    ATTRIBUTE_KIND_MAP,
     get_attribute_type_annotation,
     get_relationship_type_annotation,
     render_template,
@@ -144,6 +145,40 @@ def test_get_attribute_type_annotation_against_real_sdk_read_side_schema_classes
 
     boolean_attr = AttributeSchemaAPI(id="4", name="enabled", kind=AttributeKind.BOOLEAN, optional=False)
     assert get_attribute_type_annotation(boolean_attr) == "bool"
+
+
+# The SDK kinds whose generated annotation differs from the `str` fallback. Every
+# other kind renders as `str`, which is also what an unmapped kind falls back to.
+NON_DEFAULT_KIND_ANNOTATIONS = {
+    "Number": "int",
+    "Boolean": "bool",
+    "Checkbox": "bool",
+    "List": "list[Any]",
+}
+
+
+@pytest.mark.parametrize("kind", list(AttributeKind), ids=lambda kind: kind.value)
+def test_every_sdk_attribute_kind_renders_its_expected_annotation(kind: AttributeKind) -> None:
+    """Each kind the SDK can report renders the exact annotation it is owed.
+
+    Dropping `Number`, `Boolean`, `Checkbox` or `List` from ATTRIBUTE_KIND_MAP makes
+    that kind fall back to `str` and fails here. Dropping one of the map's `str`
+    entries changes nothing, because `str` is already the fallback.
+    """
+    attr = AttributeSchemaAPI(id=kind.value, name="field", kind=kind, optional=False)
+
+    assert get_attribute_type_annotation(attr) == NON_DEFAULT_KIND_ANNOTATIONS.get(kind.value, "str")
+
+
+def test_attribute_kind_map_names_only_kinds_the_sdk_reports() -> None:
+    """`Text` and `Number` are the real kinds; `String` and `Integer` never existed."""
+    sdk_kinds = {kind.value for kind in AttributeKind}
+
+    assert set(ATTRIBUTE_KIND_MAP) <= sdk_kinds
+    assert ATTRIBUTE_KIND_MAP["Text"] == "str"
+    assert ATTRIBUTE_KIND_MAP["Number"] == "int"
+    assert "String" not in sdk_kinds
+    assert "Integer" not in sdk_kinds
 
 
 def test_get_relationship_type_annotation_against_real_sdk_read_side_schema_classes() -> None:

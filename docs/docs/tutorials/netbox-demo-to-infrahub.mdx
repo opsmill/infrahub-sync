@@ -116,42 +116,17 @@ This is a production-grade Infrahub schema, not a copy of NetBox's data model. I
 
 :::
 
-This collection of schemas is maintained separately from Infrahub Sync. Download the
-exact source revision verified with this configuration so the destination kind names and
-relationships remain compatible:
+The schemas are published on the [Infrahub Marketplace](https://marketplace.infrahub.app/collections/infrahub/traditional-infrastructure-sot) as the `infrahub/traditional-infrastructure-sot` collection. Download it with `infrahubctl`, which the project template already installs:
 
 ```bash
-SCHEMA_LIBRARY_REF="893be13f465158fdf49ce4133a501c8355d53a32"
-DEST="schemas"
-BASE_URL="https://raw.githubusercontent.com/opsmill/schema-library/${SCHEMA_LIBRARY_REF}"
-
-FILES=(
-  "base/dcim.yml"
-  "base/location.yml"
-  "base/ipam.yml"
-  "base/organization.yml"
-  "extensions/aggregate/aggregate.yml"
-  "extensions/cable/cable.yml"
-  "extensions/circuit/circuit.yml"
-  "extensions/compute/compute.yml"
-  "extensions/cluster/cluster.yml"
-  "extensions/hosting_cluster/hosting_cluster.yml"
-  "extensions/lag/lag.yml"
-  "extensions/location_site/location_site.yml"
-  "extensions/vlan/vlan.yml"
-  "extensions/qinq/qinq.yml"
-  "extensions/rack/rack.yml"
-  "extensions/vrf/vrf.yml"
-)
-
-for f in "${FILES[@]}"; do
-  curl -sSL --create-dirs -o "${DEST}/${f}" "${BASE_URL}/${f}"
-done
+uv run infrahubctl marketplace get infrahub/traditional-infrastructure-sot --collection
 ```
 
-Do not substitute `models/examples/netbox/netbox.yml` from the Infrahub source
-repository. Despite its similar name, it defines a different model whose kinds do not
-match this sync configuration.
+The command writes the collection's 16 schema files into `schemas/traditional-infrastructure-sot/`. It reads from the marketplace only, so your Infrahub instance does not need to be reachable yet.
+
+:::success Verification
+Run `ls schemas/traditional-infrastructure-sot`. You should see files including `dcim.yml`, `location.yml`, `ipam.yml`, and `organization.yml`.
+:::
 
 Export the local Infrahub address and API token. Infrahub Sync will need them later to authenticate against your instance:
 
@@ -162,7 +137,7 @@ export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 
 This is the default admin token that the project's Docker Compose stack seeds automatically, and it matches the default already configured in `infrahubctl.toml`. Do not reuse it for an internet-facing or shared Infrahub instance.
 
-Then load the schema into Infrahub using the project's `load-schema` task:
+Then load the schema into Infrahub using the project's `load-schema` task, which walks the `schemas/` folder recursively and picks up everything you just downloaded:
 
 ```bash
 uv run invoke load-schema

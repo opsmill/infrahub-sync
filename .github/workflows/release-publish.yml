@@ -1,0 +1,136 @@
+---
+# yamllint disable rule:truthy
+name: Publish release
+
+# Fires when a release pull request lands on `main`: creates the tag and
+# publishes the GitHub Release whose body is the changelog section humans
+# wrote, rather than a generated list of pull-request titles.
+#
+# Publishing the Release is what triggers trigger-release.yml, which calls
+# workflow-publish.yml and ships the package to PyPI.
+#
+# Tags in this repository are bare (`2.0.1`), not `v`-prefixed — see
+# `gh api repos/opsmill/infrahub-sync/tags`. trigger-release.yml passes
+# `github.ref_name` straight through to workflow-publish.yml as the version,
+# so the tag name and the pyproject version have to be the same string.
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Tag and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Decide whether this push is a release
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # pyproject.toml is the only place the version lives — there is no
+          # second file to cross-check against, and `uv version` edits this
+          # one. Anchored at the start of the line so `python-version` in the
+          # tool tables cannot match, and stopped at the first hit so a future
+          # `[project]`-shaped table cannot introduce a second.
+          VERSION=$(awk -F'"' '/^version = / { print $2; exit }' pyproject.toml)
+
+          # An empty or malformed read would otherwise tag the empty string.
+          if ! printf '%s' "${VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
+            echo "::error::Could not read a usable version from pyproject.toml (got '${VERSION}')."
+            exit 1
+          fi
+
+          # Keyed on "is there a tag for the version on disk?" rather than on
+          # the commit message, so it behaves the same whether the release PR
+          # was squashed, rebased or merged.
+          if git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
+            echo "${VERSION} is already tagged — nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # An untagged version is not on its own an authorisation to release:
+          # anything able to write to `main` — a direct version edit, a
+          # hand-pushed bump, a bot commit — would otherwise cut a tag and a
+          # GitHub Release of its own accord. Publishing also requires this
+          # commit to be the merge of a release pull request, which is the
+          # reviewable artefact. Asked of the API rather than of the commit
+          # subject, so it holds whether that PR was squashed, rebased or
+          # merged.
+          RELEASE_PR=$(
+            gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls" \
+              --jq '[.[]
+                     | select(.merged_at != null)
+                     | select(.head.ref | startswith("release/"))
+                     | .number] | first // empty'
+          )
+
+          if [ -z "${RELEASE_PR}" ]; then
+            MSG="${GITHUB_SHA} is not the merge of a release/* pull request"
+            echo "${MSG} — nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "${VERSION} authorised by merged release PR #${RELEASE_PR} — publishing."
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract the changelog section
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          # Everything from the first release heading after the towncrier
+          # marker up to (but excluding) the next one — i.e. the section this
+          # release just added.
+          awk '
+            /<!-- towncrier release notes start -->/ { seen = 1; next }
+            seen && /^## / { if (started) exit; started = 1 }
+            started { print }
+          ' CHANGELOG.md > /tmp/release-body.md
+
+          if [ ! -s /tmp/release-body.md ]; then
+            echo "::error::Could not extract a changelog section for ${VERSION} from CHANGELOG.md."
+            exit 1
+          fi
+
+          if ! grep -q "${VERSION}" /tmp/release-body.md; then
+            MSG="The newest changelog section does not mention ${VERSION};"
+            MSG="${MSG} refusing to publish mismatched notes."
+            echo "::error::${MSG}"
+            exit 1
+          fi
+
+          echo "Release body:"
+          cat /tmp/release-body.md
+
+      - name: Create the tag and the GitHub Release
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "${VERSION}" \
+            --target "${GITHUB_SHA}" \
+            --title "${VERSION}" \
+            --notes-file /tmp/release-body.md

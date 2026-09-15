@@ -17,12 +17,10 @@ if TYPE_CHECKING:
 
 ATTRIBUTE_KIND_MAP = {
     "Text": "str",
-    "String": "str",
     "TextArea": "str",
     "DateTime": "str",
     "HashedPassword": "str",
     "Number": "int",
-    "Integer": "int",
     "Boolean": "bool",
     "Checkbox": "bool",
     "List": "list[Any]",

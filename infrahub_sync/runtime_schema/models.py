@@ -40,7 +40,6 @@ if TYPE_CHECKING:
 ATTRIBUTE_TYPE_DOMAIN: Mapping[str, Any] = MappingProxyType(
     {
         "Text": str,
-        "String": str,
         "TextArea": str,
         "DateTime": str,
         "HashedPassword": str,
@@ -49,7 +48,6 @@ ATTRIBUTE_TYPE_DOMAIN: Mapping[str, Any] = MappingProxyType(
         "IPHost": str,
         "IPNetwork": str,
         "Number": int,
-        "Integer": int,
         "Boolean": bool,
         "Checkbox": bool,
         "List": list[Any],

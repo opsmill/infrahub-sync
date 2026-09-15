@@ -31,7 +31,6 @@ from infrahub_sync import (
 )
 from infrahub_sync.adapters.infrahub import InfrahubModel
 from infrahub_sync.configuration import capabilities as capabilities_module
-from infrahub_sync.generator import ATTRIBUTE_KIND_MAP
 from infrahub_sync.runtime_schema import (
     ATTRIBUTE_TYPE_DOMAIN,
     UnsupportedSchemaSemanticsError,
@@ -253,7 +252,6 @@ def test_an_attribute_kind_outside_the_closed_table_refuses_before_extraction() 
 
 _KIND_DEFAULTS: dict[str, object] = {
     "Text": "a-default",
-    "String": "a-default",
     "TextArea": "line one\nline two",
     "DateTime": "2026-08-30T00:00:00+00:00",
     "HashedPassword": "hashed",
@@ -262,17 +260,10 @@ _KIND_DEFAULTS: dict[str, object] = {
     "IPHost": "10.0.0.1/32",
     "IPNetwork": "10.0.0.0/24",
     "Number": 7,
-    "Integer": 7,
     "Boolean": True,
     "Checkbox": False,
     "List": ["alpha", "beta"],
 }
-
-
-# `Integer` is in the generator's own kind map, so the closed table keeps it, but the
-# SDK's AttributeKind cannot express it — a live destination therefore never declares it,
-# and no generator oracle can be rendered for it. It is asserted directly instead.
-UNRENDERABLE_KINDS = frozenset({"Integer"})
 
 
 def _matrix_schema() -> tuple[SchemaMapping, SyncConfig]:
@@ -285,8 +276,6 @@ def _matrix_schema() -> tuple[SchemaMapping, SyncConfig]:
     attributes = [AttributeSchema(name="key", kind=AttributeKind.TEXT, unique=True)]
     field_names = ["key"]
     for kind, default in sorted(_KIND_DEFAULTS.items()):
-        if kind in UNRENDERABLE_KINDS:
-            continue
         slug = kind.lower()
         attributes.extend(
             [
@@ -339,10 +328,10 @@ def test_every_admitted_kind_and_state_matches_the_generator(tmp_path: Path) -> 
     assert described == _describe(generated["InfraDevice"])
     # The matrix really covers the declared domain and every state of it.
     assert set(_KIND_DEFAULTS) == set(ATTRIBUTE_TYPE_DOMAIN)
-    assert {kind for kind in ATTRIBUTE_TYPE_DOMAIN if kind not in AttributeKind.__members__.values()} == (
-        UNRENDERABLE_KINDS
-    )
-    for kind in set(ATTRIBUTE_TYPE_DOMAIN) - UNRENDERABLE_KINDS:
+    # Every admitted kind is one the SDK can express, so every one of them has a
+    # rendered oracle above and none is asserted on its own.
+    assert not {kind for kind in ATTRIBUTE_TYPE_DOMAIN if kind not in AttributeKind.__members__.values()}
+    for kind in ATTRIBUTE_TYPE_DOMAIN:
         slug = kind.lower()
         assert described["fields"][f"{slug}_required"]["default"] == "PydanticUndefined"
         assert described["fields"][f"{slug}_optional"]["default"] == "None"
@@ -414,55 +403,3 @@ def test_every_captured_mapped_attribute_kind_is_inside_the_closed_table(snapsho
 
     assert captured
     assert captured <= set(ATTRIBUTE_TYPE_DOMAIN)
-
-
-@pytest.mark.parametrize(
-    ("optional", "default_value", "annotation", "default"),
-    [
-        pytest.param(False, None, "<class 'int'>", "PydanticUndefined", id="required"),
-        pytest.param(True, None, "int | None", "None", id="optional"),
-        pytest.param(True, 7, "int | None", "7", id="optional-with-default"),
-    ],
-)
-def test_the_unrenderable_integer_kind_matches_the_generator_type_map(
-    *, optional: bool, default_value: object, annotation: str, default: str
-) -> None:
-    # The SDK's AttributeKind cannot express `Integer`, so there is no rendered oracle to
-    # compare against; the closed table's mapping is held to the generator's own map.
-    assert {"Integer"} == UNRENDERABLE_KINDS
-    assert ATTRIBUTE_KIND_MAP["Integer"] == "int"
-    snapshot = normalize_destination_schema(
-        {
-            "InfraDevice": {
-                "human_friendly_id": ["name__value"],
-                "uniqueness_constraints": [["name__value"]],
-                "attributes": {
-                    "key": {"kind": "Text", "optional": False, "default_value": None, "unique": True},
-                    "count": {
-                        "kind": "Integer",
-                        "optional": optional,
-                        "default_value": default_value,
-                        "unique": False,
-                    },
-                },
-                "relationships": {},
-            }
-        }
-    )
-    configuration = SyncConfig(
-        name="integer-kind",
-        source=SyncAdapter(name="netbox"),
-        destination=SyncAdapter(name="infrahub"),
-        schema_mapping=[
-            SchemaMappingModel(
-                name="InfraDevice",
-                fields=[SchemaMappingField(name="key"), SchemaMappingField(name="count")],
-            )
-        ],
-    )
-
-    built = build_runtime_models(snapshot=snapshot, configuration=configuration, model_base=InfrahubModel)
-
-    info = built["InfraDevice"].model_fields["count"]
-    assert str(info.annotation).replace("typing.", "") == annotation
-    assert repr(info.default) == default

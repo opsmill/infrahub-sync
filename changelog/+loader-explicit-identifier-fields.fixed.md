@@ -1,0 +1,1 @@
+The Infrahub adapter now asks the server for a node's identifier fields as well as its attribute fields, so objects keep the values they are keyed on even when the server returns only the fields the query named.

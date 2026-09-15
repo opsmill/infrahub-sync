@@ -10,8 +10,8 @@ $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 
 **Options**:
 
-* `--api-url TEXT`: Absolute URL of the Sync API. Defaults to INFRAHUB_SYNC_API_URL.  [env var: INFRAHUB_SYNC_API_URL]
-* `--verbosity [quiet|default|verbose]`: Log verbosity level.  [default: default]
+* `--api-url <str>`: Absolute URL of the Sync API. Defaults to INFRAHUB_SYNC_API_URL.  [env var: INFRAHUB_SYNC_API_URL]
+* `--verbosity <quiet|default|verbose>`: Log verbosity level.  [default: default]
 * `-v, --verbose`: Shorthand for --verbosity verbose.
 * `-q, --quiet`: Shorthand for --verbosity quiet.
 * `--install-completion`: Install completion for the current shell.
@@ -38,14 +38,14 @@ $ infrahub-sync diff [OPTIONS]
 
 **Options**:
 
-* `--config-id TEXT`: Registered configuration identity.  [required]
-* `--version INTEGER`: Registered configuration version.  [required]
-* `--reason TEXT`: Audit reason for the plan.  [required]
-* `--branch TEXT`: Destination branch admitted by the Sync API.
-* `--idempotency-key TEXT`: Retry key.
+* `--config-id <str>`: Registered configuration identity.  [required]
+* `--version <int>`: Registered configuration version.  [required]
+* `--reason <str>`: Audit reason for the plan.  [required]
+* `--branch <str>`: Destination branch admitted by the Sync API.
+* `--idempotency-key <str>`: Retry key.
 * `--wait / --no-wait`: Wait for this run&#x27;s execution.  [default: wait]
-* `--wait-timeout FLOAT`: Bounded wait in seconds.  [default: 1800.0]
-* `--poll-interval FLOAT`: Poll interval in seconds.  [default: 2.0]
+* `--wait-timeout <float>`: Bounded wait in seconds.  [default: 1800.0]
+* `--poll-interval <float>`: Poll interval in seconds.  [default: 2.0]
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync sync`
@@ -60,14 +60,14 @@ $ infrahub-sync sync [OPTIONS]
 
 **Options**:
 
-* `--config-id TEXT`: Registered configuration identity.  [required]
-* `--version INTEGER`: Registered configuration version.  [required]
-* `--reason TEXT`: Audit reason for the synchronization.  [required]
-* `--branch TEXT`: Destination branch admitted by the Sync API.
-* `--idempotency-key TEXT`: Retry key.
+* `--config-id <str>`: Registered configuration identity.  [required]
+* `--version <int>`: Registered configuration version.  [required]
+* `--reason <str>`: Audit reason for the synchronization.  [required]
+* `--branch <str>`: Destination branch admitted by the Sync API.
+* `--idempotency-key <str>`: Retry key.
 * `--wait / --no-wait`: Wait for this run&#x27;s execution.  [default: wait]
-* `--wait-timeout FLOAT`: Bounded wait in seconds.  [default: 1800.0]
-* `--poll-interval FLOAT`: Poll interval in seconds.  [default: 2.0]
+* `--wait-timeout <float>`: Bounded wait in seconds.  [default: 1800.0]
+* `--poll-interval <float>`: Poll interval in seconds.  [default: 2.0]
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync apply`
@@ -77,22 +77,22 @@ Apply a service-owned plan after binding its reviewed checksum.
 **Usage**:
 
 ```console
-$ infrahub-sync apply [OPTIONS] RUN_ID
+$ infrahub-sync apply [OPTIONS] {run_id}
 ```
 
 **Arguments**:
 
-* `RUN_ID`: Service-issued run ID whose plan was reviewed.  [required]
+* `run_id`: Service-issued run ID whose plan was reviewed.  [required]
 
 **Options**:
 
-* `--expected-checksum TEXT`: Checksum printed by `runs plan`.  [required]
-* `--reason TEXT`: Audit reason for the apply.  [required]
-* `--branch TEXT`: Destination branch admitted by the Sync API.
-* `--idempotency-key TEXT`: Retry key.
+* `--expected-checksum <str>`: Checksum printed by `runs plan`.  [required]
+* `--reason <str>`: Audit reason for the apply.  [required]
+* `--branch <str>`: Destination branch admitted by the Sync API.
+* `--idempotency-key <str>`: Retry key.
 * `--wait / --no-wait`: Wait for this run&#x27;s apply execution.  [default: wait]
-* `--wait-timeout FLOAT`: Bounded wait in seconds.  [default: 1800.0]
-* `--poll-interval FLOAT`: Poll interval in seconds.  [default: 2.0]
+* `--wait-timeout <float>`: Bounded wait in seconds.  [default: 1800.0]
+* `--poll-interval <float>`: Poll interval in seconds.  [default: 2.0]
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync configs`
@@ -125,17 +125,17 @@ Register a JSON or YAML configuration package.
 **Usage**:
 
 ```console
-$ infrahub-sync configs register [OPTIONS] PACKAGE
+$ infrahub-sync configs register [OPTIONS] {package}
 ```
 
 **Arguments**:
 
-* `PACKAGE`: [required]
+* `package`: [required]
 
 **Options**:
 
-* `--reason TEXT`: Audit reason for the mutation.  [required]
-* `--idempotency-key TEXT`: Retry key. A new key is generated and printed when omitted.
+* `--reason <str>`: Audit reason for the mutation.  [required]
+* `--idempotency-key <str>`: Retry key. A new key is generated and printed when omitted.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync configs version`
@@ -145,18 +145,18 @@ Create the next immutable version of a registered configuration.
 **Usage**:
 
 ```console
-$ infrahub-sync configs version [OPTIONS] CONFIG_ID PACKAGE
+$ infrahub-sync configs version [OPTIONS] {config_id} {package}
 ```
 
 **Arguments**:
 
-* `CONFIG_ID`: [required]
-* `PACKAGE`: [required]
+* `config_id`: [required]
+* `package`: [required]
 
 **Options**:
 
-* `--reason TEXT`: Audit reason for the mutation.  [required]
-* `--idempotency-key TEXT`: Retry key. A new key is generated and printed when omitted.
+* `--reason <str>`: Audit reason for the mutation.  [required]
+* `--idempotency-key <str>`: Retry key. A new key is generated and printed when omitted.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync configs list`
@@ -180,16 +180,16 @@ Show a configuration or one of its versions.
 **Usage**:
 
 ```console
-$ infrahub-sync configs show [OPTIONS] CONFIG_ID
+$ infrahub-sync configs show [OPTIONS] {config_id}
 ```
 
 **Arguments**:
 
-* `CONFIG_ID`: [required]
+* `config_id`: [required]
 
 **Options**:
 
-* `--version INTEGER`: Show one immutable registry version.
+* `--version <int>`: Show one immutable registry version.
 * `--help`: Show this message and exit.
 
 ### `infrahub-sync configs versions`
@@ -199,12 +199,12 @@ List immutable versions of a registered configuration.
 **Usage**:
 
 ```console
-$ infrahub-sync configs versions [OPTIONS] CONFIG_ID
+$ infrahub-sync configs versions [OPTIONS] {config_id}
 ```
 
 **Arguments**:
 
-* `CONFIG_ID`: [required]
+* `config_id`: [required]
 
 **Options**:
 
@@ -217,18 +217,18 @@ Validate a registered configuration version.
 **Usage**:
 
 ```console
-$ infrahub-sync configs validate [OPTIONS] CONFIG_ID VERSION
+$ infrahub-sync configs validate [OPTIONS] {config_id} {version}
 ```
 
 **Arguments**:
 
-* `CONFIG_ID`: [required]
-* `VERSION`: [required]
+* `config_id`: [required]
+* `version`: [required]
 
 **Options**:
 
-* `--offset INTEGER`: Finding offset.  [default: 0]
-* `--limit INTEGER`: Maximum findings to return.  [default: 256]
+* `--offset <int>`: Finding offset.  [default: 0]
+* `--limit <int>`: Maximum findings to return.  [default: 256]
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync runs`
@@ -258,12 +258,12 @@ Show one run&#x27;s service record and its selected execution.
 **Usage**:
 
 ```console
-$ infrahub-sync runs show [OPTIONS] RUN_ID
+$ infrahub-sync runs show [OPTIONS] {run_id}
 ```
 
 **Arguments**:
 
-* `RUN_ID`: Service-issued run ID.  [required]
+* `run_id`: Service-issued run ID.  [required]
 
 **Options**:
 
@@ -276,12 +276,12 @@ Print the results the service recorded for one run, as JSON.
 **Usage**:
 
 ```console
-$ infrahub-sync runs results [OPTIONS] RUN_ID
+$ infrahub-sync runs results [OPTIONS] {run_id}
 ```
 
 **Arguments**:
 
-* `RUN_ID`: Service-issued run ID.  [required]
+* `run_id`: Service-issued run ID.  [required]
 
 **Options**:
 
@@ -294,15 +294,15 @@ Review a saved plan summary, checksum, and operations.
 **Usage**:
 
 ```console
-$ infrahub-sync runs plan [OPTIONS] RUN_ID
+$ infrahub-sync runs plan [OPTIONS] {run_id}
 ```
 
 **Arguments**:
 
-* `RUN_ID`: Service-issued run ID.  [required]
+* `run_id`: Service-issued run ID.  [required]
 
 **Options**:
 
 * `--detail`: Render every saved operation.
-* `--kind TEXT`: Filter the detailed operation list by destination kind; requires --detail.
+* `--kind <str>`: Filter the detailed operation list by destination kind; requires --detail.
 * `--help`: Show this message and exit.

@@ -521,8 +521,20 @@ def test_applying_the_same_operation_twice_renders_byte_identical_inputs(
         f"The two applies issued different mutation bytes for {operation.kind}:\n"
         f"first:  {queries[0]}\nsecond: {queries[1]}"
     )
-    for _kind, data in renders[0]:
-        assert "id" in data or "hfid" in data, (
-            "Byte-identity is only worth having under assertion 1's condition: the repeated render "
-            "must also be a keyed one."
+    # Byte-identity is only worth having under assertion 1's condition: the repeated
+    # render must also be a keyed one. What keys it depends on the action. An update
+    # carries its recorded destination id. A create never does, and on SDK 1.23.2 the
+    # private render no longer reports a synthetic `hfid` either — 1.18.1 did — so what
+    # is checked is what a create has always keyed on at the wire: the destination
+    # kind's human-friendly-ID components in `data`, which the server matches on.
+    for kind, data in renders[0]:
+        if operation.action == "update":
+            assert "id" in data, f"the repeated render of this {kind} update carries no destination id"
+            continue
+        components = [component.removesuffix("__value") for component in SCHEMAS[kind].human_friendly_id or []]
+        assert components, f"{kind} must declare a human-friendly ID"
+        missing = [component for component in components if component not in data]
+        assert not missing, (
+            f"the repeated render of this {kind} create is unkeyed: "
+            f"human-friendly-ID component(s) {missing} are absent from {sorted(data)}"
         )
