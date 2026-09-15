@@ -24,6 +24,7 @@ from diffsync import DiffSyncModel
 
 from infrahub_sync import DiffSyncModelMixin, SyncConfig
 from infrahub_sync.adapters.utils import get_value
+from infrahub_sync.dependency_graph import compute_tiers
 
 if TYPE_CHECKING:
     from infrahub_sync import SchemaMappingModel
@@ -227,6 +228,31 @@ def test_netbox_example_points_the_namespace_field_at_the_namespace_kind(kind: s
     namespace_field = next(field for field in mapping.fields if field.name == "ip_namespace")
 
     assert namespace_field.reference == "IpamNamespace"
+
+
+def _tier_index(kind: str) -> int:
+    """Return the write-order tier the example puts `kind` in."""
+    config = SyncConfig(**yaml.safe_load(CONFIG_PATH.read_text()))
+    tiers, _dropped = compute_tiers(config.schema_mapping)
+    return next(index for index, tier in enumerate(tiers) if kind in tier)
+
+
+def test_netbox_example_writes_namespaces_before_prefixes_and_addresses() -> None:
+    """A prefix cannot reference a namespace that has not been written yet."""
+    namespace_tier = _tier_index("IpamNamespace")
+    vrf_tier = _tier_index("IpamVRF")
+
+    for kind in KIND_NAMES:
+        assert namespace_tier < _tier_index(kind)
+        assert vrf_tier < _tier_index(kind)
+
+
+def test_netbox_example_namespace_write_order_tiers() -> None:
+    """The shipped mapping resolves to these exact tiers."""
+    assert _tier_index("IpamNamespace") == 0
+    assert _tier_index("IpamVRF") == 1
+    assert _tier_index("IpamPrefix") == 2
+    assert _tier_index("IpamIPAddress") == 2
 
 
 def test_netbox_example_maps_vrfs_to_namespaces() -> None:
