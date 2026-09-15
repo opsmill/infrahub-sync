@@ -389,9 +389,13 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
    - tags and organizations (manufacturers, providers, RIRs)
    - sites and racks
    - devices and interfaces
-   - VRFs, VLANs, and VLAN groups
+   - IP namespaces, VRFs, VLANs, and VLAN groups
    - prefixes, IP addresses, and aggregates
    - circuits
+
+   NetBox has no IP namespace of its own, so the example creates one Infrahub IP namespace per NetBox VRF *name*. A prefix or IP address in a VRF goes to the namespace named after that VRF, and one with no VRF goes to Infrahub's built-in `default` namespace. That matters because Infrahub identifies a prefix by namespace plus prefix, and an IP address by namespace plus address: without the namespace, the same address in two different VRFs would become a single Infrahub object. The example still syncs the VRF itself, so you keep both the VRF relationship and a namespace that keeps overlapping addresses apart. Infrahub's built-in `default` namespace usually has nothing on the NetBox side to match it, since only a VRF carrying that name produces one: when nothing does, the plan records `default` as a literal identity and resolves it against Infrahub as the plan is applied, and when a VRF named `default` does exist the plan resolves it from NetBox like any other namespace.
+
+   The name is what does the separating, so two cases still share a namespace. Two distinct NetBox VRFs that happen to carry the same name resolve to one Infrahub namespace, and a NetBox VRF actually named `default` shares the built-in namespace with everything that has no VRF. If networks you need to keep apart sit in VRFs whose names repeat, give those VRFs distinct names or adjust the mapping before you rely on the import.
 
    :::info This is a minimal mapping
    Some records and relationships may be missing — that doesn't mean the sync failed.
@@ -465,10 +469,19 @@ repository is not a replacement: it uses a different set of destination kinds.
 ### `infrahub-sync` fails with `Object ... already present`
 
 ```text
-ValueError: An error occurred while loading Netbox: ('Object 172.16.0.2/24__Alpha already present', IpamIPAddress "172.16.0.2/24__Alpha")
+ValueError: An error occurred while loading Netbox: ('Object 172.16.0.2/24__default already present', IpamIPAddress "172.16.0.2/24__default")
 ```
 
-Two source objects map to the same identifier — here, two IP addresses sharing an address and VRF. Delete one of the duplicates in NetBox (**IPAM > IP Addresses**, search the address from the message), then re-run the command.
+Two source objects resolved to the same identifier. The part after `__` is the IP namespace the object landed in, so two NetBox IP addresses share both an address and a namespace. That happens when they sit in the same VRF, when they sit in two different VRFs that carry the same name, when neither has a VRF and both went to `default`, or when one has no VRF and the other sits in a VRF actually named `default`.
+
+That does not mean one of them is wrong. NetBox can hold the same address more than once on purpose — a shared VRRP or HSRP address, for example. It can also be an accidental duplicate. Open both rows in NetBox (**IPAM > IP Addresses**, search the address from the message) and compare their VRF, tenant, role, assigned object, and description before you change anything.
+
+What you find points to one of two fixes:
+
+- The source record is wrong. Correct or remove the entry that should not be there in NetBox.
+- Both records are correct, and the mapping is collapsing a distinction Infrahub needs to keep. Where two different VRFs share a name, giving them distinct names is enough to separate their namespaces. Anything else needs the namespace mapping or the destination schema to change so the two addresses resolve somewhere different — editing `identifiers` alone will not help, since Infrahub identifies the address by namespace plus address either way.
+
+Re-run the command once NetBox or the mapping reflects what you intend. Deleting a row purely to clear the message can destroy real data.
 
 ### `diff` fails after a sync that wrote interfaces
 

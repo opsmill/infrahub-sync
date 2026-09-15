@@ -107,7 +107,7 @@ def test_runtime_classes_match_the_generator_over_the_netbox_example(tmp_path: P
     generated = _generated_models(instance, schema, tmp_path, "netbox")
 
     assert set(runtime) == set(generated)
-    assert len(runtime) == 20
+    assert len(runtime) == 21
     assert {kind: _describe(model) for kind, model in runtime.items()} == {
         kind: _describe(model) for kind, model in generated.items()
     }
