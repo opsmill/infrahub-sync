@@ -1,15 +1,19 @@
-"""Recording a relationship peer that exists only at the destination (AD050, AD052).
+"""Recording a relationship peer absent from the loaded source store (AD050, AD052).
 
 Plan derivation resolves a reference's peer kind by probing the **source** store, because
-the mapping alone is ambiguous (AD046). A peer the source can never hold therefore refuses
-the plan — and Infrahub's built-in `default` IP namespace is exactly that peer: NetBox has
-no VRF named `default`, so every prefix and address with no VRF names a namespace no source
-extract produces.
+the mapping alone is ambiguous (AD046). A peer no candidate kind holds there refuses the
+plan. Infrahub's built-in `default` IP namespace is the case this rule exists for: a NetBox
+prefix or address with no VRF names `default`, and a NetBox instance normally has no VRF of
+that name, so nothing in the extract produces it. Where a VRF **is** named `default` the
+mapping loads it as a source `IpamNamespace`, the probe finds it, and the ordinary
+stored-peer path applies — so what is proven here is absence from the loaded store, never
+impossibility at the source.
 
 This module answers the one question that lets such a peer be recorded literally instead:
-is a literal identity provably **the** identity the destination matches that kind on? It is
-the only part of derivation that reads the destination's schema, which is why it lives here
-rather than beside the source-store probe that raises the refusal.
+is a literal identity provably **the** identity the destination matches that kind on? It
+isolates this rule's destination human-friendly-ID lookup — derivation reads the destination
+schema elsewhere too, for the convergence-key guard in `derive` — and keeping it apart from
+the source-store probe is what lets that probe stay a source-only question.
 """
 
 from __future__ import annotations
@@ -89,8 +93,12 @@ def _sole_direct_identifier(config: SyncConfig | None, kind: str) -> str | None:
         if len(declared_identifiers) != 1:
             return None
         identifier = declared_identifiers[0]
-        declared = next((candidate for candidate in entry.fields if candidate.name == identifier), None)
-        if declared is None or declared.reference:
+        # Every declaration of that name, not the first: `SchemaMappingModel` accepts a
+        # `fields` list that names one field twice, and package validation does not reject
+        # it. Taking the first would let declaration order decide whether the identifier is
+        # a direct value or a reference to another peer.
+        declared = [candidate for candidate in entry.fields if candidate.name == identifier]
+        if len(declared) != 1 or declared[0].reference:
             return None
         identifiers.add(identifier)
     return identifiers.pop() if len(identifiers) == 1 else None
@@ -105,7 +113,7 @@ def destination_only_identity(
     field: str,
     peers: DestinationOnlyPeers | None,
 ) -> dict[str, Any] | None:
-    """The literal identity naming a peer that exists only at the destination, or `None`.
+    """The literal identity naming a peer absent from the loaded source store, or `None`.
 
     `None` means "not this case", and the caller's refusal stands. The identity is recorded
     only where a literal provably **is** the identity the destination matches on, which takes

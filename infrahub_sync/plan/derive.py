@@ -25,11 +25,12 @@ Four rules in here are load-bearing and each is enforced where it is stated:
   every entry for the owning kind, and **zero hits and more than one hit both fail the
   command** — with no fallback to the mapping-declared kind, not even for a single
   candidate, because an unprobed sole candidate is the mapping-derived answer AD046
-  forbids. The one exception is a peer that cannot be in the source at all: where the
+  forbids. The one exception is a peer **absent from the loaded store**: where the
   destination's own key for a sole candidate kind is a single field the mapping identifies
   it by, `destination_only_peer` records that field's value literally instead of refusing.
   Nothing is inferred there — the kind and the identity both come from the destination
-  schema, and apply resolves the pair against the destination before writing.
+  schema, and apply resolves the pair against the destination before writing. A peer the
+  store does hold still takes the probed path, whatever its value.
 - **A derivation failure fails the command, on `diff` as on `sync`** (AD047). There is no
   tolerance option here: `--continue-on-error` is declared on `sync` only while derivation
   also runs under `diff`, and degrading to warn-and-drop would emit a silently incomplete
@@ -46,6 +47,7 @@ enters the comparison result the write path consumes (FR-016).
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from diffsync.exceptions import ObjectNotFound
@@ -71,7 +73,7 @@ from infrahub_sync.plan.keying import (
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Sequence
 
     from infrahub_sync import SyncConfig
 
@@ -128,6 +130,22 @@ def reference_candidates(config: SyncConfig | None, kind: str) -> dict[str, tupl
     return {name: tuple(sorted(kinds)) for name, kinds in by_field.items()}
 
 
+def _can_key_a_store_lookup(unique_id: Any) -> bool:
+    """Whether the store can be asked about `unique_id` at all.
+
+    `BaseStore._get_uid` takes a `str` identifier as the uid directly and expands anything
+    else as the mapping of identifier keys, `create_unique_id(**identifier)`. A value that is
+    neither — a bool, a number, a sequence — makes that expansion raise `TypeError` out of
+    the store instead of reporting the peer missing, so the question is settled here rather
+    than by catching what the store throws.
+
+    Such a value is **absent** in the only sense the store can report: no entry it holds can
+    be reached by it. That is the arm the destination-only rule narrows, and a value it does
+    not admit keeps the ordinary absent refusal.
+    """
+    return isinstance(unique_id, (str, Mapping))
+
+
 def _probe_peer_kind(
     *,
     store: Any,
@@ -143,14 +161,18 @@ def _probe_peer_kind(
     `get_all_model_names()`, enumerates kinds rather than answering for a unique-id — so an
     entry cannot be asked for its own kind and the candidate set has to be probed.
 
-    `None` where no candidate holds the peer. That outcome is returned rather than raised
-    because the caller, not the probe, decides what it means: a peer that exists only at the
-    destination can still be recorded literally, and every other absent peer refuses there.
+    `None` where no candidate holds the peer, including where `unique_id` cannot key a
+    lookup in the first place. That outcome is returned rather than raised because the
+    caller, not the probe, decides what it means: a peer absent from the loaded source store
+    can still be recorded literally, and every other absent peer refuses there.
 
     Raises:
         SourcePeerUnresolvedError: more than one candidate holds the peer (the **ambiguous**
             arm), so its kind cannot be established.
     """
+    if not _can_key_a_store_lookup(unique_id):
+        return None
+
     hits: list[tuple[str, Any]] = []
     for candidate in candidates:
         try:

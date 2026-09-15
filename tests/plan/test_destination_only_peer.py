@@ -1,9 +1,11 @@
-"""A peer that exists only at the destination is recorded as a literal identity.
+"""A peer absent from the loaded source store is recorded as a literal identity.
 
-The saved-plan path derives a reference's peer kind from the **source** store, so a peer the
-source never holds refuses the plan (`SourcePeerUnresolvedError.absent`). Infrahub's built-in
-`default` IP namespace is exactly that peer: NetBox has no VRF named `default`, so a prefix
-with no VRF names a namespace no source extract can produce.
+The saved-plan path derives a reference's peer kind from the **source** store, so a peer no
+candidate kind holds there refuses the plan (`SourcePeerUnresolvedError.absent`). Infrahub's
+built-in `default` IP namespace is the case the rule exists for: a prefix with no VRF names
+`default`, and a NetBox instance normally has no VRF of that name. Where one does, the
+mapping loads it and the stored-peer path applies instead — a case pinned below — so the rule
+turns on absence from the loaded store, not on what the source could in principle hold.
 
 The narrow rule under test records such a peer literally, and only where a literal identity
 is provably the identity the destination matches on: one candidate peer kind, one direct
@@ -20,10 +22,12 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import pytest
+from diffsync import Adapter, DiffSyncModel
 
+from infrahub_sync import SchemaMappingField, SchemaMappingModel
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.derive import operations_from_diff, warn_missing_convergence_key
 from infrahub_sync.plan.errors import PeerNotFoundError, SourcePeerUnresolvedError
@@ -50,7 +54,7 @@ from tests.test_potenda_plan_artifact import (
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from infrahub_sync import SchemaMappingModel, SyncInstance
+    from infrahub_sync import SyncInstance
     from infrahub_sync.plan.models import PlannedOperation
 
 # The three kinds the NetBox namespace mapping puts in play: the namespace a prefix is
@@ -69,8 +73,7 @@ NAMESPACE_SCHEMA: dict[str, Any] = {
 
 BUILT_IN_NAMESPACE = "default"
 
-# The rule warns from its own module, which is the only part of derivation that reads the
-# destination schema.
+# The rule warns from its own module rather than from `derive`.
 RULE_LOGGER = "infrahub_sync.plan.destination_only_peer"
 
 
@@ -563,3 +566,178 @@ def test_the_example_create_keys_itself_with_the_literal_namespace(
     operation = derive_example(kind, key_field, key_value, BUILT_IN_NAMESPACE, in_source=False)
 
     warn_missing_convergence_key(destination=example_destination(), operations=[operation])
+
+
+# =======================================================================================
+# The installed DiffSync store, not a permissive double
+# =======================================================================================
+
+# `_FakeStore` answers `get` for any identifier, which the real store does not: `BaseStore`
+# uses a `str` identifier as the uid directly and expands anything else as the mapping of
+# identifier keys (`create_unique_id(**identifier)`). A bool, a number or a sequence is
+# neither, so the real store raises `TypeError` instead of reporting the peer missing. The
+# cases below therefore drive derivation against the installed store, so what reaches the
+# rule is what reaches it in a real plan.
+
+
+class _RealNamespace(DiffSyncModel):
+    """The peer kind, as the generator emits it."""
+
+    _modelname = "IpamNamespace"
+    _identifiers = ("name",)
+    _attributes = ("description",)
+    name: str
+    description: str | None = None
+
+
+class _RealVRF(DiffSyncModel):
+    """A second candidate kind, for the ambiguous arm."""
+
+    _modelname = "IpamVRF"
+    _identifiers = ("name",)
+    _attributes = ("description",)
+    name: str
+    description: str | None = None
+
+
+class _RealSource(Adapter):
+    """A source adapter carrying the installed `LocalStore`."""
+
+    IpamNamespace = _RealNamespace
+    IpamVRF = _RealVRF
+    top_level: ClassVar[list[str]] = ["IpamNamespace", "IpamVRF"]
+
+
+def derive_against_real_store(
+    namespace: Any,  # noqa: ANN401
+    *,
+    stored: Sequence[DiffSyncModel] = (),
+    config: SyncInstance | None = None,
+    destination_schema: Mapping[str, Any] | None = None,
+) -> list[PlannedOperation]:
+    """Derive one prefix operation with the installed store on the source side."""
+    source = _RealSource()
+    for record in stored:
+        source.add(record)
+    return operations_from_diff(
+        _FakeDiff({"IpamPrefix": [prefix_element(namespace)]}),
+        config=config if config is not None else namespace_config(),
+        tier_of=resolver(top_level=NAMESPACE_KINDS),
+        source_adapter=source,
+        destination_adapter=_FakeAdapter(
+            "destination",
+            schema=NAMESPACE_SCHEMA if destination_schema is None else destination_schema,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [pytest.param(0, id="zero"), pytest.param(False, id="false"), pytest.param(1.5, id="finite-float")],
+)
+def test_a_canonical_scalar_the_real_store_cannot_look_up_is_recorded_literally(
+    value: Any,  # noqa: ANN401
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Brief condition 4 holds against the installed store, not only against a double.
+
+    These values cannot key a store lookup at all, so the peer is absent in the only sense
+    the store can report — and absent is exactly the arm the rule narrows.
+    """
+    with caplog.at_level(logging.DEBUG, logger=RULE_LOGGER):
+        (operation,) = derive_against_real_store(value)
+
+    assert operation.identity["ip_namespace"] == {"peer_kind": "IpamNamespace", "identity": {"name": value}}
+    assert len(literal_peer_warnings(caplog)) == 1
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param([["default"]], id="nested-sequence"),
+        pytest.param(float("nan"), id="nan"),
+        pytest.param(float("inf"), id="infinity"),
+        pytest.param(float("-inf"), id="negative-infinity"),
+        pytest.param({"name": "default"}, id="mapping"),
+    ],
+)
+def test_a_value_the_rule_refuses_keeps_the_absent_error_against_the_real_store(
+    value: Any,  # noqa: ANN401
+) -> None:
+    """The refusal must stay `SourcePeerUnresolvedError.absent`, not escape as a `TypeError`."""
+    with pytest.raises(SourcePeerUnresolvedError):
+        derive_against_real_store(value)
+
+
+def test_a_string_peer_in_the_real_store_still_resolves_from_it() -> None:
+    """The ordinary lookup is untouched: a `str` identifier is the store's own uid."""
+    (operation,) = derive_against_real_store("mgmt", stored=[_RealNamespace(name="mgmt", description="a VRF")])
+
+    assert operation.identity["ip_namespace"] == {"peer_kind": "IpamNamespace", "identity": {"name": "mgmt"}}
+
+
+def test_a_mapping_identifier_still_reaches_the_real_store_and_resolves() -> None:
+    """A mapping is a valid store identifier, so it must keep being looked up rather than
+    classified away: `BaseStore` expands it into `create_unique_id(**identifier)`."""
+    (operation,) = derive_against_real_store(
+        {"name": "mgmt"}, stored=[_RealNamespace(name="mgmt", description="a VRF")]
+    )
+
+    assert operation.identity["ip_namespace"] == {"peer_kind": "IpamNamespace", "identity": {"name": "mgmt"}}
+
+
+def test_an_absent_string_peer_the_rule_does_not_admit_still_refuses_against_the_real_store() -> None:
+    """A missing string peer with no usable destination key is still the absent refusal."""
+    schema = {"IpamNamespace": schema_node(human_friendly_id=None, uniqueness_constraints=[["name__value"]])}
+
+    with pytest.raises(SourcePeerUnresolvedError):
+        derive_against_real_store("default", destination_schema=schema)
+
+
+def test_the_ambiguous_arm_still_raises_against_the_real_store() -> None:
+    """A peer held under two candidate kinds cannot be named, rule or no rule."""
+    config = namespace_config(prefix_references=("IpamNamespace", "IpamVRF"))
+
+    with pytest.raises(SourcePeerUnresolvedError):
+        derive_against_real_store(
+            "shared",
+            stored=[_RealNamespace(name="shared"), _RealVRF(name="shared")],
+            config=config,
+        )
+
+
+# =======================================================================================
+# The direct-identifier proof rejects a conflicting duplicate declaration
+# =======================================================================================
+
+
+def conflicting_duplicate_entry(references: Sequence[str | None]) -> SchemaMappingModel:
+    """One entry declaring `name` once per item in `references`, each with that `reference`.
+
+    `SchemaMappingModel` accepts a `fields` list that names one field twice and package
+    validation does not reject it, so a proof over those declarations cannot let list order
+    decide which one it reads.
+    """
+    return SchemaMappingModel(
+        name="IpamNamespace",
+        mapping="ipam.vrfs",
+        identifiers=["name"],
+        fields=[SchemaMappingField(name="name", mapping="name", reference=reference) for reference in references],
+    )
+
+
+@pytest.mark.parametrize(
+    "references",
+    [
+        pytest.param((None, "IpamVRF"), id="direct-first"),
+        pytest.param(("IpamVRF", None), id="reference-first"),
+    ],
+)
+def test_a_conflicting_duplicate_identifier_declaration_refuses_in_either_order(
+    references: Sequence[str | None],
+) -> None:
+    """Order must not decide it: one of the two declarations makes the identifier a peer."""
+    config = namespace_config(namespace_entries=[conflicting_duplicate_entry(references)])
+
+    with pytest.raises(SourcePeerUnresolvedError):
+        derive(elements=[prefix_element(BUILT_IN_NAMESPACE)], config=config, destination_schema=NAMESPACE_SCHEMA)
