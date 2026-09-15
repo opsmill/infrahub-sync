@@ -25,7 +25,11 @@ Four rules in here are load-bearing and each is enforced where it is stated:
   every entry for the owning kind, and **zero hits and more than one hit both fail the
   command** — with no fallback to the mapping-declared kind, not even for a single
   candidate, because an unprobed sole candidate is the mapping-derived answer AD046
-  forbids.
+  forbids. The one exception is a peer that cannot be in the source at all: where the
+  destination's own key for a sole candidate kind is a single field the mapping identifies
+  it by, `destination_only_peer` records that field's value literally instead of refusing.
+  Nothing is inferred there — the kind and the identity both come from the destination
+  schema, and apply resolves the pair against the destination before writing.
 - **A derivation failure fails the command, on `diff` as on `sync`** (AD047). There is no
   tolerance option here: `--continue-on-error` is declared on `sync` only while derivation
   also runs under `diff`, and degrading to warn-and-drop would emit a silently incomplete
