@@ -1,0 +1,107 @@
+---
+title: Configuration package
+---
+
+A configuration package is the file you write and the immutable record the Sync API keeps
+after you register it. This page covers the package envelope, what registration returns, how
+versions and validation work, and how a package refers to credentials. For the
+`configuration` object's own fields — `source`, `destination`, `order`, `schema_mapping`,
+`diffsync_flags` — see [Sync instance configuration](./reference/config.mdx) and
+[Schema mapping reference](./reference/schema-mapping.mdx); this page does not repeat them.
+
+## Package shape and file format
+
+A package is a YAML or JSON file:
+
+```yaml
+format_version: 1
+configuration:
+  name: from-netbox
+  source: { ... }
+  destination: { ... }
+  schema_mapping: [ ... ]
+```
+
+`configuration` is required and is the object described in
+[Sync instance configuration](./reference/config.mdx). `format_version` is optional and
+defaults to — and today only accepts — `1`. An optional top-level `credentials` block
+declares the credential references the configuration uses — see
+[Credentials](#credentials) below. `examples/netbox_to_infrahub/package.yml` is a complete
+package that validates cleanly and uses the `$credential` reference pattern this page
+documents; the other `examples/*/package.yml` files show adapter-specific shape, not all of
+them validated as written.
+
+## Register and version it
+
+`configs register` submits a new package as version 1 of a new configuration; `configs
+version` submits an edited package as the next version of an existing one. Both are
+mutations that require `--reason` and accept `--idempotency-key` (see
+[Idempotency keys](#idempotency-keys)). See
+[Run a sync — Register a configuration package](./running-a-sync.mdx#register-a-configuration-package)
+for the exact command forms, and [Sync CLI](./reference/cli.mdx) for every flag.
+
+Both commands print the resulting version's `config_id`, `registry_version`,
+`package_checksum`, `created_at`, and `declared_content`. `configs version` additionally
+prints `created`: `true` for a genuinely new version, `false` when the submitted content's
+checksum already matches an existing version of that configuration — in which case the
+fields printed are that existing version's, and nothing new is written. This is separate
+from an idempotency-key replay, which returns the exact original accepted response when the
+same key is retried for the same request; retrying the same key with a changed request is
+refused with `idempotency-conflict`.
+
+`config_id` and `registry_version` are what `diff`, `sync`, and `configs validate` address a
+specific registered version by; none of them take a file path. `configs show` takes only
+`config_id` — its `--version` is optional, and omitting it prints the configuration's
+summary rather than one version. `configs list`, `configs show`, and `configs versions`
+inspect what is registered; see [Run a sync](./running-a-sync.mdx) for their command forms.
+
+## Versions are immutable
+
+The registry is append-only: registering a version never rewrites an earlier one, and an
+invalid package is refused before anything is written. To change a registered configuration,
+submit a new version of the same package with `configs version`.
+
+## Validate a version
+
+`configs validate` re-checks an already-registered version against the adapter declarations
+installed *now*, so a version accepted at registration can report findings later if an
+adapter's declared setting surface changes. Each finding carries a stable machine-readable
+`code`, a severity of `error` or `warning`, a JSON Pointer `location` into the package, and a
+message. Output is paged with `--offset` and `--limit` (default limit 256); the response
+carries `total_findings` and `next_offset`. See [Sync CLI](./reference/cli.mdx) for the
+command form. The full set of finding codes and what each one means is documented once, in
+[Durable product records — Finding codes](./reference/durable-product-records.mdx#finding-codes);
+this page does not repeat that table.
+
+## Idempotency keys
+
+`configs register` and `configs version` are mutations, and each accepts
+`--idempotency-key`. Omit it and the CLI generates one and prints it before sending the
+request — keep that key. If the connection fails after the service has already accepted the
+mutation, retry with the same key rather than submitting a new one; the service returns the
+original accepted response instead of creating a second version.
+
+## Credentials
+
+A credential-bearing setting in `configuration` never holds a literal value. It holds a
+reference:
+
+```yaml
+source:
+  settings:
+    token:
+      $credential: netbox-token
+
+credentials:
+  netbox-token:
+    provider: env
+    identifier: NETBOX_TOKEN
+```
+
+`$credential` names an entry in the package's top-level `credentials` block. Each entry
+declares a `provider` — `env` is the only one installed today — and an `identifier`, the
+exact name of the environment variable the worker reads at run time. The package never
+contains the credential's value; that value is set where the worker runs, in `operator.env`
+on the Compose deployment. See
+[Reading from NetBox or Nautobot](./compose-deployment.mdx#reading-from-netbox-or-nautobot)
+for how to set it and when to restart the deployment after changing it.
