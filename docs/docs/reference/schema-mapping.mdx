@@ -367,7 +367,7 @@ A name-based namespace refuses a source that repeats a VRF name. NetBox IDs cann
       expression: '{{ "%r" % ("netbox-vrf-%s" % vrf.id if vrf is defined and vrf else "default") }}'
 ```
 
-The namespace record and every prefix and address pointing at it derive the same value, so a prefix in NetBox VRF 3 lands in `netbox-vrf-3` whatever that VRF is called, and an overlapping prefix in VRF 4 lands in `netbox-vrf-4`. Objects with no VRF — a null `vrf` or no `vrf` key at all — still go to Infrahub's built-in `default` namespace. Each namespace record keeps the NetBox id of the VRF it came from as its local id, which is what a reference lookup matches on.
+The namespace record and every prefix and address pointing at it derive the same value, so a prefix in NetBox VRF 3 lands in `netbox-vrf-3` whatever that VRF is called, and an overlapping prefix in VRF 4 lands in `netbox-vrf-4`. Objects with no VRF — a null `vrf` or no `vrf` key at all — still go to Infrahub's built-in `default` namespace.
 
 A VRF literally named `default` behaves differently here than under the shipped mapping: it is assigned its own `netbox-vrf-<id>` namespace rather than sharing the built-in `default`, so its objects no longer share a namespace with objects that have no VRF.
 
