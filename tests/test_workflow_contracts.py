@@ -211,7 +211,7 @@ HANDOFF_MARKERS = (".release/handoff", ".release/artifacts.json", "invoke releas
 # lifecycle. Which tier runs them is a separate question, asked below: a fork
 # that qualifies runs everything here, and this case is what stops the trust
 # guard from being widened into a reason to run nothing.
-UNGUARDED_TASKS = ("release.kit", "image.build", "image.scan", "image.smoke")
+UNGUARDED_TASKS = ("release.kit", "image.build", "image.scan", "image.smoke", "compose.lifecycle")
 
 # The second input the gate takes, and the token every step and job that only a
 # qualifying run performs has to name in its `if`. False by default for the same
@@ -1517,7 +1517,10 @@ def test_the_qualification_a_fork_still_runs_is_not_behind_the_guard(task: str) 
 
     assert running, f"no step of the image job runs {task}"
     for step in running:
-        assert HANDOFF_GUARD not in str(step.get("if", "")), f"a fork no longer runs {task}"
+        condition = "".join(str(step.get("if", "")).split())
+        assert HANDOFF_GUARD not in condition or (task == "compose.lifecycle" and f"!{HANDOFF_GUARD}" in condition), (
+            f"a fork no longer runs {task}"
+        )
 
 
 def test_the_caller_derives_the_route_from_the_head_repository() -> None:
@@ -1730,7 +1733,7 @@ def test_the_escalation_filter_does_not_name_the_tree_the_fast_tier_already_cove
         f"{ESCALATION_FILTER} names the application tree, so every code change runs the full tier again"
     )
     assert TASK_TREE not in patterns, (
-        f"{ESCALATION_FILTER} names {TASK_TREE} whole; it names the two modules the full tier alone runs"
+        f"{ESCALATION_FILTER} names {TASK_TREE} whole; it names the three modules the full tier alone runs"
     )
 
 
