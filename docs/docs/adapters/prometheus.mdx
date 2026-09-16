@@ -6,6 +6,10 @@ import ReferenceLink from "../../src/components/Card";
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
+## V3 route
+
+Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure. The Prometheus mapping example is `examples/prometheus_to_infrahub (node_exporter)/package.yml`.
+
 <!-- vale off -->
 ## What is Prometheus?
 <!-- vale on -->
@@ -223,16 +227,6 @@ schema_mapping:
       # Link to parent VM
       - field: vm_name
         expression: "{{ lookup('node_uname_info', {}, 'labels.nodename') or 'unknown' }}"
-```
-
-## Registering the package
-
-Register the example package before creating a run:
-
-```bash
-uv run infrahub-sync configs register \
-  "examples/prometheus_to_infrahub (node_exporter)/package.yml" \
-  --reason "register Prometheus import"
 ```
 
 ## Common issues and troubleshooting

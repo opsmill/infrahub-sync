@@ -6,52 +6,27 @@ import ReferenceLink from "../../src/components/Card";
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
+## V3 route
+
+Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure. The custom-adapter example package is `examples/custom_adapter/package.yml`.
+
 ## Using local adapters
 
-The infrahub-sync tool supports loading adapters from various sources, including local filesystem paths. This feature allows you to develop and use custom adapters without having to integrate them into the main codebase.
+Registered V3 workers resolve custom adapters from installed code only. A package may declare a custom adapter on its source side as an installed dotted import target or an installed entry point. The destination remains the built-in Infrahub adapter.
 
-### Adapter resolution paths
+### Registered adapter identities
 
-The plugin loader can resolve adapters from:
+Use one of these installed identities in a registered package:
 
 1. **Built-ins**: Adapters that ship with infrahub-sync (`infrahub_sync.adapters.<name>`)
 2. **Dotted paths**: Python module paths (`myproj.adapters.foo:MyAdapter`)
-3. **Filesystem paths**: Local files or directories (`./adapters/foo.py:MyAdapter`)
-4. **Python entry points**: Installed packages that register entry points
+3. **Python entry points**: Installed packages that register entry points
 
-### Configuring local adapters
+Filesystem paths, including `.py` targets, are refused in registered packages. The `adapters_path` configuration field is also refused.
 
-To use a local adapter in your configuration, specify the filesystem path in the `adapter` field:
+### Development plugin-loader behavior
 
-```yaml
-source:
-  name: mycustom
-  adapter: ./path/to/my_adapter.py:MyCustomAdapter
-  settings:
-    # Your adapter settings here
-```
-
-If your adapter class name follows naming conventions (for example: `MycustomAdapter`), you can omit the class name:
-
-```yaml
-source:
-  name: mycustom
-  adapter: ./path/to/my_adapter.py
-  settings:
-    # Your adapter settings here
-```
-
-### Environment variables
-
-You can also specify additional adapter search paths via the `INFRAHUB_SYNC_ADAPTER_PATHS` environment variable:
-
-```bash
-# Unix/Linux/macOS
-export INFRAHUB_SYNC_ADAPTER_PATHS="/path/to/adapters:/another/path"
-
-# Windows
-set INFRAHUB_SYNC_ADAPTER_PATHS="C:\path\to\adapters;D:\another\path"
-```
+The plugin loader can use local filesystem plugins while developing an adapter. `INFRAHUB_SYNC_ADAPTER_PATHS` configures that development behavior; it is not a registered-worker execution path. Install the adapter as a package and use its dotted import target or entry point before declaring it in a V3 configuration package.
 
 ### Creating a custom adapter
 
@@ -74,7 +49,7 @@ class MyCustomAdapter(DiffSyncMixin, Adapter):
         pass
 ```
 
-For a more complete example, refer to the example in the repository:
+For a more complete example, refer to `examples/custom_adapter/package.yml` and the repository's [Custom Adapter Example](https://github.com/opsmill/infrahub-sync/tree/main/examples/custom_adapter). Its repository-local adapter target is development material, not an installed identity that a deployed worker can register and run as-is.
 
 <ReferenceLink title="Custom Adapter Example" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/custom_adapter" openInNewTab />
 
@@ -204,30 +179,3 @@ transforms:
 4. **Error Handling**: Implement proper error handling and logging
 5. **Type Annotations**: Use type hints to make your code more maintainable
 6. **Custom Filters**: Implement adapter-specific Jinja filters for complex transformations
-
-### Local adapter example
-
-Here's an example configuration using a local adapter:
-
-```yaml
-name: custom-example
-
-source:
-  name: mockdb
-  # Filesystem path to the adapter class
-  adapter: ./examples/custom_adapter/custom_adapter_src/custom_adapter.py:MockdbAdapter
-  settings:
-    db_path: "./examples/custom_adapter/custom_adapter_src/mock_db.json"
-
-destination:
-  name: infrahub
-  settings:
-    url: "http://localhost:8000"
-
-order: [
-  "InfraDevice",
-]
-
-schema_mapping:
-  # Your schema mapping here
-```
