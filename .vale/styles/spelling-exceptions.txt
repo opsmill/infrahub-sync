@@ -177,3 +177,4 @@ Syft
 Grype
 Skopeo
 gzip
+reachability
