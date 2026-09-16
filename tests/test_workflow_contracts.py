@@ -202,9 +202,63 @@ HANDOFF_GUARD = f"inputs.{HANDOFF_INPUT}"
 # writes what the service is holding, writes the record read from them, or
 # uploads one of the three artifacts.
 HANDOFF_MARKERS = (".release/handoff", ".release/artifacts.json", "invoke release.qualify")
-# The qualification a fork keeps. None of these may be behind the guard, or a
-# fork pull request stops building, scanning, smoking and running the lifecycle.
+# The qualification a fork keeps. None of these may be behind the *trust* guard,
+# or a fork pull request stops building, scanning, smoking and running the
+# lifecycle. Which tier runs them is a separate question, asked below: a fork
+# that qualifies runs everything here, and this case is what stops the trust
+# guard from being widened into a reason to run nothing.
 UNGUARDED_TASKS = ("release.kit", "image.build", "image.scan", "image.smoke", "compose.lifecycle")
+
+# The second input the gate takes, and the token every step and job that only a
+# qualifying run performs has to name in its `if`. False by default for the same
+# reason the trust input is: the route a caller who says nothing inherits is the
+# cheap one, and the expensive one is asked for.
+TIER_INPUT = "qualify"
+TIER_GUARD = f"inputs.{TIER_INPUT}"
+# What every push to a pull request runs. Nothing here may be behind the tier
+# guard, or a fast tier that qualifies nothing would satisfy every case below.
+FAST_TIER_TASKS = (
+    "release.identity",
+    "release.build",
+    "image.build",
+    "image.inspect",
+    "release.kit",
+    "image.sbom",
+    "image.scan",
+)
+# What only a run believed ready runs. These are the measured minutes the fast
+# tier exists to defer: the warm-builder rebuild, and the Compose lifecycle with
+# the reclaim that clears the disk for it.
+FULL_TIER_TASKS = ("image.freshness", "compose.reclaim", "compose.lifecycle")
+# The platform every tier qualifies, and the one only a qualifying run builds.
+FAST_PLATFORM = "linux/amd64"
+FULL_PLATFORM = "linux/arm64"
+# `image.build` clears the whole build directory before it runs, so the extra
+# platform cannot be a second build: it would take the first build's digest
+# record, SBOM and scan report with it. The tier therefore picks the platform
+# list the one build is given, and this reads both halves of that choice.
+TIER_PLATFORM_CHOICE = re.compile(rf"\$\{{\{{\s*{re.escape(TIER_GUARD)}\s*&&\s*'([^']+)'\s*\|\|\s*'([^']+)'\s*\}}\}}")
+
+# The caller the two tiers exist for, the filter that escalates a change to the
+# full one without anybody labelling it, and the label that asks for it.
+DEVELOP_CALLER = WORKFLOWS / "trigger-pr-develop.yml"
+ESCALATION_FILTER = "qualify_all"
+QUALIFY_LABEL = "qualify"
+# A label arriving or leaving moves a pull request between the tiers, and
+# neither is a type `pull_request` sends by default.
+LABEL_EVENT_TYPES = ("labeled", "unlabeled")
+DEFAULT_EVENT_TYPES = ("opened", "synchronize", "reopened")
+# The job branch protection requires by name. A skipped job satisfies a required
+# check, so the gate that has not run cannot be the thing required: this one
+# always runs and refuses a head the full tier never qualified.
+REQUIRED_JOB = "qualification-required"
+# The one line it says when it refuses, so the contributor reads what to do
+# rather than which expression was false.
+REQUIRED_REFUSAL = "add the `qualify` label to run full qualification before merge"
+# The job name the full tier has always reported under. Branch protection and
+# every reader's memory of this gate are written against it, so the fast tier
+# takes a different one rather than renaming this.
+FULL_TIER_JOB_NAME = "Image and Compose gate (build amd64 + arm64, qualify amd64)"
 # How the caller tells this gate which route a run takes. Compared as text
 # rather than evaluated: this suite reads declarations, and a workflow-expression
 # evaluator is a second implementation of GitHub.
@@ -1319,6 +1373,272 @@ def test_the_caller_derives_the_route_from_the_head_repository() -> None:
         assert TRUST_COMPARISON in passed, f"the image call derives {HANDOFF_INPUT} from {passed!r}"
 
 
+def tier_steps(task: str) -> list[dict]:
+    """Return every step of the image job that runs one Invoke task."""
+    running = [step for step in image_job("image")["steps"] if task in str(step.get("run", ""))]
+    assert running, f"no step of the image job runs {task}"
+    return running
+
+
+def develop_jobs() -> dict[str, dict]:
+    """Return the job graph of the caller the two tiers exist for."""
+    return jobs(DEVELOP_CALLER)
+
+
+def image_call() -> dict:
+    """Return the job of that caller which calls the image gate."""
+    calling = [job for job in develop_jobs().values() if called_workflow(job) == IMAGE_WORKFLOW]
+    assert len(calling) == 1, f"{DEVELOP_CALLER.name} makes {len(calling)} calls into {IMAGE_WORKFLOW.name}"
+    return calling[0]
+
+
+def tier_decision() -> dict:
+    """Return the job whose output decides which tier this head runs.
+
+    Found by the output it publishes rather than by name, so renaming the job
+    does not quietly leave every case below asserting nothing.
+    """
+    deciding = [job for job in develop_jobs().values() if TIER_INPUT in (job.get("outputs") or {})]
+    assert len(deciding) == 1, f"{len(deciding)} jobs of {DEVELOP_CALLER.name} publish a {TIER_INPUT} output"
+    return deciding[0]
+
+
+def test_the_gate_takes_a_tier_input_and_assumes_the_fast_one_without_it() -> None:
+    """A caller that says nothing gets the tier that qualifies on every push.
+
+    The expensive half is asked for, never inherited: a new caller that forgot
+    this input would otherwise run the Compose lifecycle and the clean-host
+    matrix on every push it makes.
+    """
+    declared = triggers_of(IMAGE_WORKFLOW)["workflow_call"]["inputs"][TIER_INPUT]
+
+    assert declared["type"] == "boolean"
+    assert declared["default"] is False
+
+
+@pytest.mark.parametrize("task", FAST_TIER_TASKS)
+def test_the_fast_tier_runs_on_every_push_whatever_the_tier_says(task: str) -> None:
+    """Tiering is deferral, not removal, and this is the half that is never deferred.
+
+    Without it the tier guard could be moved up the job and satisfy every case
+    below while an unlabelled pull request built nothing, scanned nothing and
+    produced no kit.
+    """
+    for step in tier_steps(task):
+        assert TIER_GUARD not in str(step.get("if", "")), f"{task} no longer runs on an unlabelled pull request"
+
+
+@pytest.mark.parametrize("task", FULL_TIER_TASKS)
+def test_only_a_run_believed_ready_runs_the_full_tier(task: str) -> None:
+    """These are the measured minutes the fast tier exists to defer.
+
+    A step of this half that lost its guard puts the whole cost back on every
+    push, which is the regression this change is about and is invisible from the
+    step itself.
+    """
+    for step in tier_steps(task):
+        assert TIER_GUARD in str(step.get("if", "")), f"{task} runs on every push again"
+
+
+def test_the_fast_tier_builds_the_one_platform_it_qualifies() -> None:
+    """One build, so the extra platform is a longer platform list rather than a second build.
+
+    `image.build` clears the whole build directory first, so a second build for
+    arm64 would delete the amd64 digest record, SBOM and scan report the fast
+    tier just produced and leave every later step describing the wrong one.
+    """
+    building = tier_steps("image.build")
+
+    assert len(building) == 1, f"{len(building)} steps build the image"
+    declared = str(building[0].get("if", ""))
+    assert TIER_GUARD not in declared, "an unlabelled pull request builds no image at all"
+
+    text = str(building[0].get("run", "")) + "\n" + yaml.safe_dump(building[0].get("env") or {})
+    chosen = TIER_PLATFORM_CHOICE.search(text)
+    assert chosen, f"the build does not pick its platforms from {TIER_GUARD}: {text!r}"
+    full, fast = chosen.groups()
+    assert sorted(full.split(",")) == sorted((FAST_PLATFORM, FULL_PLATFORM)), (
+        f"a qualifying run builds {full}, not both platforms"
+    )
+    assert fast == FAST_PLATFORM, f"an unlabelled pull request builds {fast}"
+
+
+def test_the_non_native_platform_is_smoked_only_by_a_run_that_built_it() -> None:
+    """Emulated arm64 smoke is four of the measured minutes, and it is the tier's to defer.
+
+    It is also the one step that would fail rather than skip if it were left
+    unguarded: the fast tier records no arm64 image, and `image.smoke` refuses a
+    platform the build never produced.
+    """
+    smoking = {
+        FAST_PLATFORM: [step for step in tier_steps("image.smoke") if FAST_PLATFORM in str(step.get("run", ""))],
+        FULL_PLATFORM: [step for step in tier_steps("image.smoke") if FULL_PLATFORM in str(step.get("run", ""))],
+    }
+
+    for platform, steps in smoking.items():
+        assert len(steps) == 1, f"{len(steps)} steps smoke {platform}"
+    assert TIER_GUARD not in str(smoking[FAST_PLATFORM][0].get("if", "")), (
+        f"{FAST_PLATFORM} is no longer smoked on every push"
+    )
+    assert TIER_GUARD in str(smoking[FULL_PLATFORM][0].get("if", "")), (
+        f"{FULL_PLATFORM} is smoked on a push that never built it"
+    )
+
+
+@pytest.mark.parametrize("job", [CLEAN_HOST_JOB, CLEANUP_JOB])
+def test_the_jobs_only_a_qualifying_run_feeds_are_behind_the_tier_guard(job: str) -> None:
+    """A fast tier hands nothing over, so both of these have nothing to do.
+
+    The clean-host matrix would fail on a missing artifact and the cleanup would
+    inventory a handoff nobody uploaded, so neither may be left running.
+    """
+    assert TIER_GUARD in str(image_job(job).get("if", "")), f"{job} runs for a head that produced no handoff"
+
+
+@pytest.mark.parametrize("job", [CLEAN_HOST_JOB, CLEANUP_JOB])
+def test_the_tier_guard_is_a_second_condition_and_not_a_replacement(job: str) -> None:
+    """Fork routing and tier routing answer different questions and both still have to hold.
+
+    A fork's token is read-only whatever the tier is, so replacing the trust
+    guard with the tier guard would put a labelled fork pull request back on the
+    route that uploads a handoff it cannot delete.
+    """
+    assert HANDOFF_GUARD in str(image_job(job).get("if", "")), f"{job} stopped asking which repository the head is in"
+
+
+def test_the_fast_tier_reports_under_a_name_of_its_own() -> None:
+    """Two tiers, two check names, so the one branch protection knows keeps meaning what it did.
+
+    The full tier's name is what every required-check setting and every reader's
+    memory of this gate is written against; a fast run reporting under it would
+    look like a qualification that had happened.
+    """
+    declared = str(image_job("image").get("name", ""))
+
+    assert TIER_GUARD in declared, f"the image job reports under one name for both tiers: {declared!r}"
+    assert FULL_TIER_JOB_NAME in declared, f"the full tier no longer reports as {FULL_TIER_JOB_NAME!r}"
+
+
+@pytest.mark.parametrize("task", FULL_TIER_TASKS)
+def test_the_escalation_filter_covers_every_tree_the_full_tier_alone_runs(task: str) -> None:
+    """A change to what only the full tier exercises has to raise the tier by itself.
+
+    Otherwise the one contributor most likely to break the lifecycle — the one
+    editing it — is the one asked to remember a label.
+    """
+    module = REPO_ROOT / "tasks" / f"{task.split('.', maxsplit=1)[0]}.py"
+
+    assert routed(module, filter_patterns(ESCALATION_FILTER)), (
+        f"{module.relative_to(REPO_ROOT)} decides what `invoke {task}` does, and {ESCALATION_FILTER} does not name it"
+    )
+
+
+@pytest.mark.parametrize("tree", QUALIFIED_TREES[1:])
+def test_the_escalation_filter_covers_every_bundle_the_full_tier_qualifies(tree: str) -> None:
+    """The Compose bundle and its suite are only ever run by the full tier."""
+    assert tree in filter_patterns(ESCALATION_FILTER), (
+        f"only the full tier runs {tree}, so {ESCALATION_FILTER} has to name it"
+    )
+
+
+@pytest.mark.parametrize("declaration", [IMAGE_WORKFLOW, DEVELOP_CALLER, FILE_FILTERS, DOCKERFILE], ids=_identify)
+def test_the_escalation_filter_routes_the_documents_that_declare_the_tiers(declaration: Path) -> None:
+    """A tier split that can be re-aimed without facing the tier it aims proves nothing.
+
+    These four are what decide which tier a head runs and what that tier does.
+    Editing one of them is the change most able to hide a regression, so it runs
+    the full tier itself — which is why this pull request runs it.
+    """
+    assert routed(declaration, filter_patterns(ESCALATION_FILTER)), (
+        f"{declaration.relative_to(REPO_ROOT)} declares the tiers, and {ESCALATION_FILTER} does not name it"
+    )
+
+
+def test_the_escalation_filter_does_not_name_the_tree_the_fast_tier_already_covers() -> None:
+    """Escalating on every application change is the wait this whole split removes.
+
+    `image_all` still selects the image job from that tree, so an adapter change
+    is built, scanned and smoked; what it does not do is add the lifecycle and
+    the clean-host matrix to a review round.
+    """
+    patterns = filter_patterns(ESCALATION_FILTER)
+
+    assert "infrahub_sync/**" not in patterns, (
+        f"{ESCALATION_FILTER} names the application tree, so every code change runs the full tier again"
+    )
+    assert TASK_TREE not in patterns, (
+        f"{ESCALATION_FILTER} names {TASK_TREE} whole; it names the two modules the full tier alone runs"
+    )
+
+
+def test_the_caller_raises_the_tier_on_the_label_or_a_sensitive_path() -> None:
+    """The input is only as good as what the caller puts in it.
+
+    Read as text, deliberately: evaluating these expressions would mean
+    reimplementing GitHub's own context resolution inside this suite. Three
+    routes raise the tier — anything that is not a pull request, the label, and
+    the filter — and dropping any one of them silently narrows the gate.
+    """
+    decided = str((tier_decision().get("outputs") or {})[TIER_INPUT])
+
+    assert "github.event_name != 'pull_request'" in decided, "a dispatch or a branch push no longer qualifies"
+    assert "labels" in decided, f"the {QUALIFY_LABEL} label no longer qualifies"
+    assert f"'{QUALIFY_LABEL}'" in decided, f"the label read is not {QUALIFY_LABEL}"
+    assert f"outputs.{ESCALATION_FILTER}" in decided, f"{ESCALATION_FILTER} no longer raises the tier by itself"
+
+    passed = str((image_call().get("with") or {})[TIER_INPUT])
+    assert "needs." in passed, f"the image call derives {TIER_INPUT} from {passed!r}, not from the job that decided"
+    assert TIER_INPUT in passed, f"the image call derives {TIER_INPUT} from {passed!r}"
+
+
+def test_the_label_arriving_or_leaving_re_runs_the_gate() -> None:
+    """A label nothing listens for is a label that qualifies nothing.
+
+    The three default types are restated alongside the two new ones, because
+    declaring `types` at all replaces the defaults rather than adding to them.
+    """
+    declared = triggers_of(DEVELOP_CALLER)["pull_request"]["types"]
+
+    for wanted in LABEL_EVENT_TYPES + DEFAULT_EVENT_TYPES:
+        assert wanted in declared, f"{DEVELOP_CALLER.name} does not run on a {wanted} pull request"
+
+
+def test_the_fast_tier_starts_beside_the_lint_it_used_to_wait_for() -> None:
+    """Ninety seconds on the critical path of every run, for an ordering nothing needs.
+
+    Lint still blocks a merge as its own required check; what it no longer does
+    is hold the tests and the image gate behind it.
+    """
+    graph = develop_jobs()
+    linting = {name for name, job in graph.items() if "linter" in str(job.get("uses", ""))}
+    needs = {name: _needs(job) for name, job in graph.items()}
+
+    assert linting, f"{DEVELOP_CALLER.name} runs no linter"
+    for name in ("tests", "image"):
+        assert not linting & _ancestors(name, needs), f"{name} still waits for {sorted(linting)}"
+
+
+def test_a_head_the_full_tier_never_qualified_cannot_satisfy_the_required_check() -> None:
+    """A skipped job satisfies a required check, so the tiered gate cannot be the thing required.
+
+    This job is: it always runs, it refuses a head whose tier never rose, and it
+    refuses one whose full tier ran and failed. Branch protection requires this
+    name, and a pull request without the label is a visible block rather than a
+    silent merge.
+    """
+    job = job_of(DEVELOP_CALLER, REQUIRED_JOB)
+    script = "\n".join(str(step.get("run", "")) for step in job["steps"])
+    watched = set(_needs(job))
+
+    assert "always()" in str(job.get("if", "")), f"{REQUIRED_JOB} is skipped by the very thing it refuses"
+    assert watched & {name for name, definition in develop_jobs().items() if called_workflow(definition)}, (
+        f"{REQUIRED_JOB} watches no call, so it cannot know whether the full tier ran"
+    )
+    assert REQUIRED_REFUSAL in script, f"{REQUIRED_JOB} does not say what to do about it"
+    assert re.search(r"exit\s+1", script), f"{REQUIRED_JOB} cannot fail a head that never qualified"
+    assert "success" in script, f"{REQUIRED_JOB} accepts a full tier that ran and failed"
+
+
 @pytest.mark.parametrize(
     ("workflow", "job"), [(IMAGE_WORKFLOW, "image"), (CANDIDATE_WORKFLOW, "candidate")], ids=_identify
 )
@@ -1455,6 +1775,18 @@ def test_the_image_filter_covers_every_input_the_qualification_kit_carries(sourc
     """
     assert routed(source, image_filter_patterns()), (
         f"the qualification kit carries {source.relative_to(REPO_ROOT)}, which image_all does not name"
+    )
+
+
+@pytest.mark.parametrize("source", kit_inputs(), ids=lambda path: path.name)
+def test_the_escalation_filter_covers_every_input_the_qualification_kit_carries(source: Path) -> None:
+    """The clean-host matrix is full-tier only, and the kit is what it runs.
+
+    An input the escalation filter does not name leaves a kit change qualified
+    by whoever remembers to label the pull request that makes it.
+    """
+    assert routed(source, filter_patterns(ESCALATION_FILTER)), (
+        f"the qualification kit carries {source.relative_to(REPO_ROOT)}, which {ESCALATION_FILTER} does not name"
     )
 
 
