@@ -128,7 +128,7 @@ identifiers: ["address", "ip_namespace"]
 
 All listed fields must be present and unique together. Each identifier field must also be mapped in the `fields` list.
 
-Pick the identifiers your destination actually uses, not the ones the source happens to have. Infrahub keys an address by address plus namespace, while NetBox groups addresses by VRF without requiring them to be unique inside one, so the shipped `examples/netbox_to_infrahub/` mapping turns each VRF name into an IP namespace and identifies on that. Using the VRF as a sync identifier can keep source records distinct even when they map to the same destination object. For example, an address in a VRF named `default` and the same address without a VRF both map to Infrahub's `default` namespace.
+Pick the identifiers your destination actually uses, not the ones the source happens to have. Infrahub keys an address by address plus namespace, while NetBox groups addresses by VRF without requiring them to be unique inside one, so the shipped `examples/netbox_to_infrahub/` mapping turns each VRF name into an IP namespace and identifies on that. That separation lasts only while the VRF names differ: two VRFs sharing a name produce the same namespace record twice and the run fails while loading the source, and an address in a VRF named `default` collides with the same address in no VRF at all. To key the namespace on something NetBox cannot repeat, see [Key the namespace on the VRF ID instead of its name](#key-the-namespace-on-the-vrf-id-instead-of-its-name).
 
 ## Filters
 
@@ -288,7 +288,7 @@ The patterns below cover the most common NetBox → Infrahub mappings. Adapt the
 
 The namespace is what identifies the address; the VRF is kept as an ordinary relationship. `namespace_name` is produced by a transform that reads the source VRF name and falls back to Infrahub's built-in `default` namespace when there is no VRF — see the shipped `examples/netbox_to_infrahub/config.yml` for the exact expression.
 
-Because the namespace is keyed by that name, two VRFs sharing a name share one namespace, and a VRF named `default` shares the built-in namespace with every object that has no VRF. Adding this mapping to an Infrahub that already holds imported data does not move the objects a previous sync created; see [Migrate from NetBox or Nautobot](../migrating-from-netbox-or-nautobot.mdx) for how to handle that.
+Because the namespace is keyed by that name, this mapping cannot carry two VRFs that share one. The namespace records come from the same VRF list, so the second one raises `ObjectAlreadyExists` and the run stops while loading the source — before a plan exists and before anything is written at the destination. It does not merge the two. A VRF named `default` is a different case: its objects share the built-in namespace with every object that has no VRF, and any prefix or address value repeated inside that shared namespace collides there. [Key the namespace on the VRF ID instead of its name](#key-the-namespace-on-the-vrf-id-instead-of-its-name) avoids both without touching NetBox. Adding either mapping to an Infrahub that already holds imported data does not move the objects a previous sync created; see [Migrate from NetBox or Nautobot](../migrating-from-netbox-or-nautobot.mdx) for how to handle that.
 
 ```yaml
 - name: IPAddress
@@ -308,6 +308,74 @@ Because the namespace is keyed by that name, two VRFs sharing a name share one n
     - name: description
       mapping: description
 ```
+
+### Key the namespace on the VRF ID instead of its name
+
+A name-based namespace refuses a source that repeats a VRF name. NetBox IDs cannot repeat, so deriving the namespace from `id` keeps same-name VRFs apart without renaming anything in NetBox. These three entries are the whole recipe — they replace the `IpamNamespace`, `IpamPrefix` and `IpamIPAddress` entries of `examples/netbox_to_infrahub/config.yml`, and the scope note below says what they do and do not cover:
+
+```yaml
+- name: IpamNamespace
+  mapping: ipam.vrfs
+  identifiers: ["name"]
+  fields:
+    - name: name
+      mapping: namespace_name
+    - name: description
+      mapping: description
+  transforms:
+    - field: namespace_name
+      expression: '{{ "%r" % ("netbox-vrf-%s" % id) }}'
+
+- name: IpamPrefix
+  mapping: ipam.prefixes
+  identifiers: ["prefix", "ip_namespace"]
+  fields:
+    - name: prefix
+      mapping: prefix
+    - name: description
+      mapping: description
+    - name: status
+      mapping: resolved_status
+    - name: member_type
+      mapping: resolved_member_type
+    - name: ip_namespace
+      mapping: namespace_name
+      reference: IpamNamespace
+  transforms:
+    - field: resolved_status
+      expression: "{{ 'active' if status.value == 'container' else status.value }}"
+    - field: resolved_member_type
+      expression: "{{ 'prefix' if status.value == 'container' else 'address' }}"
+    - field: namespace_name
+      expression: '{{ "%r" % ("netbox-vrf-%s" % vrf.id if vrf is defined and vrf else "default") }}'
+
+- name: IpamIPAddress
+  mapping: ipam.ip-addresses
+  identifiers: ["address", "ip_namespace"]
+  fields:
+    - name: address
+      mapping: address
+    - name: description
+      mapping: description
+    - name: status
+      mapping: status.value
+    - name: ip_namespace
+      mapping: namespace_name
+      reference: IpamNamespace
+  transforms:
+    - field: namespace_name
+      expression: '{{ "%r" % ("netbox-vrf-%s" % vrf.id if vrf is defined and vrf else "default") }}'
+```
+
+The namespace record and every prefix and address pointing at it derive the same value, so a prefix in NetBox VRF 3 lands in `netbox-vrf-3` whatever that VRF is called, and an overlapping prefix in VRF 4 lands in `netbox-vrf-4`. Objects with no VRF — a null `vrf` or no `vrf` key at all — still go to Infrahub's built-in `default` namespace.
+
+A VRF literally named `default` behaves differently here than under the shipped mapping: it is assigned its own `netbox-vrf-<id>` namespace rather than sharing the built-in `default`, so its objects no longer share a namespace with objects that have no VRF.
+
+This recipe covers namespaces, prefixes and addresses only. It drops the `vrf` reference those two kinds carry in the full example, and it changes nothing about `IpamVRF`, which the full example still loads keyed on the VRF name. The full example therefore still refuses two same-name VRFs, at that entry instead of at the namespace: copying only the namespace transform into it is not enough, and this recipe makes no claim about the rest of that inventory. To run the full example over such a source you also need a name transform of your own on `IpamVRF`.
+
+Changing what an object is identified by is not by itself a destination-uniqueness fix. Two prefixes or two addresses that are genuinely the same value inside one namespace still refuse, under either recipe. What the derived namespace buys you is that a repeated VRF *name* stops being what makes them collide.
+
+The derived name is only as stable as the NetBox ID behind it, and this recipe assumes a single source instance. Recreating a VRF gives it a new ID, and so a new namespace; a restore that preserves IDs preserves the namespace identity with them. IDs are local to one NetBox instance, so a second instance can reuse the same IDs for unrelated VRFs: those would collide in one namespace rather than land in separate ones. Combining instances needs a source discriminator applied consistently to the namespace, prefix and address expressions, together with a deliberate mapping and migration — this recipe does not cover that. Moving between the two recipes changes the identity as well. None of this renames data an earlier sync already wrote; see [Migrate from NetBox or Nautobot](../migrating-from-netbox-or-nautobot.mdx) for what adopting a new namespace identity actually takes.
 
 ### Filtering by tenant or tag
 

@@ -8,6 +8,11 @@ that work: the transform resolves a namespace for every record shape the NetBox
 adapter can produce, and the resulting identifiers keep overlapping prefixes
 apart.
 
+These tests read the mapping and compute identifiers; they load nothing. Whether a set
+of records can actually be loaded — and what happens when two of them resolve to one
+identity — is proved against the real adapter and the real store in
+`tests/adapters/test_netbox_namespace_identity.py`.
+
 The records here are plain dicts, matching what ``NetboxAdapter`` builds with
 ``dict(node)`` — pynetbox keeps every key returned by the API (including the
 null ones) and turns a nested record into a plain dict.
@@ -203,8 +208,14 @@ def test_netbox_example_keeps_overlapping_addresses_in_different_vrfs_apart() ->
     assert in_mgmt.get_unique_id() != in_prod.get_unique_id()
 
 
-def test_netbox_example_merges_prefixes_that_resolve_to_the_same_namespace() -> None:
-    """Accepted consequence: two rows with no VRF share the `default` namespace."""
+def test_netbox_example_collides_prefixes_that_resolve_to_the_same_namespace() -> None:
+    """Accepted consequence: two rows with no VRF resolve to one `default` identity.
+
+    A collision, not a merge: the second row is refused as it is added to the source
+    store. Only loading can show that, so it is shown in
+    `tests/adapters/test_netbox_namespace_identity.py` rather than inferred from the
+    equal identifiers here.
+    """
     mapping = _mapping("IpamPrefix")
     namespace = str(_namespace_value(mapping, {"prefix": "10.0.0.0/24", "status": {"value": "active"}, "vrf": None}))
 
