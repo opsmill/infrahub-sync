@@ -20,16 +20,11 @@ The archive carries its own copy of this procedure at
 [`OPERATING.md`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/deploy/compose/OPERATING.md),
 so a host that has the archive and nothing else can still be operated.
 
-## Obtain and verify
+## Release prerequisite
 
-The archive and its checksum are two files from one build. Check the archive
-before extracting it, and check the image before trusting it:
-
-```bash
-sha256sum -c infrahub-sync-compose-<version>.tar.gz.sha256
-tar -xzf infrahub-sync-compose-<version>.tar.gz
-cd infrahub-sync-compose-<version>
-```
+Use the [Compose quickstart](quickstart-compose) to verify and extract the
+release, load its image, initialize the deployment, and perform the first
+start. Continue here only after it reports `READY`.
 
 The checksum is a claim about the archive as shipped and about nothing
 afterwards: preparing a deployment writes `operator.env` and edits the declared
@@ -98,14 +93,7 @@ state travels between them through PostgreSQL and the object store, which is
 why the worker needs no configuration mount and why replacing it loses nothing.
 PostgreSQL and the object store hold the only volumes that survive a restart.
 
-## Prepare
-
-From the extracted bundle directory, generate this deployment's identity and its
-credentials:
-
-```bash
-./infrahub-sync-compose init
-```
+## Configuration prerequisites
 
 That writes `.instance`, `secrets/postgres-admin-password`, and `operator.env`
 with generated passwords for the two database owner roles, the object store, and
@@ -200,12 +188,7 @@ It is not a statement that any particular NetBox or Nautobot server version has
 been qualified against it.
 :::
 
-## Start
-
-```bash
-./infrahub-sync-compose preflight
-./infrahub-sync-compose start
-```
+## After the first start
 
 `start` runs `preflight` itself, so the separate call is optional. It is a
 diagnostic rather than a read-only one: it may replace the image recorded in
@@ -406,9 +389,6 @@ Two things a package declares are resolved elsewhere:
 ### The operator sequence
 
 ```bash
-./infrahub-sync-compose init
-# No image to name and no configuration or destination needed: the archive names the image.
-./infrahub-sync-compose start
 ./infrahub-sync-compose cli configs list
 # Add destination/source credentials to operator.env before planning; recreate affected services
 # using start after changed environment; restart alone retains the old container environment.
@@ -492,29 +472,15 @@ with SyncClient("http://127.0.0.1:8000", "<the generated principal token>") as c
     print(client.get_status().worker.state)
 ```
 
-### Plan, review, verify, apply, and sync
+### Plan verification details
 
 A managed write is admitted once and approved against the checksum of the plan
 you reviewed. Nothing is written at the destination until the apply names that
 exact checksum and confirms.
 
-```bash
-# 1. Plan. Writes nothing.
-./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --reason 'review the change'
-
-# 2. Review the retained plan, and read its checksum.
-./infrahub-sync-compose cli runs plan RUN_ID --detail
-
-# 3. Apply the plan you reviewed, by its checksum.
-./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM --reason 'apply the reviewed plan'
-
-# 4. Read what the run recorded.
-./infrahub-sync-compose cli runs show RUN_ID
-./infrahub-sync-compose cli runs results RUN_ID
-
-# 5. A separate sync is its own admitted run, and confirms up front.
-./infrahub-sync-compose cli sync --config-id CONFIG_ID --version 1 --reason 'converge'
-```
+The operator sequence above is the authoritative command sequence for planning,
+reviewing, applying, and reading a run. The following API verification is
+optional and does not create another plan or apply sequence.
 
 An independent verification of a retained plan is the one step here with no CLI
 command. It is a direct authenticated call, so it creates its own private curl
@@ -619,11 +585,8 @@ This alpha promises no in-place state migration and no backup or restore.
 Replacing it is the reset above followed by a fresh deployment of the same
 bundle and the same image:
 
-```bash
-./infrahub-sync-compose reset <instance identity>
-./infrahub-sync-compose init
-./infrahub-sync-compose start
-```
+Use the quickstart lifecycle commands after reset to create the replacement
+deployment; it receives a new identity and starts empty.
 
 Prior run history, retained plans, and artifacts do not survive that. Keep
 anything you need outside the deployment before you reset.
