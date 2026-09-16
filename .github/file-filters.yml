@@ -120,6 +120,7 @@ qualify_all:
   - "tests/image/**"
   - "tasks/compose.py"
   - "tasks/image.py"
+  - "tasks/release.py"
   - *compose_files
   - *qualification_kit_files
   - ".github/workflows/workflow-image.yml"

@@ -120,6 +120,10 @@ APPROVED_EVENTS = frozenset({"workflow_dispatch", "workflow_call"})
 # The job that qualifies the candidate on a host that has never seen this
 # repository, and everything it is not allowed to have.
 CLEAN_HOST_JOB = "clean-host"
+LIFECYCLE_JOB = "compose-lifecycle"
+FINAL_QUALIFICATION_JOB = "final-qualification"
+GATE_INPUT_ARTIFACT = "infrahub-sync-qualification-gate-input"
+LIFECYCLE_RESULT_ARTIFACT = "infrahub-sync-qualification-lifecycle-result"
 CHECKOUT_ACTION = "actions/checkout"
 INTERPRETER_ACTIONS = ("astral-sh/setup-uv", "actions/setup-python")
 # `python` and `python3` among them: an interpreter the runner happens to ship
@@ -207,7 +211,7 @@ HANDOFF_MARKERS = (".release/handoff", ".release/artifacts.json", "invoke releas
 # lifecycle. Which tier runs them is a separate question, asked below: a fork
 # that qualifies runs everything here, and this case is what stops the trust
 # guard from being widened into a reason to run nothing.
-UNGUARDED_TASKS = ("release.kit", "image.build", "image.scan", "image.smoke", "compose.lifecycle")
+UNGUARDED_TASKS = ("release.kit", "image.build", "image.scan", "image.smoke")
 
 # The second input the gate takes, and the token every step and job that only a
 # qualifying run performs has to name in its `if`. False by default for the same
@@ -982,7 +986,16 @@ def test_the_clean_host_job_needs_the_job_that_really_produces_what_it_downloads
     the producer leaves the gate needing something that builds nothing, and fails
     here rather than at the download step of a run.
     """
-    producing = {job for path, job, _step, _declared in candidates() if path == workflow}
+    downloaded = {
+        str((step.get("with") or {}).get("name", ""))
+        for step in job_of(workflow, CLEAN_HOST_JOB)["steps"]
+        if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
+    }
+    producing = {
+        job
+        for path, job, _step, declared in candidates()
+        if path == workflow and str(declared.get("name", "")) in downloaded
+    }
     needed = set(_needs(job_of(workflow, CLEAN_HOST_JOB)))
 
     assert producing, f"{workflow.name} uploads no candidate artifact, so this proves nothing"
@@ -990,6 +1003,139 @@ def test_the_clean_host_job_needs_the_job_that_really_produces_what_it_downloads
         f"{workflow.name}'s {CLEAN_HOST_JOB} job needs {sorted(needed)}, "
         f"which does not cover the producer {sorted(producing)}"
     )
+
+
+def test_trusted_lifecycle_and_clean_host_run_in_parallel_from_one_producer() -> None:
+    """Both expensive consumers start from the candidate handoff, not from each other."""
+    graph = jobs(IMAGE_WORKFLOW)
+    needs = {name: _needs(job) for name, job in graph.items()}
+
+    assert set(needs[LIFECYCLE_JOB]) == {"image"}
+    assert set(needs[CLEAN_HOST_JOB]) == {"image"}
+    assert LIFECYCLE_JOB not in _ancestors(CLEAN_HOST_JOB, needs)
+    assert CLEAN_HOST_JOB not in _ancestors(LIFECYCLE_JOB, needs)
+
+
+def test_final_qualification_waits_for_both_parallel_gates() -> None:
+    """No final record can exist before lifecycle and clean-host both pass."""
+    final = image_job(FINAL_QUALIFICATION_JOB)
+    uploads_record = [
+        step
+        for step in final["steps"]
+        if str((step.get("with") or {}).get("name", "")) == "infrahub-sync-qualification-record"
+    ]
+
+    assert {LIFECYCLE_JOB, CLEAN_HOST_JOB} <= set(_needs(final))
+    assert len(uploads_record) == 1
+    assert not [
+        step
+        for name, job in jobs(IMAGE_WORKFLOW).items()
+        if name != FINAL_QUALIFICATION_JOB
+        for step in job.get("steps", [])
+        if str((step.get("with") or {}).get("name", "")) == "infrahub-sync-qualification-record"
+    ]
+
+
+def test_clean_host_consumes_candidate_input_and_never_the_final_record() -> None:
+    """Clean-host is a prerequisite of the final record, so that record cannot be one of its inputs."""
+    downloads = {
+        str((step.get("with") or {}).get("name", ""))
+        for step in image_job(CLEAN_HOST_JOB)["steps"]
+        if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
+    }
+
+    assert "infrahub-sync-candidate-handoff" in downloads
+    assert "infrahub-sync-qualification-kit" in downloads
+    assert "infrahub-sync-qualification-record" not in downloads
+
+
+def test_the_handoff_carries_the_flat_digest_record_the_lifecycle_restores() -> None:
+    """The sibling resolves `candidate_reference()` from the producer's record, never a rebuild."""
+    staged = "\n".join(str(step.get("run", "")) for step in image_job("image")["steps"])
+    lifecycle = "\n".join(str(step.get("run", "")) for step in image_job(LIFECYCLE_JOB)["steps"])
+
+    assert "cp .image/digests.json .release/handoff/digests.json" in staged
+    assert "cp candidate/digests.json .image/digests.json" in lifecycle
+    assert "docker load --input candidate/image-linux-amd64.tar" in lifecycle
+    assert lifecycle.index("docker load --input") < lifecycle.index("invoke compose.lifecycle")
+
+
+def test_the_gate_input_restores_every_producer_path_exactly() -> None:
+    """Final qualification receives the producer's records and reports without retyping them."""
+    upload = step_of(IMAGE_WORKFLOW, "image", GATE_INPUT_ARTIFACT)
+    uploaded = {line.strip() for line in str(upload["with"]["path"]).splitlines() if line.strip()}
+    expected = {
+        ".release/identity.json",
+        ARTIFACT_RECORD,
+        ".release/results/",
+        ".release/bundle/",
+        ".image/digests.json",
+        ".image/*-sbom-linux-*.spdx.json",
+        ".image/*-vulnerabilities-linux-*.json",
+    }
+    final = image_job(FINAL_QUALIFICATION_JOB)
+    downloads = [step for step in final["steps"] if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")]
+
+    assert uploaded == expected
+    gate_input = [step for step in downloads if (step.get("with") or {}).get("name") == GATE_INPUT_ARTIFACT]
+    assert len(gate_input) == 1
+    assert gate_input[0]["with"]["path"] == "."
+    assert not [step for step in final["steps"] if ARTIFACT_RECORD in str(step.get("run", ""))]
+
+
+@pytest.mark.parametrize("job", [LIFECYCLE_JOB, FINAL_QUALIFICATION_JOB])
+def test_checkout_consumers_use_the_exact_source_sha_and_required_profile(job: str) -> None:
+    """Task code, waivers, and the candidate records all come from the same revision."""
+    steps = image_job(job)["steps"]
+    checkouts = [step for step in steps if str(step.get("uses", "")).startswith(CHECKOUT_ACTION)]
+    installs = [str(step.get("run", "")) for step in steps if "uv sync" in str(step.get("run", ""))]
+
+    assert len(checkouts) == 1
+    assert checkouts[0]["with"]["ref"] == "${{ github.sha }}"
+    assert checkouts[0]["with"][PERSISTED_CREDENTIALS] is False
+    assert installs == ["uv sync --frozen --extra dev --extra prefect --extra service"]
+
+
+def test_the_final_job_restores_lifecycle_into_results_and_runs_the_strict_qualifier() -> None:
+    """The final job joins evidence; it does not replace the qualifier or synthesize a result."""
+    final = image_job(FINAL_QUALIFICATION_JOB)
+    lifecycle = [step for step in final["steps"] if (step.get("with") or {}).get("name") == LIFECYCLE_RESULT_ARTIFACT]
+    qualifiers = [step for step in final["steps"] if "invoke release.qualify" in str(step.get("run", ""))]
+
+    assert len(lifecycle) == 1
+    assert lifecycle[0]["with"]["path"] == ".release/results"
+    assert len(qualifiers) == 1
+    assert not [
+        step
+        for job_name, job in jobs(IMAGE_WORKFLOW).items()
+        if job_name != FINAL_QUALIFICATION_JOB
+        for step in job.get("steps", [])
+        if "invoke release.qualify" in str(step.get("run", ""))
+    ]
+
+
+def test_new_parallel_job_names_are_literal() -> None:
+    """Expressions in job names become phantom checks instead of stable check identities."""
+    for name in (LIFECYCLE_JOB, CLEAN_HOST_JOB, FINAL_QUALIFICATION_JOB, CLEANUP_JOB):
+        declared = str(image_job(name).get("name", ""))
+        assert declared
+        assert "${{" not in declared, f"{name} has an expression name: {declared}"
+
+
+def test_inline_and_sibling_lifecycle_routes_are_mutually_exclusive() -> None:
+    """Forks keep inline coverage while trusted runs use only the sibling job."""
+    inline = [step for step in image_job("image")["steps"] if "invoke compose.lifecycle" in str(step.get("run", ""))]
+
+    assert len(inline) == 1
+    assert f"!{HANDOFF_GUARD}" in str(inline[0].get("if", "")).replace(" ", "")
+    sibling_guard = str(image_job(LIFECYCLE_JOB).get("if", ""))
+    assert HANDOFF_GUARD in sibling_guard
+    assert TIER_GUARD in sibling_guard
+
+
+def test_release_task_changes_raise_the_full_qualification_tier() -> None:
+    """The module writes both the consumer manifest and the final record."""
+    assert "tasks/release.py" in filter_patterns(ESCALATION_FILTER)
 
 
 def test_the_candidate_route_answers_no_event_and_is_the_only_manual_one() -> None:
@@ -1313,11 +1459,12 @@ def test_no_candidate_artifact_outlives_a_run_something_started_on_its_own() -> 
     assert uncovered == [], f"{len(uncovered)} candidate uploads outlive their run: {uncovered}"
 
 
-def handoff_steps(job: str) -> list[dict]:
-    """Return every step of one job that produces or describes the handoff."""
+def handoff_steps() -> list[tuple[str, dict]]:
+    """Return every step of every job that produces or describes the handoff."""
     return [
-        step
-        for step in image_job(job)["steps"]
+        (job_name, step)
+        for job_name, job in jobs(IMAGE_WORKFLOW).items()
+        for step in job.get("steps", [])
         if any(marker in str(step.get("run", "")) for marker in HANDOFF_MARKERS)
         or str((step.get("with") or {}).get("name", "")).startswith(CANDIDATE_ARTIFACTS)
     ]
@@ -1338,14 +1485,22 @@ def test_the_gate_takes_one_input_and_assumes_the_untrusted_route_without_it() -
 
 def test_every_stage_that_produces_the_handoff_is_behind_the_trust_guard() -> None:
     """A fork's token is read-only, so a fork that uploads a handoff cannot delete it."""
-    producers = handoff_steps("image")
+    producers = handoff_steps()
 
-    assert len(producers) == len(HANDOFF_MARKERS) + len(CANDIDATE_ARTIFACTS) + 1, producers
-    for step in producers:
-        assert HANDOFF_GUARD in str(step.get("if", "")), f"{_step_name(step)!r} runs on a fork"
+    assert {job for job, _step in producers} == {
+        "image",
+        LIFECYCLE_JOB,
+        CLEAN_HOST_JOB,
+        FINAL_QUALIFICATION_JOB,
+    }
+    for marker in HANDOFF_MARKERS:
+        assert [step for _job, step in producers if marker in str(step.get("run", ""))], marker
+    for job_name, step in producers:
+        guarded = f"{jobs(IMAGE_WORKFLOW)[job_name].get('if', '')} {step.get('if', '')}"
+        assert HANDOFF_GUARD in guarded, f"{job_name}: {_step_name(step)!r} runs on a fork"
 
 
-@pytest.mark.parametrize("job", [CLEAN_HOST_JOB, CLEANUP_JOB])
+@pytest.mark.parametrize("job", [LIFECYCLE_JOB, CLEAN_HOST_JOB, FINAL_QUALIFICATION_JOB, CLEANUP_JOB])
 def test_both_jobs_that_consume_or_delete_the_handoff_are_behind_the_guard(job: str) -> None:
     """Neither has anything to do on a fork, and the second would fail on a 403."""
     assert HANDOFF_GUARD in str(image_job(job).get("if", "")), f"{job} runs on a fork"
@@ -1493,7 +1648,7 @@ def test_the_non_native_platform_is_smoked_only_by_a_run_that_built_it() -> None
     )
 
 
-@pytest.mark.parametrize("job", [CLEAN_HOST_JOB, CLEANUP_JOB])
+@pytest.mark.parametrize("job", [LIFECYCLE_JOB, CLEAN_HOST_JOB, FINAL_QUALIFICATION_JOB, CLEANUP_JOB])
 def test_the_jobs_only_a_qualifying_run_feeds_are_behind_the_tier_guard(job: str) -> None:
     """A fast tier hands nothing over, so both of these have nothing to do.
 
@@ -1503,7 +1658,7 @@ def test_the_jobs_only_a_qualifying_run_feeds_are_behind_the_tier_guard(job: str
     assert TIER_GUARD in str(image_job(job).get("if", "")), f"{job} runs for a head that produced no handoff"
 
 
-@pytest.mark.parametrize("job", [CLEAN_HOST_JOB, CLEANUP_JOB])
+@pytest.mark.parametrize("job", [LIFECYCLE_JOB, CLEAN_HOST_JOB, FINAL_QUALIFICATION_JOB, CLEANUP_JOB])
 def test_the_tier_guard_is_a_second_condition_and_not_a_replacement(job: str) -> None:
     """Fork routing and tier routing answer different questions and both still have to hold.
 
@@ -1708,8 +1863,12 @@ def test_the_artifact_record_names_the_candidate_from_the_one_document_that_hold
     # identity test here silently skips every group and asserts nothing.
     checked = [
         str(declared["name"])
-        for path, _job, _step, declared in candidates()
-        if path == workflow and not str(declared["name"]).endswith("qualification-record")
+        for path, producing_job, _step, declared in candidates()
+        if path == workflow
+        and producing_job == job
+        and ARTIFACT_RECORD
+        not in str((step_of(workflow, job, str(declared["name"])).get("with") or {}).get("path", ""))
+        and not str(declared["name"]).endswith("qualification-record")
     ]
 
     assert checked, f"{workflow.name} retains no group whose identifiers the record could bind"
