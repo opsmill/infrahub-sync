@@ -45,8 +45,9 @@ Both commands print the resulting version's `config_id`, `registry_version`,
 prints `created`: `true` for a genuinely new version, `false` when the submitted content's
 checksum already matches an existing version of that configuration — in which case the
 fields printed are that existing version's, and nothing new is written. This is separate
-from an idempotency-key replay, which returns the exact original accepted response for a
-repeated key regardless of content.
+from an idempotency-key replay, which returns the exact original accepted response when the
+same key is retried for the same request; retrying the same key with a changed request is
+refused with `idempotency-conflict`.
 
 `config_id` and `registry_version` are what `diff`, `sync`, and `configs validate` address a
 specific registered version by; none of them take a file path. `configs show` takes only
