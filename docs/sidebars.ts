@@ -8,6 +8,7 @@ const sidebars: SidebarsConfig = {
       label: 'Get started',
       items: [
         'installation',
+        'quickstart-compose',
         'creating-a-sync-project',
         'configuration-package',
         'running-a-sync',
@@ -18,6 +19,8 @@ const sidebars: SidebarsConfig = {
       label: 'Tutorials',
       items: [
         'tutorials/netbox-demo-to-infrahub',
+        'tutorials/netbox-to-existing-infrahub',
+        'tutorials/nautobot-to-existing-infrahub',
       ],
     },
     {

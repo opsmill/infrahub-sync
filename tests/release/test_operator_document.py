@@ -21,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 GUIDE = REPO_ROOT / "docs" / "docs" / "compose-deployment.mdx"
 OPERATOR_DOCUMENT = REPO_ROOT / "deploy" / "compose" / "OPERATING.md"
 DOCUMENTS = (GUIDE, OPERATOR_DOCUMENT)
+FULL_OPERATOR_DOCUMENTS = (OPERATOR_DOCUMENT,)
 
 ENTRY_POINT = REPO_ROOT / "deploy" / "compose" / "infrahub-sync-compose"
 
@@ -122,7 +123,7 @@ def test_the_entry_point_dispatch_block_is_readable() -> None:
     assert len(refusal_families()) > len(LIFECYCLE), f"only {sorted(refusal_families())} were read"
 
 
-@pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
+@pytest.mark.parametrize("path", FULL_OPERATOR_DOCUMENTS, ids=lambda path: path.name)
 def test_both_documents_name_every_lifecycle_verb(path: Path) -> None:
     """An operator with one of these documents can reach the whole lifecycle."""
     body = prose(path)
@@ -143,7 +144,7 @@ def test_the_shipped_document_explains_every_refusal_a_host_can_be_shown() -> No
     assert not missing, f"{OPERATOR_DOCUMENT.name} explains no {missing}"
 
 
-@pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
+@pytest.mark.parametrize("path", FULL_OPERATOR_DOCUMENTS, ids=lambda path: path.name)
 @pytest.mark.parametrize("step", VERIFICATION)
 def test_both_documents_say_how_to_verify_what_arrived(path: Path, step: str) -> None:
     """A bundle and an image are both taken on trust unless something checks them."""
@@ -183,7 +184,7 @@ def command_blocks(path: Path) -> list[list[str]]:
     return blocks
 
 
-@pytest.mark.parametrize("path", DOCUMENTS, ids=lambda path: path.name)
+@pytest.mark.parametrize("path", FULL_OPERATOR_DOCUMENTS, ids=lambda path: path.name)
 def test_both_documents_describe_replacement_as_reset_then_init_then_start(path: Path) -> None:
     """The documented procedure is the one the qualification exercises, and it is not an upgrade.
 

@@ -23,13 +23,15 @@ from tests.compose.conftest import BUNDLE, REPO_ROOT
 
 DOCUMENT_ID = "compose-deployment"
 PAGE = REPO_ROOT / "docs" / "docs" / f"{DOCUMENT_ID}.mdx"
+QUICKSTART = REPO_ROOT / "docs" / "docs" / "quickstart-compose.mdx"
 SIDEBAR = REPO_ROOT / "docs" / "sidebars.ts"
 ENTRY_POINT = BUNDLE / "infrahub-sync-compose"
 API_REFERENCE = REPO_ROOT / "docs" / "docs" / "reference" / "sync-http-api.mdx"
 
 # Every command the entry point answers to. A command nobody wrote down is one
 # the deployment appears not to have.
-COMMANDS = ("init", "preflight", "start", "status", "logs", "stop", "restart", "reset", "cli")
+ENTRY_POINT_COMMANDS = ("init", "preflight", "start", "status", "logs", "stop", "restart", "reset", "cli")
+PAGE_COMMANDS = ("start", "status", "logs", "stop", "restart", "reset", "cli")
 
 # The frozen operator sequence, in order and complete: the two lifecycle commands
 # that precede any CLI call, the literal second `start` after credentials are
@@ -67,7 +69,7 @@ OPERATOR_SEQUENCE = (
 )
 
 # The two operator documents this sequence has to appear in, in this order.
-OPERATOR_DOCUMENTS = ("docs/docs/compose-deployment.mdx", "deploy/compose/OPERATING.md")
+OPERATOR_DOCUMENTS = ("deploy/compose/OPERATING.md",)
 
 # The three lifecycle states and the exit code each one carries, so a reader can
 # script against them.
@@ -141,7 +143,7 @@ def test_the_page_is_listed_in_the_docs_sidebar() -> None:
     assert f"'{DOCUMENT_ID}'" in sync_sidebar()
 
 
-@pytest.mark.parametrize("command", COMMANDS)
+@pytest.mark.parametrize("command", PAGE_COMMANDS)
 def test_the_page_documents_every_lifecycle_command(command: str) -> None:
     """`--help` names them; this page is where their consequences are written down."""
     assert f"infrahub-sync-compose {command}" in page()
@@ -226,7 +228,7 @@ def usage_entries() -> dict[str, str]:
     current = ""
     for line in body.splitlines():
         head = re.match(r"^  (\w+)", line)
-        if head and head.group(1) in COMMANDS:
+        if head and head.group(1) in ENTRY_POINT_COMMANDS:
             current = head.group(1)
             entries[current] = ""
         if current:
@@ -289,7 +291,7 @@ def test_every_documented_cli_call_names_commands_the_cli_has(line: str) -> None
 def test_the_page_documents_no_command_the_entry_point_does_not_have() -> None:
     """A documented command that refuses is worse than an undocumented one."""
     usage = ENTRY_POINT.read_text(encoding="utf-8")
-    documented = {command for command in COMMANDS if f"infrahub-sync-compose {command}" in page()}
+    documented = {command for command in PAGE_COMMANDS if f"infrahub-sync-compose {command}" in page()}
 
     for command in documented:
         assert f"    {command})" in usage or f"    {command} " in usage, command
@@ -355,9 +357,9 @@ def test_the_page_tells_a_clean_host_how_to_get_the_bundle_and_check_it() -> Non
     it one is not the absence of the disclaimer but the presence of the
     procedure: the two files, the checksum, the digest, and the extraction.
     """
-    text = page()
+    text = QUICKSTART.read_text(encoding="utf-8")
 
-    for step in ("infrahub-sync-compose-<version>.tar.gz.sha256", "sha256sum -c", "tar -xzf"):
+    for step in ("<release-archive>.tar.gz.sha256", "sha256sum -c", "tar -xzf"):
         assert step in text, f"the page does not tell a host to {step}"
     assert "cd deploy/compose" not in text, "the page still deploys from a directory in this tree"
 
