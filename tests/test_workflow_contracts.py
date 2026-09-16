@@ -248,6 +248,14 @@ QUALIFY_LABEL = "qualify"
 # neither is a type `pull_request` sends by default.
 LABEL_EVENT_TYPES = ("labeled", "unlabeled")
 DEFAULT_EVENT_TYPES = ("opened", "synchronize", "reopened")
+# The branch this gate guards, and so the one tree a pull-request run never
+# builds as itself: the merge commit. Qualifying it is a push route, separate
+# from anything a pull request can ask for.
+POST_MERGE_BRANCH = "feature/v3-develop"
+# Compared as a whole set rather than by membership. The post-merge route is an
+# addition to the one branch pattern that was already here, not a licence to
+# start this gate on every push the repository receives.
+PUSHED_BRANCHES = frozenset({"renovate/**", POST_MERGE_BRANCH})
 # The job branch protection requires by name. A skipped job satisfies a required
 # check, so the gate that has not run cannot be the thing required: this one
 # always runs and refuses a head the full tier never qualified.
@@ -1589,6 +1597,28 @@ def test_the_caller_raises_the_tier_on_the_label_or_a_sensitive_path() -> None:
     passed = str((image_call().get("with") or {})[TIER_INPUT])
     assert "needs." in passed, f"the image call derives {TIER_INPUT} from {passed!r}, not from the job that decided"
     assert TIER_INPUT in passed, f"the image call derives {TIER_INPUT} from {passed!r}"
+
+
+def test_a_merge_into_the_branch_this_gate_guards_re_qualifies_it() -> None:
+    """A tier that would qualify a push is not the same thing as a push the gate ever sees.
+
+    The decision above raises the tier for anything that is not a pull request,
+    but GitHub only starts a workflow for the events `on:` names. Without this
+    branch under `push`, the merged tree — the one head no pull-request run ever
+    built as itself — is the only thing the full tier never covers.
+
+    The set is compared whole, because the correction is the post-merge route
+    and not a gate that runs on every push.
+    """
+    declared = triggers_of(DEVELOP_CALLER)
+
+    assert POST_MERGE_BRANCH in declared["pull_request"]["branches"], (
+        f"{DEVELOP_CALLER.name} no longer guards pull requests into {POST_MERGE_BRANCH}"
+    )
+    assert set(declared["push"]["branches"]) == PUSHED_BRANCHES, (
+        f"{DEVELOP_CALLER.name} runs on pushes to {sorted(declared['push']['branches'])}; "
+        f"a merge into {POST_MERGE_BRANCH} has to start the full tier, and nothing wider should"
+    )
 
 
 def test_the_label_arriving_or_leaving_re_runs_the_gate() -> None:

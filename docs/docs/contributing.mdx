@@ -130,6 +130,8 @@ The full qualification tier adds the `linux/arm64` build and smoke, the warm-bui
 
 Nothing is skipped permanently. The `Full qualification` check always runs and fails until the full tier has covered the head, so a pull request cannot merge on the fast tier alone.
 
+A merge also runs the full tier by itself. A push to `feature/v3-develop` — which is what merging a pull request produces — is not a pull-request event, so it qualifies in full without a label. That covers the merged tree, which no pull-request run builds as itself: what a pull request tests is its head merged with the base at that moment, and the commit that lands can differ from it.
+
 ## Code standards
 
 ### Python style

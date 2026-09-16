@@ -7,6 +7,13 @@ on:
   push:
     branches:
       - "renovate/**"
+      # The merged tree, which no pull-request run ever built as itself: what a
+      # pull request qualifies is its head merged with the base at that moment,
+      # and the commit that lands can differ from it. A push here is not a
+      # pull-request event, so the decision below raises it to the full tier —
+      # which is the point of naming it, and the reason this list stays two
+      # entries long rather than becoming every push.
+      - "feature/v3-develop"
   pull_request:
     branches:
       - develop
