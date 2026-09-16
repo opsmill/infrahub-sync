@@ -250,6 +250,81 @@ Both published surfaces bind to loopback by default:
 
 External exposure and TLS termination are not part of this topology.
 
+## Prepare the destination schema
+
+The existing-Infrahub tutorials use a small destination schema with two kinds,
+`TestingSite` and `TestingDevice`:
+
+```yaml
+version: '1.0'
+nodes:
+  - name: Site
+    namespace: Testing
+    human_friendly_id: [name__value]
+    uniqueness_constraints: [[name__value]]
+    attributes:
+      - name: name
+        kind: Text
+        optional: false
+  - name: Device
+    namespace: Testing
+    human_friendly_id: [name__value]
+    uniqueness_constraints: [[name__value]]
+    attributes:
+      - name: name
+        kind: Text
+        optional: false
+      - name: model
+        kind: Text
+        optional: false
+      - name: serial
+        kind: Text
+        optional: false
+    relationships:
+      - name: site
+        peer: TestingSite
+        kind: Attribute
+        cardinality: one
+        optional: false
+```
+
+Save it as `schema.yml`, then use the Infrahub SDK CLI on the Docker host to
+load it. Install the CLI outside the deployment containers:
+
+```sh
+python3 -m venv .schema-tools
+.schema-tools/bin/python -m pip install 'infrahub-sdk[ctl]'
+.schema-tools/bin/infrahubctl version
+```
+
+Set the destination address and token for one command only. Replace the address
+with the URL in `destination.settings.url`; do not source `operator.env`.
+
+```sh
+(
+  export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' operator.env)"
+  .schema-tools/bin/infrahubctl schema load schema.yml --branch BRANCH_NAME
+)
+```
+
+`BRANCH_NAME` must already exist. List or, when needed, create it with the
+same scoped environment:
+
+```sh
+(
+  export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' operator.env)"
+  .schema-tools/bin/infrahubctl branch list
+  # Only if you want to create a new branch:
+  .schema-tools/bin/infrahubctl branch create BRANCH_NAME
+)
+```
+
+Use this branch for the later `diff` and `apply`. Omit `--branch` from schema
+load to target Infrahub's default branch. The destination schema is your
+Infrahub instance's responsibility; this deployment's CLI does not load it.
+
 ## Use it
 
 `cli` runs the shipped CLI against this deployment, in a container of the same
@@ -283,6 +358,15 @@ Each call is one container: nothing is published, no service is started as a
 side effect, no volume is kept, and the container is removed when the command
 ends. `cli --help` displays help for the CLI, and everything after `cli` is
 passed through as given — an argument holding spaces stays one argument.
+
+## Prepare a configuration
+
+The [NetBox](tutorials/netbox-to-existing-infrahub) and
+[Nautobot](tutorials/nautobot-to-existing-infrahub) tutorials prepare
+`package.yml` and `operator.env` for their source. Once those files are ready,
+run `./infrahub-sync-compose start` so services receive the changed environment.
+Source credentials are optional for startup but required for a run that uses
+them.
 
 ### Registering a package
 
@@ -342,6 +426,10 @@ Two things a package declares are resolved elsewhere:
 `CONFIG_ID`, `RUN_ID` and `CHECKSUM` are results the previous commands printed.
 `runs show` reports the run's phase, outcome and Prefect correlation; `runs
 results` prints what the service recorded for it as JSON.
+
+If the final output from `apply` still shows `execution_state: running`, run
+`runs show` again. It settles within seconds; confirm `phase: applied` and
+`execution_state: completed` before treating the apply as finished.
 
 ### Over HTTP or from Python
 

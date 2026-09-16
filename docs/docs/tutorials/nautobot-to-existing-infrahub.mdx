@@ -1,0 +1,146 @@
+---
+title: Sync from Nautobot to an existing Infrahub
+---
+
+This tutorial connects Nautobot to an existing Infrahub. Unlike the [NetBox demo
+tutorial](netbox-demo-to-infrahub), it does not start Infrahub locally.
+Start the deployment with the [Compose quickstart](../quickstart-compose.mdx),
+then run these commands from the extracted deployment directory on the Docker
+host.
+
+## Measured scenario
+
+The measured run used Nautobot 2.4.41 with `depth: 1` and Infrahub 1.10.6. It
+verified five devices and their location/model relationships, native namespaces,
+overlapping prefixes in separate namespaces, and an address whose namespace and
+server-computed prefix agreed. Saved run records survived deployment restart.
+The connection example below is intentionally limited to sites and devices.
+These measurements do not establish compatibility with other server versions.
+
+`depth: 1` requests nested objects. Without it, Nautobot 2.4.41 returns a
+shallow `device_type` reference and the required `device_type.model` field is
+missing.
+
+## Create and edit package.yml
+
+Set the credentials described below, then load the [destination schema](../compose-deployment#prepare-the-destination-schema)
+into Infrahub first — this example targets it.
+
+```yaml
+---
+# Map Nautobot locations and devices to TestingSite and TestingDevice in Infrahub.
+# Replace both URLs and provide the matching destination schema before registration.
+# Set NAUTOBOT_TOKEN and INFRAHUB_API_TOKEN in the generated operator.env file.
+format_version: 1
+configuration:
+  name: my-nautobot-evaluation
+  source:
+    name: nautobot
+    settings:
+      url: https://nautobot.example.invalid
+      token: {$credential: nautobot-token}
+      depth: 1
+  destination:
+    name: infrahub
+    settings:
+      url: https://infrahub.example.invalid
+      token: {$credential: infrahub-token}
+  schema_mapping:
+    - name: TestingSite
+      mapping: dcim.locations
+      identifiers: [name]
+      fields:
+        - name: name
+          mapping: name
+    - name: TestingDevice
+      mapping: dcim.devices
+      identifiers: [name]
+      fields:
+        - name: name
+          mapping: name
+        - name: model
+          mapping: device_type.model
+        - name: serial
+          mapping: serial
+        - name: site
+          mapping: location
+          reference: TestingSite
+credentials:
+  nautobot-token: {provider: env, identifier: NAUTOBOT_TOKEN}
+  infrahub-token: {provider: env, identifier: INFRAHUB_API_TOKEN}
+```
+
+Before registering `package.yml`:
+
+- Replace both URLs with addresses the worker container can reach. `localhost`
+  and `127.0.0.1` inside the worker refer to that container, not your host.
+- Match the mapping to your Infrahub schema, using the linked schema or your
+  own equivalent.
+- Keep the `{$credential: ...}` references in YAML; put token values in
+  `operator.env`, never in `package.yml`.
+- `depth: 1` makes nested objects such as `device_type` available inline so
+  `device_type.model` resolves. It increases response size, so request only the
+  depth your mapping needs.
+
+This example maps locations (as sites) and devices only. It does not import
+Nautobot namespaces, prefixes, IP addresses, or interfaces; it is a minimal
+runnable connection and destination-schema check, not a complete inventory
+template.
+
+## Nautobot-specific schema notes
+
+- Nautobot 2.x has no `Site` model. Its equivalent is `dcim.locations`, where
+  each Location has a `location_type` such as `Site`.
+- A device's source relationship is `location`, not `site`; the mapping writes
+  it into the destination's `TestingDevice.site` field.
+- Every Nautobot Location and Device needs a `status`, and every Device needs a
+  `role`, even though this destination schema does not map them. That is a
+  Nautobot data requirement, not a `package.yml` field.
+
+## If you map Nautobot IP addressing
+
+Nautobot 2.0 and later has a native IPAM namespace object
+(`ipam.namespaces`). Map it directly into the prefix identity and into an
+address identity through its prefix: `InfraPrefix` is identified by
+`["prefix", "ip_namespace"]`, while `InfraIPAddress` is identified by
+`["address", "ip_prefix"]`. Do not derive a Nautobot namespace from a VRF
+name: native namespaces already separate data, and VRF-name keys can merge two
+namespaces whose VRFs share a name.
+
+See the [schema mapping reference](../reference/schema-mapping.mdx),
+[migration guidance](../migrating-from-netbox-or-nautobot.mdx), and the [full
+Nautobot v2 example](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/nautobot-v2_to_infrahub/config.yml).
+
+## Set Nautobot and Infrahub credentials
+
+Open `operator.env`, remove the leading `#`, and fill in the source and
+destination token entries:
+
+```dotenv
+NAUTOBOT_TOKEN=<your Nautobot token>
+INFRAHUB_API_TOKEN=<your Infrahub token>
+```
+
+Paste the Nautobot API token exactly as issued under your user profile's API
+tokens; it has no special prefix like a NetBox token. For Infrahub, use an API
+token created under your account settings; a login password does not work here.
+Use source credentials that can read mapped objects and destination credentials
+authorized for the operations you intend to apply.
+
+## Continue
+
+Apply the environment changes and register the configuration in the shared
+[Compose deployment guide](../compose-deployment#prepare-a-configuration).
+
+## Recorded deletes when mapping namespaces
+
+In the measured run, the source supplied `Global` and `a4-ns-blue` while the
+destination also contained its built-in `default`. The first plan recorded 17
+creates and one delete of `default`. Apply created the intended objects and left
+the built-in namespace unchanged in identifier, name, and description. The second plan contained
+zero creates, zero updates, and the same single recorded delete.
+
+This follows the saved-plan contract: destination-only objects are recorded as
+deletes, but apply never executes them. Review each identity and verify the
+destination; do not treat an unexpected delete or a remaining create/update as
+acceptable merely because this example includes one recorded delete.

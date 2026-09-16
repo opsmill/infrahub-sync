@@ -102,8 +102,8 @@ inside containers that keep the environment they were created with.
 ### Reading from NetBox or Nautobot
 
 A package that reads from one of those declares the endpoint and a reference to
-the token, and `init` leaves both names commented in `operator.env`. Uncomment
-only the one your package names:
+the token, and `init` leaves both names commented in `operator.env`. Remove the
+leading `#` only from the one your package names:
 
 ```bash
 NETBOX_TOKEN=<your NetBox token>
@@ -123,7 +123,7 @@ credentials:
     identifier: NETBOX_TOKEN
 ```
 
-Nautobot is the same shape with `nautobot`, `nautobot-token` and
+Nautobot uses the same shape with `nautobot`, `nautobot-token` and
 `NAUTOBOT_TOKEN`.
 
 Four things decide whether this works:
@@ -253,7 +253,11 @@ Your own file is never mounted and never modified.
 ```
 
 `CONFIG_ID`, `RUN_ID` and `CHECKSUM` are results the previous commands printed.
-`--` separates this wrapper's own options from the CLI's arguments.
+`--` separates this wrapper's own options from the CLI arguments.
+
+If the final output from `apply` still shows `execution_state: running`, run
+`runs show` again. It settles within seconds; confirm `phase: applied` and
+`execution_state: completed` before treating the apply as finished.
 
 Four things worth knowing before the first plan:
 
@@ -279,7 +283,7 @@ Four things worth knowing before the first plan:
 
 | State | Exit | What it means |
 | --- | --- | --- |
-| `READY` | 0 | Dependencies answer, the API answers, and a registered worker is heartbeating. |
+| `READY` | 0 | Dependencies answer, the API answers, and a registered worker sends heartbeats. |
 | `DEGRADED` | 3 | Something owned exists, but not all of that is true. |
 | `STOPPED` | 4 | No container of this instance is running. |
 

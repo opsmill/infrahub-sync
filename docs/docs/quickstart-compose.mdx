@@ -1,0 +1,109 @@
+---
+title: Start a Compose deployment
+---
+
+Use this guide to load the release you were given and start Infrahub Sync on a
+Linux x86_64 Docker host. It includes the Sync API, worker, Prefect,
+PostgreSQL, and object storage. You can start it before you have supplied a
+source, destination, configuration, or credentials.
+
+## Before you start
+
+Install Docker and Docker Compose on a Linux x86_64 host, then check it:
+
+```sh
+uname -s
+uname -m
+docker compose version
+docker info --format '{{.Driver}} {{json .DriverStatus}}'
+```
+
+Expect `Linux` and `x86_64`. Docker Compose 2.17.3 is the minimum. Mac, Docker
+Desktop, ARM64, and emulation have not been tested. Ports 8000 and 4200 on
+`127.0.0.1` must be available. Docker also needs registry access to download
+the other service images and enough space for the download, extracted files,
+loaded images, and persistent deployment data.
+
+Run the remaining commands on the Docker host. For a remote host, transfer the
+download there and connect through SSH.
+
+## Download and verify
+
+Download the release archive and its checksum file from the release you were
+given. GitHub's automatic **Source code** downloads contain the source
+repository; use the release attachments instead. In the directory containing
+both attachments, run the checksum command supplied with that release, extract
+the archive, then verify its internal checksums:
+
+```sh
+sha256sum -c <release-archive>.tar.gz.sha256
+tar -xzf <release-archive>.tar.gz
+cd <release-archive>/linux-amd64
+sha256sum -c SHA256SUMS
+```
+
+The archive checksum and all package checksum entries must pass. Stop if any
+check fails.
+
+## Load the image and extract the deployment
+
+Load the image archive and extract the Compose bundle found in the verified
+download:
+
+```sh
+docker load --input image-linux-amd64.tar
+tar -xzf infrahub-sync-compose-<version>.tar.gz
+cd infrahub-sync-compose-<version>
+```
+
+The deployment's image record selects the loaded image automatically.
+
+## Initialize and start
+
+```sh
+./infrahub-sync-compose init
+./infrahub-sync-compose start
+./infrahub-sync-compose status
+```
+
+`init` generates the deployment identity, settings, and internal credentials.
+`start` starts its services. `status` must report `READY` and exit zero. If
+startup fails, run `./infrahub-sync-compose preflight` and follow its error
+message. If `start` reports `image-unresolvable` immediately after `docker
+load`, the loaded image is not the one this bundle names. Check that you loaded
+`image-linux-amd64.tar` from this download, then repeat the preceding step and
+`start`.
+
+`READY` confirms the deployment is running; it does not check a source or
+destination.
+
+## Identify your installed version
+
+```sh
+curl --fail --silent --show-error http://127.0.0.1:8000/version
+```
+
+The response shows `server_version`. If you changed the API port, use that port
+in the URL. Include this version when reporting feedback through your usual
+company channel.
+
+## Moving from an older version
+
+Use a new directory and let `init` generate a new deployment identity and empty
+state. If the old deployment uses the same ports, stop it first and preserve its
+directory and volumes. Do not copy its `.instance`, `operator.env`, or
+`secrets/` into the new directory, or point the new deployment at its data.
+Supply credentials in the new generated settings, register your configuration
+again, and review a fresh plan before applying.
+
+This release has no in-place state migration or verified rollback procedure. It
+does not move or clean up objects an older version created in your destination.
+
+## Choose your source
+
+Continue with one of the existing-Infrahub tutorials. Each prepares a concrete
+`package.yml` and credentials, then sends you to the shared operator guide for
+registration, validation, planning, apply, and lifecycle commands.
+
+- [Sync from NetBox to an existing Infrahub](tutorials/netbox-to-existing-infrahub)
+- [Sync from Nautobot to an existing Infrahub](tutorials/nautobot-to-existing-infrahub)

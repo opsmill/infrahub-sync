@@ -1,0 +1,142 @@
+---
+title: Sync from NetBox to an existing Infrahub
+---
+
+This tutorial connects NetBox to an existing Infrahub. Unlike the [NetBox demo
+tutorial](netbox-demo-to-infrahub), it does not start Infrahub locally.
+Start the deployment with the [Compose quickstart](../quickstart-compose.mdx),
+then run these commands from the extracted deployment directory on the Docker
+host.
+
+## Copy and edit package.yml
+
+Set the credentials described below, then load the [destination schema](../compose-deployment#prepare-the-destination-schema)
+into Infrahub first — this example targets it.
+
+```sh
+cp ../example-package.yml package.yml
+```
+
+The example maps NetBox sites and devices to the small `TestingSite` and
+`TestingDevice` destination schema:
+
+```yaml
+---
+# Map NetBox sites and devices to TestingSite and TestingDevice in Infrahub.
+# Replace both URLs and provide the matching destination schema before registration.
+# Set NETBOX_TOKEN and INFRAHUB_API_TOKEN in the generated operator.env file.
+format_version: 1
+configuration:
+  name: my-netbox-evaluation
+  source:
+    name: netbox
+    settings:
+      url: https://netbox.example.invalid
+      token: {$credential: netbox-token}
+  destination:
+    name: infrahub
+    settings:
+      url: https://infrahub.example.invalid
+      token: {$credential: infrahub-token}
+  schema_mapping:
+    - name: TestingSite
+      mapping: dcim.sites
+      identifiers: [name]
+      fields:
+        - name: name
+          mapping: name
+    - name: TestingDevice
+      mapping: dcim.devices
+      identifiers: [name]
+      fields:
+        - name: name
+          mapping: name
+        - name: model
+          mapping: device_type.model
+        - name: serial
+          mapping: serial
+        - name: site
+          mapping: site
+          reference: TestingSite
+credentials:
+  netbox-token: {provider: env, identifier: NETBOX_TOKEN}
+  infrahub-token: {provider: env, identifier: INFRAHUB_API_TOKEN}
+```
+
+Before registering `package.yml`:
+
+- Replace both URLs with addresses the worker container can reach. `localhost`
+  and `127.0.0.1` inside the worker refer to that container, not your host.
+- Match the mapping to your Infrahub schema. Use the schema shown, or adapt the
+  mapping to your own.
+- Keep the `{$credential: ...}` references in YAML; put token values in
+  `operator.env`, never in `package.yml`.
+
+This example maps sites and devices only. It does not import NetBox prefixes,
+IP addresses, VRFs, or interfaces; it is a minimal runnable connection and
+destination-schema check, not a complete inventory template.
+
+## If you map NetBox IP addressing
+
+For NetBox prefixes or IP addresses, the example uses the VRF name as the
+Infrahub namespace name. Differently named VRFs can therefore keep overlapping
+networks separate.
+
+Repeated VRF names do not merge. The name-based mapping tries to load two
+namespace records with the same identity, so Sync refuses the run before it
+produces a plan or writes to Infrahub. This can happen even when the VRFs have
+different prefixes and addresses.
+
+You do not have to rename VRFs in NetBox. The [ID-derived namespace recipe](../reference/schema-mapping.mdx#key-the-namespace-on-the-vrf-id-instead-of-its-name)
+derives distinct namespace names from NetBox VRF IDs and uses the same rule for
+every related prefix and address. It covers namespace, prefix, and address
+mappings only; copying only its namespace transform into the full NetBox
+example is insufficient because that example also loads VRF objects by name.
+
+With the default name-based mapping, no-VRF data and data in a VRF literally
+named `default` use Infrahub's built-in `default` namespace. With the ID-derived
+recipe, a VRF named `default` gets its own ID-derived namespace; no-VRF data
+still uses the built-in namespace. Neither recipe merges duplicate prefixes or
+addresses within one namespace.
+
+NetBox IDs belong to one source instance. Recreating a VRF or changing the
+naming rule changes destination identities; it does not rename an existing
+import. Review a migration before applying a changed recipe to existing data.
+
+## Set NetBox and Infrahub credentials
+
+Open `operator.env`, remove the leading `#`, and fill in the source and
+destination token entries:
+
+```dotenv
+NETBOX_TOKEN=<your NetBox token>
+INFRAHUB_API_TOKEN=<your Infrahub token>
+```
+
+For NetBox 4.6, use a v2 API token. It starts with `nbt_` and contains a dot;
+paste the complete string. For Infrahub, use an API token created under your
+account settings; a login password does not work here. Use source credentials
+that can read mapped objects and destination credentials authorized for the
+operations you intend to apply.
+
+## Continue
+
+Apply the environment changes and register the configuration in the shared
+[Compose deployment guide](../compose-deployment#prepare-a-configuration).
+
+## Recorded deletes when mapping namespaces
+
+A saved plan records destination objects absent from the mapped source,
+including Infrahub's built-in `default` namespace when no source VRF maps to
+that name. Apply never executes those deletes. In the measured run, the scoped
+name-based mapping planned eight creates and one recorded delete; after apply,
+the next plan contained only that delete and the ID, name, and
+description were unchanged. Adding a source VRF named `default` with matching
+attributes removed the delete without a configuration change. Under the
+ID-derived recipe it remained recorded, because every source VRF maps to its
+own derived name.
+
+Review exact identities in the full plan and query the destination after apply.
+Expect zero remaining creates or updates after a successful unchanged mapping;
+do not mistake a recurring recorded delete for an executed deletion or an empty
+plan. Investigate any other difference before another apply.
