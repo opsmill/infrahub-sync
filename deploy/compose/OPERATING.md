@@ -255,6 +255,23 @@ Your own file is never mounted and never modified.
 `CONFIG_ID`, `RUN_ID` and `CHECKSUM` are results the previous commands printed.
 `--` separates this wrapper's own options from the CLI arguments.
 
+On a new deployment, `configs list` prints no command output and exits zero;
+the `Container … Creating/Created` lines are Compose progress. The plan output
+does not repeat its branch: apply must use the same `--branch` supplied to
+`diff`. This release writes saved-plan format 3; it can review format 2 but
+refuses to apply it, and does not support older formats.
+
+A null optional cardinality-one relationship in an update does not clear the
+destination field. The plan format cannot distinguish an absent relationship
+from an intended clear, so it is omitted and the worker logs a warning.
+
+`runs show` keeps `operation: plan`; `phase: applied` and
+`execution_state: completed` confirm completion. Result counts come from the
+plan, not executed writes. Deletes are recorded but never executed; use
+`runs plan RUN_ID --detail` to identify each `(not executed)` delete. With an
+unchanged, fully applied mapping, the next plan has no creates or updates except
+for any recurring recorded delete.
+
 If the final output from `apply` still shows `execution_state: running`, run
 `runs show` again. It settles within seconds; confirm `phase: applied` and
 `execution_state: completed` before treating the apply as finished.
@@ -284,6 +301,7 @@ Four things worth knowing before the first plan:
 | State | Exit | What it means |
 | --- | --- | --- |
 | `READY` | 0 | Dependencies answer, the API answers, and a registered worker sends heartbeats. |
+| Refusal | 1 | The command did not run; follow its message, such as `no-instance` before `init`. |
 | `DEGRADED` | 3 | Something owned exists, but not all of that is true. |
 | `STOPPED` | 4 | No container of this instance is running. |
 
