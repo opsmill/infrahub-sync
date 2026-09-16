@@ -12,7 +12,7 @@ Prepare a [configuration package](../configuration-package.mdx) and register it.
 
 ## Using local adapters
 
-Registered V3 workers resolve custom adapters from installed code only. A package may declare a custom adapter on its source side as an installed dotted import target or an installed entry point. The destination remains the built-in Infrahub adapter.
+Registered V3 workers resolve custom adapters from installed code only. A package may declare a custom adapter on its source side as an installed dotted import target or an installed entry point. The destination must name a bundled adapter that supports the destination role.
 
 ### Registered adapter identities
 
