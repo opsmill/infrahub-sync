@@ -83,6 +83,9 @@ uv run invoke lint
 checkout: its leg compares the run against a recorded baseline and fails only on a new
 diagnostic code or a count above the recorded maximum.
 
+See [Quality gates](develop/knowledge/quality-gates.md) for the complete lint and formatter
+workflow.
+
 Run `uv run invoke check-310` before pushing as well: it builds its environments under
 `.preview/check-310-venv`, leaves your active `.venv` alone, and reproduces the three CI legs your
 environment cannot reach — `ty` under the Python 3.10 excludes, and the unit tests on
@@ -108,6 +111,8 @@ running stack or an external service:
 ```bash
 uv run pytest -m "not preview and not integration" -q
 ```
+
+See [Testing](develop/guidelines/testing.md) for the repository-wide test rules.
 
 ### Running the full stack locally
 

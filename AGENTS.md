@@ -239,7 +239,7 @@ Each should include the "Required Development Workflow" block and the "Approval 
 ## Adding a New Adapter
 
 See [`develop/guides/adding-an-adapter.md`](docs/docs/develop/guides/adding-an-adapter.md) for the full
-step-by-step procedure. Supporting developer reference lives under `dev/`:
+step-by-step procedure. Supporting developer reference lives under `docs/docs/develop/`:
 
 - [Adapter knowledge](docs/docs/develop/knowledge/index.md) — how the sync engine, the adapter contract, schema mapping, and the incremental cache work.
 - [Adapter guidelines](docs/docs/develop/guidelines/index.md) — the rules for writing and testing an adapter.
@@ -249,7 +249,7 @@ Core rule unchanged: provide a read-only `diff` pathway and validate it before e
 
 ## Beyond Adapters
 
-`dev/` is not adapter-only. When the work is not an adapter, start here:
+`docs/docs/develop/` is not adapter-only. When the work is not an adapter, start here:
 
 - [The shared execution surface](docs/docs/develop/knowledge/execution-surface.md) — the typed entry point
   to one run, used by the CLI and by the packaged Prefect flow.

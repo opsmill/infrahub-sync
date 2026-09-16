@@ -1,3 +1,7 @@
+---
+title: Project constitution
+---
+
 <!--
 SYNC IMPACT REPORT
 Version change: 0.0.0 (unfilled template) → 1.0.0
@@ -15,16 +19,16 @@ Templates requiring updates:
 Follow-up TODOs: None
 -->
 
-# Project constitution
+## Project constitution
 
 `infrahub-sync` synchronizes data between infrastructure sources and destinations
 (Infrahub, NetBox, Nautobot, ACI, Prometheus, and others) through per-system adapters
 and a core sync engine. Because every `sync` writes to a live system of record, the
 principles below put safety, reproducibility, and connector consistency ahead of speed.
 
-## Core principles
+### Core principles
 
-### I. Read-only / dry-run by default
+#### I. Read-only / dry-run by default
 
 The non-mutating path is the default path, and applying changes is always a deliberate act.
 
@@ -37,10 +41,10 @@ The non-mutating path is the default path, and applying changes is always a deli
 - New mutating behavior MUST ship behind explicit flags, never as implicit defaults.
 
 **Rationale:** A sync writes to infrastructure systems of record. Making the safe path the
-safe path — and every destructive action a reviewed choice — is what prevents an accidental
+default path — and every destructive action a reviewed choice — is what prevents an accidental
 command from rewriting production data.
 
-### Sync idempotency and safety
+#### Sync idempotency and safety
 
 A sync reconciles a source into a destination, and reconciliation MUST be safe to re-run.
 
@@ -56,7 +60,7 @@ A sync reconciles a source into a destination, and reconciliation MUST be safe t
 error handling are what prevent duplicate objects, silent data loss, and corruption of the
 destination system of record.
 
-### Adapter symmetry and pattern consistency
+#### Adapter symmetry and pattern consistency
 
 Adapters are the primary extension point; every connector MUST honor the same contract.
 
@@ -73,7 +77,7 @@ Adapters are the primary extension point; every connector MUST honor the same co
 reviewable against a known shape, and guarantee a read-only pathway exists before any
 write path is exposed.
 
-### Type safety and explicit contracts
+#### Type safety and explicit contracts
 
 The type system enforces correctness at the boundaries where data crosses systems.
 
@@ -89,7 +93,7 @@ The type system enforces correctness at the boundaries where data crosses system
 shapes, missing data, unhandled API errors — before they reach a live system, and they keep
 adapters self-documenting.
 
-### Test discipline
+#### Test discipline
 
 Features and fixes ship with tests at the right level, written alongside the change — not deferred.
 
@@ -102,7 +106,7 @@ Features and fixes ship with tests at the right level, written alongside the cha
 boundary are the cheapest place to catch auth, pagination, and empty-response bugs — long
 before a sync hits production.
 
-### Security, secrets, and input boundaries
+#### Security, secrets, and input boundaries
 
 Security is enforced at the boundary, and secrets never leak.
 
@@ -117,7 +121,7 @@ Security is enforced at the boundary, and secrets never leak.
 **Rationale:** `infrahub-sync` holds credentials for multiple systems of record. A single
 leaked token or logged secret is a cross-system breach, so secret hygiene is non-negotiable.
 
-### Simplicity and maintainability
+#### Simplicity and maintainability
 
 Prefer the simplest solution that works and matches the patterns already in the codebase.
 
@@ -132,24 +136,24 @@ Prefer the simplest solution that works and matches the patterns already in the 
 pattern-aligned, and dependency-light is what keeps the engine and adapters reviewable and
 reversible.
 
-## Security & performance standards
+### Security & performance standards
 
-### Security requirements
+#### Security requirements
 
 - Credentials only via environment variables or a secret manager; no secrets in code, logs,
   tracebacks, or example configurations.
 - Default to read-only; the mutating `sync` requires explicit approval and confirmed targets.
 - Handle authentication failures (401/403) and authorization boundaries explicitly.
 
-### Performance & reliability standards
+#### Performance & reliability standards
 
 - Respect pagination and rate limits on every adapter; avoid unbounded fetches.
 - Handle timeouts and transient network errors with clear, retryable behavior.
 - Log object counts and endpoints for observability — never secrets.
 
-## Development workflow & quality gates
+### Development workflow & quality gates
 
-### Code quality gates
+#### Code quality gates
 
 Run in order before committing; all code MUST pass these before merge:
 
@@ -161,7 +165,7 @@ uv run invoke lint   # ruff → pylint → yamllint → ty
 
 New code is Ruff-clean and typed where touched. `ty` MUST exit clean with no overrides.
 
-### Command-line sanity
+#### Command-line sanity
 
 After changes, verify the CLI still behaves:
 
@@ -171,25 +175,25 @@ uv run infrahub-sync configs --help
 uv run infrahub-sync runs --help
 ```
 
-### Logging
+#### Logging
 
 Use `structlog` for structured logging — never `print`. Include context (endpoints, object
 counts, request IDs) but never secrets.
 
-### Documentation
+#### Documentation
 
 User-visible changes (CLI flags, configuration keys, adapters) MUST update `docs/` in the same
 change. Generate CLI docs with `uv run invoke docs.generate`; build the site with
 `uv run invoke docs.docusaurus`; lint Markdown/MDX with `markdownlint-cli2`. "Update later"
 is not acceptable.
 
-### Git workflow
+#### Git workflow
 
 - Do not force-push shared branches; use follow-up commits rather than amending to hide fixes.
 - Small, scoped, reversible commits; imperative subject line, rationale in the PR body.
 - Apply PR labels (`bugs`, `breaking`, `enhancements`, `features`; default `enhancements`).
 
-## Governance
+### Governance
 
 This constitution is the authoritative reference for development standards in the
 `infrahub-sync` project. It supersedes informal practices and ad-hoc decisions.
