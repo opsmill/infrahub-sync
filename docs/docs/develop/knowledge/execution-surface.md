@@ -1,6 +1,10 @@
-# The shared execution surface
+---
+title: "The shared execution surface"
+---
 
-> Part of: `dev/knowledge/` | Related: [Sync architecture](sync-architecture.md), [Prefect orchestration](orchestration-prefect.md)
+## The shared execution surface
+
+> Part of: Develop > Knowledge | Related: [Sync architecture](sync-architecture.md), [Prefect orchestration](orchestration-prefect.md)
 
 <!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
 
@@ -12,10 +16,10 @@ functions and get the same result object.
 
 The module is deliberately import-light. It imports no Prefect symbol and nothing from
 `infrahub_sync.orchestration`, so it stays importable in a base install — see
-[ADR 9](../adr/0009-optional-integrations-live-in-their-own-package.md). It is its own module
+[ADR 9](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0009-optional-integrations-live-in-their-own-package.md). It is its own module
 rather than an addition to `utils.py`, which is already broad and would blur the seam.
 
-## The three callers
+### The three callers
 
 | Caller | Entry point |
 |---|---|
@@ -32,7 +36,7 @@ directory, then calls `execute_run` with every engine option at its CLI default 
 `show_progress=False`. No public parameter of it accepts paths, CLI fragments, credentials,
 or environment overrides.
 
-## `RunResult`
+### `RunResult`
 
 A successful run returns a frozen, slotted `dataclass` with exactly seven fields:
 
@@ -84,7 +88,7 @@ execute a sync for nested-only changes but report `status="no-change"`; a unit t
 fallback behavior. The real saved-plan engine instead refuses nested elements it has not
 walked during plan derivation, before it can return a misleading result.
 
-## Failure model
+### Failure model
 
 Two exception types make up the remote contract:
 
@@ -98,14 +102,14 @@ Two exception types make up the remote contract:
 Both are raised in one place only. `execute_run` re-raises original exception types;
 `run_remote_request` is the sole sanitize-and-wrap boundary. That split is what keeps CLI
 failure behaviour identical, and it is the subject of
-[ADR 5](../adr/0005-translate-run-failures-only-at-the-remote-boundary.md). The rules for
+[ADR 5](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0005-translate-run-failures-only-at-the-remote-boundary.md). The rules for
 redacting messages are in
 [Secret redaction](../guidelines/secret-redaction.md).
 
 A raise means no `RunResult` exists for that run. Any `run.json` already created is left at
 `status="failed"`.
 
-## The lock and the already-locked caller
+### The lock and the already-locked caller
 
 `execute_run` acquires the per-configuration pipeline lock with the same 60-second timeout
 the CLI has always used, and lets `filelock.Timeout` propagate unchanged. The lock and its
@@ -130,15 +134,15 @@ a test does see the difference, which is why the call shape is a `Protocol` rath
 bare `Callable`: a rename in the factory becomes a type error instead of a runtime
 `TypeError` inside the remote boundary.
 
-## Plan fingerprint
+### Plan fingerprint
 
 `infrahub_sync/cache/fingerprint.py::compute_plan_fingerprint(run_dir)` returns a SHA-256
 digest over the canonical plan rows, excluding timestamps, run identifiers and paths by
 construction. It is how "the remote path produced the same plan as the CLI" is tested. The
 algorithm and its compatibility rules are in
-[ADR 7](../adr/0007-canonical-plan-fingerprint-as-equivalence-oracle.md).
+[ADR 7](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0007-canonical-plan-fingerprint-as-equivalence-oracle.md).
 
-## See also
+### See also
 
 - [Prefect orchestration](orchestration-prefect.md) — the packaged remote caller.
 - [Secret redaction](../guidelines/secret-redaction.md) — the rules the wrap boundary applies.

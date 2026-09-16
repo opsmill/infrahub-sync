@@ -86,7 +86,7 @@ later outcome can add a field without a format bump. `destination_binding` — t
 and branch a plan was computed against, which `apply` compares before it writes — is the first field
 added under that rule, and it demonstrates the shape the rule requires: additive, checksum-covered,
 and absent rather than null on plans written before it existed, so the comparison is skipped for them
-instead of failing. The current field list lives in `dev/knowledge/plan-artifact.md`; this record fixes
+instead of failing. The current field list lives in `docs/docs/develop/knowledge/plan-artifact.md`; this record fixes
 the rules, not the roster. An unrecognized `format_version` is a gate: it
 short-circuits the remaining pre-apply checks, because a reader that does not know what the fields
 mean would otherwise report failures that are artifacts of its own ignorance.

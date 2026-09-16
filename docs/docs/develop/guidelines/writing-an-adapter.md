@@ -1,13 +1,17 @@
-# Writing an adapter
+---
+title: "Writing an adapter"
+---
 
-> Part of: `dev/guidelines/` | Related: [Adapter anatomy](../knowledge/adapter-anatomy.md), [Adding an adapter](../guides/adding-an-adapter.md)
+## Writing an adapter
+
+> Part of: Develop > Guidelines | Related: [Adapter anatomy](../knowledge/adapter-anatomy.md), [Adding an adapter](../guides/adding-an-adapter.md)
 
 Rules for writing an adapter connector. They assume you understand the
 [adapter anatomy](../knowledge/adapter-anatomy.md); this document is about *how* to write the
 code, not what the pieces are. The repository-wide standards in `AGENTS.md` still apply —
 this narrows them to adapters.
 
-## Inherit the mixins, in order
+### Inherit the mixins, in order
 
 **Always declare the mixin before the DiffSync base:**
 
@@ -23,7 +27,7 @@ class MyAdapter(Adapter, DiffSyncMixin): ...
 Set a `type` class attribute (for example `type = "NetBox"`); it is used in log lines and to
 decide whether the adapter is acting as the source.
 
-## Reuse the loading helpers
+### Reuse the loading helpers
 
 **Always filter and transform through the model mixin:**
 
@@ -41,7 +45,7 @@ an adapter means filters and transforms in `config.yml` behave differently per s
 REST source, subclass `GenericrestapiAdapter` instead of writing HTTP handling from scratch —
 override only the settings defaults you need (see `infrahub_sync/adapters/peeringmanager.py`).
 
-## Type and document the public surface
+### Type and document the public surface
 
 **Always type new code and give public classes and methods a concise docstring:**
 
@@ -49,7 +53,7 @@ The codebase is clean under `ty` with no `[[tool.ty.overrides]]` blocks. Do not 
 to mask errors — fix the type, or use a targeted `# ty: ignore[<rule>]` with a short reason at
 the call site. New code must be Ruff-clean and pass `uv run invoke lint`.
 
-## Raise specific exceptions
+### Raise specific exceptions
 
 **Always raise a specific exception with a clear message; never swallow errors broadly:**
 
@@ -69,7 +73,7 @@ except Exception:
 Handle the failure modes that matter for a connector explicitly: authentication (401 / 403),
 timeouts, empty pages, and pagination. Let unexpected errors surface rather than hiding them.
 
-## Log with structlog, never secrets
+### Log with structlog, never secrets
 
 **Always use `structlog`; never `print`, and never log credentials:**
 
@@ -79,7 +83,7 @@ or full auth headers. The same rule applies to exception messages and tracebacks
 > Some example adapters under `examples/` use `print` for illustration. Production adapters in
 > `infrahub_sync/adapters/` use structured logging.
 
-## Handle optional dependencies and credentials
+### Handle optional dependencies and credentials
 
 **Always treat the upstream SDK as an optional dependency and read secrets from the
 environment:**
@@ -98,7 +102,7 @@ token = os.environ.get("NETBOX_TOKEN") or settings.get("token")
 
 <!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
 
-## Implement the planned-write surface as a whole, or not at all
+### Implement the planned-write surface as a whole, or not at all
 
 Applies to the Infrahub destination only in v1: both members are typed with Infrahub's concrete
 `PeerResolver`, so another destination cannot conform statically without importing the Infrahub
@@ -135,7 +139,7 @@ Within `apply_planned_operation`:
   data value. Plan operations carry peer identities as nested `{peer_kind, identity}` pairs precisely so
   you do not have to.
 
-## Do not change an existing write path to tidy a new one
+### Do not change an existing write path to tidy a new one
 
 **Always confine a new write path's corrections to the new code:**
 
@@ -152,7 +156,7 @@ removed one.
 - Record the untouched defect where the next reader will meet it, and leave it to an outcome that owns
   it.
 
-## Anti-patterns
+### Anti-patterns
 
 | Anti-pattern | Do instead |
 |--------------|------------|
@@ -168,7 +172,7 @@ removed one.
 | Hardcoded URL or token | Environment variable, then `settings` |
 | Declaring `cursor_tier_for` without `list_changed_since` | Implement both, or leave the tier `NONE` |
 
-## See also
+### See also
 
 - [Adapter anatomy](../knowledge/adapter-anatomy.md) — the contract these rules apply to.
 - [Testing adapters](testing-adapters.md) — what to test once it is written.

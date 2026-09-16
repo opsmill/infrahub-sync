@@ -1,8 +1,12 @@
-# Planned writes and apply
+---
+title: "Planned writes and apply"
+---
+
+## Planned writes and apply
 
 <!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
 
-> Part of: `dev/knowledge/` | Related: [The saved plan artifact](plan-artifact.md), [Adapter anatomy](adapter-anatomy.md), [ADR 0002](../adr/0002-planned-write-destination-protocol.md)
+> Part of: Develop > Knowledge | Related: [The saved plan artifact](plan-artifact.md), [Adapter anatomy](adapter-anatomy.md), [ADR 0002](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0002-planned-write-destination-protocol.md)
 
 Applying a [saved plan artifact](plan-artifact.md) is a different write path from `sync`. A `sync` walks
 a live comparison result and calls each destination model's `create` / `update` / `delete`; an apply
@@ -13,7 +17,7 @@ deletes.
 
 `sync` is untouched by all of this. Everything below is new code on the planned-write path.
 
-## The write surface
+### The write surface
 
 A destination that a saved plan can be applied through is a `PlannedWriteDestination` — a
 `runtime_checkable` `Protocol` in `infrahub_sync/plan/write_surface.py` with exactly two members:
@@ -53,7 +57,7 @@ members carry the right names and the wrong shapes.
 
 Only the Infrahub adapter implements the surface today.
 
-## Applying one operation
+### Applying one operation
 
 `apply_planned_operation` executes one operation convergently and returns the destination node id.
 
@@ -105,7 +109,7 @@ creates nothing, and the apply raises `StaleDestinationIdError` asking for a fre
 of that signature are required, in one error: the code alone does not prove the id path ran, and the
 refusal claims the write never happened.
 
-### Convergence rides on the destination kind's human-friendly ID
+#### Convergence rides on the destination kind's human-friendly ID
 
 This is the single most misread part of the path, so it is worth stating plainly: what a **create**
 converges on is the **destination schema's** `human_friendly_id`, not the source configuration's
@@ -136,12 +140,12 @@ Two checks protect a create's key, and they check different things:
   by this step a relationship-crossing component's slot in `data` holds a resolved node-id string, and
   no attribute can be read out of a node id — which is why the value comes from the peer identity.
 - **There used to be a third check, on the SDK's private pre-save render.** It is gone
-  ([ADR 0013](../adr/0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)). On infrahub-sdk
+  ([ADR 0013](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)). On infrahub-sdk
   1.23.2 that render reports an `hfid` the issued mutation does not carry, so it passed writes that
   were unkeyed on the wire, and it refused relationship-crossing kinds the server converges. No
   product code reads a private SDK render.
 
-### How each action is keyed
+#### How each action is keyed
 
 The two actions are keyed differently, and the asymmetry is the point: an update can be keyed by
 something the plan recorded, and a create cannot.
@@ -189,7 +193,7 @@ zero mutation calls, and no later operation executes. Operations applied before 
 apply record reports them, and the refused operation is recorded as having written nothing rather than
 as a possible partial write.
 
-## Peer resolution
+### Peer resolution
 
 An apply cannot use the comparison store — that is exactly the dependency a saved-plan apply cannot
 satisfy — so peers are resolved through a `PeerResolver` the destination builds for one apply.
@@ -241,7 +245,7 @@ reachable only through an optional edge dropped to break a cycle, and any refere
 `order:`, which yields no tiers at all — may leave a peer unresolved at apply, where the zero-match arm
 governs. The qualification is safe precisely because the miss is loud.
 
-## Cardinality-one nulls in plan format v1
+### Cardinality-one nulls in plan format v1
 
 Plan format v1 does not encode whether a null optional cardinality-one relationship means
 "the source supplied no relationship" or "clear the destination relationship." Planned apply
@@ -254,7 +258,7 @@ A null mandatory cardinality-one relationship is never meaningful. Planned apply
 `NullRelationshipValueError` before SDK rendering or any destination mutation, rather than allowing the
 SDK to turn Python `None` into a relationship id.
 
-## Cardinality-many is an enforced replace-set
+### Cardinality-many is an enforced replace-set
 
 The destination ends holding exactly the peers the plan names. The convergent upsert of step 6 is what
 does it: it carries each cardinality-many relationship as the plan's resolved peer list, and it is the
@@ -270,7 +274,7 @@ nothing: if the destination's Upsert mutation replaces the list, the written lis
 or without it; if it merged, no in-process reconciliation could remove a peer either. The semantics
 are pinned by a live shrink test rather than hedged in code.
 
-See [ADR 0012](../adr/0012-the-convergent-upsert-is-the-replace-set-write.md) for why the second,
+See [ADR 0012](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0012-the-convergent-upsert-is-the-replace-set-write.md) for why the second,
 targeted relationship write this path used to make was deleted; it carries the link to the record
 of the forms that came before it.
 
@@ -278,7 +282,7 @@ of the forms that came before it.
 observable throughout is the **issued destination write carrying the plan's peer list** — not the
 manager's in-memory state and not a mocked adapter call.
 
-## The apply loop
+### The apply loop
 
 The order of the first four steps is load-bearing: **require `plan/`, read once, verify those bytes,
 then parse them.**
@@ -368,7 +372,7 @@ account of what an apply did, a second source of truth is a state that can contr
 service boundary resolves the record once, from the failure it is describing, and reads its verdict and
 its evidence from that same record for the same reason.
 
-### The operational exception boundary
+#### The operational exception boundary
 
 Only an **operational** failure is reported as a destination refusal. `OPERATIONAL_APPLY_FAILURES`
 in `infrahub_sync/potenda/__init__.py` is the list, and it has three members: the `PlanArtifactError`
@@ -391,7 +395,7 @@ The boundary is deliberately narrow rather than generous. An `httpx` error the S
 translate escapes as a defect instead of being wrapped on suspicion, because a defect labelled as a
 destination refusal is the more expensive mistake — the run records what was written either way.
 
-## Deletes are recorded, never executed
+### Deletes are recorded, never executed
 
 Deletes are derived by set difference and recorded as first-class operations, then never executed —
 executing them is not supported. An apply over a delete-bearing plan completes
@@ -402,9 +406,9 @@ the reviewed set as a recorded value rather than an inference.
 
 Because the engine's fallback flag set hides destination-only objects from the comparison, a
 delete-bearing plan is the **ordinary** case, not an exception. See
-[ADR 0004](../adr/0004-deletes-are-recorded-but-never-executed.md).
+[ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md).
 
-## A note on logging
+### A note on logging
 
 The code on this path emits through the standard library's `logging`, as every other module in
 `infrahub_sync/` does, and the warning levels described above are `logging` levels. The project
@@ -412,11 +416,11 @@ constitution and `AGENTS.md` both mandate `structlog`, which no module currently
 an open governance question tracked outside this feature — it is recorded here only so the levels above
 read unambiguously, and it is **not** guidance either way.
 
-## See also
+### See also
 
 - [The saved plan artifact](plan-artifact.md) — the format this path consumes.
-- [ADR 0002](../adr/0002-planned-write-destination-protocol.md) — the write-surface boundary.
-- [ADR 0012](../adr/0012-the-convergent-upsert-is-the-replace-set-write.md) — one upsert is the
+- [ADR 0002](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0002-planned-write-destination-protocol.md) — the write-surface boundary.
+- [ADR 0012](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0012-the-convergent-upsert-is-the-replace-set-write.md) — one upsert is the
   whole write, and what pins its replace semantics.
-- [ADR 0004](../adr/0004-deletes-are-recorded-but-never-executed.md) — the delete contract.
+- [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md) — the delete contract.
 - [Adapter anatomy](adapter-anatomy.md) — the `sync`-path contract this sits beside.

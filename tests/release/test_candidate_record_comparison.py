@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-GUIDE = REPO_ROOT / "dev" / "guides" / "qualifying-an-internal-candidate.md"
+GUIDE = REPO_ROOT / "docs" / "docs" / "develop" / "guides" / "qualifying-an-internal-candidate.md"
 
 SHELL = shutil.which("bash") or "bash"
 JQ = shutil.which("jq")

@@ -1,6 +1,10 @@
-# Sync architecture
+---
+title: "Sync architecture"
+---
 
-> Part of: `dev/knowledge/` | Related: [Adapter anatomy](adapter-anatomy.md), [Adding an adapter](../guides/adding-an-adapter.md)
+## Sync architecture
+
+> Part of: Develop > Knowledge | Related: [Adapter anatomy](adapter-anatomy.md), [Adding an adapter](../guides/adding-an-adapter.md)
 
 infrahub-sync moves data from a *source* system of record to a *destination* system of
 record. It is built on [DiffSync](https://github.com/networktocode/diffsync): each side
@@ -9,7 +13,7 @@ is reconciled to match the source. An adapter is the connector for one system; t
 adapter class can act as either source or destination depending on where it appears in
 `config.yml`.
 
-## The foundation classes
+### The foundation classes
 
 DiffSync represents every object as a model instance with a stable identity. Two concepts
 do the work:
@@ -23,7 +27,7 @@ do the work:
 infrahub-sync layers two classes on top of the DiffSync base classes: `DiffSyncMixin` for
 adapters and `DiffSyncModelMixin` for models. See [Adapter anatomy](adapter-anatomy.md).
 
-## Source and destination
+### Source and destination
 
 A sync names exactly one `source` and one `destination` in `config.yml`. Each points at an
 adapter by `name` (a built-in such as `netbox`, `nautobot`, or `infrahub`) or at a custom
@@ -35,7 +39,7 @@ destination in `netbox_to_infrahub` and the source in `infrahub_to_peering-manag
 adapter must be able to *load* (read) for its source role and to *create / update / delete*
 for its destination role.
 
-## The sync engine
+### The sync engine
 
 `Potenda` (in `infrahub_sync/potenda/`) orchestrates a run in three stages:
 
@@ -64,7 +68,7 @@ baseline the managed write path records in PostgreSQL. See
 [Incremental sync and cache](incremental-and-cache.md). Adapters do not call Potenda;
 Potenda calls adapters through the `DiffSyncMixin` contract.
 
-## The code-generation path
+### The code-generation path
 
 Adapters do not hand-write a model class per object type. Instead:
 
@@ -81,7 +85,7 @@ So an adapter author supplies two things: the connector (how to talk to the syst
 the schema mapping (what to move). The model classes are generated. See
 [Schema mapping](schema-mapping.md).
 
-## See also
+### See also
 
 - [Adapter anatomy](adapter-anatomy.md) — the classes and methods you implement.
 - [Adding an adapter](../guides/adding-an-adapter.md) — the end-to-end procedure.

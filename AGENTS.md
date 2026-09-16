@@ -43,7 +43,7 @@ failure. The Pylint leg is the exception to direct exit-code handling: it captur
 JSON report despite Pylint's inherited non-zero result, then fails only when a new
 diagnostic code appears or a count exceeds the recorded maximum. The baseline and the
 archive exclusions that keep `rumdl fmt` away from incompatible historical artifacts are
-documented in [`dev/knowledge/quality-gates.md`](dev/knowledge/quality-gates.md).
+documented in [`develop/knowledge/quality-gates.md`](docs/docs/develop/knowledge/quality-gates.md).
 
 The `prefect` extra is not optional for development: without it `ty` cannot resolve
 `infrahub_sync/orchestration/`'s imports and `tests/orchestration/test_flow.py` skips
@@ -126,7 +126,7 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 - Ruff: formatted and lint-clean. Honor `pyproject.toml`.
 - Pylint: fix actionable issues in touched code. It does not pass on a clean checkout; the
   inherited baseline and how to compare against it are in
-  [`dev/knowledge/quality-gates.md`](dev/knowledge/quality-gates.md).
+  [`develop/knowledge/quality-gates.md`](docs/docs/develop/knowledge/quality-gates.md).
 - ty: included in `uv run invoke lint`; do not increase the error count.
 - Raise specific exceptions; avoid broad `except Exception:`.
 
@@ -238,12 +238,12 @@ Each should include the "Required Development Workflow" block and the "Approval 
 
 ## Adding a New Adapter
 
-See [`dev/guides/adding-an-adapter.md`](dev/guides/adding-an-adapter.md) for the full
+See [`develop/guides/adding-an-adapter.md`](docs/docs/develop/guides/adding-an-adapter.md) for the full
 step-by-step procedure. Supporting developer reference lives under `dev/`:
 
-- [Adapter knowledge](dev/knowledge/README.md) — how the sync engine, the adapter contract, schema mapping, and the incremental cache work.
-- [Adapter guidelines](dev/guidelines/README.md) — the rules for writing and testing an adapter.
-- [Adapter guides](dev/guides/README.md) — adding and testing an adapter, step by step.
+- [Adapter knowledge](docs/docs/develop/knowledge/index.md) — how the sync engine, the adapter contract, schema mapping, and the incremental cache work.
+- [Adapter guidelines](docs/docs/develop/guidelines/index.md) — the rules for writing and testing an adapter.
+- [Adapter guides](docs/docs/develop/guides/index.md) — adding and testing an adapter, step by step.
 
 Core rule unchanged: provide a read-only `diff` pathway and validate it before enabling `sync`.
 
@@ -251,13 +251,13 @@ Core rule unchanged: provide a read-only `diff` pathway and validate it before e
 
 `dev/` is not adapter-only. When the work is not an adapter, start here:
 
-- [The shared execution surface](dev/knowledge/execution-surface.md) — the typed entry point
+- [The shared execution surface](docs/docs/develop/knowledge/execution-surface.md) — the typed entry point
   to one run, used by the CLI and by the packaged Prefect flow.
-- [Prefect orchestration](dev/knowledge/orchestration-prefect.md) — the optional
+- [Prefect orchestration](docs/docs/develop/knowledge/orchestration-prefect.md) — the optional
   orchestration integration and its import boundary.
-- [Quality gates](dev/knowledge/quality-gates.md) — what the lint and format aggregates
+- [Quality gates](docs/docs/develop/knowledge/quality-gates.md) — what the lint and format aggregates
   really do, and the inherited baseline.
-- [Testing](dev/guidelines/testing.md) — repository-wide test rules.
-- [Secret redaction](dev/guidelines/secret-redaction.md) — required reading before adding any
+- [Testing](docs/docs/develop/guidelines/testing.md) — repository-wide test rules.
+- [Secret redaction](docs/docs/develop/guidelines/secret-redaction.md) — required reading before adding any
   failure path that crosses a process boundary.
 - [Decision records](dev/adr/README.md) — why the architecture is shaped the way it is.
