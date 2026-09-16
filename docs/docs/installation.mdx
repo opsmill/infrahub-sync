@@ -2,10 +2,38 @@
 title: Install Infrahub Sync
 ---
 
-Infrahub Sync is available on [PyPI](https://pypi.org/project/infrahub-sync/) and can be installed using the pip package installer. It is recommended to install the Sync into a virtual environment.
+Infrahub Sync runs as a service. One host running Docker Compose brings up the Sync API,
+the Sync worker, Prefect, PostgreSQL, and object storage — the bundle every later step in
+these docs talks to. See [Compose deployment](./compose-deployment.mdx) for the procedure:
+obtaining the bundle, `init`, `start`, and status.
+
+Today's supported platform: a Linux amd64 host, Docker Compose 2.17.3 or later, and
+Infrahub 1.10.6.
+
+## Install the CLI
+
+The `infrahub-sync` CLI is a client of the Sync API — it registers configuration packages
+and creates and inspects runs, but does not load adapters or execute a sync itself. Install
+it from [PyPI](https://pypi.org/project/infrahub-sync/) into a virtual environment on the
+machine you'll run it from:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install infrahub-sync
 ```
+
+Point it at your deployment:
+
+```bash
+export INFRAHUB_SYNC_API_URL=https://sync.example.com
+export INFRAHUB_SYNC_API_TOKEN=<token>
+```
+
+Before its first protected request, the CLI checks the service's public compatibility
+resource and refuses an incompatible service before sending the bearer token. See
+[Run a sync](./running-a-sync.mdx) for the full command reference.
+
+## Next step
+
+→ [Create a sync project](./creating-a-sync-project.mdx)

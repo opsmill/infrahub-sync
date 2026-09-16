@@ -39,7 +39,7 @@ each source field maps to a destination field. Credentials are references rather
 embedded values. Submit the package with `configs register`; later runs use the returned
 configuration identity and version.
 
-→ [Create a sync project](./creating-a-sync-project.mdx) · [Sync instance configuration](./reference/config.mdx)
+→ [Create a sync project](./creating-a-sync-project.mdx) · [Configuration package](./configuration-package.mdx) · [Sync instance configuration](./reference/config.mdx)
 
 ### Preview with `diff`
 
@@ -127,11 +127,12 @@ Infrahub is populated from what is actually deployed in the network rather than 
 
 1. **Prerequisites**
     - A running [Infrahub](https://github.com/opsmill/infrahub) instance
-    - Python 3.10–3.13
+    - A host to run the Infrahub Sync Compose deployment: Linux amd64, Docker Compose 2.17.3 or later
+    - Python 3.10–3.13, for the CLI client
     - Credentials and network access for the source and destination systems
-2. **Install Infrahub Sync.** See [Install Infrahub Sync](./installation.mdx) for the full setup steps. The short version: `pip install infrahub-sync` into a virtual environment.
+2. **Install Infrahub Sync.** See [Install Infrahub Sync](./installation.mdx): bring up the Compose deployment, then install the `infrahub-sync` CLI as its client.
 3. **Choose your starting point.**
-    - Setting up a sync project for the first time? → [Create a sync project](./creating-a-sync-project.mdx)
+    - Setting up a sync project for the first time? → [Create a sync project](./creating-a-sync-project.mdx) then [Configuration package](./configuration-package.mdx)
     - Running an existing project? → [Run a sync](./running-a-sync.mdx)
 
 ## Common questions

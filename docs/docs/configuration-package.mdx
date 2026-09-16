@@ -1,0 +1,114 @@
+---
+title: Configuration package
+---
+
+A configuration package is the file you write and the immutable record the Sync API keeps
+after you register it. This page covers the package envelope, what registration returns, how
+versions and validation work, and how a package refers to credentials. For the
+`configuration` object's own fields — `source`, `destination`, `order`, `schema_mapping`,
+`diffsync_flags` — see [Sync instance configuration](./reference/config.mdx) and
+[Schema mapping reference](./reference/schema-mapping.mdx); this page does not repeat them.
+
+## Package shape and file format
+
+A package is a YAML or JSON file with two required top-level keys:
+
+```yaml
+format_version: 1
+configuration:
+  name: from-netbox
+  source: { ... }
+  destination: { ... }
+  schema_mapping: [ ... ]
+```
+
+`format_version` accepts only `1`. `configuration` is the object described in
+[Sync instance configuration](./reference/config.mdx). An optional top-level `credentials`
+block declares the credential references the configuration uses — see
+[Credentials](#credentials) below. See `examples/netbox_to_infrahub/package.yml` and the
+other `examples/*/package.yml` files in the repository for complete, working packages.
+
+## Register it
+
+```bash
+infrahub-sync configs register path/to/package.yml --reason "register inventory import"
+```
+
+Registration reads the file, validates it, and — only if it is valid — persists it as
+version 1 of a new configuration. The CLI prints the generated `config_id`, then the new
+version's `config_id`, `registry_version`, `package_checksum`, `created_at`, and its stored
+`declared_content`. `config_id` and `registry_version` are what every later command
+addresses: `diff`, `sync`, `configs show`, and `configs validate` all take them, never a file
+path. See [Run a sync](./running-a-sync.mdx#register-a-configuration-package) for the command
+reference.
+
+## Versions are immutable
+
+The registry is append-only: registering a version never rewrites an earlier one, and an
+invalid package is refused before anything is written. To change a registered configuration,
+submit a new version of the same package:
+
+```bash
+infrahub-sync configs version <config-id> path/to/edited-package.yml \
+  --reason "update inventory mapping"
+```
+
+This prints the same version fields as `register`, plus `created` — `true` for a genuinely
+new version, `false` when the call replayed an idempotency key that had already been
+accepted (see [Idempotency keys](#idempotency-keys)). Inspect what is registered with:
+
+```bash
+infrahub-sync configs list
+infrahub-sync configs show <config-id>
+infrahub-sync configs versions <config-id>
+infrahub-sync configs show <config-id> --version <version>
+```
+
+## Validate a version
+
+```bash
+infrahub-sync configs validate <config-id> <version>
+```
+
+`validate` re-checks an already-registered version against the adapter declarations
+installed *now*, so a version accepted at registration can report findings later if an
+adapter's declared setting surface changes. Each finding carries a stable machine-readable
+`code`, a severity of `error` or `warning`, a JSON Pointer `location` into the package, and a
+message. Output is paged with `--offset` and `--limit` (default limit 256); the response
+carries `total_findings` and `next_offset`. The full set of finding codes and what each one
+means is documented once, in
+[Durable product records — Finding codes](./reference/durable-product-records.mdx#finding-codes);
+this page does not repeat that table.
+
+## Idempotency keys
+
+`configs register` and `configs version` are mutations, and each accepts
+`--idempotency-key`. Omit it and the CLI generates one and prints it before sending the
+request — keep that key. If the connection fails after the service has already accepted the
+mutation, retry with the same key rather than submitting a new one; the service returns the
+original result instead of creating a second version.
+
+## Credentials
+
+A credential-bearing setting in `configuration` never holds a literal value. It holds a
+reference:
+
+```yaml
+source:
+  settings:
+    token:
+      $credential: netbox-token
+
+credentials:
+  netbox-token:
+    provider: env
+    identifier: NETBOX_TOKEN
+```
+
+`$credential` names an entry in the package's top-level `credentials` block. Each entry
+declares a `provider` — `env` is the only one installed today — and an `identifier`, the
+exact name of the environment variable the worker reads at run time. The package never
+contains the credential's value; that value is set where the worker runs, in `operator.env`
+on the Compose deployment. See
+[Reading from NetBox or Nautobot](./compose-deployment.mdx#reading-from-netbox-or-nautobot)
+for how to set it and when to restart the deployment after changing it.

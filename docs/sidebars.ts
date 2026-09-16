@@ -9,6 +9,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'installation',
         'creating-a-sync-project',
+        'configuration-package',
         'running-a-sync',
       ],
     },
