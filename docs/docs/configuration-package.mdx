@@ -11,7 +11,7 @@ versions and validation work, and how a package refers to credentials. For the
 
 ## Package shape and file format
 
-A package is a YAML or JSON file with two required top-level keys:
+A package is a YAML or JSON file:
 
 ```yaml
 format_version: 1
@@ -22,61 +22,53 @@ configuration:
   schema_mapping: [ ... ]
 ```
 
-`format_version` accepts only `1`. `configuration` is the object described in
-[Sync instance configuration](./reference/config.mdx). An optional top-level `credentials`
-block declares the credential references the configuration uses — see
-[Credentials](#credentials) below. See `examples/netbox_to_infrahub/package.yml` and the
-other `examples/*/package.yml` files in the repository for complete, working packages.
+`configuration` is required and is the object described in
+[Sync instance configuration](./reference/config.mdx). `format_version` is optional and
+defaults to — and today only accepts — `1`. An optional top-level `credentials` block
+declares the credential references the configuration uses — see
+[Credentials](#credentials) below. `examples/netbox_to_infrahub/package.yml` is a complete
+package that validates cleanly and uses the `$credential` reference pattern this page
+documents; the other `examples/*/package.yml` files show adapter-specific shape, not all of
+them validated as written.
 
-## Register it
+## Register and version it
 
-```bash
-infrahub-sync configs register path/to/package.yml --reason "register inventory import"
-```
+`configs register` submits a new package as version 1 of a new configuration; `configs
+version` submits an edited package as the next version of an existing one. Both are
+mutations that require `--reason` and accept `--idempotency-key` (see
+[Idempotency keys](#idempotency-keys)). See
+[Run a sync — Register a configuration package](./running-a-sync.mdx#register-a-configuration-package)
+for the exact command forms, and [Sync CLI](./reference/cli.mdx) for every flag.
 
-Registration reads the file, validates it, and — only if it is valid — persists it as
-version 1 of a new configuration. The CLI prints the generated `config_id`, then the new
-version's `config_id`, `registry_version`, `package_checksum`, `created_at`, and its stored
-`declared_content`. `config_id` and `registry_version` are what every later command
-addresses: `diff`, `sync`, `configs show`, and `configs validate` all take them, never a file
-path. See [Run a sync](./running-a-sync.mdx#register-a-configuration-package) for the command
-reference.
+Both commands print the resulting version's `config_id`, `registry_version`,
+`package_checksum`, `created_at`, and `declared_content`. `configs version` additionally
+prints `created`: `true` for a genuinely new version, `false` when the submitted content's
+checksum already matches an existing version of that configuration — in which case the
+fields printed are that existing version's, and nothing new is written. This is separate
+from an idempotency-key replay, which returns the exact original accepted response for a
+repeated key regardless of content.
+
+`config_id` and `registry_version` are what `diff`, `sync`, and `configs validate` address a
+specific registered version by; none of them take a file path. `configs show` takes only
+`config_id` — its `--version` is optional, and omitting it prints the configuration's
+summary rather than one version. `configs list`, `configs show`, and `configs versions`
+inspect what is registered; see [Run a sync](./running-a-sync.mdx) for their command forms.
 
 ## Versions are immutable
 
 The registry is append-only: registering a version never rewrites an earlier one, and an
 invalid package is refused before anything is written. To change a registered configuration,
-submit a new version of the same package:
-
-```bash
-infrahub-sync configs version <config-id> path/to/edited-package.yml \
-  --reason "update inventory mapping"
-```
-
-This prints the same version fields as `register`, plus `created` — `true` for a genuinely
-new version, `false` when the call replayed an idempotency key that had already been
-accepted (see [Idempotency keys](#idempotency-keys)). Inspect what is registered with:
-
-```bash
-infrahub-sync configs list
-infrahub-sync configs show <config-id>
-infrahub-sync configs versions <config-id>
-infrahub-sync configs show <config-id> --version <version>
-```
+submit a new version of the same package with `configs version`.
 
 ## Validate a version
 
-```bash
-infrahub-sync configs validate <config-id> <version>
-```
-
-`validate` re-checks an already-registered version against the adapter declarations
+`configs validate` re-checks an already-registered version against the adapter declarations
 installed *now*, so a version accepted at registration can report findings later if an
 adapter's declared setting surface changes. Each finding carries a stable machine-readable
 `code`, a severity of `error` or `warning`, a JSON Pointer `location` into the package, and a
 message. Output is paged with `--offset` and `--limit` (default limit 256); the response
-carries `total_findings` and `next_offset`. The full set of finding codes and what each one
-means is documented once, in
+carries `total_findings` and `next_offset`. See [Sync CLI](./reference/cli.mdx) for the
+command form. The full set of finding codes and what each one means is documented once, in
 [Durable product records — Finding codes](./reference/durable-product-records.mdx#finding-codes);
 this page does not repeat that table.
 
@@ -86,7 +78,7 @@ this page does not repeat that table.
 `--idempotency-key`. Omit it and the CLI generates one and prints it before sending the
 request — keep that key. If the connection fails after the service has already accepted the
 mutation, retry with the same key rather than submitting a new one; the service returns the
-original result instead of creating a second version.
+original accepted response instead of creating a second version.
 
 ## Credentials
 
