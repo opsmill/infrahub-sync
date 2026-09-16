@@ -20,6 +20,9 @@ docker compose version
 docker info --format '{{.Driver}} {{json .DriverStatus}}'
 ```
 
+Expect `Linux` and `x86_64`, and a Docker Compose version meeting the minimum in
+[Supported platforms and limits](./operations/supported-platforms-and-limits.mdx).
+
 Ports 8000 and 4200 on `127.0.0.1` must be available. Docker also needs registry
 access to download the other service images and enough space for the download,
 extracted files, loaded images, and persistent deployment data.
