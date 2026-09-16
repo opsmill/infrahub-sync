@@ -30,7 +30,8 @@ API_REFERENCE = REPO_ROOT / "docs" / "docs" / "reference" / "sync-http-api.mdx"
 
 # Every command the entry point answers to. A command nobody wrote down is one
 # the deployment appears not to have.
-COMMANDS = ("start", "status", "logs", "stop", "restart", "reset", "cli")
+ENTRY_POINT_COMMANDS = ("init", "preflight", "start", "status", "logs", "stop", "restart", "reset", "cli")
+PAGE_COMMANDS = ("start", "status", "logs", "stop", "restart", "reset", "cli")
 
 # The frozen operator sequence, in order and complete: the two lifecycle commands
 # that precede any CLI call, the literal second `start` after credentials are
@@ -142,7 +143,7 @@ def test_the_page_is_listed_in_the_docs_sidebar() -> None:
     assert f"'{DOCUMENT_ID}'" in sync_sidebar()
 
 
-@pytest.mark.parametrize("command", COMMANDS)
+@pytest.mark.parametrize("command", PAGE_COMMANDS)
 def test_the_page_documents_every_lifecycle_command(command: str) -> None:
     """`--help` names them; this page is where their consequences are written down."""
     assert f"infrahub-sync-compose {command}" in page()
@@ -227,7 +228,7 @@ def usage_entries() -> dict[str, str]:
     current = ""
     for line in body.splitlines():
         head = re.match(r"^  (\w+)", line)
-        if head and head.group(1) in COMMANDS:
+        if head and head.group(1) in ENTRY_POINT_COMMANDS:
             current = head.group(1)
             entries[current] = ""
         if current:
@@ -235,7 +236,6 @@ def usage_entries() -> dict[str, str]:
     return entries
 
 
-@pytest.mark.skip(reason="The quickstart, not the post-start Compose page, owns first-start image resolution.")
 @pytest.mark.parametrize("command", ["preflight", "cli"])
 def test_every_command_that_can_replace_the_recorded_image_says_so(command: str) -> None:
     """Both of these resolve the binding, and resolving it persists what resolved.
@@ -291,7 +291,7 @@ def test_every_documented_cli_call_names_commands_the_cli_has(line: str) -> None
 def test_the_page_documents_no_command_the_entry_point_does_not_have() -> None:
     """A documented command that refuses is worse than an undocumented one."""
     usage = ENTRY_POINT.read_text(encoding="utf-8")
-    documented = {command for command in COMMANDS if f"infrahub-sync-compose {command}" in page()}
+    documented = {command for command in PAGE_COMMANDS if f"infrahub-sync-compose {command}" in page()}
 
     for command in documented:
         assert f"    {command})" in usage or f"    {command} " in usage, command
@@ -336,7 +336,6 @@ def test_the_page_states_the_minimum_compose_version_the_bundle_enforces() -> No
     assert minimum in page(), minimum
 
 
-@pytest.mark.skip(reason="The quickstart owns bundle and image acquisition.")
 def test_the_page_says_the_bundle_names_its_own_image_rather_than_the_operator() -> None:
     """A reader who goes looking for a setting to fill in has to be told there is none.
 
@@ -344,14 +343,13 @@ def test_the_page_says_the_bundle_names_its_own_image_rather_than_the_operator()
     refusal families the record's checks produce are covered by the table
     above, which is read from the entry point's own `refuse` calls.
     """
-    text = QUICKSTART.read_text(encoding="utf-8")
+    text = page()
 
     assert "image.bind" in text
     assert "@sha256:" in text
     assert "INFRAHUB_SYNC_IMAGE=sha256:" not in text, "the page still asks an operator to name an image"
 
 
-@pytest.mark.skip(reason="The quickstart owns clean-host acquisition and verification.")
 def test_the_page_tells_a_clean_host_how_to_get_the_bundle_and_check_it() -> None:
     """The subject is an archive on a host that has no copy of this tree.
 
@@ -359,9 +357,9 @@ def test_the_page_tells_a_clean_host_how_to_get_the_bundle_and_check_it() -> Non
     it one is not the absence of the disclaimer but the presence of the
     procedure: the two files, the checksum, the digest, and the extraction.
     """
-    text = page()
+    text = QUICKSTART.read_text(encoding="utf-8")
 
-    for step in ("infrahub-sync-compose-<version>.tar.gz.sha256", "sha256sum -c", "tar -xzf"):
+    for step in ("<release-archive>.tar.gz.sha256", "sha256sum -c", "tar -xzf"):
         assert step in text, f"the page does not tell a host to {step}"
     assert "cd deploy/compose" not in text, "the page still deploys from a directory in this tree"
 
