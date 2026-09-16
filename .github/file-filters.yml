@@ -97,3 +97,31 @@ image_all:
   - *sync_files
   - *development_files
   - *uv_files
+
+# What raises a pull request from the fast tier to the full one without anybody
+# labelling it. Deliberately narrower than `image_all`: that filter decides
+# whether the image job runs at all, and an application change still builds,
+# scans and smokes on every push. This one decides whether that job also runs
+# the warm-builder rebuild, the arm64 platform, the Compose lifecycle and the
+# clean-host matrix — the twenty-seven minutes the tier split exists to defer —
+# so it names only what those stages alone are about.
+#
+# `tasks/image.py` and `tasks/compose.py` by name rather than `tasks/**`: the
+# rest of the tree is fast-tier input, already covered by `image_all`, and
+# routing it here would put every task edit back on the long path.
+#
+# The last three entries are this split's own declarations. A tier boundary that
+# can be re-aimed without facing the tier it aims proves nothing, so editing one
+# of them runs the full qualification itself.
+qualify_all:
+  - "Dockerfile"
+  - ".dockerignore"
+  - "vulnerability-waivers.yml"
+  - "tests/image/**"
+  - "tasks/compose.py"
+  - "tasks/image.py"
+  - *compose_files
+  - *qualification_kit_files
+  - ".github/workflows/workflow-image.yml"
+  - ".github/workflows/trigger-pr-develop.yml"
+  - ".github/file-filters.yml"
