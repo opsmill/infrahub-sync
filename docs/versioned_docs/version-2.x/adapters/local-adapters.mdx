@@ -1,0 +1,233 @@
+---
+title: Local Adapters
+---
+
+import ReferenceLink from "@site/src/components/Card";
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+## Using local adapters
+
+The infrahub-sync tool supports loading adapters from various sources, including local filesystem paths. This feature allows you to develop and use custom adapters without having to integrate them into the main codebase.
+
+### Adapter resolution paths
+
+The plugin loader can resolve adapters from:
+
+1. **Built-ins**: Adapters that ship with infrahub-sync (`infrahub_sync.adapters.<name>`)
+2. **Dotted paths**: Python module paths (`myproj.adapters.foo:MyAdapter`)
+3. **Filesystem paths**: Local files or directories (`./adapters/foo.py:MyAdapter`)
+4. **Python entry points**: Installed packages that register entry points
+
+### Configuring local adapters
+
+To use a local adapter in your configuration, specify the filesystem path in the `adapter` field:
+
+```yaml
+source:
+  name: mycustom
+  adapter: ./path/to/my_adapter.py:MyCustomAdapter
+  settings:
+    # Your adapter settings here
+```
+
+If your adapter class name follows naming conventions (for example: `MycustomAdapter`), you can omit the class name:
+
+```yaml
+source:
+  name: mycustom
+  adapter: ./path/to/my_adapter.py
+  settings:
+    # Your adapter settings here
+```
+
+### Environment variables
+
+You can also specify additional adapter search paths via the `INFRAHUB_SYNC_ADAPTER_PATHS` environment variable:
+
+```bash
+# Unix/Linux/macOS
+export INFRAHUB_SYNC_ADAPTER_PATHS="/path/to/adapters:/another/path"
+
+# Windows
+set INFRAHUB_SYNC_ADAPTER_PATHS="C:\path\to\adapters;D:\another\path"
+```
+
+### Creating a custom adapter
+
+A minimal custom adapter needs to extend `diffsync.Adapter` and implement the necessary methods:
+
+```python
+from diffsync import Adapter
+
+from infrahub_sync import DiffSyncMixin
+
+class MyCustomAdapter(DiffSyncMixin, Adapter):
+    def __init__(self, target, adapter, config, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.target = target
+        self.settings = adapter.settings or {}
+        self.config = config
+
+    def model_loader(self, model_name, model):
+        # Your implementation to load data into the model
+        pass
+```
+
+For a more complete example, refer to the example in the repository:
+
+<ReferenceLink title="Custom Adapter Example" url="https://github.com/opsmill/infrahub-sync/tree/2b073acbc16f8b0b61ca57ef86402b20e5b99752/examples/custom_adapter" openInNewTab />
+
+### Adding custom Jinja filters
+
+Custom adapters can provide their own Jinja filters for use in transform expressions. This is particularly useful for adapter-specific data transformations.
+
+#### Implementing custom filters
+
+To add custom filters to your adapter, implement the `_add_custom_filters` class method in your DiffSync model class:
+
+```python
+from typing import Any, ClassVar
+from diffsync import DiffSyncModel
+from infrahub_sync import DiffSyncModelMixin
+
+class MyCustomModel(DiffSyncModelMixin, DiffSyncModel):
+    # Store any data needed by filters as class variables
+    _my_mapping: ClassVar[dict[str, str]] = {}
+
+    @classmethod
+    def set_my_mapping(cls, mapping: dict[str, str]) -> None:
+        """Set mapping data for use in filters."""
+        cls._my_mapping = mapping
+
+    @classmethod
+    def _add_custom_filters(cls, native_env: Any, item: dict[str, Any]) -> None:
+        """Add custom filters to the Jinja environment."""
+
+        def my_custom_filter(value: str) -> str:
+            """Custom filter that transforms values using stored mapping."""
+            return cls._my_mapping.get(str(value), value)
+
+        def format_identifier(value: str) -> str:
+            """Another custom filter for formatting identifiers."""
+            return f"ID-{value.upper()}"
+
+        # Register filters with the Jinja environment
+        native_env.filters["my_custom_filter"] = my_custom_filter
+        native_env.filters["format_identifier"] = format_identifier
+```
+
+#### Setting up filter data
+
+If your filters need data (like mappings, lookup values, etc.), initialize it in your adapter:
+
+```python
+class MyCustomAdapter(DiffSyncMixin, Adapter):
+    def __init__(self, target, adapter, config, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # ... other initialization
+
+        # Build data needed by filters
+        my_mapping = self._build_custom_mapping()
+
+        # Pass data to model class for filter use
+        MyCustomModel.set_my_mapping(my_mapping)
+
+    def _build_custom_mapping(self) -> dict[str, str]:
+        """Build mapping data from your data source."""
+        # Implementation depends on your data source
+        return {"key1": "value1", "key2": "value2"}
+```
+
+#### Using custom filters in configuration
+
+Once implemented, use your custom filters in transform expressions:
+
+```yaml
+schema_mapping:
+  - name: MyModel
+    mapping: "api/endpoint"
+    fields:
+      - name: identifier
+        mapping: "raw_id"
+      - name: formatted_name
+        mapping: "name"
+    transforms:
+      - field: identifier
+        expression: "{{ raw_id | my_custom_filter | format_identifier }}"
+      - field: status
+        expression: "{{ 'active' if enabled else 'inactive' }}"
+```
+
+#### Filter implementation guidelines
+
+1. **Keep filters focused**: Each filter should do one specific transformation
+2. **Handle edge cases**: Always provide fallback values for missing data
+3. **Use class variables**: Store filter data as class variables for efficient access
+4. **Document your filters**: Add Python documentation strings explaining what each filter does
+5. **Test thoroughly**: Ensure filters work with various input types and edge cases
+
+#### Real-world example: ACI device name filter
+
+Here's how the ACI adapter implements the `aci_device_name` filter:
+
+```python
+class AciModel(DiffSyncModelMixin, DiffSyncModel):
+    _device_mapping: ClassVar[dict[str, str]] = {}
+
+    @classmethod
+    def set_device_mapping(cls, device_mapping: dict[str, str]) -> None:
+        cls._device_mapping = device_mapping
+
+    @classmethod
+    def _add_custom_filters(cls, native_env: Any, item: dict[str, Any]) -> None:
+        def aci_device_name(node_id: str) -> str:
+            """Resolve ACI node IDs to device names."""
+            return cls._device_mapping.get(str(node_id), node_id)
+
+        native_env.filters["aci_device_name"] = aci_device_name
+```
+
+Used in configuration:
+
+```yaml
+transforms:
+  - field: device
+    expression: "{{ l1PhysIf.attributes.dn.split('/')[2].replace('node-', '') | aci_device_name }}"
+```
+
+### Best practices
+
+1. **Package Structure**: Organize complex adapters as packages with `__init__.py`
+2. **Testing**: Include test data and documentation with your adapter
+3. **Configuration**: Use settings to make your adapter configurable
+4. **Error Handling**: Implement proper error handling and logging
+5. **Type Annotations**: Use type hints to make your code more maintainable
+6. **Custom Filters**: Implement adapter-specific Jinja filters for complex transformations
+
+### Local adapter example
+
+Here's an example configuration using a local adapter:
+
+```yaml
+name: custom-example
+
+source:
+  name: mockdb
+  # Filesystem path to the adapter class
+  adapter: ./examples/custom_adapter/custom_adapter_src/custom_adapter.py:MockdbAdapter
+  settings:
+    db_path: "./examples/custom_adapter/custom_adapter_src/mock_db.json"
+
+destination:
+  name: infrahub
+  settings:
+    url: "http://localhost:8000"
+
+order: [
+  "InfraDevice",
+]
+
+schema_mapping:
+  # Your schema mapping here
+```

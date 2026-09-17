@@ -1,0 +1,112 @@
+---
+title: Sync instance configuration
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+The configuration file allows you to define the resources needs for the sync.
+The file should be formatted as a Yaml file, have the filename `config.yml`. During the generation phase, the Sync adapters, and models will be generated in the same folder.
+
+The following settings can be defined:
+
+## Configuration fields
+
+Describes the overall synchronization configuration.
+
+| Property | Type | Description | Mandatory |
+| -------- | ---- | ----------- | --------- |
+| `name` | string | Unique identifier for the sync instance. | Yes |
+| `store` | `SyncStore` | Configuration for the optional storage mechanism. | No |
+| `source` | `SyncAdapter` | Configuration for the source adapter. | Yes |
+| `destination` | `SyncAdapter` | Configuration for the destination adapter. | Yes |
+| `order` | List of strings | Order in which objects should be synchronized. Optional — when omitted, infrahub-sync auto-computes tiers from schema_mapping. | No |
+| `schema_mapping` | List of `SchemaMappingModel` | Defines how data is mapped from source to destination. | Yes |
+| `diffsync_flags` | List of `DiffSyncFlags` | Instruct Infrahub Sync how to handle some specific situation without changing the data  | No |
+
+### Auto-tiered execution
+
+`order:` is now optional. When it is omitted, infrahub-sync derives a
+write-order graph from the `reference:` entries in each `schema_mapping`
+field and groups kinds into **tiers**:
+
+- Tier 0: kinds with no outgoing references.
+- Tier N: kinds whose references all live in tiers `0..N-1`.
+
+The flattened tier order replaces the manual `order:` list. Tiers and any
+optional edges dropped to break cycles are logged at `INFO` level when
+`diff` or `sync` runs.
+
+`infrahub-sync sync` runs with `--parallel` on by default: the engine
+narrows the destination's `top_level` to one tier at a time so no tier
+starts before the previous tier's writes have completed. Pass
+`--no-parallel` to disable the tier boundary and fall back to the legacy
+single-pass code path.
+
+If you must override the computed order (because it doesn't match an
+adapter quirk), keep the `order:` list — it always wins, and `--parallel`
+will warn and fall back to serial when an explicit order is set.
+
+### Sync store
+
+Optional configuration for a storage mechanism used for stateful synchronization.
+
+| Property | Type | Description | Mandatory |
+| -------- | ---- | ----------- | --------- |
+| type | string | Type of the store (for example    `redis`). | Yes |
+| settings | Dictionary | Connection details and other settings for the store. | No |
+
+<!-- vale off -->
+### Source and Destination
+
+<!-- vale on -->
+Configuration for source and destination adapters.
+
+| Property | Type | Description | Mandatory |
+| -------- | ---- | ----------- | --------- |
+| name | string | Identifier for the adapter. | Yes |
+| settings | Dictionary | Adapter-specific settings like `url` and `token`. If not provided, values will be loaded from environment variables. | No |
+
+<!-- vale off -->
+
+### Schema Mapping
+
+<!-- vale on -->
+Defines the mappings from source to destination schemas. The tables below are the structural field reference. For the mapping syntax in depth — direct mappings, references, identifiers, filters, transforms, and worked NetBox and Nautobot examples — see [Schema mapping reference](./schema-mapping.mdx).
+
+#### Mapping models
+
+| Property | Type | Description | Mandatory |
+| -------- | ---- | ----------- | --------- |
+| name | string | Infrahub model name to be mapped. | Yes |
+| mapping | string | The source's schema mapping (API) path. | Yes |
+| identifiers | List of strings | Fields used to uniquely identify an object. | Yes |
+| fields | List of SchemaMappingField | Describes individual field mappings or transformations. | Yes |
+| filters | List of SchemaMappingFilter | Filters you want to apply during the sync. | No |
+| transforms | List of SchemaMappingTransform | Transforms you want to apply during the sync. | No |
+
+##### Mapping field
+
+| Property | Type | Description | Mandatory |
+| -------- | ---- | ----------- | --------- |
+| name | string | Name of the field. | Yes |
+| mapping | string | How the field is mapped from source to destination. | No |
+| static | Any | A static value to assign to the field, used if `mapping` is not provided. | No |
+| reference | string | Reference to another object in the configuration, used if direct mapping is not applicable. | No |
+
+##### Mapping filters
+
+| Property | Type | Description | Mandatory |
+| -------- | ---- | ----------- | --------- |
+| field | string | Name of the source field to filter on. | Yes |
+| operation | string | Which filters will be applied on the field. Available operations are described below. | No |
+| value | string | The expected value linked to the operation. | Yes except for both is_empty and is_not_empty operation |
+
+For the full list of filter operations (`==`, `!=`, `>`, `<`, `>=`, `<=`, `in`, `not in`, `contains`, `not contains`, `is_empty`, `is_not_empty`, `regex`, `is_ip_within`) with examples, see [Available filter operations](./schema-mapping.mdx#available-filter-operations).
+
+##### Mapping transforms
+
+| Property | Type | Description | Mandatory |
+| -------- | ---- | ----------- | --------- |
+| field | string | Name of the target field. | Yes |
+| expression | string | A Jinja filter compatible expression. | Yes |

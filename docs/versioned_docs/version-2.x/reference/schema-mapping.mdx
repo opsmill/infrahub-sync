@@ -1,0 +1,310 @@
+---
+title: Schema mapping reference
+---
+
+The schema mapping section of a sync project's `config.yml` defines how data translates between the source system and the destination system. Worked examples for NetBox → Infrahub and Nautobot → Infrahub appear at the end.
+
+For the full configuration schema (not just the mapping section), see [Sync instance configuration](./config.mdx).
+
+## Anatomy of a schema mapping
+
+Each entry in the `schema_mapping` section maps one model from the source system to one model in the destination system. A mapping entry contains:
+
+- **Name** — the destination model name.
+- **Mapping** — the source model name in the source system.
+- **Identifiers** — the field(s) that uniquely identify an object in this model.
+- **Fields** — the per-field mappings between source and destination.
+
+A minimal example:
+
+```yaml
+schema_mapping:
+  - name: Device
+    mapping: dcim.device
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: name
+      - name: serial
+        mapping: serial
+      - name: status
+        mapping: status.value
+```
+
+This says: for each `dcim.device` in the source system, create or update a `Device` object in the destination using the `name` field as the unique identifier, and map the `name`, `serial`, and `status.value` fields directly.
+
+## Field mappings
+
+Each entry in the `fields` list defines one field mapping. The most common patterns are direct mapping, nested attribute mapping, static values, and references to other models.
+
+### Direct field mapping
+
+The source field name maps directly to the destination field name:
+
+```yaml
+- name: name
+  mapping: name
+```
+
+This is the most common case. The destination field `name` gets the value of the source field `name`.
+
+### Renaming fields
+
+When the destination field has a different name than the source field, list them separately:
+
+```yaml
+- name: device_role
+  mapping: role.slug
+```
+
+The destination field `device_role` gets the value of the source's `role.slug`.
+
+### Nested attribute mapping
+
+For source data with nested structure, use dotted notation to reach into the nested attribute:
+
+```yaml
+- name: status
+  mapping: status.value
+- name: site
+  mapping: site.slug
+- name: primary_ip
+  mapping: primary_ip4.address
+```
+
+### Static values
+
+When a destination field should always be set to the same value regardless of source data, use `static`:
+
+```yaml
+- name: source_system
+  static: netbox
+```
+
+This is useful for fields that record provenance, type discriminators, or any field where the value is determined by the sync configuration rather than the source data.
+
+### References to other models
+
+When a destination field is a relationship to another model that is also being synced, use `reference` to point to that model:
+
+```yaml
+- name: device
+  mapping: device.name
+  reference: Device
+```
+
+This says: the value of the source's `device.name` field should resolve to the `Device` object with that name in the destination. The referenced model must be synced before this one — see the `order` key in the project configuration.
+
+## Identifiers
+
+The `identifiers` list defines which field(s) uniquely identify an object of this model. Identifiers are used to determine whether an object already exists in the destination and should be updated, or whether a new object should be created.
+
+### Single-field identifiers
+
+For most models, a single field — typically `name` — is enough:
+
+```yaml
+identifiers: ["name"]
+```
+
+### Composite identifiers
+
+Some models need multiple fields to be uniquely identified. For example, an IP address is unique by address plus VRF:
+
+```yaml
+identifiers: ["address", "vrf"]
+```
+
+All listed fields must be present and unique together. Each identifier field must also be mapped in the `fields` list.
+
+## Filters
+
+Filters control which objects from the source get synced. Apply them at the model level to include or exclude specific objects.
+
+```yaml
+- name: Device
+  mapping: dcim.device
+  identifiers: ["name"]
+  filters:
+    - field: status.value
+      operation: "=="
+      value: active
+  fields:
+    - name: name
+      mapping: name
+```
+
+This syncs only devices with `status.value == "active"`. Other devices are skipped.
+
+### Available filter operations
+
+Infrahub Sync supports the following 14 filter operations:
+
+| Operation | Description |
+| --- | --- |
+| `==` | Equal to the value |
+| `!=` | Not equal to the value |
+| `>` | Greater than (numeric) |
+| `<` | Less than (numeric) |
+| `>=` | Greater than or equal (numeric) |
+| `<=` | Less than or equal (numeric) |
+| `in` | Value is in a list or string |
+| `not in` | Value is not in a list or string |
+| `contains` | Field value contains the given value |
+| `not contains` | Field value does not contain the given value |
+| `is_empty` | Field is `None` or empty (no `value` argument needed) |
+| `is_not_empty` | Field is not `None` and not empty (no `value` argument needed) |
+| `regex` | Field matches the regular expression in `value` |
+| `is_ip_within` | Field (an IP address) is within the IP range in `value` |
+
+Multiple filters on the same model are combined with AND — an object must match all filters to be included.
+
+## Transforms and custom Jinja filters
+
+For cases where a field value needs to be transformed during the mapping — uppercase a string, parse a date, compute a derived value — apply a `transforms` entry to the mapping. The transform takes a `field` (the target field name) and an `expression` (a Jinja-compatible expression evaluated against the source object).
+
+```yaml
+- name: Device
+  mapping: dcim.device
+  identifiers: ["name"]
+  fields:
+    - name: name
+      mapping: name
+  transforms:
+    - field: name
+      expression: "{{ name | upper }}"
+```
+
+Adapters can also register custom Jinja filters via a `_add_custom_filters` class method on the adapter model. The ACI adapter, for example, includes an `aci_device_name` filter for resolving ACI node IDs to device names. See [Local Adapters](../adapters/local-adapters.mdx) for the implementation pattern, and [Sync instance configuration](./config.mdx) for the full `transforms` syntax.
+
+## Validating a mapping
+
+Validate the mapping with the diff command before applying any changes:
+
+```shell
+infrahub-sync diff --name <project> --directory <dir>
+```
+
+The diff prints every proposed create, update, and delete. Review it model by model:
+
+- Are the field values being mapped correctly?
+- Are references resolving to the right objects in the destination?
+- Are filters excluding the right objects?
+- Are there unexpected creates or deletes?
+
+Adjust the mapping and re-run the diff until it matches expectations. Only then run the sync.
+
+---
+
+Two common source systems — NetBox and Nautobot — illustrate how the syntax above plays out:
+
+## Common patterns for NetBox → Infrahub
+
+The patterns below cover the most common NetBox → Infrahub mappings. Adapt the destination field names to match your Infrahub schema.
+
+### Sites and locations
+
+```yaml
+- name: Location
+  mapping: dcim.site
+  identifiers: ["name"]
+  fields:
+    - name: name
+      mapping: name
+    - name: slug
+      mapping: slug
+    - name: description
+      mapping: description
+    - name: status
+      mapping: status.value
+```
+
+### Devices with role and platform references
+
+```yaml
+- name: Device
+  mapping: dcim.device
+  identifiers: ["name"]
+  fields:
+    - name: name
+      mapping: name
+    - name: serial
+      mapping: serial
+    - name: location
+      mapping: site.slug
+      reference: Location
+    - name: role
+      mapping: role.slug
+      reference: DeviceRole
+    - name: platform
+      mapping: platform.slug
+      reference: Platform
+```
+
+### Interfaces with device reference
+
+```yaml
+- name: Interface
+  mapping: dcim.interface
+  identifiers: ["name", "device"]
+  fields:
+    - name: name
+      mapping: name
+    - name: device
+      mapping: device.name
+      reference: Device
+    - name: enabled
+      mapping: enabled
+    - name: type
+      mapping: type.value
+```
+
+### IP addresses with VRF reference
+
+```yaml
+- name: IPAddress
+  mapping: ipam.ip-address
+  identifiers: ["address", "vrf"]
+  fields:
+    - name: address
+      mapping: address
+    - name: vrf
+      mapping: vrf.name
+      reference: VRF
+    - name: status
+      mapping: status.value
+    - name: description
+      mapping: description
+```
+
+### Filtering by tenant or tag
+
+```yaml
+- name: Device
+  mapping: dcim.device
+  identifiers: ["name"]
+  filters:
+    - field: tenant.slug
+      operation: "=="
+      value: production
+  fields:
+    - name: name
+      mapping: name
+```
+
+## Common patterns for Nautobot → Infrahub
+
+Nautobot's API and model structure are similar to NetBox but with some differences in field names and nested structure. The mapping patterns above largely apply; the main differences:
+
+- Nautobot uses `display` instead of `name` in some places.
+- Nautobot status fields are objects rather than strings — use `status.name` instead of `status.value`.
+- Custom fields and computed fields appear in different sections of the API response.
+
+Start from the `examples/nautobot_to_infrahub/` directory in the Infrahub Sync repository and adapt from there.
+
+## Related
+
+- [Sync instance configuration](./config.mdx)
+- [Create a sync project](../creating-a-sync-project.mdx)
+- [NetBox adapter](../adapters/netbox.mdx)
+- [Nautobot adapter](../adapters/nautobot.mdx)
