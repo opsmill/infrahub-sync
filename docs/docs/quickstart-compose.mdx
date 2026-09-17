@@ -2,14 +2,16 @@
 title: Start a Compose deployment
 ---
 
-Use this guide to load the release you were given and start Infrahub Sync on a
-Linux x86_64 Docker host. It includes the Sync API, worker, Prefect,
+Use this guide to load the release you were given and start Infrahub Sync. It
+includes the Sync API, worker, Prefect,
 PostgreSQL, and object storage. You can start it before you have supplied a
 source, destination, configuration, or credentials.
 
 ## Before you start
 
-Install Docker and Docker Compose on a Linux x86_64 host, then check it:
+Review [Supported platforms and limits](./operations/supported-platforms-and-limits.mdx)
+before you start. Install Docker and Docker Compose on the deployment host, then
+check it:
 
 ```sh
 uname -s
@@ -18,11 +20,12 @@ docker compose version
 docker info --format '{{.Driver}} {{json .DriverStatus}}'
 ```
 
-Expect `Linux` and `x86_64`. Docker Compose 2.17.3 is the minimum. Mac, Docker
-Desktop, ARM64, and emulation have not been tested. Ports 8000 and 4200 on
-`127.0.0.1` must be available. Docker also needs registry access to download
-the other service images and enough space for the download, extracted files,
-loaded images, and persistent deployment data.
+Expect `Linux` and `x86_64`, and a Docker Compose version meeting the minimum in
+[Supported platforms and limits](./operations/supported-platforms-and-limits.mdx).
+
+Ports 8000 and 4200 on `127.0.0.1` must be available. Docker also needs registry
+access to download the other service images and enough space for the download,
+extracted files, loaded images, and persistent deployment data.
 
 Run the remaining commands on the Docker host. For a remote host, transfer the
 download there and connect through SSH.

@@ -35,6 +35,15 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Operations',
+      items: [
+        'operations/day-2-operations',
+        'operations/compose-troubleshooting',
+        'operations/supported-platforms-and-limits',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Adapters',
       items: [
         'adapters/choosing-an-adapter',

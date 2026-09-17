@@ -177,6 +177,7 @@ Syft
 Grype
 Skopeo
 gzip
+reachability
 ADRs
 basenames
 bitmask
