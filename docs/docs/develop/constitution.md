@@ -199,8 +199,8 @@ This constitution is the authoritative reference for development standards in th
 `infrahub-sync` project. It supersedes informal practices and ad-hoc decisions.
 
 - **Compliance:** All pull requests and reviews MUST verify adherence to these principles.
-  Reviewers SHOULD reference principle numbers when flagging an issue (for example, "Principle I
-  violation — `sync` runs without approval").
+  Reviewers SHOULD reference the relevant principle when flagging an issue (for example,
+  "Read-only / dry-run by default violation — `sync` runs without approval").
 - **Amendments:** Changes require (1) a written proposal with rationale, (2) maintainer
   review and approval, (3) a migration plan when existing code or configuration is affected, and
   (4) a version increment per the scheme below.
