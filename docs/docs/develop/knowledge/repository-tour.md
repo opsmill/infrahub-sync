@@ -6,10 +6,12 @@ title: "Repository tour"
 
 > Part of: Develop > Knowledge | Related: [Sync architecture](sync-architecture.md), [The shared execution surface](execution-surface.md), [Testing tiers](../guidelines/testing-tiers.md)
 
-**Verified 2026-09-16 against source revision `61b6a1b`.** Every path and ownership claim
-below comes from reading the tree at that revision, not from a live run. Where a module's
-behavior is explained in depth elsewhere, this page links that page rather than restating
-it.
+**Verified 2026-09-16 against source revision
+[`61b6a1b9dccae637b522084f563858dfcd5e31a9`][src-revision].** Every path and
+ownership claim below comes from reading the tree at that exact revision, not from a live run.
+Each repository path below links to itself at that revision, so a link that has since moved is
+evidence the page needs re-checking. Where a module's behavior is explained in depth elsewhere,
+this page links that page rather than restating it.
 
 Where each concern lives, so you can find the right module before changing anything. This is a
 map, not a specification: it says what owns what and where the deeper document is.
@@ -24,9 +26,9 @@ Three things in this repository look interchangeable and are not:
 
 | Route | What it is | Where it lives |
 |---|---|---|
-| Registered V3 execution | The supported route. A configuration package is registered with the Sync API, validated, planned, reviewed and applied by a service worker. | `infrahub_sync/service/`, `infrahub_sync/product_store/`, `infrahub_sync/configuration/` |
-| Internal generation and local plugins | Development material. Rendered DiffSync modules and filesystem adapter loading, used while building an adapter. | `infrahub_sync/generator/`, `infrahub_sync/plugin_loader.py` |
-| Direct Prefect execution | An optional integration that runs a flow without the Sync API. Not the operator route. | `infrahub_sync/orchestration/` |
+| Registered V3 execution | The supported route. A configuration package is registered with the Sync API, validated, planned, reviewed and applied by a service worker. | [`infrahub_sync/service/`][src-infrahub-sync-service], [`infrahub_sync/product_store/`][src-infrahub-sync-product-store], [`infrahub_sync/configuration/`][src-infrahub-sync-configuration] |
+| Internal generation and local plugins | Development material. Rendered DiffSync modules and filesystem adapter loading, used while building an adapter. | [`infrahub_sync/generator/`][src-infrahub-sync-generator], [`infrahub_sync/plugin_loader.py`][src-infrahub-sync-plugin-loader-py] |
+| Direct Prefect execution | An optional integration that runs a flow without the Sync API. Not the operator route. | [`infrahub_sync/orchestration/`][src-infrahub-sync-orchestration] |
 
 A fourth category is historical evidence — archived specifications and decision records under
 `dev/`. It documents why the code is shaped this way; it is not a description of current
@@ -34,10 +36,10 @@ behavior.
 
 ### The command-line client and its HTTP client
 
-- `infrahub_sync/cli.py` — the Typer entry point. It is a client of the Sync HTTP API and
+- [`infrahub_sync/cli.py`][src-infrahub-sync-cli-py] — the Typer entry point. It is a client of the Sync HTTP API and
   nothing else: it constructs no HTTP request itself and reads neither the source system nor a
   local plan file.
-- `infrahub_sync/client/` — the only place that builds Sync API requests.
+- [`infrahub_sync/client/`][src-infrahub-sync-client] — the only place that builds Sync API requests.
   `client.py` holds the synchronous client, `models.py` its typed request and response shapes,
   and `errors.py` its error taxonomy.
 
@@ -84,21 +86,21 @@ configuration's writes.
 
 ### Runtime schema
 
-`infrahub_sync/runtime_schema/` discovers the destination schema at run time and builds
+[`infrahub_sync/runtime_schema/`][src-infrahub-sync-runtime-schema] discovers the destination schema at run time and builds
 DiffSync models in memory from it, rather than from committed generated code. `domain.py`
 holds the domain types, `projection.py` the projection onto DiffSync models, `worker.py` the
 out-of-process discovery path, and `errors.py` its failures.
 
 ### One run: the shared execution surface
 
-`infrahub_sync/execution.py` is the typed Python entry point to a single run, used by the CLI
+[`infrahub_sync/execution.py`][src-infrahub-sync-execution-py] is the typed Python entry point to a single run, used by the CLI
 path, the service worker stages and the packaged Prefect flow. It imports no Prefect symbol,
 so it stays importable in a base install. [The shared execution surface](execution-surface.md)
 is the full document.
 
 ### Plans
 
-`infrahub_sync/plan/` owns the saved plan artifact and everything that reads or writes it:
+[`infrahub_sync/plan/`][src-infrahub-sync-plan] owns the saved plan artifact and everything that reads or writes it:
 
 | Module | Owns |
 |---|---|
@@ -123,7 +125,7 @@ is kept.
 
 ### Adapters
 
-`infrahub_sync/adapters/` holds the nine bundled connectors: `aci`, `genericrestapi`,
+[`infrahub_sync/adapters/`][src-infrahub-sync-adapters] holds the nine bundled connectors: `aci`, `genericrestapi`,
 `infrahub`, `ipfabricsync`, `nautobot`, `netbox`, `peeringmanager`, `prometheus` and
 `slurpitsync`, plus the shared `rest_api_client.py` and `utils.py`.
 
@@ -133,7 +135,7 @@ the contract, and [Adding an adapter](../guides/adding-an-adapter.md) is the pro
 
 ### Cache and incremental extraction
 
-`infrahub_sync/cache/` persists a run's snapshots and drives incremental extraction:
+[`infrahub_sync/cache/`][src-infrahub-sync-cache] persists a run's snapshots and drives incremental extraction:
 `cursors.py` (tiers and cursor state), `incremental.py`, `guardrails.py` (row-count
 protection), `fingerprint.py`, `paths.py`, `locks.py`, `parquet_io.py` and `sidecars.py`.
 [Incremental sync and cache](incremental-and-cache.md) is the full document, and
@@ -150,14 +152,14 @@ These three are development and internal machinery, not the registered route:
   path, a filesystem path or an entry point. Filesystem targets are a development
   convenience; a registered package cannot declare one. See
   [Local adapters](../../adapters/local-adapters.mdx).
-- `infrahub_sync/dependency_graph.py` computes write-order tiers from a configuration's
+- [`infrahub_sync/dependency_graph.py`][src-infrahub-sync-dependency-graph-py] computes write-order tiers from a configuration's
   `schema_mapping`, which is why `order` can be omitted.
 
 ### The engine
 
-`infrahub_sync/potenda/` is the Potenda engine: it drives load, diff and write for both the
+[`infrahub_sync/potenda/`][src-infrahub-sync-potenda] is the Potenda engine: it drives load, diff and write for both the
 live compare-and-write path and the apply path, and owns the destination SDK exception
-boundary. `infrahub_sync/utils.py` assembles the pieces — configuration, plugin loading,
+boundary. [`infrahub_sync/utils.py`][src-infrahub-sync-utils-py] assembles the pieces — configuration, plugin loading,
 runtime models, cache paths and the engine — into a runnable instance.
 [Sync architecture](sync-architecture.md) walks one run end to end.
 
@@ -170,14 +172,14 @@ usage, and it is not the supported operator route.
 
 ### Vendored extras
 
-`opsmill_prefect_extras/` is a frozen, byte-identical copy of a private upstream package,
+[`opsmill_prefect_extras/`][src-opsmill-prefect-extras] is a frozen, byte-identical copy of a private upstream package,
 kept at its original import name so nothing rewrites imports. Its upstream unit tests are
 copied under `tests/vendored_prefect_extras/`. Do not edit it; `opsmill_prefect_extras/VENDORED.md`
 records the upstream commit and the local additions.
 
 ### Tasks
 
-`tasks/` holds the Invoke definitions the workflow is built from:
+[`tasks/`][src-tasks] holds the Invoke definitions the workflow is built from:
 
 | Module | Owns |
 |---|---|
@@ -192,18 +194,23 @@ records the upstream commit and the local additions.
 
 ### The development stack and the deployment bundle
 
-- `development/` holds the local stack: the compose files, the shipped `preview.env` defaults
+- [`development/`][src-development] holds the local stack: the compose files, the shipped `preview.env` defaults
   and `preview.local.env`, which Git ignores. Runtime state lives under `.preview/`.
   [Local development stack](../../development-stack.mdx) is the procedure.
-- `deploy/compose/` is the shipped deployment bundle — `compose.yaml`, the
+- [`deploy/compose/`][src-deploy-compose] is the shipped deployment bundle — `compose.yaml`, the
   `infrahub-sync-compose` entry point, `configuration/`, `bootstrap/` and `OPERATING.md`.
   [Compose deployment](../../compose-deployment.mdx) is the operator page.
-- `examples/` holds the example configuration packages. Each directory pairs a `config.yml`
-  with the `package.yml` envelope that registers it.
+- [`examples/`][src-examples] holds fifteen directories, and they are not uniform. Four —
+  `aci_to_infrahub`, `custom_adapter`, `netbox_to_infrahub` and
+  `prometheus_to_infrahub (node_exporter)` — pair a `config.yml` with the `package.yml`
+  envelope, and a product test holds each pair to its envelope. Ten carry a `config.yml`
+  alone, with no registry envelope. One, `prefect_remote_run`, has neither: it is an
+  orchestration fixture holding a schema and sample flow-run request bodies. Counts verified
+  at this revision.
 
 ### Tests
 
-`tests/` mirrors the source tree: `adapters/`, `api/`, `cache/`, `cli/`, `client/`,
+[`tests/`][src-tests] mirrors the source tree: `adapters/`, `api/`, `cache/`, `cli/`, `client/`,
 `configuration/`, `conformance/`, `plan/`, `product_store/`, `runtime_schema/`, `service/`,
 `orchestration/` and `release/`, plus the opt-in `integration/`, `preview/`, `image/` and
 `compose/` suites and the frozen `vendored_prefect_extras/` copy.
@@ -213,7 +220,7 @@ Which of these the default gate runs, and which need something live, is
 
 ### Historical evidence
 
-`dev/adr/` holds the decision records, and `dev/specs/archive/` the completed specifications
+[`dev/adr/`][src-dev-adr] holds the decision records, and [`dev/specs/archive/`][src-dev-specs-archive] the completed specifications
 whose durable output became the pages under `docs/docs/develop/`. Both explain why a boundary
 exists. Neither is a current inventory: when an archived document and the code disagree, the
 code is right and the page you are reading should be corrected.
@@ -224,3 +231,29 @@ code is right and the page you are reading should be corrected.
 - [Testing tiers](../guidelines/testing-tiers.md) — which suite covers which part of this tree.
 - [Quality gates](quality-gates.md) — what `invoke lint` and `invoke format` run.
 - [Decision records](../adr-index.mdx) — why the architecture is shaped this way.
+
+[src-deploy-compose]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/deploy/compose
+[src-dev-adr]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/dev/adr
+[src-dev-specs-archive]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/dev/specs/archive
+[src-development]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/development
+[src-examples]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/examples
+[src-infrahub-sync-adapters]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/adapters
+[src-infrahub-sync-cache]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/cache
+[src-infrahub-sync-cli-py]: https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/cli.py
+[src-infrahub-sync-client]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/client
+[src-infrahub-sync-configuration]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/configuration
+[src-infrahub-sync-dependency-graph-py]: https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/dependency_graph.py
+[src-infrahub-sync-execution-py]: https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/execution.py
+[src-infrahub-sync-generator]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/generator
+[src-infrahub-sync-orchestration]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/orchestration
+[src-infrahub-sync-plan]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/plan
+[src-infrahub-sync-plugin-loader-py]: https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/plugin_loader.py
+[src-infrahub-sync-potenda]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/potenda
+[src-infrahub-sync-product-store]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/product_store
+[src-infrahub-sync-runtime-schema]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/runtime_schema
+[src-infrahub-sync-service]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/service
+[src-infrahub-sync-utils-py]: https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/utils.py
+[src-opsmill-prefect-extras]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/opsmill_prefect_extras
+[src-revision]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9
+[src-tasks]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/tasks
+[src-tests]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests

@@ -6,13 +6,19 @@ title: "Adding an adapter"
 
 > Part of: Develop > Guides | Related: [Adapter anatomy](../knowledge/adapter-anatomy.md), [Writing an adapter](../guidelines/writing-an-adapter.md), [Repository tour](../knowledge/repository-tour.md)
 
-**Verified 2026-09-16 against source revision `61b6a1b`.** The command forms were read from
-`uv run infrahub-sync … --help` at that revision; the capability, validation and
-registration behavior from
-[`infrahub_sync/configuration/capabilities.py`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/infrahub_sync/configuration/capabilities.py),
-[`infrahub_sync/configuration/validation.py`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/infrahub_sync/configuration/validation.py)
-and
-[`infrahub_sync/product_store/configs.py`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/infrahub_sync/product_store/configs.py).
+**Verified 2026-09-16 against source revision
+[`61b6a1b9dccae637b522084f563858dfcd5e31a9`](https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9).** The command forms were
+read from `uv run infrahub-sync … --help` at that exact revision; the capability, validation
+and registration behavior from
+[`infrahub_sync/configuration/capabilities.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/configuration/capabilities.py),
+[`infrahub_sync/configuration/validation.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/configuration/validation.py),
+[`infrahub_sync/product_store/configs.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/product_store/configs.py),
+[`infrahub_sync/service/config_routes.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/service/config_routes.py) and
+[`infrahub_sync/service/app.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/service/app.py); the write-gate behavior
+from [`infrahub_sync/plan/verify.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/plan/verify.py),
+[`infrahub_sync/potenda/__init__.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/potenda/__init__.py),
+[`infrahub_sync/execution.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/execution.py) and
+[`infrahub_sync/service/flow.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/service/flow.py).
 The refusal recorded in [The current boundary](#the-current-boundary-for-adapters-outside-the-distribution)
 was reproduced in-process against the shipped example package, read-only. The worked
 register-to-apply flow was **not** replayed against a live service for this revision.
@@ -136,8 +142,9 @@ including the single and list reference cases.
 If the adapter can be a destination, implement `create`, `update` and `delete` on the model to
 mutate the target system. A source-only adapter leaves these deferring to the base.
 
-That covers `infrahub-sync sync`, the live compare-and-write path. Applying a **saved plan**
-(`infrahub-sync apply`) goes through a separate surface — see Step 5.
+These are the DiffSync-level write methods. Note that at this revision they are not what the
+registered route calls: the service composes `sync` as plan, verify and apply, and the apply
+leg goes through the planned-write surface instead — see Step 5.
 
 #### Step 5: Implement the planned-write surface (optional, destination only)
 
@@ -165,9 +172,9 @@ Both are required: the engine builds the per-apply resolver through the factory 
 constructing one itself, so an adapter offering only the write method is not a planned-write
 destination and is refused with the rest.
 
-**Not implementing the surface is a supported position, not a break.** An adapter without it
-makes `apply` refuse in its pre-write verification gate — **before any write reaches the
-destination** — with an error naming the adapter class and directing the operator to `sync`:
+**An adapter without this surface cannot write at all through the registered route.** It is
+refused in the pre-write verification gate — **before any write reaches the destination** —
+with an error naming the adapter class:
 
 ```text
 The destination adapter 'MysystemAdapter' cannot apply a saved plan. Use `infrahub-sync sync`
@@ -175,10 +182,18 @@ for this destination, or apply against a destination whose adapter implements th
 planned-write surface.
 ```
 
-Nothing else about the adapter degrades: `diff`, `sync` and plan review (`runs plan RUN_ID`)
-all work unchanged. Only `apply` is unavailable. `infrahub` is the only one of the nine
-adapters shipped in this repository that implements the surface today; the other eight refuse
-an `apply` exactly as described above.
+**That refusal's advice is stale at this revision. Do not follow it.** Registered V3 `sync` is
+not an independent compare-and-write path: the service composes it as plan, then verify, then
+apply, under one configuration guard, and `execute_run` refuses `operation="sync"` outright for
+exactly that reason. The composed apply leg runs the same
+`isinstance(destination, PlannedWriteDestination)` check, so a destination lacking the surface
+is refused by `sync` and by saved-plan `apply` alike. Reaching for `sync` does not work around
+the missing surface.
+
+What does still work is everything that does not write: `diff` and plan review
+(`runs plan RUN_ID`) are unaffected. `infrahub` is the only one of the nine adapters shipped in
+this repository that implements the surface today; the other eight can be planned and reviewed
+against, and refused at the write gate.
 
 The gate is an `isinstance` check against the protocol, which verifies that both members are
 **present** and not that their signatures match. Get a signature wrong and the refusal will not
@@ -452,21 +467,25 @@ delete and failure behavior.
 ### The current boundary for adapters outside the distribution
 
 **At this revision, an adapter installed outside the distribution has no admitted execution
-path.** A package naming it is refused at registration, before anything is persisted. This is a
-confirmed product limitation, recorded here so you do not discover it after writing a
-connector. It is not a configuration mistake you can work around.
+path.** A package naming it is refused at registration, and no configuration or version row is
+created. This is a confirmed product limitation, recorded here so you do not discover it after
+writing a connector. It is not a configuration mistake you can work around.
 
 What the evidence shows, reproduced read-only and in-process against the shipped
-`examples/custom_adapter/package.yml` at revision `61b6a1b`:
+`examples/custom_adapter/package.yml` at revision `61b6a1b9dccae637b522084f563858dfcd5e31a9`:
 
-1. `BUILTIN_ADAPTER_CAPABILITIES` in `infrahub_sync/configuration/capabilities.py` is a
-   read-only mapping with exactly nine keys — the nine bundled adapters. There is no
+1. `BUILTIN_ADAPTER_CAPABILITIES` in
+   [`infrahub_sync/configuration/capabilities.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/configuration/capabilities.py)
+   is a read-only mapping with exactly nine keys — the nine bundled adapters. There is no
    registration hook, entry-point scan or plugin path that adds a tenth.
+
 2. Validation resolves capabilities from the package's **`source.name`** — the short
    configuration name — and never from `source.adapter`. So an installed dotted import target
    or entry point does not make the package admissible on its own; the missing piece is the
    capability declaration, and only a bundled adapter has one.
-3. The refusal is produced in `_accumulate` in `infrahub_sync/configuration/validation.py`,
+
+3. The refusal is produced in `_accumulate` in
+   [`infrahub_sync/configuration/validation.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/configuration/validation.py),
    which emits one finding for the unresolved role and judges nothing deeper inside it:
 
    ```text
@@ -474,13 +493,31 @@ What the evidence shows, reproduced read-only and in-process against the shipped
    adapter 'mockdb' has no configuration capability declaration
    ```
 
+   This is the **internal** finding. It is what
+   [`configs validate`](#the-worked-flow-register-to-convergence) returns for an already-stored
+   version, where the findings are the response. It is *not* what a refused registration tells
+   you — see the next point.
+
 4. **Registration is the refusing surface.** `configs.register`
-   (`infrahub_sync/product_store/configs.py`) calls `create_configuration` on the durable
-   projection, which runs `validate_package_credentials` *before* it writes any row. That
-   raises on the first error, and `register` converts it into the public validation error
-   carrying the finding above. Over HTTP the route answers `422` with the `validation` reason
-   and marks the refusal as proven to have had no effect. `configs validate` reports the same
-   `missing-adapter` code for an already-stored version.
+   ([`infrahub_sync/product_store/configs.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/product_store/configs.py))
+   calls `create_configuration` on the durable projection, which runs
+   `validate_package_credentials` *before* it inserts a configuration or version row. That
+   raises on the first error, and `register` converts it into the service's validation error.
+
+5. **What the client actually sees is a generic envelope.** The route maps that error to
+   `ConfigurationAPIError(422, "validation", proven_pre_effect=True)`, and the application's
+   handler renders a fixed public body — status `422`, code `configs-validation`, family
+   `validation`, `reason` null, and the message *the configuration service refused the
+   request*. The `missing-adapter` finding and the adapter name are deliberately **not** in it.
+   To see why a registration was refused, register a version and call `configs validate`, or
+   read the service's own logs.
+
+6. **Refusing is not the same as writing nothing.** Before validation runs, the mutation
+   route reserves and claims an idempotency receipt for the request. Because the refusal is
+   marked `proven_pre_effect`, that receipt is then *released*, so the same `Idempotency-Key`
+   can be retried rather than being burned. The route also appends a durable audit event for
+   the attempt with outcome `unavailable`. So no configuration row and no version row is
+   created, but the refusal does leave durable evidence behind.
 
 So: `examples/custom_adapter/package.yml` **does not run register-to-apply as shipped**. It is
 a shape reference and a source fixture. The repository-local adapter target it declares is
@@ -499,7 +536,7 @@ For the development-time plugin loader and what it is and is not, see
 
 - [ ] Adapter inherits `DiffSyncMixin` / `DiffSyncModelMixin`, mixin first, with a `type`.
 - [ ] `model_loader` filters and transforms through the model mixin; `obj_to_diffsync` sets `local_id`.
-- [ ] Decided whether the adapter implements the planned-write surface — **both** `new_peer_resolver` and `apply_planned_operation`; if it does not, confirmed that `apply` refuses cleanly and that `sync` is the documented path for it.
+- [ ] Decided whether the adapter implements the planned-write surface — **both** `new_peer_resolver` and `apply_planned_operation`. A destination without both cannot write through registered `sync` or through saved-plan `apply`; if that is the intended position, confirmed the write gate refuses cleanly and that `diff` and plan review still work.
 - [ ] An `AdapterConfigurationCapabilities` entry added to `BUILTIN_ADAPTER_CAPABILITIES`, with roles, allowed settings and credential paths that match the module.
 - [ ] `tests/configuration/test_contracts.py` expected set updated, and `tests/configuration/test_adapter_setting_conformance.py` satisfied.
 - [ ] Optional SDK imported with `# ty: ignore[unresolved-import]`; credentials from environment references; no secrets logged or committed.

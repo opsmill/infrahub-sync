@@ -11,12 +11,23 @@ must have the package and custom adapter installed in its execution environment.
 
 **`mockdb` has no adapter capability declaration, so registering this package is refused.**
 Configuration validation resolves the package's `source.name` against a closed registry that
-holds only the adapters bundled with infrahub-sync, and `mockdb` is not one of them.
-Registration fails before anything is stored, with the finding `missing-adapter` at
-`/configuration/source` and the message `adapter 'mockdb' has no configuration capability
-declaration`. Installing the adapter somewhere a worker can import it does not change that,
-because the refusal is about the missing declaration rather than about whether the class can
-be imported.
+holds only the adapters bundled with infrahub-sync, and `mockdb` is not one of them. The
+refusal happens before any configuration or version row is written, so nothing is registered.
+
+What the CLI shows you is the service's fixed refusal envelope — HTTP `422`, code
+`configs-validation`, family `validation`, no `reason`, and the message `the configuration
+service refused the request`. The specific cause is an *internal* finding, `missing-adapter` at
+`/configuration/source` with the message `adapter 'mockdb' has no configuration capability
+declaration`; that detail reaches a client through `configs validate` on a stored version, not
+through the refused registration.
+
+Refusing is not the same as writing nothing: the request's idempotency receipt is reserved,
+then released because the refusal is proven to precede any effect, and a durable audit event is
+recorded for the attempt with outcome `unavailable`.
+
+Installing the adapter somewhere a worker can import it does not change any of this, because
+the refusal is about the missing declaration rather than about whether the class can be
+imported.
 
 Treat this directory as a shape reference and a deterministic source fixture. The commands
 below are the correct current forms for the register-to-apply cycle, and they are what you

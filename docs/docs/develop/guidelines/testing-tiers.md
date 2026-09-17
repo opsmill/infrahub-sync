@@ -6,10 +6,16 @@ title: "Testing tiers"
 
 > Part of: Develop > Guidelines | Related: [Testing](testing.md), [Quality gates](../knowledge/quality-gates.md), [Qualifying an internal candidate](../guides/qualifying-an-internal-candidate.md)
 
-**Verified 2026-09-16 against source revision `61b6a1b`.** The commands, markers and skip
-behavior below were read from `tasks/tests.py`, `tasks/__init__.py`, `tasks/preview.py`,
-`tasks/compose.py` and the `[tool.pytest.ini_options]` markers in `pyproject.toml`. Nothing
-here was established by a live replay.
+**Verified 2026-09-16 against source revision
+[`61b6a1b9dccae637b522084f563858dfcd5e31a9`](https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9).** The commands, markers
+and skip behavior below were read at that exact revision from
+[`tasks/tests.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tasks/tests.py),
+[`tasks/__init__.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tasks/__init__.py),
+[`tasks/preview.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tasks/preview.py),
+[`tasks/compose.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tasks/compose.py),
+the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/integration) and the
+`[tool.pytest.ini_options]` markers in [`pyproject.toml`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/pyproject.toml). Nothing here was
+established by a live replay.
 
 Which test command to run, what each one needs before it can prove anything, and what it
 writes. [Testing](testing.md) covers what makes an individual test worth having; this page
@@ -53,7 +59,7 @@ preview and integration suites against whatever environment your shell happens t
 | Tier | Command | Needs | Writes |
 |---|---|---|---|
 | Unit | `uv run invoke tests.tests-unit` | Nothing beyond the installed extras | Nothing outside `tmp_path` |
-| Integration | `uv run invoke tests.tests-integration` | A live Infrahub, and `INFRAHUB_ADDRESS` plus `INFRAHUB_API_TOKEN` | Whatever Infrahub the ambient settings name |
+| Integration | `uv run invoke tests.tests-integration` | Varies by family — see below; no single set of variables covers the tier | Whatever live target each family names |
 | Preview smoke | `uv run invoke preview.smoke` | The development stack, started with `preview.up` | Seeds and writes to the disposable stack |
 | Compose lifecycle | `uv run invoke compose.lifecycle` | An already built and loaded candidate image, and a Docker daemon | A real container stack it brings up and tears down |
 | Clean-host qualification | See the candidate guide | A checkout-free host holding only the artifact | A real deployment |
@@ -64,13 +70,26 @@ preview and integration suites against whatever environment your shell happens t
 uv run invoke tests.tests-integration
 ```
 
-Runs `pytest -m integration`. The tests skip themselves when `INFRAHUB_ADDRESS` and
-`INFRAHUB_API_TOKEN` are unset — so a shell without them set produces a green run that proved
-nothing. The remote-run test additionally needs a live Prefect server and a separately started
-served deployment.
+Runs `pytest -m integration`. **This tier is not homogeneous.** `tests/integration/` holds
+several families with different prerequisites and different live targets, each skipping on its
+own, so configuring one family leaves the others green and unproven. Route by family rather
+than assuming one setup covers the tier:
 
-These tests write to whatever Infrahub instance the ambient settings name. Point them at a
-disposable instance.
+| Family | Needs | Modules |
+|---|---|---|
+| Infrahub destination | `INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN` | destination schema read, keyed write, node conversion, replace-set shrink |
+| Apply guard | A disposable PostgreSQL at `APPLY_GUARD_TEST_POSTGRESQL_DSN`, plus `psycopg` (and Prefect for the managed variant) | apply-guard and managed write-guard |
+| Saved-plan apply | `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN` **plus** `NETBOX_URL` and `NETBOX_TOKEN` | saved-plan apply |
+| Remote run | `INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN`, `PREFECT_API_URL`, and a separately served deployment the test resolves | remote-run |
+| Durable store | `INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL`, `_S3_BUCKET` and `_S3_ENDPOINT_URL`, plus `boto3` and `psycopg` | service storage, isolated worker handoff |
+| Live stack | A running development stack, probed rather than configured | managed write-guard live |
+
+Each module's docstring carries its own exact setup, including the disposable-target warnings;
+read it rather than copying variables between families. The guard DSN and the durable-store
+settings must point at single-purpose throwaway databases.
+
+These tests write to the live targets they name. Point every one of them at something
+disposable.
 
 #### Preview smoke
 
