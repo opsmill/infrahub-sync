@@ -70,12 +70,13 @@ preview and integration suites against whatever environment your shell happens t
 uv run invoke tests.tests-integration
 ```
 
-Runs `pytest -m integration`. **This tier is not homogeneous.** `tests/integration/` holds
-several families with different prerequisites and different live targets, each skipping on its
-own, so configuring one family leaves the others green and unproven. Route by family rather
-than assuming one setup covers the tier:
+Runs `pytest -m integration`, which is repository-wide. **This tier is not homogeneous, and it
+is not confined to `tests/integration/`.** It selects several families with different
+prerequisites and different live targets, each skipping on its own, so configuring one family
+leaves the others green and unproven. Route by family rather than assuming one setup covers the
+tier:
 
-| Family | Needs | Modules |
+| Family | Needs | Where |
 |---|---|---|
 | Infrahub destination | `INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN` | destination schema read, keyed write, node conversion, replace-set shrink |
 | Apply guard | A disposable PostgreSQL at `APPLY_GUARD_TEST_POSTGRESQL_DSN`, plus `psycopg` (and Prefect for the managed variant) | apply-guard and managed write-guard |
@@ -83,13 +84,43 @@ than assuming one setup covers the tier:
 | Remote run | `INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN`, `PREFECT_API_URL`, and a separately served deployment the test resolves | remote-run |
 | Durable store | `INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL`, `_S3_BUCKET` and `_S3_ENDPOINT_URL`, plus `boto3` and `psycopg` | service storage, isolated worker handoff |
 | Live stack | A running development stack, probed rather than configured | managed write-guard live |
+| Prefect idempotency | The `prefect` and `opsmill_prefect_extras` imports only | [`tests/integration/test_service_prefect_idempotency.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/integration/test_service_prefect_idempotency.py) |
+| Product store on PostgreSQL | A disposable PostgreSQL at `PRODUCT_STORE_TEST_POSTGRESQL_DSN`, plus `psycopg` | [`tests/product_store/test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_contract.py), [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_configuration_baseline.py), [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_write_admission.py), [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/service/test_apply_versus_verify_race.py) |
+| Redis store compatibility | A reachable `REDIS_URL` | [`tests/test_redis_store_compat.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/test_redis_store_compat.py) |
 
-Each module's docstring carries its own exact setup, including the disposable-target warnings;
-read it rather than copying variables between families. The guard DSN and the durable-store
-settings must point at single-purpose throwaway databases.
+Three of those deserve their setup stated here, because they are the ones a reader will not find
+by looking in `tests/integration/`:
 
-These tests write to the live targets they name. Point every one of them at something
-disposable.
+- **Prefect idempotency** needs no external service. It skips unless `prefect` and
+  `opsmill_prefect_extras` import, then starts Prefect's own isolated temporary API server with
+  `PREFECT_HOME` and `PREFECT_LOCAL_STORAGE_PATH` redirected under `tmp_path`. It writes only
+  that temporary state and tears it down.
+- **Product store on PostgreSQL** is a parametrized case: the same contracts run on SQLite
+  unmarked and on a real server under the `integration` mark. Set
+  `PRODUCT_STORE_TEST_POSTGRESQL_DSN` and install `psycopg`. Each module creates one generated
+  schema and drops only that schema, and its scoped `search_path` deliberately excludes
+  `public`, so a DSN aimed at the wrong database cannot reach another schema's tables:
+
+  ```bash
+  PRODUCT_STORE_TEST_POSTGRESQL_DSN="postgresql://postgres:probe@127.0.0.1:55433/storeprobe" \
+    uv run --with 'psycopg[binary]' pytest -m integration tests/product_store tests/service
+  ```
+
+- **Redis store compatibility** runs one functional round trip against a live server. Set
+  `REDIS_URL`; the test pings it first and skips when it is unset or unreachable. It writes
+  adapter state under its own store identifiers.
+
+  ```bash
+  REDIS_URL="redis://127.0.0.1:6379/0" uv run pytest -m integration tests/test_redis_store_compat.py
+  ```
+
+Most of the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/integration)
+carry their own exact setup in a module docstring, including the disposable-target warnings —
+read it rather than copying variables between families. The guard DSN, the product-store DSN and
+the durable-store settings must all point at single-purpose throwaway databases.
+
+Apart from the Prefect idempotency case, these tests write to the live targets they name. Point
+every one of them at something disposable.
 
 #### Preview smoke
 

@@ -493,10 +493,10 @@ What the evidence shows, reproduced read-only and in-process against the shipped
    adapter 'mockdb' has no configuration capability declaration
    ```
 
-   This is the **internal** finding. It is what
-   [`configs validate`](#the-worked-flow-register-to-convergence) returns for an already-stored
-   version, where the findings are the response. It is *not* what a refused registration tells
-   you — see the next point.
+   That finding exists only inside the service's own validation error. `configs validate`
+   returns findings in this shape, but only for content **already present in the store** — and
+   a package naming an unregistered adapter never gets there. It is not what a refused
+   registration tells you; see the next two points.
 
 4. **Registration is the refusing surface.** `configs.register`
    ([`infrahub_sync/product_store/configs.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/product_store/configs.py))
@@ -504,13 +504,23 @@ What the evidence shows, reproduced read-only and in-process against the shipped
    `validate_package_credentials` *before* it inserts a configuration or version row. That
    raises on the first error, and `register` converts it into the service's validation error.
 
-5. **What the client actually sees is a generic envelope.** The route maps that error to
-   `ConfigurationAPIError(422, "validation", proven_pre_effect=True)`, and the application's
-   handler renders a fixed public body — status `422`, code `configs-validation`, family
-   `validation`, `reason` null, and the message *the configuration service refused the
-   request*. The `missing-adapter` finding and the adapter name are deliberately **not** in it.
-   To see why a registration was refused, register a version and call `configs validate`, or
-   read the service's own logs.
+5. **What the client actually sees is a generic envelope, and there is no way to get more.**
+   The route maps that error to `ConfigurationAPIError(422, "validation", proven_pre_effect=True)`,
+   and the application's handler renders a fixed public body — status `422`, code
+   `configs-validation`, family `validation`, `reason` null, and the message *the configuration
+   service refused the request*. The `missing-adapter` finding and the adapter name are **not**
+   in it.
+
+   Nor is there a second route to them for this package. `configs version` refuses the same
+   way and before inserting, and you cannot reach it anyway without a `CONFIG_ID` that
+   registration never issued — so there is no stored version for `configs validate` to judge.
+   [`config_routes.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/service/config_routes.py) logs nothing, and the
+   durable audit event carries only actor, operation, reason, outcome and timestamps — its
+   model forbids extra fields, so the finding is not in it either.
+
+   **Treat that as part of the product gap.** A package rejected for an unregistered adapter
+   gets no public diagnostic naming the cause. Determining it currently means reading the
+   service source, or reproducing the validation in-process as this page did.
 
 6. **Refusing is not the same as writing nothing.** Before validation runs, the mutation
    route reserves and claims an idempotency receipt for the request. Because the refusal is

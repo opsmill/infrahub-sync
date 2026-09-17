@@ -18,8 +18,9 @@ What the CLI shows you is the service's fixed refusal envelope — HTTP `422`, c
 `configs-validation`, family `validation`, no `reason`, and the message `the configuration
 service refused the request`. The specific cause is an *internal* finding, `missing-adapter` at
 `/configuration/source` with the message `adapter 'mockdb' has no configuration capability
-declaration`; that detail reaches a client through `configs validate` on a stored version, not
-through the refused registration.
+declaration`. That detail is not reachable from outside for this package: findings are returned
+by `configs validate`, which judges content already in the store, and registration never puts
+this package there. The missing public diagnostic is part of the gap.
 
 Refusing is not the same as writing nothing: the request's idempotency receipt is reserved,
 then released because the refusal is proven to precede any effect, and a durable audit event is
