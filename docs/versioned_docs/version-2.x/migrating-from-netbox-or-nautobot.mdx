@@ -1,0 +1,143 @@
+---
+title: Migrate from NetBox or Nautobot
+---
+
+Migrate data from NetBox or Nautobot into Infrahub one model at a time. The existing system keeps running throughout, and you decide when — or whether — to retire it.
+
+Before you start, install Infrahub Sync if you haven't already — see [Install Infrahub Sync](./installation.mdx).
+
+## The gradual migration approach
+
+A one-shot cutover from NetBox or Nautobot to Infrahub carries real risk: the new system has to be completely ready, all dependent automation has to switch at the same time, and rollback is hard if something surfaces afterward. The gradual approach removes that risk by syncing data into Infrahub model by model, verifying each step, and migrating dependent workflows on your own schedule.
+
+The phases:
+
+1. **Prepare the Infrahub schema.** Define the schema in Infrahub that will hold the migrated data.
+2. **Build the sync project.** Create a YAML configuration that maps NetBox or Nautobot models and fields to the corresponding Infrahub models and fields.
+3. **Seed Infrahub with initial data.** Run the sync to populate Infrahub with the current state of the source system.
+4. **Run in side-by-side mode.** Keep both systems active. Sync runs on a recurring schedule to keep Infrahub current with source-system changes.
+5. **Migrate workflows.** Update automation, scripts, and dashboards to read from Infrahub instead of the source system.
+6. **Retire the legacy system (optional).** Once all dependent workflows read from Infrahub and the legacy system is no longer the source of truth for any data, decommission it — or keep it running for the workflows where it remains the better tool.
+
+For long-running side-by-side operation (where the legacy system is not being retired), see [Use NetBox or Nautobot with Infrahub](./using-netbox-or-nautobot-with-infrahub.mdx). The phases below focus on migration specifically.
+
+## Phase 1 — Prepare the Infrahub schema
+
+Infrahub uses a custom schema that you define. Before migrating data, decide on the schema Infrahub will use for the data coming over from NetBox or Nautobot.
+
+The Infrahub schema does not have to mirror the source system one-to-one. Migration is an opportunity to model the data the way you need going forward, not the way the previous tool happened to model it.
+
+For a concrete starting point, see the example sync projects at `examples/netbox_to_infrahub/` and `examples/nautobot_to_infrahub/` in the [Infrahub Sync repository](https://github.com/opsmill/infrahub-sync). Each references an Infrahub demo schema you can use as a reference when defining your own. Replace its model and field names with the equivalents in your Infrahub schema.
+
+## Phase 2 — Build the sync project
+
+A sync project is a directory containing a `config.yml` that defines the source (NetBox or Nautobot), the destination (Infrahub), and the per-model schema mapping.
+
+### Start from the example
+
+The Infrahub Sync repository includes working examples at `examples/netbox_to_infrahub/` and `examples/nautobot_to_infrahub/`. Copy the directory matching your source system as the starting point. The examples use the Infrahub demo schema — update model and field names to match the schema you chose in Phase 1.
+
+### Define sync order
+
+Models must be synced in dependency order: anything referenced by another model must be synced first. A typical order:
+
+1. Independent objects: tags, locations, manufacturers, device roles, platforms
+2. Rack and site data (depends on locations)
+3. Devices (depends on locations, roles, manufacturers, platforms)
+4. Interfaces (depends on devices)
+5. IP addresses and prefixes (depends on interfaces, VRFs)
+6. VLANs and VLAN groups
+
+The exact order depends on your schema. See [Sync instance configuration](./reference/config.mdx) for the syntax of the `order` key.
+
+### Map fields between the source system and Infrahub
+
+For each model, define how source fields map to Infrahub fields. The schema mapping section of the YAML handles direct field mappings, identifier mappings, references to other models, and static values. For detail on each mapping pattern, see [Schema mapping reference](./reference/schema-mapping.mdx).
+
+## Phase 3 — Seed Infrahub with initial data
+
+Run `infrahub-sync diff` to verify what the sync will do before applying changes:
+
+```shell
+infrahub-sync diff --name <project> --directory <dir>
+```
+
+The diff prints the proposed changes to the terminal without modifying Infrahub. Review it model by model:
+
+- Are the right models being created in Infrahub?
+- Are field values being mapped correctly?
+- Are relationships between models being resolved correctly?
+- Are there any unexpected creates, updates, or deletes?
+
+When the diff looks correct, run the sync:
+
+```shell
+infrahub-sync sync --name <project> --directory <dir>
+```
+
+The sync applies changes in the order defined by the project's `order` key. Independent models are created first, then dependent models, then models that reference earlier ones.
+
+### Migrate one model at a time
+
+For the first sync, enable only the most independent models (tags, locations). Verify the data in Infrahub, then add the next layer of models (racks, devices), run again, and so on. This keeps the diff output reviewable and isolates any mapping issues to the model that caused them.
+
+## Phase 4 — Run in side-by-side mode
+
+After the initial seed, schedule the sync to run on a recurring cadence so Infrahub stays current with changes in the source system. The cadence depends on how often the source data changes — hourly, daily, or on-demand are all reasonable.
+
+Infrahub Sync has no built-in scheduler. Use cron, CI, Prefect, or another workflow tool — see [Schedule sync runs](./orchestration.mdx).
+
+### Default behavior preserves Infrahub-only data
+
+By default, the `SKIP_UNMATCHED_DST` flag is enabled — Infrahub objects without a corresponding object in the source system are left alone. This is the safe default. Add Infrahub-only data (new schemas, design objects, intent data) without worrying that a sync run will delete it.
+
+To change this behavior — for example, removing Infrahub objects when they're deleted in the source system — adjust the `diffsync_flags` in the sync configuration. See [Sync instance configuration](./reference/config.mdx).
+
+### Decide on conflict policy early
+
+During side-by-side operation, the same model may be edited in both tools. Decide upfront which tool is authoritative for each model and document the decision in the project configuration. If both tools allow edits to the same model, conflicts will eventually occur — and Infrahub Sync's default behavior is for the source system to win.
+
+## Phase 5 — Migrate workflows
+
+As Infrahub becomes a reliable mirror of the source system, update dependent automation to read from Infrahub instead. This is the longest phase of a migration and typically happens workflow by workflow:
+
+- Identify each script, pipeline, or dashboard that reads from the source system.
+- Update it to read from Infrahub (using the Python SDK, infrahubctl, or GraphQL).
+- Verify the workflow behaves correctly with Infrahub as the source.
+- Once you're confident, retire the source-reading version of the workflow.
+
+For each migrated workflow, you can also stop writing to the source system for the affected data — at which point that data type is fully migrated.
+
+## Phase 6 — Retire the legacy system (optional)
+
+Once all dependent workflows read from Infrahub and the legacy system is no longer the source of truth for any data:
+
+- **Decommission the legacy system entirely** if it's no longer needed.
+- **Keep the legacy system running for specific workflows** (rack elevation, cable tracing, or any other capability you prefer there). Reconfigure the sync to keep the legacy system in sync with Infrahub for those workflows, or stop syncing entirely if the data does not need to flow.
+
+Many teams reach a stable side-by-side state and stay there indefinitely. See [Use NetBox or Nautobot with Infrahub](./using-netbox-or-nautobot-with-infrahub.mdx).
+
+## Differences between migrating from NetBox versus Nautobot
+
+The same phases apply for both source systems. The mechanical differences:
+
+- Use the [NetBox adapter](./adapters/netbox.mdx) for NetBox sources and the [Nautobot adapter](./adapters/nautobot.mdx) for Nautobot sources.
+- Start from `examples/netbox_to_infrahub/` for NetBox, `examples/nautobot_to_infrahub/` for Nautobot.
+- Field names and nested structures differ between the two systems — for example, Nautobot status fields are objects while NetBox status fields are strings. The schema mapping work is source-specific, but the overall approach is identical.
+
+## Common issues
+
+- **Sync runs slowly on large datasets.** Initial syncs of large source-system installations can take a while. Sync performance is an active area of development. Recurring sync runs are typically fast — only deltas are applied.
+- **A model is being created in Infrahub that should not be.** Check the sync project's `order` key and per-model filters — the model may be enabled when it shouldn't be, or a reference from another model may be pulling it in.
+- **Field values are not mapping correctly.** Check the schema mapping section of the YAML. Common causes: a source field has a different name than expected, or a relationship reference is not resolving because the referenced model was not synced first.
+- **Custom fields in the source system are not appearing in Infrahub.** NetBox and Nautobot custom fields require explicit mapping in the YAML — they are not synced automatically.
+
+## Related
+
+- [Use NetBox or Nautobot with Infrahub](./using-netbox-or-nautobot-with-infrahub.mdx)
+- [Create a sync project](./creating-a-sync-project.mdx)
+- [Run a sync](./running-a-sync.mdx)
+- [Schema mapping reference](./reference/schema-mapping.mdx)
+- [Schedule sync runs](./orchestration.mdx)
+- [NetBox adapter](./adapters/netbox.mdx)
+- [Nautobot adapter](./adapters/nautobot.mdx)
