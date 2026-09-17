@@ -150,13 +150,13 @@ require_no_foreign_mount() {
 }
 
 # ---------------------------------------------------------------------------
-# Reading the record, and running a check inside the candidate
+# Reading the candidate input, and running a check inside the candidate
 # ---------------------------------------------------------------------------
 # The reader is the candidate image, because this host has no interpreter. Read it
 # into a variable: a command substitution inside an argument discards the reader's
 # own exit status, so a failed read would reach a message as an empty string.
 record() {
-    [ -n "$IMAGE" ] || fail "the candidate record was read before the image that reads it was loaded"
+    [ -n "$IMAGE" ] || fail "the candidate input was read before the image that reads it was loaded"
     # An absent key already exits non-zero, and a key whose value is empty prints
     # nothing and exits 0 -- which reaches a comparison as a value that equals any
     # other missing one. Both are refusals here, told apart by their messages.
@@ -164,9 +164,9 @@ record() {
         --volume "$CANDIDATE:/candidate:ro" \
         "$IMAGE" python -c "$(printf '%s\n' \
             "import json, sys" \
-            "held = json.load(open('/candidate/qualification.json'))$1" \
+            "held = json.load(open('/candidate/candidate-input.json'))$1" \
             "if held is None or str(held) == '':" \
-            "    sys.exit('the candidate record holds an empty value where one is required')" \
+            "    sys.exit('the candidate input holds an empty value where one is required')" \
             "print(held)")"
 }
 
@@ -889,7 +889,7 @@ stop_destination() {
 require_recorded_bundle_digest() {
     # require_recorded_bundle_digest <archive filename, as the record names it>
     recorded_digest=$(record "['bundle']['sha256']") \
-        || fail "the candidate record names no digest for the deployment bundle"
+        || fail "the candidate input names no digest for the deployment bundle"
     # Not read through a pipeline: a pipeline's status is its last command's, and
     # a `sha256sum` that failed would reach the comparison as a value rather than
     # as a refusal. The tool prints "<digest>  <name>", so the digest is the
@@ -910,13 +910,13 @@ row_artifact_identity() {
     IMAGE=$(docker image inspect --format '{{.Id}}' "$loaded") \
         || fail "this host could not be asked what the loaded image is"
     recorded=$(record "['image']['platforms']['linux/amd64']['config']") \
-        || fail "the candidate record does not name a linux/amd64 configuration digest"
+        || fail "the candidate input does not name a linux/amd64 configuration digest"
     require "the loaded image is not the linux/amd64 candidate the record names" "$recorded" "$IMAGE"
-    tag=$(record "['identity']['tag']") || fail "the candidate record names no release tag"
+    tag=$(record "['identity']['tag']") || fail "the candidate input names no release tag"
     report "the loaded image is the recorded linux/amd64 candidate of $tag"
 
     # The checksum with the host's own tool, in the form the candidate wrote it.
-    bundle_name=$(record "['bundle']['name']") || fail "the candidate record names no bundle"
+    bundle_name=$(record "['bundle']['name']") || fail "the candidate input names no bundle"
     ( cd "$CANDIDATE" && sha256sum -c "$bundle_name.sha256" >/dev/null 2>&1 ) \
         || fail "the deployment bundle does not match the checksum the record names"
     report "the bundle matches the checksum the record names"
@@ -1503,7 +1503,7 @@ row_alpha_replacement() {
     [ "$before" != "$(durable_snapshot)" ] \
         || fail "the replacement kept the prior state, which this alpha does not promise"
     version=$(check served_version) || fail "the replaced deployment did not report a version"
-    recorded=$(record "['identity']['version']") || fail "the candidate record names no version"
+    recorded=$(record "['identity']['version']") || fail "the candidate input names no version"
     require "the replaced deployment does not serve the recorded version" "$recorded" "$version"
     report "reset and redeploy replaced prior disposable state with the recorded version"
 }
@@ -1619,7 +1619,7 @@ row_secrets() {
     capture_deployment_evidence final
     docker image history --no-trunc --format '{{.CreatedBy}}' "$IMAGE" > "$WORK/image.history"
 
-    bundle_name=$(record "['bundle']['name']") || fail_after_sweep "the candidate record names no bundle to sweep"
+    bundle_name=$(record "['bundle']['name']") || fail_after_sweep "the candidate input names no bundle to sweep"
     # The shipped bytes, not the compressed container of them: a plaintext search
     # of a gzip stream cannot match, so it would report success without looking.
     gzip -dc "$CANDIDATE/$bundle_name" > "$WORK/bundle.tar" \

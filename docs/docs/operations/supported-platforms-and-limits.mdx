@@ -1,0 +1,28 @@
+---
+title: Supported platforms and limits
+---
+
+This page is the general compatibility statement for Infrahub Sync's Compose
+deployment. A qualified deployment is one Linux amd64 host running Docker
+Compose 2.17.3 or later.
+
+## Measured versions
+
+The measured destination is Infrahub 1.10.6. The measured sources are NetBox
+4.6.10 and Nautobot 2.4.41 at depth 1. These measurements do not claim that
+other Infrahub, NetBox, or Nautobot versions are unsupported.
+
+## Architecture qualification
+
+The project builds arm64 images and smokes them in CI. That availability is not
+Compose deployment qualification: an arm64 Compose deployment is not qualified.
+
+## Product limits
+
+- Deletes are recorded in plans but are not executed.
+- Clearing an optional cardinality-one relationship is unsupported.
+- There is no verified in-place upgrade, migration, rollback, backup, or restore
+  procedure.
+
+For the exact operating procedure, including replacement of this alpha, use the
+[Compose deployment guide](../compose-deployment).

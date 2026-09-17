@@ -1,0 +1,56 @@
+---
+title: Day 2 operations
+---
+
+Use this page to choose the right operational action after a Compose deployment
+is running. The [Compose deployment guide](../compose-deployment) remains the
+only command reference.
+
+## Check health and status
+
+Use the [status procedure](../compose-deployment#status) to check whether the
+deployment is `READY`, `DEGRADED`, or `STOPPED`. `READY` confirms the deployment
+and its worker, not the reachability or validity of a registered source or
+destination.
+
+For service output and run failures, use the [log procedure](../compose-deployment#logs).
+The output is bounded and redacted; do not substitute a local development-stack
+troubleshooting procedure for this Compose deployment route.
+
+## Choose stop, restart, or reset
+
+The [stop, restart, and reset procedure](../compose-deployment#stop-restart-and-reset)
+defines the effects and safeguards of each action:
+
+- Stop pauses the processes while preserving containers and volumes.
+- Restart replaces the API and worker processes while preserving durable records.
+- Reset removes this instance's containers, network, and volumes. It is destructive.
+
+Use reset only when you intend to discard the deployment state. To replace this
+alpha, follow the [replacement procedure](../compose-deployment#replacing-this-alpha):
+it has no in-place migration, backup, or restore procedure, and the replacement
+starts with a new identity and empty state.
+
+## Handle credentials safely
+
+Credentials belong in `operator.env`; packages contain references rather than
+credential values. Follow the [configuration prerequisites](../compose-deployment#configuration-prerequisites)
+when adding or changing a source or destination credential, then use `start` as
+the [operator sequence](../compose-deployment#the-operator-sequence) specifies
+to recreate services with their new environment. `restart` retains the
+environment the containers already had.
+
+There is no qualified credential-rotation procedure at this release head. In
+particular, the API principal has no automatic rotation: the existing
+[Use it](../compose-deployment#use-it) guidance states that nothing rotates it
+for the operator.
+
+Never `source` `operator.env` or put a credential on a command line. Keep values
+out of logs, shell history, and configuration packages.
+
+## Reconcile an uncertain write
+
+Do not retry a write whose outcome is unknown. Use the [uncertain-write
+reconciliation procedure](../compose-deployment#when-the-outcome-of-a-write-is-uncertain):
+read the terminal run record, inspect the destination, then create a fresh plan
+that reflects the destination's current state. The earlier run is not reopened.

@@ -2,44 +2,68 @@
 title: Create a sync project
 ---
 
-A sync project is a directory containing a `config.yml` file that defines one synchronization between two systems. Configure four parts: source and destination, sync order, schema mapping, and sync behavior. A Nautobot → Infrahub example runs through each.
+A sync configuration is a package — a YAML or JSON file — that defines one synchronization
+between two systems. It has four parts: source and destination, sync order, schema
+mapping, and sync behavior. A Nautobot → Infrahub example runs through each. The package is
+registered with the Sync API; the service, not the file on disk, is what a run reads from.
+See [Configuration package](./configuration-package.mdx) for the full envelope shape, what
+registration returns, and how versions and validation work.
 
 ## Define the source and destination
 
-The `source` and `destination` keys identify which adapter to use on each side of the sync and how to connect to each system. Credentials reference environment variables rather than being embedded in the file.
+The `source` and `destination` keys identify which adapter to use on each side of the sync and
+how to connect to each system. A credential-bearing setting holds a `$credential` reference
+rather than a literal value; the referenced name resolves to the name of an environment
+variable set on the deployment (`operator.env`) — see
+[Reading from NetBox or Nautobot](./compose-deployment.mdx#reading-from-netbox-or-nautobot).
 
 ```yaml
----
-name: example-sync-task
+format_version: 1
+configuration:
+  name: example-sync-task
 
-source:
-  name: nautobot
-  settings:
-    url: "https://nautobot.example.com"
-    token: "NAUTOBOT_TOKEN" # This can also be loaded from environment variables
+  source:
+    name: nautobot
+    settings:
+      url: "https://nautobot.example.com"
+      token:
+        $credential: nautobot-token
 
-destination:
-  name: infrahub
-  settings:
-    url: "https://infrahub.example.com"
-    token: "INFRAHUB_API_TOKEN" # This can also be loaded from environment variables
+  destination:
+    name: infrahub
+    settings:
+      url: "https://infrahub.example.com"
+      token:
+        $credential: infrahub-token
+
+credentials:
+  nautobot-token:
+    provider: env
+    identifier: NAUTOBOT_TOKEN
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_API_TOKEN
 ```
 
 For the full list of adapters and their connection parameters, see [Choose an adapter](./adapters/choosing-an-adapter.mdx).
 
 ## Set the sync order
 
-The `order` key specifies the sequence in which objects should be synchronized. Order matters because some objects depend on others — a device cannot be created until its location, role, and platform already exist in the destination.
+The `order` key, under `configuration`, specifies the sequence in which objects should be
+synchronized. Order matters because some objects depend on others — a device cannot be
+created until its location, role, and platform already exist in the destination. Omit it and
+the engine derives the sequence from the `reference` entries in `schema_mapping` instead.
 
 ```yaml
-order:
-  - "InfraDevice"
-  - "InfraInterface"
+  order:
+    - "InfraDevice"
+    - "InfraInterface"
 ```
 
 ## Map the schema fields
 
-The `schema_mapping` section defines how data is translated from the source's schema into the destination's schema.
+The `schema_mapping` section, also under `configuration`, defines how data is translated from
+the source's schema into the destination's schema.
 
 :::info
 
@@ -50,30 +74,30 @@ The `schema_mapping` section defines how data is translated from the source's sc
 :::
 
 ```yaml
-schema_mapping:
-  - name: InfraDevice
-    mapping: "dcim.devices"
-    identifiers: ["name"]
-    fields:
-      - name: "name"
-        mapping: "name"
-      - name: "device_type"
-        mapping: "device_type.display_name"
-      - name: "manufacturer"
-        mapping: "device_type.manufacturer.name"
+  schema_mapping:
+    - name: InfraDevice
+      mapping: "dcim.devices"
+      identifiers: ["name"]
+      fields:
+        - name: "name"
+          mapping: "name"
+        - name: "device_type"
+          mapping: "device_type.display_name"
+        - name: "manufacturer"
+          mapping: "device_type.manufacturer.name"
 
-  - name: InfraInterface
-    mapping: "dcim.interfaces"
-    identifiers: ["device", "name"]
-    fields:
-      - name: "name"
-        mapping: "name"
-      - name: "interface_type"
-        static: "10gbe"
-      - name: "description"
-        mapping: "description"
-      - name: "device"
-        reference: "InfraDevice"
+    - name: InfraInterface
+      mapping: "dcim.interfaces"
+      identifiers: ["device", "name"]
+      fields:
+        - name: "name"
+          mapping: "name"
+        - name: "interface_type"
+          static: "10gbe"
+        - name: "description"
+          mapping: "description"
+        - name: "device"
+          reference: "InfraDevice"
 ```
 
 In this example, `device_type` and `manufacturer` are attributes of `InfraDevice`. For destination objects that have relationships to other models, the related models must be synchronized first — see how `InfraInterface` references `InfraDevice` via the `reference` key.
@@ -82,12 +106,12 @@ For the full mapping syntax — direct mappings, nested attributes, static value
 
 ## Tune sync behavior
 
-The `diffsync_flags` key controls how the synchronization handles three scenarios: unmatched objects in the destination, unmatched objects in the source, and modified objects.
+The `diffsync_flags` key, under `configuration`, controls how the synchronization handles three scenarios: unmatched objects in the destination, unmatched objects in the source, and modified objects.
 
 ```yaml
-# Optional: control sync behavior with diffsync flags
-diffsync_flags:
-  - "SKIP_UNMATCHED_DST"  # Skip objects in destination that don't exist in source
+  # Optional: control sync behavior with diffsync flags
+  diffsync_flags:
+    - "SKIP_UNMATCHED_DST"  # Skip objects in destination that don't exist in source
 ```
 
 :::info Understanding diffsync flags
@@ -110,6 +134,6 @@ executes a delete, and completes successfully while reporting how many it skippe
 
 :::
 
-For more on customizing sync configuration and troubleshooting, see [Sync instance configuration](./reference/config.mdx).
+For more on the structural field reference, see [Sync instance configuration](./reference/config.mdx).
 
-When the project is configured, run the sync — see [Run a sync](./running-a-sync.mdx).
+When the package is complete, register it — see [Run a sync](./running-a-sync.mdx).

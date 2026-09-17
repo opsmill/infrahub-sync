@@ -8,7 +8,9 @@ const sidebars: SidebarsConfig = {
       label: 'Get started',
       items: [
         'installation',
+        'quickstart-compose',
         'creating-a-sync-project',
+        'configuration-package',
         'running-a-sync',
       ],
     },
@@ -17,6 +19,8 @@ const sidebars: SidebarsConfig = {
       label: 'Tutorials',
       items: [
         'tutorials/netbox-demo-to-infrahub',
+        'tutorials/netbox-to-existing-infrahub',
+        'tutorials/nautobot-to-existing-infrahub',
       ],
     },
     {
@@ -25,8 +29,18 @@ const sidebars: SidebarsConfig = {
       items: [
         'using-netbox-or-nautobot-with-infrahub',
         'migrating-from-netbox-or-nautobot',
+        'v2-to-v3',
         'orchestration',
         'custom-certificates',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Operations',
+      items: [
+        'operations/day-2-operations',
+        'operations/compose-troubleshooting',
+        'operations/supported-platforms-and-limits',
       ],
     },
     {
@@ -62,6 +76,17 @@ const sidebars: SidebarsConfig = {
         'reference/prefect-remote-run',
         'reference/durable-product-records',
         'reference/sync-http-api',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Develop',
+      items: [
+        'develop/knowledge/index',
+        'develop/guides/index',
+        'develop/guidelines/index',
+        'develop/constitution',
+        'develop/adr-index',
       ],
     },
     {

@@ -64,16 +64,16 @@ def run_shell(script: str, *, work: Path) -> subprocess.CompletedProcess[str]:
 
 
 # ---------------------------------------------------------------------------
-# Row 1's bundle identity: the archive against the record, not only against the
+# Row 1's bundle identity: the archive against the candidate input, not only against the
 # checksum file beside it
 # ---------------------------------------------------------------------------
 def candidate_directory(work: Path, *, recorded: str | None) -> Path:
-    """A candidate directory holding an archive, its own checksum file, and a record.
+    """A candidate directory holding an archive, its checksum, and its input manifest.
 
     The checksum file always agrees with the archive: this is the case the gate
     was accepting, so the two have to be a matching pair for the comparison
     under test to be the only thing that can refuse. `recorded` is what the
-    record says the bundle's digest is, or nothing at all.
+    candidate input says the bundle's digest is, or nothing at all.
     """
     candidate = work / "candidate"
     candidate.mkdir()
@@ -82,7 +82,7 @@ def candidate_directory(work: Path, *, recorded: str | None) -> Path:
     bundle: dict[str, str] = {"name": ARCHIVE}
     if recorded is not None:
         bundle["sha256"] = recorded
-    (candidate / "qualification.json").write_text(json.dumps({"bundle": bundle}), encoding="utf-8")
+    (candidate / "candidate-input.json").write_text(json.dumps({"bundle": bundle}), encoding="utf-8")
     return candidate
 
 
@@ -91,7 +91,7 @@ def bundle_identity_script(candidate: Path) -> str:
 
     `record` runs the reader inside the candidate image, which this suite has no
     daemon for. The stub answers one key and refuses every other, so a step that
-    read the record's bundle *name* where it should read its digest fails here
+    read the input's bundle *name* where it should read its digest fails here
     rather than comparing a name against a digest and calling them different.
     """
     return "\n".join(
@@ -104,10 +104,10 @@ def bundle_identity_script(candidate: Path) -> str:
             shell_function("require"),
             "record() {",
             '    case "$1" in',
-            # The reader exits non-zero for a key the record does not hold, which
+            # The reader exits non-zero for a key the input does not hold, which
             # is the shape the lifted step's own `|| fail` is written against.
             "        \"['bundle']['sha256']\")",
-            '            sed -n \'s/.*"sha256": "\\([^"]*\\)".*/\\1/p\' "$CANDIDATE/qualification.json" | grep .',
+            '            sed -n \'s/.*"sha256": "\\([^"]*\\)".*/\\1/p\' "$CANDIDATE/candidate-input.json" | grep .',
             "            ;;",
             '        *) echo "the harness was asked for $1" >&2; return 1 ;;',
             "    esac",
@@ -122,8 +122,8 @@ def test_an_archive_the_record_does_not_name_is_refused_though_its_checksum_file
     """The accompanying checksum file travels with the archive it describes.
 
     An archive swapped together with its own `.sha256` satisfies `sha256sum -c`
-    and says nothing about the bundle the qualification record names -- and that
-    record is the document every other row 1 claim is read from.
+    and says nothing about the bundle the candidate input names -- and that
+    manifest is the document every other row 1 claim is read from.
     """
     candidate = candidate_directory(tmp_path, recorded=FOREIGN_DIGEST)
     agreed = run_shell(f'cd "{candidate}" && sha256sum -c "{ARCHIVE}.sha256"', work=tmp_path)

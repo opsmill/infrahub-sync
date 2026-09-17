@@ -10,8 +10,13 @@ on:
         default: "ubuntu-22.04"
         type: string
 
+# `github.workflow` is the caller's name inside a reusable workflow, so a group
+# built from it alone is shared with every sibling the same caller starts. The
+# linter writes exactly that, and this workflow now starts beside it rather than
+# after it, so the literal below is what keeps the two from cancelling each
+# other while still cancelling a stale run of this one.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-tests-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:

@@ -1,0 +1,34 @@
+---
+title: Compose operator troubleshooting
+---
+
+This page is for the qualified one-host Docker Compose deployment. It does not
+apply to the local development stack in the NetBox demo tutorial; keep that
+route's troubleshooting in its [NetBox demo tutorial](../tutorials/netbox-demo-to-infrahub).
+
+## Start with the deployment state
+
+Run the [status procedure](../compose-deployment#status) first. A refusal names
+its family and explains the next correction; `DEGRADED` and `STOPPED` describe
+different operational states. Use the [log procedure](../compose-deployment#logs)
+for bounded, redacted service output.
+
+If a configuration validation reports a finding, use its stable code to find the
+meaning in the [finding-code reference](../reference/durable-product-records#finding-codes).
+The message wording can change; the code is the dependable lookup key.
+
+## Recover the deployment deliberately
+
+Use the [stop, restart, and reset procedure](../compose-deployment#stop-restart-and-reset)
+to select the least disruptive action. A restart keeps durable records; reset is
+destructive and requires the displayed instance identity. When a reset is the
+right choice, use the [replacement procedure](../compose-deployment#replacing-this-alpha)
+rather than treating it as an upgrade.
+
+## Reconcile before retrying writes
+
+When a write might have reached the destination, do not repeat it. Follow the
+[uncertain-write reconciliation procedure](../compose-deployment#when-the-outcome-of-a-write-is-uncertain):
+read the run record, inspect the destination, and create a fresh plan. This is
+the operator route for a Compose deployment; it does not authorize local adapter
+execution.

@@ -68,6 +68,13 @@ Run the same command in an existing checkout. This project used pre-commit befor
 and blocks every commit. `--force` replaces that file. It also overwrites any other script at
 that path, so copy your own hook elsewhere first if you keep one there.
 
+### Find your way around the tree
+
+[Repository tour](develop/knowledge/repository-tour.md) maps the current modules — the
+command-line client, configuration admission, the service and its worker, plans, product
+storage, adapters, the cache and the engine — and separates them from the material that is
+development-only or historical. Start there before changing code you have not touched before.
+
 ## Development workflow
 
 Before committing any changes, run the following commands in order:
@@ -83,12 +90,16 @@ uv run invoke lint
 checkout: its leg compares the run against a recorded baseline and fails only on a new
 diagnostic code or a count above the recorded maximum.
 
+See [Quality gates](develop/knowledge/quality-gates.md) for the complete lint and formatter
+workflow.
+
 Run `uv run invoke check-310` before pushing as well: it builds its environments under
 `.preview/check-310-venv`, leaves your active `.venv` alone, and reproduces the three CI legs your
 environment cannot reach — `ty` under the Python 3.10 excludes, and the unit tests on
 Python 3.10 both with the `prefect` extra and on a base install that has no service
-dependencies. If Python 3.10 is not installed, the task exits successfully without running
-the three legs. To install it, run `uv python install 3.10`.
+dependencies. If Python 3.10 is not installed, the task skips loudly and exits successfully,
+leaving all three legs unqualified. To install it, run `uv python install 3.10`. See
+[Testing tiers](develop/guidelines/testing-tiers.md).
 
 ### Validate the CLI
 
@@ -102,25 +113,41 @@ uv run infrahub-sync runs plan --help
 
 ### Running tests
 
-The offline gate is what a change has to keep green. It deselects the tests that need a
-running stack or an external service:
+The offline gate is what a change has to keep green. It is a single command, and it deselects
+every marker that needs a running stack, a live service or a Docker daemon:
 
 ```bash
-uv run pytest -m "not preview and not integration" -q
+uv run invoke tests.tests-unit
 ```
+
+See [Testing tiers](develop/guidelines/testing-tiers.md) for what each other tier needs, what
+it writes, and why a skipped check is not a pass. See
+[Testing](develop/guidelines/testing.md) for the repository-wide rules about individual tests.
 
 ### Running the full stack locally
 
-To run the Sync HTTP API, its Prefect worker, and a disposable Infrahub against your checkout, see the [local development stack](./development-stack.mdx).
+To run the Sync HTTP API, its Prefect worker, and a disposable Infrahub against your checkout, see the [local development stack](./development-stack.mdx). That page also holds the service
+development loop: the API has no auto-reload, so a code change needs `preview.down` followed
+by `preview.up`.
 
 The suite that exercises that stack is opt-in under the `preview` marker, and it skips
 rather than fails when the stack is not running:
 
 ```bash
 uv run invoke preview.up      # start the stack
-uv run invoke preview.smoke   # seed, then run `pytest -m preview tests/preview`
+uv run invoke preview.smoke   # seed, then run the preview smoke suite
 uv run invoke preview.down --volumes
 ```
+
+### CI tiers
+
+Continuous integration runs in two tiers on a pull request. The fast tier runs on every push: lint, the uv check, the unit tests, and an image build for `linux/amd64` with its release identity, deployment bundle, bill of materials, vulnerability scan and smoke test. It is what a review iteration waits for.
+
+The full qualification tier adds the `linux/arm64` build and smoke, the warm-builder freshness check, the Compose lifecycle suite and the clean-host matrix. Add the `qualify` label to a pull request to run it, and leave the label on: every later push re-runs it while it is there. It also escalates by itself when the diff touches a path only those stages cover — the `Dockerfile`, `deploy/compose/`, `tests/compose/`, `tests/image/`, `tasks/image.py`, `tasks/compose.py`, `tasks/release.py`, the qualification kit, or the workflow files that declare the tiers — so a change to the lifecycle qualifies whether or not anyone remembers the label.
+
+Nothing is skipped permanently. The `Full qualification` check always runs and fails until the full tier has covered the head, so a pull request cannot merge on the fast tier alone.
+
+A merge also runs the full tier by itself. A push to `feature/v3-develop` — which is what merging a pull request produces — is not a pull-request event, so it qualifies in full without a label. That covers the merged tree, which no pull-request run builds as itself: what a pull request tests is its head merged with the base at that moment, and the commit that lands can differ from it.
 
 ## Code standards
 
@@ -140,6 +167,69 @@ uv run invoke preview.down --volumes
 ## Documentation
 
 If you make user-facing changes (CLI flags, configuration options, new adapters), update the documentation.
+
+### Two documentation lines
+
+The site publishes two versions. The current line is V3: its pages are `docs/docs/**` and its
+navigation is `docs/sidebars.ts`. The V2 line is a frozen snapshot: its pages are
+`docs/versioned_docs/version-2.x/**`, its navigation is
+`docs/versioned_sidebars/version-2.x-sidebars.json`, and `docs/versions.json` lists it.
+
+The snapshot was taken from the V2 documentation on the product's `main` branch and adapted
+only where a versioned copy requires it: component imports resolve through the site alias, and
+the product and example links it carries are pinned to the exact commit the snapshot came from
+rather than to a moving branch.
+
+The V2 team keeps maintaining `main` exactly as it does today. Nothing imports those changes
+here: there is no automatic import, and the snapshot does not track `main`. A later V2
+documentation change reaches the snapshot only when someone decides it should and edits the
+affected file narrowly, by hand.
+
+### Rules for a documentation change
+
+1. **Name the line or lines the change affects before you edit.** A statement about product
+   behavior belongs on the line whose product behaves that way.
+2. **Edit the files of each affected line explicitly.** A current-line change touches
+   `docs/docs/**` and, when navigation changes, `docs/sidebars.ts`. A V2 change touches
+   `docs/versioned_docs/version-2.x/**` and its versioned sidebar. Neither edit implies the
+   other.
+3. **Preserve the snapshot's provenance.** Never bulk-refresh the V2 tree from `main`, and
+   never rerun the freeze over it. Both would silently replace reviewed content, discard the
+   adaptations above, and lose the record of what was corrected and why.
+4. **Build and inspect both versions.** A change to either line, to a shared component, or to
+   the site configuration is verified by building the site and reading the affected pages on
+   both versions, including the version menu and the route each page resolves to.
+5. **Keep V3-only material on the current line.** The Sync API service, the configuration
+   registry, the package envelope, and the Compose deployment do not exist in V2. Do not
+   describe them in the snapshot, and do not link the snapshot to pages that describe them.
+6. **Keep shared components and assets compatible with both lines.** `docs/src/**` and
+   `docs/static/**` render inside both versions. A change that assumes current-line content,
+   or that removes something the snapshot still imports, breaks the V2 build.
+7. **Put a release note on the line it describes.** Notes for releases on the V2 line belong
+   in the snapshot's release notes; notes for the current product belong on the current line.
+8. **Pin the snapshot's outbound product links immutably.** A link from the snapshot into the
+   repository or the examples names the commit the snapshot came from, not a branch. Do not
+   add a hard-coded root-relative or hosted-only cross-version link in the snapshot: the site
+   is served under more than one base path, and such a link breaks under at least one of them.
+9. **Adapt a paired correction to each line; do not copy bytes between them.** The same fact is
+   often written differently on the two lines, and the current wording frequently names
+   commands, options, or surfaces that V2 never had. Rewrite the correction to fit the page you
+   are editing.
+
+### Which line a correction belongs to
+
+Documentation follows product behavior that actually ships.
+
+- A product behavior or supported-version statement that changes on V2 is corrected on the V2
+  line.
+- A change that affects both lines is corrected on both, worded for each.
+- A historical instruction that is dangerous or materially false may receive a narrow
+  correction in the snapshot, recorded with what was changed and why.
+
+None of this makes V2 a maintained product line. It carries no promise of product fixes,
+security fixes, dependency updates, or changes ported back from the current line;
+correcting a page describes what that release did, and changes nothing about what is
+shipped for it.
 
 ### Generate command-line documentation
 
@@ -198,12 +288,13 @@ Do not edit `CHANGELOG.md` or the version in `pyproject.toml` by hand. Both are 
 
 ## Adding a new adapter
 
-1. Create `infrahub_sync/adapters/<name>.py` following existing adapter patterns
-2. Add connection configuration schema and an example under `examples/`
-3. Provide a `diff` pathway before enabling `sync`
-4. Document required environment variables and expected error cases
-5. Create a documentation page in `docs/docs/adapters/`
-6. Add the adapter to the sidebar in `docs/sidebars.ts`
+[Adding an adapter](develop/guides/adding-an-adapter.md) is the single procedure. It covers the
+connector itself, the capability declaration that makes a package naming it admissible, the two
+conformance tests that guard that declaration, the example and its registry envelope, the
+documentation page, and the read-only `diff` validation to run before any write.
+
+It also records the current limit for an adapter that does not ship in this repository, which
+is worth reading before you start.
 
 ## Invoke tasks
 

@@ -1,6 +1,6 @@
 [project]
 name = "infrahub-sync"
-version = "3.0.0a3"
+version = "3.0.0a4"
 description = "Infrahub-Sync is a versatile Python package that synchronizes data between a source and a destination system"
 authors = [{ name = "OpsMill", email = "info@opsmill.com" }]
 readme = "README.md"
@@ -428,14 +428,12 @@ disable = [
     "MD047",  # single trailing newline
 ]
 exclude = [
-    ".specify/**",
     ".agents/**",
     ".claude/**",
     ".codex/**",
     "changelog/**",
-    "dev/constitution.md",
     # Archived spec artifacts are a historical record, and `rumdl fmt` loses text in
-    # them (see dev/knowledge/quality-gates.md). Excluded from BOTH `check` and `fmt`
+    # them (see docs/docs/develop/knowledge/quality-gates.md). Excluded from BOTH `check` and `fmt`
     # so `invoke format` cannot rewrite them.
     "dev/specs/**",
     "docs/node_modules/**",

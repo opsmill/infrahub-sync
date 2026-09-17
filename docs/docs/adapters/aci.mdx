@@ -4,6 +4,10 @@ title: Cisco ACI adapter
 
 import ReferenceLink from "../../src/components/Card";
 
+## V3 route
+
+Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure. The ACI mapping example is `examples/aci_to_infrahub/package.yml`.
+
 <!-- vale off -->
 ## What is Cisco ACI?
 <!-- vale on -->
@@ -134,15 +138,6 @@ This transform:
 - The adapter automatically queries the ACI `fabricNode` class during initialization
 - Builds a mapping of node IDs to device names
 - The filter performs a lookup with a fallback to the original node ID if not found
-
-## Registering the package
-
-Register the example package before creating a run:
-
-```bash
-uv run infrahub-sync configs register examples/aci_to_infrahub/package.yml \
-  --reason "register Cisco ACI import"
-```
 
 ## Common issues and troubleshooting
 

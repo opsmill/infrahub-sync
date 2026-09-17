@@ -7,10 +7,23 @@ on:
   push:
     branches:
       - "renovate/**"
+      # The merged tree, which no pull-request run ever built as itself: what a
+      # pull request qualifies is its head merged with the base at that moment,
+      # and the commit that lands can differ from it. A push here is not a
+      # pull-request event, so the decision below raises it to the full tier —
+      # which is the point of naming it, and the reason this list stays two
+      # entries long rather than becoming every push.
+      - "feature/v3-develop"
   pull_request:
     branches:
       - develop
       - feature/v3-develop
+    # The three GitHub sends by default, restated because two more join them:
+    # declaring `types` at all replaces the default set rather than adding to
+    # it. A label arriving is what raises a pull request to the full
+    # qualification tier, and a label leaving is what lowers it again, so both
+    # have to re-run this gate or the decision is whatever the last push made.
+    types: ["opened", "synchronize", "reopened", "labeled", "unlabeled"]
 
 # A called workflow can only keep or reduce these, never raise them, so every
 # permission any workflow below requests has to be granted at or above it. These
@@ -22,18 +35,49 @@ permissions:
   packages: read
 
 jobs:
+  # Which tier this head runs, decided once and read by everything that cares.
+  # Three routes raise it, and the `||` is deliberate: a contributor who labels
+  # a pull request gets the full tier on that push and on every later one while
+  # the label stays on, and a contributor who edits the lifecycle gets it
+  # without knowing the label exists.
+  qualification:
+    name: "Decide which tier this push runs"
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 5
+    outputs:
+      qualify: >-
+        ${{ github.event_name != 'pull_request'
+            || contains(github.event.pull_request.labels.*.name, 'qualify')
+            || steps.changes.outputs.qualify_all == 'true' }}
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v5"
+
+      # Only a pull request has two ends to compare. The other ways in here — a
+      # dispatch, and a push to a `renovate/**` branch — take the first route
+      # above and qualify in full, so there is nothing for a filter to decide.
+      - name: "Check whether the change touches a path only the full tier covers"
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: opsmill/paths-filter@v3.0.2
+        id: changes
+        with:
+          token: ${{ github.token }}
+          filters: .github/file-filters.yml
+
   linter:
     uses: ./.github/workflows/workflow-linter.yml
 
   uv-checker:
     uses: ./.github/workflows/workflow-uv-check.yml
 
+  # No `needs` on the lint calls above. Lint still blocks a merge as its own
+  # required check; holding these behind it only put its ninety seconds on the
+  # critical path of every run, including every run that was going to pass.
   tests:
-    needs: ["linter", "uv-checker"]
     uses: ./.github/workflows/workflow-tests.yml
 
   image:
-    needs: ["linter", "uv-checker"]
+    needs: ["qualification"]
     # That gate deletes its own handoff artifacts inside the run that created
     # them, which is an `actions: write` this call has to grant. Granted here
     # rather than at the top of this file so no other call carries it, and the
@@ -52,3 +96,45 @@ jobs:
       same-repository: >-
         ${{ github.event_name != 'pull_request'
             || github.event.pull_request.head.repo.full_name == github.repository }}
+      # A job output is a string, so the comparison is what makes this the
+      # boolean the gate declares.
+      qualify: ${{ needs.qualification.outputs.qualify == 'true' }}
+
+  # What branch protection requires by name. It cannot require the image gate
+  # itself: a skipped job satisfies a required check, so a pull request that
+  # never raised its tier would merge on the strength of a gate that did not
+  # run. This job always runs and refuses exactly that head.
+  qualification-required:
+    name: "Full qualification"
+    needs: ["qualification", "image"]
+    # Not `success()`: the whole point is to report on a call that was skipped.
+    if: ${{ always() }}
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 5
+    steps:
+      - name: "Refuse a head the full qualification tier never covered"
+        env:
+          DECISION: ${{ needs.qualification.result }}
+          QUALIFY: ${{ needs.qualification.outputs.qualify }}
+          IMAGE: ${{ needs.image.result }}
+        run: |
+          set -euo pipefail
+          if [ "${DECISION}" != "success" ]; then
+            echo "the tier decision ended in ${DECISION}, so nothing here knows which tier ran" >&2
+            exit 1
+          fi
+          if [ "${QUALIFY}" != "true" ]; then
+            # The backticks are the label's name in prose, single-quoted so the
+            # shell leaves them alone rather than reading them as a command.
+            # shellcheck disable=SC2016
+            echo 'add the `qualify` label to run full qualification before merge' >&2
+            exit 1
+          fi
+          # `skipped` is the honest pass: the gate's own path filter found
+          # nothing it qualifies, so the full tier had nothing to do at this
+          # head. A failure or a cancellation is not a qualification.
+          if [ "${IMAGE}" != "success" ] && [ "${IMAGE}" != "skipped" ]; then
+            echo "the full qualification tier ended in ${IMAGE}" >&2
+            exit 1
+          fi
+          echo "the full qualification tier covered this head (image gate: ${IMAGE})"

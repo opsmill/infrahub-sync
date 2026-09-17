@@ -13,6 +13,7 @@ from .sync_models import (
     InterfaceVirtual,
     IpamAggregate,
     IpamIPAddress,
+    IpamNamespace,
     IpamPrefix,
     IpamRouteTarget,
     IpamVLAN,
@@ -44,6 +45,7 @@ class InfrahubSync(_AdapterBaseClass):
     InterfaceVirtual = InterfaceVirtual
     IpamAggregate = IpamAggregate
     IpamIPAddress = IpamIPAddress
+    IpamNamespace = IpamNamespace
     IpamPrefix = IpamPrefix
     IpamRouteTarget = IpamRouteTarget
     IpamVLAN = IpamVLAN

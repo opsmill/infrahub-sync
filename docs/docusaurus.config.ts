@@ -62,10 +62,27 @@ const config: Config = {
       "classic",
       {
         docs: {
-          editUrl: "https://github.com/opsmill/infrahub-sync/tree/main/docs",
+          // Function form: the frozen 2.x pages have no editable source on `main`,
+          // so they get no edit link. V3 keeps the previous target unchanged.
+          editUrl: ({ version, versionDocsDirPath, docPath }) =>
+            version === "2.x"
+              ? undefined
+              : `https://github.com/opsmill/infrahub-sync/tree/main/docs/${versionDocsDirPath}/${docPath}`,
           routeBasePath: "/",
           sidebarCollapsed: true,
           sidebarPath: "./sidebars.ts",
+          lastVersion: "current",
+          versions: {
+            current: {
+              label: "V3",
+            },
+            "2.x": {
+              label: "V2",
+              path: "v2",
+              // Explicit: this snapshot carries no support or maintenance promise.
+              banner: "none",
+            },
+          },
         },
         blog: false,
         theme: {
@@ -88,6 +105,10 @@ const config: Config = {
           sidebarId: "syncSidebar",
           position: "left",
           label: "Infrahub Sync",
+        },
+        {
+          type: "docsVersionDropdown",
+          position: "right",
         },
         {
           href: "https://github.com/opsmill/infrahub-sync",

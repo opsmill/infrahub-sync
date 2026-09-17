@@ -233,11 +233,11 @@ def test_the_driver_verifies_the_bundle_before_it_extracts_or_edits_it() -> None
 
 
 def test_the_bundle_is_bound_to_the_record_before_it_is_extracted() -> None:
-    """The checksum file beside an archive is not the record's claim about it.
+    """The checksum file beside an archive is not the candidate input's claim about it.
 
     `sha256sum -c` reads a file the archive travels with, so a swapped pair
-    satisfies it. What binds the archive to the qualification record is the
-    record's own digest, and it has to bind before anything is taken out of the
+    satisfies it. What binds the archive to the candidate input is the
+    manifest's own digest, and it has to bind before anything is taken out of the
     archive: what a test suite proves about the step is proved in
     `test_clean_host_integrity.py`, which runs it.
     """
@@ -286,6 +286,14 @@ def test_every_read_of_the_candidate_record_is_checked() -> None:
     ]
 
     assert unchecked == []
+
+
+def test_clean_host_reads_candidate_input_and_not_a_qualification_result() -> None:
+    """The matrix is a producer of qualification evidence, so it cannot consume the final record."""
+    body = executable_lines()
+
+    assert "/candidate/candidate-input.json" in body
+    assert "/candidate/qualification.json" not in body
 
 
 def test_the_bundle_root_is_found_rather_than_derived_from_a_filename() -> None:
