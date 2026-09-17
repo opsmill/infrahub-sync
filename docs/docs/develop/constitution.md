@@ -2,23 +2,6 @@
 title: Project constitution
 ---
 
-<!--
-SYNC IMPACT REPORT
-Version change: 0.0.0 (unfilled template) → 1.0.0
-Modified principles: N/A (initial constitution)
-Added sections:
-  - Core Principles (I–VII)
-  - Security & Performance Standards
-  - Development Workflow & Quality Gates
-  - Governance
-Removed sections: None
-Templates requiring updates:
-  - .specify/templates/plan-template.md ✅ reviewed, no change needed
-  - .specify/templates/spec-template.md ✅ reviewed, no change needed
-  - .specify/templates/tasks-template.md ✅ reviewed, no change needed
-Follow-up TODOs: None
--->
-
 ## Project constitution
 
 `infrahub-sync` synchronizes data between infrastructure sources and destinations
@@ -162,9 +145,9 @@ reversible.
 Run in order before committing; all code MUST pass these before merge:
 
 ```bash
-uv sync
+uv sync --extra dev --extra prefect --extra service
 uv run invoke format
-uv run invoke lint   # ruff → pylint → yamllint → ty
+uv run invoke lint   # rumdl → ruff → pylint → yamllint → ty
 ```
 
 New code is Ruff-clean and typed where touched. `ty` MUST exit clean with no overrides.
@@ -188,7 +171,7 @@ counts, request IDs) but never secrets.
 
 User-visible changes (CLI flags, configuration keys, adapters) MUST update `docs/` in the same
 change. Generate CLI docs with `uv run invoke docs.generate`; build the site with
-`uv run invoke docs.docusaurus`; lint Markdown/MDX with `markdownlint-cli2`. "Update later"
+`uv run invoke docs.docusaurus`; lint Markdown/MDX with `rumdl`. "Update later"
 is not acceptable.
 
 #### Git workflow
@@ -218,4 +201,4 @@ This constitution is the authoritative reference for development standards in th
   sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
-**Version**: 1.0.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-06-22
+**Version**: 1.0.1 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-09-16
