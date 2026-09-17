@@ -29,6 +29,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'using-netbox-or-nautobot-with-infrahub',
         'migrating-from-netbox-or-nautobot',
+        'v2-to-v3',
         'orchestration',
         'custom-certificates',
       ],

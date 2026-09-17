@@ -13,17 +13,14 @@ host.
 The measured run used NetBox 4.6.10 and Infrahub 1.10.6. It does not establish
 compatibility with other server versions.
 
-## Copy and edit package.yml
+## Create and edit package.yml
 
 Set the credentials described below, then load the [destination schema](../compose-deployment#prepare-the-destination-schema)
 into Infrahub first — this example targets it.
 
-```sh
-cp ../example-package.yml package.yml
-```
-
-The example maps NetBox sites and devices to the small `TestingSite` and
-`TestingDevice` destination schema:
+Create `package.yml` in the deployment directory with the content below. It maps
+NetBox sites and devices to the small `TestingSite` and `TestingDevice`
+destination schema:
 
 ```yaml
 ---

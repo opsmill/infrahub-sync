@@ -168,6 +168,69 @@ A merge also runs the full tier by itself. A push to `feature/v3-develop` — wh
 
 If you make user-facing changes (CLI flags, configuration options, new adapters), update the documentation.
 
+### Two documentation lines
+
+The site publishes two versions. The current line is V3: its pages are `docs/docs/**` and its
+navigation is `docs/sidebars.ts`. The V2 line is a frozen snapshot: its pages are
+`docs/versioned_docs/version-2.x/**`, its navigation is
+`docs/versioned_sidebars/version-2.x-sidebars.json`, and `docs/versions.json` lists it.
+
+The snapshot was taken from the V2 documentation on the product's `main` branch and adapted
+only where a versioned copy requires it: component imports resolve through the site alias, and
+the product and example links it carries are pinned to the exact commit the snapshot came from
+rather than to a moving branch.
+
+The V2 team keeps maintaining `main` exactly as it does today. Nothing imports those changes
+here: there is no automatic import, and the snapshot does not track `main`. A later V2
+documentation change reaches the snapshot only when someone decides it should and edits the
+affected file narrowly, by hand.
+
+### Rules for a documentation change
+
+1. **Name the line or lines the change affects before you edit.** A statement about product
+   behavior belongs on the line whose product behaves that way.
+2. **Edit the files of each affected line explicitly.** A current-line change touches
+   `docs/docs/**` and, when navigation changes, `docs/sidebars.ts`. A V2 change touches
+   `docs/versioned_docs/version-2.x/**` and its versioned sidebar. Neither edit implies the
+   other.
+3. **Preserve the snapshot's provenance.** Never bulk-refresh the V2 tree from `main`, and
+   never rerun the freeze over it. Both would silently replace reviewed content, discard the
+   adaptations above, and lose the record of what was corrected and why.
+4. **Build and inspect both versions.** A change to either line, to a shared component, or to
+   the site configuration is verified by building the site and reading the affected pages on
+   both versions, including the version menu and the route each page resolves to.
+5. **Keep V3-only material on the current line.** The Sync API service, the configuration
+   registry, the package envelope, and the Compose deployment do not exist in V2. Do not
+   describe them in the snapshot, and do not link the snapshot to pages that describe them.
+6. **Keep shared components and assets compatible with both lines.** `docs/src/**` and
+   `docs/static/**` render inside both versions. A change that assumes current-line content,
+   or that removes something the snapshot still imports, breaks the V2 build.
+7. **Put a release note on the line it describes.** Notes for releases on the V2 line belong
+   in the snapshot's release notes; notes for the current product belong on the current line.
+8. **Pin the snapshot's outbound product links immutably.** A link from the snapshot into the
+   repository or the examples names the commit the snapshot came from, not a branch. Do not
+   add a hard-coded root-relative or hosted-only cross-version link in the snapshot: the site
+   is served under more than one base path, and such a link breaks under at least one of them.
+9. **Adapt a paired correction to each line; do not copy bytes between them.** The same fact is
+   often written differently on the two lines, and the current wording frequently names
+   commands, options, or surfaces that V2 never had. Rewrite the correction to fit the page you
+   are editing.
+
+### Which line a correction belongs to
+
+Documentation follows product behavior that actually ships.
+
+- A product behavior or supported-version statement that changes on V2 is corrected on the V2
+  line.
+- A change that affects both lines is corrected on both, worded for each.
+- A historical instruction that is dangerous or materially false may receive a narrow
+  correction in the snapshot, recorded with what was changed and why.
+
+None of this makes V2 a maintained product line. It carries no promise of product fixes,
+security fixes, dependency updates, or changes ported back from the current line;
+correcting a page describes what that release did, and changes nothing about what is
+shipped for it.
+
 ### Generate command-line documentation
 
 ```bash
