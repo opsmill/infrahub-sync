@@ -59,7 +59,7 @@ preview and integration suites against whatever environment your shell happens t
 | Tier | Command | Needs | Writes |
 |---|---|---|---|
 | Unit | `uv run invoke tests.tests-unit` | Nothing beyond the installed extras | Nothing outside `tmp_path` |
-| Integration | `uv run invoke tests.tests-integration` | Varies by family — see below; no single set of variables covers the tier | Whatever live target each family names |
+| Integration | `uv run invoke tests.tests-integration` | Varies by family — see below; no single set of variables covers the tier | Varies by family: read-only, temporary local state, or a disposable live target — see below |
 | Preview smoke | `uv run invoke preview.smoke` | The development stack, started with `preview.up` | Seeds and writes to the disposable stack |
 | Compose lifecycle | `uv run invoke compose.lifecycle` | An already built and loaded candidate image, and a Docker daemon | A real container stack it brings up and tears down |
 | Clean-host qualification | See the candidate guide | A checkout-free host holding only the artifact | A real deployment |
@@ -88,8 +88,9 @@ tier:
 | Product store on PostgreSQL | A disposable PostgreSQL at `PRODUCT_STORE_TEST_POSTGRESQL_DSN`, plus `psycopg` | [`tests/product_store/test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_contract.py), [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_configuration_baseline.py), [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_write_admission.py), [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/service/test_apply_versus_verify_race.py) |
 | Redis store compatibility | A reachable `REDIS_URL` | [`tests/test_redis_store_compat.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/test_redis_store_compat.py) |
 
-Three of those deserve their setup stated here, because they are the ones a reader will not find
-by looking in `tests/integration/`:
+Three of those get their setup stated here rather than by reference. The two live-store families
+sit outside `tests/integration/` entirely, and the Prefect module, though it is in that
+directory, carries no setup detail in its docstring:
 
 - **Prefect idempotency** needs no external service. It skips unless `prefect` and
   `opsmill_prefect_extras` import, then starts Prefect's own isolated temporary API server with
