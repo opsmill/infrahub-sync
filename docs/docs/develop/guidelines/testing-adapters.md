@@ -118,10 +118,11 @@ the outermost observable you can reach offline:
   looping inside a test.
 - Place unit tests under `tests/adapters/` named `test_<adapter>_*.py`.
 - Mark anything that talks to a real system `@pytest.mark.integration` and keep it under
-  `tests/integration/` so the default `uv run pytest -q` stays offline.
+  `tests/integration/` so the offline default, `uv run invoke tests.tests-unit`, stays offline.
 
 ### See also
 
+- [Testing tiers](testing-tiers.md) — which command runs which suite, and what a skip means.
 - [Testing an adapter](../guides/testing-an-adapter.md) — fixtures, mocking, and commands.
 - [Writing an adapter](writing-an-adapter.md) — the code these tests exercise.
 - [Incremental sync and cache](../knowledge/incremental-and-cache.md) — the cursor behavior to test.

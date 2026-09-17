@@ -19,12 +19,15 @@ step-by-step procedures see [Guides](../guides/index.md).
 
 - [Testing](testing.md) — what makes a test worth having: mutation kill as the acceptance
   criterion, asserting a negative, and reviewing a remediation over its own diff.
+- [Testing tiers](testing-tiers.md) — which command runs which tier, what each one needs
+  before it proves anything, what it writes, and why a skipped check is not a pass.
 - [Secret redaction](secret-redaction.md) — rules for any failure path that crosses a
   process boundary: where to sanitize, what to collect, and how over-collection fails.
 
 ### Related
 
 - [Knowledge](../knowledge/index.md) — the architecture these rules apply to.
+- [Repository tour](../knowledge/repository-tour.md) — where the code these rules govern lives.
 - [Adding an adapter](../guides/adding-an-adapter.md) — the procedure that applies them.
 - [Decision records](../adr-index.mdx) — the decisions behind these rules.
 - [Constitution](../constitution.md) — the principles these rules serve.

@@ -87,11 +87,6 @@ uv run invoke docs.docusaurus
 ```text
 infrahub-sync/
 ├─ infrahub_sync/                # Source
-│  ├─ cli.py                     # Typer entrypoint
-│  ├─ __init__.py                # Public API
-│  ├─ utils.py                   # Utilities
-│  ├─ potenda/                   # Core sync engine — orchestrates list/diff/generate/sync
-│  └─ adapters/                  # Per-system connectors (use existing ones as patterns)
 ├─ examples/                     # Example sync configs and templates
 ├─ tasks/                        # Invoke task definitions
 ├─ docs/                         # Docusaurus (npm project)
@@ -99,6 +94,13 @@ infrahub-sync/
 ├─ pyproject.toml                # uv + tool configs
 └─ .github/workflows/            # CI
 ```
+
+[`develop/knowledge/repository-tour.md`](docs/docs/develop/knowledge/repository-tour.md) is the
+canonical inventory of `infrahub_sync/`. It maps every current package — the CLI and its HTTP
+client, configuration admission, the service and worker, runtime schema, execution, plans,
+product storage, adapters, cache, generator, orchestration, the Potenda engine, plugin loading
+and dependency graphs — and separates registered V3 execution from development-only and
+historical material. Read it rather than inferring the layout from the tree above.
 
 Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`, `aci`, `prometheus`, `peeringmanager`, `ipfabricsync`, `slurpitsync`, `genericrestapi`.
 

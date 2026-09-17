@@ -9,6 +9,12 @@ explain the moving parts so you can reason about a change before making it. For
 prescriptive rules see [Guidelines](../guidelines/index.md); for step-by-step procedures
 see [Guides](../guides/index.md).
 
+### Orientation
+
+- [Repository tour](repository-tour.md) — where each concern lives: the command-line client,
+  configuration admission, the service and its worker, plans, product storage, adapters, the
+  cache, the engine, and the material that is development-only or historical.
+
 ### Adapters
 
 - [Sync architecture](sync-architecture.md) — how a sync runs end to end: the DiffSync
@@ -46,6 +52,8 @@ see [Guides](../guides/index.md).
 
 - [Quality gates](quality-gates.md) — what `invoke lint` and `invoke format` actually run,
   the inherited pylint baseline, and how to measure a no-regression claim.
+- [Testing tiers](../guidelines/testing-tiers.md) — which test command covers which tier, what
+  each one needs, and what a skip means.
 
 ### Related
 
