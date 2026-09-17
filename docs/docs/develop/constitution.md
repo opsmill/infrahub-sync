@@ -28,7 +28,9 @@ principles below put safety, reproducibility, and connector consistency ahead of
 
 ### Core principles
 
-#### I. Read-only / dry-run by default
+<!-- vale Infrahub.sentence-case = NO -->
+
+#### I. Read-Only / Dry-Run by Default
 
 The non-mutating path is the default path, and applying changes is always a deliberate act.
 
@@ -44,7 +46,7 @@ The non-mutating path is the default path, and applying changes is always a deli
 default path — and every destructive action a reviewed choice — is what prevents an accidental
 command from rewriting production data.
 
-#### Sync idempotency and safety
+#### II. Sync Idempotency & Safety
 
 A sync reconciles a source into a destination, and reconciliation MUST be safe to re-run.
 
@@ -60,7 +62,7 @@ A sync reconciles a source into a destination, and reconciliation MUST be safe t
 error handling are what prevent duplicate objects, silent data loss, and corruption of the
 destination system of record.
 
-#### Adapter symmetry and pattern consistency
+#### III. Adapter Symmetry & Pattern Consistency
 
 Adapters are the primary extension point; every connector MUST honor the same contract.
 
@@ -77,7 +79,7 @@ Adapters are the primary extension point; every connector MUST honor the same co
 reviewable against a known shape, and guarantee a read-only pathway exists before any
 write path is exposed.
 
-#### Type safety and explicit contracts
+#### IV. Type Safety & Explicit Contracts
 
 The type system enforces correctness at the boundaries where data crosses systems.
 
@@ -93,7 +95,7 @@ The type system enforces correctness at the boundaries where data crosses system
 shapes, missing data, unhandled API errors — before they reach a live system, and they keep
 adapters self-documenting.
 
-#### Test discipline
+#### V. Test Discipline
 
 Features and fixes ship with tests at the right level, written alongside the change — not deferred.
 
@@ -106,7 +108,7 @@ Features and fixes ship with tests at the right level, written alongside the cha
 boundary are the cheapest place to catch auth, pagination, and empty-response bugs — long
 before a sync hits production.
 
-#### Security, secrets, and input boundaries
+#### VI. Security, Secrets & Input Boundaries
 
 Security is enforced at the boundary, and secrets never leak.
 
@@ -121,7 +123,7 @@ Security is enforced at the boundary, and secrets never leak.
 **Rationale:** `infrahub-sync` holds credentials for multiple systems of record. A single
 leaked token or logged secret is a cross-system breach, so secret hygiene is non-negotiable.
 
-#### Simplicity and maintainability
+#### VII. Simplicity & Maintainability
 
 Prefer the simplest solution that works and matches the patterns already in the codebase.
 
@@ -135,6 +137,8 @@ Prefer the simplest solution that works and matches the patterns already in the 
 **Rationale:** A connector library accretes complexity quickly. Keeping each change small,
 pattern-aligned, and dependency-light is what keeps the engine and adapters reviewable and
 reversible.
+
+<!-- vale Infrahub.sentence-case = YES -->
 
 ### Security & performance standards
 
@@ -199,8 +203,8 @@ This constitution is the authoritative reference for development standards in th
 `infrahub-sync` project. It supersedes informal practices and ad-hoc decisions.
 
 - **Compliance:** All pull requests and reviews MUST verify adherence to these principles.
-  Reviewers SHOULD reference the relevant principle when flagging an issue (for example,
-  "Read-only / dry-run by default violation — `sync` runs without approval").
+  Reviewers SHOULD reference principle numbers when flagging an issue (for example, "Principle I
+  violation — `sync` runs without approval").
 - **Amendments:** Changes require (1) a written proposal with rationale, (2) maintainer
   review and approval, (3) a migration plan when existing code or configuration is affected, and
   (4) a version increment per the scheme below.
