@@ -1,8 +1,12 @@
-# The saved plan artifact
+---
+title: "The saved plan artifact"
+---
+
+## The saved plan artifact
 
 <!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
 
-> Part of: `dev/knowledge/` | Related: [Planned writes and apply](planned-write-and-apply.md), [Incremental sync and cache](incremental-and-cache.md), [ADR 0001](../adr/0001-saved-plan-artifact-format.md)
+> Part of: Develop > Knowledge | Related: [Planned writes and apply](planned-write-and-apply.md), [Incremental sync and cache](incremental-and-cache.md), [ADR 0001](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0001-saved-plan-artifact-format.md)
 
 A run records what it intends to change as a **plan artifact** under its cache run directory. The
 artifact is what `infrahub-sync runs plan` renders for review and what an apply executes, and it
@@ -10,9 +14,9 @@ exists so that the set of changes an operator reads is the set that gets written
 by `infrahub_sync/plan/` and is versioned: `format_version` is `2`, and `1` is reserved for the
 pre-existing `plan.parquet` row format, which is still written and never read by this path.
 
-For *why* the format is shaped this way, see [ADR 0001](../adr/0001-saved-plan-artifact-format.md).
+For *why* the format is shaped this way, see [ADR 0001](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0001-saved-plan-artifact-format.md).
 
-## What is on disk
+### What is on disk
 
 ```text
 <cache_root>/<sync-name>/<run_id>/
@@ -41,7 +45,7 @@ Unreadable is deliberately not flattened into a verification failure: it is a di
 a different remedy, so `verify_plan` raises `PlanArtifactUnreadableError` for it rather than returning
 it as a failure entry.
 
-## Canonical encoding
+### Canonical encoding
 
 Both files use one encoding: UTF-8 without BOM,
 `json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)`, LF endings only, one
@@ -56,7 +60,7 @@ Canonical *ordering* applies to the operations sequence and to relationship peer
 payload's list-valued attributes keep source order and are never re-sorted, because sorting them would
 make the applied value differ from the reviewed source value.
 
-## An operation
+### An operation
 
 ```json
 {"action":"create","identity":{"name":"prod"},"kind":"BuiltinTag","operation_id":"op_3531c0d83d698fd1","payload":{"description":"Production","name":"prod"},"tier":0}
@@ -91,7 +95,7 @@ whose mapped value is `None` is treated as absent and skipped. This is an intend
 not mention is one the apply leaves alone. Clearing a cardinality-one peer is done at the destination,
 and encoding it requires a future `format_version` extension.
 
-### The payload carries the identity
+#### The payload carries the identity
 
 ```text
 payload = element.keys ∪ element.source_attrs   minus every key carried as a relationship reference
@@ -115,7 +119,7 @@ fields in `_identifiers`", and the generator strips identifiers out of `_attribu
 has to be merged in from `element.keys`. Every identity key ends up in exactly one of `payload` or
 `relationships[].field` — never neither, which is a model-level validation.
 
-### Peer references are recursive
+#### Peer references are recursive
 
 A peer is recorded as `{"peer_kind": "<kind>", "identity": {...}}`, recursively to whatever depth the
 configuration nests, rather than as the peer's DiffSync `unique_id` string:
@@ -141,7 +145,7 @@ is deliberately **no fallback** to the single mapping-declared kind. The probe r
 store for a create or update, and against the **destination** store for a derived delete, whose peers
 are destination-only by construction.
 
-### The operation identifier
+#### The operation identifier
 
 ```python
 op_id = "op_" + sha256(canonical_json_bytes([action, kind, canonical_identity(identity)])).hexdigest()[:16]
@@ -152,7 +156,7 @@ stays stable across re-plans; payload exactness is covered by `plan_checksum` in
 operation exists per `(action, kind, identity)`, so a collision is pathological and fails the plan run.
 The data model rejects a stored identifier that does not match its own triple.
 
-## The manifest
+### The manifest
 
 | Key | Meaning |
 |---|---|
@@ -189,7 +193,7 @@ file order; `_source_id` and `_tombstone` stay in, both being deterministic for 
 this stops detecting is a change confined to the extraction timestamp. An absent recorded file, a
 disagreeing digest and a disagreeing row count are all still refusals.
 
-## Determinism
+### Determinism
 
 Two plan runs over an unchanged source and destination, **at the same extraction mode on each side**,
 produce a byte-identical `operations.jsonl` and a `manifest.json` byte-identical after removing
@@ -197,7 +201,7 @@ produce a byte-identical `operations.jsonl` and a `manifest.json` byte-identical
 procedure, not a caveat: `delete_operations_computed` is inside the checksum and is not masked, so two
 runs at different extraction modes are *expected* to differ.
 
-## Reading and verifying a plan
+### Reading and verifying a plan
 
 `infrahub_sync/plan/` is the whole surface. The public API re-exports `read_saved_plan`, `SavedPlan`,
 `PlanManifest`, `PlannedOperation`, `PlanSummary`, `RelationshipReference`, `SourceSnapshotRecord` and
@@ -220,7 +224,7 @@ refusal says so, because a reader that does not know what the fields mean would 
 failures that are artifacts of its own ignorance. When it passes, every remaining check is evaluated
 and every failure is named, so one apply attempt tells the operator everything that is wrong.
 
-## What the format does not cover
+### What the format does not cover
 
 Recorded so nothing reads an obligation into the silence: retention, expiry or pruning of a stored
 plan; pagination or truncation; volume or latency targets; the stability of *rendered* review text,
@@ -228,9 +232,9 @@ which is operator-facing output rather than a format; a governance process for c
 — `format_version` and the unknown-key tolerance are the two mechanisms provided; and clearing a
 cardinality-one peer, which the operation shape cannot express (see **An operation** above).
 
-## See also
+### See also
 
-- [ADR 0001](../adr/0001-saved-plan-artifact-format.md) — why the format is shaped this way.
+- [ADR 0001](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0001-saved-plan-artifact-format.md) — why the format is shaped this way.
 - [Planned writes and apply](planned-write-and-apply.md) — what executes an artifact.
 - [Incremental sync and cache](incremental-and-cache.md) — the run directory and snapshots it sits in.
 - [Schema mapping](schema-mapping.md) — where identities and references come from.

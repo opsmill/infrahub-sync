@@ -1,6 +1,10 @@
-# Schema mapping
+---
+title: "Schema mapping"
+---
 
-> Part of: `dev/knowledge/` | Related: [Adapter anatomy](adapter-anatomy.md), [Adding an adapter](../guides/adding-an-adapter.md)
+## Schema mapping
+
+> Part of: Develop > Knowledge | Related: [Adapter anatomy](adapter-anatomy.md), [Adding an adapter](../guides/adding-an-adapter.md)
 
 The `schema_mapping` block in `config.yml` is the declarative contract between a source
 system and a destination schema. It says which source resources become which destination
@@ -9,7 +13,7 @@ skip or rewrite. The generator turns each entry into a DiffSync model class, and
 read the same entries at load time. The pydantic models behind it live in
 `infrahub_sync/__init__.py`.
 
-## A mapping entry
+### A mapping entry
 
 Each list item is a `SchemaMappingModel`:
 
@@ -39,13 +43,13 @@ schema_mapping:
 - `transforms` — applied after filtering, in order.
 - `fields` — the field mappings (see below).
 
-## Fields
+### Fields
 
 Each field is a `SchemaMappingField` with four levers, checked in this order:
 
 - `static` — assign a literal value, ignoring the source object entirely.
 - `mapping` (without `reference`) — read a value from the source record by dot-notation
-  path (`get_value` walks dicts and objects, e.g. `status.value`).
+  path (`get_value` walks dicts and objects; for example, `status.value`).
 - `mapping` + `reference` — treat the value as a foreign key into another mapped model.
   The adapter resolves it to that peer's `unique_id`. If the destination field is a list,
   every referenced id is resolved and collected.
@@ -55,7 +59,7 @@ References are how relationships are rebuilt on the destination. Because a refer
 at another model by its identifiers, the referenced model must also appear in
 `schema_mapping`, and it must be written first — which is what `order` controls.
 
-## Identifiers, references, and write order
+### Identifiers, references, and write order
 
 `order` is the list of models in the sequence they are written to the destination. It is
 **auto-computed** from the `reference` edges in `schema_mapping` (a model is written after
@@ -65,7 +69,7 @@ source primary key that reference resolution matches against.
 
 <!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
 
-### `identifiers` is not the convergence key
+#### `identifiers` is not the convergence key
 
 `identifiers` is the **DiffSync natural key**: it decides which source object is "the same object" as
 which destination object during the comparison. It is not what makes a write converge. An **update** is
@@ -81,7 +85,7 @@ keying figure overstated a keying risk by a factor of two, and the error survive
 review because both numbers are real counts of something.
 
 What that means for a mapping depends on the action, because the two are keyed differently
-([ADR 0013](../adr/0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)).
+([ADR 0013](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)).
 
 **Updates are unaffected by the mismatch.** An update is keyed by the destination `id` recorded for it
 at plan time, so a mapping whose `identifiers` do not cover the destination HFID still updates the
@@ -114,7 +118,7 @@ silently duplicated, and they need a mapping or schema fix.
 Refusals happen at `diff` time, and the write surface repeats the same check; see
 [Planned writes and apply](planned-write-and-apply.md).
 
-## Filters
+### Filters
 
 Filters drop records before they enter the store. A record is kept only if it passes every
 filter. Each `SchemaMappingFilter` has a `field` (dot-notation path), an `operation`, and a
@@ -132,7 +136,7 @@ filter. Each `SchemaMappingFilter` has a `field` (dot-notation path), an `operat
 `is_empty` / `is_not_empty` ignore `value`; the ordering operations coerce both sides to
 `int`. The full operator table is `FILTERS_OPERATIONS` in `infrahub_sync/__init__.py`.
 
-## Transforms
+### Transforms
 
 Transforms rewrite a field with a Jinja2 expression after filtering. Each
 `SchemaMappingTransform` names a `field` and an `expression`. Expressions run in a Jinja2
@@ -149,7 +153,7 @@ transforms:
     expression: "{{ tags + ['synced'] }}"
 ```
 
-## See also
+### See also
 
 - [Adapter anatomy](adapter-anatomy.md) — how an adapter reads these entries at load time.
 - [Adding an adapter](../guides/adding-an-adapter.md) — writing a mapping for a new system.

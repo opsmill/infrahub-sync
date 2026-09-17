@@ -1,11 +1,15 @@
-# Adding an adapter
+---
+title: "Adding an adapter"
+---
 
-> Part of: `dev/guides/` | Related: [Adapter anatomy](../knowledge/adapter-anatomy.md), [Writing an adapter](../guidelines/writing-an-adapter.md)
+## Adding an adapter
+
+> Part of: Develop > Guides | Related: [Adapter anatomy](../knowledge/adapter-anatomy.md), [Writing an adapter](../guidelines/writing-an-adapter.md)
 
 Step-by-step guide for connecting a new system to infrahub-sync as a source or destination.
 This is the canonical procedure; `AGENTS.md` links here.
 
-## When to add an adapter
+### When to add an adapter
 
 Add an adapter when you need to read from, or write to, a system that has no connector yet.
 The built-ins live in `infrahub_sync/adapters/` (`netbox`, `nautobot`, `infrahub`, `aci`,
@@ -17,7 +21,7 @@ Before writing one, check whether you can avoid it:
   writing a connector from scratch.
 - If a built-in already covers the system, you may only need a new `config.yml`.
 
-## Prerequisites
+### Prerequisites
 
 - A working dev environment (`uv sync`) — see `AGENTS.md`.
 - An understanding of the [adapter anatomy](../knowledge/adapter-anatomy.md) and
@@ -25,9 +29,9 @@ Before writing one, check whether you can avoid it:
 - Read access to the source system (URL, token) or write access to the destination.
 - The destination schema (for an Infrahub destination, the node kinds you will map to).
 
-## Steps
+### Steps
 
-### Step 1: Choose the role and a starting point
+#### Step 1: Choose the role and a starting point
 
 Decide whether the new system is a **source** (read-only) or a **destination** (written to),
 and pick a base:
@@ -38,7 +42,7 @@ and pick a base:
 | Bespoke SDK or protocol | A fresh `DiffSyncMixin` adapter (`infrahub_sync/adapters/netbox.py`) |
 | Learning the shape | Copy `examples/custom_adapter/custom_adapter_src/custom_adapter.py` |
 
-### Step 2: Create the adapter module
+#### Step 2: Create the adapter module
 
 Create `infrahub_sync/adapters/<name>.py` (or a custom module outside the package). Define the
 two classes and a client:
@@ -69,7 +73,7 @@ Follow [Writing an adapter](../guidelines/writing-an-adapter.md): mixin first, `
 optional-dependency import with `# ty: ignore[unresolved-import]`, credentials from the
 environment.
 
-### Step 3: Implement `model_loader`
+#### Step 3: implement `model_loader`
 
 For each model, find its schema-mapping entry, fetch the source records, filter and transform
 them through the model mixin, convert each to the DiffSync shape, and add it:
@@ -89,15 +93,15 @@ Write the `obj_to_diffsync` helper to walk `element.fields` — `static`, plain 
 `reference` (resolved to a peer `unique_id`) — and always set `local_id`. See
 `examples/custom_adapter/custom_adapter_src/custom_adapter.py` for a complete version.
 
-### Step 4: Implement write methods (destination only)
+#### Step 4: Implement write methods (destination only)
 
 If the adapter can be a destination, implement `create`, `update`, and `delete` on the model
 to mutate the target system. A source-only adapter can leave these deferring to the base.
 
 That covers `infrahub-sync sync`, the live compare-and-write path. Applying a **saved plan**
-(`infrahub-sync apply --run-id <id>`) goes through a separate surface — see Step 4b.
+(`infrahub-sync apply <run-id>`) goes through a separate surface — see Step 4b.
 
-### Step 4b: Implement the planned-write surface (optional, destination only)
+#### Step 4b: Implement the planned-write surface (optional, destination only)
 
 **Infrahub-only in v1.** Read this step as documentation of the Infrahub destination's write
 surface, not as a general extension point. Both members are typed with `PeerResolver`, which is
@@ -170,10 +174,10 @@ If you do implement it, the method must:
 
 The full contract — the convergent upsert sequence, the keyedness gate, relationship
 replace-set reconciliation and the error taxonomy — is in
-[the destination write surface contract](../specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md).
+[the destination write surface contract](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md).
 `infrahub_sync/adapters/infrahub.py` is the reference implementation.
 
-### Step 5: Write the schema mapping and `config.yml`
+#### Step 5: Write the schema mapping and `config.yml`
 
 Create an example project directory with a `config.yml` that selects the adapter and maps
 resources to destination models:
@@ -206,35 +210,35 @@ schema_mapping:
 Omit `order` — it is computed from `reference` edges. See
 [schema mapping](../knowledge/schema-mapping.md) for fields, filters, and transforms.
 
-### Step 6: Add incremental support (optional)
+#### Step 6: Add incremental support (optional)
 
 If the source can filter by change, override `cursor_tier_for` to return the right
 `CursorTier` and implement `list_changed_since` (and optionally `list_existing_ids`). See
 [incremental sync and cache](../knowledge/incremental-and-cache.md). Skip this and the adapter
-simply does full extracts.
+performs full extracts.
 
-### Step 7: Add an example and document env vars
+#### Step 7: Add an example and document env vars
 
 Add a directory under `examples/<system>_to_infrahub/` (or `infrahub_to_<system>/`) with the
 `config.yml`, and document the required environment variables and the install extra for the
 optional SDK.
 
-### Step 8: Add tests
+#### Step 8: add tests
 
 Write unit tests under `tests/adapters/` that mock the client. See
 [Testing an adapter](testing-an-adapter.md) and the rules in
 [Testing adapters](../guidelines/testing-adapters.md).
 
-### Step 9: Add a documentation page
+#### Step 9: Add a documentation page
 
-Create a page under `docs/docs/adapters/` (overview, config keys, env vars, example YAML,
+Create a page under `docs/docs/adapters/` (overview, configuration keys, env vars, example YAML,
 common errors), add it to the sidebar, and lint it:
 
 ```bash
 uv run rumdl check docs/docs/adapters/
 ```
 
-## Verification
+### Verification
 
 Validate read-only paths before ever running `sync`:
 
@@ -250,7 +254,7 @@ uv run infrahub-sync diff --config-id mysystem-example --version 1 --reason "ver
 `configs register` and `configs validate` read no source; `diff` plans against both sides but
 writes nothing. Run `sync` only with explicit approval against a known-safe target.
 
-## Quality checklist
+### Quality checklist
 
 - [ ] Adapter inherits `DiffSyncMixin` / `DiffSyncModelMixin`, mixin first, with a `type`.
 - [ ] `model_loader` filters and transforms through the model mixin; `obj_to_diffsync` sets `local_id`.
@@ -262,7 +266,7 @@ writes nothing. Run `sync` only with explicit approval against a known-safe targ
 - [ ] Example added under `examples/`; env vars documented.
 - [ ] Documentation page added under `docs/docs/adapters/` and in the sidebar.
 
-## Related resources
+### Related resources
 
 - [Adapter anatomy](../knowledge/adapter-anatomy.md) — the classes and contract.
 - [Writing an adapter](../guidelines/writing-an-adapter.md) — the rules.

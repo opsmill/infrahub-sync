@@ -6,9 +6,7 @@ teammate on a clean host with no way to tell the difference. So every name here
 is read off the candidate workflow and the bundle entry point rather than
 written down twice.
 
-It also has to stay internal. The artifacts are unpublished pre-release bytes,
-so a page explaining how to download and run them belongs in `dev/`, not on the
-Docusaurus site.
+The guide is published so developers can follow the same qualification procedure.
 """
 
 from __future__ import annotations
@@ -31,10 +29,8 @@ from tests.test_workflow_contracts import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-GUIDE = REPO_ROOT / "dev" / "guides" / "qualifying-an-internal-candidate.md"
-INDEX = REPO_ROOT / "dev" / "guides" / "README.md"
-DOCS_SITE = REPO_ROOT / "docs" / "docs"
-SIDEBAR = REPO_ROOT / "docs" / "sidebars.ts"
+GUIDE = REPO_ROOT / "docs" / "docs" / "develop" / "guides" / "qualifying-an-internal-candidate.md"
+INDEX = REPO_ROOT / "docs" / "docs" / "develop" / "guides" / "index.md"
 ENTRY_POINT = REPO_ROOT / "deploy" / "compose" / "infrahub-sync-compose"
 
 # The lifecycle a reader is taken through. Every verb, because the tutorial's
@@ -123,13 +119,6 @@ def test_the_guide_is_where_the_index_says_it_is() -> None:
     """A guide nobody can find is a guide nobody follows."""
     assert GUIDE.is_file(), GUIDE
     assert GUIDE.name in INDEX.read_text(encoding="utf-8"), f"{INDEX} does not link {GUIDE.name}"
-
-
-def test_the_guide_is_not_on_the_public_documentation_site() -> None:
-    """The artifacts are unpublished and unadvertised; a public page would advertise them."""
-    assert not (DOCS_SITE / GUIDE.name).exists(), "the internal tutorial is on the docs site"
-    assert not list(DOCS_SITE.rglob(GUIDE.name)), "the internal tutorial is under the docs site tree"
-    assert GUIDE.stem not in SIDEBAR.read_text(encoding="utf-8"), "the internal tutorial is in the site sidebar"
 
 
 def test_the_guide_names_every_artifact_group_the_run_retains() -> None:

@@ -1,12 +1,16 @@
-# Testing adapters
+---
+title: "Testing adapters"
+---
 
-> Part of: `dev/guidelines/` | Related: [Testing an adapter](../guides/testing-an-adapter.md), [Adapter anatomy](../knowledge/adapter-anatomy.md)
+## Testing adapters
+
+> Part of: Develop > Guidelines | Related: [Testing an adapter](../guides/testing-an-adapter.md), [Adapter anatomy](../knowledge/adapter-anatomy.md)
 
 Rules for what an adapter's tests must cover and how they are written. For the mechanics of
 writing and running them — fixtures, mocking, commands — see
 [Testing an adapter](../guides/testing-an-adapter.md).
 
-## Mock the upstream; never require a live server
+### Mock the upstream; never require a live server
 
 **Always stub the upstream client so the default suite runs offline:**
 
@@ -22,7 +26,7 @@ api = pynetbox.api(url=os.environ["NETBOX_URL"], token=...)
 The unit suite must pass with no network access and no secrets. Tests that need a live system
 are integration tests (see below).
 
-## Cover the conversion path
+### Cover the conversion path
 
 **Always test that records become correct DiffSync models:**
 
@@ -32,7 +36,7 @@ are integration tests (see below).
 - `identifiers` and `local_id` are populated, and `reference` fields resolve to peer
   `unique_id`s — including the list-reference case.
 
-## Cover the incremental contract
+### Cover the incremental contract
 
 **Always test the cursor methods an adapter declares:**
 
@@ -45,7 +49,7 @@ are integration tests (see below).
   the `NotImplementedError`. `tests/test_diffsync_mixin_contract.py` covers the mixin defaults;
   per-adapter tests cover the overrides.
 
-## Cover the error and edge cases
+### Cover the error and edge cases
 
 **Always test the failure modes a connector actually hits:**
 
@@ -53,7 +57,7 @@ are integration tests (see below).
 - Authentication failures (401 / 403) and timeouts surface as clear errors, not silent passes.
 - Unknown model names raise rather than returning empty.
 
-## Skip cleanly when the optional dependency is absent
+### Skip cleanly when the optional dependency is absent
 
 **Always guard a module that hard-imports an optional SDK:**
 
@@ -67,7 +71,7 @@ This keeps collection green in environments that did not install that adapter's 
 
 <!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
 
-## Never claim an unexecuted test as evidence
+### Never claim an unexecuted test as evidence
 
 **Always record a run before marking a test done — a pass, or a skip whose reason is verifiable:**
 
@@ -84,11 +88,11 @@ the only missing ingredient is an environment.
 - If a test cannot be run at all in this repository, say what it does *not* yet bound. Do not let
   authorship stand in for coverage.
 
-## Assert the effect that leaves the process, not the state before it
+### Assert the effect that leaves the process, not the state before it
 
 **Always pick an observable a broken implementation actually fails:**
 
-Several assertions in this codebase's history passed against implementations that did nothing. Prefer
+Several assertions in this repository's history passed against implementations that did nothing. Prefer
 the outermost observable you can reach offline:
 
 - **Assert the issued call, not in-memory state.** SDK relationship editors are purely local, so
@@ -106,17 +110,17 @@ the outermost observable you can reach offline:
   tripwire test that goes straight at the dependency with no local code involved, and fails loudly when
   the behaviour changes.
 
-## Keep tests atomic and integration tests opt-in
+### Keep tests atomic and integration tests opt-in
 
 **Always isolate one behavior per test and mark live tests:**
 
-- One assertion target per test; parametrize config-parsing and mapping cases instead of
+- One assertion target per test; parametrize configuration-parsing and mapping cases instead of
   looping inside a test.
 - Place unit tests under `tests/adapters/` named `test_<adapter>_*.py`.
 - Mark anything that talks to a real system `@pytest.mark.integration` and keep it under
   `tests/integration/` so the default `uv run pytest -q` stays offline.
 
-## See also
+### See also
 
 - [Testing an adapter](../guides/testing-an-adapter.md) — fixtures, mocking, and commands.
 - [Writing an adapter](writing-an-adapter.md) — the code these tests exercise.

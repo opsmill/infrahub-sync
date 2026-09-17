@@ -70,6 +70,17 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Develop',
+      items: [
+        'develop/knowledge/index',
+        'develop/guides/index',
+        'develop/guidelines/index',
+        'develop/constitution',
+        'develop/adr-index',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Release Notes',
       collapsible: true,
       collapsed: true,

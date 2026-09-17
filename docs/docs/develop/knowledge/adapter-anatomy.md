@@ -1,6 +1,10 @@
-# Adapter anatomy
+---
+title: "Adapter anatomy"
+---
 
-> Part of: `dev/knowledge/` | Related: [Sync architecture](sync-architecture.md), [Schema mapping](schema-mapping.md), [Adding an adapter](../guides/adding-an-adapter.md)
+## Adapter anatomy
+
+> Part of: Develop > Knowledge | Related: [Sync architecture](sync-architecture.md), [Schema mapping](schema-mapping.md), [Adding an adapter](../guides/adding-an-adapter.md)
 
 An adapter is a single module under `infrahub_sync/adapters/<name>.py` (or a custom module
 outside the package) that defines two classes: an **adapter class** that loads and writes
@@ -8,7 +12,7 @@ objects, and a **model class** that the generated models inherit. `infrahub_sync
 is the reference example; `examples/custom_adapter/custom_adapter_src/custom_adapter.py` is a
 minimal from-scratch one.
 
-## The two classes
+### The two classes
 
 ```python
 from diffsync import Adapter, DiffSyncModel
@@ -35,7 +39,7 @@ class MyModel(DiffSyncModelMixin, DiffSyncModel):
 base classes matters: the mixin comes first so its methods take precedence over the
 DiffSync base.
 
-## The adapter contract (`DiffSyncMixin`)
+### The adapter contract (`DiffSyncMixin`)
 
 The mixin defines the surface Potenda calls. Each method is one of three kinds — provided
 (use as-is), must-implement (raises `NotImplementedError` until you override), or optional.
@@ -53,7 +57,7 @@ The mixin defines the surface Potenda calls. Each method is one of three kinds �
 A read-only-capable adapter that only ever does full extracts needs just `model_loader`.
 Incremental support is additive — see [Incremental sync and cache](incremental-and-cache.md).
 
-## The planned-write surface
+### The planned-write surface
 
 `sync` compares both sides live and writes through the **model**'s `create` / `update`.
 `apply` is different: it replays a plan artifact saved by an earlier `diff` without loading
@@ -95,16 +99,16 @@ run to complete.
 
 It must also **write only the fields the operation maps**. The payload is authoritative for those
 fields and for nothing else: an unmapped destination field must come out of the apply untouched.
-That rule is easy to break by accident on the relationship path, because an SDK that re-renders a
+That rule can break by accident on the relationship path, because an SDK that re-renders a
 whole node it considers existing emits `<rel>: null` for every optional cardinality-one
 relationship left uninitialized. If your destination client re-renders whole objects on write,
 check what it does with the fields you did not set.
 
 The full contract lives in
-[the destination write surface contract](../specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md);
+[the destination write surface contract](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md);
 `infrahub_sync/adapters/infrahub.py` is the reference implementation.
 
-## The model contract (`DiffSyncModelMixin`)
+### The model contract (`DiffSyncModelMixin`)
 
 The model mixin gives every model the helpers used during loading and the hooks used during
 writing.
@@ -126,7 +130,7 @@ You implement on the model (used when it is the destination):
 If an adapter is only ever a source, its model's `create` / `update` / `delete` are never
 called and can defer to the base implementation.
 
-## From upstream object to DiffSync model
+### From upstream object to DiffSync model
 
 Inside `model_loader`, each raw record is converted to the field shape the generated model
 expects. By convention this is a helper named `<name>_obj_to_diffsync` (or `obj_to_diffsync`
@@ -139,7 +143,7 @@ on the REST base). It walks the mapping's `fields` and, for each:
 Every record also carries a `local_id` — the source-side primary key — so references can be
 resolved across models. See [Schema mapping](schema-mapping.md) for the field semantics.
 
-## How the class is found
+### How the class is found
 
 `config.yml` selects the adapter:
 
@@ -151,7 +155,7 @@ resolved across models. See [Schema mapping](schema-mapping.md) for the field se
 `plugin_loader.py` resolves these in order. Custom adapters do not need to live inside the
 package — point at them with `adapter` and, if needed, `adapters_path`.
 
-## See also
+### See also
 
 - [Sync architecture](sync-architecture.md) — where the adapter sits in a run.
 - [Writing an adapter](../guidelines/writing-an-adapter.md) — the rules to follow.

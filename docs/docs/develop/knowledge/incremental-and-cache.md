@@ -1,13 +1,17 @@
-# Incremental sync and cache
+---
+title: "Incremental sync and cache"
+---
 
-> Part of: `dev/knowledge/` | Related: [Adapter anatomy](adapter-anatomy.md), [Sync architecture](sync-architecture.md)
+## Incremental sync and cache
+
+> Part of: Develop > Knowledge | Related: [Adapter anatomy](adapter-anatomy.md), [Sync architecture](sync-architecture.md)
 
 A full sync extracts every object from both sides on every run. For large systems that is
 slow and wasteful, so infrahub-sync can run *incrementally*: extract only what changed since
 the last run, and reuse a cached diff plan. Incremental support is opt-in per adapter and
 per model — an adapter that does nothing still works, it just always does a full extract.
 
-## Cursor tiers
+### Cursor tiers
 
 `cursor_tier_for(model_name)` declares the strongest extraction strategy the source supports
 for a model. It returns a `CursorTier` (an `IntEnum`, defined in
@@ -23,7 +27,7 @@ Higher tiers extract less data. NetBox returns `TIMESTAMP` for mapped kinds and 
 otherwise; an adapter with no incremental support inherits the `NONE` default from
 `DiffSyncMixin`.
 
-## What an adapter implements
+### What an adapter implements
 
 Three methods, layered on top of `model_loader`:
 
@@ -39,7 +43,7 @@ Three methods, layered on top of `model_loader`:
 `CursorState` (also in `cache/cursors.py`) carries the tier and the saved value (a timestamp
 or id watermark) from the previous run.
 
-## Full re-extraction cadence
+### Full re-extraction cadence
 
 `IncrementalConfig.full_resync_every` (default `10`) is declared under `incremental` in
 `config.yml` and currently governs nothing: the run counter it compared against was written
@@ -47,7 +51,7 @@ only by a code path that had no production caller, and that path is gone. Every 
 caller extracts in full, so no cadence decision is reachable. The key is retained for the
 incremental-extraction work that will supply the counter durably.
 
-## The diff plan and the cache
+### The diff plan and the cache
 
 Potenda can separate computing a diff from applying it:
 
@@ -62,7 +66,7 @@ own `<run_id>/`. Set `INFRAHUB_SYNC_CACHE_DIR` to relocate it (for example to a 
 the path may not contain `..` traversal segments. Cursor state is written by
 `persist_cursors_for_run()` at the end of a successful run and read at the start of the next.
 
-## The row-count baseline
+### The row-count baseline
 
 A buggy source or an auth failure can return far fewer objects than reality, which would make
 a later sync delete most of the destination. The durable input for detecting that is the
@@ -77,7 +81,7 @@ placement, a missing-baseline rule, a failure class, and an operator contract. T
 `RowcountGuardrail` comparison in `cache/guardrails.py` is that future feature's primitive
 and has no caller.
 
-## See also
+### See also
 
 - [Adapter anatomy](adapter-anatomy.md) — where these methods sit in the contract.
 - [Sync architecture](sync-architecture.md) — how Potenda drives load, diff, and sync.

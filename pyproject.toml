@@ -433,9 +433,8 @@ exclude = [
     ".claude/**",
     ".codex/**",
     "changelog/**",
-    "dev/constitution.md",
     # Archived spec artifacts are a historical record, and `rumdl fmt` loses text in
-    # them (see dev/knowledge/quality-gates.md). Excluded from BOTH `check` and `fmt`
+    # them (see docs/docs/develop/knowledge/quality-gates.md). Excluded from BOTH `check` and `fmt`
     # so `invoke format` cannot rewrite them.
     "dev/specs/**",
     "docs/node_modules/**",
