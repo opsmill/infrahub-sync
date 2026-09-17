@@ -4,6 +4,10 @@ title: IP Fabric adapter
 
 import ReferenceLink from "../../src/components/Card";
 
+## V3 route
+
+Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure.
+
 ## What is IP Fabric?
 
 The **IP Fabric** network infrastructure management platform provides on-demand network discovery, advanced analytics, and in-depth engineering visibility.
@@ -52,7 +56,7 @@ infrahubctl schema load schema.yml
 
 ## Configuration
 
-`infrahub-sync` allows defining what gets synchronized from a source to a destination. Included in the examples is a config.yml file that matches the example schema.
+`infrahub-sync` allows defining what gets synchronized from a source to a destination. The shipped `config.yml` is a legacy mapping input that matches the example schema; wrap it in a V3 configuration-package envelope before registration.
 
 <ReferenceLink title="config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/ipfabric_to_infrahub/config.yml" openInNewTab />
 
