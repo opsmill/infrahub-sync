@@ -95,11 +95,20 @@ by looking in `tests/integration/`:
   `opsmill_prefect_extras` import, then starts Prefect's own isolated temporary API server with
   `PREFECT_HOME` and `PREFECT_LOCAL_STORAGE_PATH` redirected under `tmp_path`. It writes only
   that temporary state and tears it down.
-- **Product store on PostgreSQL** is a parametrized case: the same contracts run on SQLite
-  unmarked and on a real server under the `integration` mark. Set
-  `PRODUCT_STORE_TEST_POSTGRESQL_DSN` and install `psycopg`. Each module creates one generated
-  schema and drops only that schema, and its scoped `search_path` deliberately excludes
-  `public`, so a DSN aimed at the wrong database cannot reach another schema's tables:
+- **Product store on PostgreSQL** is two different things under one DSN. Three modules —
+  [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_configuration_baseline.py),
+  [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_write_admission.py) and
+  [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/service/test_apply_versus_verify_race.py)
+  — parametrize their contracts over SQLite and PostgreSQL, and only the `postgresql`
+  parameter carries the `integration` mark. Alongside them,
+  [`test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_contract.py) contributes one standalone
+  marked test, `test_postgresql_run_store_initializes_against_a_real_server`, which is not
+  parametrized: it is a schema-bootstrap check that only a real server can make.
+
+  Set `PRODUCT_STORE_TEST_POSTGRESQL_DSN` and install `psycopg` for both. Each creates one
+  generated schema and drops only that schema, and its scoped `search_path` deliberately
+  excludes `public`, so a DSN aimed at the wrong database cannot reach another schema's
+  tables:
 
   ```bash
   PRODUCT_STORE_TEST_POSTGRESQL_DSN="postgresql://postgres:probe@127.0.0.1:55433/storeprobe" \
@@ -119,8 +128,16 @@ carry their own exact setup in a module docstring, including the disposable-targ
 read it rather than copying variables between families. The guard DSN, the product-store DSN and
 the durable-store settings must all point at single-purpose throwaway databases.
 
-Apart from the Prefect idempotency case, these tests write to the live targets they name. Point
-every one of them at something disposable.
+What these tests do to their targets differs, and the difference matters when you choose what to
+point them at:
+
+- **Prefect idempotency** contacts nothing external. It writes only temporary local state under
+  `tmp_path` and tears it down.
+- [`test_destination_schema_live_read.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/integration/test_destination_schema_live_read.py)
+  reads a live Infrahub's schema and performs no mutation.
+- **Every other live-backed family** mutates, locks or writes the target it names — Infrahub
+  branches and nodes, the guard and product-store databases, the durable store, Redis, or the
+  development stack. Point each of those at something disposable.
 
 #### Preview smoke
 
