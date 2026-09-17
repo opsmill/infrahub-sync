@@ -43,7 +43,14 @@ pytest -m "not integration and not preview and not docker and not builder and no
 ```
 
 So it excludes five marker families: `integration`, `preview`, `docker`, `builder` and
-`compose`. It needs no network, no credentials, no Docker daemon and no running stack.
+`compose`. It needs no network, no credentials and no running stack.
+
+**It does need the `docker compose` CLI on your PATH.** One unmarked module under
+`tests/preview/` shells out to `docker compose … config --format json` to resolve the preview
+Compose files, and it does so with `check=True` and no availability guard — so on a machine
+without that CLI the offline default **fails** with `FileNotFoundError` rather than skipping.
+That command resolves the Compose files and starts no service. Install Docker Desktop, or the
+Compose plugin, before treating a red offline run as a real regression.
 
 Below Python 3.11 the task adds two ignores, because the Sync service is unavailable there:
 
@@ -156,14 +163,23 @@ The suite runs in a single process by design. Its modules share one Infrahub bra
 Prefect deployment, and a collection hook orders them against each other; a distributed run
 would split that ordering across workers.
 
-One module under `tests/preview/` is not part of that tier.
-`tests/preview/test_evidence.py` carries no `preview` marker, so it already runs in the
-ordinary unit gate. It covers the evidence helpers offline and reads
-[Contributing](../../contributing.mdx) to hold the documented setup command to the pinned
-package manager. If you touch that page, run it directly as a fast pre-check:
+**Five modules under [`tests/preview/`](https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/preview) are not part of that tier.** They
+carry no `preview` marker, so they already run in the ordinary unit gate — 62 tests in total —
+and they need no stack:
+
+| Module | What it covers | Tests |
+|---|---|---|
+| [`test_evidence.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/preview/test_evidence.py) | The two helpers the live qualification rows capture evidence with, plus a read of [Contributing](../../contributing.mdx) that holds the documented setup command to the pinned package manager | 9 |
+| [`test_preview_configuration.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/preview/test_preview_configuration.py) | Regression checks on the disposable preview environment, including the Compose resolution that needs the `docker compose` CLI | 17 |
+| [`test_preview_legacy_state.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/preview/test_preview_legacy_state.py) | That the preview refuses retired-vocabulary state and resets it destructively | 9 |
+| [`test_preview_worker_identity.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/preview/test_preview_worker_identity.py) | That the preview starts the supported service worker without static identity plumbing | 4 |
+| [`test_smoke_request_shapes.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/preview/test_smoke_request_shapes.py) | That the smoke suite's request bodies are the ones the shipped API accepts | 23 |
+
+Directory is not marker: do not assume a module under `tests/preview/` is opt-in. If you touch
+Contributing or the preview tasks, run the unmarked set directly as a fast pre-check:
 
 ```bash
-uv run pytest -q tests/preview/test_evidence.py
+uv run pytest -q -m "not preview" tests/preview
 ```
 
 [Local development stack](../../development-stack.mdx) is the full procedure for the stack
