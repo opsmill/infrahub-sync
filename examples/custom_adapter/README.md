@@ -30,47 +30,24 @@ Installing the adapter somewhere a worker can import it does not change any of t
 the refusal is about the missing declaration rather than about whether the class can be
 imported.
 
-Treat this directory as a shape reference and a deterministic source fixture. The commands
-below are the correct current forms for the register-to-apply cycle, and they are what you
-would run for a package whose adapter does ship with infrahub-sync. For the supported route
-and the recorded reproduction of this refusal, see
-[Adding an adapter](../../docs/docs/develop/guides/adding-an-adapter.md).
+## What this directory is for
 
-## Register and review
+Treat it as a shape reference and a deterministic source fixture:
 
-Connect the CLI to that service and register the package:
+| File | What it shows |
+| --- | --- |
+| `custom_adapter_src/custom_adapter.py` | `MockdbAdapter` and `MockdbModel` — the two classes, a client, `model_loader` and a full `obj_to_diffsync` |
+| `custom_adapter_src/mock_db.json` | The five-device fixture the adapter reads |
+| `config.yml` | The declared configuration |
+| `examples/custom_adapter/package.yml` | The registry envelope that wraps `config.yml` |
 
-```bash
-export INFRAHUB_SYNC_API_URL=https://sync.example.com
-export INFRAHUB_SYNC_API_TOKEN=<token>
+**No runnable register-to-apply sequence is given here, because there is none for this
+package.** It cannot enter that cycle until `mockdb` has a bundled capability declaration,
+and adding one means adding the adapter to the distribution.
 
-uv run infrahub-sync configs register examples/custom_adapter/package.yml \
-  --reason "register custom adapter example"
-uv run infrahub-sync diff --config-id <config-id> --version <version> \
-  --reason "review custom adapter plan"
-uv run infrahub-sync runs plan <run-id> --detail
-```
-
-An empty destination that matches the mapping produces five `InfraDevice` creates — one per
-record in `custom_adapter_src/mock_db.json`. A destination that already holds those devices
-produces fewer, or none. Copy the `plan_checksum` value from the review output.
-
-## Apply the reviewed plan
-
-```bash
-uv run infrahub-sync apply <run-id> \
-  --expected-checksum <plan-checksum> \
-  --reason "apply custom adapter plan"
-```
-
-The service verifies the reviewed checksum before worker execution. The CLI does not read
-the source or a local plan.
-
-## Verify convergence
-
-Create a new plan over the same registered version. It should report zero creates,
-updates, and deletes. If it does not, inspect the worker's installed adapter, the
-destination schema, and `custom_adapter_src/mock_db.json` before applying another plan.
-
-See [Run a sync](../../docs/docs/running-a-sync.mdx) for wait, idempotency, delete, and
-failure behavior.
+For the current command forms and the worked register → validate → plan → review → apply →
+verify flow, follow
+[Adding an adapter](../../docs/docs/develop/guides/adding-an-adapter.md), which teaches the
+supported in-repository route and records the reproduction of the refusal above.
+[Run a sync](../../docs/docs/running-a-sync.mdx) covers wait, idempotency, delete and failure
+behavior for a package that can be registered.
