@@ -18,8 +18,8 @@ Two commands write, and each says what it will write before writing:
 
 The published page for this stack is
 [Local development stack](../docs/docs/development-stack.mdx). It covers the same
-commands plus the addresses, the development-only credentials, the startup refusal on
-retired state, and how to run the tests.
+commands plus the service development loop, the addresses, the development-only credentials,
+the startup refusal on retired state, and how to run the tests.
 
 ## Start
 
@@ -33,8 +33,13 @@ addresses, the bearer principals, and where runtime state lives. Requires
 Docker and Python 3.11+.
 
 Other commands: `preview.status`, `preview.seed`, `preview.smoke`, `preview.logs`
-(`--name sync-api|prefect-worker`), `preview.down` (add `--volumes` to reset
+(`-n sync-api|prefect-worker`), `preview.down` (add `--volumes` to reset
 all data).
+
+Changed service code does not reach a running stack. The Sync API has no auto-reload, and
+`preview.up` leaves an already-running process alone, so run `preview.down` and then
+`preview.up`. The plain `preview.down` keeps every data volume; only `--volumes` deletes them.
+The published page has the full loop.
 
 ## What to test
 
@@ -59,5 +64,8 @@ The preview exists to gather feedback on the two new v3 interfaces:
 | `preview.local.env` | Your personal overrides (gitignored). Tokens you mint while testing belong here, not in `preview.env`. |
 
 Runtime state (process pids, logs, sync and product caches) lives under
-`.preview/` at the repository root, also gitignored. The smoke suite is
-`tests/preview/`, opt-in via `pytest -m preview`.
+`.preview/` at the repository root, also gitignored. The worker runs from its own empty
+`.preview/worker-cwd` so it imports the installed distribution rather than this checkout. The
+smoke suite is `tests/preview/`, opt-in via `pytest -m preview` and driven by
+`preview.smoke`; see
+[Testing tiers](../docs/docs/develop/guidelines/testing-tiers.md) for what each suite needs.

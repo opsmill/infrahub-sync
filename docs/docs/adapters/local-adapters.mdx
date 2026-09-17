@@ -8,25 +8,35 @@ import TabItem from '@theme/TabItem';
 
 ## V3 route
 
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure. The custom-adapter example package is `examples/custom_adapter/package.yml`.
+Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure. The custom-adapter example package is `examples/custom_adapter/package.yml`, which is a shape reference and a source fixture rather than a package that runs register-to-apply as shipped.
 
 ## Using local adapters
 
-Registered V3 workers resolve custom adapters from installed code only. A package may declare a custom adapter on its source side as an installed dotted import target or an installed entry point. The destination must name a bundled adapter that supports the destination role.
+:::warning Custom adapters cannot be registered at this release
 
-### Registered adapter identities
+Installing your adapter is **not** sufficient to make a package naming it registrable. Registration resolves the package's `source.name` against a closed set of capability declarations, and only the adapters bundled with infrahub-sync have one. A package naming any other adapter is refused at registration, and no configuration or version row is created.
 
-Use one of these installed identities in a registered package:
+The refusal you receive is the service's fixed envelope — HTTP `422`, code `configs-validation`, family `validation`, no `reason`, and the message `the configuration service refused the request`. The underlying cause is an internal finding, `missing-adapter` at `/configuration/source`, which the refusal does not expose — and because the package is never stored, `configs validate` cannot report it either. No public diagnostic names the cause; that missing diagnostic is part of the gap. The attempt still leaves durable evidence: its idempotency receipt is reserved and then released, and an audit event is recorded with outcome `unavailable`.
 
-1. **Built-ins**: Adapters that ship with infrahub-sync (`infrahub_sync.adapters.<name>`)
-2. **Dotted paths**: Python module paths (`myproj.adapters.foo:MyAdapter`)
-3. **Python entry points**: Installed packages that register entry points
+An installed dotted import target or entry point does not change that outcome, because the refusal is about the missing capability declaration rather than about whether the class can be imported. The supported route today is to add the adapter to this repository together with its declaration — see [Adding an adapter](../develop/guides/adding-an-adapter.md), which records the reproduction and the exact refusing surface.
+
+:::
+
+The material below describes how adapter targets are resolved, and remains accurate for development work and for the bundled adapters.
+
+### Adapter identities a registered package may name
+
+1. **Built-ins**: Adapters that ship with infrahub-sync (`infrahub_sync.adapters.<name>`). These are the only ones with a capability declaration, so in practice they are the only ones a registered package can use today.
+2. **Dotted paths**: Python module paths (`myproj.adapters.foo:MyAdapter`). Accepted by the envelope as a target, but not sufficient on its own — see the warning above.
+3. **Python entry points**: Installed packages that register entry points. Same limitation.
 
 Filesystem paths, including `.py` targets, are refused in registered packages. The `adapters_path` configuration field is also refused.
 
+The destination must name a bundled adapter that supports the destination role.
+
 ### Development plugin-loader behavior
 
-The plugin loader can use local filesystem plugins while developing an adapter. `INFRAHUB_SYNC_ADAPTER_PATHS` configures that development behavior; it is not a registered-worker execution path. Install the adapter as a package and use its dotted import target or entry point before declaring it in a V3 configuration package.
+The plugin loader can use local filesystem plugins while developing an adapter. `INFRAHUB_SYNC_ADAPTER_PATHS` configures that development behavior; it is not a registered-worker execution path, and it does not make a package registrable.
 
 ### Creating a custom adapter
 
@@ -49,7 +59,7 @@ class MyCustomAdapter(DiffSyncMixin, Adapter):
         pass
 ```
 
-For a more complete example, refer to `examples/custom_adapter/package.yml` and the repository's [Custom Adapter Example](https://github.com/opsmill/infrahub-sync/tree/main/examples/custom_adapter). Its repository-local adapter target is development material, not an installed identity that a deployed worker can register and run as-is.
+For a more complete example, refer to `examples/custom_adapter/package.yml` and the repository's [Custom Adapter Example](https://github.com/opsmill/infrahub-sync/tree/main/examples/custom_adapter). Its repository-local adapter target is development material, not an installed identity that a deployed worker can register and run as-is; and as the warning above records, installing it elsewhere would not make it registrable either.
 
 <ReferenceLink title="Custom Adapter Example" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/custom_adapter" openInNewTab />
 
