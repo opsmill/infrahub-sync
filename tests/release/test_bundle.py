@@ -18,6 +18,7 @@ credential, and the instance identity.
 from __future__ import annotations
 
 import gzip
+import json
 import shutil
 import tarfile
 from pathlib import Path
@@ -318,6 +319,50 @@ def test_the_checksum_names_the_archive_in_the_form_a_clean_host_reads(
 
     assert named == identity.bundle
     assert len(digest) == 64
+
+
+def test_the_candidate_input_contains_only_what_clean_host_needs(
+    archive: Path, identity: release.ReleaseIdentity
+) -> None:
+    """The preliminary manifest is input to qualification, never a qualification result."""
+    document = release.candidate_input_document(digests(), identity, archive)
+
+    assert document == {
+        "bundle": {"name": identity.bundle, "sha256": release._digest(archive)},
+        "identity": {"tag": identity.tag, "version": identity.version},
+        "image": {"platforms": {"linux/amd64": {"config": AMD64_CONFIG}}},
+    }
+    assert "tests" not in json.dumps(document)
+
+
+def test_release_kit_writes_the_candidate_input_beside_the_bundle(
+    source: Path,
+    tracked: dict[str, int],
+    identity: release.ReleaseIdentity,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both workflow routes upload this directory, so the task owns the manifest."""
+    del source
+    record_dir = tmp_path / ".release"
+    record_dir.mkdir()
+    record_file = record_dir / "identity.json"
+    record_file.write_text(json.dumps(identity.record()), encoding="utf-8")
+    monkeypatch.setattr(release, "RECORD_FILE", record_file)
+    monkeypatch.setattr(release, "BUNDLE_DIR", record_dir / "bundle")
+    monkeypatch.setattr(release, "require_archivable_bundle", lambda _context: None)
+    monkeypatch.setattr(release, "bundle_paths", lambda _context: tracked)
+    monkeypatch.setattr(release, "build_qualification_kit", lambda: None)
+    monkeypatch.setattr(image, "read_digests", digests)
+    monkeypatch.setattr(image, "transferable_archive", lambda *_args: tmp_path / "image.tar")
+    monkeypatch.setattr(image, "archive_manifest", lambda _archive: LOADED_MANIFEST)
+
+    release.kit(Context())
+
+    candidate_input = release.BUNDLE_DIR / release.CANDIDATE_INPUT_NAME
+    assert json.loads(candidate_input.read_text(encoding="utf-8")) == release.candidate_input_document(
+        digests(), identity, release.BUNDLE_DIR / identity.bundle
+    )
 
 
 # ---------------------------------------------------------------------------

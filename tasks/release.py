@@ -42,6 +42,7 @@ RECORD_DIR = REPO_ROOT / ".release"
 RECORD_FILE = RECORD_DIR / "identity.json"
 DIST_DIR = RECORD_DIR / "dist"
 BUNDLE_DIR = RECORD_DIR / "bundle"
+CANDIDATE_INPUT_NAME = "candidate-input.json"
 QUALIFICATION_DIR = RECORD_DIR / "qualification"
 QUALIFICATION_FILE = RECORD_DIR / "qualification.json"
 RESULTS_DIR = RECORD_DIR / "results"
@@ -488,6 +489,27 @@ def write_checksum(archive: Path) -> Path:
     return checksum
 
 
+def candidate_input_document(digests: Mapping[str, Any], identity: ReleaseIdentity, archive: Path) -> dict[str, object]:
+    """Return the narrow manifest a qualification consumer may read before gates pass."""
+    built = identity_from(digests.get("provenance"), "the digest record")
+    if built != identity:
+        msg = (
+            f"the built image records {built.version} at {built.revision}, a different release "
+            f"from {identity.version} at {identity.revision}; rebuild the candidate"
+        )
+        raise ReleaseTaskError(msg)
+    platforms = digests.get("platforms")
+    qualified = platforms.get(BINDING_PLATFORM) if isinstance(platforms, Mapping) else None
+    if not isinstance(qualified, Mapping) or not isinstance(qualified.get("config"), str):
+        msg = f"the digest record holds no {BINDING_PLATFORM} image, so qualification has no candidate input"
+        raise ReleaseTaskError(msg)
+    return {
+        "bundle": {"name": archive.name, "sha256": _digest(archive)},
+        "identity": {"tag": identity.tag, "version": identity.version},
+        "image": {"platforms": {BINDING_PLATFORM: {"config": qualified["config"]}}},
+    }
+
+
 # The whole of what a result document says, in the order `record_gate` writes it.
 # Named once because the reader checks each field and returns nothing else: the
 # directory is persisted input, and a document is only usable if it says all four.
@@ -686,9 +708,15 @@ def kit(context: Context) -> None:
     binding = image_binding(record, identity, loaded_manifest=manifest)
     archive = write_bundle(identity, bundle_paths(context), BUNDLE_DIR, generated={BINDING_MEMBER: binding})
     checksum = write_checksum(archive)
+    candidate_input = BUNDLE_DIR / CANDIDATE_INPUT_NAME
+    candidate_input.write_text(
+        json.dumps(candidate_input_document(record, identity, archive), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     build_qualification_kit()
     print(f" - [{NAMESPACE}] Bundle    {archive}")
     print(f" - [{NAMESPACE}] Checksum  {checksum.read_text(encoding='utf-8').strip()}")
+    print(f" - [{NAMESPACE}] Input     {candidate_input}")
     print(f" - [{NAMESPACE}] Binding   {BINDING_MEMBER} names the {BINDING_PLATFORM} candidate")
     print(f" - [{NAMESPACE}] Manifest  {manifest} is what a containerd image store calls the loaded archive")
     print(f" - [{NAMESPACE}] Qualification kit in {QUALIFICATION_DIR}")
@@ -738,8 +766,8 @@ def qualify(context: Context) -> None:
         if results.get(("image-smoke", name), {}).get("image") != configurations[name]
     ]
     qualified = set(configurations.values())
-    if not any(gate == "compose-lifecycle" and result["image"] in qualified for (gate, _), result in results.items()):
-        missing.append(("compose-lifecycle", "the qualified platform"))
+    if results.get(("compose-lifecycle", BINDING_PLATFORM), {}).get("image") != configurations[BINDING_PLATFORM]:
+        missing.append(("compose-lifecycle", BINDING_PLATFORM))
     if missing:
         listed = ", ".join(f"{gate} on {platform}" for gate, platform in missing)
         msg = f"{listed} left no result naming this candidate's own bytes, so it qualified nothing"

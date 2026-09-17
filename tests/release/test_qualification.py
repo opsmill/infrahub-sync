@@ -186,6 +186,26 @@ def test_a_gate_result_from_other_bytes_is_refused(candidate: Path, gate: str) -
 
 
 @pytest.mark.parametrize(
+    ("platform", "image_digest"),
+    [("linux/arm64", DIGESTS["linux/arm64"]["config"]), ("linux/amd64", DIGESTS["linux/arm64"]["config"])],
+    ids=["valid-arm64-digest", "amd64-platform-with-arm64-digest"],
+)
+def test_the_lifecycle_result_must_name_the_exact_amd64_candidate(
+    candidate: Path, platform: str, image_digest: str
+) -> None:
+    """Neither another built platform nor a mismatched platform/digest pair qualifies amd64."""
+    del candidate
+    result = release.RESULTS_DIR / "compose-lifecycle-linux-amd64.json"
+    document = json.loads(result.read_text(encoding="utf-8"))
+    document["platform"] = platform
+    document["image"] = image_digest
+    result.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(release.ReleaseTaskError, match="compose-lifecycle on linux/amd64"):
+        release.qualify(Context())
+
+
+@pytest.mark.parametrize(
     ("gate", "platform"),
     [("image-smoke", "linux/s390x"), ("compose-lifecycle", "linux/arm64")],
 )

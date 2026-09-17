@@ -190,6 +190,7 @@ jobs:
           set -euo pipefail
           mkdir -p .release/handoff
           cp .image/archives/image-linux-amd64.tar .release/handoff/
+          cp .image/digests.json .release/handoff/digests.json
           cp .release/bundle/* .release/handoff/
 
       # Before the reclaim below, which is what removes the file being staged.
@@ -211,11 +212,11 @@ jobs:
         if: ${{ inputs.qualify }}
         run: uv run --no-sync invoke compose.reclaim
 
-      # The same job, the same layout, the same loaded amd64 image. The bundle is
-      # handed that image's recorded configuration digest, so the lifecycle
-      # evidence and the image evidence cannot describe separate builds.
+      # Forks cannot upload a deletable handoff, so they retain the lifecycle in
+      # this job. A trusted run uses the sibling below; the two routes are
+      # mutually exclusive for one event.
       - name: "Qualify the Compose lifecycle on linux/amd64"
-        if: ${{ inputs.qualify }}
+        if: ${{ inputs.qualify && ! inputs.same-repository }}
         timeout-minutes: 45
         run: uv run --no-sync invoke compose.lifecycle
 
@@ -259,24 +260,91 @@ jobs:
                }
              }' > .release/artifacts.json
 
-      # What the driver reads its expectations out of: this candidate's tag and
-      # version, its bundle, and the configuration digest it has to find loaded.
-      - name: "Write the qualification record"
-        if: ${{ inputs.qualify && inputs.same-repository }}
-        run: uv run --no-sync invoke release.qualify
-
-      - name: "Hand the qualification record to the clean-host gate"
+      # Everything the final qualification task reads except the lifecycle
+      # result, which the sibling job produces from this same handoff.
+      - name: "Hand the final gate its producer inputs"
         if: ${{ inputs.qualify && inputs.same-repository }}
         uses: actions/upload-artifact@v4
         with:
-          name: infrahub-sync-qualification-record
-          path: .release/qualification.json
+          name: infrahub-sync-qualification-gate-input
+          path: |
+            .release/identity.json
+            .release/artifacts.json
+            .release/results/
+            .release/bundle/
+            .image/digests.json
+            .image/*-sbom-linux-*.spdx.json
+            .image/*-vulnerabilities-linux-*.json
           include-hidden-files: true
           if-no-files-found: error
           retention-days: ${{ env.HANDOFF_RETENTION_DAYS }}
 
       # Only when the job has already failed, and only what the suite's own
       # capture boundary produced. A run that passes uploads nothing new.
+      - name: "Publish what a failed lifecycle run saw"
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-lifecycle-diagnostic
+          path: .diagnostics/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: ${{ env.DIAGNOSTIC_RETENTION_DAYS }}
+
+  # The trusted lifecycle consumes the exact candidate handoff in parallel with
+  # clean-host. It checks out only to obtain the task and fixture code; the image
+  # it qualifies is loaded from the producer's archive and addressed by the
+  # producer's recorded configuration digest.
+  compose-lifecycle:
+    name: "Compose lifecycle qualification (linux/amd64)"
+    needs: ["image"]
+    if: ${{ inputs.qualify && inputs.same-repository }}
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 60
+    steps:
+      - name: "Check out the exact source under qualification"
+        uses: "actions/checkout@v5"
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: "Install uv"
+        uses: "astral-sh/setup-uv@v4"
+        with:
+          version: "latest"
+          python-version: "3.13"
+
+      - name: "Install the required development profile"
+        run: uv sync --frozen --extra dev --extra prefect --extra service
+
+      - name: "Download the candidate handoff"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-candidate-handoff
+          path: candidate
+
+      - name: "Restore the producer's digest record"
+        run: |
+          set -euo pipefail
+          mkdir -p .image
+          cp candidate/digests.json .image/digests.json
+
+      - name: "Load the producer's linux/amd64 image"
+        run: docker load --input candidate/image-linux-amd64.tar
+
+      - name: "Qualify the Compose lifecycle on linux/amd64"
+        timeout-minutes: 45
+        run: uv run --no-sync invoke compose.lifecycle
+
+      - name: "Hand the lifecycle result to final qualification"
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-qualification-lifecycle-result
+          path: .release/results/compose-lifecycle-linux-amd64.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.HANDOFF_RETENTION_DAYS }}
+
       - name: "Publish what a failed lifecycle run saw"
         if: failure()
         uses: actions/upload-artifact@v4
@@ -305,12 +373,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: infrahub-sync-candidate-handoff
-          path: candidate
-
-      - name: "Download the record this run wrote for them"
-        uses: actions/download-artifact@v4
-        with:
-          name: infrahub-sync-qualification-record
           path: candidate
 
       - name: "Download the qualification kit"
@@ -343,10 +405,59 @@ jobs:
           if-no-files-found: ignore
           retention-days: ${{ env.DIAGNOSTIC_RETENTION_DAYS }}
 
+  final-qualification:
+    name: "Final qualification record"
+    needs: ["image", "compose-lifecycle", "clean-host"]
+    if: ${{ inputs.qualify && inputs.same-repository }}
+    runs-on: ${{ inputs.runs-on }}
+    timeout-minutes: 20
+    steps:
+      - name: "Check out the exact source under qualification"
+        uses: "actions/checkout@v5"
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: "Install uv"
+        uses: "astral-sh/setup-uv@v4"
+        with:
+          version: "latest"
+          python-version: "3.13"
+
+      - name: "Install the required development profile"
+        run: uv sync --frozen --extra dev --extra prefect --extra service
+
+      # Downloading at the workspace root restores the producer's `.release`
+      # and `.image` paths exactly. `vulnerability-waivers.yml` comes only from
+      # the exact checkout above.
+      - name: "Restore the producer-written gate input"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-qualification-gate-input
+          path: .
+
+      - name: "Restore the lifecycle result"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-qualification-lifecycle-result
+          path: .release/results
+
+      - name: "Write the final qualification record"
+        run: uv run --no-sync invoke release.qualify
+
+      - name: "Hand out the final qualification record"
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-qualification-record
+          path: .release/qualification.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.HANDOFF_RETENTION_DAYS }}
+
   # Where the handoff stops existing.
   handoff-cleanup:
     name: "Delete this run's handoff and prove the run holds none of it"
-    needs: ["image", "clean-host"]
+    needs: ["image", "compose-lifecycle", "clean-host", "final-qualification"]
     # `always()` because a failed row, a skipped gate and a cancelled run leave
     # the same bytes behind as a passing one; and the two guards because a fork
     # route created none of them and holds no token that could delete one, and a
@@ -372,6 +483,8 @@ jobs:
           for name in \
             infrahub-sync-candidate-handoff \
             infrahub-sync-qualification-kit \
+            infrahub-sync-qualification-gate-input \
+            infrahub-sync-qualification-lifecycle-result \
             infrahub-sync-qualification-record
           do
             for id in $(gh api --paginate \

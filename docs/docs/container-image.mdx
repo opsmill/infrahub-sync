@@ -162,8 +162,8 @@ separate qualification kit instead.
 `release.qualify` refuses a candidate that qualified nothing: it requires an
 image smoke result for every built platform and a Compose lifecycle result, and
 each of those records the exact image digest it ran against. It also requires
-`.release/artifacts.json` — the artifact record its caller writes from what the
-service returned for each upload — so the record carries the identifiers,
+`.release/artifacts.json` — the artifact record the image producer writes from
+what the service returned for each upload — so the record carries the identifiers,
 digests, and retention an approval would be bound to.
 
 That document names the candidate whose uploads it describes, and one naming a
@@ -172,13 +172,14 @@ Nothing rewrites the file when a second candidate starts in the same workspace,
 so its identifiers would otherwise bind an approval of these bytes to bytes the
 service is holding under another release.
 
-The image gate is that caller on a run whose head is in this repository, and both
-documents are transient there. They exist so the clean-host gate below can be
-handed this candidate's bytes and told what to expect of them, and the run
-deletes the candidate, the kit and the record before it completes. Running
-`release.qualify` anywhere else refuses until you supply an artifact record of
-your own, and retaining a candidate for approval belongs to a manual run against
-an exact merged commit.
+On a trusted run, `release.kit` writes a narrow `candidate-input.json` beside the
+bundle. It tells clean-host the bundle name and digest, the release tag and
+version, and the exact `linux/amd64` configuration digest to expect. The
+`final-qualification` job writes the qualification record only after the
+Compose lifecycle result for that digest and clean-host have both passed.
+Running `release.qualify` anywhere else refuses until you supply an artifact
+record of your own, and retaining a candidate for approval belongs to a manual
+run against an exact merged commit.
 
 ## Clean-host qualification
 
@@ -190,20 +191,25 @@ checksum and archive tools — every command that needs Python or the product CL
 runs inside the candidate image.
 
 The transfer is an artifact because that is the only one GitHub offers between
-two jobs, and it is not retention. Three artifacts are uploaded for the shortest
-window the service accepts, downloaded once, and deleted by name inside the same
-run; a last job then reads the run back and fails it if any candidate, kit or
-record is still held. A completed run that succeeded holds none of them. Only a
-failed row's swept diagnostic stays, and for seven days.
+two jobs, and it is not retention. Five transient artifacts are uploaded for the
+shortest window the service accepts: `infrahub-sync-candidate-handoff`,
+`infrahub-sync-qualification-kit`, `infrahub-sync-qualification-gate-input`,
+`infrahub-sync-qualification-lifecycle-result`, and
+`infrahub-sync-qualification-record`. Consumers download only the evidence they
+need, and cleanup deletes each artifact by exact name inside the same run; a last
+step then reads the run back and fails it if any candidate, kit or qualification
+artifact is still held. A completed run that succeeded holds none of them. Only
+a failed row's swept diagnostic stays, and for seven days.
 
 This gate runs on a head in a fork too, and there it takes a different route.
 GitHub gives a pull request from a fork a read-only token whatever a workflow
-asks for, so such a run could upload the three artifacts and then be unable to
-delete them. It therefore produces no handoff at all: it still builds both
+asks for, so such a run could upload those transient artifacts and then be unable
+to delete them. It therefore produces no handoff at all: it still builds both
 platforms, records the digests, generates the bills of materials, enforces the
 vulnerability policy, smokes both images, and qualifies the Compose lifecycle
-from the tree it checked out — and the checkout-free matrix below, which needs a
-candidate handed to it, runs for a head in this repository. The route is one
+against the recorded `linux/amd64` configuration digest — and the checkout-free
+matrix below, which needs a candidate handed to it, runs for a head in this
+repository. The route is one
 boolean the calling workflow derives from whether the head's repository is this
 one; nothing is reported as skipped, because the jobs that would do the handing
 do not exist on that route.
