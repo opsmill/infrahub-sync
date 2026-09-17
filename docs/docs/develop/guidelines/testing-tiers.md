@@ -24,10 +24,15 @@ covers which suite it belongs in and which gate runs it.
 ### A skipped check is not a pass
 
 Most of the suites below skip themselves when their prerequisite is missing, and a skip exits
-zero. That is deliberate — it keeps a contributor without Docker from being blocked — but it
-means **a green result only proves what actually ran**. Before claiming a tier passed, confirm
-the suite was collected and executed, not skipped. The two places this matters most are the
-preview smoke suite, where every test skips when the stack is unreachable, and
+zero. That is deliberate for the live tiers: a missing external service or a stack that is not
+running leaves those tests skipped rather than blocking you. It does **not** extend to
+everything — the offline default needs the `docker compose` CLI, and without it the unmarked
+preview configuration test fails rather than skipping (see
+[The offline default](#the-offline-default)).
+
+Where a suite does skip, **a green result only proves what actually ran**. Before claiming a
+tier passed, confirm it was collected and executed, not skipped. The two places this matters
+most are the preview smoke suite, where every test skips when the stack is unreachable, and
 `uv run invoke check-310`, which skips all three of its legs at once.
 
 ### The offline default
@@ -65,7 +70,7 @@ preview and integration suites against whatever environment your shell happens t
 
 | Tier | Command | Needs | Writes |
 |---|---|---|---|
-| Unit | `uv run invoke tests.tests-unit` | Nothing beyond the installed extras | Nothing outside `tmp_path` |
+| Unit | `uv run invoke tests.tests-unit` | The installed extras, plus the `docker compose` CLI on your PATH | Nothing outside `tmp_path` |
 | Integration | `uv run invoke tests.tests-integration` | Varies by family — see below; no single set of variables covers the tier | Varies by family: read-only, temporary local state, or a disposable live target — see below |
 | Preview smoke | `uv run invoke preview.smoke` | The development stack, started with `preview.up` | Seeds and writes to the disposable stack |
 | Compose lifecycle | `uv run invoke compose.lifecycle` | An already built and loaded candidate image, and a Docker daemon | A real container stack it brings up and tears down |
