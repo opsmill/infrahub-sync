@@ -1,0 +1,75 @@
+---
+title: Move from V2 to V3
+---
+
+V3 turns Infrahub Sync from a local command-line synchronizer into a deployed service. The
+command-line client still carries the familiar verbs, but the service owns registration, run
+admission, saved plans, and every write to a destination.
+
+This page compares the two lines and routes each action to its one current procedure. It is
+not a migration procedure. There is no in-place state migration between V2 and V3: a switch
+starts a fresh deployment, re-registers the configuration, and reviews a new plan before
+anything is written.
+
+The V2 documentation stays published as its own version. Reach it from the version menu in
+the top navigation; every page on this line describes V3 only.
+
+## What changed
+
+| Area | V2 | V3 | Sources |
+| --- | --- | --- | --- |
+| Installation and runtime | The package was installed into a virtual environment, and that one process read the source, computed the difference, and wrote to the destination. | A Docker Compose deployment runs the Sync API, a worker, Prefect, PostgreSQL, and object storage. The command-line client talks to that API and executes no synchronization itself. | [V2](/v2/installation) · [V3](./compose-deployment.mdx#what-the-bundle-contains) |
+| Configuration and credentials | A project directory holding a `config.yml`, whose token settings named environment variables the local process read. | One package file with a `format_version`, a `configuration` object, and a `credentials` block. Credential-bearing settings hold `$credential` references, and the worker resolves them from `operator.env` where it runs. | [V2](/v2/creating-a-sync-project) · [V3](./reference/config.mdx) |
+| Adapter code | A generation step emitted Python adapter and model code beside the configuration before a run. | No generation step. The worker loads installed adapter classes for the registered package version. | [V2](/v2/running-a-sync#generating-sync-adapters-and-models) · [V3](./reference/config.mdx) |
+| Registration and validation | There was no registry. Each command re-read the files on disk, addressed by project name and directory. | Registration returns an immutable configuration identity, version, and package checksum, and the registry is append-only. A registered version can be re-validated later against the adapter declarations installed at that moment, and mutations accept an idempotency key. | [V2](/v2/reference/cli) · [V3](./reference/sync-http-api.mdx#routes) |
+| Planning and apply | `diff` wrote a Parquet plan into a local cache directory and logged a run identifier. `apply` replayed that cached plan from disk and refused it when the destination schema shape had drifted. | `diff` admits a service plan run. The saved plan is reviewed through the service, which issues its checksum, and `apply` is bound to that checksum. `sync` submits a confirmed run. A plan records deletes, and apply never executes them. | [V2](/v2/running-a-sync#reviewing-and-applying-a-cached-plan) · [V3](./reference/cache-layout.mdx#saved-plan-review) |
+| Adapters | The loader accepted built-in names, dotted paths, filesystem paths, and entry points. | A registered package resolves its source adapter against capability declarations, and only the adapters bundled with Infrahub Sync carry one. Filesystem targets are refused in a registered package. Loading a local filesystem plugin remains development-only behavior. | [V2](/v2/adapters/local-adapters#adapter-resolution-paths) · [V3](./develop/guides/adding-an-adapter.md) |
+| Operations | There was no service to operate. A run was whatever the operator started locally, and there were no durable run records. | The deployment has documented status, log, stop, restart, reset, and replacement procedures, a reconciliation procedure for a write whose outcome is unknown, and durable run records the client reads back. | [V2](/v2/reference/cache-layout) · [V3](./operations/compose-troubleshooting.mdx) |
+| Contributor workflow | Install the development dependencies, format, lint, type-check, and run the tests. | The same loop, plus the extras the service and orchestration imports need, a local Preview stack for the API and worker, and named test tiers that state what each one requires. | [V2](/v2/contributing#development-workflow) · [V3](./develop/knowledge/quality-gates.md) |
+
+Two boundaries are worth reading before you plan work around them. A package that names an
+adapter Infrahub Sync does not bundle is refused at registration, so a V2 setup that relied on
+a filesystem or third-party adapter has no complete registered route today. And a recorded
+delete stays recorded: reviewing a plan shows what the destination holds that the source does
+not, but applying it never removes those objects.
+
+## Before switching
+
+- **Start from fresh deployment state.** Use a new directory and let the deployment generate a
+  new identity and empty state. Do not copy an older deployment's instance files, operator
+  environment, or secrets, and do not point the new deployment at the old data.
+- **Register the configuration again.** A V2 `config.yml` is not a registered V3 version. Bring
+  its content into the package envelope, supply the credential values on the deployment, and
+  register the package.
+- **Review a new plan before you apply anything.** Treat the first V3 plan as the record of what
+  the run would change, whatever a previous V2 run did.
+
+No in-place state migration, rollback, backup, or restore procedure has been verified between
+the two lines, and starting a fresh deployment neither migrates nor cleans up anything an earlier
+version wrote.
+
+That is not the same as leaving your destination alone. The plan reads the destination as it finds
+it, so it can propose creates and updates against objects a V2 run wrote: an update carries the
+destination identity recorded when the plan was built, writes the mapped fields its payload
+carries, and replaces each relationship set it names rather than merging into it. Apply executes
+every reviewed operation except a delete — recorded deletes are never executed. Read the plan
+before you apply it. See
+[Planned writes and apply](./develop/knowledge/planned-write-and-apply.md) for what one operation
+does at the destination.
+
+## Where each action lives now
+
+| What you want to do | Current page |
+| --- | --- |
+| Install the client and reach a deployment | [Install Infrahub Sync](./installation.mdx) |
+| Start a deployment, or replace an older one | [Moving from an older version](./quickstart-compose.mdx#moving-from-an-older-version) |
+| Check what is qualified, and the product limits | [Supported platforms and limits](./operations/supported-platforms-and-limits.mdx) |
+| Write the configuration | [Create a sync project](./creating-a-sync-project.mdx) |
+| Understand the package envelope, versions, and credentials | [Configuration package](./configuration-package.mdx) |
+| Register, plan, review, apply, or run a confirmed sync | [Run a sync](./running-a-sync.mdx) |
+| Look up a command and its options | [Sync CLI](./reference/cli.mdx) |
+| Pick the adapter for a source system | [Choose an adapter](./adapters/choosing-an-adapter.mdx) |
+| Understand the custom-adapter boundary | [Local adapters](./adapters/local-adapters.mdx) |
+| Operate a running deployment | [Day 2 operations](./operations/day-2-operations.mdx) |
+| Set up a development environment | [Contributing](./contributing.mdx) |
+| Know what each test tier requires | [Testing tiers](./develop/guidelines/testing-tiers.md) |
