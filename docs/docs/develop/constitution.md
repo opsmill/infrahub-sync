@@ -213,8 +213,9 @@ This constitution is the authoritative reference for development standards in th
     - **MAJOR:** Principle removal or redefinition, or a backward-incompatible governance change.
     - **MINOR:** A new principle or materially expanded guidance.
     - **PATCH:** Clarifications, wording fixes, and non-semantic refinements.
-- **Runtime guidance:** Day-to-day standards live in `AGENTS.md` and `dev/` (guides,
-  guidelines, knowledge, and ADRs); this constitution sets the principles those documents
+- **Runtime guidance:** Day-to-day standards live in `AGENTS.md` and `docs/docs/develop/`
+  (guides, guidelines, and knowledge), with decision records in `dev/adr/`; this constitution
+  sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
 **Version**: 1.0.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-06-22
