@@ -7,6 +7,23 @@ Infrahub instance is the destination.
 The CLI does not load this adapter from the caller's filesystem. A Sync service worker
 must have the package and custom adapter installed in its execution environment.
 
+## This package does not register as shipped
+
+**`mockdb` has no adapter capability declaration, so registering this package is refused.**
+Configuration validation resolves the package's `source.name` against a closed registry that
+holds only the adapters bundled with infrahub-sync, and `mockdb` is not one of them.
+Registration fails before anything is stored, with the finding `missing-adapter` at
+`/configuration/source` and the message `adapter 'mockdb' has no configuration capability
+declaration`. Installing the adapter somewhere a worker can import it does not change that,
+because the refusal is about the missing declaration rather than about whether the class can
+be imported.
+
+Treat this directory as a shape reference and a deterministic source fixture. The commands
+below are the correct current forms for the register-to-apply cycle, and they are what you
+would run for a package whose adapter does ship with infrahub-sync. For the supported route
+and the recorded reproduction of this refusal, see
+[Adding an adapter](../../docs/docs/develop/guides/adding-an-adapter.md).
+
 ## Register and review
 
 Connect the CLI to that service and register the package:
@@ -22,8 +39,9 @@ uv run infrahub-sync diff --config-id <config-id> --version <version> \
 uv run infrahub-sync runs plan <run-id> --detail
 ```
 
-An empty destination produces five `InfraDevice` creates. Copy the `plan_checksum` value
-from the review output.
+An empty destination that matches the mapping produces five `InfraDevice` creates — one per
+record in `custom_adapter_src/mock_db.json`. A destination that already holds those devices
+produces fewer, or none. Copy the `plan_checksum` value from the review output.
 
 ## Apply the reviewed plan
 

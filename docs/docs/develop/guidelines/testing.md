@@ -9,7 +9,8 @@ title: "Testing"
 <!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
 
 Repository-wide rules for tests. [Testing adapters](testing-adapters.md) covers what an
-adapter must ship; this document covers what makes any test worth having.
+adapter must ship, and [Testing tiers](testing-tiers.md) covers which command runs which suite;
+this document covers what makes any test worth having.
 
 ### A passing test is not evidence — a killed mutation is
 
@@ -104,11 +105,13 @@ passed, and were found only by a second pass scoped to the remediation diff. See
 - Parametrize instead of looping; keep each test atomic and single-purpose.
 - Mark network and integration tests opt-in (`-m integration`); they must not run in the
   default suite.
-- Run `uv run pytest -q` before committing. `invoke lint` is not a test gate — see
+- Run `uv run invoke tests.tests-unit` before committing — the offline default, described in
+  [Testing tiers](testing-tiers.md). `invoke lint` is not a test gate; see
   [Quality gates](../knowledge/quality-gates.md).
 
 ### See also
 
+- [Testing tiers](testing-tiers.md) — which command runs which suite, and what a skip means.
 - [Testing adapters](testing-adapters.md) — the per-adapter coverage requirements.
 - [Testing an adapter](../guides/testing-an-adapter.md) — how to write and run them.
 - [Quality gates](../knowledge/quality-gates.md) — what the lint and format aggregates do.

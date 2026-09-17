@@ -4,7 +4,7 @@ title: "Testing an adapter"
 
 ## Testing an adapter
 
-> Part of: Develop > Guides | Related: [Testing adapters](../guidelines/testing-adapters.md), [Adding an adapter](adding-an-adapter.md)
+> Part of: Develop > Guides | Related: [Testing adapters](../guidelines/testing-adapters.md), [Testing tiers](../guidelines/testing-tiers.md), [Adding an adapter](adding-an-adapter.md)
 
 Step-by-step guide for writing and running an adapter's tests. It covers the mechanics —
 mocking, fixtures, commands — while [Testing adapters](../guidelines/testing-adapters.md)
@@ -13,8 +13,9 @@ defines what coverage is required.
 ### When to test
 
 Every new or changed adapter needs tests before it is merged. Write them alongside the
-adapter (Step 8 of [Adding an adapter](adding-an-adapter.md)), not afterward. The default
-suite must run offline, so tests mock the upstream system rather than calling it.
+adapter — it is the "Add tests" step of [Adding an adapter](adding-an-adapter.md) — not
+afterward. The offline default must stay green, so tests mock the upstream system rather than
+calling it.
 
 ### Prerequisites
 
@@ -105,8 +106,8 @@ and unknown model names raise clear errors rather than passing silently.
 #### Step 7: Run the suite
 
 ```bash
-uv run pytest -q tests/adapters/test_mysystem_loader.py
-uv run pytest -q                # full offline suite
+uv run pytest -q tests/adapters/test_mysystem_loader.py   # the module you are writing
+uv run invoke tests.tests-unit                            # the offline default
 ```
 
 ### Integration tests
@@ -123,20 +124,22 @@ def test_live_load(): ...
 Run them explicitly and only when credentials are available:
 
 ```bash
-uv run pytest -m integration
+uv run invoke tests.tests-integration
 ```
 
-Keep them out of the default run — `uv run pytest -q` must pass with no network and no secrets.
+Keep them out of the default run — `uv run invoke tests.tests-unit` must pass with no network
+and no secrets. [Testing tiers](../guidelines/testing-tiers.md) covers what the integration
+tier needs before it proves anything.
 
 ### Verification
 
-- `uv run pytest -q` passes offline, with no live system and no credentials.
+- `uv run invoke tests.tests-unit` passes offline, with no live system and no credentials.
 - The module skips cleanly (not errors) when the optional SDK is not installed.
 - `uv run invoke lint` is clean on the new test files.
 
 ### Quality checklist
 
-- [ ] Upstream client mocked; no network in the default suite.
+- [ ] Upstream client mocked; no network in the offline default.
 - [ ] Conversion covered: field mapping, `local_id`, identifiers, references (single and list).
 - [ ] Filters and transforms covered.
 - [ ] Cursor methods covered (tier, change filter, existing ids) if the adapter is incremental.
@@ -147,5 +150,6 @@ Keep them out of the default run — `uv run pytest -q` must pass with no networ
 ### Related resources
 
 - [Testing adapters](../guidelines/testing-adapters.md) — the required coverage and conventions.
+- [Testing tiers](../guidelines/testing-tiers.md) — which command runs which suite.
 - [Adding an adapter](adding-an-adapter.md) — where testing fits in the full procedure.
 - [Incremental sync and cache](../knowledge/incremental-and-cache.md) — the behavior to test.

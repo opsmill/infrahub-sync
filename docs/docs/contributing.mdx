@@ -68,6 +68,13 @@ Run the same command in an existing checkout. This project used pre-commit befor
 and blocks every commit. `--force` replaces that file. It also overwrites any other script at
 that path, so copy your own hook elsewhere first if you keep one there.
 
+### Find your way around the tree
+
+[Repository tour](develop/knowledge/repository-tour.md) maps the current modules — the
+command-line client, configuration admission, the service and its worker, plans, product
+storage, adapters, the cache and the engine — and separates them from the material that is
+development-only or historical. Start there before changing code you have not touched before.
+
 ## Development workflow
 
 Before committing any changes, run the following commands in order:
@@ -90,8 +97,9 @@ Run `uv run invoke check-310` before pushing as well: it builds its environments
 `.preview/check-310-venv`, leaves your active `.venv` alone, and reproduces the three CI legs your
 environment cannot reach — `ty` under the Python 3.10 excludes, and the unit tests on
 Python 3.10 both with the `prefect` extra and on a base install that has no service
-dependencies. If Python 3.10 is not installed, the task exits successfully without running
-the three legs. To install it, run `uv python install 3.10`.
+dependencies. If Python 3.10 is not installed, the task skips loudly and exits successfully,
+leaving all three legs unqualified. To install it, run `uv python install 3.10`. See
+[Testing tiers](develop/guidelines/testing-tiers.md).
 
 ### Validate the CLI
 
@@ -105,25 +113,29 @@ uv run infrahub-sync runs plan --help
 
 ### Running tests
 
-The offline gate is what a change has to keep green. It deselects the tests that need a
-running stack or an external service:
+The offline gate is what a change has to keep green. It is a single command, and it deselects
+every marker that needs a running stack, a live service or a Docker daemon:
 
 ```bash
-uv run pytest -m "not preview and not integration" -q
+uv run invoke tests.tests-unit
 ```
 
-See [Testing](develop/guidelines/testing.md) for the repository-wide test rules.
+See [Testing tiers](develop/guidelines/testing-tiers.md) for what each other tier needs, what
+it writes, and why a skipped check is not a pass. See
+[Testing](develop/guidelines/testing.md) for the repository-wide rules about individual tests.
 
 ### Running the full stack locally
 
-To run the Sync HTTP API, its Prefect worker, and a disposable Infrahub against your checkout, see the [local development stack](./development-stack.mdx).
+To run the Sync HTTP API, its Prefect worker, and a disposable Infrahub against your checkout, see the [local development stack](./development-stack.mdx). That page also holds the service
+development loop: the API has no auto-reload, so a code change needs `preview.down` followed
+by `preview.up`.
 
 The suite that exercises that stack is opt-in under the `preview` marker, and it skips
 rather than fails when the stack is not running:
 
 ```bash
 uv run invoke preview.up      # start the stack
-uv run invoke preview.smoke   # seed, then run `pytest -m preview tests/preview`
+uv run invoke preview.smoke   # seed, then run the preview smoke suite
 uv run invoke preview.down --volumes
 ```
 
@@ -213,15 +225,13 @@ Do not edit `CHANGELOG.md` or the version in `pyproject.toml` by hand. Both are 
 
 ## Adding a new adapter
 
-1. Create `infrahub_sync/adapters/<name>.py` following existing adapter patterns
-2. Add connection configuration schema and an example under `examples/`
-3. Provide a `diff` pathway before enabling `sync`
-4. Document required environment variables and expected error cases
-5. Create a documentation page in `docs/docs/adapters/`
-6. Add the adapter to the sidebar in `docs/sidebars.ts`
+[Adding an adapter](develop/guides/adding-an-adapter.md) is the single procedure. It covers the
+connector itself, the capability declaration that makes a package naming it admissible, the two
+conformance tests that guard that declaration, the example and its registry envelope, the
+documentation page, and the read-only `diff` validation to run before any write.
 
-For the complete authoring procedure, including the required read-only `diff` validation,
-see [Adding an adapter](develop/guides/adding-an-adapter.md).
+It also records the current limit for an adapter that does not ship in this repository, which
+is worth reading before you start.
 
 ## Invoke tasks
 

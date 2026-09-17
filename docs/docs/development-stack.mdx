@@ -11,6 +11,11 @@ Everything the stack creates is disposable, and every credential it uses is a pu
 local default. Never point any value on this page at a shared or internet-facing
 instance.
 
+**Verified 2026-09-16 against source revision `61b6a1b`.** The commands, ports, paths and
+restart behavior below were derived by reading
+[`tasks/preview.py`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/tasks/preview.py)
+and `development/preview.env`. They were not established by a live replay of the stack.
+
 ## Install
 
 The stack needs Docker, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13.
@@ -53,6 +58,108 @@ Two commands write, and each says what it will write before writing:
   and drives real plan and apply runs against `preview-smoke`.
 
 A clean `preview.up` followed by `preview.smoke` therefore works without a separate seed.
+
+## The service development loop
+
+This is the loop for working on `infrahub_sync/service/` itself: start the stack, drive it,
+change code, get the change running, and tear it down.
+
+### Start
+
+```bash
+uv sync --extra dev --extra prefect --extra service
+uv run invoke preview.up
+```
+
+`preview.up` starts the containers and waits for Infrahub and Prefect to answer, refuses if it
+finds retired state, creates the Prefect work pool, starts the Prefect worker, applies the
+service deployment, starts the Sync API, and waits for it to serve its OpenAPI document. It
+then prints the addresses, the bearer principals, the configuration directory and the runtime
+state directory.
+
+Two details of that startup shape the rest of the loop:
+
+- **The worker runs from its own empty directory**, `.preview/worker-cwd`. Prefect puts the
+  working directory at the front of `sys.path` when it resolves a deployment's module
+  entrypoint, so a worker started at the repository root would import your checkout instead of
+  the installed distribution. Starting it from an empty directory is what proves the service resolves its
+  flow as an installed module.
+- **The configuration directory the Sync API reads is the repository's `examples/` directory.**
+  That is where it looks for configurations, so the example packages are available without
+  copying anything.
+
+### Inspect
+
+```bash
+uv run invoke preview.status                     # containers, host processes, endpoints
+uv run invoke preview.logs                       # the Sync API log, last 50 lines
+uv run invoke preview.logs -n prefect-worker     # the worker's log
+uv run invoke preview.logs -n prefect-worker --lines 500
+```
+
+`preview.status` prints each container, then each host process as `running (pid N)` or
+`stopped`, then the three addresses. The two host processes are `sync-api` and
+`prefect-worker`; their logs and process identifiers live under `.preview/`.
+
+### Edit: there is no auto-reload
+
+**A code change does not reach the running stack by itself.** Two things combine to make that
+true, and neither is a defect:
+
+- The Sync API is started under `uvicorn` without `--reload`, so it does not watch your files.
+- The task that starts a process checks first and returns early when that process is already
+  running, printing `already running`. So re-running `preview.up` after an edit leaves the old
+  process in place.
+
+To run changed service code, stop and start:
+
+```bash
+uv run invoke preview.down
+uv run invoke preview.up
+```
+
+`preview.down` without `--volumes` stops the two host processes and the containers and
+**keeps every data volume**. Your Infrahub instance, the service records and the artifacts all
+survive, so the cycle above costs a restart and not a re-seed.
+
+### Stop and restart, and the one destructive reset
+
+| Command | Host processes | Containers | Data volumes |
+| --- | --- | --- | --- |
+| `uv run invoke preview.down` | Stopped | Stopped | **Kept** |
+| `uv run invoke preview.down --volumes` | Stopped | Stopped | **Deleted** |
+
+`--volumes` is the destructive form. It deletes every data volume in the stack, so the
+Infrahub instance, the service records and the artifacts are all gone and the next `preview.up`
+starts empty. Use it when you want a clean slate or when the startup refusal on retired state
+tells you to — not as part of the ordinary edit cycle.
+
+### Smoke
+
+```bash
+uv run invoke preview.smoke
+```
+
+Seeds, then runs the smoke suite against the running stack. It writes: see
+[Starting the stack writes nothing](#starting-the-stack-writes-nothing) above for exactly what.
+Every test in the suite skips when the stack is unreachable, so read the collection summary
+before treating a green run as evidence. [Testing tiers](develop/guidelines/testing-tiers.md)
+covers what each suite proves.
+
+### Change a port or a token
+
+Put the override in `development/preview.local.env`, which the tasks read after the shipped
+`development/preview.env` and which Git ignores. Never edit `preview.env` for a personal
+change. Overrides take effect at the next `preview.up`, so stop the stack first if it is
+running.
+
+### Tear the stack down
+
+```bash
+uv run invoke preview.down --volumes
+```
+
+Removes everything the stack created. The `.preview/` directory keeps its logs.
 
 ## Addresses
 
@@ -125,12 +232,14 @@ only within one worker, and the shared branch would take concurrent writes.
 
 Every test in the suite skips, rather than fails, when the stack is not reachable.
 
-The rest of the test suite needs no stack, and excludes the markers that write to one:
+The rest of the test suite needs no stack. Run the offline default, which deselects every
+marker that writes to one:
 
 ```bash
-uv run pytest -m "not preview and not integration" -q
+uv run invoke tests.tests-unit
 ```
 
-Run that form while the stack is up. A plain `pytest -q` would collect the smoke suite
-against your running environment, and the `integration` tests write to whatever Infrahub
-instance the ambient settings name.
+Use that form while the stack is up. A plain `pytest -q` would collect the smoke suite against
+your running environment, and the `integration` tests write to whatever Infrahub instance the
+ambient settings name. [Testing tiers](develop/guidelines/testing-tiers.md) is the single
+description of each suite, its prerequisites and what a skip means.
