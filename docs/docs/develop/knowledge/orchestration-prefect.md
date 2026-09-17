@@ -1,6 +1,10 @@
-# Prefect orchestration
+---
+title: "Prefect orchestration"
+---
 
-> Part of: `dev/knowledge/` | Related: [The shared execution surface](execution-surface.md)
+## Prefect orchestration
+
+> Part of: Develop > Knowledge | Related: [The shared execution surface](execution-surface.md)
 
 <!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
 
@@ -8,7 +12,7 @@
 or one confirmed sync, and a serve entrypoint that exposes it as a locally served
 deployment. It is installed by the optional `prefect` extra, and nothing in the base
 package imports it — see
-[ADR 9](../adr/0009-optional-integrations-live-in-their-own-package.md).
+[ADR 9](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0009-optional-integrations-live-in-their-own-package.md).
 
 Two packages under `infrahub_sync/` import `prefect`, and both are optional: this one, and
 `infrahub_sync/service/` below, which the `service` extra installs. No other package under
@@ -26,7 +30,7 @@ at commit `97465e75137f6121d0377cd637383cfb3530d734`. The Sync HTTP service owns
 public contract; Prefect remains authoritative for live execution, logs, retries, workers,
 and cancellation.
 
-## The flow
+### The flow
 
 ```python
 @flow(name="infrahub-sync")
@@ -79,7 +83,7 @@ read the configuration directory from the environment, call `run_remote_request`
 summary line, return a dict. Exceptions propagate — Prefect marks the run FAILED and stores
 the sanitized message as the state message.
 
-### The summary line is the supported result surface
+#### The summary line is the supported result surface
 
 ```python
 SUMMARY_LINE_FORMAT = "run %s finished: status=%s changed=%s summary=create:%d,update:%d,delete:%d artifact=%s"
@@ -93,7 +97,7 @@ change for consumers.
 
 Result retrieval through Prefect's own result persistence is not part of the contract.
 
-### The return value is built by hand, not with `asdict`
+#### The return value is built by hand, not with `asdict`
 
 The flow returns an `asdict`-*shaped* seven-key dict built explicitly:
 
@@ -107,7 +111,7 @@ wraps `summary` in a `MappingProxyType`, which is not deep-copyable —
 `TypeError: cannot pickle 'mappingproxy' object`. Every successful run would fail at return
 time. The reason is recorded at the construction site so nobody simplifies it back.
 
-## The log bridge
+### The log bridge
 
 `RunLoggerBridge` is a `logging.Handler` attached to `logging.getLogger("infrahub_sync")`
 immediately before the surface call and removed in a `finally`. Each record is re-logged
@@ -131,7 +135,7 @@ the other run's log) and one run's `finally` would restore the level under the o
 flows are ever run in-process, the bridge must key on the current run and the level mutation
 must be reference-counted.
 
-## The serve entrypoint
+### The serve entrypoint
 
 Run as `python -m infrahub_sync.orchestration.serve`. It:
 
@@ -155,7 +159,7 @@ its `config.yml` uses repository-root-relative paths resolved against the servin
 working directory, and the cache root defaults to `Path.cwd()/.infrahub-sync-cache`. Started
 elsewhere, the example degrades to a silently empty plan or an adapter import failure.
 
-## Remote interaction
+### Remote interaction
 
 Everything a caller does goes through Prefect's own API under `$PREFECT_API_URL`.
 
@@ -174,7 +178,7 @@ refused at run *creation*: `POST … /create_flow_run` with `"operation": "apply
 **HTTP 409** and **no flow run object is created at all**. Input validation for that
 parameter therefore never reaches the flow body.
 
-## Prefect-specific traps
+### Prefect-specific traps
 
 Recorded because each cost real measurement time.
 
@@ -192,9 +196,9 @@ Recorded because each cost real measurement time.
 - **`dataclasses.asdict()` cannot copy a `MappingProxyType` field**, as above.
 - **Pinning the version is not optional here.** The extra pins `prefect==3.8.1` exactly,
   because the base dependency set and Prefect's transitive `redis` requirement interact —
-  see [ADR 8](../adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md).
+  see [ADR 8](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md).
 
-## See also
+### See also
 
 - [The shared execution surface](execution-surface.md) — what the flow actually calls.
 - [Quality gates](quality-gates.md) — the two CI test legs this integration adds.

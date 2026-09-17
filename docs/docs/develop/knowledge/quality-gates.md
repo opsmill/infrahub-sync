@@ -1,6 +1,10 @@
-# Quality gates
+---
+title: "Quality gates"
+---
 
-> Part of: `dev/knowledge/` | Related: [Testing](../guidelines/testing.md)
+## Quality gates
+
+> Part of: Develop > Knowledge | Related: [Testing](../guidelines/testing.md)
 
 <!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
 
@@ -8,7 +12,7 @@ What `invoke format` and `invoke lint` actually run, in what order, and what a p
 does and does not mean. Both aggregates are executable gates on a clean checkout; this page
 documents their ordering, inherited Pylint baseline, and archive-formatting boundary.
 
-## What the aggregates run
+### What the aggregates run
 
 `invoke lint` (`tasks/__init__.py`) calls `docs.lint` and then `linter.lint_all`:
 
@@ -29,7 +33,7 @@ If you need a specific leg's status, invoke that leg directly.
 `invoke format` calls `docs.format` (`rumdl fmt .`) and then `linter.format_all`
 (`ruff format .` then `ruff check --fix .`).
 
-## Archived specification formatting is intentionally excluded
+### Archived specification formatting is intentionally excluded
 
 `rumdl fmt .` misparses some wrapped lines in archived specification artifacts as ATX
 headings, drops text, and cascades a heading demotion through the rest of the file.
@@ -44,13 +48,13 @@ Use `rumdl check .` and fix violations by hand. When you only want the Python fo
 `invoke linter.format` — which is the *formatter* aggregate (`ruff format` + `ruff check
 --fix`), despite the name suggesting otherwise.
 
-## Namespaced aggregates
+### Namespaced aggregates
 
 `invoke linter.lint` runs the four Python/YAML/type legs without the documentation check.
 `invoke linter.format` runs the Python formatter only. The top-level `invoke lint` and
 `invoke format` commands add the documentation legs before those namespaced aggregates.
 
-## The inherited pylint baseline
+### The inherited pylint baseline
 
 Raw `pylint infrahub_sync/` reports inherited findings. Measured directly on this repository
 at commit `697b2f4`, using Python 3.13.3, Pylint 4.0.5, and an environment synced with
@@ -79,7 +83,7 @@ would add import-error diagnostics rather than remove findings.
 This keeps `invoke lint` green on the recorded baseline without disabling any diagnostic in
 Pylint configuration or allowing the inherited counts to grow.
 
-## Measuring a no-regression claim
+### Measuring a no-regression claim
 
 Two mistakes cost real time on this repository, both worth avoiding by rule:
 
@@ -100,7 +104,7 @@ Two mistakes cost real time on this repository, both worth avoiding by rule:
   has repeated basenames across adapter directories (`infrahub/sync_adapter.py`,
   `netbox/sync_adapter.py`), and flattening makes the collision look like a diff.
 
-## Regenerating an example rewrites committed files
+### Regenerating an example rewrites committed files
 
 The internal `render_adapter` helper is the only way to regenerate a committed example, and
 it **rewrites committed files**. The generator sorts schema nodes, attributes, and
@@ -111,12 +115,12 @@ the committed example.
 Review the diff after a live regeneration. Preserve intentional schema-driven changes;
 restore incidental generated-file changes before committing unrelated work.
 
-## CI
+### CI
 
 Python 3.11–3.13 linting runs in an environment synced with
 `--extra dev --extra prefect --extra service`. The type gate checks the full tree except
 the frozen vendored upstream tests (excluded via `[tool.ty.src]`); the former private
-`opsmill/prefect-extras` Git dependency is vendored in-repo, so no special access is
+`opsmill/prefect-extras` Git dependency is vendored in the repository, so no special access is
 required.
 
 Python 3.10 linting uses `--extra dev --extra prefect` and runs:
@@ -131,13 +135,13 @@ the same command from the active Python version.
 
 Tests run in **two** legs — one with the `prefect` extra, one without, where the base leg
 first asserts Prefect is genuinely not importable. See
-[ADR 9](../adr/0009-optional-integrations-live-in-their-own-package.md).
+[ADR 9](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0009-optional-integrations-live-in-their-own-package.md).
 
 Installing the extra has one visible side effect on the type gate: it pulls transitive
 packages that resolve imports the base install cannot, so a `# ty: ignore[unresolved-import]`
 that is necessary without the extra can be reported as an unused ignore with it.
 
-## See also
+### See also
 
 - [Testing](../guidelines/testing.md) — what tests must assert before a gate means anything.
 - `AGENTS.md` — the required development workflow and approval checklist.

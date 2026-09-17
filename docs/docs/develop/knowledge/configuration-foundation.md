@@ -1,4 +1,8 @@
-# Configuration foundation
+---
+title: "Configuration foundation"
+---
+
+## Configuration foundation
 
 The v3 configuration foundation separates declared configuration from runtime secrets.
 `infrahub_sync.configuration.ConfigurationPackage` is a strict versioned envelope. Its
@@ -41,7 +45,7 @@ accepted by the per-path check and then refused by the walk as not credential-be
 Any further component that renders these pointers — registry persistence, an API
 response, a CLI diff — calls that function rather than formatting its own.
 
-## Registry persistence and identity
+### Registry persistence and identity
 
 The product store owns an append-only registry. A configuration has a server-generated
 `config_id` and immutable versions numbered by an integer `registry_version` starting at 1 and
@@ -68,7 +72,7 @@ Credential validation happens at the `ProductProjection` boundary, not in the st
 matching where redaction already lives. A caller reaching for `SQLiteRunStore` or
 `PostgreSQLRunStore` directly bypasses it; neither is part of the package's public surface.
 
-### Schema migration and dialect
+#### Schema migration and dialect
 
 Migration is additive: the store introspects the existing column set and emits
 `ALTER TABLE ADD COLUMN` only for what is missing. There is no schema version table, no rebuild,
@@ -80,7 +84,7 @@ statement to see whether it fails: the test suite's PostgreSQL profile is a SQLi
 `%s`-to-`?` adapter, so a placeholder check misidentifies it, and provoking an error on a
 connection mid-DDL aborts the transaction and discards uncommitted `CREATE TABLE` statements.
 
-### The run-binding columns are inert on purpose
+#### The run-binding columns are inert on purpose
 
 `product_runs` carries nullable `config_id`, `registry_version`, and `package_checksum` columns
 that **no code path reads or writes**, and `ProductRun` has no matching fields. They are not dead
@@ -95,7 +99,7 @@ and `BEFORE UPDATE` triggers, PostgreSQL a `CHECK` constraint. Refusing the part
 a whole family of later "which field wins" ambiguities. Both triggers must be present for SQLite
 enforcement to hold, so the existence check requires both before it skips recreation.
 
-## Declaring adapter configuration capabilities
+### Declaring adapter configuration capabilities
 
 Every adapter accepted by the registry needs an
 `AdapterConfigurationCapabilities` record. The declaration is connection-free: it names

@@ -6,6 +6,10 @@ import ReferenceLink from "../../src/components/Card";
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
+## V3 route
+
+Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure.
+
 <!-- vale off -->
 ## What is Infrahub?
 <!-- vale on -->
@@ -190,15 +194,6 @@ This allows you to:
 | Only `source` specified | CoreAccountGroup | CoreAccount (source name) |
 | Only `owner` specified | CoreAccount (source name) | CoreAccountGroup |
 | Both specified | CoreAccountGroup | CoreAccountGroup |
-
-## Registering the package
-
-Register the example package before creating a run:
-
-```bash
-uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
-  --reason "register NetBox import"
-```
 
 ## Common issues and troubleshooting
 

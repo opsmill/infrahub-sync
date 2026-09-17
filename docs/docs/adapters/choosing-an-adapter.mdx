@@ -2,6 +2,10 @@
 title: Choose an adapter
 ---
 
+## V3 route
+
+Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure. The custom-adapter example package is `examples/custom_adapter/package.yml`.
+
 Infrahub Sync includes adapters for the most common infrastructure systems and a Generic REST API adapter for everything else. For systems with non-standard APIs, build a custom adapter.
 
 ## How to choose
@@ -54,7 +58,7 @@ A custom adapter is the right choice when the Generic REST API adapter can't han
 - **Complex pagination or query patterns.** The data access requires logic beyond what configuration can express — for example, conditional pagination based on response content.
 - **Data transformations that exceed Jinja filter capabilities.** The source data requires substantial preprocessing before mapping into `diffsync` models.
 
-A custom adapter is a Python class implementing the same interface as the pre-built adapters. Load it from a filesystem path, a Python module path, or an installed entry point. See [Local adapters](./local-adapters.mdx) for how to build and load one.
+A custom adapter is a Python class implementing the same interface as the pre-built adapters. A registered V3 package may declare it only as an installed dotted import target or installed entry point, and only for the source side. See [Local adapters](./local-adapters.mdx) for the registered-worker contract and development-only loader behavior.
 
 If you build a custom adapter for a system other teams might use, consider contributing it back to the Infrahub Sync repository.
 

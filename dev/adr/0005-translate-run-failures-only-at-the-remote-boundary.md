@@ -64,7 +64,7 @@ match what ruff actually reports rather than to be uniform:
 
 The one form that is `BLE001`-clean, a plain `raise … from exc`, is exactly what the
 whole-cause-chain redaction rule forbids: a traceback renders every link, so an unredacted
-cause leaks. See [Secret redaction](../guidelines/secret-redaction.md).
+cause leaks. See [Secret redaction](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/develop/guidelines/secret-redaction.md).
 
 Anything escaping configuration resolution other than a `RunValidationError` is wrapped
 here as well — the resolution call sits inside the boundary's `try` — because the one

@@ -6,6 +6,10 @@ import ReferenceLink from "../../src/components/Card";
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
+## V3 route
+
+Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure.
+
 <!-- vale off -->
 ## What is Peering Manager?
 <!-- vale on -->
@@ -47,7 +51,7 @@ infrahubctl schema load *.yml
 ## Configuration
 
 `infrahub-sync` allows defining what gets synchronized from a source to a destination.
-Included in the examples there is two `config.yml` files that matches the example schema.
+The two shipped `config.yml` files are legacy mapping inputs that match the example schema; wrap the selected mapping in a V3 configuration-package envelope before registration.
 
 <ReferenceLink title="Source config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/peering-manager_to_infrahub/config.yml" openInNewTab />
 <ReferenceLink title="Destination config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/infrahub_to_peering-manager/config.yml" openInNewTab />

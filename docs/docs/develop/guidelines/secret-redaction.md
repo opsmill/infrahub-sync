@@ -1,6 +1,10 @@
-# Secret redaction
+---
+title: "Secret redaction"
+---
 
-> Part of: `dev/guidelines/` | Related: [The shared execution surface](../knowledge/execution-surface.md), [Writing an adapter](writing-an-adapter.md)
+## Secret redaction
+
+> Part of: Develop > Guidelines | Related: [The shared execution surface](../knowledge/execution-surface.md), [Writing an adapter](writing-an-adapter.md)
 
 <!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
 
@@ -13,7 +17,7 @@ The reference implementation is `collect_secret_values`, `redact` and
 `sanitize_exception_chain` in `infrahub_sync/execution.py`. Reuse them rather than writing a
 second collector.
 
-## Redact at the boundary, not at the source
+### Redact at the boundary, not at the source
 
 **Sanitize where the message leaves the process, not where the exception is raised.**
 
@@ -21,9 +25,9 @@ An adapter's own exception text is fine locally — the CLI operator already has
 credentials. Rewriting adapter messages to be remote-safe changes CLI behaviour and spreads
 the obligation across every module. Keep it in one function, at the boundary, and leave the
 adapters alone. See
-[ADR 5](../adr/0005-translate-run-failures-only-at-the-remote-boundary.md).
+[ADR 5](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0005-translate-run-failures-only-at-the-remote-boundary.md).
 
-## Redact the whole cause chain
+### Redact the whole cause chain
 
 **A traceback renders every link, so redacting the wrapper message is not enough.**
 
@@ -46,7 +50,7 @@ Both permitted forms make ruff report `BLE001` at the broad `except`, and the on
 does not is the leaky one. A targeted `# noqa: BLE001` with a comment naming the reason is
 correct there.
 
-## Collect from the environment by name shape — and from every value's URL userinfo
+### Collect from the environment by name shape — and from every value's URL userinfo
 
 **Credentials arrive in endpoint variables, not only in credential-named ones.**
 
@@ -64,7 +68,7 @@ A name is credential-shaped when it *contains* `TOKEN`, `PASSWORD`, `PASSWD`, `S
 `CREDENTIAL` or `APIKEY`, *ends with* `_KEY` or `_AUTH`, or *equals* `KEY`, `AUTH` or
 `INFRAHUB_API_TOKEN`.
 
-## Match key names at a boundary, never as bare substrings
+### Match key names at a boundary, never as bare substrings
 
 **An over-broad match shreds the diagnostics the boundary exists to preserve.**
 
@@ -85,7 +89,7 @@ The same three boundary rules apply to configuration settings keys, lowercase: *
 `token`, `password`, `passwd`, `secret`, `credential`, `apikey` or `authorization`, *ends
 with* `_key` or `_auth`, or *equals* `key` or `auth`.
 
-## Walk settings recursively, with a cycle guard and a depth cap
+### Walk settings recursively, with a cycle guard and a depth cap
 
 **Secrets nest, and YAML can be self-referential.**
 
@@ -99,7 +103,7 @@ credential as a top-level one. Along the way:
   beneath it into a redaction target.
 - **Guard cycles and cap depth.** `yaml.safe_load` builds self-referential structures from
   aliases (`token: &A\n  nested: *A`). An unbounded walk turns that into a `RecursionError`
-  that fails *every* run of that configuration, with nothing pointing at the config's shape
+  that fails *every* run of that configuration, with nothing pointing at the configuration's shape
   as the cause. Guard on `(id(container), context)` and stop descending at a fixed depth
   (currently 64) rather than raising.
 - **Coerce non-string scalars** (`int`, `float`, `Decimal`) so a numeric credential is still
@@ -109,7 +113,7 @@ credential as a top-level one. Along the way:
   variables the adapter reads instead of an inline value. Collect the **values** those names
   point at, never the names.
 
-## Drop values below a length floor
+### Drop values below a length floor
 
 **A short value turns redaction into a substring shredder.**
 
@@ -120,7 +124,7 @@ characters are dropped. No real credential is that short, so dropping them canno
 Replace longest values first, so a secret that contains another collected value is fully
 covered.
 
-## Never chain a validation library's raw detail
+### Never chain a validation library's raw detail
 
 **pydantic's `input_value` echo can render the file it failed on.**
 
@@ -128,7 +132,7 @@ A configuration parse failure must name the logical name and, at most, the file 
 chain the original error verbatim: the echoed input can carry the file's contents, including
 inline credentials no collector ever saw.
 
-## Anti-patterns
+### Anti-patterns
 
 | Anti-pattern | Do instead |
 |---|---|
@@ -140,7 +144,7 @@ inline credentials no collector ever saw.
 | Chaining a pydantic `ValidationError` outward | Name the logical name and file path only |
 | Rewriting adapter messages to be remote-safe | Redact once, at the boundary |
 
-## Verifying it
+### Verifying it
 
 Seed canary credential values into the environment and the configuration, drive a failing
 run, and scan everything the remote caller can see — parameters, results, logs, state
@@ -152,7 +156,7 @@ its own diff. The suite it was written against will pass either way: both a miss
 variable and an over-collecting substring match were introduced by a remediation whose tests
 were all green. See [Testing](testing.md).
 
-## See also
+### See also
 
 - [The shared execution surface](../knowledge/execution-surface.md) — where the boundary is.
 - [Writing an adapter](writing-an-adapter.md) — credential handling inside an adapter.

@@ -1,13 +1,17 @@
-# Testing
+---
+title: "Testing"
+---
 
-> Part of: `dev/guidelines/` | Related: [Testing adapters](testing-adapters.md), [Quality gates](../knowledge/quality-gates.md)
+## Testing
+
+> Part of: Develop > Guidelines | Related: [Testing adapters](testing-adapters.md), [Quality gates](../knowledge/quality-gates.md)
 
 <!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
 
 Repository-wide rules for tests. [Testing adapters](testing-adapters.md) covers what an
 adapter must ship; this document covers what makes any test worth having.
 
-## A passing test is not evidence — a killed mutation is
+### A passing test is not evidence — a killed mutation is
 
 **For contract-bearing behaviour, the acceptance criterion is that breaking the code breaks a
 test.**
@@ -27,7 +31,7 @@ The procedure, when you add or fix a test for behaviour something else depends o
 Adding an assertion and declaring the gap closed is not the same thing, and the difference is
 not visible in a coverage report.
 
-## Assert the negative in a fresh process
+### Assert the negative in a fresh process
 
 **An in-process `sys.modules` assertion cannot prove an import did not happen.**
 
@@ -49,9 +53,9 @@ Static import-graph checks are collection-safe and can stay in-process.
 **Pair an "optional dependency" claim with a CI leg where it is genuinely absent**, and have
 that leg *assert the absence* before running the suite — otherwise it silently becomes a
 second full-extra run the day the lockfile changes. See
-[ADR 9](../adr/0009-optional-integrations-live-in-their-own-package.md).
+[ADR 9](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0009-optional-integrations-live-in-their-own-package.md).
 
-## Never reimplement a contract algorithm in a test
+### Never reimplement a contract algorithm in a test
 
 **Call the shared helper on both sides of a comparison.**
 
@@ -59,7 +63,7 @@ A test that recomputes a fingerprint, a digest, or a canonical form is testing i
 When the definition moves, the copy silently keeps asserting the old contract. Import the
 helper.
 
-## Isolate external state completely, and verify the isolation
+### Isolate external state completely, and verify the isolation
 
 **Redirect every state location the tool uses, not the one that is documented.**
 
@@ -71,7 +75,7 @@ in a comment which one covers what.
 The same rule applies to processes and ports: start what you need on a loopback address, and
 confirm afterwards that it is gone.
 
-## Mark private test seams as private, and keep production callers off them
+### Mark private test seams as private, and keep production callers off them
 
 **A sanctioned seam is prefixed, documented, and never set by the real caller.**
 
@@ -85,7 +89,7 @@ Prefer a `Protocol` over `Callable[..., X]` for an injected callable whose keywo
 matter: the call shape becomes part of the type, so a rename in the real implementation is a
 type error rather than a runtime `TypeError` inside the code you were protecting.
 
-## Review a remediation over its own diff
+### Review a remediation over its own diff
 
 **A fix written against a green suite is validated by nothing.**
 
@@ -95,7 +99,7 @@ and an unbounded recursion in this repository were introduced by a remediation w
 passed, and were found only by a second pass scoped to the remediation diff. See
 [Secret redaction](../guidelines/secret-redaction.md).
 
-## Conventions
+### Conventions
 
 - Parametrize instead of looping; keep each test atomic and single-purpose.
 - Mark network and integration tests opt-in (`-m integration`); they must not run in the
@@ -103,7 +107,7 @@ passed, and were found only by a second pass scoped to the remediation diff. See
 - Run `uv run pytest -q` before committing. `invoke lint` is not a test gate — see
   [Quality gates](../knowledge/quality-gates.md).
 
-## See also
+### See also
 
 - [Testing adapters](testing-adapters.md) — the per-adapter coverage requirements.
 - [Testing an adapter](../guides/testing-an-adapter.md) — how to write and run them.

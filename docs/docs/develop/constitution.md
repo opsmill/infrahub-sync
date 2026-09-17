@@ -1,3 +1,7 @@
+---
+title: Project constitution
+---
+
 <!--
 SYNC IMPACT REPORT
 Version change: 0.0.0 (unfilled template) → 1.0.0
@@ -15,16 +19,18 @@ Templates requiring updates:
 Follow-up TODOs: None
 -->
 
-# Infrahub Sync Constitution
+## Project constitution
 
 `infrahub-sync` synchronizes data between infrastructure sources and destinations
 (Infrahub, NetBox, Nautobot, ACI, Prometheus, and others) through per-system adapters
 and a core sync engine. Because every `sync` writes to a live system of record, the
 principles below put safety, reproducibility, and connector consistency ahead of speed.
 
-## Core Principles
+### Core principles
 
-### I. Read-Only / Dry-Run by Default
+<!-- vale Infrahub.sentence-case = NO -->
+
+#### I. Read-Only / Dry-Run by Default
 
 The non-mutating path is the default path, and applying changes is always a deliberate act.
 
@@ -37,10 +43,10 @@ The non-mutating path is the default path, and applying changes is always a deli
 - New mutating behavior MUST ship behind explicit flags, never as implicit defaults.
 
 **Rationale:** A sync writes to infrastructure systems of record. Making the safe path the
-easy path — and every destructive action a reviewed choice — is what prevents an accidental
+default path — and every destructive action a reviewed choice — is what prevents an accidental
 command from rewriting production data.
 
-### II. Sync Idempotency & Safety
+#### II. Sync Idempotency & Safety
 
 A sync reconciles a source into a destination, and reconciliation MUST be safe to re-run.
 
@@ -56,14 +62,14 @@ A sync reconciles a source into a destination, and reconciliation MUST be safe t
 error handling are what prevent duplicate objects, silent data loss, and corruption of the
 destination system of record.
 
-### III. Adapter Symmetry & Pattern Consistency
+#### III. Adapter Symmetry & Pattern Consistency
 
 Adapters are the primary extension point; every connector MUST honor the same contract.
 
 - A new adapter MUST live in `infrahub_sync/adapters/<name>.py` and follow the existing
   adapter patterns rather than inventing new structure.
 - It MUST provide a `diff` pathway before `sync` is enabled.
-- It MUST ship a connection config schema and a sanitized example under `examples/`.
+- It MUST ship a connection configuration schema and a sanitized example under `examples/`.
 - It MUST document required environment variables and expected error cases, and add a page
   under `docs/docs/adapters/`.
 - `diff` / `sync` / `apply` MUST flow through the core sync engine (`potenda`);
@@ -73,7 +79,7 @@ Adapters are the primary extension point; every connector MUST honor the same co
 reviewable against a known shape, and guarantee a read-only pathway exists before any
 write path is exposed.
 
-### IV. Type Safety & Explicit Contracts
+#### IV. Type Safety & Explicit Contracts
 
 The type system enforces correctness at the boundaries where data crosses systems.
 
@@ -89,27 +95,27 @@ The type system enforces correctness at the boundaries where data crosses system
 shapes, missing data, unhandled API errors — before they reach a live system, and they keep
 adapters self-documenting.
 
-### V. Test Discipline
+#### V. Test Discipline
 
 Features and fixes ship with tests at the right level, written alongside the change — not deferred.
 
 - Add unit tests for `utils` and adapter edge cases: timeouts, 401/403, empty pages, pagination.
-- Prefer parametrized tests over loops for config parsing and adapter variants.
-- Mark network/integration tests opt-in (e.g. `-m integration`); they MAY require running servers.
+- Prefer parametrized tests over loops for configuration parsing and adapter variants.
+- Mark network/integration tests opt-in (for example, `-m integration`); they MAY require running servers.
 - Tests MUST be atomic and single-purpose. Run `uv run pytest -q`.
 
 **Rationale:** Adapters touch many external APIs with brittle edge cases. Tests at the
 boundary are the cheapest place to catch auth, pagination, and empty-response bugs — long
 before a sync hits production.
 
-### VI. Security, Secrets & Input Boundaries
+#### VI. Security, Secrets & Input Boundaries
 
 Security is enforced at the boundary, and secrets never leak.
 
 - Credentials MUST come from environment variables or a secret manager — never committed,
   printed, or logged.
 - Never print or guess secrets; tracebacks and structured logs MUST NOT contain credentials.
-- Example configs MUST be authentic but sanitized — no real tokens, internal hostnames as
+- Example configurations MUST be authentic but sanitized — no real tokens, internal hostnames as
   placeholders.
 - Treat external input (API responses) defensively and validate it; error messages MUST NOT
   leak internal details.
@@ -117,14 +123,14 @@ Security is enforced at the boundary, and secrets never leak.
 **Rationale:** `infrahub-sync` holds credentials for multiple systems of record. A single
 leaked token or logged secret is a cross-system breach, so secret hygiene is non-negotiable.
 
-### VII. Simplicity & Maintainability
+#### VII. Simplicity & Maintainability
 
 Prefer the simplest solution that works and matches the patterns already in the codebase.
 
 - YAGNI: build what the task needs, not speculative abstraction. A new abstraction needs
   at least two real callers.
 - New dependencies MUST be justified.
-- Generated code (the Python the internal generator produces from YAML configs) MUST be
+- Generated code (the Python the internal generator produces from YAML configurations) MUST be
   regenerated from its YAML source, never hand-edited.
 - Keep commits small and scoped; do not mix large refactors with behavior changes.
 
@@ -132,24 +138,26 @@ Prefer the simplest solution that works and matches the patterns already in the 
 pattern-aligned, and dependency-light is what keeps the engine and adapters reviewable and
 reversible.
 
-## Security & Performance Standards
+<!-- vale Infrahub.sentence-case = YES -->
 
-### Security Requirements
+### Security & performance standards
+
+#### Security requirements
 
 - Credentials only via environment variables or a secret manager; no secrets in code, logs,
-  tracebacks, or example configs.
+  tracebacks, or example configurations.
 - Default to read-only; the mutating `sync` requires explicit approval and confirmed targets.
 - Handle authentication failures (401/403) and authorization boundaries explicitly.
 
-### Performance & Reliability Standards
+#### Performance & reliability standards
 
 - Respect pagination and rate limits on every adapter; avoid unbounded fetches.
 - Handle timeouts and transient network errors with clear, retryable behavior.
 - Log object counts and endpoints for observability — never secrets.
 
-## Development Workflow & Quality Gates
+### Development workflow & quality gates
 
-### Code Quality Gates
+#### Code quality gates
 
 Run in order before committing; all code MUST pass these before merge:
 
@@ -161,7 +169,7 @@ uv run invoke lint   # ruff → pylint → yamllint → ty
 
 New code is Ruff-clean and typed where touched. `ty` MUST exit clean with no overrides.
 
-### CLI Sanity
+#### Command-line sanity
 
 After changes, verify the CLI still behaves:
 
@@ -171,42 +179,43 @@ uv run infrahub-sync configs --help
 uv run infrahub-sync runs --help
 ```
 
-### Logging
+#### Logging
 
 Use `structlog` for structured logging — never `print`. Include context (endpoints, object
 counts, request IDs) but never secrets.
 
-### Documentation
+#### Documentation
 
-User-visible changes (CLI flags, config keys, adapters) MUST update `docs/` in the same
+User-visible changes (CLI flags, configuration keys, adapters) MUST update `docs/` in the same
 change. Generate CLI docs with `uv run invoke docs.generate`; build the site with
 `uv run invoke docs.docusaurus`; lint Markdown/MDX with `markdownlint-cli2`. "Update later"
 is not acceptable.
 
-### Git Workflow
+#### Git workflow
 
 - Do not force-push shared branches; use follow-up commits rather than amending to hide fixes.
 - Small, scoped, reversible commits; imperative subject line, rationale in the PR body.
 - Apply PR labels (`bugs`, `breaking`, `enhancements`, `features`; default `enhancements`).
 
-## Governance
+### Governance
 
 This constitution is the authoritative reference for development standards in the
 `infrahub-sync` project. It supersedes informal practices and ad-hoc decisions.
 
 - **Compliance:** All pull requests and reviews MUST verify adherence to these principles.
-  Reviewers SHOULD reference principle numbers when flagging an issue (e.g. "Principle I
+  Reviewers SHOULD reference principle numbers when flagging an issue (for example, "Principle I
   violation — `sync` runs without approval").
 - **Amendments:** Changes require (1) a written proposal with rationale, (2) maintainer
-  review and approval, (3) a migration plan when existing code or config is affected, and
+  review and approval, (3) a migration plan when existing code or configuration is affected, and
   (4) a version increment per the scheme below.
 - **Versioning:** This constitution carries its own semantic version, independent of the
   `infrahub-sync` package version.
-  - **MAJOR:** Principle removal or redefinition, or a backward-incompatible governance change.
-  - **MINOR:** A new principle or materially expanded guidance.
-  - **PATCH:** Clarifications, wording fixes, and non-semantic refinements.
-- **Runtime guidance:** Day-to-day standards live in `AGENTS.md` and `dev/` (guides,
-  guidelines, knowledge, and ADRs); this constitution sets the principles those documents
+    - **MAJOR:** Principle removal or redefinition, or a backward-incompatible governance change.
+    - **MINOR:** A new principle or materially expanded guidance.
+    - **PATCH:** Clarifications, wording fixes, and non-semantic refinements.
+- **Runtime guidance:** Day-to-day standards live in `AGENTS.md` and `docs/docs/develop/`
+  (guides, guidelines, and knowledge), with decision records in `dev/adr/`; this constitution
+  sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
 **Version**: 1.0.0 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-06-22

@@ -1,14 +1,17 @@
-# Qualifying an internal candidate
+---
+title: "Qualifying an internal candidate"
+---
 
-Internal. This page tells a teammate how to obtain a pre-release Infrahub Sync
-candidate from a GitHub Actions run and qualify it on their own host. It is not
-on the documentation site, and the artifacts it names are not advertised: they
-are unpublished pre-release bytes, and there is no registry, no package index,
-and no tagged release behind them yet.
+## Qualifying an internal candidate
+
+This developer procedure tells a teammate how to obtain an unpublished pre-release
+Infrahub Sync candidate from a GitHub Actions run and qualify it on their own host.
+The artifacts it names are unpublished pre-release bytes; there is no registry, package
+index, or tagged release behind them yet.
 
 Written for someone who did not build this.
 
-## What the host needs
+### What the host needs
 
 | Needs | Why |
 | --- | --- |
@@ -41,7 +44,7 @@ Two things are being tested at once. One is the candidate. The other is this
 page: you are the first person to follow it, so record where it was wrong.
 [What to record](#what-to-record) is the last section.
 
-## 1. Choose a run, and separate the two commits it refers to
+### 1. Choose a run, and separate the two commits it refers to
 
 A candidate is built by a manual dispatch of `workflow-candidate.yml` against an
 exact merged commit. A pull-request run is not a candidate: GitHub tests the
@@ -108,7 +111,7 @@ a host with no checkout. A run whose `clean-host` job failed, was skipped, or is
 still going has uploads but no qualification — retained artifacts alone are not
 a result.
 
-## 2. Check what the service is holding, before downloading any of it
+### 2. Check what the service is holding, before downloading any of it
 
 The run retains seven artifact groups. Read the service's own inventory first:
 it is the only place the identifiers and the granted expiry exist, and the
@@ -155,7 +158,7 @@ done
 Anything other than seven `OK` lines means this run is not an acceptable
 candidate. Record what you saw and stop.
 
-## 3. Download what the host needs
+### 3. Download what the host needs
 
 Four of the seven are what a host runs:
 
@@ -177,7 +180,7 @@ of the inventory you just checked.
 `infrahub-sync-candidate-image` keeps the build's directory layout, so the
 archive you want is `image/archives/image-linux-amd64.tar`.
 
-## 4. Bind what arrived to the commit you chose
+### 4. Bind what arrived to the commit you chose
 
 `identity.json` names the revision the artifacts were built from. It must equal
 the **candidate commit**, not the workflow revision:
@@ -193,7 +196,7 @@ test "$BUILT_FROM" = "$CANDIDATE_SHA" \
 
 If that fails, stop. You are holding bytes from another commit.
 
-### Three digests, and they are not the same thing
+#### Three digests, and they are not the same thing
 
 Confusing them is the easiest way to believe a check passed that did not.
 
@@ -280,7 +283,7 @@ awk -F'\t' '$1 == "infrahub-sync-qualification-record" {printf "record artifact 
   "$INVENTORY"
 ```
 
-### Then the bundle's own bytes
+#### Then the bundle's own bytes
 
 Two checks, and they fail for different reasons: a corrupted transfer breaks the
 first, a bundle that is not the one the record describes breaks the second.
@@ -299,7 +302,7 @@ test "$RECORDED_BUNDLE" = "$ACTUAL_BUNDLE" \
 
 Do not extract the archive until both pass.
 
-## 5. Load the image and confirm it is the one the record names
+### 5. Load the image and confirm it is the one the record names
 
 Read the configuration digest the record names, load the archive, and confirm
 Docker holds that exact configuration.
@@ -324,7 +327,7 @@ From here on, `$INFRAHUB_SYNC_IMAGE` is the verified configuration digest and
 nothing else. A tag can be re-pointed between the qualification that trusted an
 image and the run that uses it, which is why the bundle refuses one.
 
-## 6. Extract the bundle and prepare a deployment
+### 6. Extract the bundle and prepare a deployment
 
 ```bash
 cd "$WORK"
@@ -381,7 +384,7 @@ replacing one.
 The extracted bundle carries `OPERATING.md`, the same procedure written for
 whoever runs the deployment. Read it when this page runs out.
 
-## 7. Preflight, start, and reach READY
+### 7. Preflight, start, and reach READY
 
 ```bash
 ./infrahub-sync-compose preflight
@@ -424,7 +427,7 @@ in time. Take the logs before anything else:
 ./infrahub-sync-compose logs sync-api
 ```
 
-## 8. Register a package, plan, review the saved plan, then apply that exact plan
+### 8. Register a package, plan, review the saved plan, then apply that exact plan
 
 The CLI ships in the candidate image and the bundle runs it for you, in a
 container of that same verified digest, on the deployment's own network. It
@@ -500,7 +503,7 @@ be applied, and the remedy is a new plan rather than a retry.
 Then observe. Confirm at the destination that the change you approved is the
 change that happened, and that nothing else did.
 
-## 9. Retrieve the run's evidence
+### 9. Retrieve the run's evidence
 
 The run record and what the service recorded for it come back through the same
 CLI:
@@ -549,7 +552,7 @@ grep -i '^digest:' headers.txt
 printf 'expected %s\nactual   %s\n' "$EXPECTED" "$(sha256sum artifact.bin | cut -d' ' -f1)"
 ```
 
-## 10. Restart, and confirm it converges
+### 10. Restart, and confirm it converges
 
 Replacing the processes must lose nothing, because no run state lives on a
 container filesystem:
@@ -573,7 +576,7 @@ the configuration you registered in step 8 is left exactly as it was:
 ./infrahub-sync-compose start
 ```
 
-## 11. When the outcome of a write is uncertain
+### 11. When the outcome of a write is uncertain
 
 If a write ends without proving what reached the destination, the deployment
 does not retry it. Repeating a write whose outcome is unknown is the one thing
@@ -599,7 +602,7 @@ plan run. A new plan reads the destination as it now is, so what it proposes is
 what is still outstanding. The terminal run is never reopened and no later run
 inherits its admission.
 
-## 12. Stop, and reset when you are done
+### 12. Stop, and reset when you are done
 
 ```bash
 ./infrahub-sync-compose stop      # processes down, every volume untouched
@@ -628,7 +631,7 @@ state migration and no backup or restore, so a reset is also how it is replaced:
 `reset`, then `init` for a new identity, then `start`. That start is a cold
 bootstrap and prior run history, retained plans, and artifacts do not survive it.
 
-## Expiry cannot be extended
+### Expiry cannot be extended
 
 The candidate artifacts are retained for exactly 30 days from their upload. That
 window cannot be extended, and there is no way to refresh it in place.
@@ -643,7 +646,7 @@ IDs and new transport digests, so every identifier you recorded belongs to the
 old run. You accept the new bytes exactly as you accepted these, from step 1,
 including the seven-group inventory and the granted 30 days.
 
-## What to record
+### What to record
 
 Report all of this, whether or not it went well.
 
