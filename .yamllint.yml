@@ -6,10 +6,9 @@ ignore: |
   /examples
   /docs/node_modules
   /docs/pnpm-lock.yaml
-  # Vendored/agentic tooling trees (spec-kit engine + agent source-of-truth +
-  # adapters). Managed by spec-kit / the agentic structure, not hand-authored
-  # here, so they follow their own formatting conventions.
-  /.specify
+  # Agent tooling trees: the agent source-of-truth plus the Claude and Codex
+  # aliases that point at it. Managed by the agentic structure, not
+  # hand-authored here, so they follow their own formatting conventions.
   /.agents
   /.claude
   /.codex
