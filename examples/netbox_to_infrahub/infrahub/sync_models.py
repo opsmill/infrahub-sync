@@ -26,8 +26,18 @@ class BuiltinTag(_ModelBaseClass):
     _modelname = "BuiltinTag"
     _identifiers = ("name",)
     _attributes = ("description",)
-    description: str | None = None
     name: str
+    description: str | None = None
+
+    local_id: str | None = None
+    local_data: Any | None = None
+
+class IpamNamespace(_ModelBaseClass):
+    _modelname = "IpamNamespace"
+    _identifiers = ("name",)
+    _attributes = ("description",)
+    name: str
+    description: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
@@ -39,7 +49,7 @@ class DcimCircuit(_ModelBaseClass):
     circuit_id: str
     description: str | None = None
     commit_rate: int | None = None
-    status: str | None = "active"
+    status: str | None = 'active'
     provider: str
 
     local_id: str | None = None
@@ -73,12 +83,12 @@ class DcimDevice(_ModelBaseClass):
     _modelname = "DcimDevice"
     _identifiers = ("location", "name")
     _attributes = ("tags", "primary_address", "platform", "device_type", "status", "description", "position", "serial_number", "rack_face")
-    status: str | None = "active"
+    status: str | None = 'active'
     name: str
     description: str | None = None
     position: int | None = None
     serial_number: str | None = None
-    rack_face: str | None = "front"
+    rack_face: str | None = 'front'
     tags: list[str] | None = []
     primary_address: str | None = None
     platform: str | None = None
@@ -122,25 +132,27 @@ class InterfaceVirtual(_ModelBaseClass):
 
 class IpamPrefix(_ModelBaseClass):
     _modelname = "IpamPrefix"
-    _identifiers = ("prefix", "vrf")
-    _attributes = ("status", "description", "member_type")
-    status: str | None = "active"
+    _identifiers = ("prefix", "ip_namespace")
+    _attributes = ("vrf", "status", "description", "member_type")
+    status: str | None = 'active'
     description: str | None = None
-    member_type: str | None = "address"
     prefix: str
+    member_type: str | None = 'address'
     vrf: str | None = None
+    ip_namespace: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
 
 class IpamIPAddress(_ModelBaseClass):
     _modelname = "IpamIPAddress"
-    _identifiers = ("address", "vrf")
-    _attributes = ("description", "status")
+    _identifiers = ("address", "ip_namespace")
+    _attributes = ("vrf", "description", "status")
     description: str | None = None
-    status: str | None = "active"
+    status: str | None = 'active'
     address: str
     vrf: str | None = None
+    ip_namespace: str | None = None
 
     local_id: str | None = None
     local_data: Any | None = None
@@ -190,7 +202,7 @@ class LocationSite(_ModelBaseClass):
     _modelname = "LocationSite"
     _identifiers = ("name",)
     _attributes = ("tags", "status", "facility", "physical_address", "timezone", "description")
-    status: str | None = "active"
+    status: str | None = 'active'
     facility: str | None = None
     physical_address: str | None = None
     timezone: str | None = None
@@ -229,7 +241,7 @@ class LocationRack(_ModelBaseClass):
     _attributes = ("tags", "facility", "status", "height", "serial_number", "asset_tag")
     name: str
     facility: str | None = None
-    status: str | None = "active"
+    status: str | None = 'active'
     height: int | None = 42
     serial_number: str | None = None
     asset_tag: str | None = None
@@ -246,7 +258,7 @@ class IpamVLAN(_ModelBaseClass):
     name: str
     description: str | None = None
     vlan_id: int
-    status: str | None = "active"
+    status: str | None = 'active'
     vlan_group: str
 
     local_id: str | None = None
