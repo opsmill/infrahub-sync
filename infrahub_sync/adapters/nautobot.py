@@ -295,10 +295,6 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                         if not node:
                             continue
                         node_id = node.get("id", None)
-                        if not node_id and isinstance(node, tuple):
-                            node_id = node[1] if node[0] == "id" else None
-                            if not node_id:
-                                continue
                         matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                         if len(matching_nodes) == 0:
                             # TODO: If the peer is a Node we are filtering, we could end up not finding it
