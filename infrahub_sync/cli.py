@@ -19,6 +19,7 @@ from infrahub_sync.utils import (
     get_instance,
     get_potenda_from_instance,
     render_adapter,
+    resolve_infrahub_connection,
 )
 
 if TYPE_CHECKING:
@@ -379,20 +380,26 @@ def generate(
         else:
             sync_instance.adapters_path = adapter_path
 
-    # Check if the destination is infrahub
-    infrahub_address = ""
     # Determine if infrahub is in source or destination
     # We are using the destination as the "constraint", if there is 2 infrahubs instance
-    sdk_config = None
-    if sync_instance.destination.name == "infrahub" and sync_instance.destination.settings:
-        infrahub_address = sync_instance.destination.settings.get("url") or ""
-        sdk_config = get_infrahub_config(settings=sync_instance.destination.settings, branch=branch)
-    elif sync_instance.source.name == "infrahub" and sync_instance.source.settings:
-        infrahub_address = sync_instance.source.settings.get("url") or ""
-        sdk_config = get_infrahub_config(settings=sync_instance.source.settings, branch=branch)
+    infrahub_adapter = None
+    if sync_instance.destination.name == "infrahub":
+        infrahub_adapter = sync_instance.destination
+    elif sync_instance.source.name == "infrahub":
+        infrahub_adapter = sync_instance.source
 
-    # Initialize InfrahubClientSync if address and config are available
-    client = InfrahubClientSync(address=infrahub_address, config=sdk_config)
+    # Resolve the connection the same way the runtime adapter does, so the environment wins
+    if infrahub_adapter is None:
+        client = InfrahubClientSync(address="", config=None)
+    else:
+        infrahub_settings = infrahub_adapter.settings or {}
+        infrahub_address, _ = resolve_infrahub_connection(settings=infrahub_settings)
+        sdk_config = get_infrahub_config(settings=infrahub_settings, branch=branch)
+        client = (
+            InfrahubClientSync(address=infrahub_address, config=sdk_config)
+            if infrahub_address
+            else InfrahubClientSync(config=sdk_config)
+        )
 
     try:
         schema = client.schema.all()

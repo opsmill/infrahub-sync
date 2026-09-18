@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Union
@@ -281,6 +282,25 @@ def get_potenda_from_instance(
     )
 
 
+def resolve_infrahub_connection(settings: dict[str, str | None]) -> tuple[str | None, str | None]:
+    """Resolve the Infrahub address and token for `settings`, preferring the environment.
+
+    The address comes from `INFRAHUB_ADDRESS`, then `INFRAHUB_URL`, then `settings["url"]`.
+    The token comes from `INFRAHUB_API_TOKEN`, then `settings["token"]`. This is the same
+    precedence the runtime Infrahub adapter applies.
+
+    Args:
+        settings (Dict[str, Optional[str]]): The settings dictionary containing `url` and `token`.
+
+    Returns:
+        Tuple[Optional[str], Optional[str]]: The resolved address and token, each None when unset.
+    """
+    address = os.environ.get("INFRAHUB_ADDRESS") or os.environ.get("INFRAHUB_URL") or settings.get("url")
+    token = os.environ.get("INFRAHUB_API_TOKEN") or settings.get("token")
+
+    return address, token
+
+
 def get_infrahub_config(settings: dict[str, str | None], branch: str | None) -> Config:
     """Creates and returns a Config object for infrahub if settings are valid.
 
@@ -289,9 +309,13 @@ def get_infrahub_config(settings: dict[str, str | None], branch: str | None) -> 
         branch (Optional[str]): The default branch to use if none is provided in settings.
 
     Returns:
-        Optional[Config]: A Config instance if `token` is available, otherwise None.
+        Config: A Config instance. `api_token` is omitted when neither the environment nor the
+            settings supply one, so the SDK falls back to its own settings sources.
     """
-    infrahub_token = settings.get("token") or None
+    _, infrahub_token = resolve_infrahub_connection(settings=settings)
     infrahub_branch = settings.get("branch") or branch or "main"
+
+    if not infrahub_token:
+        return Config(default_branch=infrahub_branch)
 
     return Config(default_branch=infrahub_branch, api_token=infrahub_token)
