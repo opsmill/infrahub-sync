@@ -12,11 +12,17 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Protocol
 
 import pytest
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError
+
+
+class _KindedNode(Protocol):
+    """The public surface a stored node has to expose: its kind."""
+
+    def get_kind(self) -> str: ...
 
 
 class _FakeStore:
@@ -26,8 +32,8 @@ class _FakeStore:
     def get(self, *, model: str, identifier: str) -> object:
         return self._items.get((model, identifier))
 
-    def set(self, *, key: str, node: object) -> None:  # match client.store.set signature
-        self._items[getattr(node, "_schema", SimpleNamespace(kind="?")).kind, key] = node
+    def set(self, *, key: str, node: _KindedNode) -> None:  # match client.store.set signature
+        self._items[node.get_kind(), key] = node
 
 
 class _FakeClient:
@@ -70,9 +76,10 @@ class _Harness(InfrahubAdapter):
 
 
 def _make_node(kind: str, node_id: str, diffsync_data: dict[str, object]) -> SimpleNamespace:
+    """A fake SDK node exposing the public ``get_kind()`` the adapter reads."""
     return SimpleNamespace(
         id=node_id,
-        _schema=SimpleNamespace(kind=kind),
+        get_kind=lambda: kind,
         _fake_diffsync_data=diffsync_data,
     )
 
