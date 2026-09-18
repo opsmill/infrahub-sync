@@ -54,6 +54,16 @@ def _node_has_complete_attributes(node: InfrahubNodeSync, node_schema: MainSchem
     return True
 
 
+def identifier_and_attribute_fields(model: type[DiffSyncModel]) -> list[str]:
+    """Return the fields a loaded node must carry: identifiers first, then attributes.
+
+    `infrahub_node_to_diffsync` reads both lists, so both belong in the GraphQL
+    `include`. A server that returns only the requested fields would otherwise drop
+    the identifiers the DiffSync model is keyed on.
+    """
+    return list(dict.fromkeys([*model._identifiers, *model._attributes]))
+
+
 def resolve_peer_node(
     key: str,
     rel_schema: RelationshipSchemaAPI,
@@ -422,13 +432,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             msg = f"Infrahub: adapter has no model class for {model_name!r}"
             raise NotImplementedError(msg)
 
-        # `include` is the list of attribute fields the diffsync model
-        # treats as identifiers. Pulling just those keeps the GraphQL
-        # response small.
-        identifiers = list(getattr(model_cls, "_identifiers", ()) or ())
+        fields = identifier_and_attribute_fields(model_cls)
         nodes = self.client.all(
             kind=model_name,
-            include=identifiers or None,
+            include=fields or None,
             populate_store=False,
         )
         for node in nodes:
@@ -445,7 +452,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         element = next((el for el in self.config.schema_mapping if el.name == model_name), None)
         if element:
             # Retrieve all nodes corresponding to model_name (list of InfrahubNodeSync)
-            nodes = self.client.all(kind=model_name, include=list(model._attributes), populate_store=True)
+            nodes = self.client.all(
+                kind=model_name, include=identifier_and_attribute_fields(model), populate_store=True
+            )
 
             # Transform the list of InfrahubNodeSync into a list of (node, dict) tuples
             node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node)) for node in nodes]
