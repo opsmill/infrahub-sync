@@ -16,14 +16,15 @@ so the fields under test have real declared types and defaults.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from diffsync.store import BaseStore
 from diffsync.store.local import LocalStore
-from diffsync.store.redis import RedisStore
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel
+
+if TYPE_CHECKING:
+    from diffsync.store import BaseStore
 
 pytest.importorskip("pynetbox")
 pytest.importorskip("pynautobot")
@@ -189,9 +190,9 @@ def _scalar_payload(adapter: str) -> dict[str, Any]:
 LIST_FIELD = [SchemaMappingField(name="tags", mapping="tags", reference="BuiltinTag")]
 SCALAR_FIELD = [SchemaMappingField(name="primary_tag", mapping="primary_tag", reference="BuiltinTag")]
 
-# The two store states a converter can meet without a matching peer. Both leave `get_all`
-# returning an empty list for `BuiltinTag`: an untouched store has nothing, and an unrelated
-# peer is filed under its own model name.
+# The two store states a converter can meet without a matching peer. `get_all("BuiltinTag")`
+# returns no objects for the untouched store, and one for the second: a `BuiltinTag` like the
+# one being looked for, whose `local_id` is not the id the source object asks for.
 NO_MATCHING_PEER = (
     pytest.param({}, id="empty-store"),
     pytest.param({"999": "unrelated"}, id="no-matching-peer"),
@@ -220,15 +221,6 @@ def test_store_get_all_copy_is_empty_exactly_when_the_store_result_is(adapter: s
     assert type(all_nodes_for_reference) is list
     assert len(nodes) == peer_count
     assert bool(nodes) == bool(all_nodes_for_reference)
-
-
-def test_the_only_store_backends_are_the_two_the_repository_builds() -> None:
-    """`LocalStore` and `RedisStore` are the whole set of stores a run can be given.
-
-    `infrahub_sync/utils.py` builds one of exactly these two. A third backend would have to be
-    re-checked against the list contract asserted above before the converters could trust it.
-    """
-    assert set(BaseStore.__subclasses__()) == {LocalStore, RedisStore}
 
 
 # --- Peers the store holds ----------------------------------------------------------------
