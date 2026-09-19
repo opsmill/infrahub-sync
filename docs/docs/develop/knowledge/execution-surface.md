@@ -4,146 +4,181 @@ title: "The shared execution surface"
 
 ## The shared execution surface
 
-> Part of: Develop > Knowledge | Related: [Sync architecture](sync-architecture.md), [Prefect orchestration](orchestration-prefect.md)
+`infrahub_sync/execution.py` runs individual plan, verification and apply operations for
+the Sync service and direct Python callers. The CLI submits registered runs through the
+Sync HTTP API; the worker calls this module to execute them.
 
-<!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
+For tracing a registered write, start with the service stages and their
+[configuration write guard](apply-guard.md). For a direct Python or Prefect plan, start
+with `execute_run` or `run_remote_request`. The direct Prefect integration resolves a local
+configuration and only plans; it does not perform the registered service workflow.
 
-`infrahub_sync/execution.py` is the typed Python entry point to a single sync run. It exists
-because the plan and serial-sync lifecycles need more than one caller: the CLI drives them
-from a terminal, and the packaged Prefect flow drives them in a served process. Rather than
-letting the flow shell out to the CLI or duplicate the lifecycle, both go through the same
-functions and get the same result object.
+The module imports no Prefect symbols or orchestration modules and remains importable
+in a base install. [ADR 9][adr-imports] explains the optional-package boundary.
+The behavior below follows the [released execution source][execution-source].
 
-The module is deliberately import-light. It imports no Prefect symbol and nothing from
-`infrahub_sync.orchestration`, so it stays importable in a base install — see
-[ADR 9](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0009-optional-integrations-live-in-their-own-package.md). It is its own module
-rather than an addition to `utils.py`, which is already broad and would blur the seam.
+### Callers and entry points {#the-three-callers}
 
-### The three callers
+| Caller | Entry point and responsibility |
+| --- | --- |
+| CLI `diff`, `sync`, `apply` | Call `SyncClient` methods over HTTP; inspect API run and plan resources. They do not call `execute_run`. |
+| Sync service worker | Call `execute_run` for each stage, passing `base_directory` for that stage's private scratch directory. A service `sync` composes plan, verify and apply. |
+| Direct Python caller | Pass a resolved `SyncInstance` to `execute_run`; the operation selects the lifecycle and return type. |
+| Direct Prefect flow | Call `run_remote_request`, which resolves a configuration name and calls `execute_run` in-process for a plan. |
 
-| Caller | Entry point |
-|---|---|
-| CLI `diff` | `execute_run(instance, operation="plan", …)` |
-| Sync API worker stages | `execute_run(instance, operation=…, base_directory=<stage scratch>, …)` |
-| `orchestration/flow.py` | `run_remote_request(sync_name, operation, confirm_writes, branch, config_directory=…)` |
+The [CLI][cli-source] constructs requests through `SyncClient`.
+The [service flow][flow-source] retrieves retained plans from object storage into private
+scratch directories; each stage removes its scratch when it ends. The CLI reads results
+through the API rather than opening those directories.
 
-`base_directory` names the cache root one run works in. A caller that owns a private
-directory for the run — the Sync service, whose stages share no filesystem — passes it, and
-nothing then derives the run's location from the environment or the working directory.
+`base_directory` takes precedence over `INFRAHUB_SYNC_CACHE_DIR` and the working directory.
+Without it, direct execution uses the environment's cache setting or defaults to
+`<cwd>/.infrahub-sync-cache/<sync_name>/`. A runner-local path is not a durable service
+artifact URL; see [durable product records](../../reference/durable-product-records.mdx)
+for retained artifacts and results.
 
-`run_remote_request` is the remote-shaped composition: it resolves a logical name against a
-directory, then calls `execute_run` with every engine option at its CLI default except
-`show_progress=False`. No public parameter of it accepts paths, CLI fragments, credentials,
-or environment overrides.
+### Operations and return types
+
+The `Operation` type includes `"plan"`, `"verify"`, `"apply"` and `"sync"`, but the core
+refuses `"sync"` at runtime and provides no overload for it. Registered `sync` is a
+service composition of the other operations under one configuration guard.
+
+| `execute_run` operation | Inputs and behavior | Return type |
+| --- | --- | --- |
+| `plan` | Load both adapters, compare data and save proposed operations. Refuse to overwrite a committed plan under an existing `run_id`. | `RunResult`; `SavedPlan` when the service sets `_return_saved_plan=True`. |
+| `verify` | Require `run_id` and read an existing saved plan without constructing adapters. | `SavedPlan`. |
+| `apply` | Require `run_id`, `confirm_writes=True`, `ownership` and `record_applied`. Construct the destination and execute saved operations. | `RunResult`. |
+| `sync` | Raise `RunValidationError` before constructing adapters or run state. | No result. |
+
+Verification normally returns review data, including checksum status and verification
+notes. The service sets `_require_verified=True` to run the full saved-plan verifier and
+raise `PlanVerificationError` if checks fail. A returned `SavedPlan` from an ordinary
+review call is therefore not proof that the artifact passed every apply check.
+
+For apply, `ownership` implements `WriteOwnership`: it proves the caller's right to write
+before each dispatched destination operation and after the final operation.
+`record_applied` receives the completed `ApplyRecord` before saving the applied run state.
+The service uses that callback to retain write evidence if later cleanup or persistence
+fails. A local pipeline lock alone does not provide the service's configuration guard.
+
+### Direct name resolution and Prefect execution
+
+`run_remote_request(sync_name, operation, confirm_writes, branch, config_directory=…)`
+resolves an exact logical name from `config.yml` files beneath `config_directory`.
+The Python caller supplies that directory; the packaged Prefect flow reads it from
+`INFRAHUB_SYNC_CONFIG_DIRECTORY`. The four flow parameters contain no configuration path,
+credentials, CLI fragments or environment overrides.
+
+Only `operation="plan"` executes through this direct integration. `"sync"` is refused
+before configuration resolution, even with `confirm_writes=True`. Other engine options
+use `execute_run` defaults, except `show_progress=False`.
+See [Prefect orchestration](orchestration-prefect.md#the-flow) for the flow parameters,
+logging and serve entrypoint.
 
 ### `RunResult`
 
-A successful run returns a frozen, slotted `dataclass` with exactly seven fields:
+Plan and apply normally return a frozen, slotted data class with seven fields:
 
-```python
-@dataclass(frozen=True, slots=True)
-class RunResult:
-    sync_name: str        # resolved logical configuration name
-    operation: Operation  # "plan" | "sync"
-    run_id: str           # cache run id; equals Path(artifact_path).name
-    status: Status        # "planned" | "applied" | "no-change"
-    changed: bool
-    summary: Mapping[ActionKey, int]  # create/update/delete, always all three, zero-filled
-    artifact_path: str    # absolute runner-local run directory
-```
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `sync_name` | `str` | Resolved logical configuration name. |
+| `operation` | `Operation` | The core operation that produced the result: `plan` or `apply`. |
+| `run_id` | `str` | Run directory name. |
+| `status` | `Status` | `planned`, `applied` or `no-change`, derived from operation counts. |
+| `changed` | `bool` | Whether the operation-count total is greater than zero. |
+| `summary` | `Mapping[ActionKey, int]` | Counts for `create`, `update` and `delete`, including zero counts. |
+| `artifact_path` | `str` | Absolute runner-local run directory; its final path segment equals `run_id`. |
 
-`__post_init__` does two things. It wraps `summary` in a `types.MappingProxyType` via
-`object.__setattr__`, because `frozen=True` prevents rebinding a field but not mutating the
-dict behind it. And it validates cross-field invariants, raising `ValueError` — an invariant
-violation is a bug in the surface, not a run failure:
+`RunResult.__post_init__` validates these relationships and raises `ValueError` when they
+do not hold:
 
-- `changed` ⇔ `status != "no-change"` ⇔ `sum(summary.values()) > 0`
-- `status == "planned"` implies `operation == "plan"`; `status == "applied"` implies
-  `operation == "sync"`
-- `artifact_path` is absolute, and `run_id == Path(artifact_path).name`
-- `set(summary) == {"create", "update", "delete"}`
+- `changed`, `status != "no-change"` and `sum(summary.values()) > 0` must agree.
+- `status="planned"` requires `operation="plan"`.
+- `status="applied"` permits `operation="apply"` or `"sync"` in the data class, although
+  `execute_run` refuses a sync request.
+- `artifact_path` must be absolute and end in `run_id`.
+- `summary` must contain exactly `create`, `update` and `delete`.
 
-`artifact_path` is required absolute because it crosses a process boundary: a remote caller
-cannot recover the serving process's working directory. `cache.paths.cache_root_for`
-makes a relative cache directory absolute at the single derivation point, using `absolute()`
-rather than `resolve()` so the final path segment the `run_id` invariant compares against
-survives.
+The data class copies `summary` into a `MappingProxyType` to prevent mutation of its counts.
+Freezing the data class alone would only prevent rebinding the field. To serialize the
+result, copy its fields and convert `summary` to a plain dictionary; `dataclasses.asdict`
+cannot deep-copy this mapping. The
+[direct flow's return conversion](orchestration-prefect.md#the-return-value-is-built-by-hand-not-with-asdict)
+shows the implementation.
 
-For `operation="plan"`, `summary`, `changed` and `status` derive from the authoritative
-saved operations that the real engine just derived in memory and handed to the artifact
-writer, never by re-reading `plan.parquet`. For `operation="sync"`, those result fields
-instead derive from the in-memory diffsync rows that describe the live serial-sync
-lifecycle. A derived delete saved for review but excluded from the live diff by the default
-flags therefore does not make a sync result claim that a destination write occurred.
+For a plan, counts come from the saved operations returned by the plan writer. Injected
+test engines whose writer returns no counts fall back to their in-memory plan rows.
+For apply, counts come from the exact artifact consumed by the apply engine.
 
-Behavioral test engines with the legacy no-return `write_plan` shape fall back to their
-in-memory materialized plan rows for plan results, which keeps the execution seam open to
-injection without weakening production delete reporting. A valid authoritative writer summary avoids
-materializing those fallback rows.
-
-One test-seam fidelity boundary is worth knowing: a legacy behavioral engine that returns
-no saved-operation counts falls back to building rows from the diff, which walks only the
-diff root's direct children, while `Diff.has_diffs()` is recursive. Such a fake can therefore
-execute a sync for nested-only changes but report `status="no-change"`; a unit test pins that
-fallback behavior. The real saved-plan engine instead refuses nested elements it has not
-walked during plan derivation, before it can return a misleading result.
+**These counts describe planned operations, not confirmed destination writes.** Apply
+skips deletes but includes them in `summary`. A delete-only apply can therefore return
+`status="applied"` and `changed=True` while dispatching no destination operations.
+The `ApplyRecord` separately records applied operation IDs and skipped delete IDs.
+See [planned writes and apply](planned-write-and-apply.md) for those records.
 
 ### Failure model
 
-Two exception types make up the remote contract:
+`execute_run` raises `RunValidationError` for invalid operation inputs and
+`RunConcurrencyError` when its local pipeline lock remains unavailable after the bounded
+wait. Adapter, plan and engine failures otherwise retain their lifecycle exception types.
+A raised exception means the call returned no success result; it does not mean the
+destination was unchanged.
 
-- `RunValidationError` — every input-boundary refusal: `operation="sync"` without
-  `confirm_writes`, a `sync_name` that matches no installed configuration, or a matched
-  configuration that is unreadable or invalid.
-- `RunExecutionError` — an adapter or engine failure after validation passed: missing
-  runner-environment credentials, an unreachable system, a nonexistent Infrahub branch,
-  pipeline-lock contention, or an adapter import failure.
+The core attempts to save `run.json` with `status="failed"` when a started lifecycle fails.
+If both persistence attempts fail, the core logs a warning and preserves the original
+failure. Input refusals can happen before any run file exists.
 
-Both are raised in one place only. `execute_run` re-raises original exception types;
-`run_remote_request` is the sole sanitize-and-wrap boundary. That split is what keeps CLI
-failure behaviour identical, and it is the subject of
-[ADR 5](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0005-translate-run-failures-only-at-the-remote-boundary.md). The rules for
-redacting messages are in
-[Secret redaction](../guidelines/secret-redaction.md).
+`run_remote_request` is the direct integration's sanitize-and-wrap boundary:
 
-A raise means no `RunResult` exists for that run. Any `run.json` already created is left at
-`status="failed"`.
+- `RunValidationError` reports a refused request or unresolved/invalid configuration.
+- `RunExecutionError` wraps other `Exception` failures, including lock contention,
+  adapter initialization and import failures, with redacted messages and causes.
+
+The registered service has its own failure boundary in `service_sync_run`. It records
+available write evidence and sanitizes the exception before raising to Prefect.
+Neither wrapper rolls back completed destination writes. Follow the
+[uncertain-write procedure](../../compose-deployment.mdx#when-the-outcome-of-a-write-is-uncertain)
+when a service run reports an ambiguous outcome. See
+[secret redaction](../guidelines/secret-redaction.md) for the shared redaction functions.
 
 ### The lock and the already-locked caller
 
-`execute_run` acquires the per-configuration pipeline lock with the same 60-second timeout
-the CLI has always used, and lets `filelock.Timeout` propagate unchanged. The lock and its
-advisory "which run still looks running" lookup both take the caller's `base_directory`, so
-a caller that owns a private directory for the run is excluded and diagnosed inside it
-rather than in a location other processes derive.
+Plan and apply acquire a per-configuration filesystem pipeline lock unless the caller
+sets `_lock_already_held=True`. The default wait is 60 seconds. On contention, the core
+reports the latest local run file still marked running, if available, as diagnostic
+context; that file can be stale and does not prove lock ownership.
 
-What that lock is: contention control between two invocations sharing one cache root. What
-it is not: cross-worker write authority. Taken inside a stage's own private directory there
-is nothing for a second worker to contend on. Exclusion for a managed write belongs to the
-PostgreSQL advisory configuration guard instead (`infrahub_sync.service.apply_guard`).
+Both the lock and that lookup use `base_directory`. They coordinate callers sharing one
+cache root. In the service's private stage directory they cannot exclude another worker,
+so registered writes acquire the [PostgreSQL configuration guard](apply-guard.md).
+The service sets `_lock_already_held=True` on its apply calls while holding that guard.
+The direct remote wrapper never sets it. Verification takes no pipeline lock.
 
-`_lock_already_held=True` is set by the managed apply and sync stages, which already hold
-that configuration guard and take no core lock inside it. No other caller sets it;
-`run_remote_request` never does.
-
-`execute_run` calls the factory with all eight keyword arguments of
-`utils.get_potenda_from_instance`, always explicitly, for both operations. The two CLI
-commands historically passed different subsets whose omitted values defaulted to exactly
-what the surface now passes, so the real factory behaves identically — but a fake factory in
-a test does see the difference, which is why the call shape is a `Protocol` rather than a
-bare `Callable`: a rename in the factory becomes a type error instead of a runtime
-`TypeError` inside the remote boundary.
+Planning calls `PotendaFactory` with eight explicit keyword arguments: `sync_instance`,
+`branch`, `show_progress`, `verbosity`, `run_id`, `continue_on_error`, `concurrent_load` and
+`base_directory`. The protocol preserves those parameter names for type checking of
+injected factories. Apply uses `PlanApplier.open_existing` to construct only the
+destination adapter; it does not call the planning factory or reload the source.
 
 ### Plan fingerprint
 
-`infrahub_sync/cache/fingerprint.py::compute_plan_fingerprint(run_dir)` returns a SHA-256
-digest over the canonical plan rows, excluding timestamps, run identifiers and paths by
-construction. It is how "the remote path produced the same plan as the CLI" is tested. The
-algorithm and its compatibility rules are in
-[ADR 7](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0007-canonical-plan-fingerprint-as-equivalence-oracle.md).
+`cache.fingerprint.compute_plan_fingerprint(run_dir)` hashes selected rows from the
+legacy `plan.parquet` file for comparisons. It excludes timestamps, run identifiers and
+paths; [ADR 7][adr-fingerprint] records that comparison algorithm.
+
+The registered apply approval instead uses the saved artifact's `plan_checksum`.
+Do not substitute the legacy fingerprint for the checksum returned by `runs plan`.
+See [the saved plan artifact](plan-artifact.md) for the manifest and checksum rules.
 
 ### See also
 
-- [Prefect orchestration](orchestration-prefect.md) — the packaged remote caller.
-- [Secret redaction](../guidelines/secret-redaction.md) — the rules the wrap boundary applies.
-- [Testing](../guidelines/testing.md) — how contract-bearing behaviour here is tested.
+- [Sync architecture](sync-architecture.md) — registered run submission, execution and persistence.
+- [The configuration write guard](apply-guard.md) — acquisition, ownership checks and release.
+- [Prefect orchestration](orchestration-prefect.md) — service and direct-flow integrations.
+- [Testing](../guidelines/testing.md) — execution contracts and test isolation.
+
+[execution-source]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/execution.py
+[cli-source]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/cli.py#L519-L579
+[flow-source]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/service/flow.py
+[adr-imports]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/dev/adr/0009-optional-integrations-live-in-their-own-package.md
+[adr-fingerprint]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/dev/adr/0007-canonical-plan-fingerprint-as-equivalence-oracle.md
