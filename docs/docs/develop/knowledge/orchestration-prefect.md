@@ -1,53 +1,33 @@
 ---
 title: "Prefect orchestration"
+toc_max_heading_level: 4
 ---
 
 ## Prefect orchestration
 
-> Part of: Develop > Knowledge | Related: [The shared execution surface](execution-surface.md)
+Prefect executes Sync work through two integrations. Registered runs use the Sync API and
+its service worker; the direct integration runs a read-only plan from a local configuration
+without the Sync API.
 
-<!-- Extracted from the archived prefect remote-run spec (dev/specs/archive/001, commit 33817cf) on 2026-07-31 -->
+| Integration | Input | Where to inspect the result |
+| --- | --- | --- |
+| Registered service | An API-created product run, bound to a registered configuration version | Sync API run, plan and results resources, with links to Prefect executions |
+| Direct Prefect | A read-only plan for a configuration name resolved from the serving process's directory | Prefect flow-run logs and the summary line |
 
-`infrahub_sync/orchestration/` is the direct Prefect integration: a flow that runs one plan
-or one confirmed sync, and a serve entrypoint that exposes it as a locally served
-deployment. It is installed by the optional `prefect` extra, and nothing in the base
-package imports it — see
-[ADR 9](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0009-optional-integrations-live-in-their-own-package.md).
+For the supported deployment and the lifecycle of a registered run, start with
+[Sync architecture](sync-architecture.md). The direct integration is a separate optional
+Python entrypoint, not the Compose operator workflow.
 
-Two packages under `infrahub_sync/` import `prefect`, and both are optional: this one, and
-`infrahub_sync/service/` below, which the `service` extra installs. No other package under
-`infrahub_sync/` imports it, so a base install loads neither. The vendored
-`opsmill_prefect_extras/` imports Prefect too; it sits outside `infrahub_sync/` and the
-`service` extra is what brings it into a working install.
+### Registered service integration
 
-The flow calls [the shared execution surface](execution-surface.md) in-process. It never
-spawns the CLI.
+`infrahub_sync/service/` provides the Sync API and its Prefect integration, installed by
+the `service` extra. The API submits work to `infrahub-sync-service/run`; a process worker
+executes the installed `infrahub_sync.service.flow.service_sync_run` function.
 
-`infrahub_sync/service/` is a separate, optional operational profile. Its service flow
-consumes the API-created product run ID and delegates deployment catalogue validation,
-deployment convergence, and native submission idempotency to OpsMill Prefect Extras pinned
-at commit `97465e75137f6121d0377cd637383cfb3530d734`. The Sync HTTP service owns the
-public contract; Prefect remains authoritative for live execution, logs, retries, workers,
-and cancellation.
-
-### The flow
-
-```python
-@flow(name="infrahub-sync")
-def infrahub_sync_run(
-    sync_name: str,
-    operation: Literal["plan", "sync"] = "plan",
-    confirm_writes: bool = False,
-    branch: str | None = None,
-) -> dict: ...
-```
-
-Exactly those four parameters. None of them accepts a path, a CLI fragment, a credential, or
-an environment override. Everything else the run needs comes from the serving process's own
-environment.
-
-The separate `infrahub-sync-service/run` deployment serves a different flow, with eight
-parameters:
+The service uses the vendored OpsMill Prefect Extras package for deployment catalogue
+validation, deployment convergence and submission idempotency. The API retains product
+records; Prefect records live execution state and logs. See
+[durable product records](../../reference/durable-product-records.mdx) for the distinction.
 
 ```python
 @flow(name="infrahub-sync-service")
@@ -63,25 +43,49 @@ def service_sync_run(
 ) -> dict[str, Any]: ...
 ```
 
-The three registry parameters travel together: when all three are set, they name the
-registered version the run is bound to; when all three are unset, the run uses the legacy
-path; and a partial carrier is refused.
-This flow does not replace or extend the four-parameter direct Prefect flow. Credentials,
-endpoints, adapter instances, product-cache locations, and saved-plan cache locations stay
-in the service worker environment.
+Registered execution supplies all three configuration fields: `config_id`,
+`registry_version` and `package_checksum`. The worker checks them against the product run
+and registered package. A partial binding is refused. When all three fields are unset,
+the worker can plan or verify an unregistered configuration from its local directory.
+Service writes require a registered binding.
 
-When the service flow runs outside Prefect context in offline executor tests,
-`get_run_logger()` raises `MissingContextError`. The flow catches only that exception and
-uses its module logger. It does not construct `RunLoggerBridge` in the fallback path.
+The worker reads endpoint settings from the package and resolves credential references
+in its environment. Each stage uses private
+temporary files and exchanges plans through object storage; it reads no shared cache
+location. See the [registered-run lifecycle](sync-architecture.md#one-registered-run) for
+planning, verification, approved writes and result persistence.
 
-`FLOW_NAME` is `infrahub-sync` and `DEPLOYMENT_NAME` is `run`, so the deployment lookup path
-is `/api/deployments/name/infrahub-sync/run` rather than a stuttering repeat of the flow
-name, and later orchestration work gets sibling deployments as `.../infrahub-sync/<verb>`.
+### Direct integration {#the-flow}
 
-The body, in order: attach the log bridge and take ownership of the source logger's level,
-read the configuration directory from the environment, call `run_remote_request`, log one
-summary line, return a dict. Exceptions propagate — Prefect marks the run FAILED and stores
-the sanitized message as the state message.
+`infrahub_sync/orchestration/` provides the optional direct integration, installed by the
+`prefect` extra. It calls `run_remote_request` in
+[the shared execution module](execution-surface.md) in-process.
+The flow takes four parameters:
+
+```python
+@flow(name="infrahub-sync")
+def infrahub_sync_run(
+    sync_name: str,
+    operation: Literal["plan", "sync"] = "plan",
+    confirm_writes: bool = False,
+    branch: str | None = None,
+) -> dict[str, Any]: ...
+```
+
+Only `operation="plan"` executes here. Although `"sync"` remains in the parameter schema,
+`run_remote_request` refuses it before resolving a configuration, even when
+`confirm_writes=True`. Submit writes through the Sync API.
+
+None of the four parameters accepts a path, a CLI fragment, a credential, or an
+environment override. Other runtime settings come from the serving process's
+configuration and environment.
+
+The flow name is `infrahub-sync` and the deployment name is `run`, so the deployment lookup
+path is `/api/deployments/name/infrahub-sync/run`.
+
+The flow attaches the log bridge, reads `INFRAHUB_SYNC_CONFIG_DIRECTORY`, calls
+`run_remote_request`, logs the summary and returns a dictionary. Exceptions propagate to
+Prefect with sanitized messages.
 
 #### The summary line is the supported result surface
 
@@ -90,16 +94,16 @@ SUMMARY_LINE_FORMAT = "run %s finished: status=%s changed=%s summary=create:%d,u
 ```
 
 This line is how a remote caller reads a run's outcome, and its format is contractual —
-never a Python dictionary `repr`. It carries five `RunResult` fields: `run_id` (the leading
+never a Python dictionary `repr`. It contains five `RunResult` fields: `run_id` (the leading
 substitution), `status`, `changed`, the three summary counts, and `artifact_path`.
 `sync_name` and `operation` deliberately do not appear. Changing the format is a breaking
 change for consumers.
 
 Result retrieval through Prefect's own result persistence is not part of the contract.
 
-#### The return value is built by hand, not with `asdict`
+#### The return dictionary {#the-return-value-is-built-by-hand-not-with-asdict}
 
-The flow returns an `asdict`-*shaped* seven-key dict built explicitly:
+The flow builds a seven-key dictionary from the `RunResult` fields:
 
 ```python
 out = {f.name: getattr(result, f.name) for f in dataclasses.fields(result)}
@@ -108,39 +112,30 @@ out["summary"] = dict(result.summary)
 
 `dataclasses.asdict(result)` cannot be used. It deep-copies field values, and `RunResult`
 wraps `summary` in a `MappingProxyType`, which is not deep-copyable —
-`TypeError: cannot pickle 'mappingproxy' object`. Every successful run would fail at return
-time. The reason is recorded at the construction site so nobody simplifies it back.
+`TypeError: cannot pickle 'mappingproxy' object`. Using it here would fail a successful run while
+constructing the return value.
 
-### The log bridge
+#### The log bridge
 
-`RunLoggerBridge` is a `logging.Handler` attached to `logging.getLogger("infrahub_sync")`
-immediately before the surface call and removed in a `finally`. Each record is re-logged
-through Prefect's run logger preserving the level and the originating logger name, so
-lifecycle lines from anywhere in the `infrahub_sync` hierarchy show up in the flow-run log
-and are retrievable through the API.
+`RunLoggerBridge` forwards records from the `infrahub_sync` logger hierarchy to the Prefect
+run logger, preserving each record's level and originating logger name and redacting secrets.
+The direct flow sets the source logger to `INFO` and disables propagation while the bridge
+is attached. In `finally`, it removes the bridge and restores both the previous level and
+propagation setting.
 
-**The flow owns the logger's level, not just its handler.** A handler never defeats
-`Logger.isEnabledFor`, and the `infrahub_sync` hierarchy is level-`NOTSET` outside the CLI —
-the CLI makes INFO effective in `_setup_logging`, which the flow never calls. So the flow
-captures the logger's current level, sets `INFO` before the call, and restores the captured
-level in the same `finally` that removes the handler. With both, forwarding does not depend
-on ambient root-logger configuration or on operator-set Prefect logging environment
-variables.
+Those settings are process-global. `_REMOTE_LOGGER_OWNERSHIP_LOCK` covers request execution
+as well as log forwarding within a process. Concurrent direct-flow calls therefore run one
+at a time and cannot attach competing bridges or restore each other's logger settings. It does not serialize runs in separate processes.
+The service flow uses the same lock and bridge when a Prefect run context exists.
+In offline executor tests, it catches `MissingContextError` and uses its module logger
+without attaching a bridge.
 
-**This mutates process-global logging state**, which is only safe because each flow run gets
-its own process — the default behaviour of `flow.serve(...)`. Two concurrent in-process runs
-of *different* configurations are not excluded by the per-configuration pipeline lock, so
-they would cross-attach bridges (one run's records, adapter detail included, forwarded into
-the other run's log) and one run's `finally` would restore the level under the other. If
-flows are ever run in-process, the bridge must key on the current run and the level mutation
-must be reference-counted.
-
-### The serve entrypoint
+#### The serve entrypoint
 
 Run as `python -m infrahub_sync.orchestration.serve`. It:
 
-1. guards the `prefect` import and, on `ImportError`, emits one error line naming the extra
-   and the install command, then exits non-zero;
+1. checks for a missing `prefect` import, reports the extra and install command, and exits
+   non-zero; unrelated import failures propagate;
 2. reads `INFRAHUB_SYNC_CONFIG_DIRECTORY` and, if it is unset, empty, or not an existing
    directory, emits one error line **naming the variable** and exits non-zero before any
    deployment is served;
@@ -148,8 +143,7 @@ Run as `python -m infrahub_sync.orchestration.serve`. It:
    work pool, no separate worker;
 4. serves until interrupted.
 
-Error lines go through `logging` or `sys.stderr.write`, never `print()`: the repository has
-an AST-level test that forbids `print` in package modules.
+Startup errors are written to standard error through `sys.stderr.write`.
 
 The directory path is fixed at serve start; its *contents* are re-resolved on every run, so
 configurations added, edited or removed take effect on the next run without re-serving.
@@ -159,9 +153,10 @@ its `config.yml` uses repository-root-relative paths resolved against the servin
 working directory, and the cache root defaults to `Path.cwd()/.infrahub-sync-cache`. Started
 elsewhere, the example degrades to a silently empty plan or an adapter import failure.
 
-### Remote interaction
+#### Remote interaction
 
-Everything a caller does goes through Prefect's own API under `$PREFECT_API_URL`.
+Direct-integration callers use Prefect's API. The paths below are relative to the server
+origin; `$PREFECT_API_URL` normally already includes `/api`.
 
 | Step | Request |
 |---|---|
@@ -178,29 +173,34 @@ refused at run *creation*: `POST … /create_flow_run` with `"operation": "apply
 **HTTP 409** and **no flow run object is created at all**. Input validation for that
 parameter therefore never reaches the flow body.
 
-### Prefect-specific traps
+#### Prefect-specific traps
 
-Recorded because each cost real measurement time.
-
-- **A flow module must not use `from __future__ import annotations`** — at least not
-  reliably. With deferred annotations, `Flow.validate_parameters` →
-  `ValidatedFunction.model_rebuild` fails with
-  `PydanticUndefinedAnnotation: name 'Literal' is not defined` and the run ends FAILED
-  before the body executes. Observed on Prefect 3.5.0; re-measured on 3.8.1, where the
-  refusal still works. The failure is version-specific, so the module keeps the omission
-  (against the repository's convention, with a comment saying why) and a test pins that the
-  annotation resolves.
+- **Keep concrete parameter annotations.** Deferred annotations caused
+  `PydanticUndefinedAnnotation: name 'Literal' is not defined` before the flow body ran
+  on Prefect 3.5.0. The module omits `from __future__ import annotations`, and a test
+  checks that the operation annotation resolves to `Literal["plan", "sync"]`.
+  The tests also check refusal of an invalid operation during parameter validation on
+  Prefect 3.8.1.
 - **`PREFECT_LOCAL_STORAGE_PATH` does not follow `PREFECT_HOME`.** Redirecting
   `PREFECT_HOME` isolates the database but not persisted run results. Test isolation — and
   any operator who wants one directory — needs both variables set.
-- **`dataclasses.asdict()` cannot copy a `MappingProxyType` field**, as above.
+- **`dataclasses.asdict()` cannot copy a `MappingProxyType` field** — construct the return
+  dictionary explicitly, as shown above.
 - **Pinning the version is not optional here.** The extra pins `prefect==3.8.1` exactly,
   because the base dependency set and Prefect's transitive `redis` requirement interact —
-  see [ADR 8](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md).
+  see [ADR 8](https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md).
+
+### Optional imports
+
+The `orchestration` and `service` packages contain Sync's Prefect imports; a base install
+loads neither integration. The `service` extra also installs the dependencies used by
+`opsmill_prefect_extras/`. See
+[ADR 9](https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/dev/adr/0009-optional-integrations-live-in-their-own-package.md)
+for the optional-package boundary.
 
 ### See also
 
 - [The shared execution surface](execution-surface.md) — what the flow actually calls.
 - [Quality gates](quality-gates.md) — the two CI test legs this integration adds.
-- `examples/prefect_remote_run/` — the runnable example and its request corpus.
-- `docs/docs/reference/prefect-remote-run.mdx` — the user-facing reference page.
+- [Direct-flow example](https://github.com/opsmill/infrahub-sync/tree/f98a845986d1f03503d321ce5561b65a3946bf74/examples/prefect_remote_run) — the schema and sample requests.
+- [Direct Prefect reference](../../reference/prefect-remote-run.mdx) — configure and call the direct integration.
