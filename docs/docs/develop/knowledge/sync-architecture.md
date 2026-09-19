@@ -4,13 +4,12 @@ title: "Sync architecture"
 
 ## Sync architecture
 
-Infrahub Sync compares data from a source system with a destination and records the
+Infrahub Sync compares data from a source system with data from a destination and records the
 proposed changes in a saved plan. For example, you can review a plan from NetBox to
 Infrahub before approving destination writes.
 
 In the registered service workflow, the CLI submits work to the Sync API and a worker
-executes it through Prefect. To investigate a queued run or find its retained plan, first
-distinguish the processes that execute work from the stores that retain its records.
+executes it through Prefect.
 
 ### Service components
 
@@ -126,7 +125,7 @@ and field comparisons.
 ### The sync engine
 
 `Potenda`, in `infrahub_sync/potenda/`, loads adapter data, computes the DiffSync comparison
-and writes saved plans. The managed service applies those plans through the destination's
+and writes saved plans. The service applies those plans through the destination's
 planned-write methods. Deletes are recorded for review but are not executed.
 See [planned writes and apply](planned-write-and-apply.md) for the write operations and
 relationship handling.
@@ -145,5 +144,6 @@ a registered package cannot declare one. See [local adapters](../../adapters/loc
 
 - [Repository tour](repository-tour.md) — locate the module responsible for each stage or record.
 - [Prefect orchestration](orchestration-prefect.md) — distinguish service execution from the direct Prefect integration.
+- [Incremental extraction and cache](incremental-and-cache.md) — understand retained extraction data and cache behavior.
 - [The saved plan artifact](plan-artifact.md) — inspect the plan's manifest and operations.
 - [Adding an adapter](../guides/adding-an-adapter.md) — implement and test a connector.

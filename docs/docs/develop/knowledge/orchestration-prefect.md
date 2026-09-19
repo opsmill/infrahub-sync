@@ -1,5 +1,6 @@
 ---
 title: "Prefect orchestration"
+toc_max_heading_level: 4
 ---
 
 ## Prefect orchestration
@@ -44,8 +45,9 @@ def service_sync_run(
 
 Registered execution supplies all three configuration fields: `config_id`,
 `registry_version` and `package_checksum`. The worker checks them against the product run
-and registered package. A partial binding is refused; the all-unset form is retained for
-the legacy path, and managed writes require a registered binding.
+and registered package. A partial binding is refused. When all three fields are unset,
+the worker can plan or verify an unregistered configuration from its local directory.
+Service writes require a registered binding.
 
 The worker reads endpoint settings from the package and resolves credential references
 in its environment. Each stage uses private
@@ -58,7 +60,7 @@ planning, verification, approved writes and result persistence.
 `infrahub_sync/orchestration/` provides the optional direct integration, installed by the
 `prefect` extra. It calls `run_remote_request` in
 [the shared execution module](execution-surface.md) in-process.
-The flow retains four parameters:
+The flow takes four parameters:
 
 ```python
 @flow(name="infrahub-sync")
@@ -113,7 +115,7 @@ wraps `summary` in a `MappingProxyType`, which is not deep-copyable —
 `TypeError: cannot pickle 'mappingproxy' object`. Using it here would fail a successful run while
 constructing the return value.
 
-### The log bridge
+#### The log bridge
 
 `RunLoggerBridge` forwards records from the `infrahub_sync` logger hierarchy to the Prefect
 run logger, preserving each record's level and originating logger name and redacting secrets.
@@ -121,9 +123,9 @@ The direct flow sets the source logger to `INFO` and disables propagation while 
 is attached. In `finally`, it removes the bridge and restores both the previous level and
 propagation setting.
 
-Those settings are process-global. `_REMOTE_LOGGER_OWNERSHIP_LOCK` serializes the bridge
-scope within a process, so concurrent flow calls cannot attach competing bridges or restore
-each other's logger settings. It does not serialize runs in separate processes.
+Those settings are process-global. `_REMOTE_LOGGER_OWNERSHIP_LOCK` covers request execution
+as well as log forwarding within a process. Concurrent direct-flow calls therefore run one
+at a time and cannot attach competing bridges or restore each other's logger settings. It does not serialize runs in separate processes.
 The service flow uses the same lock and bridge when a Prefect run context exists.
 In offline executor tests, it catches `MissingContextError` and uses its module logger
 without attaching a bridge.
