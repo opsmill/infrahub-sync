@@ -59,7 +59,7 @@ For apply, `ownership` implements `WriteOwnership`: it proves the caller's right
 before each dispatched destination operation and after the final operation.
 `record_applied` receives the completed `ApplyRecord` before saving the applied run state.
 The service uses that callback to retain write evidence if later cleanup or persistence
-fails. A local pipeline lock alone does not provide the service's configuration guard.
+fails.
 
 ### Direct name resolution and Prefect execution
 
@@ -162,8 +162,9 @@ destination adapter; it does not call the planning factory or reload the source.
 
 ### Plan fingerprint
 
-`cache.fingerprint.compute_plan_fingerprint(run_dir)` hashes selected rows from the
-legacy `plan.parquet` file for comparisons. It excludes timestamps, run identifiers and
+`cache.fingerprint.compute_plan_fingerprint(run_dir)` hashes five fields — `action`,
+`resource`, `source_id`, `attribute` and `new_value` — from every row of the legacy
+`plan.parquet` file for comparisons. It excludes timestamps, run identifiers and
 paths; [ADR 7][adr-fingerprint] records that comparison algorithm.
 
 The registered apply approval instead uses the saved artifact's `plan_checksum`.

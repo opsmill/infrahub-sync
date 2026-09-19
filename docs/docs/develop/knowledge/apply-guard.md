@@ -9,7 +9,7 @@ with a PostgreSQL advisory lock. Both stages acquire this guard before reading t
 destination schema and hold it until their write work finishes.
 
 Each worker stage uses a private scratch directory, so a filesystem lock in that directory
-cannot exclude another worker. The guard coordinates processes that use the same
+cannot exclude another worker. The guard serializes processes that use the same
 configuration key in the same PostgreSQL database. It does not lock destination objects
 against other configurations or external tools.
 
@@ -37,7 +37,7 @@ Standalone `plan` and `verify` stages do not acquire the configuration write gua
 
 The service connects `guard.require_ownership` to the engine through
 `ProvenWriteOwnership`. The engine checks ownership immediately before each destination
-operation it dispatches and once after the final operation. Recorded deletes are skipped.
+operation it dispatches and once after the final operation. The engine does not dispatch delete operations; it records their identifiers as skipped.
 If a proof fails, the engine raises before dispatching the next operation; earlier writes
 are not rolled back. See [planned writes and apply](planned-write-and-apply.md) for the
 operation records and destination methods.
