@@ -308,13 +308,6 @@ class AciAdapter(DiffSyncMixin, Adapter):
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
                 nodes = list(all_nodes_for_reference)
 
-                if not nodes and all_nodes_for_reference:
-                    msg = (
-                        f"Unable to get '{field.mapping}' with '{field.reference}' reference from store. "
-                        f"The available models are {self.store.get_all_model_names()}"
-                    )
-                    raise ValueError(msg)
-
                 if field_is_list:
                     data[field.name] = self._process_list_field(obj, field, nodes)
                 else:
@@ -329,7 +322,7 @@ class AciAdapter(DiffSyncMixin, Adapter):
         for node in nodes_in_obj:
             if not node:
                 continue
-            node_id = str(node) if node else ""
+            node_id = str(node)
             matching_nodes = [item for item in nodes if item.local_id == node_id]
             if not matching_nodes:
                 msg = f"Unable to locate the node {field.reference} {node_id}"
