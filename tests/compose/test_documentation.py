@@ -536,7 +536,10 @@ def test_skill_install_removes_its_claimed_paths_after_a_partial_copy(tmp_path: 
         "  exit 17\n"
         "fi\n"
         'case "$2" in\n'
-        "  *infrahub-sync-configuration*) exit 17 ;;\n"
+        "  *infrahub-sync-configuration*)\n"
+        '    "$REAL_CP" "$@" || exit $?\n'
+        "    exit 17\n"
+        "    ;;\n"
         "esac\n"
         'exec "$REAL_CP" "$@"',
     )
