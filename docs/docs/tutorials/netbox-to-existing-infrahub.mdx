@@ -134,7 +134,7 @@ environment block before loading the schema.
 )
 ```
 
-Require a successful schema load. In Infrahub, select that branch and inspect
+Continue only after the schema load succeeds. In Infrahub, select that branch and inspect
 its schema: `TestingSite` and `TestingDevice` must exist, with
 `TestingDevice.site` referencing `TestingSite`. Resolve schema errors before
 continuing. Registering a Sync package does not load this schema.
@@ -228,7 +228,7 @@ Recreate services whose environment changed, then check readiness:
 ./infrahub-sync-compose status
 ```
 
-Require `READY` and exit zero. `start` reloads the changed environment;
+Continue only when `status` reports `READY` and exits with status 0. `start` reloads the changed environment;
 `restart` retains the environment from when the containers were created.
 
 Register your package with the included Sync CLI:
