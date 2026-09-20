@@ -4,21 +4,20 @@ title: "Knowledge"
 
 ## Knowledge
 
-How infrahub-sync works — descriptive reference, loaded on demand. These documents
-explain the moving parts so you can reason about a change before making it. For
-prescriptive rules see [Guidelines](../guidelines/index.md); for step-by-step procedures
-see [Guides](../guides/index.md).
+Understand the service components, execution stages and Python modules before changing
+infrahub-sync. Start with the architecture for a registered run or the repository tour
+for a module to edit. For development rules see [Guidelines](../guidelines/index.md);
+for step-by-step procedures see [Guides](../guides/index.md).
 
 ### Orientation
 
-- [Repository tour](repository-tour.md) — where each concern lives: the command-line client,
-  configuration admission, the service and its worker, plans, product storage, adapters, the
-  cache, the engine, and the material that is development-only or historical.
+- [Sync architecture](sync-architecture.md) — service components, the registered-run
+  lifecycle, durable records and deployment limits.
+- [Repository tour](repository-tour.md) — the modules for CLI requests, service execution,
+  plans, storage and adapters, with a trace from the HTTP client to worker operations.
 
 ### Adapters
 
-- [Sync architecture](sync-architecture.md) — how a sync runs end to end: the DiffSync
-  core, source and destination adapters, the Potenda engine, and the code-generation path.
 - [Adapter anatomy](adapter-anatomy.md) — the two classes every adapter provides, the
   `DiffSyncMixin` / `DiffSyncModelMixin` contract, and what you implement versus what you
   get for free.
@@ -32,21 +31,21 @@ see [Guides](../guides/index.md).
 - [The saved plan artifact](plan-artifact.md) — the manifest and operations a run records
   before it writes: layout, canonical encoding, operation identifiers, the checksum, and how
   a stored plan is read and verified.
-- [Planned writes and apply](planned-write-and-apply.md) — the second write path: the
-  destination write surface and what its type does and does not enforce, apply-time peer
-  resolution, replace-set semantics, and how deletes are recorded but not executed.
+- [Planned writes and apply](planned-write-and-apply.md) — the destination write surface for saved
+  operations, apply-time peer resolution, replace-set semantics, and why recorded deletes
+  are not executed.
 - [The configuration write guard](apply-guard.md) — the PostgreSQL session advisory lock
   that serializes one configuration's writes across processes: its direct-connection
   requirement, key derivation, deadline bounds, ownership proof, and failure sanitizing.
 
-### Running a sync from something other than the CLI
+### Configuration and execution {#running-a-sync-from-something-other-than-the-cli}
 
 - [Configuration foundation](configuration-foundation.md) — declared package identity,
   runtime credential references, and the connection-free adapter capability declaration.
-- [The shared execution surface](execution-surface.md) — the typed entry point to one run:
-  `RunResult`, the failure classes, the pipeline lock, and the plan fingerprint.
-- [Prefect orchestration](orchestration-prefect.md) — the packaged flow and serve
-  entrypoint, the log bridge, the remote API surface, and Prefect's traps.
+- [The shared execution surface](execution-surface.md) — service and direct Python
+  callers, plan/verify/apply inputs and return types, failure handling and filesystem locks.
+- [Prefect orchestration](orchestration-prefect.md) — registered service execution and
+  direct read-only planning, with their inputs, results and optional dependencies.
 
 ### Repository workflow
 
@@ -57,7 +56,7 @@ see [Guides](../guides/index.md).
 
 ### Related
 
-- [Adapter guidelines](../guidelines/index.md) — rules that apply to this code.
-- [Adapter guides](../guides/index.md) — adding and testing an adapter.
+- [Guidelines](../guidelines/index.md) — rules that apply to this code.
+- [Guides](../guides/index.md) — adding and testing an adapter.
 - [Decision records](../adr-index.mdx) — why the architecture is shaped the way it is.
 - [Constitution](../constitution.md) — project principles these documents serve.
