@@ -373,13 +373,13 @@ def test_the_page_tells_a_clean_host_how_to_get_the_bundle_and_check_it() -> Non
     assert "cd deploy/compose" not in text, "the page still deploys from a directory in this tree"
 
 
-def test_the_page_still_withholds_the_publication_it_does_not_have() -> None:
-    """Dropping the disclaimer is not permission to imply a published artifact.
+def test_private_candidates_link_to_installation_access_instructions() -> None:
+    """Direct private testers to release access before deployment commands."""
+    introduction = page().split("## Related operator pages", maxsplit=1)[0]
 
-    A registry, a package index and a tagged release are all still absent, so a
-    reader has to be told the archive is arranged rather than downloaded.
-    """
-    assert "not part of this lifecycle yet" in page()
+    assert "Private candidates are available as release attachments." in introduction
+    assert "[Install Infrahub Sync](./installation.mdx)" in introduction
+    assert "release access" in introduction
 
 
 def test_the_api_reference_marks_the_configuration_directory_as_legacy_only() -> None:
