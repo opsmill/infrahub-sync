@@ -47,7 +47,9 @@ def _adapter(peers: dict[str, str]) -> AciAdapter:
     adapter = object.__new__(AciAdapter)
     adapter.store = LocalStore()
     for local_id, name in peers.items():
-        adapter.store.add(obj=AciPeer(local_id=local_id, name=name))
+        peer = AciPeer(name=name)
+        peer.local_id = local_id
+        adapter.store.add(obj=peer)
     return adapter
 
 
