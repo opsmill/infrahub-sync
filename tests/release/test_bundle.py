@@ -19,11 +19,15 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 import shutil
+import subprocess  # noqa: S404 -- this test runs the shipped guide's own shell snippet
 import tarfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
+import yaml
 from invoke import Context
 
 from tasks import image, release
@@ -54,7 +58,15 @@ SHIPPED = {
     # The operator's own copy of the procedure. A host that has the archive and
     # nothing else has to be able to read how to deploy it.
     "OPERATING.md",
+    "skills/README.md",
+    "skills/infrahub-sync-configuration/SKILL.md",
+    "skills/infrahub-sync-deployment/SKILL.md",
 }
+SKILL_NAMES = ("infrahub-sync-configuration", "infrahub-sync-deployment")
+SKILL_ENTRYPOINTS = {name: f"skills/{name}/SKILL.md" for name in SKILL_NAMES}
+PINNED_DOC_REVISION = "38399ee12280c412755b96356316b3b529900395"
+PINNED_DOC_PATH = f"/opsmill/infrahub-sync/blob/{PINNED_DOC_REVISION}/"
+MARKDOWN_LINK = re.compile(r"\[[^]]+\]\(([^)]+)\)")
 # What a deployment writes beside them on its own host. None is the repository's
 # to ship, and one of them is a credential.
 GENERATED = ("operator.env", ".instance", "secrets/postgres-admin-password")
@@ -190,9 +202,162 @@ def contents(archive: Path) -> dict[str, bytes]:
     return held
 
 
+def skill_document(path: Path) -> tuple[dict[str, str], str]:
+    """Return one skill's frontmatter and body."""
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    assert lines[0] == "---", path
+    boundary = lines.index("---", 1)
+    loaded = yaml.safe_load("\n".join(lines[1:boundary]))
+    assert isinstance(loaded, dict), path
+    return {str(key): str(value) for key, value in loaded.items()}, "\n".join(lines[boundary + 1 :])
+
+
+def extract_bundle(archive: Path, destination: Path) -> Path:
+    """Extract regular files from the bundle archive into an isolated directory."""
+    with tarfile.open(archive) as opened:
+        for member in opened.getmembers():
+            if not member.isfile():
+                continue
+            stream = opened.extractfile(member)
+            assert stream is not None, member.name
+            target = destination / member.name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(stream.read())
+    return destination / ROOT
+
+
+def install_snippet(guide: Path) -> str:
+    """Return the guide's one documented shell installation block."""
+    blocks = re.findall(r"```sh\n(.*?)\n```", guide.read_text(encoding="utf-8"), flags=re.DOTALL)
+    assert len(blocks) == 1
+    return blocks[0]
+
+
 def test_the_bundle_ships_exactly_the_files_the_deployment_needs(tracked: dict[str, int]) -> None:
     """Read from Git, so an untracked file beside them cannot become bundle content."""
     assert set(tracked) == SHIPPED
+
+
+@pytest.mark.parametrize("skill_name", SKILL_NAMES)
+def test_each_skill_has_a_discriminating_portable_entrypoint(skill_name: str) -> None:
+    """Discovery metadata and positive/negative boundaries travel in the entrypoint."""
+    path = BUNDLE_SOURCE / SKILL_ENTRYPOINTS[skill_name]
+    metadata, body = skill_document(path)
+
+    assert metadata.keys() == {"name", "description"}
+    assert metadata["name"] == path.parent.name == skill_name
+    assert re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", skill_name)
+    assert len(metadata["description"]) <= 1024
+    assert "## Use this skill when" in body
+    assert "## Do not use this skill when" in body
+    for host_specific in ("/Users/", "bb thread", "BB_THREAD_STORAGE", "Codex"):
+        assert host_specific not in path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("skill_name", SKILL_NAMES)
+def test_each_skill_routes_to_existing_docs_at_the_immutable_source_revision(skill_name: str) -> None:
+    """A copied skill must not depend on its former checkout for human procedures."""
+    path = BUNDLE_SOURCE / SKILL_ENTRYPOINTS[skill_name]
+    links = MARKDOWN_LINK.findall(path.read_text(encoding="utf-8"))
+
+    assert len(links) >= 4
+    for link in links:
+        parsed = urlsplit(link)
+        assert parsed.scheme == "https"
+        assert parsed.netloc == "github.com"
+        assert parsed.path.startswith(PINNED_DOC_PATH)
+        source_path = parsed.path.removeprefix(PINNED_DOC_PATH)
+        assert (release.REPO_ROOT / source_path).is_file(), link
+
+
+def test_skills_and_install_guide_survive_archive_extraction_and_copy(archive: Path, tmp_path: Path) -> None:
+    """Exercise the real archive, then copy each whole skill without a checkout."""
+    bundle = extract_bundle(archive, tmp_path / "extracted")
+    installed = tmp_path / "agent-skills"
+    for skill_name in SKILL_NAMES:
+        copied = installed / skill_name
+        shutil.copytree(bundle / "skills" / skill_name, copied)
+        metadata, _body = skill_document(copied / "SKILL.md")
+        assert metadata["name"] == skill_name
+
+    guide = bundle / "skills" / "README.md"
+    relative_links = [link for link in MARKDOWN_LINK.findall(guide.read_text(encoding="utf-8")) if "://" not in link]
+    assert relative_links
+    for link in relative_links:
+        target = (guide.parent / link).resolve()
+        assert target.is_relative_to(bundle.resolve())
+        assert target.is_file(), link
+
+
+def test_documented_install_is_all_or_nothing_and_does_not_overwrite(archive: Path, tmp_path: Path) -> None:
+    """Run the shipped snippet against existing and empty agent skill directories."""
+    bundle = extract_bundle(archive, tmp_path / "install-bundle")
+    snippet = install_snippet(bundle / "skills" / "README.md")
+
+    occupied = tmp_path / "occupied"
+    sentinel = occupied / SKILL_NAMES[0] / "SKILL.md"
+    sentinel.parent.mkdir(parents=True)
+    sentinel.write_text("user-owned sentinel\n", encoding="utf-8")
+    refused = subprocess.run(  # noqa: S603 -- fixed /bin/sh argv runs the shipped guide's snippet
+        ["/bin/sh", "-c", snippet],
+        cwd=bundle,
+        env={"AGENT_SKILLS_DIR": str(occupied)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert refused.returncode != 0
+    assert sentinel.read_text(encoding="utf-8") == "user-owned sentinel\n"
+    assert not (occupied / SKILL_NAMES[1]).exists()
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    installed = subprocess.run(  # noqa: S603 -- fixed /bin/sh argv runs the shipped guide's snippet
+        ["/bin/sh", "-c", snippet],
+        cwd=bundle,
+        env={"AGENT_SKILLS_DIR": str(empty)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert installed.returncode == 0, installed.stderr
+    for skill_name in SKILL_NAMES:
+        assert (empty / skill_name / "SKILL.md").read_bytes() == (
+            bundle / "skills" / skill_name / "SKILL.md"
+        ).read_bytes()
+
+
+@pytest.mark.parametrize("destination_kind", ["unset", "empty", "missing"])
+def test_documented_install_refuses_an_unsafe_destination(archive: Path, tmp_path: Path, destination_kind: str) -> None:
+    """Unset, empty, and nonexistent destinations stop before the copy command."""
+    bundle = extract_bundle(archive, tmp_path / f"unsafe-{destination_kind}")
+    snippet = install_snippet(bundle / "skills" / "README.md")
+    marker = tmp_path / f"copy-called-{destination_kind}"
+    fake_bin = tmp_path / f"bin-{destination_kind}"
+    fake_bin.mkdir()
+    fake_cp = fake_bin / "cp"
+    fake_cp.write_text(f"#!/bin/sh\n: > '{marker}'\nexit 99\n", encoding="utf-8")
+    fake_cp.chmod(0o755)
+    environment = {"PATH": str(fake_bin)}
+    if destination_kind == "empty":
+        environment["AGENT_SKILLS_DIR"] = ""
+    elif destination_kind == "missing":
+        environment["AGENT_SKILLS_DIR"] = str(tmp_path / "does-not-exist")
+
+    refused = subprocess.run(  # noqa: S603 -- fixed /bin/sh argv runs the shipped guide's snippet
+        ["/bin/sh", "-c", snippet],
+        cwd=bundle,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert refused.returncode != 0
+    assert not marker.exists()
 
 
 def test_the_archive_holds_the_shipped_files_and_nothing_a_deployment_generates(archive: Path) -> None:

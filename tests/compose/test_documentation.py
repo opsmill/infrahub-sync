@@ -10,8 +10,12 @@ value the page and the bundle disagree about is a copy-and-paste failure.
 from __future__ import annotations
 
 import ast
+import os
 import re
 import shlex
+import shutil
+import subprocess  # noqa: S404 -- fixed shell argv executes the documented recipe under test
+from pathlib import Path
 from typing import Any, get_type_hints
 
 import pytest
@@ -27,6 +31,8 @@ QUICKSTART = REPO_ROOT / "docs" / "docs" / "quickstart-compose.mdx"
 SIDEBAR = REPO_ROOT / "docs" / "sidebars.ts"
 ENTRY_POINT = BUNDLE / "infrahub-sync-compose"
 API_REFERENCE = REPO_ROOT / "docs" / "docs" / "reference" / "sync-http-api.mdx"
+SKILLS_GUIDE = BUNDLE / "skills" / "README.md"
+SKILL_NAMES = ("infrahub-sync-deployment", "infrahub-sync-configuration")
 
 # Every command the entry point answers to. A command nobody wrote down is one
 # the deployment appears not to have.
@@ -99,6 +105,9 @@ BUNDLE_FILES = (
     "configuration/qualification.yaml",
     "bootstrap/databases.sh",
     "OPERATING.md",
+    "skills/README.md",
+    "skills/infrahub-sync-configuration/SKILL.md",
+    "skills/infrahub-sync-deployment/SKILL.md",
     "image.bind",
     "operator.env",
     "secrets/postgres-admin-password",
@@ -388,6 +397,180 @@ def test_the_api_reference_marks_the_configuration_directory_as_legacy_only() ->
 
     assert "Legacy" in row, row
     assert "no configuration mount" in row, row
+
+
+# ---------------------------------------------------------------------------
+# The documented skill installation recipe is atomic
+# ---------------------------------------------------------------------------
+
+
+def skill_install_script() -> str:
+    """Return the guide's one fenced shell recipe exactly as readers run it."""
+    scripts = re.findall(r"```sh\n(.*?)\n```", SKILLS_GUIDE.read_text(encoding="utf-8"), re.DOTALL)
+
+    assert len(scripts) == 1, "the skills guide must carry exactly one shell recipe"
+    return scripts[0] + "\n"
+
+
+def make_skill_sources(bundle: Path) -> None:
+    """Create two complete skill directories, including non-entry-point content."""
+    for name in SKILL_NAMES:
+        source = bundle / "skills" / name
+        (source / "notes").mkdir(parents=True)
+        (source / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+        (source / "notes" / "auxiliary.txt").write_text(f"auxiliary for {name}\n", encoding="utf-8")
+
+
+def run_skill_install(
+    bundle: Path, destination: Path, *, environment: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run the guide's recipe in a disposable extracted-bundle layout."""
+    variables = {**os.environ, "AGENT_SKILLS_DIR": str(destination), **(environment or {})}
+    return subprocess.run(
+        ["/bin/sh"],
+        input=skill_install_script(),
+        cwd=bundle,
+        env=variables,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def write_command_wrapper(directory: Path, command: str, body: str) -> None:
+    """Put a controlled command first on PATH for one recipe execution."""
+    directory.mkdir(parents=True, exist_ok=True)
+    wrapper = directory / command
+    wrapper.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+    wrapper.chmod(0o755)
+
+
+@pytest.mark.parametrize("occupied_name", SKILL_NAMES)
+def test_skill_install_preserves_an_occupied_destination_without_a_partial_install(
+    tmp_path: Path, occupied_name: str
+) -> None:
+    """Either occupied destination must stop the pair without changing either owner."""
+    bundle = tmp_path / "bundle"
+    destination = tmp_path / "agent-skills"
+    make_skill_sources(bundle)
+    destination.mkdir()
+    occupied = destination / occupied_name
+    occupied.mkdir()
+    sentinel = occupied / "sentinel"
+    sentinel.write_text("keep\n", encoding="utf-8")
+
+    result = run_skill_install(bundle, destination)
+
+    assert result.returncode != 0
+    assert sentinel.read_text(encoding="utf-8") == "keep\n"
+    assert set(occupied.iterdir()) == {sentinel}
+    for name in SKILL_NAMES:
+        if name != occupied_name:
+            assert not (destination / name).exists()
+
+
+def test_skill_install_loses_a_concurrent_claim_without_copying_into_or_removing_it(tmp_path: Path) -> None:
+    """A winner created at the claim boundary remains the sole owner of its path."""
+    bundle = tmp_path / "bundle"
+    destination = tmp_path / "agent-skills"
+    wrappers = tmp_path / "wrappers"
+    make_skill_sources(bundle)
+    destination.mkdir()
+    race_target = destination / SKILL_NAMES[0]
+    real_mkdir = shutil.which("mkdir")
+    real_cp = shutil.which("cp")
+    assert real_mkdir is not None
+    assert real_cp is not None
+    write_command_wrapper(
+        wrappers,
+        "mkdir",
+        'if [ "$1" = "$RACE_TARGET" ]; then\n'
+        '  "$REAL_MKDIR" "$1"\n'
+        '  printf "%s\\n" winner > "$1/sentinel"\n'
+        "fi\n"
+        'exec "$REAL_MKDIR" "$@"',
+    )
+    # The cp branch makes the same boundary visible to the old check-then-copy recipe.
+    write_command_wrapper(
+        wrappers,
+        "cp",
+        'if [ ! -e "$RACE_TARGET" ]; then\n'
+        '  "$REAL_MKDIR" "$RACE_TARGET"\n'
+        '  printf "%s\\n" winner > "$RACE_TARGET/sentinel"\n'
+        "fi\n"
+        'exec "$REAL_CP" "$@"',
+    )
+
+    result = run_skill_install(
+        bundle,
+        destination,
+        environment={
+            "PATH": f"{wrappers}{os.pathsep}{os.environ.get('PATH', '')}",
+            "RACE_TARGET": str(race_target),
+            "REAL_MKDIR": real_mkdir,
+            "REAL_CP": real_cp,
+        },
+    )
+
+    assert result.returncode != 0
+    sentinel = race_target / "sentinel"
+    assert sentinel.read_text(encoding="utf-8") == "winner\n"
+    assert set(race_target.iterdir()) == {sentinel}
+    assert not (destination / SKILL_NAMES[1]).exists()
+
+
+def test_skill_install_removes_its_claimed_paths_after_a_partial_copy(tmp_path: Path) -> None:
+    """A failed second copy rolls back both destinations claimed by this run."""
+    bundle = tmp_path / "bundle"
+    destination = tmp_path / "agent-skills"
+    wrappers = tmp_path / "wrappers"
+    make_skill_sources(bundle)
+    destination.mkdir()
+    real_cp = shutil.which("cp")
+    assert real_cp is not None
+    write_command_wrapper(
+        wrappers,
+        "cp",
+        'if [ "$#" -eq 4 ]; then\n'
+        '  "$REAL_CP" -R "$2" "$4"\n'
+        "  exit 17\n"
+        "fi\n"
+        'case "$2" in\n'
+        "  *infrahub-sync-configuration*)\n"
+        '    "$REAL_CP" "$@" || exit $?\n'
+        "    exit 17\n"
+        "    ;;\n"
+        "esac\n"
+        'exec "$REAL_CP" "$@"',
+    )
+
+    result = run_skill_install(
+        bundle,
+        destination,
+        environment={
+            "PATH": f"{wrappers}{os.pathsep}{os.environ.get('PATH', '')}",
+            "REAL_CP": real_cp,
+        },
+    )
+
+    assert result.returncode == 17
+    for name in SKILL_NAMES:
+        assert not (destination / name).exists()
+
+
+def test_skill_install_copies_both_complete_skill_directories(tmp_path: Path) -> None:
+    """A successful install includes auxiliary files instead of only SKILL.md."""
+    bundle = tmp_path / "bundle"
+    destination = tmp_path / "agent-skills"
+    make_skill_sources(bundle)
+    destination.mkdir()
+
+    result = run_skill_install(bundle, destination)
+
+    assert result.returncode == 0, result.stderr
+    for name in SKILL_NAMES:
+        assert (destination / name / "SKILL.md").read_text(encoding="utf-8") == f"# {name}\n"
+        assert (destination / name / "notes" / "auxiliary.txt").read_text(encoding="utf-8") == f"auxiliary for {name}\n"
 
 
 # ---------------------------------------------------------------------------
