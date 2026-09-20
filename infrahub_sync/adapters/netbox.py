@@ -205,7 +205,6 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                 if not field_is_list:
                     if node := get_value(obj, field.mapping):
                         if isinstance(node, dict):
-                            matching_nodes = []
                             node_id = node.get("id", None)
                             matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                             if len(matching_nodes) == 0:
