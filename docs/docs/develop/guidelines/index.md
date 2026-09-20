@@ -4,9 +4,9 @@ title: "Guidelines"
 
 ## Guidelines
 
-Prescriptive rules — how adapter code should be written. Guidelines say what you must and
-must not do; for how the system works see [Knowledge](../knowledge/index.md), and for
-step-by-step procedures see [Guides](../guides/index.md).
+Rules for writing and testing Infrahub Sync code, including adapter rules, repository-wide
+testing, and secret redaction. For how the system works, see
+[Knowledge](../knowledge/index.md); for step-by-step procedures, see [Guides](../guides/index.md).
 
 ### Adapters
 
@@ -27,7 +27,7 @@ step-by-step procedures see [Guides](../guides/index.md).
 ### Related
 
 - [Knowledge](../knowledge/index.md) — the architecture these rules apply to.
-- [Repository tour](../knowledge/repository-tour.md) — where the code these rules govern lives.
-- [Adding an adapter](../guides/adding-an-adapter.md) — the procedure that applies them.
+- [Repository tour](../knowledge/repository-tour.md) — where to find the code for each part of the system.
+- [Adding an adapter](../guides/adding-an-adapter.md) — the procedure for implementing and testing a new adapter.
 - [Decision records](../adr-index.mdx) — the decisions behind these rules.
 - [Constitution](../constitution.md) — the principles these rules serve.
