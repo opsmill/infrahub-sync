@@ -6,29 +6,22 @@ title: "Repository tour"
 
 > Part of: Develop > Knowledge | Related: [Sync architecture](sync-architecture.md), [The shared execution surface](execution-surface.md), [Testing tiers](../guidelines/testing-tiers.md)
 
-**Verified 2026-09-16 against source revision
-[`61b6a1b9dccae637b522084f563858dfcd5e31a9`][src-revision].** Every path and
-ownership claim below comes from reading the tree at that exact revision, not from a live run.
-Each repository path below links to itself at that revision, so a link that has since moved is
-evidence the page needs re-checking. Where a module's behavior is explained in depth elsewhere,
-this page links that page rather than restating it.
+Find the module responsible for a change, from CLI requests to worker execution and
+stored results. For service components and the registered-run lifecycle, start with
+[Sync architecture](sync-architecture.md); for the test suite to run, see
+[Testing tiers](../guidelines/testing-tiers.md).
 
-Where each concern lives, so you can find the right module before changing anything. This is a
-map, not a specification: it says what owns what and where the deeper document is.
+The module inventory was verified on 2026-09-16 against
+[`61b6a1b`][src-revision]. Inventory links retain that revision; the execution trace
+below links to the released [`f98a845`][route-revision] source.
 
-Read this alongside [Sync architecture](sync-architecture.md), which explains how one run
-moves through the engine, and [Testing tiers](../guidelines/testing-tiers.md), which explains
-which suite covers which part of the tree.
+### Execution routes {#the-one-boundary-to-hold-on-to}
 
-### The one boundary to hold on to
-
-Three things in this repository look interchangeable and are not:
-
-| Route | What it is | Where it lives |
+| Route | Purpose | Modules |
 |---|---|---|
-| Registered V3 execution | The supported route. A configuration package is registered with the Sync API, validated, planned, reviewed and applied by a service worker. | [`infrahub_sync/service/`][src-infrahub-sync-service], [`infrahub_sync/product_store/`][src-infrahub-sync-product-store], [`infrahub_sync/configuration/`][src-infrahub-sync-configuration] |
-| Internal generation and local plugins | Development material. Rendered DiffSync modules and filesystem adapter loading, used while building an adapter. | [`infrahub_sync/generator/`][src-infrahub-sync-generator], [`infrahub_sync/plugin_loader.py`][src-infrahub-sync-plugin-loader-py] |
-| Direct Prefect execution | An optional integration that runs a flow without the Sync API. Not the operator route. | [`infrahub_sync/orchestration/`][src-infrahub-sync-orchestration] |
+| Registered V3 execution | Register a configuration package with the Sync API, plan, review and approve destination writes. | [`infrahub_sync/service/`][src-infrahub-sync-service], [`infrahub_sync/product_store/`][src-infrahub-sync-product-store], [`infrahub_sync/configuration/`][src-infrahub-sync-configuration] |
+| Internal generation and local plugins | Render DiffSync modules and load filesystem adapters during adapter development. | [`infrahub_sync/generator/`][src-infrahub-sync-generator], [`infrahub_sync/plugin_loader.py`][src-infrahub-sync-plugin-loader-py] |
+| Direct Prefect planning | Run a read-only plan for a configuration in a local directory, without the Sync API. | [`infrahub_sync/orchestration/flow.py`][route-direct-flow], [`run_remote_request`][route-remote-request] |
 
 A fourth category is historical evidence — archived specifications and decision records under
 `dev/`. It documents why the code is shaped this way; it is not a description of current
@@ -45,6 +38,19 @@ behavior.
 
 The command surface is `configs`, `runs`, `diff`, `sync` and `apply`. See the
 [CLI reference](../../reference/cli.mdx) for every option.
+
+To trace a registered run from a CLI command to execution, follow these modules:
+
+| Stage | Module and action |
+|---|---|
+| CLI command | [`cli.py`][route-cli] calls `SyncClient` to submit a plan, sync or apply request. |
+| HTTP request | [`client/client.py`][route-client] sends the request to the Sync API and reads run, plan and result resources. |
+| Service submission | [`service/app.py`][route-api] handles HTTP requests; [`service/service.py`][route-service] records and submits work through [`service/orchestration.py`][route-orchestration] to Prefect. |
+| Worker execution | The process worker executes [`service/flow.py`][route-flow], which resolves the registered configuration and calls the core plan, verify and apply operations. |
+| Core operation | [`execution.py`][route-execution] executes each operation. Registered `sync` composes plan, verify and apply in the service flow. |
+
+The CLI reads results through the API. For the execution stages and retained records,
+see [the registered-run lifecycle](sync-architecture.md#one-registered-run).
 
 ### Configuration admission
 
@@ -93,10 +99,13 @@ out-of-process discovery path, and `errors.py` its failures.
 
 ### One run: the shared execution surface
 
-[`infrahub_sync/execution.py`][src-infrahub-sync-execution-py] is the typed Python entry point to a single run, used by the CLI
-path, the service worker stages and the packaged Prefect flow. It imports no Prefect symbol,
-so it stays importable in a base install. [The shared execution surface](execution-surface.md)
-is the full document.
+[`infrahub_sync/execution.py`][route-execution] provides `execute_run` for service worker
+stages and direct Python callers. The CLI uses the HTTP client; the direct Prefect flow
+calls [`run_remote_request`][route-remote-request], which resolves a local configuration
+and calls `execute_run` for a plan. The execution module imports no Prefect symbols and
+remains importable in a base install. See
+[the shared execution surface](execution-surface.md) for callers, operation inputs and
+return types.
 
 ### Plans
 
@@ -161,14 +170,16 @@ These three are development and internal machinery, not the registered route:
 live compare-and-write path and the apply path, and owns the destination SDK exception
 boundary. [`infrahub_sync/utils.py`][src-infrahub-sync-utils-py] assembles the pieces — configuration, plugin loading,
 runtime models, cache paths and the engine — into a runnable instance.
-[Sync architecture](sync-architecture.md) walks one run end to end.
+For the service components and registered-run lifecycle, see
+[Sync architecture](sync-architecture.md).
 
 ### Optional orchestration
 
-`infrahub_sync/orchestration/` holds the packaged flow (`flow.py`) and its serve entry point
-(`serve.py`). It is the direct-Prefect integration, separate from the service's own Prefect
-usage, and it is not the supported operator route.
-[Prefect orchestration](orchestration-prefect.md) covers the import boundary and the traps.
+`infrahub_sync/orchestration/` contains the direct flow (`flow.py`) and its serve entry point
+(`serve.py`). The [direct flow][route-direct-flow] runs read-only plans through
+[`run_remote_request`][route-remote-request], which refuses `sync` requests. Registered
+writes use the service integration. See [Prefect orchestration](orchestration-prefect.md)
+for the two integrations, their inputs and their result locations.
 
 ### Vendored extras
 
@@ -227,7 +238,7 @@ code is right and the page you are reading should be corrected.
 
 ### Related
 
-- [Sync architecture](sync-architecture.md) — how one run moves through the engine.
+- [Sync architecture](sync-architecture.md) — service components and the registered-run lifecycle.
 - [Testing tiers](../guidelines/testing-tiers.md) — which suite covers which part of this tree.
 - [Quality gates](quality-gates.md) — what `invoke lint` and `invoke format` run.
 - [Decision records](../adr-index.mdx) — why the architecture is shaped this way.
@@ -243,9 +254,7 @@ code is right and the page you are reading should be corrected.
 [src-infrahub-sync-client]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/client
 [src-infrahub-sync-configuration]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/configuration
 [src-infrahub-sync-dependency-graph-py]: https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/dependency_graph.py
-[src-infrahub-sync-execution-py]: https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/execution.py
 [src-infrahub-sync-generator]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/generator
-[src-infrahub-sync-orchestration]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/orchestration
 [src-infrahub-sync-plan]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/plan
 [src-infrahub-sync-plugin-loader-py]: https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/plugin_loader.py
 [src-infrahub-sync-potenda]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/potenda
@@ -257,3 +266,14 @@ code is right and the page you are reading should be corrected.
 [src-revision]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9
 [src-tasks]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/tasks
 [src-tests]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests
+
+[route-revision]: https://github.com/opsmill/infrahub-sync/tree/f98a845986d1f03503d321ce5561b65a3946bf74
+[route-cli]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/cli.py#L535-L659
+[route-client]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/client/client.py#L258-L312
+[route-api]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/service/app.py#L167-L211
+[route-service]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/service/service.py#L606-L650
+[route-orchestration]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/service/orchestration.py#L138-L147
+[route-flow]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/service/flow.py#L805-L885
+[route-execution]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/execution.py#L1073-L1149
+[route-direct-flow]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/orchestration/flow.py#L110-L170
+[route-remote-request]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/execution.py#L1304-L1325
