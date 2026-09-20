@@ -7,10 +7,9 @@ owns the Sync API, the Sync worker, a Prefect server, PostgreSQL, and
 S3-compatible object storage. A host needs Docker Compose 2.17.3 or later and
 nothing else — no product checkout, no Python, no `uv`.
 
-The bundle is an archive and a checksum, and it is qualified by running it on a
-host that has never seen this repository. Publishing it — a package index, a
-registry, a tagged release — is not part of this lifecycle yet, so obtaining the
-archive is arranged rather than self-service.
+Private candidates are available as release attachments. Start with
+[Install Infrahub Sync](./installation.mdx) for release access and the guides
+pinned for Candidate 4.
 
 Start from the [Compose quickstart](quickstart-compose), which owns release
 verification, image loading, `init`, and the first `start`. This page owns the
@@ -20,9 +19,8 @@ configuration and reviewed-run procedure after that prerequisite.
 
 [Day 2 operations](operations/day-2-operations) · [Compose operator troubleshooting](operations/compose-troubleshooting) · [Supported platforms and limits](operations/supported-platforms-and-limits)
 
-The archive carries its own copy of this procedure at
-[`OPERATING.md`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/deploy/compose/OPERATING.md),
-so a host that has the archive and nothing else can still be operated.
+The extracted bundle includes `OPERATING.md` with local operating instructions
+for that bundle. Follow the release download and checksum steps before using it.
 
 ## Release prerequisite
 
