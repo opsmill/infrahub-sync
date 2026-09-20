@@ -1,12 +1,14 @@
 ---
-title: Sync NetBox to Infrahub
+title: Sync the public NetBox demo to a local Infrahub
 description: Set up a local Infrahub instance, load a data model, and synchronize infrastructure data from the public NetBox demo.
 ---
 
 This tutorial is for people getting started with Infrahub: it starts from a blank page, with no existing Infrahub instance or schema required. We will use Infrahub Sync to copy data from the [public NetBox demo](https://demo.netbox.dev) into Infrahub, installing and configuring everything we need along the way. This tutorial covers the fundamental work needed to get started; more advanced topics will be covered in subsequent guides.
 
 :::tip Already running Infrahub?
-If you already have an Infrahub instance running, you can skip straight to the [NetBox adapter documentation](../adapters/netbox.mdx).
+For an existing NetBox and Infrahub with a Compose Sync deployment, follow
+[Preview NetBox data in an existing Infrahub](netbox-to-existing-infrahub).
+That tutorial ends with a saved preview; this local demo continues through an import.
 :::
 
 By the end of this tutorial, you will know how to:

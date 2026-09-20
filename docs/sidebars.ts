@@ -18,9 +18,9 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Tutorials',
       items: [
-        'tutorials/netbox-demo-to-infrahub',
         'tutorials/netbox-to-existing-infrahub',
         'tutorials/nautobot-to-existing-infrahub',
+        'tutorials/netbox-demo-to-infrahub',
       ],
     },
     {
