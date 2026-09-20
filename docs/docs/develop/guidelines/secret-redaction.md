@@ -9,7 +9,7 @@ configuration parser. When adding an error path, sanitize the text before return
 through an API, forwarding it to Prefect or storing it for remote inspection. Never
 include credentials in messages you write yourself.
 
-The rules below follow the [released redaction implementation][execution-source].
+The rules below describe the [released redaction implementation][execution-source].
 They apply to both registered service runs and direct execution, with different callers
 responsible for the final output.
 
@@ -31,9 +31,10 @@ implementations. See the [shared execution surface](../knowledge/execution-surfa
 for the operations each route supports.
 
 The registered CLI is a remote API caller; having credentials in the local shell does
-not make a returned failure safe to display. Keep the adapter rule to
+not make a returned failure safe to display. The adapter rule still applies:
 [never include credentials in logs or exceptions](writing-an-adapter.md#log-with-structlog-never-secrets).
-Boundary redaction also handles messages from dependencies that the adapter did not compose.
+Boundary redaction also replaces collected values in messages from dependencies that the
+adapter did not write.
 
 ### Redact the whole cause chain
 
@@ -70,15 +71,15 @@ context exists. This is not a filter for every logger, return value or artifact.
 See [Prefect logging](../knowledge/orchestration-prefect.md#the-log-bridge).
 
 A boundary that catches `Exception` to sanitize and re-raise it may need a targeted
-`# noqa: BLE001` with a comment explaining the translation. Keep that exception to the
-lint rule at the boundary; it does not justify swallowing failures.
+`# noqa: BLE001` with a comment explaining the translation. Limit that lint suppression to
+this boundary. It does not permit discarding a failure instead of re-raising it.
 
 ### Collect from the environment by name shape — and from every value's URL userinfo
 
-Endpoint variables such as `NETBOX_ADDRESS` may contain credentials even though their
-names do not mention authentication. The collector checks environment values in two ways:
+Endpoint variables such as `NETBOX_ADDRESS` may contain credentials even though
+nothing in their names refers to authentication. The collector checks environment values in two ways:
 
-- A credential-shaped variable name contributes its whole value.
+- A variable with a credential-shaped name contributes its whole value.
 - Every variable contributes any URL userinfo and password found in its value,
   regardless of the variable name.
 
@@ -89,7 +90,10 @@ Environment name matching is case-insensitive. A name qualifies when it *contain
 URL userinfo is the `username:password` portion of `scheme://username:password@host`.
 The collector adds the whole userinfo string and the password separately, subject to
 the [minimum length](#drop-values-below-a-length-floor). It also scans string values in
-configuration settings for URL userinfo, regardless of the settings key.
+configuration settings for URL userinfo, except for entries under `*_env_vars` keys.
+Those entries are variable names, not strings to scan for userinfo. The collector reads
+the referenced values only when the key qualifies as a credential key, including through
+inherited context.
 
 ### Match key names at a boundary, never as bare substrings
 
@@ -113,18 +117,18 @@ For configuration settings, the collector converts each key to lowercase and che
 Credentials can occur in nested `source`, `destination` and optional `store` settings.
 The shared collector applies these rules to all three settings blocks:
 
-- **Inherit matched keys.** Values beneath a credential-shaped key remain candidates,
+- **Inherited context.** Values beneath a credential-shaped key remain candidates,
   including plainly named entries inside a `credentials` mapping.
-- **Bound container traversal.** Track `(id(container), secret_context)` to stop cycles
+- **Bounded traversal.** The collector tracks `(id(container), secret_context)` to stop cycles
   while allowing the same YAML alias under both ordinary and credential-shaped keys.
-  Stop descending into containers at depth 64. Values beyond that limit may be missed.
-- **Handle supported scalars.** Collect strings and convert `int`, `float` and `Decimal`
-  values to text. Skip `None`, boolean values and unsupported leaf objects.
-- **Resolve environment references.** Under a credential-shaped `*_env_vars` key,
-  collect the values of the named environment variables, not their names.
+  It stops descending into containers at depth 64. Values beyond that limit may be missed.
+- **Supported scalars.** The collector accepts strings and converts `int`, `float` and `Decimal`
+  values to text. It skips `None`, boolean values and unsupported leaf objects.
+- **Environment references.** For a qualifying `*_env_vars` key, the collector reads
+  the values of the named environment variables, not their names.
 
-Both execution wrappers collect environment values before configuration resolution and
-refresh the collection with settings after resolution. Do not assume inline settings values
+`run_remote_request` and `service_sync_run` collect environment values before
+configuration resolution, then refresh the collection with settings after resolution. Do not assume inline settings values
 have been collected before that refresh.
 
 ### Drop values below a length floor
@@ -146,8 +150,9 @@ new messages and test the values the changed route can expose.
 
 ### Never chain a validation library's raw detail
 
-A validation error can include rejected input before a usable configuration exists.
-A collector cannot reliably sanitize credentials it has not collected.
+A validation error can include the input it rejected. Validation happens before a usable
+configuration exists. At that point, the collector has no settings values from the invalid
+file. It cannot reliably sanitize credentials it has not collected.
 
 For direct configuration resolution, `resolve_sync_instance` reports the logical name
 and, for a matched invalid file, its path. It suppresses the original validation cause
