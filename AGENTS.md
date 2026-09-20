@@ -254,7 +254,8 @@ Core rule unchanged: provide a read-only `diff` pathway and validate it before e
 `docs/docs/develop/` is not adapter-only. When the work is not an adapter, start here:
 
 - [The shared execution surface](docs/docs/develop/knowledge/execution-surface.md) — the typed entry point
-  to one run, used by the CLI and by the packaged Prefect flow.
+  used by the service worker and direct Python callers. The CLI submits runs through the Sync HTTP API;
+  the direct Prefect flow calls the execution module through `run_remote_request`.
 - [Prefect orchestration](docs/docs/develop/knowledge/orchestration-prefect.md) — the optional
   orchestration integration and its import boundary.
 - [Quality gates](docs/docs/develop/knowledge/quality-gates.md) — what the lint and format aggregates
