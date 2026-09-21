@@ -383,7 +383,7 @@ def _infrahub_environment() -> dict[str, str]:
 
 
 @pytest.fixture(scope="session")
-def infrahub_fixture(docker_daemon: None) -> Iterator[dict[str, str]]:
+def infrahub_fixture(sync_image: str) -> Iterator[dict[str, str]]:
     """One pinned Infrahub 1.10.6, seeded with the smoke schema, device, and branch.
 
     Test infrastructure, never a service of the release bundle: it is started
@@ -391,8 +391,11 @@ def infrahub_fixture(docker_daemon: None) -> Iterator[dict[str, str]]:
     removed with its volumes afterwards. Only `infrahub-server`, `task-worker`
     and their dependency closure are started; the development stack's own
     `sync-*` services are not part of what this fixture provides.
+
+    Depends on `sync_image`, which carries the daemon prerequisite with it: the
+    image prerequisite has to pass before anything here is started.
     """
-    del docker_daemon
+    del sync_image
     from tasks.preview import COMPOSE_FILES, ENV_FILE, SCHEMA_FILE, ensure_smoke_branch
 
     values = _infrahub_environment()
