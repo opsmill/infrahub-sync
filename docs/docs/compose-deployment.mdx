@@ -555,24 +555,78 @@ one redaction boundary before anything is rendered.
 
 ## Stop, restart, and reset
 
-These three are deliberately different operations.
+Before planned maintenance, coordinate with everyone submitting work to this
+deployment to stop new submissions. For each `RUN_ID` returned by a submission,
+check:
 
 ```bash
-# Stop the processes. Containers and every volume stay exactly as they are.
+./infrahub-sync-compose cli runs show RUN_ID
+```
+
+Wait until its `execution_state` is `completed`, `failed`, `cancelled`,
+`abandoned`, or `interrupted`. These are terminal execution states; a missing
+or other value does not confirm a terminal execution. `status` can report
+`READY` while work is running: it checks health, not idleness. These checks
+cover only known runs; if you cannot account for all submitted work, postpone
+maintenance.
+
+### Stop and resume the deployment
+
+`stop` stops all services while preserving their containers and volumes:
+
+```bash
 ./infrahub-sync-compose stop
+./infrahub-sync-compose status
+```
 
-# Replace the API and worker processes. The worker rejoins under a new Prefect
-# identity; every durable record survives, because none of it was ever on a
-# container filesystem.
+Expect `STOPPED` and exit code 4. To resume the deployment, use `start`:
+
+```bash
+./infrahub-sync-compose start
+./infrahub-sync-compose status
+```
+
+Expect `READY` and exit code 0 before submitting work. `start` starts the
+PostgreSQL, object storage, and Prefect dependencies as well as the API and worker.
+
+### Restart the API and worker
+
+When the dependencies are running, use `restart` to restart only the API and
+worker processes:
+
+```bash
 ./infrahub-sync-compose restart
+./infrahub-sync-compose status
+```
 
-# Remove this instance's containers, network, and volumes. The next start is a
-# cold one.
+`restart` waits for `READY` and preserves durable records. It does not start
+stopped dependencies, so use `start` after a full deployment stop.
+
+### Verify a retained configuration
+
+Before maintenance, read a version of an existing registered configuration:
+
+```bash
+./infrahub-sync-compose cli configs show CONFIG_ID --version VERSION
+```
+
+Replace `CONFIG_ID` and `VERSION` with the identifier and version you registered.
+Save the output, then repeat the command after the deployment reports `READY`.
+Confirm that `config_id`, `registry_version`, `package_checksum`, and
+`declared_content` match the earlier output. This checks that the configuration
+version remains available; `READY` alone only checks deployment health.
+
+### Reset the deployment
+
+`reset` removes this instance's containers, network, and volumes. Use it only
+when you intend to discard the deployment's data:
+
+```bash
 ./infrahub-sync-compose reset <instance identity>
 ```
 
-Each of them resolves its targets by explicit name and checks that every one
-carries this instance's label before it changes anything. A resource that is
+`stop`, `restart`, and `reset` verify the instance labels on the deployment's
+resources before changing anything. A resource that is
 missing is nothing to remove; a resource that exists under another label is
 refused, and the whole operation stops before its first mutation:
 

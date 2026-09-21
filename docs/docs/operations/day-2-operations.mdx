@@ -22,9 +22,16 @@ troubleshooting procedure for this Compose deployment route.
 The [stop, restart, and reset procedure](../compose-deployment#stop-restart-and-reset)
 defines the effects and safeguards of each action:
 
-- Stop pauses the processes while preserving containers and volumes.
-- Restart replaces the API and worker processes while preserving durable records.
-- Reset removes this instance's containers, network, and volumes. It is destructive.
+- `stop` stops all services while preserving containers and volumes. Use `start`
+  to resume the deployment, including its dependencies.
+- `restart` replaces only the API and worker processes while preserving durable
+  records. The deployment's dependencies must already be running.
+- `reset` removes this instance's containers, network, and volumes. It is destructive.
+
+Before planned maintenance, [coordinate submissions and check known runs](../compose-deployment#stop-restart-and-reset).
+After resuming,
+[verify a retained configuration version](../compose-deployment#verify-a-retained-configuration)
+to check product state as well as deployment health.
 
 Use reset only when you intend to discard the deployment state. To replace this
 alpha, follow the [replacement procedure](../compose-deployment#replacing-this-alpha):
