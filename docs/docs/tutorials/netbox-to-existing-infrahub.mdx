@@ -312,9 +312,9 @@ The saved evidence omits exception messages. For more detail, inspect the
 ./infrahub-sync-compose logs sync-worker
 ```
 
-Find the `flow_run_id` from `runs show` in the logs. If they report a source
-connection failure, check the source URL and reachability from the worker
-container. Correct the cause before creating another preview. After credential
+Find the `flow_run_id` from `runs show` in the logs to identify the Prefect
+flow-run name. Read the messages for that name. If they report a source connection
+failure, check the source URL and reachability from the worker container. Correct the cause before creating another preview. After credential
 edits, run `start` again; after package edits, register and validate the new version.
 
 ## Continue
