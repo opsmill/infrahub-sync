@@ -1,1 +1,0 @@
-The configuration model now declares its supported Pydantic v2 validation directly instead of selecting a validator at import time, and the destination write-operations check no longer carries a delete branch that its own flag rule made unreachable. Accepted configuration, resolved flags and error messages are unchanged.
