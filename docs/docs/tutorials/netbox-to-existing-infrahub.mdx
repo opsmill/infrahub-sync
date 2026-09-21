@@ -1,26 +1,166 @@
 ---
-title: Sync from NetBox to an existing Infrahub
+title: Preview NetBox data in an existing Infrahub
 ---
 
-This tutorial connects NetBox to an existing Infrahub. Unlike the [NetBox demo
-tutorial](netbox-demo-to-infrahub), it does not start Infrahub locally.
-Start the deployment with the [Compose quickstart](../quickstart-compose.mdx),
-then run these commands from the extracted deployment directory on the Docker
-host.
+Preview the sites and devices from your existing NetBox instance in an
+existing Infrahub. You will prepare two destination kinds, register a Sync
+configuration, and review a saved plan before importing inventory data. For a
+fresh local Infrahub and the public NetBox demo, follow the
+[local demo tutorial](netbox-demo-to-infrahub) instead.
+
+## Before you start
+
+- Complete [Start a Compose deployment](../quickstart-compose.mdx) and confirm
+  `READY`.
+- Have NetBox and Infrahub running, with API tokens for each. The worker
+  container must be able to reach both servers; the Docker host must also reach
+  Infrahub to load its schema.
+- Have Python 3 with `venv` and `pip` on the Docker host for the separate
+  Infrahub schema tool. The Sync CLI is already included in the deployment.
+- Choose an Infrahub branch where you can load the example schema. Loading the
+  schema changes that branch's types; the later preview does not import data.
+  If `TestingSite` or `TestingDevice` already exists there with a different
+  definition, choose another suitable branch or adapt the schema and mapping
+  together before continuing.
+
+Run all commands from the extracted deployment directory on the Docker host.
+For Candidate 4, this is `linux-amd64/infrahub-sync-compose-3.0.0a4` under the
+verified download.
+
+The two YAML files have different purposes:
+
+- `schema.yml` defines the types and fields in Infrahub. Load it with
+  `infrahubctl`.
+- `package.yml` declares the Sync source, destination, mappings, and credential
+  references. Register it with `./infrahub-sync-compose cli`.
 
 ## Measured scenario
 
 The measured run used NetBox 4.6.10 and Infrahub 1.10.6. It does not establish
 compatibility with other server versions.
 
+## Set NetBox and Infrahub credentials
+
+Open `operator.env`, remove the leading `#`, and fill in the source and
+destination token entries:
+
+```dotenv
+NETBOX_TOKEN=<your NetBox token>
+INFRAHUB_API_TOKEN=<your Infrahub token>
+```
+
+For NetBox 4.6, use a v2 API token. It starts with `nbt_` and contains a dot;
+paste the complete string. For Infrahub, use an API token created under your
+account settings; a login password does not work here. Use source credentials
+that can read the mapped objects and an Infrahub token that can load schema and
+read those destination kinds on your chosen branch.
+
+Do not change the generated Sync API credentials. The bundled CLI uses them to
+contact Sync; `INFRAHUB_API_TOKEN` authenticates to the destination Infrahub.
+Do not run `source operator.env`: that file also contains the deployment's
+internal credentials.
+
+## Prepare the destination schema
+
+Save the following as `schema.yml` in the deployment directory. Each device
+has a name, model, serial number, and a relationship to its site. This example
+requires unique site names and unique device names in the mapped data.
+
+```yaml
+version: '1.0'
+nodes:
+  - name: Site
+    namespace: Testing
+    human_friendly_id: [name__value]
+    uniqueness_constraints: [[name__value]]
+    attributes:
+      - name: name
+        kind: Text
+        optional: false
+  - name: Device
+    namespace: Testing
+    human_friendly_id: [name__value]
+    uniqueness_constraints: [[name__value]]
+    attributes:
+      - name: name
+        kind: Text
+        optional: false
+      - name: model
+        kind: Text
+        optional: false
+      - name: serial
+        kind: Text
+        optional: false
+    relationships:
+      - name: site
+        peer: TestingSite
+        kind: Attribute
+        cardinality: one
+        optional: false
+```
+
+Install the Infrahub SDK's schema tool in a host virtual environment:
+
+```sh
+python3 -m venv .schema-tools
+.schema-tools/bin/python -m pip install 'infrahub-sdk[ctl]'
+.schema-tools/bin/infrahubctl version
+```
+
+The version command must complete successfully before you continue. Replace
+`https://infrahub.example.invalid` below with the address the **Docker host**
+uses to reach Infrahub. The commands in parentheses read only the
+destination token from `operator.env`. These environment settings apply only
+inside the parentheses.
+
+```sh
+(
+  export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' operator.env)"
+  .schema-tools/bin/infrahubctl branch list
+)
+```
+
+Choose a branch from the list and replace `BRANCH_NAME` in every remaining
+command with its name. If you need a new branch, run
+`.schema-tools/bin/infrahubctl branch create BRANCH_NAME` inside the same scoped
+environment block before loading the schema.
+
+```sh
+(
+  export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' operator.env)"
+  .schema-tools/bin/infrahubctl schema load schema.yml --branch BRANCH_NAME
+)
+```
+
+Continue only after the schema load succeeds. In Infrahub, select that branch and inspect
+its schema: `TestingSite` and `TestingDevice` must exist, with
+`TestingDevice.site` referencing `TestingSite`. Resolve schema errors before
+continuing. Registering a Sync package does not load this schema.
+
 ## Create and edit package.yml {#copy-and-edit-packageyml}
 
-Set the credentials described below, then load the [destination schema](../compose-deployment#prepare-the-destination-schema)
-into Infrahub first — this example targets it.
+Candidate 4 includes a NetBox example at
+`linux-amd64/example-package.yml`. It is beside the extracted
+`infrahub-sync-compose-3.0.0a4` directory:
 
-Create `package.yml` in the deployment directory with the content below. It maps
-NetBox sites and devices to the small `TestingSite` and `TestingDevice`
-destination schema:
+```text
+linux-amd64/
+├── example-package.yml
+└── infrahub-sync-compose-3.0.0a4/
+    ├── infrahub-sync-compose
+    └── operator.env
+```
+
+From inside `infrahub-sync-compose-3.0.0a4`, copy it:
+
+```sh
+cp ../example-package.yml package.yml
+```
+
+The copied file contains the mapping below. It maps NetBox sites and devices
+to the `TestingSite` and `TestingDevice` kinds you loaded:
 
 ```yaml
 ---
@@ -67,16 +207,114 @@ credentials:
 
 Before registering `package.yml`:
 
-- Replace both URLs with addresses the worker container can reach. `localhost`
-  and `127.0.0.1` inside the worker refer to that container, not your host.
-- Match the mapping to your Infrahub schema. Use the schema shown, or adapt the
-  mapping to your own.
-- Keep the `{$credential: ...}` references in YAML; put token values in
-  `operator.env`, never in `package.yml`.
+- Replace both URLs with addresses the **worker container** can reach.
+  `localhost` and `127.0.0.1` inside the worker refer to that container.
+  The destination must be the same Infrahub instance where you loaded the
+  schema, even if the host uses a different address to reach it.
+- Keep the `{$credential: ...}` references in YAML; token values belong in
+  `operator.env`.
+- Keep the mapping's destination kinds and fields consistent with `schema.yml`.
 
-This example maps sites and devices only. It does not import NetBox prefixes,
-IP addresses, VRFs, or interfaces; it is a minimal runnable connection and
-destination-schema check, not a complete inventory template.
+The mapping includes sites and devices only. It does not import IP addressing
+or interfaces. Source devices need the mapped name, model, serial, and
+site relationship; review source data before expecting a complete preview.
+
+## Reload credentials and register the package
+
+Recreate services whose environment changed, then check readiness:
+
+```sh
+./infrahub-sync-compose start
+./infrahub-sync-compose status
+```
+
+Continue only when `status` reports `READY` and exits with status 0. `start` reloads the changed environment;
+`restart` retains the environment from when the containers were created.
+
+Register your package with the included Sync CLI:
+
+```sh
+./infrahub-sync-compose cli --package ./package.yml -- \
+  configs register /input/package.yaml --reason 'register NetBox first preview'
+```
+
+With `--package`, the wrapper copies the host file into a temporary read-only
+container mount at `/input/package.yaml`. The wrapper removes that copy after the command.
+Sync stores the declared package, and the CLI prints `config_id` and
+`registry_version`. Record both; replace `CONFIG_ID` and `VERSION` below with
+those values.
+
+## Validate the configuration
+
+```sh
+./infrahub-sync-compose cli configs validate CONFIG_ID VERSION
+```
+
+Read `total_findings` and every `finding` line. If `next_offset` is not `<none>`,
+repeat with `--offset` set to that value to read the remaining findings. Resolve
+findings with `severity=error` before planning; a zero command exit alone does
+not mean the report contains no errors.
+
+This checks the registered package's declared content. It does not test source
+credentials, connectivity, or the live destination schema. The preview below
+performs the reads against both servers.
+
+If you edit `package.yml` after registration, register a new immutable version:
+
+```sh
+./infrahub-sync-compose cli --package ./package.yml -- \
+  configs version CONFIG_ID /input/package.yaml --reason 'correct first-preview package'
+```
+
+Use the returned `registry_version` as `VERSION`, then validate it again.
+
+## Preview and review the changes
+
+Use the same `BRANCH_NAME` where you loaded the schema:
+
+```sh
+./infrahub-sync-compose cli diff --config-id CONFIG_ID --version VERSION \
+  --branch BRANCH_NAME --reason 'preview NetBox sites and devices'
+```
+
+The worker reads NetBox and Infrahub and saves a plan. The CLI waits by default,
+then prints `run_id`, `plan_checksum`, `checksum_ok`, and operation counts.
+Record the run ID and inspect the complete plan:
+
+```sh
+./infrahub-sync-compose cli runs plan RUN_ID --detail
+```
+
+Expect `checksum_ok: true` and operations for `TestingSite` and `TestingDevice`.
+On a destination with no objects of those kinds, expect creates for the mapped
+source records. Counts depend on your source data. Check device names,
+model and serial values, and each device's site relationship. An empty plan
+can mean the source is empty or the destination already matches it; confirm
+which case applies.
+
+The preview does not create, update, or delete inventory objects in Infrahub.
+Against an existing destination, the plan can include updates and recorded
+deletes as well as creates; review every unexpected operation before proceeding.
+
+If the run fails, inspect its record:
+
+```sh
+./infrahub-sync-compose cli runs show RUN_ID
+./infrahub-sync-compose cli runs results RUN_ID
+```
+
+Correct the reported credentials, URL, schema, or mapping issue before creating
+another preview. After credential edits, run `start` again; after package edits,
+register and validate the new version.
+
+## Continue
+
+You now have a registered configuration and a saved preview to review. For
+later approved writes and deployment maintenance, see the
+[Compose operator sequence](../compose-deployment#the-operator-sequence) and
+[day 2 operations](../operations/day-2-operations.mdx).
+
+The following notes concern larger mappings beyond this first preview.
 
 ## If you map NetBox IP addressing
 
@@ -104,27 +342,6 @@ addresses within one namespace.
 NetBox IDs belong to one source instance. Recreating a VRF or changing the
 naming rule changes destination identities; it does not rename an existing
 import. Review a migration before applying a changed recipe to existing data.
-
-## Set NetBox and Infrahub credentials
-
-Open `operator.env`, remove the leading `#`, and fill in the source and
-destination token entries:
-
-```dotenv
-NETBOX_TOKEN=<your NetBox token>
-INFRAHUB_API_TOKEN=<your Infrahub token>
-```
-
-For NetBox 4.6, use a v2 API token. It starts with `nbt_` and contains a dot;
-paste the complete string. For Infrahub, use an API token created under your
-account settings; a login password does not work here. Use source credentials
-that can read mapped objects and destination credentials authorized for the
-operations you intend to apply.
-
-## Continue
-
-Apply the environment changes and register the configuration in the shared
-[Compose deployment guide](../compose-deployment#prepare-a-configuration).
 
 ## Recorded deletes when mapping namespaces
 

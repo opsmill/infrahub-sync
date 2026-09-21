@@ -6,6 +6,11 @@ Migrate data from NetBox or Nautobot into Infrahub one model at a time. The exis
 
 Before you start, install Infrahub Sync if you haven't already — see [Install Infrahub Sync](./installation.mdx).
 
+For a gradual migration, plan data ownership and workflow changes alongside the import.
+For the first connection and preview with existing systems, follow the
+[NetBox](./tutorials/netbox-to-existing-infrahub.mdx) or
+[Nautobot](./tutorials/nautobot-to-existing-infrahub.mdx) tutorial.
+
 ## The gradual migration approach
 
 A one-shot cutover from NetBox or Nautobot to Infrahub carries real risk: the new system has to be completely ready, all dependent automation has to switch at the same time, and rollback is hard if something surfaces afterward. The gradual approach removes that risk by syncing data into Infrahub model by model, verifying each step, and migrating dependent workflows on your own schedule.

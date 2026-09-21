@@ -2,8 +2,8 @@
 title: Start a Compose deployment
 ---
 
-Use this guide to load the release you were given and start Infrahub Sync. It
-includes the Sync API, worker, Prefect,
+Start Infrahub Sync from the release you were given. The deployment includes
+the Sync API, worker, Prefect,
 PostgreSQL, and object storage. You can start it before you have supplied a
 source, destination, configuration, or credentials.
 
@@ -106,16 +106,17 @@ does not move or clean up objects an older version created in your destination.
 
 ## Choose your source
 
-First, [check the included CLI](compose-deployment#use-it) against your running
-deployment. It uses the candidate image and generated authentication; a separate
-Sync pip installation is not required.
+Continue to the tutorial for your existing source and destination:
 
-Continue with one of the existing-Infrahub tutorials. Each prepares a concrete
-`package.yml` and credentials, then sends you to the shared operator guide for
-registration, validation, planning, apply, and lifecycle commands.
+- [Preview NetBox data in an existing Infrahub](tutorials/netbox-to-existing-infrahub)
+  to map sites and devices and review a saved preview from your NetBox.
+- [Preview Nautobot data in an existing Infrahub](tutorials/nautobot-to-existing-infrahub)
+  to map locations and devices and review a saved preview from your Nautobot.
 
-Continue with the [Compose deployment guide](compose-deployment) after choosing
-and preparing your source.
+Each tutorial includes destination schema preparation, credentials, package
+registration, validation, and preview with the bundled Sync CLI. For a fresh
+local Infrahub and the public NetBox demo, follow the separate
+[local demo tutorial](tutorials/netbox-demo-to-infrahub).
 
-- [Sync from NetBox to an existing Infrahub](tutorials/netbox-to-existing-infrahub)
-- [Sync from Nautobot to an existing Infrahub](tutorials/nautobot-to-existing-infrahub)
+For later approved writes and deployment maintenance, use the
+[Compose deployment guide](compose-deployment).

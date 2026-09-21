@@ -361,9 +361,11 @@ passed through as given — an argument holding spaces stays one argument.
 ## Prepare a configuration
 
 The [NetBox](tutorials/netbox-to-existing-infrahub) and
-[Nautobot](tutorials/nautobot-to-existing-infrahub) tutorials prepare
-`package.yml` and `operator.env` for their source. Once those files are ready,
-run `./infrahub-sync-compose start` so services receive the changed environment.
+[Nautobot](tutorials/nautobot-to-existing-infrahub) tutorials include schema and
+package preparation, registration, validation, and a first preview. Continue
+here for the full operator sequence and lifecycle commands. After changing
+`operator.env`, run `./infrahub-sync-compose start` so services receive the new
+environment.
 Source credentials are optional for startup but required for a run that uses
 them.
 

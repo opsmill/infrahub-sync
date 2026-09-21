@@ -6,6 +6,11 @@ If you're adopting Infrahub but already have an established system of record in 
 
 This is the most common adoption pattern, whether you plan to eventually consolidate on Infrahub or keep both systems running long-term.
 
+For long-term operation, decide which system owns each type of data.
+For the first connection and preview with existing systems, follow the
+[NetBox](./tutorials/netbox-to-existing-infrahub.mdx) or
+[Nautobot](./tutorials/nautobot-to-existing-infrahub.mdx) tutorial.
+
 ## The side-by-side pattern
 
 Both tools continue to operate. The existing system (NetBox or Nautobot) remains the system of record for some data; Infrahub becomes the system of record for the rest. A sync project moves data between them on a defined cadence, so each system holds the data it owns plus a current view of what the other system owns.
