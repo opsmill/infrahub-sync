@@ -555,8 +555,20 @@ one redaction boundary before anything is rendered.
 
 ## Stop, restart, and reset
 
-For planned maintenance, wait until no runs are active before stopping or
-restarting services.
+Before planned maintenance, coordinate with everyone submitting work to this
+deployment to stop new submissions. For each `RUN_ID` returned by a submission,
+check:
+
+```bash
+./infrahub-sync-compose cli runs show RUN_ID
+```
+
+Wait until its `execution_state` is `completed`, `failed`, `cancelled`,
+`abandoned`, or `interrupted`. These are terminal execution states; a missing
+or other value does not confirm a terminal execution. `status` can report
+`READY` while work is running: it checks health, not idleness. These checks
+cover only known runs; if you cannot account for all submitted work, postpone
+maintenance.
 
 ### Stop and resume the deployment
 
@@ -613,8 +625,8 @@ when you intend to discard the deployment's data:
 ./infrahub-sync-compose reset <instance identity>
 ```
 
-`stop`, `restart`, and `reset` find resources by explicit name and verify each
-resource's instance label before changing anything. A resource that is
+`stop`, `restart`, and `reset` verify the instance labels on the deployment's
+resources before changing anything. A resource that is
 missing is nothing to remove; a resource that exists under another label is
 refused, and the whole operation stops before its first mutation:
 

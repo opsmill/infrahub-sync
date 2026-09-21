@@ -25,10 +25,11 @@ defines the effects and safeguards of each action:
 - `stop` stops all services while preserving containers and volumes. Use `start`
   to resume the deployment, including its dependencies.
 - `restart` replaces only the API and worker processes while preserving durable
-  records. Its dependencies must already be running.
-- Reset removes this instance's containers, network, and volumes. It is destructive.
+  records. The deployment's dependencies must already be running.
+- `reset` removes this instance's containers, network, and volumes. It is destructive.
 
-For planned maintenance, wait until no runs are active. After resuming,
+Before planned maintenance, [coordinate submissions and check known runs](../compose-deployment#stop-restart-and-reset).
+After resuming,
 [verify a retained configuration version](../compose-deployment#verify-a-retained-configuration)
 to check product state as well as deployment health.
 
