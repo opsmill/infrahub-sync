@@ -23,21 +23,10 @@ from diffsync.enum import DiffSyncFlags
 from jinja2 import StrictUndefined
 from jinja2.nativetypes import NativeEnvironment
 from netutils.ip import is_ip_within as netutils_is_ip_within
-from packaging import version
 
 from infrahub_sync.adapters.utils import get_value
 
 logger = logging.getLogger(__name__)
-
-# Pydantic v1/v2 compatibility shim — runtime branch picks the right decorator + kwargs.
-if version.parse(pydantic.__version__) >= version.parse("2.0.0"):
-    from pydantic import field_validator as validator_decorator
-
-    validator_kwargs: dict[str, Any] = {"mode": "before"}
-else:
-    from pydantic import validator as validator_decorator  # ty: ignore[deprecated]
-
-    validator_kwargs = {"pre": True, "allow_reuse": True}
 
 
 class SchemaMappingFilter(pydantic.BaseModel):
@@ -95,7 +84,7 @@ class SyncConfig(pydantic.BaseModel):
     diffsync_flags: list[Union[str, DiffSyncFlags]] | None = []
     incremental: IncrementalConfig | None = None
 
-    @validator_decorator("diffsync_flags", **validator_kwargs)  # ty: ignore[no-matching-overload]
+    @pydantic.field_validator("diffsync_flags", mode="before")
     def convert_str_to_enum(cls, v):  # pylint: disable=no-self-argument  # a pydantic validator: `cls` is correct
         if not isinstance(v, list):
             msg = "diffsync_flags must be provided as a list"
@@ -196,8 +185,6 @@ def requested_destination_write_operations(
     requested = {"update"}
     if not effective & DiffSyncFlags.SKIP_UNMATCHED_SRC:
         requested.add("create")
-    if not effective & DiffSyncFlags.SKIP_UNMATCHED_DST:
-        requested.add("delete")
     return frozenset(requested)
 
 
@@ -397,8 +384,9 @@ class DiffSyncModelMixin:
 
     @classmethod
     def is_list(cls, name):
-        # Pydantic v2 exposes `model_fields`; v1 uses `__fields__`. Try both.
-        fields = getattr(cls, "model_fields", None) or getattr(cls, "__fields__", None) or {}
+        # The declared default decides, not the annotation: a list-typed field
+        # left unset is not a list here.
+        fields = getattr(cls, "model_fields", None) or {}
         field = fields.get(name)
         if not field:
             msg = f"Unable to find the field {name} under {cls}"
