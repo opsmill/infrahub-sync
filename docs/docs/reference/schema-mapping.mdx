@@ -104,7 +104,7 @@ When a destination field is a relationship to another model that is also being s
   reference: Device
 ```
 
-This says: the value of the source's `device.name` field should resolve to the `Device` object with that name in the destination. The referenced model must be synced before this one — see the `order` key in the project configuration.
+This says: the value of the source's `device.name` field should resolve to the `Device` object with that name in the destination. The referenced model must be synced before this one; infrahub-sync computes that ordering automatically from `reference` fields, or you can override it with the optional `order` key in the project configuration.
 
 ## Identifiers
 
