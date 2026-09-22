@@ -37,7 +37,7 @@ not include them. Acquire the source separately from your
 [release download](./installation.mdx#get-the-private-candidate); copying these
 instructions does not upgrade an installed Sync deployment.
 
-The following setup uses Git and an installed Codex CLI. Codex discovers
+The following setup uses Git and Codex. Codex discovers
 project skills in `.agents/skills`; see its
 [skill discovery and invocation documentation](https://developers.openai.com/codex/skills/).
 For another agent, use that agent's documented project skill directory and
@@ -69,7 +69,8 @@ From `source/deploy/compose`, run the **entire Install shell block** in the
 including its checks for existing destination directories. Copy each whole
 skill directory; keep the two directories separate.
 
-After the recipe succeeds, start a fresh Codex session from the draft project:
+After the recipe succeeds, open the draft project in a fresh Codex session.
+For the Codex CLI, start it from the project directory:
 
 ```sh
 cd "$SYNC_AGENT_PROJECT"
@@ -77,8 +78,10 @@ pwd -P
 codex
 ```
 
-In Codex, run `/skills` and confirm that `infrahub-sync-configuration` and
-`infrahub-sync-deployment` are available from this project's `.agents/skills`.
+In the Codex CLI, run `/skills` and confirm that `infrahub-sync-configuration`
+and `infrahub-sync-deployment` are available from this project's `.agents/skills`.
+If your Codex host lists available skills at session startup, confirm both
+names and their paths under this project's `.agents/skills` in that catalog instead.
 If either is missing, check the directory and restart the session before
 continuing. A file visible in your editor is not evidence that the agent
 discovered the skill.
@@ -102,7 +105,9 @@ that file. If it already exists, stop and ask before replacing it.
 Read the human documentation in OWNED_PROJECT_PATH/source/docs/docs/:
 configuration-package.mdx, reference/config.mdx, reference/schema-mapping.mdx,
 and tutorials/netbox-to-existing-infrahub.mdx. You may inspect the adapter
-setting declarations in OWNED_PROJECT_PATH/source/infrahub_sync/configuration/capabilities.py. This is source revision 77681ddc95c520438a97c1eab0241a6d8c0188da;
+setting declarations in
+OWNED_PROJECT_PATH/source/infrahub_sync/configuration/capabilities.py.
+This is source revision 77681ddc95c520438a97c1eab0241a6d8c0188da;
 report source checks separately from checks against my installed deployment.
 
 Use configuration name netbox-agent-draft. Source adapter: netbox, URL
