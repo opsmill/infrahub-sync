@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import subprocess  # noqa: S404 -- fixed argv (sys.executable -m ruff), no shell, no user input
 import sys
 from typing import TYPE_CHECKING, Any, Protocol
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from infrahub_sync import SyncConfig
+
+logger = logging.getLogger(__name__)
 
 ATTRIBUTE_KIND_MAP = {
     "Text": "str",
@@ -67,12 +70,22 @@ def get_identifiers(node: NodeSchema, config: SyncConfig) -> list[str] | None:
     if config_identifiers:
         return config_identifiers[0]
 
-    identifiers = [
-        attr.name for attr in node.attributes if attr.unique and has_field(config, name=node.kind, field=attr.name)
+    identifier_attributes = [
+        attr for attr in node.attributes if attr.unique and has_field(config, name=node.kind, field=attr.name)
     ]
+    identifiers = [attr.name for attr in identifier_attributes]
 
     if not identifiers:
         return None
+
+    optional_identifiers = [attr.name for attr in identifier_attributes if attr.optional]
+    if optional_identifiers:
+        logger.warning(
+            "Auto-selected optional attribute(s) %s as identifiers for %s; "
+            "configure identifiers explicitly for this node",
+            optional_identifiers,
+            node.kind,
+        )
 
     return identifiers
 

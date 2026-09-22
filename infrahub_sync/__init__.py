@@ -270,6 +270,15 @@ class DiffSyncModelMixin:
     # Set on generated subclasses (see generator/templates/diffsync_models.j2).
     local_id: str | None = None
 
+    def get_unique_id(self) -> str:
+        """Return the DiffSync identifier, refusing nullable identifier values."""
+        model_kind = getattr(self, "_modelname", type(self).__name__)
+        for identifier in getattr(self, "_identifiers", ()):
+            if getattr(self, identifier, None) is None:
+                msg = f"{model_kind} identifier field {identifier!r} cannot be None"
+                raise ValueError(msg)
+        return super().get_unique_id()  # ty: ignore[unresolved-attribute] -- cooperative DiffSync mixin
+
     @classmethod
     def apply_filter(cls, field_value: Any, operation: str, value: Any) -> bool:
         """Apply a specified operation to a field value."""
