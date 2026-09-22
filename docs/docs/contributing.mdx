@@ -15,10 +15,22 @@ This guide covers how to set up a development environment for `infrahub-sync` an
 
 ### Clone the repository
 
+For V3 development, clone the `feature/v3-develop` branch. The default `main` branch
+contains V2 and does not define the `prefect` and `service` extras required below.
+To install the released private candidate, follow [Install Infrahub Sync](./installation.mdx).
+
 ```bash
-git clone https://github.com/opsmill/infrahub-sync.git
+git clone --branch feature/v3-develop https://github.com/opsmill/infrahub-sync.git
 cd infrahub-sync
 ```
+
+Before installing dependencies, check the branch:
+
+```bash
+git branch --show-current
+```
+
+The expected output is `feature/v3-develop`.
 
 ### Install uv
 
