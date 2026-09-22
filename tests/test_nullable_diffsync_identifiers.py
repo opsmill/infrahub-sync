@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -17,7 +18,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
-from infrahub_sync.generator import get_identifiers
+from infrahub_sync.generator import get_identifiers, render_template
 
 
 class _AutoIdentifierModel(DiffSyncModelMixin, DiffSyncModel):
@@ -95,6 +96,8 @@ def test_missing_explicitly_configured_identifier_raises() -> None:
     record = _ExplicitIdentifierModel()
 
     assert get_identifiers(node=node, config=config) == list(record._identifiers)
+    assert f"{record}" == "None"
+    assert repr(record) == 'InfraAsset "None"'
     with pytest.raises(ValueError, match="InfraAsset identifier field 'serial' cannot be None"):
         record.get_unique_id()
 
@@ -109,6 +112,8 @@ def test_missing_explicitly_configured_identifier_raises() -> None:
 )
 def test_generator_warns_only_for_optional_auto_selected_identifiers(
     caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+    *,
     optional: bool,
     configured_identifiers: list[str] | None,
     expects_warning: bool,
@@ -116,7 +121,12 @@ def test_generator_warns_only_for_optional_auto_selected_identifiers(
     node, config = _generator_inputs(optional=optional, configured_identifiers=configured_identifiers)
 
     with caplog.at_level(logging.WARNING, logger="infrahub_sync.generator"):
-        assert get_identifiers(node=node, config=config) == ["serial"]
+        render_template(
+            template_file=Path("diffsync_models.j2"),
+            output_dir=tmp_path,
+            output_file=Path("sync_models.py"),
+            context={"schema": {node.kind: node}, "adapter": config.source, "config": config},
+        )
 
     warnings = [record.getMessage() for record in caplog.records]
     assert bool(warnings) is expects_warning

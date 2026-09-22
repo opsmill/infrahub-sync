@@ -78,7 +78,22 @@ def get_identifiers(node: NodeSchema, config: SyncConfig) -> list[str] | None:
     if not identifiers:
         return None
 
-    optional_identifiers = [attr.name for attr in identifier_attributes if attr.optional]
+    return identifiers
+
+
+def warn_optional_auto_selected_identifiers(node: NodeSchema, config: SyncConfig) -> None:
+    """Warn once when generation auto-selects optional identifier attributes."""
+    configured_identifiers = any(
+        item.identifiers for item in config.schema_mapping if item.name == node.kind and item.identifiers
+    )
+    if configured_identifiers:
+        return
+
+    optional_identifiers = [
+        attr.name
+        for attr in node.attributes
+        if attr.unique and attr.optional and has_field(config, name=node.kind, field=attr.name)
+    ]
     if optional_identifiers:
         logger.warning(
             "Auto-selected optional attribute(s) %s as identifiers for %s; "
@@ -86,8 +101,6 @@ def get_identifiers(node: NodeSchema, config: SyncConfig) -> list[str] | None:
             optional_identifiers,
             node.kind,
         )
-
-    return identifiers
 
 
 def get_attributes(node: NodeSchema, config: SyncConfig) -> list[str] | None:
@@ -177,7 +190,19 @@ def has_children(node: NodeSchema, config: SyncConfig) -> bool:
     return bool(get_children(config=config, node=node))
 
 
-def render_template(template_file: Path, output_dir: Path, output_file: Path, context: dict[str, Any]) -> None:
+def render_template(
+    template_file: Path,
+    output_dir: Path,
+    output_file: Path,
+    context: dict[str, Any],
+    *,
+    warn_optional_identifiers: bool = True,
+) -> None:
+    """Render one generator template, warning once per affected model render."""
+    if warn_optional_identifiers and template_file.name == "diffsync_models.j2":
+        for node in context["schema"].values():
+            warn_optional_auto_selected_identifiers(node=node, config=context["config"])
+
     template_loader = jinja2.PackageLoader("infrahub_sync", "generator/templates")
     template_env = jinja2.Environment(
         loader=template_loader,

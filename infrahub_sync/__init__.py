@@ -270,6 +270,10 @@ class DiffSyncModelMixin:
     # Set on generated subclasses (see generator/templates/diffsync_models.j2).
     local_id: str | None = None
 
+    def _get_unvalidated_unique_id(self) -> str:
+        """Return the DiffSync identifier for diagnostic string conversion."""
+        return super().get_unique_id()  # ty: ignore[unresolved-attribute] -- cooperative DiffSync mixin
+
     def get_unique_id(self) -> str:
         """Return the DiffSync identifier, refusing nullable identifier values."""
         model_kind = getattr(self, "_modelname", type(self).__name__)
@@ -277,7 +281,16 @@ class DiffSyncModelMixin:
             if getattr(self, identifier, None) is None:
                 msg = f"{model_kind} identifier field {identifier!r} cannot be None"
                 raise ValueError(msg)
-        return super().get_unique_id()  # ty: ignore[unresolved-attribute] -- cooperative DiffSync mixin
+        return self._get_unvalidated_unique_id()
+
+    def __str__(self) -> str:
+        """Return a diagnostic string even when an identifier is incomplete."""
+        return self._get_unvalidated_unique_id()
+
+    def __repr__(self) -> str:
+        """Return a diagnostic representation even when an identifier is incomplete."""
+        model_kind = getattr(self, "_modelname", type(self).__name__)
+        return f'{model_kind} "{self._get_unvalidated_unique_id()}"'
 
     @classmethod
     def apply_filter(cls, field_value: Any, operation: str, value: Any) -> bool:
