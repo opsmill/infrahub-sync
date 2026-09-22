@@ -54,6 +54,7 @@ _REPORT: dict[str, Any] = {}
 
 
 def _write_report(report_path: Path) -> None:
+    """Serialize the current worker report to the parent-provided path."""
     report_path.write_text(json.dumps(_REPORT), encoding="utf-8")
 
 
@@ -61,12 +62,15 @@ class RecordingDestination:
     """The one adapter an apply constructs; no destination service exists here."""
 
     def __init__(self, **_kwargs: Any) -> None:  # noqa: ANN401 - the adapter's own kwargs shape.
+        """Record that the apply stage constructed its destination adapter."""
         _REPORT["destination_constructed"] = True
 
     def new_peer_resolver(self) -> object:  # noqa: PLR6301 - fixed adapter signature.
+        """Return the inert peer resolver required by the adapter interface."""
         return object()
 
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: Any) -> str:  # noqa: ANN401, ARG002, PLR6301
+        """Record one dispatched operation and return its synthetic node identifier."""
         _REPORT["dispatched"].append(operation.operation_id)
         return "node-" + str(len(_REPORT["dispatched"]))
 
@@ -88,6 +92,7 @@ class ExtractingEngine:
         configuration_binding: tuple[str, int, str],
         schema_fingerprint: str,
     ) -> None:
+        """Store the run context needed to produce the plan artifact."""
         self.run_dir = run_directory
         self.run_id = run_directory.name
         self.top_level = ["BuiltinTag"]
@@ -102,11 +107,13 @@ class ExtractingEngine:
         """The one boundary this environment cannot provide."""
 
     def diff(self) -> Any:  # noqa: ANN401, PLR6301 - stands in for the product's own diff type.
+        """Return the empty difference used by this controlled extraction."""
         from types import SimpleNamespace
 
         return SimpleNamespace(rows=[], has_diffs=lambda: False, str=lambda: "extracted-diff")
 
     def _diff_to_rows(self, _diff: Any) -> list[Any]:  # noqa: ANN401, PLR6301
+        """Convert the controlled empty difference into no report rows."""
         return []
 
     def write_plan(self, _diff: Any) -> None:  # noqa: ANN401
@@ -177,6 +184,7 @@ def main() -> None:  # noqa: PLR0915 - one linear worker script, kept readable a
 
         @contextmanager
         def wrapped() -> Any:  # noqa: ANN401
+            """Yield the real stage scratch while recording its private root."""
             with real_stage_scratch(stage_name) as value:
                 _REPORT["scratch"] = str(value.root)
                 _write_report(report_path)
@@ -202,6 +210,7 @@ def main() -> None:  # noqa: PLR0915 - one linear worker script, kept readable a
         )
 
     def models(**_kwargs: Any) -> RuntimeModelPlan:  # noqa: ANN401 - the product's own model-builder kwargs shape.
+        """Return the runtime model plan for the recording destination."""
         return RuntimeModelPlan(
             branch="main",
             schema_fingerprint=fingerprint,
