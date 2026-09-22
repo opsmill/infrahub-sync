@@ -27,9 +27,8 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess  # noqa: S404 - the worker processes run a fixed interpreter and inline script.
+import subprocess  # noqa: S404 - the worker processes run a fixed interpreter and script.
 import sys
-import textwrap
 from datetime import datetime, timezone
 from hashlib import sha256
 from importlib import import_module
@@ -93,185 +92,7 @@ def _settings_or_skip() -> dict[str, str]:
     }
 
 
-# The worker process. What runs for real: the private scratch, the whole `execute_run` plan
-# lifecycle including its pipeline lock and run sidecar, the plan artifact and its Parquet
-# snapshots, the bundle codec, the S3 publication and rehydration, the PostgreSQL guard and
-# baseline, the apply engine, and the applied sidecar.
-#
-# What is doubled, and only this: the engine factory, because this environment offers no
-# source or destination service to extract from or write to, and Prefect's worker-identity
-# lookup, because there is no Prefect server. The factory's stand-in is handed the run
-# directory the real engine entry point derived, so every path below it is the product's.
-_WORKER = '''
-import json, os, sys
-from datetime import datetime, timezone
-from pathlib import Path
-
-sys.path.insert(0, {repository_root!r})
-
-from infrahub_sync.plan.checksum import source_snapshot_records
-from infrahub_sync.plan.config_version import resolve_config_version
-from infrahub_sync.plan.models import PlannedOperation, SourceSnapshotRecord
-from infrahub_sync.plan.review import SavedPlan, read_saved_plan
-from infrahub_sync.plan.writer import write_plan_artifact
-from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels
-from infrahub_sync.service import flow as service_flow
-from infrahub_sync.service.scratch import stage_scratch as real_stage_scratch
-from tests.plan.artifact_fixtures import operation_record
-
-REPORT = Path({report!r})
-STAGE = {stage!r}
-RUN_ID = {run_id!r}
-BINDING = tuple({binding!r})
-FLOW_RUN_ID = {flow_run_id!r}
-WORKER_ID = {worker_id!r}
-SCHEMA_FINGERPRINT = {fingerprint!r}
-
-report = {{"stage": STAGE, "pid": os.getpid(), "dispatched": [], "scratch": None}}
-
-
-def write_report():
-    REPORT.write_text(json.dumps(report), encoding="utf-8")
-
-
-class RecordingDestination:
-    """The one adapter an apply constructs; no destination service exists here."""
-
-    def __init__(self, **kwargs):
-        report["destination_constructed"] = True
-
-    def new_peer_resolver(self):
-        return object()
-
-    def apply_planned_operation(self, *, operation, peers):
-        report["dispatched"].append(operation.operation_id)
-        return "node-" + str(len(report["dispatched"]))
-
-
-def scratch(stage):
-    """Record the private root this stage works in, then behave exactly as usual."""
-    from contextlib import contextmanager
-
-    @contextmanager
-    def wrapped():
-        with real_stage_scratch(stage) as value:
-            report["scratch"] = str(value.root)
-            write_report()
-            yield value
-
-    return wrapped()
-
-
-class ExtractingEngine:
-    """The engine surface a plan touches, standing in for extraction only.
-
-    It is constructed by the real `execute_run`, in the run directory the real
-    `execute_run` derived, and it writes the artifact the product's own writer produces.
-    Everything around it -- the pipeline lock, the run sidecar, reading the saved plan back
-    -- is the product's.
-    """
-
-    def __init__(self, run_directory, config_version):
-        self.run_dir = run_directory
-        self.run_id = run_directory.name
-        self.top_level = ["BuiltinTag"]
-        self.tiers = None
-        self.force_full_extract = False
-        self.cache_root = run_directory.parent
-        self._config_version = config_version
-
-    def load_both_sides(self):
-        """The one boundary this environment cannot provide."""
-
-    def diff(self):
-        from types import SimpleNamespace
-
-        return SimpleNamespace(rows=[], has_diffs=lambda: False, str=lambda: "extracted-diff")
-
-    def _diff_to_rows(self, _diff):
-        return []
-
-    def write_plan(self, _diff):
-        """Write the source snapshots and the plan artifact this run hands on."""
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        (self.run_dir / "A").mkdir(parents=True, exist_ok=True)
-        pq.write_table(
-            pa.table({{"name": ["prod"], "_extract_ts": ["2026-09-04T12:00:00+00:00"]}}),
-            self.run_dir / "A" / "tag.parquet",
-        )
-        write_plan_artifact(
-            run_dir=self.run_dir,
-            run_id=self.run_id,
-            config_version=self._config_version,
-            source_snapshot=[
-                SourceSnapshotRecord(**record) for record in source_snapshot_records(self.run_dir)
-            ],
-            deletes_computed=True,
-            operations=[PlannedOperation.model_validate(operation_record(identity={{"name": "prod"}}))],
-            configuration_binding=BINDING,
-            schema_fingerprint=SCHEMA_FINGERPRINT,
-        )
-        report["planned_in"] = str(self.run_dir)
-
-
-def engine_factory(**kwargs):
-    """Build the extraction stand-in inside the directory the real engine chose."""
-    from infrahub_sync.cache.paths import run_dir
-
-    instance = kwargs["sync_instance"]
-    base = Path(kwargs["base_directory"])
-    assert base.is_absolute(), base
-    directory = run_dir(instance.name, str(kwargs["run_id"]), base_directory=base)
-    directory.mkdir(parents=True, exist_ok=True)
-    report["engine_built_in"] = str(directory)
-    return ExtractingEngine(directory, resolve_config_version(instance))
-
-
-def models(**kwargs):
-    return RuntimeModelPlan(
-        branch="main",
-        schema_fingerprint=SCHEMA_FINGERPRINT,
-        destination=RuntimeSideModels(adapter_class=RecordingDestination, models={{}}),
-        source=None,
-    )
-
-
-service_flow.stage_scratch = scratch
-service_flow.build_runtime_model_plan = models
-service_flow._prefect_flow_run_id = lambda: FLOW_RUN_ID
-service_flow._require_current_worker_identity = lambda *args: None
-# The engine factory is the only seam replaced: `service_flow._plan` and
-# `service_flow.execute_run` stay the product's, so the plan leg takes its real pipeline
-# lock inside the stage root and writes its real sidecar there.
-import infrahub_sync.execution as execution_module
-
-execution_module.get_potenda_from_instance = engine_factory
-
-os.environ["PREFECT__WORKER_ID"] = WORKER_ID
-
-try:
-    result = service_flow.service_sync_run.fn(
-        RUN_ID,
-        STAGE,
-        BINDING[0],
-        BINDING[1],
-        BINDING[2],
-        None,
-        {expected_checksum!r},
-        {confirm_writes!r},
-    )
-    report["outcome"] = result["outcome"]
-    report["ok"] = True
-except BaseException as failure:
-    report["ok"] = False
-    report["error_type"] = type(failure).__name__
-    report["error"] = str(failure)
-
-write_report()
-sys.exit(0 if report["ok"] else 1)
-'''
+_WORKER_PROGRAM = Path(__file__).resolve().parent / "isolated_worker_program.py"
 
 
 def _run_worker(  # noqa: PLR0913 - one parameter per input the worker process needs
@@ -288,17 +109,22 @@ def _run_worker(  # noqa: PLR0913 - one parameter per input the worker process n
 ) -> dict[str, Any]:
     """Run one stage in its own interpreter and return the report it wrote."""
     report = report_root / f"{stage}-{uuid4().hex}.json"
-    script = _WORKER.format(
-        repository_root=str(_REPOSITORY_ROOT),
-        report=str(report),
-        stage=stage,
-        run_id=run_id,
-        binding=list(binding),
-        flow_run_id=flow_run_id,
-        worker_id=str(uuid4()),
-        fingerprint=SCHEMA_FINGERPRINT,
-        expected_checksum=expected_checksum,
-        confirm_writes=confirm_writes,
+    input_path = report_root / f"{stage}-{uuid4().hex}-input.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "report": str(report),
+                "stage": stage,
+                "run_id": run_id,
+                "binding": list(binding),
+                "flow_run_id": flow_run_id,
+                "worker_id": str(uuid4()),
+                "fingerprint": SCHEMA_FINGERPRINT,
+                "expected_checksum": expected_checksum,
+                "confirm_writes": confirm_writes,
+            }
+        ),
+        encoding="utf-8",
     )
     environment = {
         **os.environ,
@@ -316,8 +142,8 @@ def _run_worker(  # noqa: PLR0913 - one parameter per input the worker process n
     working_directory.mkdir(exist_ok=True)
     environment["INFRAHUB_SYNC_CACHE_DIR"] = str(legacy_cache)
     try:
-        completed = subprocess.run(  # noqa: S603 - fixed interpreter, inline script, no shell.
-            [sys.executable, "-c", textwrap.dedent(script)],
+        completed = subprocess.run(  # noqa: S603 - fixed interpreter, fixed script path, no shell.
+            [sys.executable, str(_WORKER_PROGRAM), str(input_path)],
             capture_output=True,
             text=True,
             env=environment,
@@ -339,6 +165,9 @@ def _run_worker(  # noqa: PLR0913 - one parameter per input the worker process n
     written["detail"] = f"{written.get('error_type')}: {written.get('error')}\n{written['stderr']}"
     written["legacy_cache_contents"] = sorted(str(path.relative_to(legacy_cache)) for path in legacy_cache.rglob("*"))
     written["cwd_contents"] = sorted(str(path.relative_to(working_directory)) for path in working_directory.rglob("*"))
+    # Proof the child actually received this call's working directory and read this call's
+    # serialized input, rather than some stale or shared state.
+    assert (written.get("cwd"), written.get("input_path")) == (str(working_directory), str(input_path)), written
     return written
 
 
