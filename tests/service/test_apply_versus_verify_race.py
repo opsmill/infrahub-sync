@@ -40,13 +40,11 @@ from infrahub_sync.service.models import (
 )
 from infrahub_sync.service.orchestration import Observation, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
-from tests.product_store.postgresql_isolation import isolated_schema_fixture
+from tests.product_store.postgresql_isolation import postgresql_schema_fixture
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
     from pathlib import Path
-
-    from tests.product_store.postgresql_isolation import IsolatedSchema
 
 # Run IDs and receipt identities stay namespaced to one test session, so a case reads
 # only the rows it wrote even when several sessions share one server.
@@ -55,10 +53,7 @@ _CONFLICT_CODE = "run-execution-conflict"
 _STARTED_AT = datetime(2026, 9, 3, 9, tzinfo=timezone.utc)
 
 
-@pytest.fixture(name="_postgresql_schema", scope="session")
-def postgresql_schema_fixture() -> Iterator[IsolatedSchema]:
-    """Hold one generated schema for this module's cases, and drop only that schema."""
-    yield from isolated_schema_fixture("the admission race's PostgreSQL parameter")
+_postgresql_schema = postgresql_schema_fixture("the admission race's PostgreSQL parameter")
 
 
 @pytest.fixture(params=("sqlite", pytest.param("postgresql", marks=pytest.mark.integration)))
