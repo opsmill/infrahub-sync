@@ -17,7 +17,36 @@ from typing import Any, cast
 import pytest
 from diffsync.store.local import LocalStore
 
+import infrahub_sync.adapters as adapters_package
 from infrahub_sync import SchemaMappingField, SchemaMappingModel
+
+
+def _reload_submodule(name: str) -> Iterator[types.ModuleType]:
+    """Import `infrahub_sync.adapters.<name>` fresh, then restore both prior states.
+
+    A plain `import infrahub_sync.adapters.<name>` sets `<name>` as an attribute on the
+    already-imported `infrahub_sync.adapters` package, in addition to the `sys.modules`
+    entry. Popping only `sys.modules` at teardown leaves that stub-backed attribute in
+    place, so a later `from infrahub_sync.adapters import <name>` returns it without
+    re-importing. Both must be recorded and restored.
+    """
+    full_name = f"infrahub_sync.adapters.{name}"
+    had_module = full_name in sys.modules
+    prior_module = sys.modules.get(full_name)
+    had_attr = hasattr(adapters_package, name)
+    prior_attr = getattr(adapters_package, name, None)
+
+    sys.modules.pop(full_name, None)
+
+    yield __import__(full_name, fromlist=["_"])
+
+    sys.modules.pop(full_name, None)
+    if had_module and prior_module is not None:
+        sys.modules[full_name] = prior_module
+    if had_attr:
+        setattr(adapters_package, name, prior_attr)
+    else:
+        adapters_package.__dict__.pop(name, None)
 
 
 @pytest.fixture
@@ -26,11 +55,7 @@ def ipfabricsync_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.Modul
     stub = cast("Any", types.ModuleType("ipfabric"))
     stub.IPFClient = object  # only the imported symbol; nothing else is simulated
     monkeypatch.setitem(sys.modules, "ipfabric", stub)
-    sys.modules.pop("infrahub_sync.adapters.ipfabricsync", None)
-    import infrahub_sync.adapters.ipfabricsync as module
-
-    yield module
-    sys.modules.pop("infrahub_sync.adapters.ipfabricsync", None)
+    yield from _reload_submodule("ipfabricsync")
 
 
 @pytest.fixture
@@ -38,11 +63,7 @@ def slurpitsync_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.Module
     """Import `infrahub_sync.adapters.slurpitsync` against a bare `slurpit` stub."""
     stub = types.ModuleType("slurpit")
     monkeypatch.setitem(sys.modules, "slurpit", stub)
-    sys.modules.pop("infrahub_sync.adapters.slurpitsync", None)
-    import infrahub_sync.adapters.slurpitsync as module
-
-    yield module
-    sys.modules.pop("infrahub_sync.adapters.slurpitsync", None)
+    yield from _reload_submodule("slurpitsync")
 
 
 def _holder(*, peer_model: type[Any], peers: dict[str, str], identifier_mapping: str):
@@ -234,3 +255,42 @@ def test_slurpit_list_valued_reference_missing_is_skipped(slurpitsync_module) ->
 
     assert data["peers"] == []
     assert holder.skipped == ["missing"]
+
+
+# --- Fixture teardown hygiene -------------------------------------------------------
+
+
+@pytest.mark.parametrize(("name", "sdk_name"), [("ipfabricsync", "ipfabric"), ("slurpitsync", "slurpit")])
+def test_teardown_leaves_no_stub_backed_module_on_parent_package(
+    monkeypatch: pytest.MonkeyPatch, name: str, sdk_name: str
+) -> None:
+    """After a fixture's teardown runs, the parent package must not still expose the stub-backed module.
+
+    A plain `import infrahub_sync.adapters.<name>` sets `<name>` as an attribute on the
+    already-imported `infrahub_sync.adapters` package. If teardown only pops the
+    `sys.modules` entry, that attribute survives and `from infrahub_sync.adapters import
+    <name>` returns the stale stub-backed module without re-importing. This drives the
+    same reload-and-restore helper the fixtures use, then imports through the parent
+    package afterward and proves no stub-backed module comes back.
+    """
+    full_name = f"infrahub_sync.adapters.{name}"
+    assert not hasattr(adapters_package, name), "leaked from a previous test"
+
+    stub = cast("Any", types.ModuleType(sdk_name))
+    if sdk_name == "ipfabric":
+        stub.IPFClient = object
+    with monkeypatch.context() as sdk_patch:
+        sdk_patch.setitem(sys.modules, sdk_name, stub)
+        gen = _reload_submodule(name)
+        module = next(gen)
+        assert module is sys.modules[full_name]
+        assert getattr(adapters_package, name) is module
+
+        with pytest.raises(StopIteration):
+            next(gen)
+
+    assert full_name not in sys.modules
+    assert not hasattr(adapters_package, name)
+
+    with pytest.raises(ModuleNotFoundError):
+        __import__(full_name, fromlist=["_"])
