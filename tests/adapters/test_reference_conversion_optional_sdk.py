@@ -95,6 +95,8 @@ def _holder(*, peer_model: type[Any], peers: dict[str, str], identifier_mapping:
 
 
 def _ipf_peer_model(module):
+    """Build a minimal IP Fabric peer model referenced by `_ipf_record_model`."""
+
     class IpfPeer(module.IpfabricsyncModel):
         _modelname = "IpfPeer"
         _identifiers = ("name",)
@@ -104,6 +106,8 @@ def _ipf_peer_model(module):
 
 
 def _ipf_record_model(module):
+    """Build a minimal IP Fabric record model with scalar and list peer references."""
+
     class IpfRecord(module.IpfabricsyncModel):
         _modelname = "IpfRecord"
         _identifiers = ("name",)
@@ -165,12 +169,15 @@ def test_ipfabric_list_valued_reference_field_is_left_unset(ipfabricsync_module)
 
 
 def _slurpit_holder(*, peer_model: type[Any], peers: dict[str, str], identifier_mapping: str):
+    """Build a `_holder` with the `skipped` list Slurpit's reference conversion appends to."""
     holder = _holder(peer_model=peer_model, peers=peers, identifier_mapping=identifier_mapping)
     holder.skipped = []
     return holder
 
 
 def _slurpit_peer_model(module):
+    """Build a minimal Slurpit peer model referenced by `_slurpit_record_model`."""
+
     class SlurpitPeer(module.SlurpitsyncModel):
         _modelname = "SlurpitPeer"
         _identifiers = ("name",)
@@ -180,6 +187,8 @@ def _slurpit_peer_model(module):
 
 
 def _slurpit_record_model(module):
+    """Build a minimal Slurpit record model with scalar and list peer references."""
+
     class SlurpitRecord(module.SlurpitsyncModel):
         _modelname = "SlurpitRecord"
         _identifiers = ("name",)
