@@ -243,15 +243,8 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
                 nodes = [item for item in all_nodes_for_reference]
-                if not nodes and all_nodes_for_reference:
-                    msg = (
-                        f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
-                        f" The available models are {self.store.get_all_model_names()}"
-                    )
-                    raise IndexError(msg)
                 if not field_is_list:
                     if node := obj.get(field.mapping):
-                        matching_nodes = []
                         # If node is a simple string/value, use it directly; otherwise build from nested object
                         if isinstance(node, (str, int)):
                             node_id = str(node)

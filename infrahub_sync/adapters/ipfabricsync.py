@@ -96,6 +96,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                 self.update_or_add_model_instance(item)
 
     def ipfabric_dict_to_diffsync(self, obj: dict, mapping: SchemaMappingModel, model: type[IpfabricsyncModel]) -> dict:  # pylint: disable=too-many-branches
+        """Convert an IP Fabric dict to a DiffSync-ready payload."""
         data: dict[str, Any] = {"local_id": str(obj["id"])}
 
         for field in mapping.fields:  # pylint: disable=too-many-nested-blocks
@@ -134,16 +135,8 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
 
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
-
                 nodes = [item for item in all_nodes_for_reference]
-                if not nodes and all_nodes_for_reference:
-                    msg = (
-                        f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
-                        f" The available models are {self.store.get_all_model_names()}"
-                    )
-                    raise IndexError(msg)
                 if not field_is_list and (node := obj[field.mapping]):
-                    matching_nodes = []
                     node_id = build_mapping(adapter=self, reference=field.reference, obj=obj, field=field)
                     matching_nodes = [item for item in nodes if str(item) == node_id]
                     if len(matching_nodes) == 0:
