@@ -148,15 +148,11 @@ configuration:
           reference: LocationSite
         - name: height
           mapping: u_height
-        - name: facility
-          mapping: facility_id
         - name: status
           mapping: status.value
         - name: tags
           mapping: tags
           reference: BuiltinTag
-        - name: serial_number
-          mapping: serial
         - name: asset_tag
           mapping: asset_tag
         # NOTE: current schema doesn't support role for racks (see related note)
@@ -236,8 +232,6 @@ configuration:
       fields:
         - name: name # /!\ Netbox allows duplicate device names within a virtual-chassis.
           mapping: name
-        - name: serial_number
-          mapping: serial
         - name: description
           mapping: description
         - name: position
@@ -278,8 +272,6 @@ configuration:
       fields:
         - name: name
           mapping: name
-        - name: serial_number
-          mapping: serial
         - name: description
           mapping: description
         - name: position
