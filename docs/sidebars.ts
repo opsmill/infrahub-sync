@@ -27,6 +27,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Guides',
       items: [
+        'use-with-an-ai-agent',
         'using-netbox-or-nautobot-with-infrahub',
         'migrating-from-netbox-or-nautobot',
         'v2-to-v3',
