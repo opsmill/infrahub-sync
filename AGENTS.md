@@ -114,9 +114,10 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 
 ## Configuration and Examples
 
-- YAML config keys: `name`, `source`, `destination`, `order`.
+- YAML config keys: `name`, `source`, `destination`, `order` (optional).
 - `source` and `destination` specify adapter names and connection settings.
-- `order` defines the sync sequence of object types.
+- `order` overrides the sync sequence of object types; when omitted, infrahub-sync computes
+  a write order from schema references instead.
 - Defaults often target `localhost`; adjust for real deployments.
 - Credentials must come from environment variables or a secret manager. Never commit, print, or log secrets. Keep example configs authentic but sanitized.
 
