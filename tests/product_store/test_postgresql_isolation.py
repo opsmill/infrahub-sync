@@ -131,12 +131,15 @@ def test_the_shared_fixture_body_creates_before_yielding_and_drops_at_teardown(
 
     class _FakeSchema:
         def __init__(self) -> None:
+            """Start with no recorded calls."""
             self.calls: list[str] = []
 
         def create(self) -> None:
+            """Record that the schema was created."""
             self.calls.append("create")
 
         def drop(self) -> None:
+            """Record that the schema was dropped."""
             self.calls.append("drop")
 
     fake = _FakeSchema()
