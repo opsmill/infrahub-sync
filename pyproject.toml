@@ -205,6 +205,7 @@ markers = [
     "docker: container-image tests that run the built image through a Docker daemon. Opt in with -m docker; they are driven by `invoke image.smoke`, which exports the built image from the retained layout, loads it, and names it to them.",
     "builder: warm-builder freshness tests that run two real image builds through a Docker daemon. Opt in with -m builder; they are driven by `invoke image.freshness`, which names the shared buildx builder to them.",
     "compose: Compose bundle lifecycle tests that run a real deployment through a Docker daemon. Opt in with -m compose; they are driven by `invoke compose.lifecycle`, which names the already-built image to them. They share one session-scoped stack and run single-process.",
+    "timeout: bounds a test's wall-clock runtime via pytest-timeout; the test fails instead of hanging past the given number of seconds.",
 ]
 filterwarnings = [
     "ignore:Module already imported so cannot be rewritten",
@@ -212,6 +213,7 @@ filterwarnings = [
     "ignore:Deprecated call to",
 ]
 addopts = "-vs --cov-report term-missing --cov-report xml --dist loadscope"
+strict_markers = true
 
 [tool.ruff]
 line-length = 120
