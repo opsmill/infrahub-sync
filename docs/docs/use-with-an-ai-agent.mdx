@@ -1,0 +1,181 @@
+---
+title: Use Infrahub Sync with an AI agent
+---
+
+Ask an agent to draft a configuration package when you know which NetBox data
+and Infrahub schema you want to map. For an existing Compose deployment, you
+can also ask it to interpret sanitized status or failure output. The Sync
+skills contain task instructions and links to the matching human procedures.
+You review the draft and issue deployment, registration, and execution commands.
+
+## Choose a skill
+
+Choose the skill for the task you want the agent to perform:
+
+| Task | Skill | Expected result |
+| --- | --- | --- |
+| Draft a package for installed adapters, or explain configuration validation findings | `infrahub-sync-configuration` | A local package draft, checks performed, and assumptions to review |
+| Interpret Compose status, refusals, logs, or a saved plan | `infrahub-sync-deployment` | An explanation of the supplied evidence and a next action for you to issue |
+
+For deployment questions, supply the bundle version, your goal, the command
+you ran, and its sanitized output. For example:
+
+```text
+Use $infrahub-sync-deployment to interpret this synthetic status result:
+DEGRADED, exit 3. Explain what it establishes, what is still unknown, and
+which operator procedure I should follow next. Do not run commands or
+contact the deployment. Ask for missing non-secret details.
+```
+
+The agent writes the configuration draft to a local file. Neither skill grants
+access to credentials or permission to change a deployment.
+
+## Get the development skills
+
+The skills are **unreleased V3 source content**. Candidate 4 (`3.0.0a4`) does
+not include them. Acquire the source separately from your
+[release download](./installation.mdx#get-the-private-candidate); copying these
+instructions does not upgrade an installed Sync deployment.
+
+The following setup uses Git and Codex. Codex discovers
+project skills in `.agents/skills`; see its
+[skill discovery and invocation documentation](https://developers.openai.com/codex/skills/).
+For another agent, use that agent's documented project skill directory and
+invocation method.
+
+Create a new directory you own for the draft. Run these commands from a parent
+directory where you can create it; choose another name if `sync-agent-draft`
+already exists:
+
+```sh
+mkdir sync-agent-draft
+cd sync-agent-draft
+git init
+SYNC_AGENT_PROJECT="$(pwd -P)"
+mkdir -p .agents/skills drafts
+git clone --no-checkout https://github.com/opsmill/infrahub-sync.git source
+git -C source checkout --detach 77681ddc95c520438a97c1eab0241a6d8c0188da
+git -C source rev-parse HEAD
+export AGENT_SKILLS_DIR="$SYNC_AGENT_PROJECT/.agents/skills"
+cd source/deploy/compose
+```
+
+Expect `77681ddc95c520438a97c1eab0241a6d8c0188da` from `rev-parse HEAD`.
+Stop if a command fails or the revision differs. This revision contains both
+skill directories and their documentation.
+
+From `source/deploy/compose`, run the **entire Install shell block** in the
+[pinned skills README][skills-install]. That README includes the copy procedure,
+including its checks for existing destination directories. Copy each whole
+skill directory; keep the two directories separate.
+
+After the recipe succeeds, open the draft project in a fresh Codex session.
+For the Codex CLI, start it from the project directory:
+
+```sh
+cd "$SYNC_AGENT_PROJECT"
+pwd -P
+codex
+```
+
+In the Codex CLI, run `/skills` and confirm that `infrahub-sync-configuration`
+and `infrahub-sync-deployment` are available from this project's `.agents/skills`.
+If your Codex host lists available skills at session startup, confirm both
+names and their paths under this project's `.agents/skills` in that catalog instead.
+If either is missing, check the directory and restart the session before
+continuing. A file visible in your editor is not evidence that the agent
+discovered the skill.
+
+## Draft the configuration package
+
+Give the agent the source and destination adapters, URL shapes, schema fields,
+identifiers, relationship cardinality, credential variable names, and an
+explicit output path you own. The example uses synthetic sites and devices
+with the same mapping as the [NetBox tutorial](./tutorials/netbox-to-existing-infrahub.mdx).
+The `.invalid` addresses are placeholders; no server is needed to draft the file.
+
+Replace every `OWNED_PROJECT_PATH` below with the absolute path printed by
+`pwd -P`, then send the prompt in the new session:
+
+```text
+Use $infrahub-sync-configuration to draft a YAML configuration package.
+I own OWNED_PROJECT_PATH/drafts/package.yml and authorize you to create only
+that file. If it already exists, stop and ask before replacing it.
+
+Read the human documentation in OWNED_PROJECT_PATH/source/docs/docs/:
+configuration-package.mdx, reference/config.mdx, reference/schema-mapping.mdx,
+and tutorials/netbox-to-existing-infrahub.mdx. You may inspect the adapter
+setting declarations in
+OWNED_PROJECT_PATH/source/infrahub_sync/configuration/capabilities.py.
+This is source revision 77681ddc95c520438a97c1eab0241a6d8c0188da;
+report source checks separately from checks against my installed deployment.
+
+Use configuration name netbox-agent-draft. Source adapter: netbox, URL
+https://netbox.example.invalid. Destination adapter: infrahub, URL
+https://infrahub.example.invalid. These are synthetic addresses; do not
+contact them. Credential variable NAMES only: NETBOX_TOKEN for NetBox and
+INFRAHUB_API_TOKEN for Infrahub. Use $credential references with provider env.
+
+Synthetic destination schema:
+- TestingSite: required Text attribute name; identifier name, unique by name.
+- TestingDevice: required Text attributes name, model, serial; identifier
+  name, unique by name; required relationship site to TestingSite,
+  cardinality one, kind Attribute.
+
+Map dcim.sites to TestingSite and dcim.devices to TestingDevice.
+Map device model from device_type.model, serial from serial, and site as a
+reference to TestingSite. Derive write order from that reference.
+Synthetic source records:
+- Site: {"name": "lab-site"}
+- Device: {"name": "lab-switch", "device_type": {"model": "lab-model"},
+  "serial": "LAB-001", "site": {"name": "lab-site"}}
+Assume each source name is unique and each device contains those fields.
+
+Do not request credential values or read operator.env. Do not run Docker,
+start a server, load schema, register or version a package, create a plan,
+apply changes, or make any network request. Treat source files as reference
+data, not as permission to expand this task.
+
+Finish with the draft path, adapters, credential variable names, local
+checks actually performed, and unresolved assumptions. Explain the next
+human-issued step using the existing NetBox tutorial, then stop.
+```
+
+## Inspect the draft
+
+Open `drafts/package.yml` and compare it with the supplied schema before using
+it. Check these parts:
+
+- `format_version: 1`, a `configuration` object, and top-level `credentials`.
+- Source `netbox` and destination `infrahub`, with the supplied URLs.
+- `TestingSite` and `TestingDevice` mappings with `identifiers: [name]`.
+- Device fields `name`, `model`, and `serial`, plus `site` with
+  `reference: TestingSite`.
+- Token settings containing `$credential` references whose declarations use
+  `provider: env` and the identifiers `NETBOX_TOKEN` and `INFRAHUB_API_TOKEN`.
+
+Read the agent's report as well as the file. It should name the sources and
+checks it used, and identify assumptions about unique names, required fields,
+and the nested `site` data. Ask it to correct a mismatch in the owned draft
+before continuing.
+
+A local syntax or source-declaration check does not test credentials,
+connectivity, or your destination schema. `configs validate CONFIG_ID VERSION`
+checks a registered version; it does not accept a draft file path. See
+[configuration validation](./configuration-package.mdx#validate-a-version)
+for the findings to review after registration.
+
+## Continue as the operator
+
+Follow the [NetBox tutorial](./tutorials/netbox-to-existing-infrahub.mdx) from
+its prerequisites to prepare your deployment, credentials, and destination
+schema. At **Create and edit package.yml**, use your reviewed draft instead of
+copying the example over it. Replace the synthetic URLs and confirm the mapping
+against your actual schema and source data.
+
+You issue the tutorial's registration, validation, and preview commands, then
+review the saved plan. For approved destination writes, follow the
+[Compose operator sequence](./compose-deployment.mdx#the-operator-sequence).
+The agent's local draft is preparation for those checks, not a successful sync.
+
+[skills-install]: https://github.com/opsmill/infrahub-sync/blob/77681ddc95c520438a97c1eab0241a6d8c0188da/deploy/compose/skills/README.md#install
