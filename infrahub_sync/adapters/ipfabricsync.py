@@ -134,16 +134,8 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
 
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
-
                 nodes = [item for item in all_nodes_for_reference]
-                if not nodes and all_nodes_for_reference:
-                    msg = (
-                        f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
-                        f" The available models are {self.store.get_all_model_names()}"
-                    )
-                    raise IndexError(msg)
                 if not field_is_list and (node := obj[field.mapping]):
-                    matching_nodes = []
                     node_id = build_mapping(adapter=self, reference=field.reference, obj=obj, field=field)
                     matching_nodes = [item for item in nodes if str(item) == node_id]
                     if len(matching_nodes) == 0:
