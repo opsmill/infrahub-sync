@@ -1,33 +1,62 @@
+from collections.abc import Callable
+
+import pytest
 from invoke import Context, Result
+from invoke.runners import Local
 
 from tasks import linter
 from tasks.utils import ESCAPED_REPO_PATH
 
 
-class _RecordingContext(Context):
-    """Records the command actually sent to the shell, `cd` prefix included.
+def _record_runner_commands(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Capture the final command text handed to invoke's runner.
 
-    `Context.cd` only prefixes commands at run time; a task that calls
-    `context.run` outside that `with` block silently checks whatever directory
-    the process happens to be started from instead of the repository root.
+    `Context.run` resolves any active `cd`/`prefix` wrapping before calling
+    `Runner.run` (see its docstring: "this method instantiates a `Runner`
+    subclass ... and calls its `run` method"). Patching that public seam
+    checks the command actually sent to the shell without depending on the
+    private mechanics `Context` uses internally to build it.
     """
+    commands: list[str] = []
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.commands: list[str] = []
-
-    def run(self, command: str, **kwargs: object) -> Result:  # type: ignore[override]
-        del kwargs
-        self.commands.append(self._prefix_commands(command))
+    def fake_run(self: Local, command: str, **kwargs: object) -> Result:
+        del self, kwargs
+        commands.append(command)
         return Result(exited=0)
 
+    monkeypatch.setattr(Local, "run", fake_run)
+    return commands
 
-def test_lint_yaml_runs_from_the_repository_root() -> None:
-    context = _RecordingContext()
 
-    linter.lint_yaml(context)
+def test_lint_yaml_runs_from_the_repository_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands = _record_runner_commands(monkeypatch)
 
-    assert context.commands == [f"cd {ESCAPED_REPO_PATH} && yamllint ."]
+    linter.lint_yaml(Context())
+
+    assert commands == [f"cd {ESCAPED_REPO_PATH} && yamllint ."]
+
+
+@pytest.mark.parametrize(
+    ("task_func", "expected_command"),
+    [
+        (
+            linter.lint_ruff,
+            f"cd {ESCAPED_REPO_PATH} && ruff format --check --diff . &&ruff check --diff .",
+        ),
+        (
+            linter.format_ruff,
+            f"cd {ESCAPED_REPO_PATH} && ruff format . && ruff check --fix .",
+        ),
+    ],
+)
+def test_ruff_tasks_run_from_the_repository_root(
+    monkeypatch: pytest.MonkeyPatch, task_func: Callable[[Context], None], expected_command: str
+) -> None:
+    commands = _record_runner_commands(monkeypatch)
+
+    task_func(Context())
+
+    assert commands == [expected_command]
 
 
 def test_ty_check_command_excludes_service_on_python_310() -> None:
