@@ -371,7 +371,10 @@ def test_an_unparseable_manifest_also_fails_the_gate(tmp_path: Path) -> None:
     assert "manifest" in str(failures[0].found)
 
 
-@pytest.mark.parametrize("manifest_state", ["absent", "unparseable", "missing_version"])
+@pytest.mark.parametrize(
+    "manifest_state",
+    ["absent", "unparseable", "missing_version", "null_version", "list_version", "string_version", "bool_version"],
+)
 def test_an_incomplete_manifest_only_recommends_rebuilding_the_plan(tmp_path: Path, manifest_state: str) -> None:
     """Unknown provenance cannot truthfully recommend the version that wrote the artifact."""
     directory = _verifiable_run(tmp_path)
@@ -382,7 +385,15 @@ def test_an_incomplete_manifest_only_recommends_rebuilding_the_plan(tmp_path: Pa
         path.write_bytes(b'{"format_version": 2, "run_id":')
     else:
         manifest = json.loads(path.read_text(encoding="utf-8"))
-        del manifest["format_version"]
+        if manifest_state == "missing_version":
+            del manifest["format_version"]
+        else:
+            manifest["format_version"] = {
+                "null_version": None,
+                "list_version": [2],
+                "string_version": "bogus",
+                "bool_version": True,
+            }[manifest_state]
         path.write_text(json.dumps(manifest), encoding="utf-8")
 
     failure = _failure(_verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION), "format_version")

@@ -120,11 +120,15 @@ def _gate_failure(run_id: str, mapping: dict[str, Any] | None) -> VerificationFa
         # The `isinstance` guard runs first: an unhashable hand-edited value like
         # `[2]` would raise `TypeError` from the frozenset membership test, in the component
         # built to classify corrupt manifests.
-        if isinstance(declared, int) and declared in SUPPORTED_FORMAT_VERSIONS:
+        if isinstance(declared, int) and not isinstance(declared, bool) and declared in SUPPORTED_FORMAT_VERSIONS:
             return None
         if "format_version" not in mapping:
             found = "no 'format_version' field"
             reason = "the manifest does not declare a format version, so the artifact is incomplete"
+            recovery = RE_PLAN_NEXT_ACTION
+        elif not isinstance(declared, int) or isinstance(declared, bool):
+            found = repr(declared)
+            reason = "the manifest does not declare a usable integer format version, so the artifact is incomplete"
             recovery = RE_PLAN_NEXT_ACTION
         else:
             found = repr(declared)
