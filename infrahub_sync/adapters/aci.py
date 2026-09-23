@@ -205,14 +205,20 @@ class AciAdapter(DiffSyncMixin, Adapter):
         AciModel.set_device_mapping(self.device_mapping)
 
     def _create_aci_client(self, adapter: SyncAdapter) -> AciApiClient:
+        """Build the ACI client with environment-first settings and safe TLS defaults."""
         settings = adapter.settings or {}
         url = select_runtime_credential(settings, "url", ("CISCO_APIC_URL",))
         username = select_runtime_credential(settings, "username", ("CISCO_APIC_USERNAME",))
         password = select_runtime_credential(settings, "password", ("CISCO_APIC_PASSWORD",))
-        # Prefer explicit env var for verify; allow boolean or string values
+        # Prefer explicit env var for verify; allow boolean or string values. An empty
+        # env value falls through to the declared setting. This is env-first, matching
+        # select_runtime_credential and this function's own url/username/password reads.
         verify_raw = os.environ.get("CISCO_APIC_VERIFY")
-        if verify_raw is None:
+        if not verify_raw:
             verify_raw = settings.get("verify", True)
+            if verify_raw is None:
+                # A declared `verify: null` is "unset", not "disabled"; keep the secure default.
+                verify_raw = True
         verify = verify_raw.lower() not in ("0", "false", "no") if isinstance(verify_raw, str) else bool(verify_raw)
         api_endpoint = settings.get("api_endpoint", "api")  # Default endpoint, change if necessary
 
