@@ -119,7 +119,10 @@ own extraction, guardrails, ordering, and destination calls.
   the service run ID and terminal fields.
 - A failed waited apply also reports recorded failure evidence as
   `apply failed: <ErrorClass>` when the result is available. `PlanSchemaChangedError`
-  adds a hint to create and review a new plan before applying again.
+  adds a hint to create and review a new plan before applying again. A saved plan with an
+  incomplete manifest adds a hint to re-run `diff` and review the new plan. A readable
+  plan with an unsupported format version instead offers a rebuild with this version or
+  an apply with the version that wrote it.
 - A timeout exits nonzero with the run ID and last product phase, outcome, and execution
   state. It does not cancel the remote run.
 - Ctrl-C stops local polling, prints the last observed product record, exits 130, and does

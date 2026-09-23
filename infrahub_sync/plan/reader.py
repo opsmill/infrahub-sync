@@ -341,10 +341,16 @@ def _parse_manifest(raw: RawPlanArtifact, run_id: str) -> tuple[PlanManifest, di
             found="no 'format_version' field",
         )
     found_version = mapping["format_version"]
-    # The `isinstance` guard runs first: an unhashable hand-edited value like
-    # `[2]` would raise `TypeError` from the frozenset membership test. A non-integer is a
-    # unsupported version, so it takes the version refusal below.
-    if not isinstance(found_version, int) or found_version not in SUPPORTED_FORMAT_VERSIONS:
+    # Keep the version refusal type for callers, but a malformed declaration cannot
+    # identify a compatible writer. Give it the same rebuild remedy as a torn artifact.
+    if not isinstance(found_version, int) or isinstance(found_version, bool):
+        msg = (
+            f"The plan artifact of run {run_id!r} declares an unusable format version "
+            f"{found_version!r}; the manifest is incomplete. Expected an integer format version "
+            f"supported by this version of infrahub-sync: {supported_versions_text()}."
+        )
+        raise PlanFormatVersionError(msg, next_action=PlanArtifactTornError.next_action)
+    if found_version not in SUPPORTED_FORMAT_VERSIONS:
         msg = (
             f"The plan artifact of run {run_id!r} declares format version {found_version!r}, which "
             f"this version of infrahub-sync does not support. Supported plan format versions: "

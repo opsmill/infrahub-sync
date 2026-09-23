@@ -680,6 +680,18 @@ def apply_cmd(
                     typer.echo(f"{stage} failed: {error_type}", err=True)
                     if error_type == "PlanSchemaChangedError":
                         typer.echo("hint: create and review a new plan before applying again", err=True)
+                    elif error_type == "RegisteredPlanVerificationError":
+                        recovery_action = failure.get("recovery_action")
+                        if recovery_action == "rebuild":
+                            typer.echo(
+                                "hint: re-run diff for this sync, review the new plan, then apply that run", err=True
+                            )
+                        elif recovery_action == "compatible_version":
+                            typer.echo(
+                                "hint: re-run diff with this version and review the new plan, "
+                                "or apply the reviewed plan with the version that wrote it",
+                                err=True,
+                            )
             raise
         if wait:
             _echo_run(completed)

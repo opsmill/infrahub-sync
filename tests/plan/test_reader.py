@@ -443,16 +443,22 @@ def test_an_unsupported_format_version_names_the_version_and_lists_those_support
     assert raised.value.next_action
 
 
-def test_an_unhashable_format_version_is_version_refused_rather_than_raising(tmp_path: Path) -> None:
-    """`format_version: [2]` in a hand-edited manifest is unhashable."""
+@pytest.mark.parametrize("declared", [None, [2], "bogus", True])
+def test_an_unusable_format_version_keeps_version_refusal_with_rebuild_guidance(
+    tmp_path: Path, declared: object
+) -> None:
+    """A malformed declaration keeps the reader type but cannot name a compatible writer."""
     directory = _run_dir(tmp_path)
-    write_artifact(directory, [operation_record()], format_version=[2])
+    write_artifact(directory, [operation_record()], format_version=declared)
 
     with pytest.raises(PlanFormatVersionError) as raised:
         load_plan_artifact(directory)
 
     message = str(raised.value)
-    assert "[2]" in message
+    assert repr(declared) in message
+    assert "incomplete" in message
+    assert "apply it with the version that wrote it" not in raised.value.next_action
+    assert "Re-run `diff`" in raised.value.next_action
     for supported in SUPPORTED_FORMAT_VERSIONS:
         assert str(supported) in message
 

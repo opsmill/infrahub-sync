@@ -62,6 +62,10 @@ if TYPE_CHECKING:
 GATED_CHECKS: tuple[VerificationCheck, ...] = ("run_binding", "plan_checksum", "source_snapshot", "config_version")
 
 RE_PLAN_NEXT_ACTION = "Re-run `diff` for this sync to rebuild the plan artifact, then apply that run."
+UNSUPPORTED_FORMAT_NEXT_ACTION = (
+    "Re-run `diff` with this version of infrahub-sync to rebuild the artifact, "
+    "or apply it with the version that wrote it."
+)
 
 
 def _failure(
@@ -113,14 +117,27 @@ def _gate_failure(run_id: str, mapping: dict[str, Any] | None) -> VerificationFa
     """Evaluate check 1. Returns the gate failure, or `None` when the gate passes."""
     if mapping is None:
         found = "no readable, parseable manifest"
+        reason = "the manifest is absent or cannot be interpreted as a manifest, so the artifact is incomplete"
+        recovery = RE_PLAN_NEXT_ACTION
     else:
         declared = mapping.get("format_version")
         # The `isinstance` guard runs first: an unhashable hand-edited value like
         # `[2]` would raise `TypeError` from the frozenset membership test, in the component
         # built to classify corrupt manifests.
-        if isinstance(declared, int) and declared in SUPPORTED_FORMAT_VERSIONS:
+        if isinstance(declared, int) and not isinstance(declared, bool) and declared in SUPPORTED_FORMAT_VERSIONS:
             return None
-        found = "no 'format_version' field" if "format_version" not in mapping else repr(declared)
+        if "format_version" not in mapping:
+            found = "no 'format_version' field"
+            reason = "the manifest does not declare a format version, so the artifact is incomplete"
+            recovery = RE_PLAN_NEXT_ACTION
+        elif not isinstance(declared, int) or isinstance(declared, bool):
+            found = repr(declared)
+            reason = "the manifest does not declare a usable integer format version, so the artifact is incomplete"
+            recovery = RE_PLAN_NEXT_ACTION
+        else:
+            found = repr(declared)
+            reason = "this version of Infrahub Sync does not understand the artifact's declared format version"
+            recovery = UNSUPPORTED_FORMAT_NEXT_ACTION
     return _failure(
         "format_version",
         run_id=run_id,
@@ -131,10 +148,8 @@ def _gate_failure(run_id: str, mapping: dict[str, Any] | None) -> VerificationFa
         expected=f"one of the supported plan format versions: {supported_versions_text()}",
         found=found,
         next_action=(
-            f"The remaining checks ({', '.join(GATED_CHECKS)}) were not evaluated: an artifact whose "
-            f"format version this version of Infrahub Sync does not understand cannot have its remaining fields "
-            f"meaningfully interpreted. Re-run `diff` with this version of infrahub-sync to rebuild "
-            f"the artifact, or apply it with the version that wrote it."
+            f"The remaining checks ({', '.join(GATED_CHECKS)}) were not evaluated: {reason}, so its remaining "
+            f"fields cannot be meaningfully interpreted. {recovery}"
         ),
     )
 
