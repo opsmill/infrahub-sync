@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import pytest
 
-from infrahub_sync import SyncAdapter, SyncInstance
+from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.utils import PlanApplier, get_potenda_from_instance
 
 
@@ -104,7 +104,7 @@ ROWS = (
     AdapterRow(
         "genericrestapi",
         {"url": "https://registered-generic", "token": "registered-token"},
-        {"URL": "https://ambient-generic", "TOKEN": "ambient-token"},
+        {"GENERICRESTAPI_URL": "https://ambient-generic", "GENERICRESTAPI_TOKEN": "ambient-token"},
         {"url": "https://registered-generic", "token": "registered-token"},
         {"url": "https://ambient-generic", "token": "ambient-token"},
     ),
@@ -334,8 +334,7 @@ def test_peeringmanager_defaults_reach_genericrestapi_without_overriding_registe
     assert [_observed(row, call) for call in observed] == [row.expected, row.expected]
     for adapter in (instance.source, instance.destination):
         assert adapter.settings is not None
-        assert adapter.settings["url_env_vars"] == ["PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_URL"]
-        assert adapter.settings["token_env_vars"] == ["PEERING_MANAGER_TOKEN"]
+        assert adapter.settings == {**row.settings, "_infrahub_sync_registered_context": True}
 
 
 @pytest.mark.parametrize("adapter_name", ["genericrestapi", "peeringmanager"])
@@ -378,3 +377,100 @@ def test_registered_basic_auth_wins_over_ambient_at_every_genericrestapi_seam(
     assert [_basic_observed(call) for call in observed] == (
         [expected, expected] if construction == "normal" else [expected]
     )
+
+
+@pytest.mark.parametrize("adapter_name", ["genericrestapi", "peeringmanager"])
+@pytest.mark.parametrize("auth_method", ["token", "basic"])
+@pytest.mark.parametrize("environment", ["declared", "namespaced", "alias", "bare"])
+def test_rest_adapter_uses_only_its_namespaced_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_name: str,
+    auth_method: str,
+    environment: str,
+) -> None:
+    """Declared values survive bare ambient names; namespaced values take precedence."""
+    environment_prefix = "GENERICRESTAPI" if adapter_name == "genericrestapi" else "PEERING_MANAGER"
+    url_name = "GENERICRESTAPI_URL" if adapter_name == "genericrestapi" else "PEERING_MANAGER_ADDRESS"
+    row = next(candidate for candidate in ROWS if candidate.name == adapter_name)
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    settings = {
+        "url": "https://declared-rest",
+        "auth_method": auth_method,
+        "token": "declared-token",
+        "username": "declared-user",
+        "password": "declared-password",
+    }
+    declared = SyncAdapter(name=adapter_name, settings=settings)
+    caller_settings = declared.settings
+    config = SyncConfig(name="rest-environment", source=declared, destination=SyncAdapter(name="infrahub"))
+    for name in ("URL", "ADDRESS", "TOKEN", "USERNAME", "PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+    for name in (
+        f"{environment_prefix}_URL",
+        f"{environment_prefix}_ADDRESS",
+        f"{environment_prefix}_TOKEN",
+        f"{environment_prefix}_USERNAME",
+        f"{environment_prefix}_PASSWORD",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    if environment == "bare":
+        for name in ("URL", "ADDRESS", "TOKEN", "USERNAME", "PASSWORD"):
+            monkeypatch.setenv(name, "https://bare-rest" if name in {"URL", "ADDRESS"} else f"bare-{name.lower()}")
+    elif environment in {"namespaced", "alias"}:
+        selected_url_name = (
+            f"{environment_prefix}_ADDRESS" if adapter_name == "genericrestapi" else "PEERING_MANAGER_URL"
+        )
+        monkeypatch.setenv(url_name if environment == "namespaced" else selected_url_name, "https://namespaced-rest")
+        for name in ("TOKEN", "USERNAME", "PASSWORD"):
+            value = "namespaced-user" if name == "USERNAME" else f"namespaced-{name.lower()}"
+            monkeypatch.setenv(f"{environment_prefix}_{name}", value)
+
+    constructed = getattr(module, _class_name(row))(target="source", adapter=declared, config=config)
+
+    assert len(observed) == 1
+    assert observed[0]["base_url"] == (
+        "https://namespaced-rest" if environment in {"namespaced", "alias"} else "https://declared-rest"
+    ) + ("/api" if adapter_name == "peeringmanager" else "/api/v0")
+    credential_prefix = "namespaced" if environment in {"namespaced", "alias"} else "declared"
+    if auth_method == "token":
+        assert observed[0]["api_token"] == f"{credential_prefix}-token"
+    else:
+        assert observed[0]["username"] == f"{credential_prefix}-user"
+        assert observed[0]["password"] == f"{credential_prefix}-password"
+    assert declared.settings is caller_settings
+    assert caller_settings == settings
+    if adapter_name == "peeringmanager":
+        assert constructed.settings is not caller_settings
+        assert constructed.settings["username_env_vars"] == ["PEERING_MANAGER_USERNAME"]
+        assert constructed.settings["password_env_vars"] == ["PEERING_MANAGER_PASSWORD"]
+
+
+@pytest.mark.parametrize("environment", ["declared", "namespaced"])
+def test_ipfabric_resolves_into_local_settings_without_mutating_caller(
+    monkeypatch: pytest.MonkeyPatch, environment: str
+) -> None:
+    """Environment fallback reaches IP Fabric without writing into SyncAdapter settings."""
+    row = ROWS[5]
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    settings: dict[str, Any] = {"verify_ssl": False}
+    if environment == "declared":
+        settings.update({"base_url": "https://declared-ipfabric", "auth": "declared-token"})
+    declared = SyncAdapter(name="ipfabricsync", settings=settings)
+    caller_settings = declared.settings
+    config = SyncConfig(name="ipfabric-environment", source=declared, destination=SyncAdapter(name="infrahub"))
+    monkeypatch.setenv("IPF_URL", "https://namespaced-ipfabric")
+    monkeypatch.setenv("IPF_TOKEN", "namespaced-token")
+
+    getattr(module, _class_name(row))(target="source", adapter=declared, config=config)
+
+    assert observed == [
+        {
+            "verify_ssl": False,
+            "base_url": "https://declared-ipfabric" if environment == "declared" else "https://namespaced-ipfabric",
+            "auth": "declared-token" if environment == "declared" else "namespaced-token",
+        }
+    ]
+    assert declared.settings is caller_settings
+    assert caller_settings == settings

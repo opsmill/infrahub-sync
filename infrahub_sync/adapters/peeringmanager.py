@@ -21,7 +21,7 @@ class PeeringmanagerAdapter(GenericrestapiAdapter):
 
     def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, **kwargs) -> None:
         # Set PeeringManager-specific defaults
-        settings = adapter.settings or {}
+        settings = dict(adapter.settings or {})
 
         # Apply PeeringManager-specific defaults if not specified
         if "auth_method" not in settings:
@@ -32,13 +32,21 @@ class PeeringmanagerAdapter(GenericrestapiAdapter):
             settings["url_env_vars"] = ["PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_URL"]
         if "token_env_vars" not in settings:
             settings["token_env_vars"] = ["PEERING_MANAGER_TOKEN"]
+        if "username_env_vars" not in settings:
+            settings["username_env_vars"] = ["PEERING_MANAGER_USERNAME"]
+        if "password_env_vars" not in settings:
+            settings["password_env_vars"] = ["PEERING_MANAGER_PASSWORD"]
 
         settings.setdefault("response_key_pattern", "results")
 
-        # Save the original settings back to the adapter
-        adapter.settings = settings
-
-        super().__init__(target=target, adapter=adapter, config=config, adapter_type="PeeringManager", **kwargs)
+        super().__init__(
+            target=target,
+            adapter=adapter,
+            config=config,
+            adapter_type="PeeringManager",
+            _client_settings=settings,
+            **kwargs,
+        )
 
 
 class PeeringmanagerModel(GenericrestapiModel):

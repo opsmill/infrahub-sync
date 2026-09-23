@@ -112,6 +112,8 @@ Below is a snippet from the example config.yml file:
   </TabItem>
 </Tabs>
 
+For direct adapter use, Peering Manager reads `PEERING_MANAGER_ADDRESS` or `PEERING_MANAGER_URL`, `PEERING_MANAGER_TOKEN`, and, for basic authentication, `PEERING_MANAGER_USERNAME` and `PEERING_MANAGER_PASSWORD`. These names take precedence over declared settings. Rename any bare `USERNAME` and `PASSWORD` variables used for Peering Manager authentication to their `PEERING_MANAGER_` forms; bare names are no longer read. Registered configuration packages use declared or resolved credentials instead of ambient environment variables.
+
 :::info
 
 You can pass `params` for the REST API client, used by Peering Manager adapter, in the settings. For example `limit`

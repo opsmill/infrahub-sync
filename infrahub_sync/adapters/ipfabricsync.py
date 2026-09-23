@@ -43,14 +43,14 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
         self.config = config
 
     def _create_ipfabric_client(self, adapter: SyncAdapter) -> IPFClient:
-        settings = adapter.settings or {}
+        settings = dict(adapter.settings or {})
 
-        base_url = settings.get("base_url", None)
+        base_url = settings.get("base_url")
         if not base_url:
             base_url = os.environ.get("IPF_URL", None)
             settings["base_url"] = base_url
 
-        auth = settings.get("auth", None)
+        auth = settings.get("auth")
         if not auth:
             auth = os.environ.get("IPF_TOKEN", None)
             settings["auth"] = auth
