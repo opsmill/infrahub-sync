@@ -949,7 +949,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # Extract the list of dicts for filtering and transforming
             list_obj = [pair[1] for pair in node_dict_pairs]
 
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            if self.target == "source":
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, model_name)
