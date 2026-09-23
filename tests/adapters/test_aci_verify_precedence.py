@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 
 from infrahub_sync import SyncAdapter
@@ -23,7 +25,10 @@ def _create_client(monkeypatch: pytest.MonkeyPatch, *, env_value: str | None, de
     adapter = object.__new__(AciAdapter)
     settings = dict(BASE_SETTINGS)
     settings["verify"] = declared_verify
-    client = adapter._create_aci_client(SyncAdapter(name="aci", settings=settings))
+    # AciApiClient disables warnings when verification is false; restore the
+    # process-wide warning filters before another test can observe the change.
+    with warnings.catch_warnings():
+        client = adapter._create_aci_client(SyncAdapter(name="aci", settings=settings))
     return client.verify
 
 
