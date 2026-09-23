@@ -13,6 +13,7 @@ assertion alone passes against the wrong implementation.
 
 from __future__ import annotations
 
+import json
 import shutil
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -23,7 +24,7 @@ from infrahub_sync.cache.parquet_io import write_resource_side
 from infrahub_sync.plan.checksum import source_snapshot_records
 from infrahub_sync.plan.errors import PlanArtifactUnreadableError
 from infrahub_sync.plan.reader import read_plan_artifact_bytes
-from infrahub_sync.plan.verify import GATED_CHECKS, verify_plan
+from infrahub_sync.plan.verify import GATED_CHECKS, RE_PLAN_NEXT_ACTION, verify_plan
 from tests.plan.artifact_fixtures import (
     CONFIG_VERSION,
     OTHER_RUN_ID,
@@ -322,6 +323,22 @@ def test_the_format_version_gate_short_circuits_the_remaining_checks(tmp_path: P
         assert gated in failure.next_action
 
 
+def test_a_declared_unsupported_version_keeps_compatibility_recovery(tmp_path: Path) -> None:
+    """A readable version can still name the compatible-tool alternative."""
+    directory = _verifiable_run(tmp_path)
+    write_artifact(
+        directory,
+        [tamperable_operation()],
+        source_snapshot=source_snapshot_records(directory),
+        format_version=UNSUPPORTED_FORMAT_VERSION,
+    )
+
+    failure = _failure(_verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION), "format_version")
+
+    assert "apply it with the version that wrote it" in failure.next_action
+    assert RE_PLAN_NEXT_ACTION not in failure.next_action
+
+
 def test_the_gate_names_the_checks_it_did_not_evaluate() -> None:
     """The gated set is exactly checks 2 to 5 — the operator is told what was skipped."""
     assert GATED_CHECKS == ("run_binding", "plan_checksum", "source_snapshot", "config_version")
@@ -352,6 +369,27 @@ def test_an_unparseable_manifest_also_fails_the_gate(tmp_path: Path) -> None:
 
     assert _checks(failures) == ["format_version"]
     assert "manifest" in str(failures[0].found)
+
+
+@pytest.mark.parametrize("manifest_state", ["absent", "unparseable", "missing_version"])
+def test_an_incomplete_manifest_only_recommends_rebuilding_the_plan(tmp_path: Path, manifest_state: str) -> None:
+    """Unknown provenance cannot truthfully recommend the version that wrote the artifact."""
+    directory = _verifiable_run(tmp_path)
+    path = manifest_path(directory)
+    if manifest_state == "absent":
+        path.unlink()
+    elif manifest_state == "unparseable":
+        path.write_bytes(b'{"format_version": 2, "run_id":')
+    else:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        del manifest["format_version"]
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    failure = _failure(_verify(run_dir=directory, run_id=RUN_ID, config_version=CONFIG_VERSION), "format_version")
+
+    assert RE_PLAN_NEXT_ACTION in failure.next_action
+    assert "apply it with the version that wrote it" not in failure.next_action
+    assert "incomplete" in failure.next_action
 
 
 def test_once_the_gate_passes_two_simultaneous_failures_are_both_named(tmp_path: Path) -> None:
