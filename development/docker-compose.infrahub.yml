@@ -8,8 +8,8 @@
 # include linux/amd64 and linux/arm64. In the preview, set a matching
 # INFRAHUB_DOCKER_IMAGE_DIGEST when changing VERSION. Direct Compose use with
 # either an image-name or VERSION override drops the shipped digest unless a
-# digest is supplied. With an image-name override, an empty digest keeps that
-# image unpinned.
+# digest is supplied. A digest-only override replaces the shipped digest.
+# With an image-name override, an empty digest keeps that image unpinned.
 x-infrahub-config: &infrahub_config
   AWS_ACCESS_KEY_ID:
   AWS_DEFAULT_ACL: ${AWS_DEFAULT_ACL:-private}
@@ -251,7 +251,7 @@ services:
       - 6362:6362
 
   task-manager:
-    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub:${VERSION:-1.10.6@sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}${INFRAHUB_DOCKER_IMAGE_DIGEST-}}${INFRAHUB_DOCKER_IMAGE:+:${VERSION:-1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-}}"
+    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub:${VERSION:-${INFRAHUB_DOCKER_IMAGE_DIGEST+1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-1.10.6@sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}}${VERSION+${INFRAHUB_DOCKER_IMAGE_DIGEST-}}}${INFRAHUB_DOCKER_IMAGE:+:${VERSION:-1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-}}"
     command: uvicorn --host 0.0.0.0 --port 4200 --factory infrahub.prefect_server.app:create_infrahub_prefect
     restart: unless-stopped
     depends_on:
@@ -284,7 +284,7 @@ services:
       retries: 5
 
   infrahub-server:
-    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub:${VERSION:-1.10.6@sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}${INFRAHUB_DOCKER_IMAGE_DIGEST-}}${INFRAHUB_DOCKER_IMAGE:+:${VERSION:-1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-}}"
+    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub:${VERSION:-${INFRAHUB_DOCKER_IMAGE_DIGEST+1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-1.10.6@sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}}${VERSION+${INFRAHUB_DOCKER_IMAGE_DIGEST-}}}${INFRAHUB_DOCKER_IMAGE:+:${VERSION:-1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-}}"
     restart: unless-stopped
     command: >
       gunicorn --config backend/infrahub/serve/gunicorn_config.py
@@ -330,7 +330,7 @@ services:
     deploy:
       mode: replicated
       replicas: 2
-    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub:${VERSION:-1.10.6@sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}${INFRAHUB_DOCKER_IMAGE_DIGEST-}}${INFRAHUB_DOCKER_IMAGE:+:${VERSION:-1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-}}"
+    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub:${VERSION:-${INFRAHUB_DOCKER_IMAGE_DIGEST+1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-1.10.6@sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}}${VERSION+${INFRAHUB_DOCKER_IMAGE_DIGEST-}}}${INFRAHUB_DOCKER_IMAGE:+:${VERSION:-1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-}}"
     command: prefect worker start --type infrahubasync --pool infrahub-worker --with-healthcheck
     restart: unless-stopped
     depends_on:

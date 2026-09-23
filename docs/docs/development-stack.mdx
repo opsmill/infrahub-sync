@@ -209,7 +209,8 @@ shell drops the shipped digest so a local build can run. To use a registry mirro
 explicitly; the mirror may use the same digest as the shipped image. When using
 Docker Compose directly, an image-name override drops the shipped digest even
 without `VERSION` or an env file. With that override, an empty
-`INFRAHUB_DOCKER_IMAGE_DIGEST` leaves the image unpinned.
+`INFRAHUB_DOCKER_IMAGE_DIGEST` leaves the image unpinned. A digest-only override
+keeps the shipped Infrahub tag and replaces its digest.
 
 ## The stack refuses to start on retired state
 

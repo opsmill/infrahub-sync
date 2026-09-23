@@ -337,6 +337,24 @@ def test_direct_compose_local_image_override_drops_the_digest(
         assert configured[name]["image"] == "local-infrahub:1.10.6"
 
 
+def test_direct_compose_digest_override_replaces_the_shipped_digest(compose_version: str) -> None:
+    """A digest-only override must resolve to one valid image reference."""
+    del compose_version
+    digest = "@sha256:" + "a" * 64
+    result = compose(
+        ["config", "--format", "json"],
+        files=(DESTINATION_COMPOSE,),
+        inherit_environment=False,
+        environment={"INFRAHUB_DOCKER_IMAGE_DIGEST": digest},
+    )
+    assert result.returncode == 0, result.stderr
+    configured = services(json.loads(result.stdout))
+    expected = f"registry.opsmill.io/opsmill/infrahub:1.10.6{digest}"
+    for name in ("task-manager", "infrahub-server", "task-worker"):
+        assert configured[name]["image"] == expected
+        assert TAGGED_INDEX_REFERENCE.fullmatch(configured[name]["image"])
+
+
 def test_standalone_version_override_drops_the_shipped_digest(compose_version: str) -> None:
     """Direct Compose use must not pair a new tag with the shipped digest."""
     del compose_version

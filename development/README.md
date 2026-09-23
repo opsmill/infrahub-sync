@@ -68,7 +68,8 @@ the generic `VERSION` variable; use `preview.local.env` to change the Infrahub
 version. Changing an Infrahub or Prefect tag requires a matching digest;
 changing only the Infrahub image name drops the shipped digest so a local build
 can run. For a registry mirror, set its digest explicitly, even if it matches
-the shipped digest.
+the shipped digest. With direct Docker Compose, a digest-only override keeps
+the shipped Infrahub tag and replaces its digest.
 
 Runtime state (process pids, logs, sync and product caches) lives under
 `.preview/` at the repository root, also gitignored. The worker runs from its own empty
