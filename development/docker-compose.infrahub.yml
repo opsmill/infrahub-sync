@@ -6,7 +6,8 @@
 # To refresh an image pin, inspect its current tag with `docker buildx imagetools
 # inspect name:tag`, copy the top-level index Digest, and confirm its Manifests
 # include linux/amd64 and linux/arm64. When overriding INFRAHUB_DOCKER_IMAGE or
-# VERSION, set INFRAHUB_DOCKER_IMAGE_DIGEST to the matching sha256 digest too.
+# VERSION, set INFRAHUB_DOCKER_IMAGE_DIGEST to the matching @sha256 digest too.
+# Set that variable to an empty value only for an intentionally unpinned local image.
 x-infrahub-config: &infrahub_config
   AWS_ACCESS_KEY_ID:
   AWS_DEFAULT_ACL: ${AWS_DEFAULT_ACL:-private}
@@ -248,7 +249,7 @@ services:
       - 6362:6362
 
   task-manager:
-    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub}:${VERSION:-1.10.6}@${INFRAHUB_DOCKER_IMAGE_DIGEST:-sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}"
+    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub}:${VERSION:-1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-@sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}"
     command: uvicorn --host 0.0.0.0 --port 4200 --factory infrahub.prefect_server.app:create_infrahub_prefect
     restart: unless-stopped
     depends_on:
@@ -281,7 +282,7 @@ services:
       retries: 5
 
   infrahub-server:
-    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub}:${VERSION:-1.10.6}@${INFRAHUB_DOCKER_IMAGE_DIGEST:-sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}"
+    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub}:${VERSION:-1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-@sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}"
     restart: unless-stopped
     command: >
       gunicorn --config backend/infrahub/serve/gunicorn_config.py
@@ -327,7 +328,7 @@ services:
     deploy:
       mode: replicated
       replicas: 2
-    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub}:${VERSION:-1.10.6}@${INFRAHUB_DOCKER_IMAGE_DIGEST:-sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}"
+    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub}:${VERSION:-1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-@sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}"
     command: prefect worker start --type infrahubasync --pool infrahub-worker --with-healthcheck
     restart: unless-stopped
     depends_on:

@@ -187,14 +187,24 @@ Nothing the stack uses is a secret, and none of it works anywhere else:
 
 - `development/preview.env` ships the MinIO access key and secret key, the Infrahub admin
   token, and the Sync API bearer principal.
-- `development/docker-compose.infrahub.yml` is the official Infrahub Compose file,
-  downloaded unmodified from `https://infrahub.opsmill.io/<VERSION>` for the `VERSION`
-  pinned in `development/preview.env`. Its Infrahub admin token, agent token, and
-  security key defaults are that file's own published values.
+- `development/docker-compose.infrahub.yml` is based on the official Infrahub Compose
+  file at `https://infrahub.opsmill.io/<VERSION>` for the `VERSION` in
+  `development/preview.env`. This repository adds image digest pins to it; when
+  refreshing from upstream, restore and verify those pins. Its Infrahub admin
+  token, agent token, and security key defaults are the upstream published values.
 
 They reach only the disposable local containers this stack creates. Do not reuse them in
 a deployment, and mint your own tokens in `development/preview.local.env` if you need
 different ones.
+
+When updating an Infrahub or Prefect image in the preview, change its tag and
+matching `@sha256:` digest together in `development/preview.env`. Inspect the
+tag with `docker buildx imagetools inspect name:tag`, copy the top-level index
+digest, and check that it includes both linux/amd64 and linux/arm64. Compose
+would still pull the old image after a tag-only change, so the preview tasks
+refuse one. For a locally built
+Infrahub image, set `INFRAHUB_DOCKER_IMAGE_DIGEST` to an empty value in
+`development/preview.local.env` so Compose uses the local tag without a pin.
 
 ## The stack refuses to start on retired state
 

@@ -94,6 +94,7 @@ class PreviewError(RuntimeError):
 def load_preview_env() -> dict[str, str]:
     """Read shipped preview settings, then apply gitignored local overrides."""
     values: dict[str, str] = {}
+    shipped: dict[str, str] = {}
     for env_file in (ENV_FILE, LOCAL_ENV_FILE):
         if not env_file.exists():
             continue
@@ -103,6 +104,8 @@ def load_preview_env() -> dict[str, str]:
                 continue
             key, _, value = line.partition("=")
             values[key.strip()] = value.strip()
+        if env_file == ENV_FILE:
+            shipped = values.copy()
     required = {
         "COMPOSE_PROJECT_NAME",
         "INFRAHUB_INITIAL_ADMIN_TOKEN",
@@ -118,10 +121,24 @@ def load_preview_env() -> dict[str, str]:
         "PREVIEW_WORK_POOL",
         "PREVIEW_RUN_ADMISSION_TTL_SECONDS",
         "PREVIEW_PREFECT_WORKER_QUERY_SECONDS",
+        "VERSION",
+        "INFRAHUB_DOCKER_IMAGE_DIGEST",
+        "PREVIEW_PREFECT_IMAGE_TAG",
+        "PREVIEW_PREFECT_IMAGE_DIGEST",
     }
     missing = required - values.keys()
     if missing:
         msg = f"{ENV_FILE} is missing required keys: {sorted(missing)}"
+        raise PreviewError(msg)
+    if (values["VERSION"] != shipped.get("VERSION") or values.get("INFRAHUB_DOCKER_IMAGE")) and values[
+        "INFRAHUB_DOCKER_IMAGE_DIGEST"
+    ] == shipped.get("INFRAHUB_DOCKER_IMAGE_DIGEST"):
+        msg = "Change INFRAHUB_DOCKER_IMAGE_DIGEST with VERSION or INFRAHUB_DOCKER_IMAGE; use an empty value for a local image"
+        raise PreviewError(msg)
+    if values["PREVIEW_PREFECT_IMAGE_TAG"] != shipped.get("PREVIEW_PREFECT_IMAGE_TAG") and values[
+        "PREVIEW_PREFECT_IMAGE_DIGEST"
+    ] == shipped.get("PREVIEW_PREFECT_IMAGE_DIGEST"):
+        msg = "Change PREVIEW_PREFECT_IMAGE_DIGEST with PREVIEW_PREFECT_IMAGE_TAG"
         raise PreviewError(msg)
     return values
 
