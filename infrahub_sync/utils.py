@@ -59,7 +59,7 @@ def render_adapter(
         ("diffsync_adapter.j2", "sync_adapter.py"),
     )
     rendered_files = []
-    for adapter in [sync_instance.source, sync_instance.destination]:
+    for adapter_index, adapter in enumerate([sync_instance.source, sync_instance.destination]):
         output_dir_path = Path(sync_instance.directory, adapter.name)
         if not output_dir_path.is_dir():
             output_dir_path.mkdir(exist_ok=True)
@@ -74,6 +74,7 @@ def render_adapter(
                 output_dir=output_dir_path,
                 output_file=Path(item[1]),
                 context={"schema": schema, "adapter": adapter, "config": sync_instance},
+                warn_optional_identifiers=adapter_index == 0,
             )
             output_file_path = output_dir_path / item[1]
             rendered_files.append((item[0], output_file_path))
