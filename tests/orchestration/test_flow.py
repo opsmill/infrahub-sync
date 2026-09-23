@@ -52,6 +52,7 @@ from infrahub_sync.orchestration.flow import (
     RunLoggerBridge,
     infrahub_sync_run,
 )
+from tests.logging_registry_fixtures import logging_registry_snapshot  # noqa: F401 - fixture, used by name
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -390,6 +391,7 @@ def test_bridge_never_leaks_a_secret_to_stderr_on_a_failed_record(
     assert stderr.count("could not be forwarded") == 1
 
 
+@pytest.mark.usefixtures("logging_registry_snapshot")
 @pytest.mark.parametrize("failure_mode", ["formatting", "forwarding"])
 def test_bridge_strips_line_separators_from_logger_and_level_names_in_the_diagnostic(
     source_logger: logging.Logger,
@@ -401,8 +403,11 @@ def test_bridge_strips_line_separators_from_logger_and_level_names_in_the_diagno
 
     `record.name` comes from whoever called `logging.getLogger()`, and
     `record.levelname` from whoever called `logging.addLevelName()` — both are
-    outside this module's control. A `\\n`, `\\r`, U+2028, or U+2029 embedded in
+    outside this module's control. A `\n`, `\r`, U+2028, or U+2029 embedded in
     either must not split the fixed diagnostic into more than one stderr line.
+    `logging_registry_snapshot` restores the level-name mapping and the logger
+    registry entry (and any descendant's `.parent` reference) this test
+    touches, whatever they held before the test ran.
     """
     injected_level = 35
     injected_level_name = "IN\nJEC\rTED\u2028LEVEL\u2029"
@@ -419,31 +424,78 @@ def test_bridge_strips_line_separators_from_logger_and_level_names_in_the_diagno
     source_logger.handlers = []
     source_logger.addHandler(RunLoggerBridge(run_logger))
     source_logger.setLevel(BRIDGED_LEVEL)
-    # The separator lives in the suffix after the known `infrahub_sync.` prefix,
-    # not inside a dotted segment, so `getLogger()` registers exactly one extra
-    # entry (`injected_name` itself) rather than spurious placeholder parents.
     injected_name = f"{SOURCE_LOGGER_NAME}.po\u2028ten\u2029da\n\r"
-    injected_name_entry_before = logging.Logger.manager.loggerDict.get(injected_name)
     child = logging.getLogger(injected_name)
 
-    try:
-        if failure_mode == "formatting":
-            child.log(injected_level, "bad format: %s", "one", "extra")
-        else:
-            child.log(injected_level, "message")
-    finally:
-        del logging._levelToName[injected_level]
-        del logging._nameToLevel[injected_level_name]
-        if injected_name_entry_before is None:
-            logging.Logger.manager.loggerDict.pop(injected_name, None)
-        else:
-            logging.Logger.manager.loggerDict[injected_name] = injected_name_entry_before
+    if failure_mode == "formatting":
+        child.log(injected_level, "bad format: %s", "one", "extra")
+    else:
+        child.log(injected_level, "message")
 
     stderr = capsys.readouterr().err
     assert stderr.count("could not be forwarded") == 1
     assert stderr.strip().count("\n") == 0
     for separator in ("\r", "\u2028", "\u2029"):
         assert separator not in stderr
+
+
+_NON_PRINTABLE_DIAGNOSTIC_PROBES = ["\n", "\r", "\v", "\f", "\u0085", "\u2028", "\u2029"]
+
+
+@pytest.mark.usefixtures("logging_registry_snapshot")
+@pytest.mark.parametrize("character", _NON_PRINTABLE_DIAGNOSTIC_PROBES)
+@pytest.mark.parametrize("field", ["logger_name", "level_name", "exception_type"])
+def test_bridge_sanitizes_every_non_printable_character_in_every_diagnostic_field(
+    source_logger: logging.Logger,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    field: str,
+    character: str,
+) -> None:
+    """Every inserted field — logger name, level name, exception type — is sanitized the same way.
+
+    `record.name` and `record.levelname` are caller-controlled (via
+    `logging.getLogger()` / `logging.addLevelName()`), and `type(exc).__name__`
+    is whatever exception class formatting or forwarding happened to raise —
+    none of the three is restricted to printable text. A single non-printable
+    character embedded in any one of them, not just `\n`/`\r` but also `\v`,
+    `\f`, U+0085, U+2028, or U+2029, must not split the fixed diagnostic into
+    more than one stderr line, and the record's own content (here, a canary
+    argument) must still never reach stderr.
+    """
+    canary = "DIAGNOSTIC_FIELD_CANARY"
+    injected_level = 45
+    level_name = f"INJECTED{character}LEVEL" if field == "level_name" else "INJECTEDLEVEL"
+    logger_name_suffix = f"po{character}tenda" if field == "logger_name" else "potenda"
+    logging.addLevelName(injected_level, level_name)
+    source_logger.handlers = []
+    run_logger = _StubRunLogger()
+
+    if field == "exception_type":
+        exc_type = type(f"Bad{character}Exception", (Exception,), {})
+
+        def _raise_with_bad_type(*_args: object, **_kwargs: object) -> None:
+            raise exc_type(canary)
+
+        monkeypatch.setattr(run_logger, "log", _raise_with_bad_type)
+    else:
+
+        def _raise_plain(*_args: object, **_kwargs: object) -> None:
+            failure_message = "run logger rejected the record"
+            raise RuntimeError(failure_message)
+
+        monkeypatch.setattr(run_logger, "log", _raise_plain)
+
+    source_logger.addHandler(RunLoggerBridge(run_logger))
+    source_logger.setLevel(BRIDGED_LEVEL)
+    child = logging.getLogger(f"{SOURCE_LOGGER_NAME}.{logger_name_suffix}")
+
+    child.log(injected_level, "message with canary %s", canary)
+
+    stderr = capsys.readouterr().err
+    assert stderr.count("could not be forwarded") == 1
+    assert stderr.strip("\n").count("\n") == 0
+    assert canary not in stderr
 
 
 def test_bridge_handles_a_non_string_record_name_without_raising(

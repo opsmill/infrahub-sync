@@ -80,20 +80,19 @@ class RunLogger(Protocol):
     def info(self, msg: str, *args: object) -> None: ...
 
 
-_DIAGNOSTIC_LINE_SEPARATORS = ("\n", "\r", "\u2028", "\u2029")
-
-
 def _sanitize_diagnostic_field(value: object) -> str:
-    """Render a `LogRecord` field as a single line of text for the bridge failure diagnostic.
+    """Render any field as a single line of text for the bridge failure diagnostic.
 
     `value` may be any type (e.g. `None` from `logging.makeLogRecord()`) and may
-    contain line separators the caller controls (via `logging.getLogger()` or
-    `logging.addLevelName()`); both would otherwise defeat the one-line guarantee.
+    contain characters the caller controls (via `logging.getLogger()`,
+    `logging.addLevelName()`, or a custom exception class) that could otherwise
+    split the fixed diagnostic into more than one stderr line \u2014 not just `\n`
+    and `\r`, but any non-printable character, including `\v`, `\f`, U+0085, and
+    the Unicode line/paragraph separators U+2028 and U+2029. Replacing every
+    character for which `str.isprintable()` is false covers all of them at once
+    instead of enumerating separators.
     """
-    text = str(value)
-    for separator in _DIAGNOSTIC_LINE_SEPARATORS:
-        text = text.replace(separator, "")
-    return text
+    return "".join(char if char.isprintable() else "?" for char in str(value))
 
 
 class RunLoggerBridge(logging.Handler):
@@ -127,20 +126,26 @@ class RunLoggerBridge(logging.Handler):
             # record content instead, and swallow a failure to do even that.
             #
             # `record.name` is whatever the caller passed to `logging.getLogger()`,
-            # and `record.levelname` can likewise be attacker/caller-controlled via
-            # `logging.addLevelName()` — neither is a value this module controls, and
-            # neither is guaranteed to even be a string (e.g. a `LogRecord` built by
-            # `logging.makeLogRecord()`). A newline or other line-separator embedded
-            # in either would split this one write into two stderr lines (log-line
+            # `record.levelname` can likewise be attacker/caller-controlled via
+            # `logging.addLevelName()`, and `type(exc).__name__` comes from
+            # whatever exception class formatting or forwarding happened to
+            # raise (including a user-written adapter's own exception type) —
+            # none of the three is a value this module controls, and none is
+            # guaranteed to even be a string (e.g. a `LogRecord` built by
+            # `logging.makeLogRecord()` defaults `name` to `None`). A non-printable
+            # character embedded in any of them — not just `\n`/`\r`, but also
+            # `\v`, `\f`, U+0085, or the Unicode line/paragraph separators — would
+            # split this one write into more than one stderr line (log-line
             # injection), and a non-string value would raise at the logging call
-            # site. Build the whole line — including converting both to text —
-            # inside the suppression, so nothing here can escape `emit()`.
+            # site. Build the whole line — including converting all three fields
+            # to text — inside the suppression, so nothing here can escape `emit()`.
             with contextlib.suppress(Exception):
                 safe_name = _sanitize_diagnostic_field(record.name)
                 safe_levelname = _sanitize_diagnostic_field(record.levelname)
+                safe_exc_type = _sanitize_diagnostic_field(type(exc).__name__)
                 sys.stderr.write(
                     f"infrahub_sync: a log record from {safe_name} at {safe_levelname} "
-                    f"could not be forwarded ({type(exc).__name__})\n"
+                    f"could not be forwarded ({safe_exc_type})\n"
                 )
 
 

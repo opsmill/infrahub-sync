@@ -54,6 +54,7 @@ from infrahub_sync.service.orchestration import (
     PrefectOrchestration,
 )
 from tests.configuration.validation_packages import package
+from tests.logging_registry_fixtures import logging_registry_snapshot  # noqa: F401 - fixture, used by name
 from tests.service.execution_fixtures import append_execution, bind_granting_guard
 
 if TYPE_CHECKING:
@@ -280,6 +281,7 @@ def test_missing_context_uses_local_logger_without_constructing_a_bridge(monkeyp
     assert prefect_context is False
 
 
+@pytest.mark.usefixtures("logging_registry_snapshot")
 @pytest.mark.parametrize("raise_exceptions", [True, False])
 @pytest.mark.parametrize("failure_mode", ["formatting", "forwarding"])
 def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_record(
@@ -313,13 +315,10 @@ def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_re
 
         monkeypatch.setattr(run_logger, "log", _raise_on_log)
     child_logger_name = f"{service_flow.SOURCE_LOGGER_NAME}.secret-leak-test"
-    # `getLogger()` on a name with no prior entry, or whose only prior entry is a
-    # `PlaceHolder` (registered when a descendant logger was created first), swaps
-    # in a real `Logger` and registers it in the process-wide `Manager.loggerDict`
-    # for the life of the interpreter. Save whatever was there before — `Logger`,
-    # `PlaceHolder`, or nothing — so teardown can put back the exact prior entry
-    # instead of just deleting whatever this test leaves behind.
-    child_logger_entry_before = logging.Logger.manager.loggerDict.get(child_logger_name)
+    # `logging_registry_snapshot` restores whatever this name (and any
+    # descendant's `.parent` reference) held in the process-wide registry
+    # before the test ran, whether that was a `Logger`, a `PlaceHolder`, or
+    # nothing.
     child_logger = logging.getLogger(child_logger_name)
 
     try:
@@ -335,10 +334,6 @@ def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_re
                 child_logger.warning("secret in the message: %s", canary)
     finally:
         source_logger.handlers = original_handlers
-        if child_logger_entry_before is None:
-            logging.Logger.manager.loggerDict.pop(child_logger_name, None)
-        else:
-            logging.Logger.manager.loggerDict[child_logger_name] = child_logger_entry_before
 
     stderr = capsys.readouterr().err
     assert canary not in stderr
