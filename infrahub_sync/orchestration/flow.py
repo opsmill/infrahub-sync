@@ -80,6 +80,22 @@ class RunLogger(Protocol):
     def info(self, msg: str, *args: object) -> None: ...
 
 
+_DIAGNOSTIC_LINE_SEPARATORS = ("\n", "\r", "\u2028", "\u2029")
+
+
+def _sanitize_diagnostic_field(value: object) -> str:
+    """Render a `LogRecord` field as a single line of text for the bridge failure diagnostic.
+
+    `value` may be any type (e.g. `None` from `logging.makeLogRecord()`) and may
+    contain line separators the caller controls (via `logging.getLogger()` or
+    `logging.addLevelName()`); both would otherwise defeat the one-line guarantee.
+    """
+    text = str(value)
+    for separator in _DIAGNOSTIC_LINE_SEPARATORS:
+        text = text.replace(separator, "")
+    return text
+
+
 class RunLoggerBridge(logging.Handler):
     """Forward `infrahub_sync` hierarchy records into the Prefect run logger.
 
@@ -112,13 +128,16 @@ class RunLoggerBridge(logging.Handler):
             #
             # `record.name` is whatever the caller passed to `logging.getLogger()`,
             # and `record.levelname` can likewise be attacker/caller-controlled via
-            # `logging.addLevelName()` — neither is a value this module controls, so
-            # a newline embedded in either would split this one write into two
-            # stderr lines (log-line injection). Strip newlines from both before
-            # interpolating them.
-            safe_name = record.name.replace("\n", "").replace("\r", "")
-            safe_levelname = record.levelname.replace("\n", "").replace("\r", "")
+            # `logging.addLevelName()` — neither is a value this module controls, and
+            # neither is guaranteed to even be a string (e.g. a `LogRecord` built by
+            # `logging.makeLogRecord()`). A newline or other line-separator embedded
+            # in either would split this one write into two stderr lines (log-line
+            # injection), and a non-string value would raise at the logging call
+            # site. Build the whole line — including converting both to text —
+            # inside the suppression, so nothing here can escape `emit()`.
             with contextlib.suppress(Exception):
+                safe_name = _sanitize_diagnostic_field(record.name)
+                safe_levelname = _sanitize_diagnostic_field(record.levelname)
                 sys.stderr.write(
                     f"infrahub_sync: a log record from {safe_name} at {safe_levelname} "
                     f"could not be forwarded ({type(exc).__name__})\n"

@@ -304,7 +304,6 @@ def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_re
     # never removes it). That handler's own unrelated `handleError` leak is the
     # ticket's explicit exclusion, so it is cleared here to isolate this bridge.
     original_handlers = list(source_logger.handlers)
-    source_logger.handlers = []
     run_logger = _RecordingRunLogger()
     if failure_mode == "forwarding":
 
@@ -314,10 +313,17 @@ def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_re
 
         monkeypatch.setattr(run_logger, "log", _raise_on_log)
     child_logger_name = f"{service_flow.SOURCE_LOGGER_NAME}.secret-leak-test"
-    child_logger_preexisted = child_logger_name in logging.Logger.manager.loggerDict
+    # `getLogger()` on a name with no prior entry, or whose only prior entry is a
+    # `PlaceHolder` (registered when a descendant logger was created first), swaps
+    # in a real `Logger` and registers it in the process-wide `Manager.loggerDict`
+    # for the life of the interpreter. Save whatever was there before — `Logger`,
+    # `PlaceHolder`, or nothing — so teardown can put back the exact prior entry
+    # instead of just deleting whatever this test leaves behind.
+    child_logger_entry_before = logging.Logger.manager.loggerDict.get(child_logger_name)
     child_logger = logging.getLogger(child_logger_name)
 
     try:
+        source_logger.handlers = []
         with service_flow._remote_log_bridge(run_logger, prefect_context=True, secrets=(canary,)):
             if failure_mode == "formatting":
                 child_logger.warning(  # noqa: PLE1205
@@ -329,13 +335,10 @@ def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_re
                 child_logger.warning("secret in the message: %s", canary)
     finally:
         source_logger.handlers = original_handlers
-        # `logging.getLogger()` registers the logger in the process-wide
-        # `Manager.loggerDict` for the life of the interpreter; remove the entry
-        # this test created so it does not leak into whatever runs after it —
-        # unless a logger of this name already existed before the test ran, in
-        # which case removing it would clobber that pre-existing state.
-        if not child_logger_preexisted:
-            del logging.Logger.manager.loggerDict[child_logger_name]
+        if child_logger_entry_before is None:
+            logging.Logger.manager.loggerDict.pop(child_logger_name, None)
+        else:
+            logging.Logger.manager.loggerDict[child_logger_name] = child_logger_entry_before
 
     stderr = capsys.readouterr().err
     assert canary not in stderr

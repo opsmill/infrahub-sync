@@ -390,6 +390,127 @@ def test_bridge_never_leaks_a_secret_to_stderr_on_a_failed_record(
     assert stderr.count("could not be forwarded") == 1
 
 
+@pytest.mark.parametrize("failure_mode", ["formatting", "forwarding"])
+def test_bridge_strips_line_separators_from_logger_and_level_names_in_the_diagnostic(
+    source_logger: logging.Logger,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure_mode: str,
+) -> None:
+    """The diagnostic stays one stderr line even when caller-controlled names embed line separators.
+
+    `record.name` comes from whoever called `logging.getLogger()`, and
+    `record.levelname` from whoever called `logging.addLevelName()` — both are
+    outside this module's control. A `\\n`, `\\r`, U+2028, or U+2029 embedded in
+    either must not split the fixed diagnostic into more than one stderr line.
+    """
+    injected_level = 35
+    injected_level_name = "IN\nJEC\rTED\u2028LEVEL\u2029"
+    logging.addLevelName(injected_level, injected_level_name)
+    monkeypatch.setattr(source_logger, "propagate", False)
+    run_logger = _StubRunLogger()
+    if failure_mode == "forwarding":
+
+        def _raise_on_log(*_args: object, **_kwargs: object) -> None:
+            failure_message = "run logger rejected the record"
+            raise RuntimeError(failure_message)
+
+        monkeypatch.setattr(run_logger, "log", _raise_on_log)
+    source_logger.handlers = []
+    source_logger.addHandler(RunLoggerBridge(run_logger))
+    source_logger.setLevel(BRIDGED_LEVEL)
+    # The separator lives in the suffix after the known `infrahub_sync.` prefix,
+    # not inside a dotted segment, so `getLogger()` registers exactly one extra
+    # entry (`injected_name` itself) rather than spurious placeholder parents.
+    injected_name = f"{SOURCE_LOGGER_NAME}.po\u2028ten\u2029da\n\r"
+    injected_name_entry_before = logging.Logger.manager.loggerDict.get(injected_name)
+    child = logging.getLogger(injected_name)
+
+    try:
+        if failure_mode == "formatting":
+            child.log(injected_level, "bad format: %s", "one", "extra")
+        else:
+            child.log(injected_level, "message")
+    finally:
+        del logging._levelToName[injected_level]
+        del logging._nameToLevel[injected_level_name]
+        if injected_name_entry_before is None:
+            logging.Logger.manager.loggerDict.pop(injected_name, None)
+        else:
+            logging.Logger.manager.loggerDict[injected_name] = injected_name_entry_before
+
+    stderr = capsys.readouterr().err
+    assert stderr.count("could not be forwarded") == 1
+    assert stderr.strip().count("\n") == 0
+    for separator in ("\r", "\u2028", "\u2029"):
+        assert separator not in stderr
+
+
+def test_bridge_handles_a_non_string_record_name_without_raising(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A record whose name or level name is not a string must not raise at the logging call site.
+
+    `logging.makeLogRecord()` — used by remote-unpickling log record transport,
+    among other things — defaults `record.name` to `None`. The old `.replace()`
+    calls assumed a string and would raise `AttributeError` outside the
+    suppression, breaking the "logging stays nonfatal" guarantee.
+    """
+    run_logger = _StubRunLogger()
+    bridge = RunLoggerBridge(run_logger)
+    record = logging.makeLogRecord(
+        {
+            "msg": "bad format: %s",
+            "args": ("one", "extra"),
+            "levelname": "WARNING",
+            "levelno": logging.WARNING,
+        }
+    )
+    assert record.name is None
+
+    bridge.handle(record)  # must not raise
+
+    stderr = capsys.readouterr().err
+    assert stderr.count("could not be forwarded") == 1
+    assert "from None at WARNING" in stderr
+
+
+def test_bridge_keeps_forwarding_later_records_after_a_run_logger_failure(
+    source_logger: logging.Logger,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acceptance criterion 3, exercised for the run-logger failure path specifically.
+
+    The existing bad-format-record test only proves later records survive a
+    FORMATTING failure. The run logger's own `.log()` call can independently
+    raise on a record that formatted fine; a later, healthy record must still be
+    forwarded afterward.
+    """
+    monkeypatch.setattr(source_logger, "propagate", False)
+    run_logger = _StubRunLogger()
+    real_log = run_logger.log
+    call_count = 0
+
+    def _raise_once_then_delegate(level: int, msg: str, *args: object) -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            failure_message = "run logger rejected the record"
+            raise RuntimeError(failure_message)
+        real_log(level, msg, *args)
+
+    monkeypatch.setattr(run_logger, "log", _raise_once_then_delegate)
+    source_logger.handlers = []
+    source_logger.addHandler(RunLoggerBridge(run_logger))
+    source_logger.setLevel(BRIDGED_LEVEL)
+    child = logging.getLogger(CHILD_LOGGER_NAME)
+
+    child.info("first record, run logger rejects it")
+    child.info("second record, run logger accepts it")
+
+    assert run_logger.rendered == [f"{CHILD_LOGGER_NAME} | second record, run logger accepts it"]
+
+
 @pytest.mark.usefixtures("prefect_harness")
 def test_a_bad_format_record_does_not_fail_the_run(
     monkeypatch: pytest.MonkeyPatch,
