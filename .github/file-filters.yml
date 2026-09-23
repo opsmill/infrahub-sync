@@ -23,6 +23,12 @@ yaml_all: &yaml_all
 development_files: &development_files
   - "tasks/**"
 
+# Several unit tests read fixtures under here at runtime (config parsing, plan
+# artifacts, the example-hygiene and dependency-graph suites), so a change here
+# can break the unit or base-install jobs without touching `infrahub_sync/**`.
+examples_files: &examples_files
+  - "examples/**"
+
 github_workflows: &github_workflows
   - ".github/workflows/*.yml"
 
@@ -80,6 +86,7 @@ sync_all:
   - *development_files
   - *uv_files
   - *contract_declarations
+  - *examples_files
 
 documentation_all:
   - *doc_files
