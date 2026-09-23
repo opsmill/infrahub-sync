@@ -37,7 +37,9 @@ from diffsync import Adapter
 
 from infrahub_sync import (
     SchemaMappingField,
+    SchemaMappingFilter,
     SchemaMappingModel,
+    SchemaMappingTransform,
     SyncAdapter,
     SyncConfig,
 )
@@ -303,7 +305,102 @@ def _config(entries: dict[str, list[str]]) -> SyncConfig:
     )
 
 
+def _config_with_filter_and_transform(*, source_name: str) -> SyncConfig:
+    """Config for ``LocationSite`` carrying a filter and a transform, with the
+    given source adapter name (``"infrahub"`` for a same-type pair, anything
+    else for a heterogeneous one)."""
+
+    return SyncConfig(
+        name="test",
+        source=SyncAdapter(name=source_name, adapter="x:x"),
+        destination=SyncAdapter(name="infrahub", adapter="x:x"),
+        order=["LocationSite"],
+        schema_mapping=[
+            SchemaMappingModel(
+                name="LocationSite",
+                mapping="LocationSite",
+                identifiers=["name"],
+                filters=[SchemaMappingFilter(field="description", operation="==", value="east")],
+                transforms=[SchemaMappingTransform(field="description", expression="{{ description.upper() }}")],
+                fields=[
+                    SchemaMappingField(name="name", mapping="name"),
+                    SchemaMappingField(name="description", mapping="description"),
+                ],
+            )
+        ],
+    )
+
+
+def _two_site_client() -> StrictClient:
+    """Two ``LocationSite`` rows: one the filter keeps, one it would drop."""
+
+    return StrictClient(
+        rows={
+            "LocationSite": [
+                _Row("id-1", {"name": "dc-east", "description": "east"}),
+                _Row("id-2", {"name": "dc-west", "description": "west"}),
+            ]
+        }
+    )
+
+
 _ModelT = TypeVar("_ModelT", bound=InfrahubModel)
+
+
+def _loaded_names(adapter: _Harness, model: type[LocationSite]) -> list[str]:
+    """Names of every loaded ``LocationSite``, narrowed from the store."""
+
+    return [item.name for item in adapter.get_all(model) if isinstance(item, LocationSite)]
+
+
+def test_model_loader_applies_filter_and_transform_for_the_source_role() -> None:
+    """The logical source runs configured filters and transforms."""
+
+    client = _two_site_client()
+    adapter = _Harness(config=_config_with_filter_and_transform(source_name="infrahub"), client=client)
+    adapter.target = "source"
+
+    adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    loaded_names = _loaded_names(adapter, LocationSite)
+    assert loaded_names == ["dc-east"]
+    assert _loaded(adapter, LocationSite, "dc-east").description == "EAST"
+
+
+def test_model_loader_skips_filter_and_transform_for_the_destination_role_same_adapter_type() -> None:
+    """A same-type destination (Infrahub-to-Infrahub) loads its raw mapped state.
+
+    Before the fix, the predicate compared ``config.source.name`` to the
+    adapter's own type, which is true for both sides of an Infrahub-to-Infrahub
+    sync. That let the destination run the source's filters and transforms too,
+    corrupting the DiffSync comparison.
+    """
+
+    client = _two_site_client()
+    adapter = _Harness(config=_config_with_filter_and_transform(source_name="infrahub"), client=client)
+    adapter.target = "destination"
+
+    adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    loaded_names = sorted(_loaded_names(adapter, LocationSite))
+    assert loaded_names == ["dc-east", "dc-west"]
+    assert _loaded(adapter, LocationSite, "dc-east").description == "east"
+    assert _loaded(adapter, LocationSite, "dc-west").description == "west"
+
+
+def test_model_loader_skips_filter_and_transform_for_a_heterogeneous_destination() -> None:
+    """A heterogeneous pair (e.g. NetBox source, Infrahub destination) keeps its
+    current behavior: the Infrahub destination still loads its raw mapped state."""
+
+    client = _two_site_client()
+    adapter = _Harness(config=_config_with_filter_and_transform(source_name="netbox"), client=client)
+    adapter.target = "destination"
+
+    adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    loaded_names = sorted(_loaded_names(adapter, LocationSite))
+    assert loaded_names == ["dc-east", "dc-west"]
+    assert _loaded(adapter, LocationSite, "dc-east").description == "east"
 
 
 def _loaded(adapter: _Harness, model: type[_ModelT], unique_id: str) -> _ModelT:
