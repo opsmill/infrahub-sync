@@ -369,6 +369,7 @@ def test_failed_apply_renders_only_recognized_recovery_hints(
     recovery_action: str | None,
     expected_hint: str | None,
 ) -> None:
+    """Show a recovery hint only for recognized failed-apply evidence."""
     client.wait_for_run.side_effect = RunTerminalError(
         "service-run-1",
         terminal_state="failed",
