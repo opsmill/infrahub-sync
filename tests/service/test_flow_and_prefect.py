@@ -313,7 +313,8 @@ def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_re
             raise RuntimeError(failure_message)
 
         monkeypatch.setattr(run_logger, "log", _raise_on_log)
-    child_logger = logging.getLogger(f"{service_flow.SOURCE_LOGGER_NAME}.secret-leak-test")
+    child_logger_name = f"{service_flow.SOURCE_LOGGER_NAME}.secret-leak-test"
+    child_logger = logging.getLogger(child_logger_name)
 
     try:
         with service_flow._remote_log_bridge(run_logger, prefect_context=True, secrets=(canary,)):
@@ -327,6 +328,10 @@ def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_re
                 child_logger.warning("secret in the message: %s", canary)
     finally:
         source_logger.handlers = original_handlers
+        # `logging.getLogger()` registers the logger in the process-wide
+        # `Manager.loggerDict` for the life of the interpreter; remove it so this
+        # test does not leak a registry entry into whatever runs after it.
+        del logging.Logger.manager.loggerDict[child_logger_name]
 
     stderr = capsys.readouterr().err
     assert canary not in stderr

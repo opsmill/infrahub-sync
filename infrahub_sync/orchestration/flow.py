@@ -109,9 +109,15 @@ class RunLoggerBridge(logging.Handler):
             # stderr whenever `logging.raiseExceptions` is true, bypassing the
             # redaction this bridge exists to apply. Write a fixed line with no
             # record content instead, and swallow a failure to do even that.
+            #
+            # `record.name` is whatever the caller passed to `logging.getLogger()`,
+            # not a value this module controls, so a newline embedded in it would
+            # split this one write into two stderr lines (log-line injection). Strip
+            # newlines before interpolating it.
+            safe_name = record.name.replace("\n", "").replace("\r", "")
             with contextlib.suppress(Exception):
                 sys.stderr.write(
-                    f"infrahub_sync: a log record from {record.name} at {record.levelname} "
+                    f"infrahub_sync: a log record from {safe_name} at {record.levelname} "
                     f"could not be forwarded ({type(exc).__name__})\n"
                 )
 
