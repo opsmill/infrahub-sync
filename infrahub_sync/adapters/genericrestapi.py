@@ -35,14 +35,13 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
         config: SyncConfig,
         adapter_type: str | None = "GenericRestApi",
         *args,
-        _client_settings: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
 
         self.target = target
         self.type = adapter_type
-        self.settings = _client_settings if _client_settings is not None else (adapter.settings or {})
+        self.settings = adapter.settings or {}
         self.params = self.settings.get("params", {})
         self.client = self._create_rest_client(settings=self.settings)
         self.config = config

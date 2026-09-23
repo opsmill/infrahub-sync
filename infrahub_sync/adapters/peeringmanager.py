@@ -41,10 +41,9 @@ class PeeringmanagerAdapter(GenericrestapiAdapter):
 
         super().__init__(
             target=target,
-            adapter=adapter,
+            adapter=adapter.model_copy(update={"settings": settings}),
             config=config,
             adapter_type="PeeringManager",
-            _client_settings=settings,
             **kwargs,
         )
 

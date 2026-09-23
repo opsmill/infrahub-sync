@@ -139,18 +139,19 @@ def _install_optional_sdk_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _adapter_module(monkeypatch: pytest.MonkeyPatch, row: AdapterRow) -> types.ModuleType:
     _install_optional_sdk_stubs(monkeypatch)
-    module_name = f"infrahub_sync.adapters.{row.name}"
-    # Record the pre-test entry, or its absence, so teardown restores the real module or
-    # drops the stub-bound one. `monkeypatch.delitem` records nothing when the key is
-    # absent, which is the normal state here, and would leave the stub-bound module cached.
-    # The re-import also rebinds the parent package attribute, which `sys.modules` alone
-    # does not cover: an attribute walk would still reach the stub-bound module.
-    monkeypatch.setitem(sys.modules, module_name, types.ModuleType(module_name))
-    monkeypatch.setattr(
-        importlib.import_module("infrahub_sync.adapters"), row.name, types.ModuleType(module_name), raising=False
-    )
-    del sys.modules[module_name]
-    return importlib.import_module(module_name)
+    package = importlib.import_module("infrahub_sync.adapters")
+    module_names = [row.name]
+    if row.name in {"genericrestapi", "peeringmanager"}:
+        # Fresh REST imports also bind these modules on the parent package.
+        module_names = list(dict.fromkeys(("rest_api_client", "genericrestapi", row.name)))
+    for name in module_names:
+        module_name = f"infrahub_sync.adapters.{name}"
+        # Record both the prior sys.modules entry and package attribute. delitem
+        # alone records nothing when the module was absent before this test.
+        monkeypatch.setitem(sys.modules, module_name, types.ModuleType(module_name))
+        monkeypatch.setattr(package, name, types.ModuleType(module_name), raising=False)
+        del sys.modules[module_name]
+    return importlib.import_module(f"infrahub_sync.adapters.{row.name}")
 
 
 def _class_name(row: AdapterRow) -> str:
@@ -444,6 +445,21 @@ def test_rest_adapter_uses_only_its_namespaced_environment(
         assert constructed.settings is not caller_settings
         assert constructed.settings["username_env_vars"] == ["PEERING_MANAGER_USERNAME"]
         assert constructed.settings["password_env_vars"] == ["PEERING_MANAGER_PASSWORD"]
+
+
+@pytest.mark.parametrize("adapter_name", ["genericrestapi", "peeringmanager"])
+def test_rest_adapter_import_restores_indirect_modules(adapter_name: str) -> None:
+    """Fresh REST imports leave no cached modules or package attributes behind."""
+    package = importlib.import_module("infrahub_sync.adapters")
+    names = ("rest_api_client", "genericrestapi", "peeringmanager")
+    missing = object()
+    before_modules = {name: sys.modules.get(f"infrahub_sync.adapters.{name}", missing) for name in names}
+    before_attributes = {name: getattr(package, name, missing) for name in names}
+    with pytest.MonkeyPatch.context() as import_patch:
+        test_rest_adapter_uses_only_its_namespaced_environment(import_patch, adapter_name, "basic", "bare")
+    for name in names:
+        assert sys.modules.get(f"infrahub_sync.adapters.{name}", missing) is before_modules[name]
+        assert getattr(package, name, missing) is before_attributes[name]
 
 
 @pytest.mark.parametrize("environment", ["declared", "namespaced"])
