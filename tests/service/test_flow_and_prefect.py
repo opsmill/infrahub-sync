@@ -314,6 +314,7 @@ def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_re
 
         monkeypatch.setattr(run_logger, "log", _raise_on_log)
     child_logger_name = f"{service_flow.SOURCE_LOGGER_NAME}.secret-leak-test"
+    child_logger_preexisted = child_logger_name in logging.Logger.manager.loggerDict
     child_logger = logging.getLogger(child_logger_name)
 
     try:
@@ -329,9 +330,12 @@ def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_re
     finally:
         source_logger.handlers = original_handlers
         # `logging.getLogger()` registers the logger in the process-wide
-        # `Manager.loggerDict` for the life of the interpreter; remove it so this
-        # test does not leak a registry entry into whatever runs after it.
-        del logging.Logger.manager.loggerDict[child_logger_name]
+        # `Manager.loggerDict` for the life of the interpreter; remove the entry
+        # this test created so it does not leak into whatever runs after it —
+        # unless a logger of this name already existed before the test ran, in
+        # which case removing it would clobber that pre-existing state.
+        if not child_logger_preexisted:
+            del logging.Logger.manager.loggerDict[child_logger_name]
 
     stderr = capsys.readouterr().err
     assert canary not in stderr

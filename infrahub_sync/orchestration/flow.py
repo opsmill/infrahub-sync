@@ -111,13 +111,16 @@ class RunLoggerBridge(logging.Handler):
             # record content instead, and swallow a failure to do even that.
             #
             # `record.name` is whatever the caller passed to `logging.getLogger()`,
-            # not a value this module controls, so a newline embedded in it would
-            # split this one write into two stderr lines (log-line injection). Strip
-            # newlines before interpolating it.
+            # and `record.levelname` can likewise be attacker/caller-controlled via
+            # `logging.addLevelName()` — neither is a value this module controls, so
+            # a newline embedded in either would split this one write into two
+            # stderr lines (log-line injection). Strip newlines from both before
+            # interpolating them.
             safe_name = record.name.replace("\n", "").replace("\r", "")
+            safe_levelname = record.levelname.replace("\n", "").replace("\r", "")
             with contextlib.suppress(Exception):
                 sys.stderr.write(
-                    f"infrahub_sync: a log record from {safe_name} at {record.levelname} "
+                    f"infrahub_sync: a log record from {safe_name} at {safe_levelname} "
                     f"could not be forwarded ({type(exc).__name__})\n"
                 )
 
