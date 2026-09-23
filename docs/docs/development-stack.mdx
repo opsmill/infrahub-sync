@@ -202,9 +202,12 @@ matching `@sha256:` digest together in `development/preview.env`. Inspect the
 tag with `docker buildx imagetools inspect name:tag`, copy the top-level index
 digest, and check that it includes both linux/amd64 and linux/arm64. Compose
 would still pull the old image after a tag-only change, so the preview tasks
-refuse one. For a locally built
-Infrahub image, set `INFRAHUB_DOCKER_IMAGE_DIGEST` to an empty value in
-`development/preview.local.env` so Compose uses the local tag without a pin.
+refuse one, including a tag exported in the shell. An Infrahub image-name-only
+override in `development/preview.local.env` or the shell drops the shipped
+digest so a local build can run. To use a registry mirror, set its digest
+explicitly; the mirror may use the same digest as the shipped image. When using
+Docker Compose directly, set `INFRAHUB_DOCKER_IMAGE_DIGEST` to an empty value
+alongside a local `INFRAHUB_DOCKER_IMAGE` override.
 
 ## The stack refuses to start on retired state
 

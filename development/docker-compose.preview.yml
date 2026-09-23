@@ -10,7 +10,7 @@
 # version as the `service` extra (prefect==3.8.1).
 # Refresh pins with `docker buildx imagetools inspect name:tag`: use the top-level
 # index Digest and check for linux/amd64 and linux/arm64 manifests. When changing
-# PREVIEW_PREFECT_IMAGE_TAG, set PREVIEW_PREFECT_IMAGE_DIGEST to its matching
+# PREVIEW_PREFECT_IMAGE_TAG in the preview, set PREVIEW_PREFECT_IMAGE_DIGEST to its matching
 # @sha256 digest. An empty digest is for an intentionally unpinned local image.
 services:
   sync-postgres:
@@ -62,7 +62,7 @@ services:
     ports: !reset []
 
   sync-prefect:
-    image: "prefecthq/prefect:${PREVIEW_PREFECT_IMAGE_TAG:-3.8.1-python3.12}${PREVIEW_PREFECT_IMAGE_DIGEST-@sha256:2d647011130f4bb36ee07b8386921890f1da44a9b7fbf81cfa86a555b92f151e}"  # yamllint disable-line rule:line-length
+    image: "prefecthq/prefect:${PREVIEW_PREFECT_IMAGE_TAG:-3.8.1-python3.12@sha256:2d647011130f4bb36ee07b8386921890f1da44a9b7fbf81cfa86a555b92f151e}${PREVIEW_PREFECT_IMAGE_DIGEST-}"  # yamllint disable-line rule:line-length
     command: prefect server start --host 0.0.0.0 --port 4200
     depends_on:
       sync-minio-bootstrap:

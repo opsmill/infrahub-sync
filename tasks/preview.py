@@ -92,9 +92,10 @@ class PreviewError(RuntimeError):
 
 
 def load_preview_env() -> dict[str, str]:
-    """Read shipped preview settings, then apply gitignored local overrides."""
+    """Read preview settings and validate image overrides from files and the shell."""
     values: dict[str, str] = {}
     shipped: dict[str, str] = {}
+    explicit_overrides: set[str] = set()
     for env_file in (ENV_FILE, LOCAL_ENV_FILE):
         if not env_file.exists():
             continue
@@ -103,9 +104,22 @@ def load_preview_env() -> dict[str, str]:
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
-            values[key.strip()] = value.strip()
+            key = key.strip()
+            values[key] = value.strip()
+            if env_file == LOCAL_ENV_FILE:
+                explicit_overrides.add(key)
         if env_file == ENV_FILE:
             shipped = values.copy()
+    image_settings = {
+        "VERSION",
+        "INFRAHUB_DOCKER_IMAGE",
+        "INFRAHUB_DOCKER_IMAGE_DIGEST",
+        "PREVIEW_PREFECT_IMAGE_TAG",
+        "PREVIEW_PREFECT_IMAGE_DIGEST",
+    }
+    for key in image_settings & os.environ.keys():
+        values[key] = os.environ[key]
+        explicit_overrides.add(key)
     required = {
         "COMPOSE_PROJECT_NAME",
         "INFRAHUB_INITIAL_ADMIN_TOKEN",
@@ -130,10 +144,14 @@ def load_preview_env() -> dict[str, str]:
     if missing:
         msg = f"{ENV_FILE} is missing required keys: {sorted(missing)}"
         raise PreviewError(msg)
-    if (values["VERSION"] != shipped.get("VERSION") or values.get("INFRAHUB_DOCKER_IMAGE")) and values[
+    if values.get("INFRAHUB_DOCKER_IMAGE") and "INFRAHUB_DOCKER_IMAGE_DIGEST" not in explicit_overrides:
+        # An image-name override used to select a local build without changing any
+        # other setting. Never attach the shipped registry digest to that image.
+        values["INFRAHUB_DOCKER_IMAGE_DIGEST"] = ""
+    if values["VERSION"] != shipped.get("VERSION") and values["INFRAHUB_DOCKER_IMAGE_DIGEST"] == shipped.get(
         "INFRAHUB_DOCKER_IMAGE_DIGEST"
-    ] == shipped.get("INFRAHUB_DOCKER_IMAGE_DIGEST"):
-        msg = "Change INFRAHUB_DOCKER_IMAGE_DIGEST with VERSION or INFRAHUB_DOCKER_IMAGE; use an empty value for a local image"
+    ):
+        msg = "Change INFRAHUB_DOCKER_IMAGE_DIGEST with VERSION; use an empty value for a local image"
         raise PreviewError(msg)
     if values["PREVIEW_PREFECT_IMAGE_TAG"] != shipped.get("PREVIEW_PREFECT_IMAGE_TAG") and values[
         "PREVIEW_PREFECT_IMAGE_DIGEST"

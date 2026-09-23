@@ -319,6 +319,22 @@ def test_local_image_override_can_drop_the_digest(compose_version: str) -> None:
     assert configured["sync-prefect"]["image"] == "prefecthq/prefect:custom"
 
 
+def test_standalone_version_override_drops_the_shipped_digest(compose_version: str) -> None:
+    """Direct Compose use must not pair a new tag with the shipped digest."""
+    del compose_version
+    result = compose(
+        ["config", "--format", "json"],
+        files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
+        inherit_environment=False,
+        environment={"VERSION": "custom", "PREVIEW_PREFECT_IMAGE_TAG": "custom"},
+    )
+    assert result.returncode == 0, result.stderr
+    configured = services(json.loads(result.stdout))
+    for name in ("task-manager", "infrahub-server", "task-worker"):
+        assert configured[name]["image"] == "registry.opsmill.io/opsmill/infrahub:custom"
+    assert configured["sync-prefect"]["image"] == "prefecthq/prefect:custom"
+
+
 def test_a_tag_only_sync_image_still_resolves_to_the_tag_it_was_given(
     contract_environment: dict[str, str],
 ) -> None:
