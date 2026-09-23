@@ -79,6 +79,7 @@ class FakeRelManager:
     """Cardinality-many manager stand-in — records add/remove calls."""
 
     def __init__(self, existing_ids: list[str] | None = None, fetched_ids: list[str] | None = None) -> None:
+        """Set the visible and fetched peer IDs for this stand-in manager."""
         self.peer_ids = list(existing_ids or [])
         self.initialized = fetched_ids is None
         self.fetched_ids = fetched_ids
@@ -87,16 +88,19 @@ class FakeRelManager:
         self.removed: list[str] = []
 
     def fetch(self) -> None:
+        """Load the deferred peer IDs and mark the manager initialized."""
         self.fetch_count += 1
         if self.fetched_ids is not None:
             self.peer_ids = list(self.fetched_ids)
         self.initialized = True
 
     def add(self, data: dict[str, str]) -> None:
+        """Record and add a peer to the current relationship."""
         self.added.append(data)
         self.peer_ids.append(data["id"])
 
     def remove(self, peer_id: str) -> None:
+        """Record and remove a peer from the current relationship."""
         self.removed.append(peer_id)
         self.peer_ids.remove(peer_id)
 
