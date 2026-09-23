@@ -205,6 +205,7 @@ class AciAdapter(DiffSyncMixin, Adapter):
         AciModel.set_device_mapping(self.device_mapping)
 
     def _create_aci_client(self, adapter: SyncAdapter) -> AciApiClient:
+        """Build the ACI client with environment-first settings and safe TLS defaults."""
         settings = adapter.settings or {}
         url = select_runtime_credential(settings, "url", ("CISCO_APIC_URL",))
         username = select_runtime_credential(settings, "username", ("CISCO_APIC_USERNAME",))
