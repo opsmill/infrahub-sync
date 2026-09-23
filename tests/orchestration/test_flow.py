@@ -310,18 +310,28 @@ def test_bridge_forwards_every_record_at_the_effective_level(source_logger: logg
     assert [level for level, _msg, _args in run_logger.calls] == [level for _name, level in emitted_at_effective_level]
 
 
+@pytest.mark.parametrize("raise_exceptions", [True, False])
 def test_bridge_swallows_a_bad_format_record_and_keeps_forwarding(
     source_logger: logging.Logger,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    raise_exceptions: bool,  # noqa: FBT001
 ) -> None:
     """`logging.Handler.emit` must never propagate — `Handler.handle` does not shield it.
 
     A `%`-format mismatch in any `infrahub_sync.*` log call would otherwise raise at
     that call site. `propagate` is disabled because pytest's own capture handler
     deliberately re-raises bad records, which would mask what this test measures.
+    `logging.raiseExceptions` must not change the outcome: the bridge never calls
+    `handleError`, which is the only path that reads it.
     """
     monkeypatch.setattr(source_logger, "propagate", False)
+    monkeypatch.setattr(logging, "raiseExceptions", raise_exceptions)
+    # A prior test elsewhere in the suite may have permanently attached the plain
+    # CLI `StreamHandler` to this same process-global logger (`cli._setup_logging`
+    # never removes it). That handler's own unrelated `handleError` leak is the
+    # ticket's explicit exclusion, so it is cleared here to isolate this bridge.
+    source_logger.handlers = []
     run_logger = _StubRunLogger()
     source_logger.addHandler(RunLoggerBridge(run_logger))
     source_logger.setLevel(BRIDGED_LEVEL)
@@ -331,8 +341,53 @@ def test_bridge_swallows_a_bad_format_record_and_keeps_forwarding(
     child.info("Sync run %s at %s", RUN_ID, ARTIFACT_PATH)
 
     assert run_logger.rendered == [f"{CHILD_LOGGER_NAME} | Sync run {RUN_ID} at {ARTIFACT_PATH}"]
-    # `handleError` reported it the way the CLI's StreamHandler already does.
-    assert "--- Logging error ---" in capsys.readouterr().err
+    stderr = capsys.readouterr().err
+    assert "--- Logging error ---" not in stderr
+    assert stderr.count("could not be forwarded") == 1
+    assert f"infrahub_sync: a log record from {CHILD_LOGGER_NAME} at INFO could not be forwarded (TypeError)" in stderr
+
+
+@pytest.mark.parametrize("raise_exceptions", [True, False])
+@pytest.mark.parametrize("failure_mode", ["formatting", "forwarding"])
+def test_bridge_never_leaks_a_secret_to_stderr_on_a_failed_record(
+    source_logger: logging.Logger,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure_mode: str,
+    raise_exceptions: bool,  # noqa: FBT001
+) -> None:
+    """Acceptance criterion 4: a secret in a failed record's message or arguments never reaches stderr.
+
+    Covers both ways `emit()` can fail: bad `%`-formatting of the message itself
+    (raised by `record.getMessage()`), and the run logger's `.log()` call raising
+    on a record that formats fine. Both must be checked under both settings of
+    `logging.raiseExceptions`, since that flag is exactly what `handleError` used
+    to key its unredacted stderr write on.
+    """
+    canary = "PREFLIGHT_SECRET_CANARY"
+    monkeypatch.setattr(source_logger, "propagate", False)
+    monkeypatch.setattr(logging, "raiseExceptions", raise_exceptions)
+    run_logger = _StubRunLogger()
+    if failure_mode == "forwarding":
+
+        def _raise_on_log(*_args: object, **_kwargs: object) -> None:
+            failure_message = "run logger rejected the record"
+            raise RuntimeError(failure_message)
+
+        monkeypatch.setattr(run_logger, "log", _raise_on_log)
+    source_logger.handlers = []
+    source_logger.addHandler(RunLoggerBridge(run_logger, secrets=(canary,)))
+    source_logger.setLevel(BRIDGED_LEVEL)
+    child = logging.getLogger(CHILD_LOGGER_NAME)
+
+    if failure_mode == "formatting":
+        child.info("secret in an over-supplied argument: %s", canary, "one argument too many")
+    else:
+        child.info("secret in the message: %s", canary)
+
+    stderr = capsys.readouterr().err
+    assert canary not in stderr
+    assert stderr.count("could not be forwarded") == 1
 
 
 @pytest.mark.usefixtures("prefect_harness")
