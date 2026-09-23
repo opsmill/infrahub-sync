@@ -111,7 +111,6 @@ def load_preview_env() -> dict[str, str]:
         if env_file == ENV_FILE:
             shipped = values.copy()
     image_settings = {
-        "VERSION",
         "INFRAHUB_DOCKER_IMAGE",
         "INFRAHUB_DOCKER_IMAGE_DIGEST",
         "PREVIEW_PREFECT_IMAGE_TAG",

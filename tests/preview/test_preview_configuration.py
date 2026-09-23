@@ -106,15 +106,14 @@ def test_preview_accepts_a_registry_mirror_with_the_shipped_digest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An explicitly paired mirror may serve the same content digest."""
-    shipped = preview.load_preview_env()
     local_env = tmp_path / "preview.local.env"
+    monkeypatch.setattr(preview, "LOCAL_ENV_FILE", local_env)
+    shipped = preview.load_preview_env()
     local_env.write_text(
         f"INFRAHUB_DOCKER_IMAGE=mirror.example/infrahub\n"
         f"INFRAHUB_DOCKER_IMAGE_DIGEST={shipped['INFRAHUB_DOCKER_IMAGE_DIGEST']}\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(preview, "LOCAL_ENV_FILE", local_env)
-
     values = preview.load_preview_env()
 
     assert values["INFRAHUB_DOCKER_IMAGE"] == "mirror.example/infrahub"
@@ -124,18 +123,28 @@ def test_preview_accepts_a_registry_mirror_with_the_shipped_digest(
 @pytest.mark.parametrize(
     ("setting", "value", "digest_name"),
     [
-        ("VERSION", "9.9.9", "INFRAHUB_DOCKER_IMAGE_DIGEST"),
         ("PREVIEW_PREFECT_IMAGE_TAG", "3.9.0-python3.12", "PREVIEW_PREFECT_IMAGE_DIGEST"),
     ],
 )
 def test_preview_rejects_shell_tag_only_overrides(
-    monkeypatch: pytest.MonkeyPatch, setting: str, value: str, digest_name: str
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, setting: str, value: str, digest_name: str
 ) -> None:
     """A shell tag override cannot pair with a digest from preview.env."""
+    monkeypatch.setattr(preview, "LOCAL_ENV_FILE", tmp_path / "preview.local.env")
     monkeypatch.setenv(setting, value)
 
     with pytest.raises(preview.PreviewError, match=digest_name):
         preview.load_preview_env()
+
+
+def test_preview_ignores_unrelated_shell_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The shipped Infrahub version wins over a generic shell variable."""
+    monkeypatch.setattr(preview, "LOCAL_ENV_FILE", tmp_path / "preview.local.env")
+    monkeypatch.setenv("VERSION", "unrelated-version")
+
+    values = preview.load_preview_env()
+
+    assert values["VERSION"] == "1.10.6"
 
 
 def test_preview_routes_prefect_ui_to_the_published_host_port() -> None:

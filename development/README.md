@@ -63,10 +63,12 @@ The preview exists to gather feedback on the two new v3 interfaces:
 | `preview.env` | Shipped defaults — ports, paired image tags and digests, and local-only tokens. Change a tag and its digest together; a tag-only change still pulls the prior image. Nothing here is a secret; never point these values at a shared or internet-facing instance. |
 | `preview.local.env` | Your personal overrides (gitignored). Tokens you mint while testing belong here, not in `preview.env`. |
 
-The preview tasks also read image overrides exported in the shell. Changing an
-Infrahub or Prefect tag requires a matching digest; changing only the Infrahub
-image name drops the shipped digest so a local build can run. For a registry
-mirror, set its digest explicitly, even if it matches the shipped digest.
+The preview tasks also read image overrides exported in the shell, except for
+the generic `VERSION` variable; use `preview.local.env` to change the Infrahub
+version. Changing an Infrahub or Prefect tag requires a matching digest;
+changing only the Infrahub image name drops the shipped digest so a local build
+can run. For a registry mirror, set its digest explicitly, even if it matches
+the shipped digest.
 
 Runtime state (process pids, logs, sync and product caches) lives under
 `.preview/` at the repository root, also gitignored. The worker runs from its own empty

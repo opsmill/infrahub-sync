@@ -319,6 +319,24 @@ def test_local_image_override_can_drop_the_digest(compose_version: str) -> None:
     assert configured["sync-prefect"]["image"] == "prefecthq/prefect:custom"
 
 
+@pytest.mark.parametrize("digest_override", [{}, {"INFRAHUB_DOCKER_IMAGE_DIGEST": ""}])
+def test_direct_compose_local_image_override_drops_the_digest(
+    compose_version: str, digest_override: dict[str, str]
+) -> None:
+    """An image-name override cannot retain the shipped digest without an env file."""
+    del compose_version
+    result = compose(
+        ["config", "--format", "json"],
+        files=(DESTINATION_COMPOSE,),
+        inherit_environment=False,
+        environment={"INFRAHUB_DOCKER_IMAGE": "local-infrahub", **digest_override},
+    )
+    assert result.returncode == 0, result.stderr
+    configured = services(json.loads(result.stdout))
+    for name in ("task-manager", "infrahub-server", "task-worker"):
+        assert configured[name]["image"] == "local-infrahub:1.10.6"
+
+
 def test_standalone_version_override_drops_the_shipped_digest(compose_version: str) -> None:
     """Direct Compose use must not pair a new tag with the shipped digest."""
     del compose_version
