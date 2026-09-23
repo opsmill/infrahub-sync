@@ -210,8 +210,8 @@ class AciAdapter(DiffSyncMixin, Adapter):
         username = select_runtime_credential(settings, "username", ("CISCO_APIC_USERNAME",))
         password = select_runtime_credential(settings, "password", ("CISCO_APIC_PASSWORD",))
         # Prefer explicit env var for verify; allow boolean or string values. An empty
-        # env value falls through to the declared setting, matching the other adapters'
-        # ambient-variable precedence (e.g. select_runtime_credential, ipfabricsync).
+        # env value falls through to the declared setting. This is env-first, matching
+        # select_runtime_credential and this function's own url/username/password reads.
         verify_raw = os.environ.get("CISCO_APIC_VERIFY")
         if not verify_raw:
             verify_raw = settings.get("verify", True)
