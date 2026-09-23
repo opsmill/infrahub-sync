@@ -1,4 +1,4 @@
-"""Tests for source/owner attribution on relationships in ``update_node``.
+"""Tests for relationship updates and source/owner attribution in ``update_node``.
 
 Regression coverage for the bug where ``update_node`` stamped ``source``/
 ``owner`` metadata onto updated **attributes** but not onto updated
@@ -78,20 +78,27 @@ class FakeClient:
 class FakeRelManager:
     """Cardinality-many manager stand-in — records add/remove calls."""
 
-    def __init__(self, existing_ids: list[str] | None = None) -> None:
+    def __init__(self, existing_ids: list[str] | None = None, fetched_ids: list[str] | None = None) -> None:
         self.peer_ids = list(existing_ids or [])
-        self.initialized = True
-        self.added: list[object] = []
+        self.initialized = fetched_ids is None
+        self.fetched_ids = fetched_ids
+        self.fetch_count = 0
+        self.added: list[dict[str, str]] = []
         self.removed: list[str] = []
 
     def fetch(self) -> None:
+        self.fetch_count += 1
+        if self.fetched_ids is not None:
+            self.peer_ids = list(self.fetched_ids)
         self.initialized = True
 
-    def add(self, data: object) -> None:
+    def add(self, data: dict[str, str]) -> None:
         self.added.append(data)
+        self.peer_ids.append(data["id"])
 
     def remove(self, peer_id: str) -> None:
         self.removed.append(peer_id)
+        self.peer_ids.remove(peer_id)
 
 
 class FakeNode:
@@ -331,3 +338,40 @@ def test_update_node_relationship_many_no_attribution_when_unset(patch_resolve_p
     _run_update(node, {"tags": ["t1-uid"]})
 
     assert manager.added == [{"id": "t1-uid"}]
+
+
+@pytest.mark.parametrize(
+    ("desired_ids", "expected_removed", "expected_added"),
+    [
+        (["a-uid", "c-uid"], ["b-uid"], [{"id": "c-uid"}]),
+        ([], ["a-uid", "b-uid"], []),
+    ],
+)
+def test_update_node_relationship_many_fetches_before_comparing_peers(
+    patch_resolve_peer: None,  # noqa: ARG001
+    desired_ids: list[str],
+    expected_removed: list[str],
+    expected_added: list[dict[str, str]],
+) -> None:
+    """A lazy relationship converges to the source and stays there on a repeat update."""
+    rel = FakeRelSchema(name="tags", peer="BuiltinTag", cardinality="many")
+    schema = FakeSchema(relationships=[rel], relationship_names=["tags"])
+    manager = FakeRelManager(fetched_ids=["a-uid", "b-uid"])
+    node = FakeNode(
+        schema=schema,
+        client=FakeClient(peers={"BuiltinTag": object()}),
+        many_managers={"tags": manager},
+    )
+
+    _run_update(node, {"tags": desired_ids})
+
+    assert manager.fetch_count == 1
+    assert manager.removed == expected_removed
+    assert manager.added == expected_added
+    assert set(manager.peer_ids) == set(desired_ids)
+
+    _run_update(node, {"tags": desired_ids})
+
+    assert manager.fetch_count == 1
+    assert manager.removed == expected_removed
+    assert manager.added == expected_added
