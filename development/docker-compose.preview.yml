@@ -1,17 +1,20 @@
 ---
-# Preview overrides for the pinned official Infrahub compose file
-# (docker-compose.infrahub.yml — downloaded pristine from
-# https://infrahub.opsmill.io/1.10.6; do not edit that file, replace it from the
-# source URL and update VERSION in preview.env).
+# yamllint disable rule:line-length
+# Preview overrides for the Infrahub compose file based on
+# https://infrahub.opsmill.io/1.10.6. If replacing that file from upstream,
+# restore and verify its image digest pins before running a qualification.
 #
 # This file remaps host ports so the preview never collides with another local
 # Infrahub stack, drops host port publications the preview does not need, and
 # adds a dedicated Prefect server for Infrahub Sync's service execution path —
 # separate from Infrahub's internal task-manager, and pinned to the same Prefect
 # version as the `service` extra (prefect==3.8.1).
+# Refresh pins with `docker buildx imagetools inspect name:tag`: use the top-level
+# index Digest and check for linux/amd64 and linux/arm64 manifests. When changing
+# PREVIEW_PREFECT_IMAGE_TAG, set PREVIEW_PREFECT_IMAGE_DIGEST to its matching digest.
 services:
   sync-postgres:
-    image: "postgres:16-alpine"
+    image: "postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"
     environment:
       POSTGRES_DB: infrahub_sync
       POSTGRES_USER: postgres
@@ -25,7 +28,7 @@ services:
       retries: 20
 
   sync-minio:
-    image: "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"
+    image: "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: "${PREVIEW_MINIO_ACCESS_KEY:-minioadmin}"
@@ -39,7 +42,7 @@ services:
       retries: 20
 
   sync-minio-bootstrap:
-    image: "quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z"
+    image: "quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3"
     depends_on:
       sync-minio:
         condition: service_healthy
@@ -59,7 +62,7 @@ services:
     ports: !reset []
 
   sync-prefect:
-    image: "prefecthq/prefect:${PREVIEW_PREFECT_IMAGE_TAG:-3.8.1-python3.12}"
+    image: "prefecthq/prefect:${PREVIEW_PREFECT_IMAGE_TAG:-3.8.1-python3.12}@${PREVIEW_PREFECT_IMAGE_DIGEST:-sha256:2d647011130f4bb36ee07b8386921890f1da44a9b7fbf81cfa86a555b92f151e}"
     command: prefect server start --host 0.0.0.0 --port 4200
     depends_on:
       sync-minio-bootstrap:

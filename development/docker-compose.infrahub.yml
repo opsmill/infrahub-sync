@@ -3,6 +3,10 @@
 # The following environment variables are part of the Infrahub configuration options.
 # For detailed information on these configuration options, please refer to the Infrahub documentation:
 # https://docs.infrahub.app/reference/configuration
+# To refresh an image pin, inspect its current tag with `docker buildx imagetools
+# inspect name:tag`, copy the top-level index Digest, and confirm its Manifests
+# include linux/amd64 and linux/arm64. When overriding INFRAHUB_DOCKER_IMAGE or
+# VERSION, set INFRAHUB_DOCKER_IMAGE_DIGEST to the matching sha256 digest too.
 x-infrahub-config: &infrahub_config
   AWS_ACCESS_KEY_ID:
   AWS_DEFAULT_ACL: ${AWS_DEFAULT_ACL:-private}
@@ -200,7 +204,7 @@ x-task-manager-config:
 
 services:
   message-queue:
-    image: ${MESSAGE_QUEUE_DOCKER_IMAGE:-rabbitmq:4.2.1-management}
+    image: ${MESSAGE_QUEUE_DOCKER_IMAGE:-rabbitmq:4.2.1-management@sha256:61fe7962792ad7bbaa3f9454122b366ff4b34fc1c224e528267f4ed3fd845f15}
     restart: unless-stopped
     environment:
       RABBITMQ_DEFAULT_USER: *broker_username
@@ -215,7 +219,7 @@ services:
       - 15692:15692
 
   cache:
-    image: ${CACHE_DOCKER_IMAGE:-redis:8.4.0}
+    image: ${CACHE_DOCKER_IMAGE:-redis:8.4.0@sha256:c22af04bb576503bf16b3e34a1fd2fd82de0f765afd866d2e380145e0af30d78}
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
@@ -224,7 +228,7 @@ services:
       retries: 3
 
   database:
-    image: ${NEO4J_DOCKER_IMAGE:-neo4j:2025.10.1-community}
+    image: ${NEO4J_DOCKER_IMAGE:-neo4j:2025.10.1-community@sha256:155c8aad10d5c838bc3bbc476c0418779086547822acb214ec5e3d49ba336907}
     restart: unless-stopped
     environment:
       NEO4J_AUTH: ${INFRAHUB_DB_USERNAME:-neo4j}/${INFRAHUB_DB_PASSWORD:-admin}
@@ -244,7 +248,7 @@ services:
       - 6362:6362
 
   task-manager:
-    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub}:${VERSION:-1.10.6}"
+    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub}:${VERSION:-1.10.6}@${INFRAHUB_DOCKER_IMAGE_DIGEST:-sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}"
     command: uvicorn --host 0.0.0.0 --port 4200 --factory infrahub.prefect_server.app:create_infrahub_prefect
     restart: unless-stopped
     depends_on:
@@ -260,7 +264,7 @@ services:
       start_period: 10s
 
   task-manager-db:
-    image: "${POSTGRES_DOCKER_IMAGE:-postgres:18-alpine}"
+    image: "${POSTGRES_DOCKER_IMAGE:-postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873}"
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${INFRAHUB_TASKMANAGER_DB_USER:-postgres}
@@ -277,7 +281,7 @@ services:
       retries: 5
 
   infrahub-server:
-    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub}:${VERSION:-1.10.6}"
+    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub}:${VERSION:-1.10.6}@${INFRAHUB_DOCKER_IMAGE_DIGEST:-sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}"
     restart: unless-stopped
     command: >
       gunicorn --config backend/infrahub/serve/gunicorn_config.py
@@ -323,7 +327,7 @@ services:
     deploy:
       mode: replicated
       replicas: 2
-    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub}:${VERSION:-1.10.6}"
+    image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub}:${VERSION:-1.10.6}@${INFRAHUB_DOCKER_IMAGE_DIGEST:-sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}"
     command: prefect worker start --type infrahubasync --pool infrahub-worker --with-healthcheck
     restart: unless-stopped
     depends_on:
