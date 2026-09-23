@@ -50,6 +50,10 @@ def _create_client(monkeypatch: pytest.MonkeyPatch, *, env_value: str | None, de
         # A non-string declared setting (not just str/bool) still normalizes via bool().
         (None, 0, False),
         (None, 1, True),
+        # A declared `verify: null` is "unset", not "disabled": keep the secure default,
+        # both when the env var is absent and when it is present but empty.
+        (None, None, True),
+        ("", None, True),
     ],
 )
 def test_verify_precedence(
@@ -58,6 +62,7 @@ def test_verify_precedence(
     declared_verify: object,
     expected: bool,  # noqa: FBT001 - one parametrized dimension of the resolved flag.
 ) -> None:
+    """Resolve the `verify` flag for each ambient env / declared setting combination."""
     assert _create_client(monkeypatch, env_value=env_value, declared_verify=declared_verify) is expected
 
 

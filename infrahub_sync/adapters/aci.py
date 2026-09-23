@@ -215,6 +215,9 @@ class AciAdapter(DiffSyncMixin, Adapter):
         verify_raw = os.environ.get("CISCO_APIC_VERIFY")
         if not verify_raw:
             verify_raw = settings.get("verify", True)
+            if verify_raw is None:
+                # A declared `verify: null` is "unset", not "disabled"; keep the secure default.
+                verify_raw = True
         verify = verify_raw.lower() not in ("0", "false", "no") if isinstance(verify_raw, str) else bool(verify_raw)
         api_endpoint = settings.get("api_endpoint", "api")  # Default endpoint, change if necessary
 
