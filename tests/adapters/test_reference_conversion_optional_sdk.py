@@ -1,14 +1,15 @@
 """IP Fabric and Slurpit reference conversion without their optional SDKs installed.
 
-Both adapters import their provider SDK unconditionally at module level, and neither
-`ipfabric` nor `slurpit` is installable in any repo profile. Each import is stubbed
-with a bare `types.ModuleType` injected into `sys.modules`, and the cached adapter
-module is dropped first, exactly as `tests/runtime_schema/test_registered_execution.py`
-does for `pynetbox`.
+Both adapters import their provider SDK unconditionally at module level. Neither `ipfabric`
+nor `slurpit` is installed in the base profile this module's own tests run under (only the
+`service` extra carries them), so each import is stubbed here with a bare `types.ModuleType`
+injected into `sys.modules`, and the cached adapter module is dropped first, exactly as
+`tests/runtime_schema/test_registered_execution.py` does for `pynetbox`.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 import types
 from collections.abc import Iterator
@@ -301,5 +302,16 @@ def test_teardown_leaves_no_stub_backed_module_on_parent_package(
     assert full_name not in sys.modules
     assert not hasattr(adapters_package, name)
 
-    with pytest.raises(ModuleNotFoundError):
-        __import__(full_name, fromlist=["_"])
+    if importlib.util.find_spec(sdk_name) is None:
+        # Neither SDK is installed in the base profile these tests run under; the
+        # `service` extra is where each is declared.
+        with pytest.raises(ModuleNotFoundError):
+            __import__(full_name, fromlist=["_"])
+    else:
+        # In a `service`-profile run the SDK is genuinely installed, so a fresh,
+        # unstubbed import succeeds too, and teardown must undo its side effects the
+        # same way, so it doesn't leak into other tests in this session.
+        module = __import__(full_name, fromlist=["_"])
+        assert module is sys.modules[full_name]
+        del sys.modules[full_name]
+        adapters_package.__dict__.pop(name, None)

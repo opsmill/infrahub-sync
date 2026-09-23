@@ -1,0 +1,1 @@
+Declare the `ipfabric`, `slurpit-sdk`, and `prometheus-client` SDKs in the `service` package extra so the bundled IP Fabric, Slurp'it, and Prometheus adapters can actually load in a standard deployment.

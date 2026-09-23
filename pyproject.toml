@@ -86,7 +86,20 @@ service = [
     # placement leaves `infrahubctl` unable to start there for a missing
     # `ariadne_codegen`. The base install stays free of it.
     "infrahub-sdk[ctl]>=1.17,<2; python_version >= '3.11'",
+    # The SDK the bundled IP Fabric source adapter imports at module top. 8.0.1
+    # (verified here) accepts `base_url` and `auth` as `IPFClient` pydantic-settings
+    # fields; the upper bound holds to the current major, since a future one is not
+    # verified. `IPFClient`'s field is `verify`, not `verify_ssl`, so a configured
+    # `verify_ssl` setting still fails at connect time — a pre-existing
+    # adapter/settings mismatch this change does not fix.
+    "ipfabric>=8.0,<9; python_version >= '3.11'",
     "prefect==3.8.1; python_version >= '3.11'",
+    # prefect already resolves this transitively; declaring it directly is what lets
+    # `infrahub_sync/adapters/prometheus.py` import `prometheus_client.parser`
+    # outside a Prefect-bearing resolution too. The floor is where
+    # `parser.text_string_to_metric_families` has long been stable (verified
+    # against 0.26.0, the version currently resolved).
+    "prometheus-client>=0.20,<1; python_version >= '3.11'",
     "psycopg[binary]>=3.2,<4; python_version >= '3.11'",
     # The SDKs the bundled NetBox and Nautobot source adapters import at module
     # top. pynetbox 7.6 is where NetBox's v2 (`nbt_`) tokens are supported;
@@ -95,6 +108,15 @@ service = [
     # packaging dependency, not a supported source-server profile.
     "pynautobot>=2.5,<3; python_version >= '3.11'",
     "pynetbox>=7.6,<8; python_version >= '3.11'",
+    # The SDK the bundled Slurp'it source adapter imports at module top, from the
+    # `slurpit-sdk` distribution (the module name `slurpit` is unrelated to the
+    # `slurpit_sk` package, which does not carry this client). The floor and
+    # ceiling hold to the 0.9 series: `slurpit.api.__init__` accepts `url` and
+    # `api_key` across both 0.9.32 (resolved here) and 0.9.146 (latest); a future
+    # major is not verified. Neither release accepts a `verify_ssl` keyword, so a
+    # configured `verify_ssl` setting still fails at connect time — a pre-existing
+    # adapter/settings mismatch this change does not fix.
+    "slurpit-sdk>=0.9,<0.10; python_version >= '3.11'",
     "uvicorn>=0.34,<1; python_version >= '3.11'",
 ]
 dev = [

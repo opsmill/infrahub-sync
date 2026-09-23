@@ -5,7 +5,7 @@ import ipaddress
 import logging
 from typing import Any
 
-import slurpit  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
+import slurpit  # ty: ignore[unresolved-import]  # declared as `slurpit-sdk` in the `service` extra, not the base install
 from diffsync import Adapter, DiffSyncModel
 from typing_extensions import Self
 
