@@ -220,8 +220,13 @@ def _verify_registered_apply(
     approval gates both reads, so bytes swapped between them cannot reach the write loop.
     """
     artifact = read_plan_artifact_bytes(resolve_run_directory(instance.name, run_id, base_directory=base_directory))
-    if verify_plan(artifact=artifact, run_id=run_id, config_version=resolve_config_version(instance)):
-        raise ValueError(_REGISTERED_PLAN_VERIFICATION_FAILED)
+    failures = verify_plan(artifact=artifact, run_id=run_id, config_version=resolve_config_version(instance))
+    if failures:
+        # The verifier's actions describe the artifact state without echoing manifest
+        # values, which may contain credentials in a damaged or hand-edited artifact.
+        guidance = "; ".join(f"{failure.check}: {failure.next_action}" for failure in failures)
+        message = f"{_REGISTERED_PLAN_VERIFICATION_FAILED}: {guidance}"
+        raise ValueError(message)
     manifest = parse_plan_artifact(artifact, run_id=run_id).manifest
     if manifest.configuration_binding != binding:
         raise ValueError(_REGISTERED_PLAN_BINDING_MISMATCH)

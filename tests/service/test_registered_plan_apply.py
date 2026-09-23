@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import pytest
@@ -22,7 +24,7 @@ from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import service_sync_run
 from tests.configuration.validation_packages import package
-from tests.plan.artifact_fixtures import operation_record
+from tests.plan.artifact_fixtures import manifest_path, operation_record, write_artifact
 from tests.service.execution_fixtures import (
     append_execution,
     bind_granting_guard,
@@ -150,6 +152,60 @@ def test_bound_apply_accepts_an_exact_manifest_binding(tmp_path: Path, monkeypat
     run_id, binding, checksum, calls = _registered_apply(tmp_path, monkeypatch, manifest_binding="exact")
     service_sync_run.fn(run_id, "apply", *binding, expected_checksum=checksum, confirm_writes=True)
     assert calls == ["execute-run"]
+
+
+@pytest.mark.parametrize(
+    ("manifest_state", "expected_action", "wrong_action"),
+    [
+        pytest.param(
+            "unsupported", "apply it with the version that wrote it", "artifact is incomplete", id="unsupported"
+        ),
+        pytest.param("malformed", "rebuild the plan artifact", "apply it with the version", id="malformed"),
+        pytest.param("missing-version", "rebuild the plan artifact", "apply it with the version", id="missing-version"),
+        pytest.param("absent", "rebuild the plan artifact", "apply it with the version", id="absent-manifest"),
+    ],
+)
+def test_registered_apply_reports_verifier_recovery_before_destination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    manifest_state: str,
+    expected_action: str,
+    wrong_action: str,
+) -> None:
+    """The managed precheck carries the format gate's specific, safe recovery action."""
+    run_id = "managed-plan-recovery"
+    run_directory = tmp_path / "managed-plan" / run_id
+    write_artifact(run_directory, run_id=run_id)
+    path = manifest_path(run_directory)
+    if manifest_state == "absent":
+        path.unlink()
+    else:
+        mapping = json.loads(path.read_bytes())
+        if manifest_state == "unsupported":
+            mapping["format_version"] = 99
+        elif manifest_state == "malformed":
+            mapping["format_version"] = "private-token-canary"
+        else:
+            del mapping["format_version"]
+        path.write_text(json.dumps(mapping), encoding="utf-8")
+    before = path.read_bytes() if path.exists() else None
+    monkeypatch.setattr(service_flow, "resolve_config_version", lambda _instance: "fixture-version")
+
+    with pytest.raises(ValueError, match="registered saved plan verification failed") as error:
+        service_flow._verify_registered_apply(
+            instance=SimpleNamespace(name="managed-plan"),
+            run_id=run_id,
+            binding=None,
+            expected_checksum=None,
+            base_directory=tmp_path,
+        )
+
+    message = str(error.value)
+    assert "format_version:" in message
+    assert expected_action in message
+    assert wrong_action not in message
+    assert "private-token-canary" not in message
+    assert (path.read_bytes() if path.exists() else None) == before
 
 
 def test_a_registered_saved_apply_runs_without_the_source_credential(
