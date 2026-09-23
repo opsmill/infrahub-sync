@@ -44,7 +44,7 @@ from infrahub_sync.plan.models import ApplyRecord, PlanManifest
 from infrahub_sync.plan.ownership import ProvenWriteOwnership, WriteDispatchTracker
 from infrahub_sync.plan.reader import parse_plan_artifact, read_plan_artifact_bytes
 from infrahub_sync.plan.review import SavedPlan, resolve_run_directory
-from infrahub_sync.plan.verify import verify_plan
+from infrahub_sync.plan.verify import RE_PLAN_NEXT_ACTION, UNSUPPORTED_FORMAT_NEXT_ACTION, verify_plan
 from infrahub_sync.product_store import (
     BaselineWriteback,
     ExecutionFinishWriteback,
@@ -93,6 +93,14 @@ _NO_CONFIGURATION_DIRECTORY = ""
 # The stages the managed write scope covers. A read stage has nothing to be uncertain
 # about, so it keeps its own deliberate handling where the two differ.
 _WRITE_STAGES = ("apply", "sync")
+
+
+class RegisteredPlanVerificationError(ValueError):
+    """A managed plan refusal with a fixed, safe recovery signal for the CLI."""
+
+    def __init__(self, message: str, recovery_action: Literal["rebuild", "compatible_version"] | None) -> None:
+        super().__init__(message)
+        self.recovery_action = recovery_action
 
 
 def _raise_writeback_refused() -> None:
@@ -226,7 +234,14 @@ def _verify_registered_apply(
         # values, which may contain credentials in a damaged or hand-edited artifact.
         guidance = "; ".join(f"{failure.check}: {failure.next_action}" for failure in failures)
         message = f"{_REGISTERED_PLAN_VERIFICATION_FAILED}: {guidance}"
-        raise ValueError(message)
+        format_failure = next((failure for failure in failures if failure.check == "format_version"), None)
+        recovery_action: Literal["rebuild", "compatible_version"] | None = None
+        if format_failure is not None:
+            if format_failure.next_action.endswith(RE_PLAN_NEXT_ACTION):
+                recovery_action = "rebuild"
+            elif format_failure.next_action.endswith(UNSUPPORTED_FORMAT_NEXT_ACTION):
+                recovery_action = "compatible_version"
+        raise RegisteredPlanVerificationError(message, recovery_action)
     manifest = parse_plan_artifact(artifact, run_id=run_id).manifest
     if manifest.configuration_binding != binding:
         raise ValueError(_REGISTERED_PLAN_BINDING_MISMATCH)
@@ -705,6 +720,8 @@ def _failure_evidence(
         # this process's own taxonomy carries one identifier.
         "cause_type": None if exc.__cause__ is None else type(exc.__cause__).__name__,
     }
+    if stage == "apply" and isinstance(exc, RegisteredPlanVerificationError) and exc.recovery_action is not None:
+        evidence["recovery_action"] = exc.recovery_action
     written = effective_apply_record(exc, record)
     if written is not None:
         evidence.update(written.as_summary_keys())

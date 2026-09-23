@@ -350,15 +350,23 @@ def test_apply_sends_only_reviewed_checksum_and_shipped_fields(client: MagicMock
 
 
 @pytest.mark.parametrize(
-    ("error_type", "expected_hint"),
+    ("error_type", "recovery_action", "expected_hint"),
     [
-        ("PlanSchemaChangedError", "hint: create and review a new plan before applying again"),
-        ("OperationApplyFailedError", None),
+        ("PlanSchemaChangedError", None, "hint: create and review a new plan before applying again"),
+        ("RegisteredPlanVerificationError", "rebuild", "hint: re-run diff for this sync"),
+        (
+            "RegisteredPlanVerificationError",
+            "compatible_version",
+            "or apply the reviewed plan with the version that wrote it",
+        ),
+        ("RegisteredPlanVerificationError", "private-token-canary", None),
+        ("OperationApplyFailedError", "rebuild", None),
     ],
 )
-def test_failed_apply_renders_recorded_failure_with_only_the_schema_drift_hint(
+def test_failed_apply_renders_only_recognized_recovery_hints(
     client: MagicMock,
     error_type: str,
+    recovery_action: str | None,
     expected_hint: str | None,
 ) -> None:
     client.wait_for_run.side_effect = RunTerminalError(
@@ -375,6 +383,7 @@ def test_failed_apply_renders_recorded_failure_with_only_the_schema_drift_hint(
                 "stage": "apply",
                 "outcome": "failed",
                 "error_type": error_type,
+                "recovery_action": recovery_action,
             }
         },
     )
@@ -392,6 +401,7 @@ def test_failed_apply_renders_recorded_failure_with_only_the_schema_drift_hint(
     assert result.exit_code == 1
     client.get_results.assert_called_once_with("service-run-1")
     assert f"apply failed: {error_type}" in result.output
+    assert "private-token-canary" not in result.output
     if expected_hint is None:
         assert "hint:" not in result.output
     else:

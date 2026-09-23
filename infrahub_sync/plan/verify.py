@@ -62,6 +62,10 @@ if TYPE_CHECKING:
 GATED_CHECKS: tuple[VerificationCheck, ...] = ("run_binding", "plan_checksum", "source_snapshot", "config_version")
 
 RE_PLAN_NEXT_ACTION = "Re-run `diff` for this sync to rebuild the plan artifact, then apply that run."
+UNSUPPORTED_FORMAT_NEXT_ACTION = (
+    "Re-run `diff` with this version of infrahub-sync to rebuild the artifact, "
+    "or apply it with the version that wrote it."
+)
 
 
 def _failure(
@@ -133,10 +137,7 @@ def _gate_failure(run_id: str, mapping: dict[str, Any] | None) -> VerificationFa
         else:
             found = repr(declared)
             reason = "this version of Infrahub Sync does not understand the artifact's declared format version"
-            recovery = (
-                "Re-run `diff` with this version of infrahub-sync to rebuild the artifact, "
-                "or apply it with the version that wrote it."
-            )
+            recovery = UNSUPPORTED_FORMAT_NEXT_ACTION
     return _failure(
         "format_version",
         run_id=run_id,
