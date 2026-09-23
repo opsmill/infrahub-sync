@@ -176,7 +176,8 @@ def lint_yaml(context: Context) -> None:
 
     print(f" - [{NAMESPACE}] Format yaml with yamllint")
     exec_cmd = f"yamllint {MAIN_DIRECTORY}"
-    context.run(exec_cmd, pty=True)
+    with context.cd(ESCAPED_REPO_PATH):
+        context.run(exec_cmd, pty=True)
 
 
 @task

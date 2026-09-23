@@ -1,4 +1,33 @@
+from invoke import Context, Result
+
 from tasks import linter
+from tasks.utils import ESCAPED_REPO_PATH
+
+
+class _RecordingContext(Context):
+    """Records the command actually sent to the shell, `cd` prefix included.
+
+    `Context.cd` only prefixes commands at run time; a task that calls
+    `context.run` outside that `with` block silently checks whatever directory
+    the process happens to be started from instead of the repository root.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.commands: list[str] = []
+
+    def run(self, command: str, **kwargs: object) -> Result:  # type: ignore[override]
+        del kwargs
+        self.commands.append(self._prefix_commands(command))
+        return Result(exited=0)
+
+
+def test_lint_yaml_runs_from_the_repository_root() -> None:
+    context = _RecordingContext()
+
+    linter.lint_yaml(context)
+
+    assert context.commands == [f"cd {ESCAPED_REPO_PATH} && yamllint ."]
 
 
 def test_ty_check_command_excludes_service_on_python_310() -> None:
