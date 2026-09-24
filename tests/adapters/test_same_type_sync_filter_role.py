@@ -56,7 +56,7 @@ def _sdk_installed(sdk_name: str) -> bool:
 
 
 @pytest.fixture
-def optional_sdk_importer(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> _SDKImporter:
+def optional_sdk_importer(monkeypatch: pytest.MonkeyPatch) -> _SDKImporter:
     """Import optional adapter modules while restoring all import state at teardown."""
     import infrahub_sync.adapters as adapters_package
 
@@ -67,6 +67,7 @@ def optional_sdk_importer(monkeypatch: pytest.MonkeyPatch, request: pytest.Fixtu
         patcher: pytest.MonkeyPatch | None = None,
         force_stub: bool = False,
     ) -> types.ModuleType:
+        """Import an adapter with a temporary SDK stub when needed."""
         patcher = patcher or monkeypatch
         full_name = f"infrahub_sync.adapters.{adapter_module_name}"
         if not force_stub and _sdk_installed(sdk_name):
@@ -85,7 +86,7 @@ def optional_sdk_importer(monkeypatch: pytest.MonkeyPatch, request: pytest.Fixtu
         module = importlib.import_module(full_name)
         loop = getattr(module, "loop", None)
         if isinstance(loop, asyncio.AbstractEventLoop):
-            request.addfinalizer(loop.close)
+            loop.close()
 
         # Importlib writes these two entries itself. Their removal is recorded by
         # monkeypatch; the earlier setitem/setattr restore the state before import.
