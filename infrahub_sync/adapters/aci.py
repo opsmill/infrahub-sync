@@ -270,9 +270,7 @@ class AciAdapter(DiffSyncMixin, Adapter):
             logger.debug(json.dumps(objs, indent=2))
             total = len(objs)
             # Always apply filters and transforms for the source adapter
-            # Check if this is the source adapter by comparing source name with adapter type
-            is_source_adapter = self.config.source.name.lower() == "aci"
-            if is_source_adapter:
+            if self.target == "source":
                 # Filter records
                 filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)

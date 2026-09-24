@@ -492,7 +492,7 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
 
                     obj["lookup"] = _mk_lookup(obj)
 
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            if self.target == "source":
                 filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
                 logger.info(
