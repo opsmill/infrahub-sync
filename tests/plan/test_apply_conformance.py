@@ -8,16 +8,13 @@ relationship-crossing identity component is already a resolved node-id string by
 harness runs a **real** `InfrahubNodeSync` built from the committed schema fixture with only
 the transport edge replaced; no server is contacted.
 
-Five assertions: an update renders the scalar top-level `id` recorded for it; the
-relationship-crossing kind is **written** as one convergent upsert, because the server matches
-on the human-friendly-ID components in `data` and needs no key on the wire (AD067 closed); the
-replace-set is issued for every cardinality-many relationship including `peers: []`, with no
-destination read; that same upsert names only the fields the plan maps plus its key; and
-applying the same operation twice renders byte-identical inputs.
+The harness checks that updates render their recorded `id`, relationship-crossing creates
+carry a complete `hfid`, partial relationship identities are refused, and repeated applies
+reuse one node. It also checks replace-set behavior, unmapped fields, and repeat-render
+identity for direct-attribute operations.
 
-It deliberately does **not** assert "two applies produce one object": a fixture holds no
-destination state, so that could only pass for the wrong reason. Byte-identity is the
-strongest claim decidable offline, and no substitute for SC-002, SC-003 and SC-008.
+The stateful transport fixture also models the destination's key lookup so two applies must
+return the same node id. The live server remains the final check of its matching behavior.
 """
 
 from __future__ import annotations
@@ -36,6 +33,7 @@ from infrahub_sdk.schema import NodeSchemaAPI
 from infrahub_sdk.schema.main import BranchSchema
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerResolver
+from infrahub_sync.plan.errors import UnaccountedIdentityComponentError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
@@ -148,6 +146,30 @@ class ConformanceClient(InfrahubClientSync):
     def mutation_names(self) -> list[str]:
         """Just the names, which is what separates the convergent upsert from any other write."""
         return [name for name, _ in self.mutations]
+
+
+class ConvergingClient(ConformanceClient):
+    """Record real SDK queries and model a destination keyed by the sent HFID."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.nodes: dict[tuple[str, ...], str] = {}
+
+    def execute_graphql(self, *args: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+        response = super().execute_graphql(*args, **kwargs)
+        query = kwargs["query"]
+        if f"{DEVICE_KIND}Upsert" not in query:
+            return response
+        hfid = rendered_hfid(query)
+        # An unkeyed write always creates another node. This keeps the regression
+        # meaningful if the SDK stops putting the explicit key on the wire.
+        if hfid is None:
+            node_id = f"device-{len(self.nodes) + 1}"
+            self.nodes[node_id,] = node_id
+        else:
+            node_id = self.nodes.setdefault(tuple(hfid), f"device-{len(self.nodes) + 1}")
+        response[f"{DEVICE_KIND}Upsert"]["object"]["id"] = node_id
+        return response
 
 
 def make_adapter(client: ConformanceClient) -> InfrahubAdapter:
@@ -293,6 +315,12 @@ def top_level_scalar_id(query: str) -> str | None:
     return match.group(1) if match else None
 
 
+def rendered_hfid(query: str) -> list[str] | None:
+    """The destination object's top-level HFID, excluding any nested peer key."""
+    match = re.search(r"^ {12}hfid: \[(.*?)^ {12}\]", query, flags=re.MULTILINE | re.DOTALL)
+    return re.findall(r'"([^"]+)"', match.group(1)) if match else None
+
+
 def mutation_input_fields(query: str) -> list[str]:
     """The field names inside a rendered mutation's top-level `data: { ... }` input block.
 
@@ -405,20 +433,70 @@ def test_an_update_renders_a_scalar_top_level_id_equal_to_its_destination_id(
 # ---------------------------------------------------------------------------------------
 
 
-def test_a_relationship_crossing_kind_is_written_as_one_convergent_upsert() -> None:
-    """AD067 closes: the server matches on the HFID components in `data`, so this is keyed.
+def test_a_relationship_crossing_kind_is_keyed_and_repeated_apply_reuses_the_node() -> None:
+    """A complete wire HFID makes two creates converge on the same destination node."""
+    client = ConvergingClient()
+    adapter = make_adapter(client)
+    peer = InfrahubNodeSync(client=client, schema=SCHEMAS[SITE_KIND], data={"id": "conf-site-id-1"})
+    with patch.object(client, "filters", return_value=[peer]) as lookup:
+        results = [
+            adapter.apply_planned_operation(operation=device_operation(), peers=PeerResolver(adapter)) for _ in range(2)
+        ]
 
-    Measured on Infrahub 1.10.6 for `TestingInterface`, whose HFID crosses `device`: two
-    identical upserts carrying no key at all converge onto one object. The client cannot
-    render such an `hfid` from a resolved peer id, and it does not need to.
-    """
-    client, adapter, peers = seeded_adapter()
+    assert lookup.call_count == 2
+    assert all(call.kwargs["name__value"] == "site-a" for call in lookup.call_args_list)
 
-    adapter.apply_planned_operation(operation=device_operation(), peers=peers)
+    assert client.mutation_names == [f"{DEVICE_KIND}Upsert"] * 2
+    assert [rendered_hfid(query) for _, query in client.mutations] == [["site-a", "device-a"]] * 2
+    assert results == ["device-1", "device-1"]
+    assert len(client.nodes) == 1
 
-    assert client.mutation_names == [f"{DEVICE_KIND}Upsert"], (
-        "The kind is written as one convergent upsert, not refused."
+
+def test_partial_relationship_filter_cannot_weaken_the_write_key(caplog: pytest.LogCaptureFixture) -> None:
+    """A peer found through a partial filter cannot make a partial HFID writable."""
+    client = ConformanceClient()
+    adapter = make_adapter(client)
+    peers = PeerResolver(adapter)
+    peer = InfrahubNodeSync(client=client, schema=SCHEMAS[SITE_KIND], data={"id": "conf-site-id-1"})
+    operation = make_operation(
+        kind=DEVICE_KIND,
+        identity={"name": "device-a", "site": {"peer_kind": SITE_KIND, "identity": {"code": "site-a"}}},
+        payload={"name": "device-a"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"code": "site-a"}])
+        ],
     )
+
+    with (
+        patch.object(client, "filters", return_value=[peer]),
+        caplog.at_level("WARNING"),
+        pytest.raises(UnaccountedIdentityComponentError, match="site__name__value"),
+    ):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert "PARTIAL filter" in caplog.text
+    assert client.mutations == []
+
+
+def test_partial_peer_filter_cannot_key_a_relationship_create(caplog: pytest.LogCaptureFixture) -> None:
+    """A complete parent HFID still needs a fully identified relationship peer."""
+    client = ConformanceClient()
+    site_schema = SCHEMAS[SITE_KIND].model_copy(update={"human_friendly_id": ["name__value", "region__value"]})
+    client.schema.set_cache(BranchSchema(hash="composite-peer", nodes={**SCHEMAS, SITE_KIND: site_schema}))
+    adapter = make_adapter(client)
+    adapter.schema[SITE_KIND] = site_schema
+    peers = PeerResolver(adapter)
+    peer = InfrahubNodeSync(client=client, schema=site_schema, data={"id": "conf-site-id-1"})
+
+    with (
+        patch.object(client, "filters", return_value=[peer]),
+        caplog.at_level("WARNING"),
+        pytest.raises(UnaccountedIdentityComponentError, match="region__value"),
+    ):
+        adapter.apply_planned_operation(operation=device_operation(), peers=peers)
+
+    assert "PARTIAL filter" in caplog.text
+    assert client.mutations == []
 
 
 # ---------------------------------------------------------------------------------------

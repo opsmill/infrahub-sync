@@ -388,24 +388,6 @@ def _identity_path_value(identity: Mapping[str, Any], segments: Sequence[str]) -
     return _identity_path_value(nested, rest)
 
 
-def _operation_peer_identity(operation: PlannedOperation, field: str) -> Mapping[str, Any] | None:
-    """The nested peer identity the operation records for `field` (AD043, AD051).
-
-    Read from the operation's own **identity** first, where an identity-bearing reference
-    is recorded as a `{"peer_kind", "identity"}` pair, and otherwise from the relationship
-    reference of that name, whose `peers` hold those identities directly. A
-    cardinality-many reference names no single peer, so it supplies no component.
-    """
-    if field in operation.identity:
-        nested = _nested_peer_identity(operation.identity[field])
-        if nested is not None:
-            return nested
-    for reference in operation.relationships or ():
-        if reference.field == field and reference.cardinality == "one" and reference.peers:
-            return reference.peers[0]
-    return None
-
-
 def _hfid_component_accounted_for(
     *,
     component: str,
@@ -440,11 +422,92 @@ def _hfid_component_accounted_for(
     # here; the component's own value comes from the operation's nested peer identity.
     if value is None:
         return False
-    nested = _operation_peer_identity(operation, field)
-    if nested is None:
+    # The resolved peer must be the peer named by the operation's identity. A
+    # different relationship reference could otherwise make an explicit HFID
+    # name one object while the payload writes a relationship to another.
+    identity_peer = operation.identity.get(field)
+    nested = _nested_peer_identity(identity_peer)
+    if (
+        not isinstance(identity_peer, Mapping)
+        or nested is None
+        or not any(
+            reference.field == field
+            and reference.cardinality == "one"
+            and reference.peer_kind == identity_peer.get("peer_kind")
+            and reference.peers == [nested]
+            for reference in operation.relationships or ()
+        )
+    ):
         return False
     resolved = _identity_path_value(nested, segments[1:])
     return resolved is not _UNRESOLVED and is_usable_component_value(resolved)
+
+
+def _explicit_hfid(operation: PlannedOperation, node_schema: NodeSchemaAPI, data: Mapping[str, Any]) -> list[str]:
+    """Build the complete destination HFID from the values proven for this create."""
+    values: list[str] = []
+    for component in _hfid_components(node_schema):
+        segments = _component_segments(component)
+        value = data.get(segments[0]) if len(segments) == 1 else _identity_path_value(operation.identity, segments)
+        if value is _UNRESOLVED or not is_usable_component_value(value) or isinstance(value, (Mapping, list, tuple)):
+            msg = f"Operation {operation.operation_id!r} has no complete writable HFID component {component!r}."
+            raise UnaccountedIdentityComponentError(msg)
+        values.append(str(value))
+    return values
+
+
+def _refuse_partial_key_peer_filter(
+    operation: PlannedOperation, node_schema: NodeSchemaAPI, client: InfrahubClientSync
+) -> None:
+    """Keep a relationship key from relying on a partial peer lookup."""
+    for component in _hfid_components(node_schema):
+        segments = _component_segments(component)
+        if len(segments) == 1:
+            continue
+        reference = next((item for item in operation.relationships or () if item.field == segments[0]), None)
+        if reference is None or not reference.peers:
+            continue  # The component check reports the absent reference.
+        peer_schema = client.schema.get(kind=reference.peer_kind)
+        if not isinstance(peer_schema, NodeSchemaAPI):
+            msg = f"Expected NodeSchemaAPI for {reference.peer_kind}, got {type(peer_schema).__name__}"
+            raise TypeError(msg)
+        missing = []
+        for peer_component in _hfid_components(peer_schema):
+            value = _identity_path_value(reference.peers[0], _component_segments(peer_component))
+            if (
+                value is _UNRESOLVED
+                or not is_usable_component_value(value)
+                or isinstance(value, (Mapping, list, tuple))
+            ):
+                missing.append(peer_component)
+        if missing:
+            msg = (
+                f"Operation {operation.operation_id!r} cannot key its {component!r} relationship through "
+                f"a partial {reference.peer_kind!r} peer filter; missing: {', '.join(missing)}. "
+                "No destination write was attempted."
+            )
+            raise UnaccountedIdentityComponentError(msg)
+
+
+def _save_upsert_with_hfid(node: InfrahubNodeSync, hfid: list[str]) -> None:
+    """Put a proven HFID on the wire despite the SDK's upsert exclusion.
+
+    The SDK always calls its input renderer with ``exclude_hfid=True`` for an
+    upsert. Override only this node's renderer for the duration of its save so
+    its normal mutation, file handling, and response processing stay intact.
+    """
+    render = node._generate_input_data
+
+    def keyed_render(*args: Any, **kwargs: Any) -> dict[str, dict]:
+        result = render(*args, **kwargs)
+        result["data"]["data"]["hfid"] = hfid
+        return result
+
+    setattr(node, "_generate_input_data", keyed_render)
+    try:
+        node.save(allow_upsert=True)
+    finally:
+        delattr(node, "_generate_input_data")
 
 
 class PeerResolver:
@@ -1251,16 +1314,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         forbids. The payload is authoritative for the mapped fields it carries and touches no
         unmapped destination field.
 
-        How the write is keyed depends on the action, and neither way reads the SDK's
-        private pre-save render (AD066/AD067, retired). An **update** carries the
-        destination `id` recorded for it at plan time, set on the node before `save`. A
-        **create** has no id and is keyed by the destination kind's human-friendly-ID
-        components in its payload, which the server matches on — so its completeness is
-        proven here, before the mutation, by the per-component diagnostic below.
-
-        The private render was retired because it stopped agreeing with the wire: on SDK
-        1.23.2 it reports an `hfid` for a kind whose issued mutation carries no key at all,
-        so a gate reading it passes writes that are unkeyed where it matters.
+        An **update** carries the destination `id` recorded at plan time. A **create**
+        whose HFID crosses a relationship carries an explicit, complete `hfid` built from
+        its validated operation identity; the SDK otherwise omits it from upserts. Other
+        creates remain keyed by the destination kind's HFID components in the payload.
+        Each create is checked before mutation so a missing component cannot become an
+        unkeyed write.
 
         That upsert is the **only** destination write the operation makes. It carries every
         cardinality-many relationship as the plan's peer list, and `peers: []` means empty the
@@ -1363,6 +1422,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # `client.create` and read the cached schema and the operation alone.
             refuse_unkeyed_create_coverage(operation, node=node_schema)
             self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
+            _refuse_partial_key_peer_filter(operation, node_schema, self.client)
 
         source_id = self.source_node.id if self.source_node else None
         owner_id = self.owner_node.id if self.owner_node else None
@@ -1378,7 +1438,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # render it as the attribute-shaped `id: {}` and key nothing.
             node.id = operation.destination_id
         try:
-            node.save(allow_upsert=True)
+            if operation.action == "create" and any(
+                len(_component_segments(component)) > 1 for component in _hfid_components(node_schema)
+            ):
+                _save_upsert_with_hfid(node, _explicit_hfid(operation, node_schema, data))
+            else:
+                node.save(allow_upsert=True)
         except GraphQLError as exc:
             _refuse_stale_destination_id(exc, operation=operation)
             raise
