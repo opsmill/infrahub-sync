@@ -21,10 +21,12 @@ import importlib.util
 import os
 import sys
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 from unittest import mock
 
 import pytest
+from packaging.requirements import Requirement
 
 import infrahub_sync.adapters as adapters_package
 from infrahub_sync import SyncAdapter
@@ -94,9 +96,13 @@ def test_adapter_imports_without_error_in_service_profile(
 
 
 @requires_service_profile
-def test_service_profile_does_not_install_slurpit_sdk() -> None:
-    with pytest.raises(importlib.metadata.PackageNotFoundError):
-        importlib.metadata.version("slurpit-sdk")
+def test_service_extra_does_not_declare_slurpit_sdk() -> None:
+    """Keep the Slurp'it SDK out of the declared service dependencies."""
+    tomllib = importlib.import_module("tomllib")
+    pyproject = tomllib.loads((Path(__file__).parents[2] / "pyproject.toml").read_text(encoding="utf-8"))
+    extras = pyproject["project"]["optional-dependencies"]
+    assert all(Requirement(item).name != "slurpit-sdk" for item in extras["service"])
+    assert any(Requirement(item).name == "slurpit-sdk" for item in extras["slurpit"])
 
 
 @requires_service_profile

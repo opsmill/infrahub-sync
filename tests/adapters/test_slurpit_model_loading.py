@@ -339,6 +339,15 @@ def test_site_mapping_loads_async_sdk_models(adapter_module: types.ModuleType) -
     assert loaded == [{"id": 7, "sitename": "HQ"}]
 
 
+@pytest.mark.parametrize("mapping", ["site.reset_devices", "device.delete_device", "site.get_sites.extra"])
+def test_dotted_sdk_mapping_rejects_unsupported_methods(adapter_module: types.ModuleType, mapping: str) -> None:
+    """Reject unapproved SDK methods before resolving or invoking them."""
+    instance, loaded = _adapter(adapter_module, mapping)
+    with pytest.raises(ValueError, match="Unsupported Slurp'it SDK mapping"):
+        adapter_module.SlurpitsyncAdapter.model_loader(instance, "Thing", MappedRecord)
+    assert loaded == []
+
+
 @pytest.mark.parametrize("target", ["source", "destination"])
 def test_model_loading_applies_mapping_rules_only_for_source(adapter_module: types.ModuleType, target: str) -> None:
     instance, loaded = _adapter(adapter_module, "site.get_sites", target=target)

@@ -120,7 +120,7 @@ This table highlights the available `mappings` the adapter has to gather and nor
 | --- | --- |
 | `unique_vendors` | Retrieves devices through the async SDK and returns each distinct brand. |
 | `unique_device_type` | Retrieves devices through the async SDK and returns each distinct brand, device type, and operating system combination. |
-| `model`.`function` | This mapping directly relates to the SDK. For example once the SDK client is initiated you can get devices by using `device.get_devices` this will execute the query to gather all the devices.   |
+| `device.get_devices` or `site.get_sites` | Retrieves devices or sites through the SDK. Other dotted SDK methods are rejected so a data load cannot call an SDK write method. |
 | `planning_results`.`<planning_name>` | Retrieves results for the planning whose SDK `slug` matches the suffix. For example, `planning_results.routing-table` uses the planning slug `routing-table`. |
 | `filter_networks` | The `filter_networks` function processes a list of network entries, normalizing the network and mask fields, and filters out unwanted networks based on predefined "ignore" prefixes (such as 0.0.0.0/0 and 127.0.0.0/8). It returns a list of filtered, normalized networks, excluding those with prefixes deemed unnecessary or invalid. |
 | `filter_interfaces` | Normalizes interface IP addresses and matches them against previously loaded network prefixes. |

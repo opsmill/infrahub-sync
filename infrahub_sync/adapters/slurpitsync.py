@@ -22,6 +22,7 @@ from infrahub_sync.adapters.utils import build_mapping, get_value
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
+READ_ONLY_SDK_MAPPINGS = frozenset({"device.get_devices", "site.get_sites"})
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -218,6 +219,9 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 planning_name = element.mapping.split(".")[1]
                 nodes = self.planning_results(planning_name)
             elif "." in element.mapping:
+                if element.mapping not in READ_ONLY_SDK_MAPPINGS:
+                    msg = f"Unsupported Slurp'it SDK mapping: {element.mapping}"
+                    raise ValueError(msg)
                 app_name, resource_name = element.mapping.split(".")
                 slurpit_app = getattr(self.client, app_name)
                 slurpit_model = getattr(slurpit_app, resource_name)
