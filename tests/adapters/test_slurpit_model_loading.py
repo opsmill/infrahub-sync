@@ -7,14 +7,16 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import importlib
 import re
 import sys
 import types
+import weakref
 from collections import UserDict
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from unittest import mock
 
 import httpx
@@ -24,7 +26,6 @@ from packaging.version import Version
 
 import infrahub_sync.adapters as adapters_package
 from infrahub_sync import SyncAdapter
-from infrahub_sync.potenda import Potenda
 
 
 class Device:
@@ -115,6 +116,24 @@ class Client:
         self.site = SiteAPI()
 
 
+class TrackedClient(httpx.AsyncClient):
+    def __init__(self, events: list[str], name: str, loop: asyncio.AbstractEventLoop) -> None:
+        super().__init__(transport=httpx.MockTransport(lambda request: httpx.Response(200, request=request)))
+        self.events = events
+        self.name = name
+        self.loop = loop
+
+    async def aclose(self) -> None:
+        assert asyncio.get_running_loop() is self.loop
+        self.events.append(self.name)
+        await super().aclose()
+
+
+class ClientOwner(Protocol):
+    client: Client
+    _loop: asyncio.AbstractEventLoop
+
+
 class MappedRecord(UserDict[str, object]):
     @staticmethod
     def filter_records(records: list[dict[str, object]], schema_mapping: object) -> list[dict[str, object]]:
@@ -175,6 +194,11 @@ def _adapter(module: types.ModuleType, mapping: str, target: str = "source") -> 
     return instance, loaded
 
 
+def _attach_clients(instance: ClientOwner, events: list[str]) -> None:
+    for name in ("device", "planning", "site"):
+        getattr(instance.client, name).client = TrackedClient(events, name, instance._loop)
+
+
 def test_run_async_reuses_loop_for_shared_httpx_transport_and_closes_it(adapter_module: types.ModuleType) -> None:
     instance, _ = _adapter(adapter_module, "device.get_devices")
     first_loop: asyncio.AbstractEventLoop | None = None
@@ -203,21 +227,54 @@ def test_run_async_reuses_loop_for_shared_httpx_transport_and_closes_it(adapter_
 
 
 @pytest.mark.parametrize("load_fails", [False, True])
-def test_loading_teardown_closes_adapter_loop(adapter_module: types.ModuleType, load_fails: bool) -> None:
+def test_load_closes_sdk_clients_before_loop(adapter_module: types.ModuleType, load_fails: bool) -> None:
     instance, _ = _adapter(adapter_module, "device.get_devices")
-    loader = types.SimpleNamespace(
-        source=instance,
-        load_one_side=mock.Mock(side_effect=RuntimeError("load failed") if load_fails else None),
-        _write_side_snapshot=mock.Mock(),
-    )
+    events: list[str] = []
+    _attach_clients(instance, events)
+    instance.top_level = ["Thing"]
+    instance.Thing = MappedRecord
+    instance.model_loader = mock.Mock(side_effect=RuntimeError("load failed") if load_fails else None)
 
     if load_fails:
-        with pytest.raises(ValueError, match="load failed"):
-            Potenda.source_load(cast("Any", loader))
+        with pytest.raises(RuntimeError, match="load failed"):
+            instance.load()
     else:
-        Potenda.source_load(cast("Any", loader))
+        instance.load()
 
+    instance.model_loader.assert_called_once_with(model_name="Thing", model=MappedRecord)
+    assert events == ["device", "planning", "site"]
     assert instance._loop.is_closed()
+
+
+def test_close_is_idempotent(adapter_module: types.ModuleType) -> None:
+    instance, _ = _adapter(adapter_module, "device.get_devices")
+    events: list[str] = []
+    _attach_clients(instance, events)
+
+    instance.close()
+    instance.close()
+
+    assert events == ["device", "planning", "site"]
+    assert instance._loop.is_closed()
+
+
+def test_unloaded_adapter_finalizer_closes_clients_and_loop(adapter_module: types.ModuleType) -> None:
+    instance = adapter_module.SlurpitsyncAdapter(
+        target="source",
+        adapter=SyncAdapter(name="slurpitsync", settings={"url": "https://slurpit.example"}),
+        config=cast("Any", types.SimpleNamespace(schema_mapping=[])),
+    )
+    events: list[str] = []
+    _attach_clients(instance, events)
+    loop = instance._loop
+    reference = weakref.ref(instance)
+
+    del instance
+    gc.collect()
+
+    assert reference() is None
+    assert events == ["device", "planning", "site"]
+    assert loop.is_closed()
 
 
 @pytest.mark.parametrize("mapping", ["unique_vendors", "unique_device_type", "device.get_devices"])

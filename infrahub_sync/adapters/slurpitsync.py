@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import weakref
 from typing import TYPE_CHECKING, Any, TypeVar
 
+import httpx
 import slurpit  # ty: ignore[unresolved-import]  # declared as `slurpit-sdk` in the optional `slurpit` extra
 from diffsync import Adapter, DiffSyncModel
 from typing_extensions import Self
@@ -25,6 +27,30 @@ if TYPE_CHECKING:
     from collections.abc import Coroutine
 
 
+async def _close_sdk_clients(client: slurpit.api) -> None:
+    """Close each per-API HTTP client owned by the Slurp'it SDK."""
+    clients = {
+        id(http_client): http_client
+        for api in vars(client).values()
+        if isinstance(http_client := getattr(api, "client", None), httpx.AsyncClient)
+    }
+    results = await asyncio.gather(*(http_client.aclose() for http_client in clients.values()), return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+
+
+def _close_resources(loop: asyncio.AbstractEventLoop, client: slurpit.api | None) -> None:
+    """Release SDK transports on their loop, then release the loop itself."""
+    if loop.is_closed():
+        return
+    try:
+        if client is not None:
+            loop.run_until_complete(_close_sdk_clients(client))
+    finally:
+        loop.close()
+
+
 class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
     type = "Slurpitsync"
 
@@ -37,6 +63,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         except BaseException:
             self.close()
             raise
+        self._finalizer = weakref.finalize(self, _close_resources, self._loop, self.client)
         self.config = config
         self.filtered_networks = []
         self.skipped = []
@@ -45,6 +72,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         settings = dict(adapter.settings or {})
         verify = settings.pop("verify_ssl", True)
         client = slurpit.api(verify=verify, **settings)
+        self.client = client
         try:
             self.run_async(client.device.get_devices())
         except Exception as e:
@@ -56,10 +84,20 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         """Run an SDK coroutine on the loop shared by this adapter's client."""
         return self._loop.run_until_complete(coroutine)
 
+    def load(self) -> None:
+        """Load Slurp'it models and release the SDK connection afterward."""
+        try:
+            super().load()
+        finally:
+            self.close()
+
     def close(self) -> None:
-        """Release the event loop after the adapter finishes loading."""
-        if not self._loop.is_closed():
-            self._loop.close()
+        """Close SDK clients and the loop once, even for an unloaded adapter."""
+        finalizer = getattr(self, "_finalizer", None)
+        if finalizer is not None:
+            finalizer()
+        else:
+            _close_resources(self._loop, getattr(self, "client", None))
 
     def unique_vendors(self) -> list[dict[str, Any]]:
         devices = self.run_async(self.client.device.get_devices())
