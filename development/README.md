@@ -58,10 +58,18 @@ The preview exists to gather feedback on the two new v3 interfaces:
 
 | File | Role |
 | --- | --- |
-| `docker-compose.infrahub.yml` | Official Infrahub compose file, downloaded pristine from `https://infrahub.opsmill.io/<VERSION>`. Do not edit; replace from the source URL and update `VERSION` in `preview.env` together. |
+| `docker-compose.infrahub.yml` | Based on the official Infrahub compose file at `https://infrahub.opsmill.io/<VERSION>`, with image digests added. When refreshing from upstream, restore and verify every image pin before using the file. |
 | `docker-compose.preview.yml` | Preview overrides: collision-free host ports and the dedicated `sync-prefect` service pinned to the repository's Prefect version. |
-| `preview.env` | Shipped defaults — ports, image tags, and local-only tokens. Nothing here is a secret; never point these values at a shared or internet-facing instance. |
+| `preview.env` | Shipped defaults — ports, paired image tags and digests, and local-only tokens. Change a tag and its digest together; a tag-only change still pulls the prior image. Nothing here is a secret; never point these values at a shared or internet-facing instance. |
 | `preview.local.env` | Your personal overrides (gitignored). Tokens you mint while testing belong here, not in `preview.env`. |
+
+The preview tasks also read image overrides exported in the shell, except for
+the generic `VERSION` variable; use `preview.local.env` to change the Infrahub
+version. Changing an Infrahub or Prefect tag requires a matching digest;
+changing only the Infrahub image name drops the shipped digest so a local build
+can run. For a registry mirror, set its digest explicitly, even if it matches
+the shipped digest. With direct Docker Compose, a digest-only override keeps
+the shipped Infrahub tag and replaces its digest.
 
 Runtime state (process pids, logs, sync and product caches) lives under
 `.preview/` at the repository root, also gitignored. The worker runs from its own empty

@@ -194,6 +194,7 @@ def compose(  # noqa: PLR0913 -- the bundle, its overrides, and its inputs vary 
     files: Sequence[Path] = (COMPOSE_FILE,),
     env_files: Sequence[Path] = (DEFAULTS_FILE,),
     timeout: int = 600,
+    inherit_environment: bool = True,
 ) -> Captured:
     """Run one fixed-argv `docker compose` command against the bundle.
 
@@ -209,11 +210,16 @@ def compose(  # noqa: PLR0913 -- the bundle, its overrides, and its inputs vary 
         command += ["--env-file", str(env_file)]
     for path in files:
         command += ["--file", str(path)]
+    base_environment = (
+        os.environ
+        if inherit_environment
+        else {name: os.environ[name] for name in ("PATH", "HOME", "DOCKER_CONFIG") if name in os.environ}
+    )
     return capture(
         [*command, *argv],
         timeout=timeout,
         cwd=BUNDLE,
-        env={**os.environ, **(environment or {})},
+        env={**base_environment, **(environment or {})},
     )
 
 

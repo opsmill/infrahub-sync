@@ -40,6 +40,113 @@ if TYPE_CHECKING:
     from invoke.tasks import Task
 
 
+@pytest.fixture(autouse=True)
+def clean_image_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep preview image checks independent of the invoking shell."""
+    for key in (
+        "VERSION",
+        "INFRAHUB_DOCKER_IMAGE",
+        "INFRAHUB_DOCKER_IMAGE_DIGEST",
+        "PREVIEW_PREFECT_IMAGE_TAG",
+        "PREVIEW_PREFECT_IMAGE_DIGEST",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
+@pytest.mark.parametrize(
+    ("override", "digest_name"),
+    [
+        ("VERSION=9.9.9", "INFRAHUB_DOCKER_IMAGE_DIGEST"),
+        ("PREVIEW_PREFECT_IMAGE_TAG=3.9.0-python3.12", "PREVIEW_PREFECT_IMAGE_DIGEST"),
+    ],
+)
+def test_preview_rejects_tag_only_image_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, override: str, digest_name: str
+) -> None:
+    """A changed tag must never silently keep the previous image digest."""
+    local_env = tmp_path / "preview.local.env"
+    local_env.write_text(f"{override}\n", encoding="utf-8")
+    monkeypatch.setattr(preview, "LOCAL_ENV_FILE", local_env)
+
+    with pytest.raises(preview.PreviewError, match=digest_name):
+        preview.load_preview_env()
+
+
+def test_preview_accepts_a_local_image_with_an_empty_digest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A local Infrahub build can keep the existing image-name override."""
+    local_env = tmp_path / "preview.local.env"
+    local_env.write_text("INFRAHUB_DOCKER_IMAGE=local-infrahub\nINFRAHUB_DOCKER_IMAGE_DIGEST=\n", encoding="utf-8")
+    monkeypatch.setattr(preview, "LOCAL_ENV_FILE", local_env)
+
+    values = preview.load_preview_env()
+
+    assert values["INFRAHUB_DOCKER_IMAGE"] == "local-infrahub"
+    assert not values["INFRAHUB_DOCKER_IMAGE_DIGEST"]
+
+
+@pytest.mark.parametrize("source", ["file", "shell"])
+def test_preview_image_name_override_drops_the_shipped_digest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: str
+) -> None:
+    """A local image selected by either override path stays unpinned."""
+    local_env = tmp_path / "preview.local.env"
+    if source == "file":
+        local_env.write_text("INFRAHUB_DOCKER_IMAGE=local-infrahub\n", encoding="utf-8")
+    else:
+        monkeypatch.setenv("INFRAHUB_DOCKER_IMAGE", "local-infrahub")
+    monkeypatch.setattr(preview, "LOCAL_ENV_FILE", local_env)
+
+    values = preview.load_preview_env()
+
+    assert values["INFRAHUB_DOCKER_IMAGE"] == "local-infrahub"
+    assert not values["INFRAHUB_DOCKER_IMAGE_DIGEST"]
+
+
+def test_preview_accepts_a_registry_mirror_with_the_shipped_digest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An explicitly paired mirror may serve the same content digest."""
+    local_env = tmp_path / "preview.local.env"
+    monkeypatch.setattr(preview, "LOCAL_ENV_FILE", local_env)
+    shipped = preview.load_preview_env()
+    local_env.write_text(
+        f"INFRAHUB_DOCKER_IMAGE=mirror.example/infrahub\n"
+        f"INFRAHUB_DOCKER_IMAGE_DIGEST={shipped['INFRAHUB_DOCKER_IMAGE_DIGEST']}\n",
+        encoding="utf-8",
+    )
+    values = preview.load_preview_env()
+
+    assert values["INFRAHUB_DOCKER_IMAGE"] == "mirror.example/infrahub"
+    assert values["INFRAHUB_DOCKER_IMAGE_DIGEST"] == shipped["INFRAHUB_DOCKER_IMAGE_DIGEST"]
+
+
+@pytest.mark.parametrize(
+    ("setting", "value", "digest_name"),
+    [
+        ("PREVIEW_PREFECT_IMAGE_TAG", "3.9.0-python3.12", "PREVIEW_PREFECT_IMAGE_DIGEST"),
+    ],
+)
+def test_preview_rejects_shell_tag_only_overrides(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, setting: str, value: str, digest_name: str
+) -> None:
+    """A shell tag override cannot pair with a digest from preview.env."""
+    monkeypatch.setattr(preview, "LOCAL_ENV_FILE", tmp_path / "preview.local.env")
+    monkeypatch.setenv(setting, value)
+
+    with pytest.raises(preview.PreviewError, match=digest_name):
+        preview.load_preview_env()
+
+
+def test_preview_ignores_unrelated_shell_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The shipped Infrahub version wins over a generic shell variable."""
+    monkeypatch.setattr(preview, "LOCAL_ENV_FILE", tmp_path / "preview.local.env")
+    monkeypatch.setenv("VERSION", "unrelated-version")
+
+    values = preview.load_preview_env()
+
+    assert values["VERSION"] == "1.10.6"
+
+
 def test_preview_routes_prefect_ui_to_the_published_host_port() -> None:
     compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
 
