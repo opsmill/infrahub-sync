@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Union, cast
 import yaml
 from diffsync.store.local import LocalStore
 from diffsync.store.redis import RedisStore
-from infrahub_sdk import Config
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.cache.paths import run_dir as stored_run_dir
@@ -496,19 +495,3 @@ class PlanApplier:
             f"Nothing was written."
         )
         raise PlanVerificationError(msg, next_action=failure.next_action)
-
-
-def get_infrahub_config(settings: dict[str, str | None], branch: str | None) -> Config:
-    """Creates and returns a Config object for infrahub if settings are valid.
-
-    Args:
-        settings (Dict[str, Optional[str]]): The settings dictionary containing `url`, `token`, and `branch`.
-        branch (Optional[str]): The default branch to use if none is provided in settings.
-
-    Returns:
-        Optional[Config]: A Config instance if `token` is available, otherwise None.
-    """
-    infrahub_token = settings.get("token") or None
-    infrahub_branch = settings.get("branch") or branch or "main"
-
-    return Config(default_branch=infrahub_branch, api_token=infrahub_token)

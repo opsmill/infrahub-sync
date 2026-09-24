@@ -42,11 +42,6 @@ def list_to_set(items: list[str]) -> str:
     return "(" + response + ")"
 
 
-def list_to_str(items: list[str]) -> str:
-    """Convert a list into a string separated with comma"""
-    return ", ".join(items)
-
-
 def has_node(config: SyncConfig, name: str) -> bool:
     return any(item.name == name for item in config.schema_mapping)
 
@@ -124,23 +119,6 @@ def get_attributes(node: NodeSchema, config: SyncConfig) -> list[str] | None:
     return attributes
 
 
-def get_children(node: NodeSchema, config: SyncConfig) -> str | None:
-    # rel.peer.lower() might now work in all cases we should have a better function to convert that
-    children = {
-        rel.peer.lower(): rel.name
-        for rel in node.relationships
-        if rel.cardinality == "many"
-        and rel.kind == RelationshipKind.COMPONENT
-        and has_field(config, name=node.kind, field=rel.name)
-    }
-
-    if not children:
-        return None
-
-    children_list = [f'"{key}": "{value}"' for key, value in children.items()]
-    return "{" + ", ".join(children_list) + "}"
-
-
 class _AttributeLike(Protocol):
     """Structural shape get_attribute_type_annotation() needs from an attribute-schema object."""
 
@@ -186,10 +164,6 @@ def get_relationship_type_annotation(item: _RelationshipLike) -> str:
     return annotation
 
 
-def has_children(node: NodeSchema, config: SyncConfig) -> bool:
-    return bool(get_children(config=config, node=node))
-
-
 def render_template(
     template_file: Path,
     output_dir: Path,
@@ -210,12 +184,9 @@ def render_template(
     # Add custom filters to Jinja2
     template_env.filters["get_identifiers"] = get_identifiers
     template_env.filters["get_attributes"] = get_attributes
-    template_env.filters["get_children"] = get_children
     template_env.filters["list_to_set"] = list_to_set
-    template_env.filters["list_to_str"] = list_to_str
     template_env.filters["has_node"] = has_node
     template_env.filters["has_field"] = has_field
-    template_env.filters["has_children"] = has_children
     template_env.filters["get_attribute_type_annotation"] = get_attribute_type_annotation
     template_env.filters["get_relationship_type_annotation"] = get_relationship_type_annotation
 
