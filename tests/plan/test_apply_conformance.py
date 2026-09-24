@@ -9,8 +9,8 @@ harness runs a **real** `InfrahubNodeSync` built from the committed schema fixtu
 the transport edge replaced; no server is contacted.
 
 The harness checks that updates render their recorded `id`, relationship-crossing creates
-carry a complete `hfid`, partial relationship identities are refused, and repeated applies
-reuse one node. It also checks replace-set behavior, unmapped fields, and repeat-render
+carry complete identity components, partial relationship identities are refused, and repeated
+applies reuse one node. It also checks replace-set behavior, unmapped fields, and repeat-render
 identity for direct-attribute operations.
 
 The stateful transport fixture also models the destination's key lookup so two applies must
@@ -149,7 +149,7 @@ class ConformanceClient(InfrahubClientSync):
 
 
 class ConvergingClient(ConformanceClient):
-    """Record real SDK queries and model a destination keyed by the sent HFID."""
+    """Record real SDK queries and model a destination keyed by their identity fields."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -160,14 +160,11 @@ class ConvergingClient(ConformanceClient):
         query = kwargs["query"]
         if f"{DEVICE_KIND}Upsert" not in query:
             return response
-        hfid = rendered_hfid(query)
-        # An unkeyed write always creates another node. This keeps the regression
-        # meaningful if the SDK stops putting the explicit key on the wire.
-        if hfid is None:
-            node_id = f"device-{len(self.nodes) + 1}"
-            self.nodes[node_id,] = node_id
-        else:
-            node_id = self.nodes.setdefault(tuple(hfid), f"device-{len(self.nodes) + 1}")
+        name = re.search(r'name:\s*\{\s*value: "([^"]+)"', query)
+        site = re.search(r'site:\s*\{\s*id: "([^"]+)"', query)
+        # Without both components, each write creates a new node.
+        key = (site.group(1), name.group(1)) if site and name else (f"unkeyed-{len(self.nodes) + 1}",)
+        node_id = self.nodes.setdefault(key, f"device-{len(self.nodes) + 1}")
         response[f"{DEVICE_KIND}Upsert"]["object"]["id"] = node_id
         return response
 
@@ -315,12 +312,6 @@ def top_level_scalar_id(query: str) -> str | None:
     return match.group(1) if match else None
 
 
-def rendered_hfid(query: str) -> list[str] | None:
-    """The destination object's top-level HFID, excluding any nested peer key."""
-    match = re.search(r"^ {12}hfid: \[(.*?)^ {12}\]", query, flags=re.MULTILINE | re.DOTALL)
-    return re.findall(r'"([^"]+)"', match.group(1)) if match else None
-
-
 def mutation_input_fields(query: str) -> list[str]:
     """The field names inside a rendered mutation's top-level `data: { ... }` input block.
 
@@ -434,7 +425,7 @@ def test_an_update_renders_a_scalar_top_level_id_equal_to_its_destination_id(
 
 
 def test_a_relationship_crossing_kind_is_keyed_and_repeated_apply_reuses_the_node() -> None:
-    """A complete wire HFID makes two creates converge on the same destination node."""
+    """Complete identity fields make two creates converge on the same destination node."""
     client = ConvergingClient()
     adapter = make_adapter(client)
     peer = InfrahubNodeSync(client=client, schema=SCHEMAS[SITE_KIND], data={"id": "conf-site-id-1"})
@@ -447,7 +438,8 @@ def test_a_relationship_crossing_kind_is_keyed_and_repeated_apply_reuses_the_nod
     assert all(call.kwargs["name__value"] == "site-a" for call in lookup.call_args_list)
 
     assert client.mutation_names == [f"{DEVICE_KIND}Upsert"] * 2
-    assert [rendered_hfid(query) for _, query in client.mutations] == [["site-a", "device-a"]] * 2
+    assert set(client.nodes) == {("conf-site-id-1", "device-a")}
+    assert all("hfid:" not in query for _, query in client.mutations)
     assert results == ["device-1", "device-1"]
     assert len(client.nodes) == 1
 
@@ -482,7 +474,6 @@ def test_partial_peer_filter_cannot_key_a_relationship_create(caplog: pytest.Log
     """A complete parent HFID still needs a fully identified relationship peer."""
     client = ConformanceClient()
     site_schema = SCHEMAS[SITE_KIND].model_copy(update={"human_friendly_id": ["name__value", "region__value"]})
-    client.schema.set_cache(BranchSchema(hash="composite-peer", nodes={**SCHEMAS, SITE_KIND: site_schema}))
     adapter = make_adapter(client)
     adapter.schema[SITE_KIND] = site_schema
     peers = PeerResolver(adapter)

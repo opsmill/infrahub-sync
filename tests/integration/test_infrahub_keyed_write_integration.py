@@ -2,8 +2,8 @@
 
 The offline harnesses prove what the client renders. What they cannot prove is what the
 **server does with it**, and that is the whole substance of this change: a create carrying
-a complete human-friendly ID converges rather than duplicating, and an upsert carrying a
-recorded `id` updates in place. Both are
+every human-friendly-ID component converges rather than duplicating even though the mutation
+carries no key at all, and an upsert carrying a recorded `id` updates in place. Both are
 server behaviours; a recording transport cannot settle either.
 
 Five primary cases, on the smallest fixture that can carry them:
@@ -64,9 +64,11 @@ DEVICE_KIND = "TestUnkeyedDevice"
 MOUNT_KIND = "TestUnkeyedMount"
 RENAMABLE_KIND = "TestUnkeyedRenamable"
 
-# `TestUnkeyedDevice`'s human-friendly ID crosses the `site` relationship. The SDK cannot
-# derive that HFID from a resolved peer id, so the planned-write path supplies the complete
-# key explicitly. The first case below checks live convergence. The site is
+# `TestUnkeyedDevice`'s human-friendly ID crosses the `site` relationship. The SDK renders no
+# key at all for that shape — a peer supplied as a resolved node id renders as `{"id": ...}`
+# with no `__typename`, so `get_human_friendly_id()` resolves to None — and it does not need
+# to: the server matches on the components in `data`. That the destination really converges it
+# is the first case below, and it is why AD067 is closed rather than worked around. The site is
 # all-direct, so the peer it references is itself writable and the device's own keying is what
 # each case measures.
 #
@@ -393,9 +395,12 @@ def _device_partial_update(device_name: str, *, destination_id: str, serial: str
 def test_a_relationship_crossing_create_converges_instead_of_duplicating(
     keyed_write_scope: KeyedWriteScope,
 ) -> None:
-    """The explicit relationship-crossing HFID converges onto one live object.
+    """AD067 closes: the server matches on the components in `data`, with no key on the wire.
 
-    The second apply must return the first node's id and leave exactly one matching object.
+    The second apply is the substance. A create-shaped upsert carries neither `id` nor
+    `hfid` for this kind, so convergence is the server matching on the human-friendly-ID
+    components the payload carries. If it did not, this would show as a count that climbed —
+    which is exactly the silent duplicate the whole change exists to prevent.
     """
     scope = keyed_write_scope
     created_name = f"converged-{scope.device_name}"

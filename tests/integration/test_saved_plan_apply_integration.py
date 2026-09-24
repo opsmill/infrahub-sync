@@ -7,8 +7,9 @@ of them declares `human_friendly_id: ['name__value']`, so every planned write he
 the client can form.
 
 The earlier slice also qualified through `InterfaceLag` and `InterfacePhysical`, both
-`['device__name__value', 'name__value']`. The planned-write path now supplies a complete
-explicit HFID for those kinds. This slice simply no longer carries one, which
+`['device__name__value', 'name__value']`. Such a key cannot be rendered client-side, but it does
+not need to be: the destination converges on the complete HFID components in `data`, so those
+kinds are written like any other (AD067 closed). This slice simply no longer carries one, which
 keeps its identity assertions direct. **SC-008's relationship-crossing peer arm moved rather
 than being retired**, together with the nested `<rel>__<attr>__value` filter spelling it was the
 only live evidence for: both are qualified directly by

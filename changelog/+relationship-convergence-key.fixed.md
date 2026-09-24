@@ -1,1 +1,1 @@
-Ensure planned Infrahub writes with relationship-based identities carry a complete destination key, and refuse incomplete keys before writing.
+Refuse Infrahub writes when a relationship peer lookup uses only part of its key instead of warning and continuing.
