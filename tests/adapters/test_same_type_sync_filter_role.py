@@ -10,6 +10,9 @@ because the predicate is then true for both instances.
 
 from __future__ import annotations
 
+import importlib
+import sys
+import types
 from collections.abc import Callable, Iterator
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -19,6 +22,46 @@ import pytest
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
 
 _ELEMENT_NAME = "InfraDevice"
+
+
+def _import_with_optional_sdk_stub(
+    adapter_module_name: str,
+    sdk_name: str,
+    **sdk_attrs: Any,  # noqa: ANN401 — stub attribute values vary per SDK (e.g. `IPFClient=object`)
+) -> types.ModuleType:
+    """Import `infrahub_sync.adapters.<adapter_module_name>`, stubbing an uninstalled SDK.
+
+    Neither `ipfabric` nor `slurpit` is installed in the development or CI unit
+    profiles, and both adapter modules import their SDK unconditionally at module
+    level. `_create_ipfabric_client`/`_create_slurpit_client` are patched out by the
+    callers below, so only the import itself needs to succeed. The stub and the
+    freshly imported adapter module are removed again afterward so this does not
+    leak into other test modules, matching what
+    `tests/adapters/test_reference_conversion_optional_sdk.py` checks for.
+    """
+    import infrahub_sync.adapters as adapters_package
+
+    full_name = f"infrahub_sync.adapters.{adapter_module_name}"
+    try:
+        importlib.import_module(sdk_name)
+        sdk_installed = True
+    except ImportError:
+        sdk_installed = False
+
+    if sdk_installed:
+        return importlib.import_module(full_name)
+
+    stub = types.ModuleType(sdk_name)
+    for name, value in sdk_attrs.items():
+        setattr(stub, name, value)
+    sys.modules[sdk_name] = stub
+    sys.modules.pop(full_name, None)
+    try:
+        return importlib.import_module(full_name)
+    finally:
+        sys.modules.pop(sdk_name, None)
+        sys.modules.pop(full_name, None)
+        adapters_package.__dict__.pop(adapter_module_name, None)
 
 
 def _config(source_name: str, dest_name: str, *, fields: list[dict] | None = None) -> SyncConfig:
@@ -84,11 +127,11 @@ def _build_genericrestapi(target: str, config: SyncConfig) -> Any:  # noqa: ANN4
 
 
 def _build_ipfabricsync(target: str, config: SyncConfig) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
-    pytest.importorskip("ipfabric")
-    from infrahub_sync.adapters.ipfabricsync import IpfabricsyncAdapter
+    module = _import_with_optional_sdk_stub("ipfabricsync", "ipfabric", IPFClient=object)
+    adapter_cls = module.IpfabricsyncAdapter
 
-    with patch.object(IpfabricsyncAdapter, "_create_ipfabric_client", return_value=MagicMock()):
-        adapter = IpfabricsyncAdapter(
+    with patch.object(adapter_cls, "_create_ipfabric_client", return_value=MagicMock()):
+        adapter = adapter_cls(
             target=target,
             adapter=SyncAdapter(name="ipfabricsync", settings={"base_url": "https://example.invalid", "token": "x"}),
             config=config,
@@ -98,11 +141,11 @@ def _build_ipfabricsync(target: str, config: SyncConfig) -> Any:  # noqa: ANN401
 
 
 def _build_slurpitsync(target: str, config: SyncConfig) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
-    pytest.importorskip("slurpit")
-    from infrahub_sync.adapters.slurpitsync import SlurpitsyncAdapter
+    module = _import_with_optional_sdk_stub("slurpitsync", "slurpit")
+    adapter_cls = module.SlurpitsyncAdapter
 
-    with patch.object(SlurpitsyncAdapter, "_create_slurpit_client", return_value=MagicMock()):
-        return SlurpitsyncAdapter(
+    with patch.object(adapter_cls, "_create_slurpit_client", return_value=MagicMock()):
+        return adapter_cls(
             target=target,
             adapter=SyncAdapter(name="slurpitsync", settings={"url": "https://example.invalid", "token": "x"}),
             config=config,
