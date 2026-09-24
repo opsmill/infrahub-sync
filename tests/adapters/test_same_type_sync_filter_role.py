@@ -10,7 +10,9 @@ because the predicate is then true for both instances.
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+import importlib.util
 import sys
 import types
 from collections.abc import Callable, Iterator
@@ -24,6 +26,19 @@ from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, S
 _ELEMENT_NAME = "InfraDevice"
 
 
+def _sdk_installed(sdk_name: str) -> bool:
+    """Check for a real install without trusting a stub left behind in `sys.modules`.
+
+    A bare `types.ModuleType` stub has no `__spec__`, so `find_spec` raises `ValueError`
+    for it instead of returning a spec, letting a leaked stub be told apart from a real
+    installed package.
+    """
+    try:
+        return importlib.util.find_spec(sdk_name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def _import_with_optional_sdk_stub(
     adapter_module_name: str,
     sdk_name: str,
@@ -34,22 +49,24 @@ def _import_with_optional_sdk_stub(
     Neither `ipfabric` nor `slurpit` is installed in the development or CI unit
     profiles, and both adapter modules import their SDK unconditionally at module
     level. `_create_ipfabric_client`/`_create_slurpit_client` are patched out by the
-    callers below, so only the import itself needs to succeed. The stub and the
-    freshly imported adapter module are removed again afterward so this does not
-    leak into other test modules, matching what
-    `tests/adapters/test_reference_conversion_optional_sdk.py` checks for.
+    callers below, so only the import itself needs to succeed. Any prior `sys.modules`
+    entries and `infrahub_sync.adapters` package attribute are recorded and restored
+    afterward, and a module-level event loop created by the stubbed import (Slurp'it)
+    is closed, matching what `_reload_submodule` in
+    `tests/adapters/test_reference_conversion_optional_sdk.py` does.
     """
     import infrahub_sync.adapters as adapters_package
 
     full_name = f"infrahub_sync.adapters.{adapter_module_name}"
-    try:
-        importlib.import_module(sdk_name)
-        sdk_installed = True
-    except ImportError:
-        sdk_installed = False
-
-    if sdk_installed:
+    if _sdk_installed(sdk_name):
         return importlib.import_module(full_name)
+
+    had_sdk_module = sdk_name in sys.modules
+    prior_sdk_module = sys.modules.get(sdk_name)
+    had_adapter_module = full_name in sys.modules
+    prior_adapter_module = sys.modules.get(full_name)
+    had_attr = hasattr(adapters_package, adapter_module_name)
+    prior_attr = getattr(adapters_package, adapter_module_name, None)
 
     stub = types.ModuleType(sdk_name)
     for name, value in sdk_attrs.items():
@@ -57,11 +74,22 @@ def _import_with_optional_sdk_stub(
     sys.modules[sdk_name] = stub
     sys.modules.pop(full_name, None)
     try:
-        return importlib.import_module(full_name)
+        module = importlib.import_module(full_name)
+        loop = getattr(module, "loop", None)
+        if isinstance(loop, asyncio.AbstractEventLoop):
+            loop.close()
+        return module
     finally:
         sys.modules.pop(sdk_name, None)
         sys.modules.pop(full_name, None)
-        adapters_package.__dict__.pop(adapter_module_name, None)
+        if had_sdk_module:
+            sys.modules[sdk_name] = prior_sdk_module
+        if had_adapter_module and prior_adapter_module is not None:
+            sys.modules[full_name] = prior_adapter_module
+        if had_attr:
+            setattr(adapters_package, adapter_module_name, prior_attr)
+        else:
+            adapters_package.__dict__.pop(adapter_module_name, None)
 
 
 def _config(source_name: str, dest_name: str, *, fields: list[dict] | None = None) -> SyncConfig:
