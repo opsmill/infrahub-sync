@@ -93,7 +93,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         run `filter_records` itself (e.g. to log a filtered count) so records
         aren't filtered twice.
         """
-        if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+        if self.target == "source":
             filtered = (
                 raw_records if already_filtered else model.filter_records(records=raw_records, schema_mapping=element)
             )
@@ -164,7 +164,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
             raw_records = [dict(node) for node in endpoint.all()]
             total = len(raw_records)
 
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            if self.target == "source":
                 filtered = model.filter_records(records=raw_records, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered), total, resource_name)
             else:

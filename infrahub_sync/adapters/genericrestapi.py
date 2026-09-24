@@ -129,8 +129,7 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
                 raise ValueError(msg) from exc
 
             total = len(objs)
-            adapter_type_title = (self.type or "").title()
-            if self.config.source.name.title() == adapter_type_title:
+            if self.target == "source":
                 # Filter records
                 filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
