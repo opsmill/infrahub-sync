@@ -54,6 +54,7 @@ from infrahub_sync.service.orchestration import (
     PrefectOrchestration,
 )
 from tests.configuration.validation_packages import package
+from tests.logging_registry_fixtures import logging_registry_snapshot  # noqa: F401 - fixture, used by name
 from tests.service.execution_fixtures import append_execution, bind_granting_guard
 
 if TYPE_CHECKING:
@@ -278,6 +279,65 @@ def test_missing_context_uses_local_logger_without_constructing_a_bridge(monkeyp
 
     assert isinstance(run_logger, logging.Logger)
     assert prefect_context is False
+
+
+@pytest.mark.usefixtures("logging_registry_snapshot")
+@pytest.mark.parametrize("raise_exceptions", [True, False])
+@pytest.mark.parametrize("failure_mode", ["formatting", "forwarding"])
+def test_service_worker_log_bridge_never_leaks_a_secret_to_stderr_on_a_failed_record(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    failure_mode: str,
+    raise_exceptions: bool,  # noqa: FBT001
+) -> None:
+    """Same acceptance criterion as the direct flow bridge, exercised via the service worker's own import path.
+
+    `service_flow.RunLoggerBridge` is the same class the direct flow uses, but the
+    service worker's `_remote_log_bridge` constructs and owns it independently, so
+    the failure path is proven through this module's usage too rather than assumed
+    from the direct flow's coverage.
+    """
+    canary = "service-worker-preflight-secret-canary"
+    source_logger = logging.getLogger(service_flow.SOURCE_LOGGER_NAME)
+    monkeypatch.setattr(source_logger, "propagate", False)
+    monkeypatch.setattr(logging, "raiseExceptions", raise_exceptions)
+    # A prior test elsewhere in the suite may have permanently attached the plain
+    # CLI `StreamHandler` to this same process-global logger (`cli._setup_logging`
+    # never removes it). That handler's own unrelated `handleError` leak is the
+    # ticket's explicit exclusion, so it is cleared here to isolate this bridge.
+    original_handlers = list(source_logger.handlers)
+    run_logger = _RecordingRunLogger()
+    if failure_mode == "forwarding":
+
+        def _raise_on_log(*_args: object, **_kwargs: object) -> None:
+            failure_message = "run logger rejected the record"
+            raise RuntimeError(failure_message)
+
+        monkeypatch.setattr(run_logger, "log", _raise_on_log)
+    child_logger_name = f"{service_flow.SOURCE_LOGGER_NAME}.secret-leak-test"
+    # `logging_registry_snapshot` restores whatever this name (and any
+    # descendant's `.parent` reference) held in the process-wide registry
+    # before the test ran, whether that was a `Logger`, a `PlaceHolder`, or
+    # nothing.
+    child_logger = logging.getLogger(child_logger_name)
+
+    try:
+        source_logger.handlers = []
+        with service_flow._remote_log_bridge(run_logger, prefect_context=True, secrets=(canary,)):
+            if failure_mode == "formatting":
+                child_logger.warning(  # noqa: PLE1205
+                    "secret in an over-supplied argument: %s",
+                    canary,
+                    "one argument too many",
+                )
+            else:
+                child_logger.warning("secret in the message: %s", canary)
+    finally:
+        source_logger.handlers = original_handlers
+
+    stderr = capsys.readouterr().err
+    assert canary not in stderr
+    assert stderr.count("could not be forwarded") == 1
 
 
 def test_direct_and_service_log_bridges_serialize_ownership_and_restore_state(  # noqa: PLR0914, PLR0915

@@ -23,9 +23,11 @@ The flow calls the shared execution surface IN-PROCESS; it never spawns the CLI.
 # (re-adding the import fails it); the refusal itself is covered separately by
 # ::test_flow_refuses_an_invalid_operation_at_parameter_validation.
 
+import contextlib
 import dataclasses
 import logging
 import os
+import sys
 from collections.abc import Sequence
 from threading import Lock
 from typing import Any, Literal, Protocol
@@ -78,6 +80,21 @@ class RunLogger(Protocol):
     def info(self, msg: str, *args: object) -> None: ...
 
 
+def _sanitize_diagnostic_field(value: object) -> str:
+    """Render any field as a single line of text for the bridge failure diagnostic.
+
+    `value` may be any type (e.g. `None` from `logging.makeLogRecord()`) and may
+    contain characters the caller controls (via `logging.getLogger()`,
+    `logging.addLevelName()`, or a custom exception class) that could otherwise
+    split the fixed diagnostic into more than one stderr line \u2014 not just `\n`
+    and `\r`, but any non-printable character, including `\v`, `\f`, U+0085, and
+    the Unicode line/paragraph separators U+2028 and U+2029. Replacing every
+    character for which `str.isprintable()` is false covers all of them at once
+    instead of enumerating separators.
+    """
+    return "".join(char if char.isprintable() else "?" for char in str(value))
+
+
 class RunLoggerBridge(logging.Handler):
     """Forward `infrahub_sync` hierarchy records into the Prefect run logger.
 
@@ -95,15 +112,41 @@ class RunLoggerBridge(logging.Handler):
         """Re-log the record through the run logger, preserving level and origin name."""
         try:
             self._run_logger.log(record.levelno, "%s | %s", record.name, redact(record.getMessage(), self._secrets))
-        except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             # `logging.Handler.emit` must never propagate: `Handler.handle` does not
             # shield it, so anything raised here escapes at the unrelated logging
             # call site. A single bad `%`-format call in any `infrahub_sync.*` logger
             # — including a user-written custom adapter — would otherwise fail a run
-            # that has already written to the destination. `handleError` is the
-            # stdlib contract for exactly this, and it is what today's plain CLI
-            # StreamHandler already does with the same bad call.
-            self.handleError(record)
+            # that has already written to the destination.
+            #
+            # Deliberately NOT `self.handleError(record)`: the stdlib default prints
+            # a traceback plus the ORIGINAL, unredacted `record.msg`/`record.args` to
+            # stderr whenever `logging.raiseExceptions` is true, bypassing the
+            # redaction this bridge exists to apply. Write a fixed line with no
+            # record content instead, and swallow a failure to do even that.
+            #
+            # `record.name` is whatever the caller passed to `logging.getLogger()`,
+            # `record.levelname` can likewise be attacker/caller-controlled via
+            # `logging.addLevelName()`, and `type(exc).__name__` comes from
+            # whatever exception class formatting or forwarding happened to
+            # raise (including a user-written adapter's own exception type) —
+            # none of the three is a value this module controls, and none is
+            # guaranteed to even be a string (e.g. a `LogRecord` built by
+            # `logging.makeLogRecord()` defaults `name` to `None`). A non-printable
+            # character embedded in any of them — not just `\n`/`\r`, but also
+            # `\v`, `\f`, U+0085, or the Unicode line/paragraph separators — would
+            # split this one write into more than one stderr line (log-line
+            # injection), and a non-string value would raise at the logging call
+            # site. Build the whole line — including converting all three fields
+            # to text — inside the suppression, so nothing here can escape `emit()`.
+            with contextlib.suppress(Exception):
+                safe_name = _sanitize_diagnostic_field(record.name)
+                safe_levelname = _sanitize_diagnostic_field(record.levelname)
+                safe_exc_type = _sanitize_diagnostic_field(type(exc).__name__)
+                sys.stderr.write(
+                    f"infrahub_sync: a log record from {safe_name} at {safe_levelname} "
+                    f"could not be forwarded ({safe_exc_type})\n"
+                )
 
 
 @flow(name=FLOW_NAME)
