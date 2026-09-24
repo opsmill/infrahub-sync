@@ -72,12 +72,12 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             return loop.run_until_complete(coroutine)
 
     def unique_vendors(self) -> list[dict[str, Any]]:
-        devices = self.run_async(self.client.device.get_devices())
+        devices = self.client.device.get_devices()
         vendors = {device.brand for device in devices}
         return [{"brand": item} for item in vendors]
 
     def unique_device_type(self) -> list[dict[str, Any]]:
-        devices = self.run_async(self.client.device.get_devices())
+        devices = self.client.device.get_devices()
         device_types = {(device.brand, device.device_type, device.device_os) for device in devices}
         return [{"brand": item[0], "device_type": item[1], "device_os": item[2]} for item in device_types]
 
@@ -166,18 +166,14 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         return results
 
     def planning_results(self, planning_name):
-        plannings = self.run_async(self.client.planning.get_plannings())
+        plannings = self.client.planning.get_plannings()
         planning = next((plan.to_dict() for plan in plannings if plan.slug == planning_name), None)
         if not planning:
             msg = f"No planning found for name: {planning_name}"
             raise IndexError(msg)
 
         search_data = {"planning_id": planning["id"], "unique_results": True}
-        # `search_plannings` takes no `limit` keyword in the installed SDK; pre-existing,
-        # out of scope here. TODO: drop `limit` or confirm a newer SDK release adds it.
-        results = self.run_async(
-            self.client.planning.search_plannings(search_data, limit=30000)  # ty: ignore[unknown-argument]
-        )
+        results = self.client.planning.search_plannings(search_data)
         return results or []
 
     def model_loader(self, model_name: str, model: type[SlurpitsyncModel]) -> None:

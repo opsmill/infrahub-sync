@@ -1194,6 +1194,9 @@ dev = [
     { name = "types-ujson" },
     { name = "yamllint" },
 ]
+ipfabric = [
+    { name = "ipfabric", marker = "python_full_version >= '3.11'" },
+]
 prefect = [
     { name = "prefect" },
 ]
@@ -1201,7 +1204,6 @@ service = [
     { name = "boto3", marker = "python_full_version >= '3.11'" },
     { name = "fastapi", marker = "python_full_version >= '3.11'" },
     { name = "infrahub-sdk", extra = ["ctl"], marker = "python_full_version >= '3.11'" },
-    { name = "ipfabric", marker = "python_full_version >= '3.11'" },
     { name = "prefect", marker = "python_full_version >= '3.11'" },
     { name = "prometheus-client", marker = "python_full_version >= '3.11'" },
     { name = "psycopg", extra = ["binary"], marker = "python_full_version >= '3.11'" },
@@ -1222,7 +1224,7 @@ requires-dist = [
     { name = "infrahub-sdk", specifier = ">=1.17,<2" },
     { name = "infrahub-sdk", extras = ["ctl"], marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=1.17,<2" },
     { name = "invoke", marker = "extra == 'dev'", specifier = ">=2.2.1,<4" },
-    { name = "ipfabric", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=8.0,<9" },
+    { name = "ipfabric", marker = "python_full_version >= '3.11' and extra == 'ipfabric'", specifier = ">=8.0,<9" },
     { name = "ipython", marker = "extra == 'dev'", specifier = ">=8.18" },
     { name = "jinja2", specifier = ">=3.0.2" },
     { name = "netutils", specifier = ">=1.12,<2.0" },
@@ -1264,7 +1266,7 @@ requires-dist = [
     { name = "uvicorn", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=0.34,<1" },
     { name = "yamllint", marker = "extra == 'dev'", specifier = ">=1.37.1" },
 ]
-provides-extras = ["prefect", "service", "dev"]
+provides-extras = ["prefect", "service", "ipfabric", "dev"]
 
 [[package]]
 name = "iniconfig"

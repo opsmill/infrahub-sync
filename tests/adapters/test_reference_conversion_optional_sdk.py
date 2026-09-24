@@ -310,8 +310,17 @@ def test_teardown_leaves_no_stub_backed_module_on_parent_package(
     else:
         # In a `service`-profile run the SDK is genuinely installed, so a fresh,
         # unstubbed import succeeds too, and teardown must undo its side effects the
-        # same way, so it doesn't leak into other tests in this session.
-        module = __import__(full_name, fromlist=["_"])
-        assert module is sys.modules[full_name]
-        del sys.modules[full_name]
-        adapters_package.__dict__.pop(name, None)
+        # same way, so it doesn't leak into other tests in this session. A real SDK
+        # import also pulls in its own submodules and dependencies (`ipfabric.api`,
+        # `niquests`, `pandas`, ...), none of which were in `sys.modules` before, so
+        # those must be snapshotted and removed too, and the cleanup must run even if
+        # the import or assertion fails.
+        pre_import_modules = frozenset(sys.modules)
+        try:
+            module = __import__(full_name, fromlist=["_"])
+            assert module is sys.modules[full_name]
+        finally:
+            sys.modules.pop(full_name, None)
+            adapters_package.__dict__.pop(name, None)
+            for leaked_module in set(sys.modules) - pre_import_modules:
+                sys.modules.pop(leaked_module, None)

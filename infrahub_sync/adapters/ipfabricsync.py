@@ -20,7 +20,7 @@ from infrahub_sync.adapters.utils import build_mapping
 logger = logging.getLogger(__name__)
 
 try:
-    # declared in the `service` extra, not the base install
+    # declared in the `ipfabric` extra, not the base install or the default `service` image
     from ipfabric import IPFClient  # ty: ignore[unresolved-import]
 except ImportError:
     logger.exception("Failed to import ipfabric")
