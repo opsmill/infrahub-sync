@@ -110,7 +110,7 @@ ROWS = (
     ),
     AdapterRow(
         "slurpitsync",
-        {"url": "https://registered-slurpit", "token": "registered-token"},
+        {"url": "https://registered-slurpit", "api_key": "registered-token"},
         {},
         {"url": "https://registered-slurpit", "token": "registered-token"},
         {"url": "https://registered-slurpit", "token": "registered-token"},
@@ -215,7 +215,7 @@ def _capture_client(
         def make_slurpit_client(**kwargs: object) -> object:
             observed.append(kwargs)
 
-            async def get_devices() -> list[object]:  # noqa: RUF029 - awaited via `run_async`
+            def get_devices() -> list[object]:  # matches the real (synchronous) SDK
                 return []
 
             return types.SimpleNamespace(device=types.SimpleNamespace(get_devices=get_devices))
@@ -245,7 +245,7 @@ def _observed(row: AdapterRow, kwargs: dict[str, Any]) -> dict[str, object]:
             "token": kwargs["api_token"],
         }
     if row.name in {"ipfabricsync", "slurpitsync"}:
-        url_key, token_key = {"ipfabricsync": ("base_url", "auth"), "slurpitsync": ("url", "token")}[row.name]
+        url_key, token_key = {"ipfabricsync": ("base_url", "auth"), "slurpitsync": ("url", "api_key")}[row.name]
         return {"url": kwargs[url_key], "token": kwargs[token_key]}
     return {"url": str(kwargs["base_url"]).removesuffix("/api/v0").removesuffix("/api"), "token": kwargs["api_token"]}
 
@@ -505,7 +505,7 @@ def test_ipfabric_resolves_into_local_settings_without_mutating_caller(
 
     assert observed == [
         {
-            "verify_ssl": False,
+            "verify": False,
             "base_url": "https://declared-ipfabric" if environment == "declared" else "https://namespaced-ipfabric",
             "auth": "declared-token" if environment == "declared" else "namespaced-token",
         }

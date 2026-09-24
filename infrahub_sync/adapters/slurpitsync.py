@@ -36,16 +36,25 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         self.skipped = []
 
     def _create_slurpit_client(self, adapter: SyncAdapter) -> slurpit.api:
-        settings = adapter.settings or {}
-        # The registered setting surface is forwarded without establishing the optional
-        # client's accepted signature here. The local boundary is guarded by
-        # tests/configuration/test_adapter_setting_conformance.py.
+        settings = dict(adapter.settings or {})
+        # `slurpit.api` takes no verify/verify_ssl keyword at all (0.9.x), so a
+        # `verify_ssl` registered setting can only be honored when it isn't
+        # asking to disable verification; otherwise this is a no-op the SDK
+        # can't perform, so warn rather than fail or silently stay verified.
+        verify_ssl = settings.pop("verify_ssl", None)
+        if verify_ssl is False:
+            logger.warning(
+                "The Slurp'it SDK does not support disabling TLS verification; "
+                "requests will still verify the server's certificate."
+            )
         client = slurpit.api(**settings)
         try:
-            self.run_async(client.device.get_devices())
-        except Exception as e:  # noqa: BLE001
+            # `DeviceAPI.get_devices` is a synchronous `requests` call, not a coroutine;
+            # `run_async` is for the adapter's own async model-loading calls below.
+            client.device.get_devices()
+        except Exception as e:
             msg = f"Unable to connect to Slurpit API: {e}"
-            raise ValueError(msg)
+            raise ValueError(msg) from e
         return client
 
     def run_async(self, coroutine):
@@ -164,7 +173,11 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             raise IndexError(msg)
 
         search_data = {"planning_id": planning["id"], "unique_results": True}
-        results = self.run_async(self.client.planning.search_plannings(search_data, limit=30000))
+        # `search_plannings` takes no `limit` keyword in the installed SDK; pre-existing,
+        # out of scope here. TODO: drop `limit` or confirm a newer SDK release adds it.
+        results = self.run_async(
+            self.client.planning.search_plannings(search_data, limit=30000)  # ty: ignore[unknown-argument]
+        )
         return results or []
 
     def model_loader(self, model_name: str, model: type[SlurpitsyncModel]) -> None:

@@ -1,1 +1,1 @@
-Declare the `ipfabric`, `slurpit-sdk`, and `prometheus-client` SDKs in the `service` package extra so the bundled IP Fabric, Slurp'it, and Prometheus adapters can actually load in a standard deployment.
+Declare the `ipfabric`, `slurpit-sdk`, and `prometheus-client` SDKs in the `service` package extra, and pass their `verify` setting under the name each SDK actually accepts, so the bundled IP Fabric, Slurp'it, and Prometheus adapters can load and connect in a standard deployment.

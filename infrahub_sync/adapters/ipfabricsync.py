@@ -60,10 +60,11 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             msg = "Both url and auth must be specified! Please specify in the config or using `IPF_URL` and `IPF_TOKEN` environment variables."
             raise ValueError(msg)
 
-        # Registered settings, including verify_ssl, reach the optional client here. The
-        # local boundary is guarded by tests/configuration/test_adapter_setting_conformance.py;
-        # the optional client's accepted signature is not established here.
-        return IPFClient(**settings)
+        # Registered settings reach the optional client here. `IPFClient` takes `verify`,
+        # not the `verify_ssl` name used by this adapter's registered settings, so rename it;
+        # `IPFClient`'s own default for `verify` is `None`, so passing it unset is harmless.
+        verify_ssl = settings.pop("verify_ssl", None)
+        return IPFClient(verify=verify_ssl, **settings)
 
     def model_loader(self, model_name: str, model: type[IpfabricsyncModel]) -> None:
         """
