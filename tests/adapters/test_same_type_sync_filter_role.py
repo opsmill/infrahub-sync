@@ -16,7 +16,7 @@ import importlib.metadata
 import sys
 import types
 from collections.abc import Callable, Iterator
-from typing import Any, cast
+from typing import Any, Protocol, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,6 +28,17 @@ _ELEMENT_NAME = "InfraDevice"
 # Import name (the `sys.modules` / `import` key) to PyPI distribution name, for SDKs
 # whose distribution name differs from their import name.
 _SDK_DISTRIBUTIONS = {"ipfabric": "ipfabric", "slurpit": "slurpit-sdk"}
+
+
+class _SDKImporter(Protocol):
+    def __call__(
+        self,
+        adapter_module_name: str,
+        sdk_name: str,
+        *,
+        patcher: pytest.MonkeyPatch | None = None,
+        force_stub: bool = False,
+    ) -> types.ModuleType: ...
 
 
 def _sdk_installed(sdk_name: str) -> bool:
@@ -44,52 +55,46 @@ def _sdk_installed(sdk_name: str) -> bool:
     return True
 
 
-def _import_with_optional_sdk_stub(
-    adapter_module_name: str,
-    sdk_name: str,
-    monkeypatch: pytest.MonkeyPatch,
-    request: pytest.FixtureRequest,
-    **sdk_attrs: Any,  # noqa: ANN401 — stub attribute values vary per SDK (e.g. `IPFClient=object`)
-) -> types.ModuleType:
-    """Import `infrahub_sync.adapters.<adapter_module_name>`, stubbing an uninstalled SDK.
-
-    Neither `ipfabric` nor `slurpit` is installed in the development or CI unit
-    profiles, and both adapter modules import their SDK unconditionally at module
-    level. `_create_ipfabric_client`/`_create_slurpit_client` are patched out by the
-    callers below, so only the import itself needs to succeed. All `sys.modules` and
-    `infrahub_sync.adapters` package attribute changes go through `monkeypatch`, which
-    restores the exact prior state (including an absent key or a `None` entry) at
-    teardown regardless of what this function does in between. A module-level event
-    loop created by the stubbed import (Slurp'it) is closed via `request.addfinalizer`
-    rather than inline, so it stays open for the rest of the test.
-    """
+@pytest.fixture
+def optional_sdk_importer(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> _SDKImporter:
+    """Import optional adapter modules while restoring all import state at teardown."""
     import infrahub_sync.adapters as adapters_package
 
-    full_name = f"infrahub_sync.adapters.{adapter_module_name}"
-    if _sdk_installed(sdk_name):
-        return importlib.import_module(full_name)
+    def import_adapter(
+        adapter_module_name: str,
+        sdk_name: str,
+        *,
+        patcher: pytest.MonkeyPatch | None = None,
+        force_stub: bool = False,
+    ) -> types.ModuleType:
+        patcher = patcher or monkeypatch
+        full_name = f"infrahub_sync.adapters.{adapter_module_name}"
+        if not force_stub and _sdk_installed(sdk_name):
+            return importlib.import_module(full_name)
 
-    # Record (via monkeypatch) and clear any prior cache entry/attribute before
-    # importing, so the import below observes a clean slate and monkeypatch's
-    # teardown restores exactly what was there beforehand.
-    monkeypatch.delitem(sys.modules, full_name, raising=False)
-    monkeypatch.delattr(adapters_package, adapter_module_name, raising=False)
+        # Record the old value (or absence) before importlib adds its own entries.
+        patcher.setitem(sys.modules, full_name, None)
+        patcher.delitem(sys.modules, full_name, raising=False)
+        patcher.setattr(adapters_package, adapter_module_name, None, raising=False)
+        patcher.delattr(adapters_package, adapter_module_name, raising=False)
+        stub = types.ModuleType(sdk_name)
+        if sdk_name == "ipfabric":
+            setattr(stub, "IPFClient", object)  # noqa: B010 — ModuleType has no typed SDK attributes
+        patcher.setitem(sys.modules, sdk_name, stub)
 
-    stub = types.ModuleType(sdk_name)
-    for name, value in sdk_attrs.items():
-        setattr(stub, name, value)
-    monkeypatch.setitem(sys.modules, sdk_name, stub)
+        module = importlib.import_module(full_name)
+        loop = getattr(module, "loop", None)
+        if isinstance(loop, asyncio.AbstractEventLoop):
+            request.addfinalizer(loop.close)
 
-    module = importlib.import_module(full_name)
-    loop = getattr(module, "loop", None)
-    if isinstance(loop, asyncio.AbstractEventLoop):
-        request.addfinalizer(loop.close)
+        # Importlib writes these two entries itself. Their removal is recorded by
+        # monkeypatch; the earlier setitem/setattr restore the state before import.
+        patcher.delitem(sys.modules, full_name, raising=False)
+        patcher.delattr(adapters_package, adapter_module_name, raising=False)
+        patcher.delitem(sys.modules, sdk_name, raising=False)
+        return module
 
-    # Drop the stub-based entries the import just created so nothing leaks into the
-    # rest of the test; monkeypatch still restores the pre-test state at teardown.
-    sys.modules.pop(full_name, None)
-    sys.modules.pop(sdk_name, None)
-    return module
+    return import_adapter
 
 
 def _config(source_name: str, dest_name: str, *, fields: list[dict] | None = None) -> SyncConfig:
@@ -113,9 +118,7 @@ def _fake_model() -> MagicMock:
     return model
 
 
-def _build_netbox(
-    target: str, config: SyncConfig, _monkeypatch: pytest.MonkeyPatch, _request: pytest.FixtureRequest
-) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
+def _build_netbox(target: str, config: SyncConfig, _importer: _SDKImporter) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
     pytest.importorskip("pynetbox")
     from infrahub_sync.adapters.netbox import NetboxAdapter
 
@@ -129,9 +132,7 @@ def _build_netbox(
     return adapter
 
 
-def _build_nautobot(
-    target: str, config: SyncConfig, _monkeypatch: pytest.MonkeyPatch, _request: pytest.FixtureRequest
-) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
+def _build_nautobot(target: str, config: SyncConfig, _importer: _SDKImporter) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
     pytest.importorskip("pynautobot")
     from infrahub_sync.adapters.nautobot import NautobotAdapter
 
@@ -145,9 +146,7 @@ def _build_nautobot(
     return adapter
 
 
-def _build_genericrestapi(
-    target: str, config: SyncConfig, _monkeypatch: pytest.MonkeyPatch, _request: pytest.FixtureRequest
-) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
+def _build_genericrestapi(target: str, config: SyncConfig, _importer: _SDKImporter) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
     from infrahub_sync.adapters.genericrestapi import GenericrestapiAdapter
 
     with patch.object(GenericrestapiAdapter, "_create_rest_client", return_value=MagicMock()):
@@ -160,10 +159,8 @@ def _build_genericrestapi(
     return adapter
 
 
-def _build_ipfabricsync(
-    target: str, config: SyncConfig, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
-) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
-    module = _import_with_optional_sdk_stub("ipfabricsync", "ipfabric", monkeypatch, request, IPFClient=object)
+def _build_ipfabricsync(target: str, config: SyncConfig, importer: _SDKImporter) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
+    module = importer("ipfabricsync", "ipfabric")
     adapter_cls = module.IpfabricsyncAdapter
 
     with patch.object(adapter_cls, "_create_ipfabric_client", return_value=MagicMock()):
@@ -176,10 +173,8 @@ def _build_ipfabricsync(
     return adapter
 
 
-def _build_slurpitsync(
-    target: str, config: SyncConfig, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
-) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
-    module = _import_with_optional_sdk_stub("slurpitsync", "slurpit", monkeypatch, request)
+def _build_slurpitsync(target: str, config: SyncConfig, importer: _SDKImporter) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
+    module = importer("slurpitsync", "slurpit")
     adapter_cls = module.SlurpitsyncAdapter
 
     with patch.object(adapter_cls, "_create_slurpit_client", return_value=MagicMock()):
@@ -200,9 +195,7 @@ def _restore_aci_device_mapping() -> Iterator[None]:
     AciModel._device_mapping = original
 
 
-def _build_aci(
-    target: str, config: SyncConfig, _monkeypatch: pytest.MonkeyPatch, _request: pytest.FixtureRequest
-) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
+def _build_aci(target: str, config: SyncConfig, _importer: _SDKImporter) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
     from infrahub_sync.adapters.aci import AciAdapter
 
     with patch.object(AciAdapter, "_create_aci_client", return_value=MagicMock()):
@@ -217,9 +210,7 @@ def _build_aci(
     return adapter
 
 
-def _build_prometheus(
-    target: str, config: SyncConfig, _monkeypatch: pytest.MonkeyPatch, _request: pytest.FixtureRequest
-) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
+def _build_prometheus(target: str, config: SyncConfig, _importer: _SDKImporter) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
     pytest.importorskip("prometheus_client")
     from infrahub_sync.adapters.prometheus import PrometheusAdapter
 
@@ -234,7 +225,7 @@ def _build_prometheus(
     return adapter
 
 
-_ADAPTER_BUILDERS: dict[str, Callable[[str, SyncConfig, pytest.MonkeyPatch, pytest.FixtureRequest], Any]] = {
+_ADAPTER_BUILDERS: dict[str, Callable[[str, SyncConfig, _SDKImporter], Any]] = {
     "netbox": _build_netbox,
     "nautobot": _build_nautobot,
     "genericrestapi": _build_genericrestapi,
@@ -250,17 +241,16 @@ _FIELDS_BY_ADAPTER: dict[str, list[dict]] = {
 }
 
 
-def _run_model_loader(  # noqa: PLR0913 — one parameter per builder input this dispatches, plus the pytest fixtures it threads through
+def _run_model_loader(
     adapter_key: str,
     *,
     target: str,
     source_name: str,
     dest_name: str,
-    monkeypatch: pytest.MonkeyPatch,
-    request: pytest.FixtureRequest,
+    importer: _SDKImporter,
 ) -> MagicMock:
     config = _config(source_name, dest_name, fields=_FIELDS_BY_ADAPTER.get(adapter_key))
-    adapter = _ADAPTER_BUILDERS[adapter_key](target, config, monkeypatch, request)
+    adapter = _ADAPTER_BUILDERS[adapter_key](target, config, importer)
     model = _fake_model()
 
     if adapter_key == "slurpitsync":
@@ -275,7 +265,7 @@ def _run_model_loader(  # noqa: PLR0913 — one parameter per builder input this
 
 @pytest.mark.parametrize("adapter_key", sorted(_ADAPTER_BUILDERS))
 def test_filters_and_transforms_run_only_for_source_role_in_same_type_sync(
-    adapter_key: str, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+    adapter_key: str, optional_sdk_importer: _SDKImporter
 ) -> None:
     """Same-type sync (source and destination both `adapter_key`): only the source instance filters/transforms."""
     source = _run_model_loader(
@@ -283,8 +273,7 @@ def test_filters_and_transforms_run_only_for_source_role_in_same_type_sync(
         target="source",
         source_name=adapter_key,
         dest_name=adapter_key,
-        monkeypatch=monkeypatch,
-        request=request,
+        importer=optional_sdk_importer,
     )
     assert source.filter_records.called
     assert source.transform_records.called
@@ -294,8 +283,7 @@ def test_filters_and_transforms_run_only_for_source_role_in_same_type_sync(
         target="destination",
         source_name=adapter_key,
         dest_name=adapter_key,
-        monkeypatch=monkeypatch,
-        request=request,
+        importer=optional_sdk_importer,
     )
     assert not destination.filter_records.called
     assert not destination.transform_records.called
@@ -303,7 +291,7 @@ def test_filters_and_transforms_run_only_for_source_role_in_same_type_sync(
 
 @pytest.mark.parametrize("adapter_key", sorted(_ADAPTER_BUILDERS))
 def test_filters_and_transforms_unchanged_for_heterogeneous_sync(
-    adapter_key: str, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+    adapter_key: str, optional_sdk_importer: _SDKImporter
 ) -> None:
     """Heterogeneous sync (different source/destination adapter types): behavior is unchanged by role."""
     source = _run_model_loader(
@@ -311,8 +299,7 @@ def test_filters_and_transforms_unchanged_for_heterogeneous_sync(
         target="source",
         source_name=adapter_key,
         dest_name="infrahub",
-        monkeypatch=monkeypatch,
-        request=request,
+        importer=optional_sdk_importer,
     )
     assert source.filter_records.called
     assert source.transform_records.called
@@ -322,15 +309,17 @@ def test_filters_and_transforms_unchanged_for_heterogeneous_sync(
         target="destination",
         source_name="infrahub",
         dest_name=adapter_key,
-        monkeypatch=monkeypatch,
-        request=request,
+        importer=optional_sdk_importer,
     )
     assert not destination.filter_records.called
     assert not destination.transform_records.called
 
 
-def test_import_with_optional_sdk_stub_restores_prior_sys_modules_state(request: pytest.FixtureRequest) -> None:
-    """A pre-existing `None` entry and a leaked stub must come back exactly as they were.
+@pytest.mark.parametrize(("adapter_name", "sdk_name"), [("ipfabricsync", "ipfabric"), ("slurpitsync", "slurpit")])
+def test_import_with_optional_sdk_stub_restores_prior_import_state(
+    optional_sdk_importer: _SDKImporter, adapter_name: str, sdk_name: str
+) -> None:
+    """Restore a prior `None` entry and SDK stub without leaking a package attribute.
 
     A `None` entry in `sys.modules` for the adapter module name is a valid sentinel
     (Python's own import machinery uses it to mean "this name is known to fail to
@@ -339,19 +328,19 @@ def test_import_with_optional_sdk_stub_restores_prior_sys_modules_state(request:
     leaked into `sys.modules` under the SDK's own name by an earlier test must also
     come back exactly, not be merged with or overwritten by the fresh stub import.
     """
-    sdk_name = "ipfabric"
-    full_name = "infrahub_sync.adapters.ipfabricsync"
+    import infrahub_sync.adapters as adapters_package
+
+    full_name = f"infrahub_sync.adapters.{adapter_name}"
 
     prior_sdk_stub = types.ModuleType(sdk_name)
-    sys.modules[full_name] = None  # ty: ignore[invalid-assignment] — a real `None` sentinel is the scenario under test
-    sys.modules[sdk_name] = prior_sdk_stub
-    try:
-        with pytest.MonkeyPatch.context() as mp:
-            module = _import_with_optional_sdk_stub("ipfabricsync", sdk_name, mp, request, IPFClient=object)
-            assert module.IpfabricsyncAdapter is not None
+    with pytest.MonkeyPatch.context() as prior_state:
+        prior_state.setitem(sys.modules, full_name, None)
+        prior_state.setitem(sys.modules, sdk_name, prior_sdk_stub)
+        prior_state.delattr(adapters_package, adapter_name, raising=False)
+        with pytest.MonkeyPatch.context() as imported_state:
+            module = optional_sdk_importer(adapter_name, sdk_name, patcher=imported_state, force_stub=True)
+            assert module is not None
 
         assert sys.modules[full_name] is None
         assert sys.modules[sdk_name] is prior_sdk_stub
-    finally:
-        sys.modules.pop(full_name, None)
-        sys.modules.pop(sdk_name, None)
+        assert not hasattr(adapters_package, adapter_name)
