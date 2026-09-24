@@ -148,7 +148,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         run `filter_records` itself (e.g. to log a filtered count) so records
         aren't filtered twice.
         """
-        if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+        if self.target == "source":
             filtered = (
                 raw_records if already_filtered else model.filter_records(records=raw_records, schema_mapping=element)
             )
@@ -225,7 +225,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
             raw_records = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
             total = len(raw_records)
             resource_name = element.mapping.split(".")[-1]
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            if self.target == "source":
                 filtered = model.filter_records(records=raw_records, schema_mapping=element)
                 # Mirror the NetBox adapter's filtered/total log so operators see
                 # the same detail regardless of source system.

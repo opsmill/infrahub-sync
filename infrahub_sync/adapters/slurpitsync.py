@@ -5,7 +5,7 @@ import ipaddress
 import logging
 from typing import Any
 
-import slurpit  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
+import slurpit  # ty: ignore[unresolved-import]  # declared as `slurpit-sdk` in the `service` extra, not the base install
 from diffsync import Adapter, DiffSyncModel
 from typing_extensions import Self
 
@@ -36,16 +36,25 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         self.skipped = []
 
     def _create_slurpit_client(self, adapter: SyncAdapter) -> slurpit.api:
-        settings = adapter.settings or {}
-        # The registered setting surface is forwarded without establishing the optional
-        # client's accepted signature here. The local boundary is guarded by
-        # tests/configuration/test_adapter_setting_conformance.py.
+        settings = dict(adapter.settings or {})
+        # `slurpit.api` takes no verify/verify_ssl keyword at all (0.9.x), so a
+        # `verify_ssl` registered setting can only be honored when it isn't
+        # asking to disable verification; otherwise this is a no-op the SDK
+        # can't perform, so warn rather than fail or silently stay verified.
+        verify_ssl = settings.pop("verify_ssl", None)
+        if verify_ssl is False:
+            logger.warning(
+                "The Slurp'it SDK does not support disabling TLS verification; "
+                "requests will still verify the server's certificate."
+            )
         client = slurpit.api(**settings)
         try:
-            self.run_async(client.device.get_devices())
-        except Exception as e:  # noqa: BLE001
+            # `DeviceAPI.get_devices` is a synchronous `requests` call, not a coroutine;
+            # `run_async` is for the adapter's own async model-loading calls below.
+            client.device.get_devices()
+        except Exception as e:
             msg = f"Unable to connect to Slurpit API: {e}"
-            raise ValueError(msg)
+            raise ValueError(msg) from e
         return client
 
     def run_async(self, coroutine):
@@ -63,12 +72,12 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             return loop.run_until_complete(coroutine)
 
     def unique_vendors(self) -> list[dict[str, Any]]:
-        devices = self.run_async(self.client.device.get_devices())
+        devices = self.client.device.get_devices()
         vendors = {device.brand for device in devices}
         return [{"brand": item} for item in vendors]
 
     def unique_device_type(self) -> list[dict[str, Any]]:
-        devices = self.run_async(self.client.device.get_devices())
+        devices = self.client.device.get_devices()
         device_types = {(device.brand, device.device_type, device.device_os) for device in devices}
         return [{"brand": item[0], "device_type": item[1], "device_os": item[2]} for item in device_types]
 
@@ -157,14 +166,14 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         return results
 
     def planning_results(self, planning_name):
-        plannings = self.run_async(self.client.planning.get_plannings())
-        planning = next((plan.to_dict() for plan in plannings if plan.slug == planning_name), None)
+        plannings = self.client.planning.get_plannings()
+        planning = next((plan.to_dict() for plan in plannings if plan.name == planning_name), None)
         if not planning:
             msg = f"No planning found for name: {planning_name}"
             raise IndexError(msg)
 
         search_data = {"planning_id": planning["id"], "unique_results": True}
-        results = self.run_async(self.client.planning.search_plannings(search_data, limit=30000))
+        results = self.client.planning.search_plannings(search_data)
         return results or []
 
     def model_loader(self, model_name: str, model: type[SlurpitsyncModel]) -> None:
@@ -184,7 +193,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 app_name, resource_name = element.mapping.split(".")
                 slurpit_app = getattr(self.client, app_name)
                 slurpit_model = getattr(slurpit_app, resource_name)
-                nodes = self.run_async(slurpit_model())
+                nodes = slurpit_model()
             elif element.mapping == "filter_interfaces":
                 interfaces = self.planning_results("interfaces")
                 nodes = self.run_async(self.filter_interfaces(interfaces))
@@ -200,7 +209,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                     list_obj.append(node)
             total = len(list_obj)
 
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            if self.target == "source":
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)

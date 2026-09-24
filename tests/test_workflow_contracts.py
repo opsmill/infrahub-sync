@@ -1997,6 +1997,19 @@ def test_the_filter_runs_this_suite_when_a_declaration_it_reads_changes(declarat
     )
 
 
+def test_the_sync_filter_routes_the_examples_tree() -> None:
+    """Several unit tests read fixtures under `examples/**` at runtime.
+
+    A pull request that changes only a file there has to run the unit and
+    base-install jobs, or a break in an example fixture merges undetected.
+    """
+    probe = REPO_ROOT / "examples" / "probe.yml"
+
+    assert routed(probe, filter_patterns("sync_all")), (
+        f"unit tests read fixtures under {probe.parent.relative_to(REPO_ROOT)}, which sync_all does not name"
+    )
+
+
 def test_the_image_filter_routes_the_document_that_declares_it() -> None:
     """A selector that does not name itself can be re-aimed without facing the gate it aims.
 

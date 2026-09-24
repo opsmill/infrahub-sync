@@ -108,6 +108,13 @@ ROWS = (
         {"url": "https://registered-generic", "token": "registered-token"},
         {"url": "https://ambient-generic", "token": "ambient-token"},
     ),
+    AdapterRow(
+        "slurpitsync",
+        {"url": "https://registered-slurpit", "api_key": "registered-token"},
+        {},
+        {"url": "https://registered-slurpit", "token": "registered-token"},
+        {"url": "https://registered-slurpit", "token": "registered-token"},
+    ),
 )
 
 
@@ -125,6 +132,8 @@ def _install_optional_sdk_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     prometheus_client = types.ModuleType("prometheus_client")
     prometheus_parser = cast("Any", types.ModuleType("prometheus_client.parser"))
     prometheus_parser.text_string_to_metric_families = lambda _text: ()
+    slurpit = cast("Any", types.ModuleType("slurpit"))
+    slurpit.api = lambda **_kwargs: types.SimpleNamespace()
     for name, module in {
         "pynetbox": pynetbox,
         "pynautobot": pynautobot,
@@ -133,6 +142,7 @@ def _install_optional_sdk_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
         "ipfabric": ipfabric,
         "prometheus_client": prometheus_client,
         "prometheus_client.parser": prometheus_parser,
+        "slurpit": slurpit,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
 
@@ -200,6 +210,17 @@ def _capture_client(
         monkeypatch.setattr(dynamic_module, "PrometheusScrapeClient", capture)
     elif row.name == "ipfabricsync":
         monkeypatch.setattr(dynamic_module, "IPFClient", capture)
+    elif row.name == "slurpitsync":
+
+        def make_slurpit_client(**kwargs: object) -> object:
+            observed.append(kwargs)
+
+            def get_devices() -> list[object]:  # matches the real (synchronous) SDK
+                return []
+
+            return types.SimpleNamespace(device=types.SimpleNamespace(get_devices=get_devices))
+
+        monkeypatch.setattr(dynamic_module.slurpit, "api", make_slurpit_client)
     else:
         monkeypatch.setattr(importlib.import_module("infrahub_sync.adapters.genericrestapi"), "RestApiClient", capture)
     return observed
@@ -223,8 +244,9 @@ def _observed(row: AdapterRow, kwargs: dict[str, Any]) -> dict[str, object]:
             "password": kwargs["password"],
             "token": kwargs["api_token"],
         }
-    if row.name == "ipfabricsync":
-        return {"url": kwargs["base_url"], "token": kwargs["auth"]}
+    if row.name in {"ipfabricsync", "slurpitsync"}:
+        url_key, token_key = {"ipfabricsync": ("base_url", "auth"), "slurpitsync": ("url", "api_key")}[row.name]
+        return {"url": kwargs[url_key], "token": kwargs[token_key]}
     return {"url": str(kwargs["base_url"]).removesuffix("/api/v0").removesuffix("/api"), "token": kwargs["api_token"]}
 
 
@@ -483,7 +505,7 @@ def test_ipfabric_resolves_into_local_settings_without_mutating_caller(
 
     assert observed == [
         {
-            "verify_ssl": False,
+            "verify": False,
             "base_url": "https://declared-ipfabric" if environment == "declared" else "https://namespaced-ipfabric",
             "auth": "declared-token" if environment == "declared" else "namespaced-token",
         }
