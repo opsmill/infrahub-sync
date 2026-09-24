@@ -107,7 +107,7 @@ service = [
     # ceiling hold to the 0.9 series: `slurpit.api.__init__` accepts `url` and
     # `api_key` across both 0.9.32 (resolved here) and 0.9.146 (latest); a future
     # major is not verified. Neither release accepts a `verify_ssl` keyword; the
-    # adapter logs a warning and continues unverified rather than failing when a
+    # adapter logs a warning and continues with verification enabled when a
     # configured `verify_ssl: false` can't be honored.
     "slurpit-sdk>=0.9,<0.10; python_version >= '3.11'",
     "uvicorn>=0.34,<1; python_version >= '3.11'",

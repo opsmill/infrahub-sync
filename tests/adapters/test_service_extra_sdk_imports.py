@@ -46,9 +46,9 @@ def restore_adapter_module() -> Iterator[Callable[[str, str, str], None]]:
     Importing a real SDK (`ipfabric`, `slurpit`, `prometheus_client`) pulls in dozens of its
     own submodules (`ipfabric.api`, `ipfabric.models`, ...), none of which existed in
     `sys.modules` before the test ran. Restoring only the `infrahub_sync.adapters.<name>`
-    entry leaves all of those behind, where they leak into later tests. `register` takes the
-    SDK's own root module name and this deletes it and every `<sdk_name>.*` submodule at
-    teardown, in addition to the explicit per-adapter-module restore below.
+    entry leaves all of those behind, where they leak into later tests. `register` snapshots
+    the module keys before import and removes only SDK and adapter modules added afterward.
+    Modules that were already loaded are preserved.
 
     This deliberately does not touch transitive third-party dependencies pulled in alongside
     the SDK (`niquests`, `pandas`, `numpy`, ...): those aren't the adapter's own SDK, other
@@ -58,32 +58,24 @@ def restore_adapter_module() -> Iterator[Callable[[str, str, str], None]]:
     `tests/adapters/test_reference_conversion_optional_sdk.py` reimports these same modules
     against stub SDKs and depends on that not having happened yet.
     """
-    restores: list[tuple[str, str, bool, Any, bool, Any]] = []
-    sdk_roots: list[str] = []
+    restores: list[tuple[str, str, str, frozenset[str], bool, Any]] = []
 
     def register(module_name: str, full_name: str, sdk_name: str) -> None:
-        had_module = full_name in sys.modules
-        prior_module = sys.modules.get(full_name)
         had_attr = hasattr(adapters_package, module_name)
         prior_attr = getattr(adapters_package, module_name, None)
-        restores.append((module_name, full_name, had_module, prior_module, had_attr, prior_attr))
-        sdk_roots.append(sdk_name)
+        restores.append((module_name, full_name, sdk_name, frozenset(sys.modules), had_attr, prior_attr))
 
     yield register
 
-    for module_name, full_name, had_module, prior_module, had_attr, prior_attr in restores:
-        if had_module:
-            sys.modules[full_name] = prior_module
-        else:
-            sys.modules.pop(full_name, None)
+    cleanup = pytest.MonkeyPatch()
+    for module_name, full_name, sdk_name, prior_modules, had_attr, prior_attr in reversed(restores):
+        for added_name in set(sys.modules) - prior_modules:
+            if added_name in {full_name, sdk_name} or added_name.startswith(f"{sdk_name}."):
+                cleanup.delitem(sys.modules, added_name, raising=False)
         if had_attr:
-            setattr(adapters_package, module_name, prior_attr)
+            cleanup.setattr(adapters_package, module_name, prior_attr)
         else:
-            adapters_package.__dict__.pop(module_name, None)
-
-    for sdk_name in sdk_roots:
-        for leaked_module in [name for name in sys.modules if name == sdk_name or name.startswith(f"{sdk_name}.")]:
-            del sys.modules[leaked_module]
+            cleanup.delattr(adapters_package, module_name, raising=False)
 
 
 @requires_service_profile

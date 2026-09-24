@@ -167,7 +167,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
 
     def planning_results(self, planning_name):
         plannings = self.client.planning.get_plannings()
-        planning = next((plan.to_dict() for plan in plannings if plan.slug == planning_name), None)
+        planning = next((plan.to_dict() for plan in plannings if plan.name == planning_name), None)
         if not planning:
             msg = f"No planning found for name: {planning_name}"
             raise IndexError(msg)
@@ -193,7 +193,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 app_name, resource_name = element.mapping.split(".")
                 slurpit_app = getattr(self.client, app_name)
                 slurpit_model = getattr(slurpit_app, resource_name)
-                nodes = self.run_async(slurpit_model())
+                nodes = slurpit_model()
             elif element.mapping == "filter_interfaces":
                 interfaces = self.planning_results("interfaces")
                 nodes = self.run_async(self.filter_interfaces(interfaces))
