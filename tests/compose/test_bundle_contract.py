@@ -42,6 +42,9 @@ if TYPE_CHECKING:
 # repository pinned to a manifest digest. A tag matches neither.
 IMMUTABLE_REFERENCE = re.compile(r"^(?:sha256:[0-9a-f]{64}|[^\s]+@sha256:[0-9a-f]{64})$")
 TAGGED_INDEX_REFERENCE = re.compile(r"^(?:[^\s/@]+/)*[^/\s@:]+:[^/\s@:]+@sha256:[0-9a-f]{64}$")
+MINIO_IMAGE = (
+    "cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba"
+)
 DEVELOPMENT_COMPOSE = Path(__file__).resolve().parents[2] / "development"
 DESTINATION_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.infrahub.yml"
 PREVIEW_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.preview.yml"
@@ -209,6 +212,17 @@ def test_prefect_telemetry_is_off(model: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # Immutable image identity
 # ---------------------------------------------------------------------------
+
+
+def test_object_store_uses_the_pinned_minio_build_and_migrates_existing_data(model: dict[str, Any]) -> None:
+    """The new image can write data from a volume owned by the former root image."""
+    object_store = service(model, "object-store")
+
+    assert object_store["image"] == MINIO_IMAGE
+    assert object_store["user"] == "0"
+    assert object_store["entrypoint"] == ["/bin/sh", "-ec"]
+    assert "chown -R 65532:65532 /data" in object_store["command"][0]
+    assert "chroot --userspec=65532:65532 / /usr/bin/minio server /data" in object_store["command"][0]
 
 
 def test_every_image_the_bundle_runs_is_named_by_digest(model: dict[str, Any]) -> None:

@@ -312,6 +312,11 @@ bounded — 200 lines per service, or `INFRAHUB_SYNC_LOG_LINES`.
 
 ## Stop, restart, reset
 
+The object store currently uses a temporary Chainguard MinIO image. On the first
+start after upgrading from the former MinIO image, it repairs ownership of the
+existing object-store volume before MinIO starts as a non-root user. The volume
+and its data stay in place; this first start can take longer for a large volume.
+
 ```bash
 ./infrahub-sync-compose stop                    # processes down, every volume untouched
 ./infrahub-sync-compose restart                 # replace the API and worker processes

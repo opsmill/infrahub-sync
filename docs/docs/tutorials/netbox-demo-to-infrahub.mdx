@@ -226,7 +226,8 @@ services:
     ports:
       - "127.0.0.1:5433:5432"
   minio:
-    image: quay.io/minio/minio
+    # Temporary Chainguard image while a maintained S3 store is selected.
+    image: cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
     command: server /data
     environment:
       MINIO_ROOT_USER: sync-local
@@ -234,7 +235,7 @@ services:
     ports:
       - "127.0.0.1:9000:9000"
   minio-client:
-    image: quay.io/minio/mc
+    image: cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
     entrypoint: /bin/sh
     command:
       - -c
