@@ -1,4 +1,62 @@
+from collections.abc import Callable
+
+import pytest
+from invoke import Context, Result
+from invoke.runners import Local
+
 from tasks import linter
+from tasks.utils import ESCAPED_REPO_PATH
+
+
+def _record_runner_commands(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Capture the final command text handed to invoke's runner.
+
+    `Context.run` resolves any active `cd`/`prefix` wrapping before calling
+    `Runner.run` (see its docstring: "this method instantiates a `Runner`
+    subclass ... and calls its `run` method"). Patching that public seam
+    checks the command actually sent to the shell without depending on the
+    private mechanics `Context` uses internally to build it.
+    """
+    commands: list[str] = []
+
+    def fake_run(self: Local, command: str, **kwargs: object) -> Result:
+        del self, kwargs
+        commands.append(command)
+        return Result(exited=0)
+
+    monkeypatch.setattr(Local, "run", fake_run)
+    return commands
+
+
+def test_lint_yaml_runs_from_the_repository_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands = _record_runner_commands(monkeypatch)
+
+    linter.lint_yaml(Context())
+
+    assert commands == [f"cd {ESCAPED_REPO_PATH} && yamllint ."]
+
+
+@pytest.mark.parametrize(
+    ("task_func", "expected_command"),
+    [
+        (
+            linter.lint_ruff,
+            f"cd {ESCAPED_REPO_PATH} && ruff format --check --diff . &&ruff check --diff .",
+        ),
+        (
+            linter.format_ruff,
+            f"cd {ESCAPED_REPO_PATH} && ruff format . && ruff check --fix .",
+        ),
+    ],
+)
+def test_ruff_tasks_run_from_the_repository_root(
+    monkeypatch: pytest.MonkeyPatch, task_func: Callable[[Context], None], expected_command: str
+) -> None:
+    commands = _record_runner_commands(monkeypatch)
+
+    task_func(Context())
+
+    assert commands == [expected_command]
 
 
 def test_ty_check_command_excludes_service_on_python_310() -> None:
