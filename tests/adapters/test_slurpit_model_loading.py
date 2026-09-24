@@ -30,27 +30,33 @@ from infrahub_sync import SyncAdapter
 
 class Device:
     def __init__(self) -> None:
+        """Initialize the test stub."""
         self.brand = "Cisco"
         self.device_type = "router"
         self.device_os = "ios"
 
     def to_dict(self) -> dict[str, object]:
+        """Return this test row as a dictionary."""
         return {"id": 1, "hostname": "edge1", "brand": self.brand}
 
 
 class Planning:
     def __init__(self, slug: str) -> None:
+        """Initialize the test stub."""
         self.slug = slug
 
     def to_dict(self) -> dict[str, object]:
+        """Return this test row as a dictionary."""
         return {"id": 42, "slug": self.slug}
 
 
 class Site:
     def __init__(self) -> None:
+        """Initialize the test stub."""
         self.sitename = "HQ"
 
     def to_dict(self) -> dict[str, object]:
+        """Return this test row as a dictionary."""
         return {"id": 7, "sitename": self.sitename}
 
 
@@ -64,6 +70,7 @@ class DeviceAPI:
         format: str = "json",
         include_raw_json: bool = False,
     ) -> list[Device]:
+        """Return stub device rows with the SDK signature."""
         _ = (self, offset, limit, export_csv, export_df, format, include_raw_json)
         return []
 
@@ -77,6 +84,7 @@ class PlanningAPI:
         export_df: bool = False,
         format: str = "json",
     ) -> list[Planning]:
+        """Return stub planning rows with the SDK signature."""
         _ = (self, offset, limit, export_csv, export_df, format)
         return []
 
@@ -89,6 +97,7 @@ class PlanningAPI:
         export_df: bool = False,
         format: str = "json",
     ) -> list[dict[str, object]]:
+        """Return stub planning search rows with the SDK signature."""
         _ = (self, search_data, offset, limit, export_csv, export_df, format)
         return []
 
@@ -102,12 +111,14 @@ class SiteAPI:
         export_df: bool = False,
         format: str = "json",
     ) -> list[Site]:
+        """Return stub site rows with the SDK signature."""
         _ = (self, offset, limit, export_csv, export_df, format)
         return []
 
 
 class Client:
     def __init__(self, url: str, api_key: str | None = None, verify: bool = True) -> None:
+        """Initialize the test stub."""
         self.url = url
         self.api_key = api_key
         self.verify = verify
@@ -118,12 +129,14 @@ class Client:
 
 class TrackedClient(httpx.AsyncClient):
     def __init__(self, events: list[str], name: str, loop: asyncio.AbstractEventLoop) -> None:
+        """Initialize the test stub."""
         super().__init__(transport=httpx.MockTransport(lambda request: httpx.Response(200, request=request)))
         self.events = events
         self.name = name
         self.loop = loop
 
     async def aclose(self) -> None:
+        """Record cleanup on the owning event loop."""
         assert asyncio.get_running_loop() is self.loop
         self.events.append(self.name)
         await super().aclose()
@@ -137,11 +150,13 @@ class ClientOwner(Protocol):
 class MappedRecord(UserDict[str, object]):
     @staticmethod
     def filter_records(records: list[dict[str, object]], schema_mapping: object) -> list[dict[str, object]]:
+        """Return the stub records without filtering."""
         _ = schema_mapping
         return records
 
     @staticmethod
     def transform_records(records: list[dict[str, object]], schema_mapping: object) -> list[dict[str, object]]:
+        """Return the stub records without transformation."""
         _ = schema_mapping
         return records
 
@@ -176,6 +191,7 @@ def adapter_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.ModuleType
 
 
 def _adapter(module: types.ModuleType, mapping: str, target: str = "source") -> tuple[Any, list[dict[str, object]]]:
+    """Build an isolated adapter for a schema mapping."""
     instance = module.SlurpitsyncAdapter.__new__(module.SlurpitsyncAdapter)
     instance._loop = asyncio.new_event_loop()
     module._test_loops.append(instance._loop)
@@ -195,16 +211,19 @@ def _adapter(module: types.ModuleType, mapping: str, target: str = "source") -> 
 
 
 def _attach_clients(instance: ClientOwner, events: list[str]) -> None:
+    """Attach tracked HTTP clients to each SDK API."""
     for name in ("device", "planning", "site"):
         getattr(instance.client, name).client = TrackedClient(events, name, instance._loop)
 
 
 def test_run_async_reuses_loop_for_shared_httpx_transport_and_closes_it(adapter_module: types.ModuleType) -> None:
+    """Verify run async reuses loop for shared httpx transport and closes it."""
     instance, _ = _adapter(adapter_module, "device.get_devices")
     first_loop: asyncio.AbstractEventLoop | None = None
     requests = 0
 
     def respond(request: httpx.Request) -> httpx.Response:
+        """Return a response while checking event loop reuse."""
         nonlocal first_loop, requests
         current_loop = asyncio.get_running_loop()
         if first_loop is None:
@@ -228,6 +247,7 @@ def test_run_async_reuses_loop_for_shared_httpx_transport_and_closes_it(adapter_
 
 @pytest.mark.parametrize("load_fails", [False, True])
 def test_load_closes_sdk_clients_before_loop(adapter_module: types.ModuleType, load_fails: bool) -> None:
+    """Verify load closes sdk clients before loop."""
     instance, _ = _adapter(adapter_module, "device.get_devices")
     events: list[str] = []
     _attach_clients(instance, events)
@@ -247,6 +267,7 @@ def test_load_closes_sdk_clients_before_loop(adapter_module: types.ModuleType, l
 
 
 def test_close_is_idempotent(adapter_module: types.ModuleType) -> None:
+    """Verify close is idempotent."""
     instance, _ = _adapter(adapter_module, "device.get_devices")
     events: list[str] = []
     _attach_clients(instance, events)
@@ -259,6 +280,7 @@ def test_close_is_idempotent(adapter_module: types.ModuleType) -> None:
 
 
 def test_unloaded_adapter_finalizer_closes_clients_and_loop(adapter_module: types.ModuleType) -> None:
+    """Verify unloaded adapter finalizer closes clients and loop."""
     instance = adapter_module.SlurpitsyncAdapter(
         target="source",
         adapter=SyncAdapter(name="slurpitsync", settings={"url": "https://slurpit.example"}),
@@ -277,8 +299,36 @@ def test_unloaded_adapter_finalizer_closes_clients_and_loop(adapter_module: type
     assert loop.is_closed()
 
 
+def test_unloaded_adapter_finalizer_closes_clients_during_another_loop(adapter_module: types.ModuleType) -> None:
+    """Verify unloaded adapter finalizer closes clients during another loop."""
+    instance = adapter_module.SlurpitsyncAdapter(
+        target="source",
+        adapter=SyncAdapter(name="slurpitsync", settings={"url": "https://slurpit.example"}),
+        config=cast("Any", types.SimpleNamespace(schema_mapping=[])),
+    )
+    events: list[str] = []
+    _attach_clients(instance, events)
+    loop = instance._loop
+    reference = weakref.ref(instance)
+    owner = [instance]
+    del instance
+
+    async def release() -> None:
+        """Drop the adapter while another event loop is running."""
+        await asyncio.sleep(0)
+        owner.clear()
+        gc.collect()
+
+    asyncio.run(release())
+
+    assert reference() is None
+    assert events == ["device", "planning", "site"]
+    assert loop.is_closed()
+
+
 @pytest.mark.parametrize("mapping", ["unique_vendors", "unique_device_type", "device.get_devices"])
 def test_device_mappings_load_async_sdk_models(adapter_module: types.ModuleType, mapping: str) -> None:
+    """Verify device mappings load async sdk models."""
     instance, loaded = _adapter(adapter_module, mapping)
     with mock.patch.object(DeviceAPI, "get_devices", autospec=True, return_value=[Device()]) as get_devices:
         adapter_module.SlurpitsyncAdapter.model_loader(instance, "Thing", MappedRecord)
@@ -305,6 +355,7 @@ def test_device_mappings_load_async_sdk_models(adapter_module: types.ModuleType,
     ],
 )
 def test_planning_mappings_load_async_sdk_models(adapter_module: types.ModuleType, mapping: str) -> None:
+    """Verify planning mappings load async sdk models."""
     instance, loaded = _adapter(adapter_module, mapping)
     planning_name = mapping.rsplit(".", maxsplit=1)[-1]
     if mapping == "filter_networks":
@@ -332,6 +383,7 @@ def test_planning_mappings_load_async_sdk_models(adapter_module: types.ModuleTyp
 
 
 def test_site_mapping_loads_async_sdk_models(adapter_module: types.ModuleType) -> None:
+    """Verify site mapping loads async sdk models."""
     instance, loaded = _adapter(adapter_module, "site.get_sites")
     with mock.patch.object(SiteAPI, "get_sites", autospec=True, return_value=[Site()]) as get_sites:
         adapter_module.SlurpitsyncAdapter.model_loader(instance, "Thing", MappedRecord)
@@ -350,6 +402,7 @@ def test_dotted_sdk_mapping_rejects_unsupported_methods(adapter_module: types.Mo
 
 @pytest.mark.parametrize("target", ["source", "destination"])
 def test_model_loading_applies_mapping_rules_only_for_source(adapter_module: types.ModuleType, target: str) -> None:
+    """Verify model loading applies mapping rules only for source."""
     instance, loaded = _adapter(adapter_module, "site.get_sites", target=target)
     with (
         mock.patch.object(SiteAPI, "get_sites", autospec=True, return_value=[Site()]),
@@ -363,6 +416,7 @@ def test_model_loading_applies_mapping_rules_only_for_source(adapter_module: typ
 
 
 def test_missing_planning_slug_raises_index_error(adapter_module: types.ModuleType) -> None:
+    """Verify missing planning slug raises index error."""
     instance, _ = _adapter(adapter_module, "planning_results.hardware-info")
     with (
         mock.patch.object(PlanningAPI, "get_plannings", autospec=True, return_value=[Planning("other")]),
@@ -373,6 +427,7 @@ def test_missing_planning_slug_raises_index_error(adapter_module: types.ModuleTy
 
 @pytest.mark.parametrize("verify", [True, False])
 def test_client_passes_verify_to_async_sdk(adapter_module: types.ModuleType, verify: bool) -> None:
+    """Verify client passes verify to async sdk."""
     instance, _ = _adapter(adapter_module, "device.get_devices")
     settings = {"url": "https://slurpit.example", "api_key": "test-api-key", "verify_ssl": verify}
     with mock.patch.object(DeviceAPI, "get_devices", autospec=True, return_value=[]) as get_devices:
@@ -383,6 +438,7 @@ def test_client_passes_verify_to_async_sdk(adapter_module: types.ModuleType, ver
 
 
 def test_declared_sdk_floor_excludes_synchronous_release() -> None:
+    """Verify declared sdk floor excludes synchronous release."""
     pyproject = (Path(__file__).parents[2] / "pyproject.toml").read_text()
     match = re.search(r'"(slurpit-sdk[^"\n]+)"', pyproject)
     assert match is not None

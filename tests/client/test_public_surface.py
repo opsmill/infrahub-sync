@@ -20,6 +20,7 @@ def test_embedded_v1_api_is_removed() -> None:
 
 
 def test_httpx_is_a_base_dependency_only() -> None:
+    """Verify httpx is a base dependency only."""
     metadata = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     base, optional = metadata.split("[project.optional-dependencies]", maxsplit=1)
     service = optional.split("service = [", maxsplit=1)[1].split("\n]", maxsplit=1)[0]

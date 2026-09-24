@@ -179,6 +179,7 @@ def test_ipfabric_adapter_constructs_client_without_live_call(
 @requires_service_profile
 @requires_ipfabric_extra
 def test_ipfabric_adapter_passes_verify_not_verify_ssl(restore_adapter_module) -> None:
+    """Verify ipfabric adapter passes verify not verify ssl."""
     full_name = "infrahub_sync.adapters.ipfabricsync"
     restore_adapter_module("ipfabricsync", full_name, "ipfabric")
     module = importlib.import_module(full_name)

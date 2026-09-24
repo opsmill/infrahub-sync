@@ -149,6 +149,7 @@ def _install_optional_sdk_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _adapter_module(monkeypatch: pytest.MonkeyPatch, row: AdapterRow) -> types.ModuleType:
+    """Load the adapter module with isolated test dependencies."""
     _install_optional_sdk_stubs(monkeypatch)
     package = importlib.import_module("infrahub_sync.adapters")
     module_names = [row.name]
@@ -181,6 +182,7 @@ def _instance(row: AdapterRow, settings: Mapping[str, object]) -> SyncInstance:
 def _capture_client(
     monkeypatch: pytest.MonkeyPatch, row: AdapterRow, module: types.ModuleType
 ) -> list[dict[str, object]]:
+    """Capture the client constructed by the adapter."""
     observed: list[dict[str, object]] = []
     dynamic_module = cast("Any", module)
 
@@ -214,9 +216,11 @@ def _capture_client(
     elif row.name == "slurpitsync":
 
         def make_slurpit_client(**kwargs: object) -> object:
+            """Create the stub Slurp'it SDK client."""
             observed.append(kwargs)
 
             async def get_devices() -> list[object]:  # matches the current async SDK
+                """Return stub devices from the async SDK client."""
                 await asyncio.sleep(0)
                 return []
 

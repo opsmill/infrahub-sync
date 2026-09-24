@@ -4,6 +4,7 @@ import asyncio
 import ipaddress
 import logging
 import weakref
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import httpx
@@ -45,17 +46,29 @@ def _close_resources(loop: asyncio.AbstractEventLoop, client: slurpit.api | None
     """Release SDK transports on their loop, then release the loop itself."""
     if loop.is_closed():
         return
+
+    def close_on_adapter_loop() -> None:
+        """Finish cleanup where the adapter loop can run independently."""
+        try:
+            if client is not None:
+                loop.run_until_complete(_close_sdk_clients(client))
+        finally:
+            loop.close()
+
     try:
-        if client is not None:
-            loop.run_until_complete(_close_sdk_clients(client))
-    finally:
-        loop.close()
+        asyncio.get_running_loop()
+    except RuntimeError:
+        close_on_adapter_loop()
+    else:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(close_on_adapter_loop).result()
 
 
 class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
     type = "Slurpitsync"
 
     def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
+        """Initialize the adapter and its private event loop."""
         super().__init__(*args, **kwargs)
         self.target = target
         self._loop = asyncio.new_event_loop()
@@ -70,6 +83,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         self.skipped = []
 
     def _create_slurpit_client(self, adapter: SyncAdapter) -> slurpit.api:
+        """Create and check the configured Slurp'it client."""
         settings = dict(adapter.settings or {})
         verify = settings.pop("verify_ssl", True)
         client = slurpit.api(verify=verify, **settings)
@@ -101,11 +115,13 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             _close_resources(self._loop, getattr(self, "client", None))
 
     def unique_vendors(self) -> list[dict[str, Any]]:
+        """Return each vendor found among Slurp'it devices."""
         devices = self.run_async(self.client.device.get_devices())
         vendors = {device.brand for device in devices}
         return [{"brand": item} for item in vendors]
 
     def unique_device_type(self) -> list[dict[str, Any]]:
+        """Return distinct device brand, type, and OS combinations."""
         devices = self.run_async(self.client.device.get_devices())
         device_types = {(device.brand, device.device_type, device.device_os) for device in devices}
         return [{"brand": item[0], "device_type": item[1], "device_os": item[2]} for item in device_types]
@@ -195,6 +211,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         return results
 
     def planning_results(self, planning_name):
+        """Fetch the rows for a planning slug."""
         plannings = self.run_async(self.client.planning.get_plannings())
         planning = next((plan.to_dict() for plan in plannings if plan.slug == planning_name), None)
         if not planning:
