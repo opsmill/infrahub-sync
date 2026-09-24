@@ -80,7 +80,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             table = self.client.fetch_all(element.mapping, filters=ipf_filters.get(element.mapping))
 
             total = len(table)
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            if self.target == "source":
                 # Filter records
                 filtered_objs = model.filter_records(records=table, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)

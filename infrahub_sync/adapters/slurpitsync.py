@@ -200,7 +200,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                     list_obj.append(node)
             total = len(list_obj)
 
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            if self.target == "source":
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)
