@@ -88,17 +88,38 @@ services:
       - "./bootstrap/databases.sh:/usr/local/bin/databases.sh:ro"
     entrypoint: ["/bin/sh", "/usr/local/bin/databases.sh"]
 
+  # The former image wrote as root. Repair its volume once in a short-lived
+  # service so the long-running server never needs root, even during startup.
+  object-store-init:
+    image: >-
+      cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
+    labels: *instance-labels
+    restart: "no"
+    user: "0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        if [ "$$(stat -c %u:%g /data)" != "65532:65532" ]; then
+          chown -R 65532:65532 /data;
+        fi
+    network_mode: "none"
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN"]
+    volumes:
+      - "object-store-data:/data"
+
   object-store:
     # Temporary Chainguard build while a maintained S3 store is selected; the old MinIO image requires authentication.
     image: >-
       cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
     labels: *instance-labels
     restart: unless-stopped
-    # Repair data written by the former root image, then run MinIO as its non-root image user.
-    user: "0"
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
-      - "chown -R 65532:65532 /data; exec chroot --userspec=65532:65532 / /usr/bin/minio server /data"
+    user: "65532:65532"
+    command: ["server", "/data"]
+    depends_on:
+      object-store-init:
+        condition: service_completed_successfully
     environment:
       MINIO_ROOT_USER: "${INFRAHUB_SYNC_S3_ACCESS_KEY:?the object-store access key is required}"
       MINIO_ROOT_PASSWORD: "${INFRAHUB_SYNC_S3_SECRET_KEY:?the object-store secret key is required}"
