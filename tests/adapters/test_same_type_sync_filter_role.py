@@ -10,7 +10,7 @@ because the predicate is then true for both instances.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -42,7 +42,7 @@ def _fake_model() -> MagicMock:
     return model
 
 
-def _build_netbox(target: str, config: SyncConfig) -> Any:
+def _build_netbox(target: str, config: SyncConfig) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
     pytest.importorskip("pynetbox")
     from infrahub_sync.adapters.netbox import NetboxAdapter
 
@@ -56,7 +56,7 @@ def _build_netbox(target: str, config: SyncConfig) -> Any:
     return adapter
 
 
-def _build_nautobot(target: str, config: SyncConfig) -> Any:
+def _build_nautobot(target: str, config: SyncConfig) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
     pytest.importorskip("pynautobot")
     from infrahub_sync.adapters.nautobot import NautobotAdapter
 
@@ -70,7 +70,7 @@ def _build_nautobot(target: str, config: SyncConfig) -> Any:
     return adapter
 
 
-def _build_genericrestapi(target: str, config: SyncConfig) -> Any:
+def _build_genericrestapi(target: str, config: SyncConfig) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
     from infrahub_sync.adapters.genericrestapi import GenericrestapiAdapter
 
     with patch.object(GenericrestapiAdapter, "_create_rest_client", return_value=MagicMock()):
@@ -79,11 +79,11 @@ def _build_genericrestapi(target: str, config: SyncConfig) -> Any:
             adapter=SyncAdapter(name="genericrestapi", settings={"url": "https://example.invalid"}),
             config=config,
         )
-    cast(MagicMock, adapter.client).get.return_value = {}
+    cast("MagicMock", adapter.client).get.return_value = {}
     return adapter
 
 
-def _build_ipfabricsync(target: str, config: SyncConfig) -> Any:
+def _build_ipfabricsync(target: str, config: SyncConfig) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
     pytest.importorskip("ipfabric")
     from infrahub_sync.adapters.ipfabricsync import IpfabricsyncAdapter
 
@@ -97,7 +97,7 @@ def _build_ipfabricsync(target: str, config: SyncConfig) -> Any:
     return adapter
 
 
-def _build_slurpitsync(target: str, config: SyncConfig) -> Any:
+def _build_slurpitsync(target: str, config: SyncConfig) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
     pytest.importorskip("slurpit")
     from infrahub_sync.adapters.slurpitsync import SlurpitsyncAdapter
 
@@ -109,7 +109,17 @@ def _build_slurpitsync(target: str, config: SyncConfig) -> Any:
         )
 
 
-def _build_aci(target: str, config: SyncConfig) -> Any:
+@pytest.fixture(autouse=True)
+def _restore_aci_device_mapping() -> Iterator[None]:
+    """AciAdapter construction sets AciModel's class-level device mapping as a side effect."""
+    from infrahub_sync.adapters.aci import AciModel
+
+    original = AciModel._device_mapping
+    yield
+    AciModel._device_mapping = original
+
+
+def _build_aci(target: str, config: SyncConfig) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
     from infrahub_sync.adapters.aci import AciAdapter
 
     with patch.object(AciAdapter, "_create_aci_client", return_value=MagicMock()):
@@ -120,11 +130,11 @@ def _build_aci(target: str, config: SyncConfig) -> Any:
             ),
             config=config,
         )
-    cast(MagicMock, adapter.client).get.return_value = MagicMock(json=MagicMock(return_value={"imdata": []}))
+    cast("MagicMock", adapter.client).get.return_value = MagicMock(json=MagicMock(return_value={"imdata": []}))
     return adapter
 
 
-def _build_prometheus(target: str, config: SyncConfig) -> Any:
+def _build_prometheus(target: str, config: SyncConfig) -> Any:  # noqa: ANN401 — concrete adapter type varies per builder
     pytest.importorskip("prometheus_client")
     from infrahub_sync.adapters.prometheus import PrometheusAdapter
 
