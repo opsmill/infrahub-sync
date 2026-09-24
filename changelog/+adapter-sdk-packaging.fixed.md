@@ -1,1 +1,1 @@
-Declare IP Fabric and Slurp'it as optional adapter extras outside the default image, declare Prometheus in the service extra, and pass TLS verification settings correctly to both adapter SDKs.
+Declare IP Fabric and Slurp'it as optional adapter extras outside the default image, declare Prometheus in the service extra, and keep Slurp'it async connections usable throughout loading while honoring TLS settings for both adapter SDKs.

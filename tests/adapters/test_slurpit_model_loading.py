@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import re
 import sys
@@ -16,12 +17,14 @@ from pathlib import Path
 from typing import Any, cast
 from unittest import mock
 
+import httpx
 import pytest
 from packaging.requirements import Requirement
 from packaging.version import Version
 
 import infrahub_sync.adapters as adapters_package
 from infrahub_sync import SyncAdapter
+from infrahub_sync.potenda import Potenda
 
 
 class Device:
@@ -135,9 +138,14 @@ def adapter_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.ModuleType
     sdk.api = Client
     monkeypatch.setitem(sys.modules, "slurpit", sdk)
     monkeypatch.delitem(sys.modules, full_name, raising=False)
+    module = importlib.import_module(full_name)
+    loops: list[asyncio.AbstractEventLoop] = []
+    monkeypatch.setattr(module, "_test_loops", loops, raising=False)
     try:
-        yield importlib.import_module(full_name)
+        yield module
     finally:
+        for loop in loops:
+            loop.close()
         cleanup = pytest.MonkeyPatch()
         for added_name in set(sys.modules) - prior_modules:
             if added_name == full_name or added_name.startswith("slurpit."):
@@ -150,6 +158,9 @@ def adapter_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.ModuleType
 
 def _adapter(module: types.ModuleType, mapping: str, target: str = "source") -> tuple[Any, list[dict[str, object]]]:
     instance = module.SlurpitsyncAdapter.__new__(module.SlurpitsyncAdapter)
+    instance._loop = asyncio.new_event_loop()
+    module._test_loops.append(instance._loop)
+    instance.name = "Slurpit"
     instance.target = target
     instance.client = Client("https://slurpit.example", "test-api-key")
     instance.skipped = []
@@ -162,6 +173,51 @@ def _adapter(module: types.ModuleType, mapping: str, target: str = "source") -> 
     )
     instance.slurpit_obj_to_diffsync = lambda obj, mapping, model: obj  # noqa: ARG005
     return instance, loaded
+
+
+def test_run_async_reuses_loop_for_shared_httpx_transport_and_closes_it(adapter_module: types.ModuleType) -> None:
+    instance, _ = _adapter(adapter_module, "device.get_devices")
+    first_loop: asyncio.AbstractEventLoop | None = None
+    requests = 0
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        nonlocal first_loop, requests
+        current_loop = asyncio.get_running_loop()
+        if first_loop is None:
+            first_loop = current_loop
+        assert current_loop is first_loop
+        requests += 1
+        return httpx.Response(200, request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    try:
+        for _ in range(2):
+            response = instance.run_async(client.get("https://slurpit.example/devices"))
+            assert response.status_code == 200
+        assert requests == 2
+    finally:
+        instance.run_async(client.aclose())
+        loop = instance._loop
+        instance.close()
+    assert loop.is_closed()
+
+
+@pytest.mark.parametrize("load_fails", [False, True])
+def test_loading_teardown_closes_adapter_loop(adapter_module: types.ModuleType, load_fails: bool) -> None:
+    instance, _ = _adapter(adapter_module, "device.get_devices")
+    loader = types.SimpleNamespace(
+        source=instance,
+        load_one_side=mock.Mock(side_effect=RuntimeError("load failed") if load_fails else None),
+        _write_side_snapshot=mock.Mock(),
+    )
+
+    if load_fails:
+        with pytest.raises(ValueError, match="load failed"):
+            Potenda.source_load(cast("Any", loader))
+    else:
+        Potenda.source_load(cast("Any", loader))
+
+    assert instance._loop.is_closed()
 
 
 @pytest.mark.parametrize("mapping", ["unique_vendors", "unique_device_type", "device.get_devices"])

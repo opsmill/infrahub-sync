@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import slurpit  # ty: ignore[unresolved-import]  # declared as `slurpit-sdk` in the optional `slurpit` extra
 from diffsync import Adapter, DiffSyncModel
@@ -19,6 +19,10 @@ from infrahub_sync import (
 from infrahub_sync.adapters.utils import build_mapping, get_value
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
+
+if TYPE_CHECKING:
+    from collections.abc import Coroutine
 
 
 class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
@@ -27,7 +31,12 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
     def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.target = target
-        self.client = self._create_slurpit_client(adapter=adapter)
+        self._loop = asyncio.new_event_loop()
+        try:
+            self.client = self._create_slurpit_client(adapter=adapter)
+        except BaseException:
+            self.close()
+            raise
         self.config = config
         self.filtered_networks = []
         self.skipped = []
@@ -43,9 +52,14 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             raise ValueError(msg) from e
         return client
 
-    def run_async(self, coroutine):
-        """Run an SDK coroutine and close its temporary event loop."""
-        return asyncio.run(coroutine)
+    def run_async(self, coroutine: Coroutine[Any, Any, T]) -> T:
+        """Run an SDK coroutine on the loop shared by this adapter's client."""
+        return self._loop.run_until_complete(coroutine)
+
+    def close(self) -> None:
+        """Release the event loop after the adapter finishes loading."""
+        if not self._loop.is_closed():
+            self._loop.close()
 
     def unique_vendors(self) -> list[dict[str, Any]]:
         devices = self.run_async(self.client.device.get_devices())

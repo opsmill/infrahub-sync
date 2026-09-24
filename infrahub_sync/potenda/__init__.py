@@ -464,6 +464,9 @@ class Potenda:
         except Exception as exc:
             msg = f"An error occurred while loading {self.source}: {exc!s}"
             raise ValueError(msg) from exc
+        finally:
+            if callable(close := getattr(self.source, "close", None)):
+                close()
 
     def destination_load(self):
         try:
@@ -473,6 +476,9 @@ class Potenda:
         except Exception as exc:
             msg = f"An error occurred while loading {self.destination}: {exc!s}"
             raise ValueError(msg) from exc
+        finally:
+            if callable(close := getattr(self.destination, "close", None)):
+                close()
 
     def load_both_sides(self) -> None:
         """Load source and destination.
