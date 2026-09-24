@@ -58,3 +58,4 @@ def logging_registry_snapshot() -> Iterator[None]:
                 obj.propagate = propagate
                 obj.disabled = disabled
                 obj.parent = parents_before[name]
+        manager._clear_cache()  # ty: ignore[unresolved-attribute]  # undocumented stdlib method, missing from typeshed's Manager stub

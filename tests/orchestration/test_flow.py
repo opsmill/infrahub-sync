@@ -486,6 +486,7 @@ def test_bridge_sanitizes_every_non_printable_character_in_every_diagnostic_fiel
 
         monkeypatch.setattr(run_logger, "log", _raise_plain)
 
+    monkeypatch.setattr(source_logger, "propagate", False)
     source_logger.addHandler(RunLoggerBridge(run_logger))
     source_logger.setLevel(BRIDGED_LEVEL)
     child = logging.getLogger(f"{SOURCE_LOGGER_NAME}.{logger_name_suffix}")
