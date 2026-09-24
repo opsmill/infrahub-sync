@@ -198,7 +198,18 @@ ADAPTER_CREDENTIAL_ENV_VARS: Mapping[str, tuple[str, ...]] = MappingProxyType(
         "prometheus": ("PROM_URL", "PROM_TOKEN"),
         "ipfabricsync": ("IPF_URL", "IPF_TOKEN"),
         "aci": ("CISCO_APIC_URL", "CISCO_APIC_USERNAME", "CISCO_APIC_PASSWORD"),
-        "peeringmanager": ("PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_TOKEN"),
+        "peeringmanager": (
+            "PEERING_MANAGER_ADDRESS",
+            "PEERING_MANAGER_TOKEN",
+            "PEERING_MANAGER_USERNAME",
+            "PEERING_MANAGER_PASSWORD",
+        ),
+        "genericrestapi": (
+            "GENERICRESTAPI_URL",
+            "GENERICRESTAPI_TOKEN",
+            "GENERICRESTAPI_USERNAME",
+            "GENERICRESTAPI_PASSWORD",
+        ),
     }
 )
 _MISSING_CREDENTIAL_MARKERS = (

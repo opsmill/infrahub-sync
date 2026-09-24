@@ -56,17 +56,17 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
         - Configurable timeouts and SSL verification
         """
         # Get URL from multiple possible sources
-        url_env_vars = settings.get("url_env_vars", ["URL", "ADDRESS"])
+        url_env_vars = settings.get("url_env_vars", ["GENERICRESTAPI_URL", "GENERICRESTAPI_ADDRESS"])
         url = select_runtime_credential(settings, "url", tuple(url_env_vars))
 
         # Get settings with defaults
         api_endpoint = settings.get("api_endpoint", "/api/v0")
         auth_method = settings.get("auth_method", "token")
-        token_env_vars = settings.get("token_env_vars", ["TOKEN"])
+        token_env_vars = settings.get("token_env_vars", ["GENERICRESTAPI_TOKEN"])
         api_token = select_runtime_credential(settings, "token", tuple(token_env_vars))
-        username_env_vars = settings.get("username_env_vars", ["USERNAME"])
+        username_env_vars = settings.get("username_env_vars", ["GENERICRESTAPI_USERNAME"])
         username = select_runtime_credential(settings, "username", tuple(username_env_vars))
-        password_env_vars = settings.get("password_env_vars", ["PASSWORD"])
+        password_env_vars = settings.get("password_env_vars", ["GENERICRESTAPI_PASSWORD"])
         password = select_runtime_credential(settings, "password", tuple(password_env_vars))
 
         # Other configuration

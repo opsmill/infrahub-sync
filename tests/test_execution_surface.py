@@ -1372,6 +1372,16 @@ def test_a_result_invariant_violation_is_not_reported_as_a_credential_problem(
             ("PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_TOKEN"),
             id="generic-rest-api-wording",
         ),
+        pytest.param(
+            "Error initializing PeeringmanagerAdapter: Basic authentication requires both username and password!",
+            ("PEERING_MANAGER_USERNAME", "PEERING_MANAGER_PASSWORD"),
+            id="peering-manager-basic-auth",
+        ),
+        pytest.param(
+            "Error initializing GenericrestapiAdapter: Basic authentication requires both username and password!",
+            ("GENERICRESTAPI_URL", "GENERICRESTAPI_USERNAME", "GENERICRESTAPI_PASSWORD"),
+            id="generic-rest-basic-auth",
+        ),
     ],
 )
 def test_missing_credential_hint_names_the_failing_adapters_variables(

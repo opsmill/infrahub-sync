@@ -73,12 +73,12 @@ You can specify credentials using environment variables instead of storing them 
 
 | Setting | Environment Variables | Description |
 |---------|----------------------|-------------|
-| `url` | URL, ADDRESS | API base URL |
-| token | TOKEN | API token/key |
-| username | USERNAME | Basic auth username |
-| password | PASSWORD | Basic auth password |
+| `url` | `GENERICRESTAPI_URL`, `GENERICRESTAPI_ADDRESS` | API base URL |
+| token | `GENERICRESTAPI_TOKEN` | API token/key |
+| username | `GENERICRESTAPI_USERNAME` | Basic auth username |
+| password | `GENERICRESTAPI_PASSWORD` | Basic auth password |
 
-The adapter will check for these environment variables in the order specified.
+For direct adapter use, these environment variables take precedence over declared settings. The URL names are checked in the order shown. If you previously relied on bare `URL`, `ADDRESS`, `TOKEN`, `USERNAME`, or `PASSWORD`, rename them with the `GENERICRESTAPI_` prefix; bare names are no longer read. Registered configuration packages use their declared or resolved credential values instead of ambient environment variables.
 
 ### Custom response handling
 
