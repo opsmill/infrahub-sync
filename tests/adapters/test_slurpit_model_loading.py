@@ -10,6 +10,7 @@ import importlib
 import re
 import sys
 import types
+from collections import UserDict
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -111,6 +112,18 @@ class Client:
         self.site = SiteAPI()
 
 
+class MappedRecord(UserDict[str, object]):
+    @staticmethod
+    def filter_records(records: list[dict[str, object]], schema_mapping: object) -> list[dict[str, object]]:
+        _ = schema_mapping
+        return records
+
+    @staticmethod
+    def transform_records(records: list[dict[str, object]], schema_mapping: object) -> list[dict[str, object]]:
+        _ = schema_mapping
+        return records
+
+
 @pytest.fixture
 def adapter_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.ModuleType]:
     """Load the adapter with an async SDK stub and restore import state afterward."""
@@ -135,8 +148,9 @@ def adapter_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.ModuleType
             cleanup.delattr(adapters_package, "slurpitsync", raising=False)
 
 
-def _adapter(module: types.ModuleType, mapping: str) -> tuple[Any, list[dict[str, object]]]:
+def _adapter(module: types.ModuleType, mapping: str, target: str = "source") -> tuple[Any, list[dict[str, object]]]:
     instance = module.SlurpitsyncAdapter.__new__(module.SlurpitsyncAdapter)
+    instance.target = target
     instance.client = Client("https://slurpit.example", "test-api-key")
     instance.skipped = []
     instance.filtered_networks = [{"normalized_prefix": "10.0.0.0/24", "Vrf": "default"}]
@@ -154,7 +168,7 @@ def _adapter(module: types.ModuleType, mapping: str) -> tuple[Any, list[dict[str
 def test_device_mappings_load_async_sdk_models(adapter_module: types.ModuleType, mapping: str) -> None:
     instance, loaded = _adapter(adapter_module, mapping)
     with mock.patch.object(DeviceAPI, "get_devices", autospec=True, return_value=[Device()]) as get_devices:
-        adapter_module.SlurpitsyncAdapter.model_loader(instance, "Thing", dict)
+        adapter_module.SlurpitsyncAdapter.model_loader(instance, "Thing", MappedRecord)
     get_devices.assert_awaited_once_with(instance.client.device)
     assert len(loaded) == 1
     if mapping == "unique_vendors":
@@ -192,7 +206,7 @@ def test_planning_mappings_load_async_sdk_models(adapter_module: types.ModuleTyp
         mock.patch.object(PlanningAPI, "get_plannings", autospec=True, return_value=[Planning(planning_name)]) as get,
         mock.patch.object(PlanningAPI, "search_plannings", autospec=True, return_value=rows) as search,
     ):
-        adapter_module.SlurpitsyncAdapter.model_loader(instance, "Thing", dict)
+        adapter_module.SlurpitsyncAdapter.model_loader(instance, "Thing", MappedRecord)
     get.assert_awaited_once_with(instance.client.planning)
     search.assert_awaited_once_with(instance.client.planning, {"planning_id": 42, "unique_results": True}, limit=30000)
     assert len(loaded) == 1
@@ -207,9 +221,23 @@ def test_planning_mappings_load_async_sdk_models(adapter_module: types.ModuleTyp
 def test_site_mapping_loads_async_sdk_models(adapter_module: types.ModuleType) -> None:
     instance, loaded = _adapter(adapter_module, "site.get_sites")
     with mock.patch.object(SiteAPI, "get_sites", autospec=True, return_value=[Site()]) as get_sites:
-        adapter_module.SlurpitsyncAdapter.model_loader(instance, "Thing", dict)
+        adapter_module.SlurpitsyncAdapter.model_loader(instance, "Thing", MappedRecord)
     get_sites.assert_awaited_once_with(instance.client.site)
     assert loaded == [{"id": 7, "sitename": "HQ"}]
+
+
+@pytest.mark.parametrize("target", ["source", "destination"])
+def test_model_loading_applies_mapping_rules_only_for_source(adapter_module: types.ModuleType, target: str) -> None:
+    instance, loaded = _adapter(adapter_module, "site.get_sites", target=target)
+    with (
+        mock.patch.object(SiteAPI, "get_sites", autospec=True, return_value=[Site()]),
+        mock.patch.object(MappedRecord, "filter_records", wraps=MappedRecord.filter_records) as filter_records,
+        mock.patch.object(MappedRecord, "transform_records", wraps=MappedRecord.transform_records) as transform_records,
+    ):
+        adapter_module.SlurpitsyncAdapter.model_loader(instance, "Thing", MappedRecord)
+    assert loaded == [{"id": 7, "sitename": "HQ"}]
+    assert filter_records.call_count == (1 if target == "source" else 0)
+    assert transform_records.call_count == (1 if target == "source" else 0)
 
 
 def test_missing_planning_slug_raises_index_error(adapter_module: types.ModuleType) -> None:
