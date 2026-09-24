@@ -5,7 +5,7 @@ import ipaddress
 import logging
 from typing import Any
 
-import slurpit  # ty: ignore[unresolved-import]  # declared as `slurpit-sdk` in the `service` extra, not the base install
+import slurpit  # ty: ignore[unresolved-import]  # declared as `slurpit-sdk` in the optional `slurpit` extra
 from diffsync import Adapter, DiffSyncModel
 from typing_extensions import Self
 
@@ -19,9 +19,6 @@ from infrahub_sync import (
 from infrahub_sync.adapters.utils import build_mapping, get_value
 
 logger = logging.getLogger(__name__)
-
-# Create a new event loop for running async functions synchronously
-loop = asyncio.new_event_loop()
 
 
 class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
@@ -37,47 +34,26 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
 
     def _create_slurpit_client(self, adapter: SyncAdapter) -> slurpit.api:
         settings = dict(adapter.settings or {})
-        # `slurpit.api` takes no verify/verify_ssl keyword at all (0.9.x), so a
-        # `verify_ssl` registered setting can only be honored when it isn't
-        # asking to disable verification; otherwise this is a no-op the SDK
-        # can't perform, so warn rather than fail or silently stay verified.
-        verify_ssl = settings.pop("verify_ssl", None)
-        if verify_ssl is False:
-            logger.warning(
-                "The Slurp'it SDK does not support disabling TLS verification; "
-                "requests will still verify the server's certificate."
-            )
-        client = slurpit.api(**settings)
+        verify = settings.pop("verify_ssl", True)
+        client = slurpit.api(verify=verify, **settings)
         try:
-            # `DeviceAPI.get_devices` is a synchronous `requests` call, not a coroutine;
-            # `run_async` is for the adapter's own async model-loading calls below.
-            client.device.get_devices()
+            self.run_async(client.device.get_devices())
         except Exception as e:
             msg = f"Unable to connect to Slurpit API: {e}"
             raise ValueError(msg) from e
         return client
 
     def run_async(self, coroutine):
-        """Utility to run asynchronous coroutines synchronously"""
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_closed():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            return loop.run_until_complete(coroutine)
-        except RuntimeError:
-            # If no event loop exists, create a new one
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            return loop.run_until_complete(coroutine)
+        """Run an SDK coroutine and close its temporary event loop."""
+        return asyncio.run(coroutine)
 
     def unique_vendors(self) -> list[dict[str, Any]]:
-        devices = self.client.device.get_devices()
+        devices = self.run_async(self.client.device.get_devices())
         vendors = {device.brand for device in devices}
         return [{"brand": item} for item in vendors]
 
     def unique_device_type(self) -> list[dict[str, Any]]:
-        devices = self.client.device.get_devices()
+        devices = self.run_async(self.client.device.get_devices())
         device_types = {(device.brand, device.device_type, device.device_os) for device in devices}
         return [{"brand": item[0], "device_type": item[1], "device_os": item[2]} for item in device_types]
 
@@ -166,14 +142,14 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         return results
 
     def planning_results(self, planning_name):
-        plannings = self.client.planning.get_plannings()
-        planning = next((plan.to_dict() for plan in plannings if plan.name == planning_name), None)
+        plannings = self.run_async(self.client.planning.get_plannings())
+        planning = next((plan.to_dict() for plan in plannings if plan.slug == planning_name), None)
         if not planning:
             msg = f"No planning found for name: {planning_name}"
             raise IndexError(msg)
 
         search_data = {"planning_id": planning["id"], "unique_results": True}
-        results = self.client.planning.search_plannings(search_data)
+        results = self.run_async(self.client.planning.search_plannings(search_data, limit=30000))
         return results or []
 
     def model_loader(self, model_name: str, model: type[SlurpitsyncModel]) -> None:
@@ -193,7 +169,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 app_name, resource_name = element.mapping.split(".")
                 slurpit_app = getattr(self.client, app_name)
                 slurpit_model = getattr(slurpit_app, resource_name)
-                nodes = slurpit_model()
+                nodes = self.run_async(slurpit_model())
             elif element.mapping == "filter_interfaces":
                 interfaces = self.planning_results("interfaces")
                 nodes = self.run_async(self.filter_interfaces(interfaces))

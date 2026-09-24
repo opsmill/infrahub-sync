@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 import types
@@ -160,7 +161,7 @@ def _adapter_module(monkeypatch: pytest.MonkeyPatch, row: AdapterRow) -> types.M
         # alone records nothing when the module was absent before this test.
         monkeypatch.setitem(sys.modules, module_name, types.ModuleType(module_name))
         monkeypatch.setattr(package, name, types.ModuleType(module_name), raising=False)
-        del sys.modules[module_name]
+        monkeypatch.delitem(sys.modules, module_name)
     return importlib.import_module(f"infrahub_sync.adapters.{row.name}")
 
 
@@ -215,7 +216,8 @@ def _capture_client(
         def make_slurpit_client(**kwargs: object) -> object:
             observed.append(kwargs)
 
-            def get_devices() -> list[object]:  # matches the real (synchronous) SDK
+            async def get_devices() -> list[object]:  # matches the current async SDK
+                await asyncio.sleep(0)
                 return []
 
             return types.SimpleNamespace(device=types.SimpleNamespace(get_devices=get_devices))

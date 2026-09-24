@@ -1,9 +1,8 @@
-"""The `service` extra installs every SDK a bundled adapter imports at module top, except `ipfabric`.
+"""The `service` extra installs Prometheus; vendor SDKs use separate optional extras.
 
-`slurpit-sdk` and `prometheus-client` are declared in `service` for `python_version >= '3.11'`
-only (see `pyproject.toml`), matching the direct-Prefect profile used on Python 3.10, which
-has no `service` extra at all. Below 3.11 these tests skip; at 3.11+ the SDK is expected to be
-installed, so a missing import or a failing construction is a real failure, not a skip.
+`prometheus-client` is declared in `service` for Python 3.11 and newer.
+The Slurp'it adapter is tested against an async SDK stub in
+`test_slurpit_model_loading.py`, so the default service profile needs no real SDK.
 
 `ipfabric` is declared in its own `ipfabric` extra instead, not part of `service` and so not
 part of the default Sync image: every current release depends unconditionally on `niquests`,
@@ -43,7 +42,7 @@ requires_ipfabric_extra = pytest.mark.skipif(
 def restore_adapter_module() -> Iterator[Callable[[str, str, str], None]]:
     """Undo a successful import's `sys.modules`/package-attribute side effects.
 
-    Importing a real SDK (`ipfabric`, `slurpit`, `prometheus_client`) pulls in dozens of its
+    Importing a real SDK (`ipfabric`, `prometheus_client`) pulls in dozens of its
     own submodules (`ipfabric.api`, `ipfabric.models`, ...), none of which existed in
     `sys.modules` before the test ran. Restoring only the `infrahub_sync.adapters.<name>`
     entry leaves all of those behind, where they leak into later tests. `register` snapshots
@@ -82,7 +81,6 @@ def restore_adapter_module() -> Iterator[Callable[[str, str, str], None]]:
 @pytest.mark.parametrize(
     ("module_name", "sdk_name"),
     [
-        ("slurpitsync", "slurpit"),
         ("prometheus", "prometheus_client"),
     ],
 )
@@ -93,6 +91,12 @@ def test_adapter_imports_without_error_in_service_profile(
     restore_adapter_module(module_name, full_name, sdk_name)
     importlib.import_module(full_name)
     assert sdk_name in sys.modules
+
+
+@requires_service_profile
+def test_service_profile_does_not_install_slurpit_sdk() -> None:
+    with pytest.raises(importlib.metadata.PackageNotFoundError):
+        importlib.metadata.version("slurpit-sdk")
 
 
 @requires_service_profile
@@ -183,54 +187,3 @@ def test_ipfabric_adapter_passes_verify_not_verify_ssl(restore_adapter_module) -
     _, kwargs = ipf_client.call_args
     assert kwargs["verify"] is False
     assert "verify_ssl" not in kwargs
-
-
-@requires_service_profile
-def test_slurpit_adapter_constructs_client_without_live_call(restore_adapter_module) -> None:
-    full_name = "infrahub_sync.adapters.slurpitsync"
-    restore_adapter_module("slurpitsync", full_name, "slurpit")
-    module = importlib.import_module(full_name)
-
-    adapter = SyncAdapter(name="slurpitsync", settings={"url": "https://slurpit.example", "api_key": "test-api-key"})
-    instance = module.SlurpitsyncAdapter.__new__(module.SlurpitsyncAdapter)
-    with mock.patch("slurpit.apis.deviceapi.DeviceAPI.get_devices", return_value=[]):
-        client = instance._create_slurpit_client(adapter)
-    assert client.api_key == "test-api-key"
-
-
-@requires_service_profile
-def test_slurpit_adapter_warns_when_verify_disabled_but_unsupported(caplog, restore_adapter_module) -> None:
-    full_name = "infrahub_sync.adapters.slurpitsync"
-    restore_adapter_module("slurpitsync", full_name, "slurpit")
-    module = importlib.import_module(full_name)
-
-    adapter = SyncAdapter(
-        name="slurpitsync",
-        settings={"url": "https://slurpit.example", "api_key": "test-api-key", "verify_ssl": False},
-    )
-    instance = module.SlurpitsyncAdapter.__new__(module.SlurpitsyncAdapter)
-    with (
-        mock.patch("slurpit.apis.deviceapi.DeviceAPI.get_devices", return_value=[]),
-        caplog.at_level("WARNING", logger=module.logger.name),
-    ):
-        instance._create_slurpit_client(adapter)
-    assert "does not support disabling" in caplog.text
-
-
-@requires_service_profile
-def test_slurpit_adapter_does_not_warn_when_verify_enabled(caplog, restore_adapter_module) -> None:
-    full_name = "infrahub_sync.adapters.slurpitsync"
-    restore_adapter_module("slurpitsync", full_name, "slurpit")
-    module = importlib.import_module(full_name)
-
-    adapter = SyncAdapter(
-        name="slurpitsync",
-        settings={"url": "https://slurpit.example", "api_key": "test-api-key", "verify_ssl": True},
-    )
-    instance = module.SlurpitsyncAdapter.__new__(module.SlurpitsyncAdapter)
-    with (
-        mock.patch("slurpit.apis.deviceapi.DeviceAPI.get_devices", return_value=[]),
-        caplog.at_level("WARNING", logger=module.logger.name),
-    ):
-        instance._create_slurpit_client(adapter)
-    assert "does not support disabling" not in caplog.text

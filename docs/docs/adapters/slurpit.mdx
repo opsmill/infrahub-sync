@@ -18,7 +18,17 @@ Run the installation wizard and Slurp’it will start mining your network. You c
 ## Requirements
 
 This Adapter uses the [Slurp’it SDK](https://pypi.org/project/slurpit-sdk), distributed as `slurpit-sdk` on PyPI.
-The Sync service image installs it as part of its `service` package extra; no separate install step is needed.
+It is available through the optional `slurpit` extra (`slurpit-sdk>=0.9.52,<0.10`). The default Sync image installs only `service` and does not include this SDK.
+To add it to a custom Sync image, copy the repository Dockerfile and add this command in the build stage after the final `uv sync` command:
+
+```dockerfile
+RUN uv pip install --python /opt/infrahub-sync/venv/bin/python \
+    'ariadne-codegen==0.15.3' 'slurpit-sdk>=0.9.52,<0.10' \
+    && uv pip check --python /opt/infrahub-sync/venv/bin/python
+```
+
+The current SDK requires `httpx>=0.27,<0.28`. The custom image also uses `ariadne-codegen==0.15.3` because the default service image's 0.18 release requires httpx 0.28. The default service image keeps httpx 0.28 and real urllib3.
+The `service` and `slurpit` extras are marked as conflicting in uv because `uv sync --extra service --extra slurpit` cannot preserve the default service resolution.
 
 ## Sync directions supported
 
@@ -108,11 +118,11 @@ This table highlights the available `mappings` the adapter has to gather and nor
 
 | Name | Description |
 | --- | --- |
-| `unique_vendors` | Retrieves devices through the synchronous SDK and returns each distinct brand. |
-| `unique_device_type` | Retrieves devices through the synchronous SDK and returns each distinct brand, device type, and operating system combination. |
+| `unique_vendors` | Retrieves devices through the async SDK and returns each distinct brand. |
+| `unique_device_type` | Retrieves devices through the async SDK and returns each distinct brand, device type, and operating system combination. |
 | `model`.`function` | This mapping directly relates to the SDK. For example once the SDK client is initiated you can get devices by using `device.get_devices` this will execute the query to gather all the devices.   |
-| `planning_results`.`<planning_name>` | Retrieves results for the planning whose SDK `name` matches the suffix. For example, `planning_results.routing-table` uses the planning named `routing-table`. |
+| `planning_results`.`<planning_name>` | Retrieves results for the planning whose SDK `slug` matches the suffix. For example, `planning_results.routing-table` uses the planning slug `routing-table`. |
 | `filter_networks` | The `filter_networks` function processes a list of network entries, normalizing the network and mask fields, and filters out unwanted networks based on predefined "ignore" prefixes (such as 0.0.0.0/0 and 127.0.0.0/8). It returns a list of filtered, normalized networks, excluding those with prefixes deemed unnecessary or invalid. |
 | `filter_interfaces` | Normalizes interface IP addresses and matches them against previously loaded network prefixes. |
 
-The current `slurpit-sdk` has no `site` API or `get_sites` method, so the example does not map sites.
+The current SDK has a `site.get_sites` API, which the example maps to locations.
