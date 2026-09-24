@@ -1,14 +1,15 @@
 """IP Fabric and Slurpit reference conversion without their optional SDKs installed.
 
-Both adapters import their provider SDK unconditionally at module level, and neither
-`ipfabric` nor `slurpit` is installable in any repo profile. Each import is stubbed
-with a bare `types.ModuleType` injected into `sys.modules`, and the cached adapter
-module is dropped first, exactly as `tests/runtime_schema/test_registered_execution.py`
-does for `pynetbox`.
+Both adapters import their provider SDK unconditionally at module level. Neither `ipfabric`
+nor `slurpit` is installed in the base profile this module's own tests run under (only the
+`service` extra carries them), so each import is stubbed here with a bare `types.ModuleType`
+injected into `sys.modules`, and the cached adapter module is dropped first, exactly as
+`tests/runtime_schema/test_registered_execution.py` does for `pynetbox`.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 import types
 from collections.abc import Iterator
@@ -21,7 +22,7 @@ import infrahub_sync.adapters as adapters_package
 from infrahub_sync import SchemaMappingField, SchemaMappingModel
 
 
-def _reload_submodule(name: str) -> Iterator[types.ModuleType]:
+def _reload_submodule(name: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[types.ModuleType]:
     """Import `infrahub_sync.adapters.<name>` fresh, then restore both prior states.
 
     A plain `import infrahub_sync.adapters.<name>` sets `<name>` as an attribute on the
@@ -36,17 +37,20 @@ def _reload_submodule(name: str) -> Iterator[types.ModuleType]:
     had_attr = hasattr(adapters_package, name)
     prior_attr = getattr(adapters_package, name, None)
 
-    sys.modules.pop(full_name, None)
+    monkeypatch.delitem(sys.modules, full_name, raising=False)
 
-    yield __import__(full_name, fromlist=["_"])
-
-    sys.modules.pop(full_name, None)
-    if had_module and prior_module is not None:
-        sys.modules[full_name] = prior_module
-    if had_attr:
-        setattr(adapters_package, name, prior_attr)
-    else:
-        adapters_package.__dict__.pop(name, None)
+    try:
+        yield __import__(full_name, fromlist=["_"])
+    finally:
+        cleanup = pytest.MonkeyPatch()
+        if had_module and prior_module is not None:
+            cleanup.setitem(sys.modules, full_name, prior_module)
+        else:
+            cleanup.delitem(sys.modules, full_name, raising=False)
+        if had_attr:
+            cleanup.setattr(adapters_package, name, prior_attr)
+        else:
+            cleanup.delattr(adapters_package, name, raising=False)
 
 
 @pytest.fixture
@@ -55,7 +59,7 @@ def ipfabricsync_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.Modul
     stub = cast("Any", types.ModuleType("ipfabric"))
     stub.IPFClient = object  # only the imported symbol; nothing else is simulated
     monkeypatch.setitem(sys.modules, "ipfabric", stub)
-    yield from _reload_submodule("ipfabricsync")
+    yield from _reload_submodule("ipfabricsync", monkeypatch)
 
 
 @pytest.fixture
@@ -63,7 +67,7 @@ def slurpitsync_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.Module
     """Import `infrahub_sync.adapters.slurpitsync` against a bare `slurpit` stub."""
     stub = types.ModuleType("slurpit")
     monkeypatch.setitem(sys.modules, "slurpit", stub)
-    yield from _reload_submodule("slurpitsync")
+    yield from _reload_submodule("slurpitsync", monkeypatch)
 
 
 def _holder(*, peer_model: type[Any], peers: dict[str, str], identifier_mapping: str):
@@ -283,14 +287,17 @@ def test_teardown_leaves_no_stub_backed_module_on_parent_package(
     package afterward and proves no stub-backed module comes back.
     """
     full_name = f"infrahub_sync.adapters.{name}"
-    assert not hasattr(adapters_package, name), "leaked from a previous test"
+    had_attr = hasattr(adapters_package, name)
+    prior_attr = getattr(adapters_package, name, None)
+    had_module = full_name in sys.modules
+    prior_module = sys.modules.get(full_name)
 
     stub = cast("Any", types.ModuleType(sdk_name))
     if sdk_name == "ipfabric":
         stub.IPFClient = object
     with monkeypatch.context() as sdk_patch:
         sdk_patch.setitem(sys.modules, sdk_name, stub)
-        gen = _reload_submodule(name)
+        gen = _reload_submodule(name, sdk_patch)
         module = next(gen)
         assert module is sys.modules[full_name]
         assert getattr(adapters_package, name) is module
@@ -298,8 +305,36 @@ def test_teardown_leaves_no_stub_backed_module_on_parent_package(
         with pytest.raises(StopIteration):
             next(gen)
 
-    assert full_name not in sys.modules
-    assert not hasattr(adapters_package, name)
+    assert (full_name in sys.modules) == had_module
+    if had_module:
+        assert sys.modules[full_name] is prior_module
+    assert hasattr(adapters_package, name) == had_attr
+    if had_attr:
+        assert getattr(adapters_package, name) is prior_attr
 
-    with pytest.raises(ModuleNotFoundError):
-        __import__(full_name, fromlist=["_"])
+    if importlib.util.find_spec(sdk_name) is None:
+        # Neither SDK is installed in the base profile these tests run under; the
+        # `service` extra is where each is declared.
+        with pytest.raises(ModuleNotFoundError):
+            __import__(full_name, fromlist=["_"])
+    else:
+        # In a `service`-profile run the SDK is genuinely installed, so a fresh,
+        # unstubbed import succeeds too, and teardown must undo its side effects the
+        # same way, so it doesn't leak into other tests in this session. Restore
+        # newly imported SDK modules and the adapter package attribute while
+        # preserving previously loaded modules and transitive dependencies.
+        pre_import_modules = frozenset(sys.modules)
+        prior_attr = getattr(adapters_package, name, None)
+        had_attr = hasattr(adapters_package, name)
+        try:
+            module = __import__(full_name, fromlist=["_"])
+            assert module is sys.modules[full_name]
+        finally:
+            cleanup = pytest.MonkeyPatch()
+            for added_name in set(sys.modules) - pre_import_modules:
+                if added_name in {full_name, sdk_name} or added_name.startswith(f"{sdk_name}."):
+                    cleanup.delitem(sys.modules, added_name, raising=False)
+            if had_attr:
+                cleanup.setattr(adapters_package, name, prior_attr)
+            else:
+                cleanup.delattr(adapters_package, name, raising=False)
