@@ -114,12 +114,38 @@ def test_server_allocated_rule_id_is_refused_at_the_write_boundary() -> None:
 
 
 def test_writable_rule_key_allows_repeated_writes_with_a_read_only_display_id() -> None:
-    client, adapter, peers = _read_only_rule_adapter(writable_alternative=True)
+    class StatefulRuleClient(RecordingClient):
+        """Apply rendered upserts to an independent in-memory destination index."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.persisted: dict[str, str] = {}
+
+        def execute_graphql(self, *args: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401, ARG002
+            query = kwargs["query"]
+            match = re.search(r'hostname:\s*\{\s*value:\s*"([^"]+)"', query)
+            assert match is not None, "The actual SDK mutation must carry the writable key."
+            hostname = match.group(1)
+            node_id = self.persisted.setdefault(hostname, f"saved-node-{len(self.persisted) + 1}")
+            self.events.append(("mutation", ("TestRuleUpsert", query)))
+            return {"TestRuleUpsert": {"ok": True, "object": {"id": node_id}}}
+
+        def read_back(self, hostname: str) -> list[str]:
+            """Query the simulated destination by its persisted writable key."""
+            return [node_id for key, node_id in self.persisted.items() if key == hostname]
+
+    _client, adapter, peers = _read_only_rule_adapter(writable_alternative=True)
+    stateful_client = StatefulRuleClient()
+    stateful_client.schema.set_cache(BranchSchema(hash="fixture", nodes=dict(adapter.schema)))
+    adapter.client = stateful_client
     operation = make_operation(kind="TestRule", identity={"hostname": "edge-1"}, payload={"hostname": "edge-1"})
 
-    assert adapter.apply_planned_operation(operation=operation, peers=peers) == NODE_ID
-    assert adapter.apply_planned_operation(operation=operation, peers=peers) == NODE_ID
-    assert client.mutation_names == ["TestRuleUpsert", "TestRuleUpsert"]
+    first = adapter.apply_planned_operation(operation=operation, peers=peers)
+    second = adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert first == second
+    assert stateful_client.mutation_names == ["TestRuleUpsert", "TestRuleUpsert"]
+    assert stateful_client.read_back("edge-1") == [first]
 
 
 def update_operation(

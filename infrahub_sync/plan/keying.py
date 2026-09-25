@@ -84,33 +84,56 @@ def writable_convergence_reason(
     schemas: Mapping[str, Any] | None = None,
     identity: Mapping[str, Any] | None = None,
     check_values: bool = False,
+    write_values: Mapping[str, Any] | None = None,
     references: Mapping[str, Mapping[str, str]] | None = None,
 ) -> str | None:
-    """Explain why no complete destination key can be recreated from mapped identity fields."""
+    """Explain why no complete destination key can be recreated from mapped identity fields.
+
+    Direct DiffSync writes supply resolved peer IDs in ``write_values``. A peer ID proves
+    that the relationship has a write value, while a planned identity instead carries
+    the peer's nested identity and is checked component by component.
+    """
     keys = [list(getattr(node, "human_friendly_id", None) or ())]
     keys.extend(list(key) for key in (getattr(node, "uniqueness_constraints", None) or ()))
     unusable: set[str] = set()
+    unwritable: set[str] = set()
     for key in keys:
         if not key:
             continue
+        unwritable.update(
+            component for component in key if not _writable_component(component, node, schemas, identity, references)
+        )
         missing = {
             component
             for component in key
             if _component_field(component) not in identity_fields
             or (mapped_fields is not None and _component_field(component) not in mapped_fields)
             or not _writable_component(component, node, schemas, identity, references)
-            or (check_values and identity is not None and not _usable(component_value(identity, component)))
+            or (check_values and not _usable(_convergence_value(component, identity, write_values)))
         }
         if not missing:
             return None
         unusable.update(missing)
     detail = ", ".join(sorted(unusable)) or "no declared destination key"
-    return (
-        f"no complete writable destination convergence identity; unusable components: {detail}. "
+    explanation = (
         "A server-allocated, read-only value cannot be recreated from its mapped source value; "
         "neither can a computed value. "
-        "map and select every component of a writable destination uniqueness constraint"
+        if unwritable
+        else ""
     )
+    return (
+        f"no complete writable destination convergence identity; unusable components: {detail}. "
+        f"{explanation}Map and select every component of a writable destination uniqueness constraint"
+    )
+
+
+def _convergence_value(
+    component: str, identity: Mapping[str, Any] | None, write_values: Mapping[str, Any] | None
+) -> Any:
+    """Get a plan component or the resolved write value of its root field."""
+    if write_values is not None:
+        return write_values.get(_component_field(component))
+    return component_value(identity, component) if identity is not None else None
 
 
 def component_value(identity: Mapping[str, Any], component: str) -> Any:

@@ -1407,14 +1407,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 mapped_fields=data,
                 schemas=self.schema,
                 identity=operation.identity,
-                check_values=any(
-                    (
-                        getattr(attribute, "read_only", False)
-                        or getattr(attribute, "computed_attribute", None) is not None
-                    )
-                    and f"{attribute.name}__value" in (node_schema.human_friendly_id or ())
-                    for attribute in node_schema.attributes
-                ),
+                check_values=_has_unwritable_hfid_attribute(node_schema),
             )
             if reason:
                 msg = (
@@ -1423,13 +1416,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 )
                 raise UnkeyedCreateRefusedError(msg)
             refuse_unkeyed_create_coverage(operation, node=node_schema, schemas=self.schema)
-            if all(
-                not (
-                    getattr(attribute, "read_only", False) or getattr(attribute, "computed_attribute", None) is not None
-                )
-                for attribute in node_schema.attributes
-                if f"{attribute.name}__value" in (node_schema.human_friendly_id or ())
-            ):
+            if not _has_unwritable_hfid_attribute(node_schema):
                 self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
 
         source_id = self.source_node.id if self.source_node else None
@@ -1496,6 +1483,16 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         raise UnaccountedIdentityComponentError(msg)
 
 
+def _has_unwritable_hfid_attribute(node_schema: NodeSchemaAPI) -> bool:
+    """Whether an HFID attribute is omitted or computed by the destination."""
+    hfid = set(node_schema.human_friendly_id or ())
+    return any(
+        f"{attribute.name}__value" in hfid
+        and (getattr(attribute, "read_only", False) or getattr(attribute, "computed_attribute", None) is not None)
+        for attribute in node_schema.attributes
+    )
+
+
 class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
     @classmethod
     def create(
@@ -1522,6 +1519,7 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
             schemas=adapter.schema,
             identity=ids,
             check_values=True,
+            write_values=data,
         )
         if reason:
             msg = f"Destination kind {cls.__name__!r}: {reason}. No write was attempted."

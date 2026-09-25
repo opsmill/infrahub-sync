@@ -258,7 +258,7 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
                         schemas=normalized.kinds,
                         references=references,
                     )
-                    if identifiers and reason:
+                    if reason:
                         findings.append(
                             _finding(
                                 code=_CODE_DESTINATION_SCHEMA_MISMATCH,

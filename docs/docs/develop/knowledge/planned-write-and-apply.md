@@ -181,6 +181,8 @@ human-friendly ID. Validation names the unusable components before extraction, a
 destination checks again before mutation. Map and select every component of an independent
 writable uniqueness constraint to use a computed or read-only display ID safely. Registered
 apply compares the bound schema fingerprint, including attribute writability, before writing.
+This changes the fingerprint for existing saved plans, so review and save a new plan after
+upgrading before you apply it.
 
 Several creates projecting onto **one** destination human-friendly ID are refused as
 `DestinationIdentityCollisionError`: the sync tells them apart and the destination does not, so

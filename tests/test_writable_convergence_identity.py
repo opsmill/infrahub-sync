@@ -102,6 +102,18 @@ def test_blank_writable_alternative_does_not_key_a_create() -> None:
         )
 
 
+def test_unselected_writable_component_has_no_read_only_explanation() -> None:
+    node = _node(constraint=["hostname__value", "site__value"])
+    node.human_friendly_id = []
+
+    reason = writable_convergence_reason(node=node, identity_fields={"hostname"}, mapped_fields={"hostname"})
+
+    assert reason is not None
+    assert "site__value" in reason
+    assert "server-allocated" not in reason
+    assert ". Map and select" in reason
+
+
 def test_relationship_crossing_key_checks_the_peer_attribute() -> None:
     node = _node(constraint=["owner__rule_id__value"])
     node.relationships = [SimpleNamespace(name="owner", peer="AbstractRule")]

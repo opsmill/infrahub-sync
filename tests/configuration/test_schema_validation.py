@@ -157,6 +157,22 @@ def test_schema_validation_names_a_read_only_selected_identity(monkeypatch: pyte
     )
 
 
+def test_schema_validation_refuses_a_kind_with_no_selected_or_declared_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    snapshot["InfraDevice"]["human_friendly_id"] = []
+    snapshot["InfraDevice"]["uniqueness_constraints"] = []
+    snapshot["InfraDevice"]["attributes"]["name"]["unique"] = False
+    _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(snapshot)))
+    content = _mapping_package_data(fields=[{"name": "name", "mapping": "name"}])
+
+    findings = collect_destination_schema_findings(package(content)).findings
+
+    assert any(
+        finding.code == "destination-schema-mismatch" and "no declared destination key" in finding.message
+        for finding in findings
+    )
+
+
 # --- The accessor seam (registration-time invariant) ---------------------------------
 
 
@@ -251,7 +267,8 @@ def test_an_unknown_field_is_an_error_finding(monkeypatch: pytest.MonkeyPatch) -
     result = collect_destination_schema_findings(package(data))
 
     assert _codes_and_locations(result.findings) == [
-        ("destination-schema-mismatch", "/configuration/schema_mapping/0/fields/0/name")
+        ("destination-schema-mismatch", "/configuration/schema_mapping/0/fields/0/name"),
+        ("destination-schema-mismatch", "/configuration/schema_mapping/0/identifiers"),
     ]
 
 
@@ -289,7 +306,10 @@ def test_a_wrong_relationship_cardinality_is_an_error_finding(
 
     result = collect_destination_schema_findings(package(_mapping_package_data([field])))
 
-    assert _codes_and_locations(result.findings) == [("destination-schema-mismatch", location)]
+    assert _codes_and_locations(result.findings) == [
+        ("destination-schema-mismatch", location),
+        ("destination-schema-mismatch", "/configuration/schema_mapping/0/identifiers"),
+    ]
 
 
 def test_a_conforming_mapping_yields_no_findings_and_a_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -424,6 +444,7 @@ def test_schema_findings_arrive_in_the_stable_sort_order(monkeypatch: pytest.Mon
 
     assert _codes_and_locations(result.findings) == [
         ("destination-schema-mismatch", "/configuration/schema_mapping/0/fields/0/name"),
+        ("destination-schema-mismatch", "/configuration/schema_mapping/0/identifiers"),
         ("destination-schema-mismatch", "/configuration/schema_mapping/1/name"),
     ]
 
