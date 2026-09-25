@@ -25,7 +25,11 @@ from infrahub_sdk.exceptions import GraphQLError
 from infrahub_sdk.schema.main import BranchSchema, NodeSchemaAPI
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerResolver
-from infrahub_sync.plan.errors import UnaccountedIdentityComponentError, UnkeyedCreateRefusedError
+from infrahub_sync.plan.errors import (
+    ReviewedPayloadFieldMissingError,
+    UnaccountedIdentityComponentError,
+    UnkeyedCreateRefusedError,
+)
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 from tests.adapters.test_infrahub_planned_write import (
@@ -76,7 +80,8 @@ ALL_SCHEMAS: dict[str, NodeSchemaAPI] = {**SCHEMAS, CONSTRAINED_KIND: CONSTRAINE
 def keyed_adapter() -> tuple[RecordingClient, InfrahubAdapter, PeerResolver]:
     """A recording client and adapter that also know the constrained fixture kind."""
     client = RecordingClient()
-    client.schema.set_cache(BranchSchema(hash="fixture", nodes=dict(ALL_SCHEMAS)))
+    client.live_schema = BranchSchema(hash="fixture", nodes=dict(ALL_SCHEMAS))
+    client.schema.set_cache(client.live_schema)
     adapter = make_adapter(client)
     adapter.schema = dict(ALL_SCHEMAS)
     return client, adapter, PeerResolver(adapter)
@@ -105,9 +110,19 @@ def _read_only_rule_adapter(*, writable_alternative: bool) -> tuple[RecordingCli
 
 def test_server_allocated_rule_id_is_refused_at_the_write_boundary() -> None:
     client, adapter, peers = _read_only_rule_adapter(writable_alternative=False)
-    operation = make_operation(kind="TestRule", identity={"rule_id": "999"}, payload={"rule_id": "999"})
+    operation = make_operation(kind="TestRule", identity={"hostname": "edge-1"}, payload={"hostname": "edge-1"})
 
     with pytest.raises(UnkeyedCreateRefusedError, match="rule_id__value"):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.mutation_names == []
+
+
+def test_reviewed_read_only_rule_id_is_refused_at_the_write_boundary() -> None:
+    client, adapter, peers = _read_only_rule_adapter(writable_alternative=False)
+    operation = make_operation(kind="TestRule", identity={"rule_id": "999"}, payload={"rule_id": "999"})
+
+    with pytest.raises(ReviewedPayloadFieldMissingError, match="rule_id"):
         adapter.apply_planned_operation(operation=operation, peers=peers)
 
     assert client.mutation_names == []
@@ -634,8 +649,8 @@ def test_a_complete_cardinality_many_peer_set_is_written() -> None:
     assert rendered_relationship_ids(client.mutations[0][1], "members") == ["tag-id-1", "tag-id-2"]
 
 
-def test_an_omitted_optional_null_relationship_does_not_require_a_peer() -> None:
-    """A null optional peer is omitted, so no peer key is needed for this update."""
+def test_an_ambiguous_null_relationship_is_refused_without_a_peer_lookup() -> None:
+    """A null payload field could be a scalar lost to relationship schema drift."""
     client, adapter, peers = keyed_adapter()
     operation = update_operation(
         kind=TEAM_KIND,
@@ -643,10 +658,11 @@ def test_an_omitted_optional_null_relationship_does_not_require_a_peer() -> None
         payload={"name": "team-a", "owner": None},
     )
 
-    adapter.apply_planned_operation(operation=operation, peers=peers)
+    with pytest.raises(ReviewedPayloadFieldMissingError, match="owner"):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
 
     assert client.resolver_queries == []
-    assert "owner" not in client.mutations[0][1]
+    assert client.mutations == []
 
 
 def test_an_update_with_an_unchanged_relationship_needs_no_peer_lookup() -> None:

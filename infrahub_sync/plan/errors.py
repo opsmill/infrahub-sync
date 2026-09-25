@@ -403,6 +403,13 @@ class PlanSchemaChangedError(PlanArtifactError):
     )
 
 
+class ReviewedPayloadFieldMissingError(PlanArtifactError):
+    """The live schema or SDK payload omits a reviewed direct field."""
+
+    wrote = False
+    next_action = "Create a new plan against the current destination schema and review it before applying."
+
+
 class OperationApplyFailedError(PlanArtifactError):
     """The destination rejected an operation, or transport failed while applying it (AD027).
 

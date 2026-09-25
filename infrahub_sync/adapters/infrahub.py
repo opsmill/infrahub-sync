@@ -33,6 +33,7 @@ from infrahub_sync.plan.errors import (
     NullRelationshipValueError,
     PeerAmbiguousError,
     PeerNotFoundError,
+    ReviewedPayloadFieldMissingError,
     SkippedDeleteOperation,
     StaleDestinationIdError,
     UnaccountedIdentityComponentError,
@@ -1277,6 +1278,85 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """
         return PeerResolver(self)
 
+    def validate_planned_payload_fields(self, operations: Sequence[PlannedOperation]) -> None:
+        """Check every reviewed direct field and SDK input before the first write."""
+        if not any(operation.action != "delete" for operation in operations):
+            return
+        schemas = self.client.schema.all(refresh=True)
+        missing_by_kind: dict[str, set[str]] = {}
+        for operation in operations:
+            if operation.action == "delete":
+                continue
+            schema = schemas.get(operation.kind)
+            if isinstance(schema, NodeSchemaAPI):
+                missing = self._unwritable_reviewed_fields(operation=operation, node_schema=schema)
+                if not missing:
+                    missing = self._omitted_rendered_fields(operation=operation, node_schema=schema)
+            else:
+                missing = set(operation.payload or {})
+            if missing:
+                missing_by_kind.setdefault(operation.kind, set()).update(missing)
+        if missing_by_kind:
+            details = "; ".join(
+                f"{kind!r}: {', '.join(repr(field) for field in sorted(fields))}"
+                for kind, fields in sorted(missing_by_kind.items())
+            )
+            msg = (
+                f"The live destination schema cannot represent reviewed direct payload field(s) for "
+                f"destination kind(s) {details}. The whole plan was refused before its first write; "
+                "no destination write was attempted."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
+
+    @staticmethod
+    def _reviewed_direct_fields(*, operation: PlannedOperation, node_schema: NodeSchemaAPI) -> set[str]:
+        """Return direct payload fields, including nulls whose names became relationships.
+
+        Derived plans put relationships in ``operation.relationships``. The legacy
+        mandatory null relationship check remains at the operation boundary.
+        """
+        payload = operation.payload or {}
+        mandatory_null_relationships = {
+            relationship.name
+            for relationship in node_schema.relationships
+            if relationship.cardinality == "one"
+            and not relationship.optional
+            and relationship.name in payload
+            and payload[relationship.name] is None
+        }
+        return set(payload) - mandatory_null_relationships
+
+    @classmethod
+    def _unwritable_reviewed_fields(cls, *, operation: PlannedOperation, node_schema: NodeSchemaAPI) -> set[str]:
+        """Find direct fields that are absent or read-only in the current schema."""
+        writable = {attribute.name for attribute in node_schema.attributes if not attribute.read_only}
+        return cls._reviewed_direct_fields(operation=operation, node_schema=node_schema) - writable
+
+    def _omitted_rendered_fields(self, *, operation: PlannedOperation, node_schema: NodeSchemaAPI) -> set[str]:
+        """Find reviewed direct values the SDK would leave out of its mutation input."""
+        payload = operation.payload or {}
+        data = self.client.schema.generate_payload_create(schema=node_schema, data=payload)
+        node = self.client.create(kind=operation.kind, data=data)
+        if operation.action == "update":
+            node.id = operation.destination_id
+        self._set_reviewed_null_attributes(node=node, operation=operation, node_schema=node_schema)
+        rendered_data = node._generate_input_data(exclude_hfid=True)["data"]["data"]
+        return {
+            field
+            for field in self._reviewed_direct_fields(operation=operation, node_schema=node_schema)
+            if field not in rendered_data
+        }
+
+    @staticmethod
+    def _set_reviewed_null_attributes(
+        *, node: InfrahubNodeSync, operation: PlannedOperation, node_schema: NodeSchemaAPI
+    ) -> None:
+        """Mark reviewed null attributes as writes in the SDK mutation input."""
+        payload = operation.payload or {}
+        for attribute in node_schema.attributes:
+            if attribute.name in payload and payload[attribute.name] is None:
+                getattr(node, attribute.name).value = None
+
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
         """Execute one planned operation convergently. Returns the destination node id.
 
@@ -1312,6 +1392,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         Raises:
             SkippedDeleteOperation: the operation is a recorded delete (a designed
                 limitation, not a failure), and no skip is recorded — see above.
+            ReviewedPayloadFieldMissingError: the live schema or SDK mutation would omit
+                a reviewed direct payload field, so no write is made for this operation.
             UnaccountedIdentityComponentError: a human-friendly-ID component of the
                 destination kind is not accounted for by the payload and the operation.
             StaleDestinationIdError: an update's recorded destination id matches no object
@@ -1330,21 +1412,36 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             )
             raise SkippedDeleteOperation(msg)
 
-        node_schema = self.client.schema.get(kind=operation.kind)
+        # Preflight refreshed this cache once for the whole plan. Reuse the schema that
+        # the SDK will render with; a fresh full-branch download per operation is costly
+        # and cannot prevent a server-side schema change between this check and save.
+        node_schema = self.client.schema.all().get(operation.kind)
+        if node_schema is None and operation.payload:
+            fields = ", ".join(repr(field) for field in sorted(operation.payload))
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
+                f"would omit reviewed direct payload field(s) {fields} because the live schema "
+                "no longer declares the kind. No write was made for this operation."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
         if not isinstance(node_schema, NodeSchemaAPI):
             msg = f"Expected NodeSchemaAPI for {operation.kind}, got {type(node_schema).__name__}"
             raise TypeError(msg)
 
         # The payload is `keys` union `source_attrs`, so it already carries the identity
-        # components the convergent write keys on (AD042). No plan format distinguishes an
-        # absent optional to-one relationship from an intended clear. Keep create's
-        # established omission behavior; on update, disclose that the null is a no-op rather
-        # than silently claiming convergence. Derivation drops a null cardinality-one peer
-        # before the operation is recorded and warns there (S7), so this arm is reached only
-        # by a hand-built artifact that carries one — which is why it is kept rather than
-        # removed. A mandatory null is invalid and must stop here before the SDK can render
-        # it as a relationship id.
+        # components the convergent write keys on (AD042). Derived plans put relationships
+        # in `operation.relationships`; a null payload field is reviewed as an attribute.
+        # Keep the legacy mandatory null relationship error for hand-built artifacts.
         payload = operation.payload or {}
+        missing_fields = self._unwritable_reviewed_fields(operation=operation, node_schema=node_schema)
+        if missing_fields:
+            fields = ", ".join(repr(field) for field in sorted(missing_fields))
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
+                f"would omit reviewed direct payload field(s) {fields} because the live schema "
+                "does not declare them as writable attributes. No write was made for this operation."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
         null_to_one_relationships = [
             relationship
             for relationship in node_schema.relationships
@@ -1362,25 +1459,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             )
             raise NullRelationshipValueError(msg)
 
-        optional_null_fields = sorted(
-            relationship.name for relationship in null_to_one_relationships if relationship.optional
-        )
-        if operation.action == "update" and optional_null_fields:
-            logger.warning(
-                "Planned update %s for destination kind %s carries null for optional cardinality-one "
-                "relationship field(s) %s. The plan format cannot distinguish an absent relationship "
-                "from an intended clear, so the field is omitted and the destination relationship is "
-                "not cleared. Clear it directly at the destination if the clear was intended.",
-                operation.operation_id,
-                operation.kind,
-                ", ".join(optional_null_fields),
-            )
-        omitted_null_relationships = set(optional_null_fields)
-        data: dict[str, Any] = {
-            field: value
-            for field, value in payload.items()
-            if value is not None or field not in omitted_null_relationships
-        }
+        data: dict[str, Any] = dict(payload)
         references = list(operation.relationships or ())
         _refuse_partial_key_peer_filter(operation, self.schema)
         for reference in references:
@@ -1432,6 +1511,23 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # a keyed update of that exact object. Putting `id` into `data` instead would
             # render it as the attribute-shaped `id: {}` and key nothing.
             node.id = operation.destination_id
+        self._set_reviewed_null_attributes(node=node, operation=operation, node_schema=node_schema)
+        # generate_payload_create retains unknown keys as empty dictionaries. The node
+        # drops them while building the input to the mutation, so check that final input.
+        rendered_data = node._generate_input_data(exclude_hfid=True)["data"]["data"]
+        missing_fields = {
+            field
+            for field in self._reviewed_direct_fields(operation=operation, node_schema=node_schema)
+            if field not in rendered_data
+        }
+        if missing_fields:
+            fields = ", ".join(repr(field) for field in sorted(missing_fields))
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
+                f"would omit reviewed direct payload field(s) {fields} from the SDK mutation. "
+                "No write was made for this operation."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
         try:
             node.save(allow_upsert=True)
         except GraphQLError as exc:

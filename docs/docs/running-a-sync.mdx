@@ -123,6 +123,12 @@ own extraction, guardrails, ordering, and destination calls.
   incomplete manifest adds a hint to re-run `diff` and review the new plan. A readable
   plan with an unsupported format version instead offers a rebuild with this version or
   an apply with the version that wrote it.
+- Apply checks every reviewed direct Infrahub payload field against the current destination
+  schema and the generated mutation input before the first write. It repeats these checks
+  for each operation before sending its write. If a field is no longer writable or a
+  reviewed value would be omitted, apply names the kind and field, refuses the write, and
+  asks you to create and review a new plan. Reviewed null attributes are written explicitly.
+  Operations completed before a later refusal stay recorded as applied.
 - A timeout exits nonzero with the run ID and last product phase, outcome, and execution
   state. It does not cancel the remote run.
 - Ctrl-C stops local polling, prints the last observed product record, exits 130, and does

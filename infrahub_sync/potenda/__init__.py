@@ -85,7 +85,7 @@ if TYPE_CHECKING:
     from diffsync.enum import DiffSyncFlags
 
     from infrahub_sync import SyncInstance
-    from infrahub_sync.plan.models import PlanManifest, VerificationFailure
+    from infrahub_sync.plan.models import PlanManifest, PlannedOperation, VerificationFailure
     from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import RawPlanArtifact
 
@@ -168,6 +168,26 @@ def _require_applyable_format(manifest: PlanManifest, *, run_id: str) -> None:
         f"recorded destination id, so they cannot be keyed. Nothing was written to the destination."
     )
     raise PlanFormatApplyUnsupportedError(msg)
+
+
+def _validate_infrahub_plan_payload(
+    destination: PlannedWriteDestination, operations: Sequence[PlannedOperation], *, run_id: str
+) -> None:
+    """Check all Infrahub direct fields before dispatch; other adapters are unchanged."""
+    from infrahub_sync.adapters.infrahub import InfrahubAdapter
+
+    if isinstance(destination, InfrahubAdapter):
+        try:
+            destination.validate_planned_payload_fields(operations)
+        except InfrahubSDKError as exc:
+            msg = (
+                f"The live destination schema for run {run_id!r} could not be checked before apply: "
+                f"{_operational_failure_summary(exc)}. Nothing was written to the destination."
+            )
+            raise PlanVerificationError(
+                msg,
+                next_action="Check destination access, then retry applying the reviewed plan.",
+            ) from exc
 
 
 def _failure_reach_and_remedy(exc: Exception, *, record: ApplyRecord) -> tuple[str, str | None]:
@@ -826,6 +846,11 @@ class Potenda:
         # read, before `ownership.before_operation` and therefore before the first dispatch,
         # so the destination is provably untouched.
         _require_applyable_format(loaded.manifest, run_id=run_id)
+
+        # The registered service has a schema fingerprint guard, but direct Python apply
+        # callers need the same no-write guarantee for reviewed Infrahub payload fields.
+        # Check the entire artifact before dispatching its first operation.
+        _validate_infrahub_plan_payload(destination, loaded.operations, run_id=run_id)
 
         self._last_applied_plan_action_counts = {
             action: sum(operation.action == action for operation in loaded.operations) for action in ACTIONS

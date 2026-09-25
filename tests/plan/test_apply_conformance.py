@@ -101,9 +101,16 @@ class ConformanceClient(InfrahubClientSync):
 
     def __init__(self) -> None:
         super().__init__(config=Config(address="http://localhost:8000", api_token="token"))  # noqa: S106
-        self.schema.set_cache(BranchSchema(hash="conformance-fixture", nodes=dict(SCHEMAS)))
+        self.live_schema = BranchSchema(hash="conformance-fixture", nodes=dict(SCHEMAS))
+        self.schema.set_cache(self.live_schema)
+        self.schema._fetch = self._fetch_schema  # ty: ignore[invalid-assignment]
         self.events: list[tuple[str, Any]] = []
         self.existing_peers: dict[tuple[str, str], list[str]] = {}
+
+    def _fetch_schema(self, branch: str, namespaces: list[str] | None = None) -> BranchSchema:
+        """Return the committed fixture for apply-time schema refreshes."""
+        _ = branch, namespaces
+        return self.live_schema
 
     def execute_graphql(self, *args: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401, ARG002
         """Record the rendered mutation exactly as the SDK handed it to the transport."""
