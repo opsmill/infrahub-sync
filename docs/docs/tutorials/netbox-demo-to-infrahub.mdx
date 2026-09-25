@@ -422,9 +422,10 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
    NetBox data uses other patch-panel names, adapt both device and interface filters.
 
    Racks can share a name across sites in NetBox. The demo has a `Comms closet` rack at
-   several sites. The mapping prefixes each Infrahub rack name with its site name (for
-   example, `Site A-Comms closet`) so those racks remain separate. Device references to
-   racks use the corresponding NetBox rack ID and resolve to the renamed rack.
+   several sites. The mapping prefixes each Infrahub rack name with the length of the site
+   name and the site name (for example, `6:Site A:Comms closet`). The length keeps pairs
+   with separators in their names distinct. Device references to racks use the corresponding
+   NetBox rack ID and resolve to the renamed rack.
    :::
 
 3. Once you're happy with the data, open a proposed change from `netbox-import` toward `main` so the import can be reviewed before it's merged.

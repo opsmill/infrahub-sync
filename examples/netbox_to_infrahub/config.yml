@@ -162,7 +162,7 @@ schema_mapping:
       #   mapping: role.slug
     transforms:
       - field: unique_name
-        expression: "{{ site.name ~ '-' ~ name }}"
+        expression: "{{ (site.name | length) ~ ':' ~ site.name ~ ':' ~ name }}"
 
   # Manufacturers / Platforms / Device Types
   - name: OrganizationManufacturer

@@ -8,8 +8,8 @@ The NetBox demo data reuses VLAN, rack, and device names:
 * NetBox lets several devices share a name across different sites. The demo data does this
   for patch panels (`PP:MDF` at more than one site), so devices and interfaces with `PP:`
   in the device name are filtered out together.
-* The demo has a `Comms closet` rack at several sites. The rack name includes the site
-  so Infrahub creates one rack per site.
+* The demo has a `Comms closet` rack at several sites. The rack name length-prefixes
+  the site so Infrahub creates one rack per site without separator collisions.
 
 These tests read the mapping and run its filters/transforms directly; they load nothing.
 """
@@ -78,6 +78,7 @@ def test_netbox_example_vlan_names_that_collide_in_netbox_dont_collide_in_infrah
 
 @pytest.mark.parametrize("config_path", [CONFIG_PATH, EXAMPLE_DIR / "package.yml"])
 def test_netbox_example_rack_name_carries_the_site(config_path: Path) -> None:
+    """Distinct site/rack pairs produce distinct rack names in either example."""
     mapping = _mapping("LocationRack", config_path=config_path)
     name_field = next(field for field in mapping.fields if field.name == "name")
     assert name_field.mapping is not None
@@ -85,12 +86,16 @@ def test_netbox_example_rack_name_carries_the_site(config_path: Path) -> None:
     records = [
         {"id": 1, "name": "Comms closet", "site": {"id": 10, "name": "Site A"}},
         {"id": 2, "name": "Comms closet", "site": {"id": 20, "name": "Site B"}},
+        {"id": 3, "name": "C", "site": {"id": 30, "name": "A-B"}},
+        {"id": 4, "name": "B-C", "site": {"id": 40, "name": "A"}},
     ]
     transformed = DiffSyncModelMixin.transform_records(records=records, schema_mapping=mapping)
 
     assert [get_value(record, name_field.mapping) for record in transformed] == [
-        "Site A-Comms closet",
-        "Site B-Comms closet",
+        "6:Site A:Comms closet",
+        "6:Site B:Comms closet",
+        "3:A-B:C",
+        "1:A:B-C",
     ]
 
 
