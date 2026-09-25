@@ -33,6 +33,7 @@ from infrahub_sync.plan.errors import (
     NullRelationshipValueError,
     PeerAmbiguousError,
     PeerNotFoundError,
+    ReviewedPayloadFieldMissingError,
     SkippedDeleteOperation,
     StaleDestinationIdError,
     UnaccountedIdentityComponentError,
@@ -1272,6 +1273,36 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """
         return PeerResolver(self)
 
+    def validate_planned_payload_fields(self, operations: Sequence[PlannedOperation]) -> None:
+        """Refuse every reviewed direct field absent from the live schema before any write."""
+        if not any(operation.action != "delete" for operation in operations):
+            return
+        schemas = self.client.schema.all(refresh=True)
+        missing_by_kind: dict[str, set[str]] = {}
+        for operation in operations:
+            if operation.action == "delete":
+                continue
+            schema = schemas.get(operation.kind)
+            direct_fields = set(operation.payload or {})
+            if isinstance(schema, NodeSchemaAPI):
+                direct_fields.difference_update(schema.relationship_names)
+                missing = direct_fields - set(schema.attribute_names)
+            else:
+                missing = direct_fields
+            if missing:
+                missing_by_kind.setdefault(operation.kind, set()).update(missing)
+        if missing_by_kind:
+            details = "; ".join(
+                f"{kind!r}: {', '.join(repr(field) for field in sorted(fields))}"
+                for kind, fields in sorted(missing_by_kind.items())
+            )
+            msg = (
+                f"The live destination schema cannot represent reviewed direct payload field(s) for "
+                f"destination kind(s) {details}. The whole plan was refused before its first write; "
+                "no destination write was attempted."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
+
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
         """Execute one planned operation convergently. Returns the destination node id.
 
@@ -1325,7 +1356,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             )
             raise SkippedDeleteOperation(msg)
 
-        node_schema = self.client.schema.get(kind=operation.kind)
+        node_schema = self.client.schema.all(refresh=True).get(operation.kind)
+        if node_schema is None and operation.payload:
+            fields = ", ".join(repr(field) for field in sorted(operation.payload))
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
+                f"would omit reviewed direct payload field(s) {fields} because the live schema "
+                "no longer declares the kind. No write was made for this operation."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
         if not isinstance(node_schema, NodeSchemaAPI):
             msg = f"Expected NodeSchemaAPI for {operation.kind}, got {type(node_schema).__name__}"
             raise TypeError(msg)
@@ -1340,6 +1379,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # removed. A mandatory null is invalid and must stop here before the SDK can render
         # it as a relationship id.
         payload = operation.payload or {}
+        missing_fields = set(payload) - set(node_schema.attribute_names) - set(node_schema.relationship_names)
+        if missing_fields:
+            fields = ", ".join(repr(field) for field in sorted(missing_fields))
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
+                f"would omit reviewed direct payload field(s) {fields} because the live schema "
+                "no longer declares them. No write was made for this operation."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
         null_to_one_relationships = [
             relationship
             for relationship in node_schema.relationships
@@ -1404,6 +1452,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         create_data = self.client.schema.generate_payload_create(
             schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
         )
+        missing_fields = (set(payload) & set(node_schema.attribute_names)) - set(create_data)
+        if missing_fields:
+            fields = ", ".join(repr(field) for field in sorted(missing_fields))
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
+                f"would omit reviewed direct payload field(s) {fields} from the SDK payload. "
+                "No write was made for this operation."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
         node = self.client.create(kind=operation.kind, data=create_data)
         if operation.action == "update":
             # The recorded id, set on the node rather than put into `data`. The SDK renders

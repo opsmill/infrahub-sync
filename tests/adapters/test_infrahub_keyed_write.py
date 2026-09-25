@@ -76,7 +76,8 @@ ALL_SCHEMAS: dict[str, NodeSchemaAPI] = {**SCHEMAS, CONSTRAINED_KIND: CONSTRAINE
 def keyed_adapter() -> tuple[RecordingClient, InfrahubAdapter, PeerResolver]:
     """A recording client and adapter that also know the constrained fixture kind."""
     client = RecordingClient()
-    client.schema.set_cache(BranchSchema(hash="fixture", nodes=dict(ALL_SCHEMAS)))
+    client.live_schema = BranchSchema(hash="fixture", nodes=dict(ALL_SCHEMAS))
+    client.schema.set_cache(client.live_schema)
     adapter = make_adapter(client)
     adapter.schema = dict(ALL_SCHEMAS)
     return client, adapter, PeerResolver(adapter)
