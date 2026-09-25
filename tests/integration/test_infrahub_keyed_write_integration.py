@@ -23,6 +23,9 @@ resolved through the nested filter (the read half), an explicit peer destination
 one node while an unknown id refuses the write, and the run is shown to write nothing outside
 the branch it owns.
 
+A computed display-name control writes twice using a separate writable uniqueness constraint
+and reads the destination independently to check that only one node persists.
+
 **Everything this module touches lives on one branch it creates and deletes.** The sibling
 modules load their throwaway schema onto `main`, which makes two concurrent runs — or a run
 against an instance someone else is using — share a namespace: a `filters(kind=...)` teardown
@@ -64,6 +67,7 @@ SITE_KIND = "TestUnkeyedSite"
 DEVICE_KIND = "TestUnkeyedDevice"
 MOUNT_KIND = "TestUnkeyedMount"
 RENAMABLE_KIND = "TestUnkeyedRenamable"
+COMPUTED_KIND = "TestUnkeyedComputed"
 
 # `TestUnkeyedDevice`'s human-friendly ID crosses the `site` relationship. The SDK renders no
 # key at all for that shape — a peer supplied as a resolved node id renders as `{"id": ...}`
@@ -139,6 +143,28 @@ _SCHEMA = {
                 },
             ],
         },
+    ],
+}
+
+_COMPUTED_SCHEMA = {
+    "version": "1.0",
+    "nodes": [
+        {
+            "name": "UnkeyedComputed",
+            "namespace": "Test",
+            "include_in_menu": False,
+            "human_friendly_id": ["display_name__value"],
+            "uniqueness_constraints": [["hostname__value"]],
+            "attributes": [
+                {"name": "hostname", "kind": "Text", "unique": True},
+                {
+                    "name": "display_name",
+                    "kind": "Text",
+                    "read_only": True,
+                    "computed_attribute": {"kind": "Jinja2", "jinja2_template": "{{ hostname__value }}"},
+                },
+            ],
+        }
     ],
 }
 
@@ -427,6 +453,43 @@ def test_a_relationship_crossing_create_converges_instead_of_duplicating(
         if node.name.value == created_name
     ]
     assert len(matching) == 1, f"The re-apply duplicated {created_name!r} at the destination: {matching}"
+
+
+def test_a_computed_display_name_converges_on_a_writable_unique_hostname(keyed_write_scope: KeyedWriteScope) -> None:
+    """Two writes return one ID and an independent destination read finds one node."""
+    scope = keyed_write_scope
+    address, token = _env_or_skip()
+    response = requests.post(
+        f"{address}/api/schema/load?branch={scope.branch}",
+        headers={"X-INFRAHUB-KEY": token, "Content-Type": "application/json"},
+        json={"schemas": [_COMPUTED_SCHEMA]},
+        timeout=60,
+        allow_redirects=False,
+    )
+    _raise_for_status_without_redirect(response)
+    _await_schema_kinds(scope.client, scope.branch, (COMPUTED_KIND,))
+    scope.adapter.schema = scope.client.schema.all(branch=scope.branch, refresh=True)
+    hostname = f"computed-{scope.site_name}"
+    identity = canonical_identity({"hostname": hostname}, kind=COMPUTED_KIND)
+    operation = PlannedOperation(
+        operation_id=operation_id("create", COMPUTED_KIND, identity),
+        action="create",
+        kind=COMPUTED_KIND,
+        identity=identity,
+        tier=0,
+        payload={"hostname": hostname},
+    )
+
+    first = scope.adapter.apply_planned_operation(operation=operation, peers=scope.adapter.new_peer_resolver())
+    second = scope.adapter.apply_planned_operation(operation=operation, peers=scope.adapter.new_peer_resolver())
+    matching = [
+        node
+        for node in scope.client.filters(kind=COMPUTED_KIND, branch=scope.branch, populate_store=False)
+        if node.hostname.value == hostname
+    ]
+
+    assert first == second
+    assert [node.id for node in matching] == [first]
 
 
 def test_an_update_keyed_by_its_recorded_id_renames_in_place(keyed_write_scope: KeyedWriteScope) -> None:

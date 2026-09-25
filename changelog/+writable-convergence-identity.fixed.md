@@ -1,0 +1,1 @@
+Registration and planning now refuse mappings without a complete writable destination key, including mappings previously accepted with only a read-only identity, an unmapped key component, or no key; review and save new plans after upgrading because schema fingerprints now include writability.

@@ -27,6 +27,7 @@ from infrahub_sync.runtime_schema import (
     RuntimeModelScope,
     RuntimeModelScopeError,
     UnsupportedDestinationProfileError,
+    UnwritableConvergenceIdentityError,
     build_runtime_model_plan,
 )
 from infrahub_sync.runtime_schema import worker as worker_module
@@ -120,11 +121,22 @@ def _credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(name="netbox_driver", autouse=True)
 def _netbox_driver(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Make the NetBox adapter importable without its optional driver installed."""
+    import infrahub_sync.adapters as adapters_package
+
     driver = cast("Any", types.ModuleType("pynetbox"))
     driver.api = lambda *_args, **_kwargs: types.SimpleNamespace()
     monkeypatch.setitem(sys.modules, "pynetbox", driver)
+    previous = sys.modules.pop("infrahub_sync.adapters.netbox", None)
+    missing = object()
+    previous_attribute = vars(adapters_package).get("netbox", missing)
     yield
     sys.modules.pop("infrahub_sync.adapters.netbox", None)
+    if previous is not None:
+        sys.modules["infrahub_sync.adapters.netbox"] = previous
+    if previous_attribute is missing:
+        vars(adapters_package).pop("netbox", None)
+    else:
+        vars(adapters_package)["netbox"] = previous_attribute
 
 
 def _instance(package: ConfigurationPackage, tmp_path: Path) -> SyncInstance:
@@ -157,6 +169,17 @@ def test_the_plan_carries_fresh_model_classes_for_both_sides(spy: _SnapshotSpy, 
     assert plan.source.models["BuiltinTag"] is not plan.destination.models["BuiltinTag"]
     assert plan.destination.models["LocationSite"]._attributes == ("tags",)
     assert spy.branches == ["main"]
+
+
+def test_registered_plan_refuses_a_server_allocated_only_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    snapshot["BuiltinTag"]["attributes"]["name"]["read_only"] = True
+    monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", _SnapshotSpy(snapshot))
+
+    with pytest.raises(UnwritableConvergenceIdentityError, match="name__value"):
+        _plan(_package(), tmp_path)
 
 
 def test_registered_composition_attaches_the_plan_to_the_runtime_instance(spy: _SnapshotSpy, tmp_path: Path) -> None:

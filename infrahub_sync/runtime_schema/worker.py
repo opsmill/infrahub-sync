@@ -25,6 +25,7 @@ from infrahub_sync.configuration.capabilities import (
     UnknownAdapterCapabilitiesError as _UnknownAdapterCapabilitiesError,
 )
 from infrahub_sync.configuration.runtime import effective_destination_branch
+from infrahub_sync.plan.keying import writable_convergence_reason
 from infrahub_sync.plugin_loader import resolve_installed_adapter_class, resolve_installed_model_base
 
 from .domain import normalize_destination_schema
@@ -32,6 +33,7 @@ from .errors import (
     DestinationSchemaUnavailableError,
     MissingMappedKindError,
     UnsupportedDestinationProfileError,
+    UnwritableConvergenceIdentityError,
 )
 from .models import build_runtime_models
 from .projection import compute_consumed_schema_fingerprint
@@ -157,6 +159,23 @@ def build_runtime_model_plan(
     schema_fingerprint = compute_consumed_schema_fingerprint(configuration=instance, snapshot=snapshot)
     if scope == "both":
         _require_mapped_kinds(instance, snapshot.kinds)
+        references = {
+            mapping.name: {field.name: field.reference for field in mapping.fields or () if field.reference is not None}
+            for mapping in instance.schema_mapping
+        }
+        for mapping in instance.schema_mapping:
+            node = snapshot.kinds[mapping.name]
+            mapped_fields = {field.name for field in mapping.fields or ()}
+            reason = writable_convergence_reason(
+                node=node,
+                identity_fields=mapped_fields,
+                mapped_fields=mapped_fields,
+                schemas=snapshot.kinds,
+                references=references,
+            )
+            if reason:
+                msg = f"destination kind {mapping.name!r}: {reason}"
+                raise UnwritableConvergenceIdentityError(msg)
 
     def side(adapter: SyncAdapter) -> RuntimeSideModels:
         return RuntimeSideModels(

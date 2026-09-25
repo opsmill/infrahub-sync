@@ -39,6 +39,7 @@ class NormalizedAttribute:
     optional: bool
     default_value: Any
     unique: bool
+    read_only: bool = False
 
     def mutable_default(self) -> Any:
         """Return this attribute's declared default as a mutable JSON-native value."""
@@ -54,6 +55,7 @@ class NormalizedRelationship:
     cardinality: str
     optional: bool
     kind: str
+    read_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +167,7 @@ def _normalized_attribute(name: str, entry: object, *, kind: str) -> NormalizedA
         optional=_require_bool(member["optional"], detail=detail),
         default_value=_require_json_default(member["default_value"], detail=detail),
         unique=_require_bool(member["unique"], detail=detail),
+        read_only=_require_bool(member.get("read_only", False), detail=detail),
     )
 
 
@@ -183,6 +186,7 @@ def _normalized_relationship(name: str, entry: object, *, kind: str) -> Normaliz
         cardinality=cardinality,
         optional=_require_bool(member["optional"], detail=detail),
         kind=_require_str(member["kind"], detail=detail),
+        read_only=_require_bool(member.get("read_only", False), detail=detail),
     )
 
 

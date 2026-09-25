@@ -15,7 +15,7 @@ The rules themselves, and the measurements behind them, are recorded in
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import TYPE_CHECKING, Any
 
 from infrahub_sync.plan.errors import DestinationIdentityCollisionError, UnkeyedCreateRefusedError
@@ -40,6 +40,103 @@ def _component_field(component: str) -> str:
     name, which is the path's first segment.
     """
     return component.split(COMPONENT_PATH_SEPARATOR, 1)[0]
+
+
+def _writable_component(
+    component: str,
+    node: Any,
+    schemas: Mapping[str, Any] | None,
+    identity: Mapping[str, Any] | None = None,
+    references: Mapping[str, Mapping[str, str]] | None = None,
+) -> bool:
+    """Whether a schema path can be recreated by a destination write."""
+    field, _, rest = component.partition(COMPONENT_PATH_SEPARATOR)
+    for attribute in getattr(node, "attributes", ()):
+        if attribute.name == field:
+            computed = getattr(attribute, "computed_attribute", None)
+            return (
+                rest in ("", "value")
+                and not getattr(attribute, "read_only", False)
+                and (computed is None or getattr(computed, "kind", None) == "User")
+            )
+    for relationship in getattr(node, "relationships", ()):
+        if relationship.name == field:
+            if getattr(relationship, "read_only", False):
+                return False
+            if not rest or schemas is None:
+                return True
+            reference = identity.get(field) if identity is not None else None
+            peer_kind = reference.get("peer_kind") if isinstance(reference, Mapping) else None
+            configured_peer = (references or {}).get(node.kind, {}).get(field)
+            peer = schemas.get(peer_kind or configured_peer or relationship.peer)
+            if peer is None:
+                return False
+            peer_identity = reference.get("identity") if isinstance(reference, Mapping) else None
+            return _writable_component(
+                rest, peer, schemas, peer_identity if isinstance(peer_identity, Mapping) else None, references
+            )
+    # Older schema fixtures expose keys but no member list. Keep their existing behavior.
+    return not hasattr(node, "attributes")
+
+
+def writable_convergence_reason(
+    *,
+    node: Any,
+    identity_fields: Collection[str],
+    mapped_fields: Collection[str] | None = None,
+    schemas: Mapping[str, Any] | None = None,
+    identity: Mapping[str, Any] | None = None,
+    check_values: bool = False,
+    write_values: Mapping[str, Any] | None = None,
+    references: Mapping[str, Mapping[str, str]] | None = None,
+) -> str | None:
+    """Explain why no complete destination key can be recreated from mapped identity fields.
+
+    Direct DiffSync writes supply resolved peer IDs in ``write_values``. A peer ID proves
+    that the relationship has a write value, while a planned identity instead carries
+    the peer's nested identity and is checked component by component.
+    """
+    keys = [list(getattr(node, "human_friendly_id", None) or ())]
+    keys.extend(list(key) for key in (getattr(node, "uniqueness_constraints", None) or ()))
+    unusable: set[str] = set()
+    unwritable: set[str] = set()
+    for key in keys:
+        if not key:
+            continue
+        unwritable.update(
+            component for component in key if not _writable_component(component, node, schemas, identity, references)
+        )
+        missing = {
+            component
+            for component in key
+            if _component_field(component) not in identity_fields
+            or (mapped_fields is not None and _component_field(component) not in mapped_fields)
+            or not _writable_component(component, node, schemas, identity, references)
+            or (check_values and not _usable(_convergence_value(component, identity, write_values)))
+        }
+        if not missing:
+            return None
+        unusable.update(missing)
+    detail = ", ".join(sorted(unusable)) or "no declared destination key"
+    explanation = (
+        "Read-only values (including server-allocated values) and server-computed values "
+        "cannot be recreated from mapped source values. "
+        if unwritable
+        else ""
+    )
+    return (
+        f"no complete writable destination convergence identity; unusable components: {detail}. "
+        f"{explanation}Map and select every component of a writable destination uniqueness constraint"
+    )
+
+
+def _convergence_value(
+    component: str, identity: Mapping[str, Any] | None, write_values: Mapping[str, Any] | None
+) -> Any:
+    """Get a plan component or the resolved write value of its root field."""
+    if write_values is not None:
+        return write_values.get(_component_field(component))
+    return component_value(identity, component) if identity is not None else None
 
 
 def component_value(identity: Mapping[str, Any], component: str) -> Any:
@@ -88,7 +185,9 @@ def _usable(value: Any) -> bool:
     return is_usable_component_value(value)
 
 
-def unkeyed_create_coverage_reason(operation: PlannedOperation, *, node: Any) -> str | None:
+def unkeyed_create_coverage_reason(
+    operation: PlannedOperation, *, node: Any, schemas: Mapping[str, Any] | None = None
+) -> str | None:
     """Why this create's **identity** cannot key it, or `None` if it can.
 
     The first of the two create arms, and the only one both callers run. It asks a question
@@ -106,6 +205,15 @@ def unkeyed_create_coverage_reason(operation: PlannedOperation, *, node: Any) ->
     `unkeyed_create_value_reason` below.
     """
     identity = operation.identity
+    if any(
+        not _writable_component(component, node, schemas, identity)
+        for key in [
+            getattr(node, "human_friendly_id", None) or (),
+            *(getattr(node, "uniqueness_constraints", None) or ()),
+        ]
+        for component in key
+    ):
+        return writable_convergence_reason(node=node, identity_fields=identity, schemas=schemas, identity=identity)
     human_friendly_id = list(getattr(node, "human_friendly_id", None) or ())
     if human_friendly_id:
         uncovered = sorted(component for component in human_friendly_id if _component_field(component) not in identity)
@@ -135,7 +243,9 @@ def unkeyed_create_coverage_reason(operation: PlannedOperation, *, node: Any) ->
     )
 
 
-def unkeyed_create_value_reason(operation: PlannedOperation, *, node: Any) -> str | None:
+def unkeyed_create_value_reason(
+    operation: PlannedOperation, *, node: Any, schemas: Mapping[str, Any] | None = None
+) -> str | None:
     """Why this create's covered components carry no usable value, or `None` if they do.
 
     The second arm, for **plan time only**. The write surface answers the same question
@@ -147,6 +257,12 @@ def unkeyed_create_value_reason(operation: PlannedOperation, *, node: Any) -> st
     """
     identity = operation.identity
     human_friendly_id = list(getattr(node, "human_friendly_id", None) or ())
+    if human_friendly_id and any(
+        not _writable_component(component, node, schemas, identity) for component in human_friendly_id
+    ):
+        return writable_convergence_reason(
+            node=node, identity_fields=identity, identity=identity, schemas=schemas, check_values=True
+        )
     if not human_friendly_id:
         return None
     valueless = sorted(
@@ -154,29 +270,33 @@ def unkeyed_create_value_reason(operation: PlannedOperation, *, node: Any) -> st
     )
     if not valueless:
         return None
-    return (
-        f"its identity names every human-friendly-ID component but supplies no usable value for {', '.join(valueless)}"
-    )
+    return f"its identity supplies no usable value for human-friendly-ID component(s) {', '.join(valueless)}"
 
 
-def unkeyed_create_reason(operation: PlannedOperation, *, node: Any) -> str | None:
+def unkeyed_create_reason(
+    operation: PlannedOperation, *, node: Any, schemas: Mapping[str, Any] | None = None
+) -> str | None:
     """Both create arms, in order: identity coverage, then value presence.
 
     Plan derivation's entry point. The write surface composes the arms differently — coverage
     here, then AD051 for values — so that a valueless component is diagnosed by the mechanism
     that can name it.
     """
-    return unkeyed_create_coverage_reason(operation, node=node) or unkeyed_create_value_reason(operation, node=node)
+    return unkeyed_create_coverage_reason(operation, node=node, schemas=schemas) or unkeyed_create_value_reason(
+        operation, node=node, schemas=schemas
+    )
 
 
-def refuse_unkeyed_create_coverage(operation: PlannedOperation, *, node: Any) -> None:
+def refuse_unkeyed_create_coverage(
+    operation: PlannedOperation, *, node: Any, schemas: Mapping[str, Any] | None = None
+) -> None:
     """Raise where a create's identity cannot key it. The write surface's first arm."""
-    _refuse(unkeyed_create_coverage_reason(operation, node=node), operation)
+    _refuse(unkeyed_create_coverage_reason(operation, node=node, schemas=schemas), operation)
 
 
-def refuse_unkeyed_create(operation: PlannedOperation, *, node: Any) -> None:
+def refuse_unkeyed_create(operation: PlannedOperation, *, node: Any, schemas: Mapping[str, Any] | None = None) -> None:
     """Raise where a create cannot be proven keyed. Plan derivation's entry point."""
-    _refuse(unkeyed_create_reason(operation, node=node), operation)
+    _refuse(unkeyed_create_reason(operation, node=node, schemas=schemas), operation)
 
 
 def _refuse(reason: str | None, operation: PlannedOperation) -> None:

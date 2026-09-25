@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
+from infrahub_sync.plan.keying import writable_convergence_reason
 from infrahub_sync.runtime_schema import (
     NormalizedAttribute,
     NormalizedKind,
@@ -136,6 +137,7 @@ _SEMANTIC_MUTATIONS = (
         ("mapped-attribute", "default_value"), _set("InfraDevice.attributes.role.default_value", value="spine")
     ),
     _SemanticMutation(("mapped-attribute", "unique"), _set("InfraDevice.attributes.role.unique", value=True)),
+    _SemanticMutation(("mapped-attribute", "read_only"), _set("InfraDevice.attributes.role.read_only", value=True)),
     _SemanticMutation(("mapped-relationship", "name"), _rename("InfraDevice.relationships.site", "rack")),
     _SemanticMutation(
         ("mapped-relationship", "peer"), _set("InfraDevice.relationships.site.peer", value="LocationRegion")
@@ -147,6 +149,9 @@ _SEMANTIC_MUTATIONS = (
         ("mapped-relationship", "optional"), _set("InfraDevice.relationships.site.optional", value=False)
     ),
     _SemanticMutation(("mapped-relationship", "kind"), _set("InfraDevice.relationships.site.kind", value="Component")),
+    _SemanticMutation(
+        ("mapped-relationship", "read_only"), _set("InfraDevice.relationships.site.read_only", value=True)
+    ),
     _SemanticMutation(("mandatory-attribute", "name"), _rename("InfraDevice.attributes.asn", "serial")),
     _SemanticMutation(("mandatory-attribute", "kind"), _set("InfraDevice.attributes.asn.kind", value="Text")),
     _SemanticMutation(("mandatory-attribute", "optional"), _set("InfraDevice.attributes.asn.optional", value=True)),
@@ -154,6 +159,7 @@ _SEMANTIC_MUTATIONS = (
         ("mandatory-attribute", "default_value"), _set("InfraDevice.attributes.asn.default_value", value=0)
     ),
     _SemanticMutation(("mandatory-attribute", "unique"), _set("InfraDevice.attributes.asn.unique", value=True)),
+    _SemanticMutation(("mandatory-attribute", "read_only"), _set("InfraDevice.attributes.asn.read_only", value=True)),
     _SemanticMutation(("mandatory-relationship", "name"), _rename("InfraDevice.relationships.owner", "tenant")),
     _SemanticMutation(
         ("mandatory-relationship", "peer"),
@@ -168,6 +174,9 @@ _SEMANTIC_MUTATIONS = (
     ),
     _SemanticMutation(
         ("mandatory-relationship", "kind"), _set("InfraDevice.relationships.owner.kind", value="Component")
+    ),
+    _SemanticMutation(
+        ("mandatory-relationship", "read_only"), _set("InfraDevice.relationships.owner.read_only", value=True)
     ),
 )
 
@@ -194,6 +203,29 @@ def test_the_fingerprint_is_a_full_sha256_digest() -> None:
 
 def test_the_fingerprint_is_stable_across_repeated_projections() -> None:
     assert _fingerprint(_SNAPSHOT) == _fingerprint(copy.deepcopy(_SNAPSHOT))
+
+
+def test_unmapped_peer_key_writability_changes_the_fingerprint() -> None:
+    """A crossing key consumes the peer field even when the peer kind is unmapped."""
+    changed = copy.deepcopy(_SNAPSHOT)
+    changed["LocationSite"]["attributes"]["name"]["read_only"] = True
+    identity = {"name": "device-a", "site": {"peer_kind": "LocationSite", "identity": {"name": "site-a"}}}
+    before = normalize_destination_schema(_SNAPSHOT)
+    after = normalize_destination_schema(changed)
+
+    assert (
+        writable_convergence_reason(
+            node=before.kinds["InfraDevice"], identity_fields=identity, schemas=before.kinds, identity=identity
+        )
+        is None
+    )
+    assert (
+        writable_convergence_reason(
+            node=after.kinds["InfraDevice"], identity_fields=identity, schemas=after.kinds, identity=identity
+        )
+        is not None
+    )
+    assert _fingerprint(changed) != _fingerprint(_SNAPSHOT)
 
 
 @pytest.mark.parametrize(

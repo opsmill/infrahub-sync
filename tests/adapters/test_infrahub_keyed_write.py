@@ -25,7 +25,11 @@ from infrahub_sdk.exceptions import GraphQLError
 from infrahub_sdk.schema.main import BranchSchema, NodeSchemaAPI
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerResolver
-from infrahub_sync.plan.errors import ReviewedPayloadFieldMissingError, UnaccountedIdentityComponentError
+from infrahub_sync.plan.errors import (
+    ReviewedPayloadFieldMissingError,
+    UnaccountedIdentityComponentError,
+    UnkeyedCreateRefusedError,
+)
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 from tests.adapters.test_infrahub_planned_write import (
@@ -81,6 +85,104 @@ def keyed_adapter() -> tuple[RecordingClient, InfrahubAdapter, PeerResolver]:
     adapter = make_adapter(client)
     adapter.schema = dict(ALL_SCHEMAS)
     return client, adapter, PeerResolver(adapter)
+
+
+def _read_only_rule_adapter(*, writable_alternative: bool) -> tuple[RecordingClient, InfrahubAdapter, PeerResolver]:
+    """A rule kind whose displayed number is allocated by the destination."""
+    rule_id = _text("rule-id", "rule_id", optional=False).model_copy(update={"read_only": True})
+    schema = NodeSchemaAPI(
+        id="rule-schema",
+        name="Rule",
+        namespace="Test",
+        label="Rule",
+        default_filter="rule_id__value",
+        human_friendly_id=["rule_id__value"],
+        uniqueness_constraints=[["hostname__value"]] if writable_alternative else [],
+        attributes=[rule_id, _text("rule-hostname", "hostname", optional=False)],
+        relationships=[],
+    )
+    client = RecordingClient()
+    client.schema.set_cache(BranchSchema(hash="fixture", nodes={"TestRule": schema}))
+    adapter = make_adapter(client)
+    adapter.schema = {"TestRule": schema}
+    return client, adapter, PeerResolver(adapter)
+
+
+def test_server_allocated_rule_id_is_refused_at_the_write_boundary() -> None:
+    client, adapter, peers = _read_only_rule_adapter(writable_alternative=False)
+    operation = make_operation(kind="TestRule", identity={"hostname": "edge-1"}, payload={"hostname": "edge-1"})
+
+    with pytest.raises(UnkeyedCreateRefusedError, match="rule_id__value"):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.mutation_names == []
+
+
+def test_reviewed_read_only_rule_id_is_refused_at_the_write_boundary() -> None:
+    client, adapter, peers = _read_only_rule_adapter(writable_alternative=False)
+    operation = make_operation(kind="TestRule", identity={"rule_id": "999"}, payload={"rule_id": "999"})
+
+    with pytest.raises(ReviewedPayloadFieldMissingError, match="rule_id"):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.mutation_names == []
+
+
+def test_writable_rule_key_allows_repeated_writes_with_a_read_only_display_id() -> None:
+    class StatefulRuleClient(RecordingClient):
+        """Apply rendered upserts to an independent in-memory destination index."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.persisted: dict[str, str] = {}
+
+        def execute_graphql(self, *args: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401, ARG002
+            query = kwargs["query"]
+            match = re.search(r'hostname:\s*\{\s*value:\s*"([^"]+)"', query)
+            assert match is not None, "The actual SDK mutation must carry the writable key."
+            hostname = match.group(1)
+            node_id = self.persisted.setdefault(hostname, f"saved-node-{len(self.persisted) + 1}")
+            self.events.append(("mutation", ("TestRuleUpsert", query)))
+            return {"TestRuleUpsert": {"ok": True, "object": {"id": node_id}}}
+
+        def read_back(self, hostname: str) -> list[str]:
+            """Query the simulated destination by its persisted writable key."""
+            return [node_id for key, node_id in self.persisted.items() if key == hostname]
+
+    _client, adapter, peers = _read_only_rule_adapter(writable_alternative=True)
+    stateful_client = StatefulRuleClient()
+    stateful_client.schema.set_cache(BranchSchema(hash="fixture", nodes=dict(adapter.schema)))
+    adapter.client = stateful_client
+    operation = make_operation(kind="TestRule", identity={"hostname": "edge-1"}, payload={"hostname": "edge-1"})
+
+    first = adapter.apply_planned_operation(operation=operation, peers=peers)
+    second = adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert first == second
+    assert stateful_client.mutation_names == ["TestRuleUpsert", "TestRuleUpsert"]
+    assert stateful_client.read_back("edge-1") == [first]
+
+
+def test_read_only_hfid_relationship_accepts_a_complete_writable_constraint() -> None:
+    """A read-only display relationship does not block a selected writable key."""
+    schema = ALL_SCHEMAS[DEVICE_KIND].model_copy(
+        update={
+            "relationships": [
+                relationship.model_copy(update={"read_only": True})
+                for relationship in ALL_SCHEMAS[DEVICE_KIND].relationships
+            ],
+            "uniqueness_constraints": [["name__value"]],
+        }
+    )
+    client = RecordingClient()
+    client.schema.set_cache(BranchSchema(hash="fixture", nodes={DEVICE_KIND: schema}))
+    adapter = make_adapter(client)
+    adapter.schema = {DEVICE_KIND: schema}
+    operation = make_operation(kind=DEVICE_KIND, identity={"name": "device-a"}, payload={"name": "device-a"})
+
+    adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert client.mutation_names == [f"{DEVICE_KIND}Upsert"]
 
 
 def update_operation(
