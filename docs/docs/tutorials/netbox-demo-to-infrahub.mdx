@@ -189,7 +189,13 @@ Open `sync-projects/netbox-demo/config.yml` in an editor and scan the top-level 
 - `destination` configures the Infrahub adapter.
 - `schema_mapping` defines how NetBox API resources become Infrahub objects.
 
-The configuration includes default endpoint values, but the environment variables exported above take precedence for tokens and URLs.
+The worker reads the `source.settings.url` and `destination.settings.url` values from the
+registered package itself, not from the environment — the `NETBOX_URL` and
+`INFRAHUB_ADDRESS` variables exported above only matter to the `invoke load-schema` task and
+other project-template commands that run outside Infrahub Sync. Edit those two URLs directly
+in `config.yml` before registering the package if either target isn't at the address already
+in the file. Only the two credentials (`NETBOX_TOKEN` and `INFRAHUB_API_TOKEN`) come from the
+worker's environment, resolved through the `credentials` block at the bottom of `package.yml`.
 
 This tutorial registers the package, uses `diff` to create a service plan, reviews that
 plan, and then submits a confirmed sync. See [Run a sync](../running-a-sync.mdx) when you
@@ -402,6 +408,14 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
 
    :::info This is a minimal mapping
    Some records and relationships may be missing — that doesn't mean the sync failed.
+
+   Two exclusions keep this mapping working against the current demo data. VLAN names in
+   NetBox are only unique within a VLAN group, but Infrahub's `IpamVLAN` identifies a VLAN by
+   name alone — so the mapping prefixes the Infrahub name with the VLAN group name (for
+   example, `Data` in group `Site A` becomes `Site A-Data`). And `DcimDevice` also identifies
+   a device by name alone, so both `DcimDevice` entries skip devices whose role is
+   `patch-panel`: the demo data names several identically across different sites, and patch
+   panels are passive components with no data worth syncing in this minimal mapping anyway.
    :::
 
 3. Once you're happy with the data, open a proposed change from `netbox-import` toward `main` so the import can be reviewed before it's merged.

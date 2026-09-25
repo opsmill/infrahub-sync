@@ -1,0 +1,119 @@
+"""Tests for the collision fixes in the shipped NetBox example.
+
+Infrahub identifies both `IpamVLAN` and `DcimDevice` by name alone (their HFID is
+`name__value`), but the NetBox demo data has two ways to produce the same name twice:
+
+* NetBox only enforces a unique VLAN name within a VLAN group, so the same name (for
+  example `Data`) repeats across every group. `examples/netbox_to_infrahub/config.yml`
+  renders the Infrahub VLAN name as `"{{ group.name }}-{{ name }}"` so it stays unique.
+* NetBox lets several devices share a name across different sites. The demo data does this
+  for patch panels (`PP:MDF` at more than one site), so both `DcimDevice` entries filter out
+  devices whose role is `patch-panel`.
+
+These tests read the mapping and run its filters/transforms directly; they load nothing.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from infrahub_sync import DiffSyncModelMixin, SyncConfig
+from infrahub_sync.adapters.utils import get_value
+
+EXAMPLE_DIR = Path(__file__).resolve().parent.parent / "examples" / "netbox_to_infrahub"
+CONFIG_PATH = EXAMPLE_DIR / "config.yml"
+
+
+def _mapping(name: str, *, index: int = 0):
+    """Return the `index`-th schema_mapping entry named `name` (DcimDevice appears twice)."""
+    config = SyncConfig(**yaml.safe_load(CONFIG_PATH.read_text()))
+    matches = [mapping for mapping in config.schema_mapping if mapping.name == name]
+    return matches[index]
+
+
+# ---------------------------------------------------------------------------
+# IpamVLAN: the rendered name carries the group, so it's unique the way
+# Infrahub's name-only HFID needs it to be.
+# ---------------------------------------------------------------------------
+
+
+def test_netbox_example_vlan_name_carries_the_group() -> None:
+    mapping = _mapping("IpamVLAN")
+    name_field = next(field for field in mapping.fields if field.name == "name")
+    assert name_field.mapping is not None
+
+    record = {"name": "Data", "group": {"id": 1, "name": "Site A"}}
+    transformed = DiffSyncModelMixin.transform_records(records=[record], schema_mapping=mapping)[0]
+
+    assert get_value(transformed, name_field.mapping) == "Site A-Data"
+
+
+def test_netbox_example_vlan_names_that_collide_in_netbox_dont_collide_in_infrahub() -> None:
+    """The exact scenario in the demo data: one name, several groups."""
+    mapping = _mapping("IpamVLAN")
+    name_field = next(field for field in mapping.fields if field.name == "name")
+    assert name_field.mapping is not None
+
+    groups = [{"id": 1, "name": "Site A"}, {"id": 2, "name": "Site B"}, {"id": 3, "name": "Site C"}]
+    rendered_names = set()
+    for group in groups:
+        record = {"name": "Data", "group": group}
+        transformed = DiffSyncModelMixin.transform_records(records=[record], schema_mapping=mapping)[0]
+        rendered_names.add(get_value(transformed, name_field.mapping))
+
+    assert len(rendered_names) == len(groups)
+
+
+# ---------------------------------------------------------------------------
+# DcimDevice: both entries skip patch panels.
+# ---------------------------------------------------------------------------
+
+DEVICE_ENTRY_INDEXES = [0, 1]  # 0: rack-based devices, 1: site-based devices
+
+
+@pytest.mark.parametrize("index", DEVICE_ENTRY_INDEXES)
+def test_netbox_example_device_mapping_filters_out_patch_panels(index: int) -> None:
+    mapping = _mapping("DcimDevice", index=index)
+    record = {
+        "name": "PP:MDF",
+        "parent_device": None,
+        "rack": {"id": 1} if index == 0 else None,
+        "role": {"id": 9, "name": "Patch Panel", "slug": "patch-panel"},
+    }
+
+    filtered = DiffSyncModelMixin.filter_records(records=[record], schema_mapping=mapping)
+
+    assert filtered == []
+
+
+@pytest.mark.parametrize("index", DEVICE_ENTRY_INDEXES)
+def test_netbox_example_device_mapping_keeps_devices_with_other_roles(index: int) -> None:
+    mapping = _mapping("DcimDevice", index=index)
+    record = {
+        "name": "core-switch-01",
+        "parent_device": None,
+        "rack": {"id": 1} if index == 0 else None,
+        "role": {"id": 3, "name": "Core Switch", "slug": "core-switch"},
+    }
+
+    filtered = DiffSyncModelMixin.filter_records(records=[record], schema_mapping=mapping)
+
+    assert filtered == [record]
+
+
+@pytest.mark.parametrize("index", DEVICE_ENTRY_INDEXES)
+def test_netbox_example_device_mapping_keeps_devices_without_a_role(index: int) -> None:
+    """A device payload with no role at all must not trip StrictUndefined or be excluded."""
+    mapping = _mapping("DcimDevice", index=index)
+    record = {
+        "name": "unassigned-role-device",
+        "parent_device": None,
+        "rack": {"id": 1} if index == 0 else None,
+    }
+
+    filtered = DiffSyncModelMixin.filter_records(records=[record], schema_mapping=mapping)
+
+    assert filtered == [record]

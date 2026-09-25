@@ -265,6 +265,13 @@ schema_mapping:
         operation: "is_not_empty"
       - field: name # /!\ Netbox allows empty name for devices
         operation: "is_not_empty"
+      # Patch panels don't carry a unique Infrahub identity: the demo data
+      # names several "PP:MDF" at different sites, and DcimDevice's HFID is
+      # name alone. They're passive, so skipping them loses nothing worth
+      # syncing today; a real Infrahub identity for them is future work.
+      - field: role.slug
+        operation: "!="
+        value: "patch-panel"
 
   - name: DcimDevice
     identifiers: ["location", "name"]
@@ -305,6 +312,11 @@ schema_mapping:
         operation: "is_empty"
       - field: name # /!\ Netbox allows empty name for devices
         operation: "is_not_empty"
+      # See the rack-based DcimDevice entry above: patch panels collide on
+      # Infrahub's name-only HFID and are skipped here too.
+      - field: role.slug
+        operation: "!="
+        value: "patch-panel"
 
   # TODO: Add support for cluster, VM, servers ...
 
@@ -552,8 +564,11 @@ schema_mapping:
     mapping: ipam.vlans
     identifiers: ["name", "vlan_id", "vlan_group"]
     fields:
-      - name: name
-        mapping: name
+      - name: name # /!\ Infrahub's IpamVLAN HFID is name alone, but Netbox only
+        # enforces unique (group, name) — the same name (e.g. "Data") repeats
+        # across every VLAN group. Prefix it with the group name below so it's
+        # unique the way Infrahub needs it to be.
+        mapping: unique_name
       - name: vlan_id
         mapping: vid
       - name: description
@@ -566,6 +581,9 @@ schema_mapping:
       - name: vlan_group
         mapping: group
         reference: IpamVLANGroup
+    transforms:
+      - field: unique_name
+        expression: "{{ group.name ~ '-' ~ name }}"
     # vlan_group is required (optional: false) in the schema, but Netbox
     # VLANs can have no group at all — skip those rather than fail the sync.
     filters:
