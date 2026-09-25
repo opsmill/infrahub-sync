@@ -10,6 +10,7 @@ this module carries the schema-path mirror of the core's exact-set and reachabil
 from __future__ import annotations
 
 import ast
+import copy
 import re
 from collections.abc import ItemsView, Iterator, Mapping
 from dataclasses import replace
@@ -140,6 +141,20 @@ def _mapping_package_data(
 
 def _codes_and_locations(findings: tuple[Any, ...]) -> list[tuple[str, str]]:
     return [(finding.code, finding.location) for finding in findings]
+
+
+def test_schema_validation_names_a_read_only_selected_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    snapshot["InfraDevice"]["attributes"]["name"]["read_only"] = True
+    _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(snapshot)))
+    content = _mapping_package_data(fields=[{"name": "name", "mapping": "name"}])
+    content["configuration"]["schema_mapping"][0]["identifiers"] = ["name"]
+
+    findings = collect_destination_schema_findings(package(content)).findings
+
+    assert any(
+        finding.code == "destination-schema-mismatch" and "name__value" in finding.message for finding in findings
+    )
 
 
 # --- The accessor seam (registration-time invariant) ---------------------------------

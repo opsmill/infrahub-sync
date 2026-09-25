@@ -36,9 +36,14 @@ from infrahub_sync.plan.errors import (
     SkippedDeleteOperation,
     StaleDestinationIdError,
     UnaccountedIdentityComponentError,
+    UnkeyedCreateRefusedError,
 )
 from infrahub_sync.plan.identity import canonical_identity
-from infrahub_sync.plan.keying import is_usable_component_value, refuse_unkeyed_create_coverage
+from infrahub_sync.plan.keying import (
+    is_usable_component_value,
+    refuse_unkeyed_create_coverage,
+    writable_convergence_reason,
+)
 from infrahub_sync.plan.models import DestinationBindingRecord
 
 logger = logging.getLogger(__name__)
@@ -1396,8 +1401,36 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # first, from the same function plan derivation uses; then AD051 for values,
             # because it is the check that can name the missing component. Both run before
             # `client.create` and read the cached schema and the operation alone.
-            refuse_unkeyed_create_coverage(operation, node=node_schema)
-            self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
+            reason = writable_convergence_reason(
+                node=node_schema,
+                identity_fields=operation.identity,
+                mapped_fields=data,
+                schemas=self.schema,
+                identity=operation.identity,
+                check_values=any(
+                    (
+                        getattr(attribute, "read_only", False)
+                        or getattr(attribute, "computed_attribute", None) is not None
+                    )
+                    and f"{attribute.name}__value" in (node_schema.human_friendly_id or ())
+                    for attribute in node_schema.attributes
+                ),
+            )
+            if reason:
+                msg = (
+                    f"Operation {operation.operation_id!r} for destination kind {operation.kind!r}: {reason}. "
+                    "No destination write was attempted."
+                )
+                raise UnkeyedCreateRefusedError(msg)
+            refuse_unkeyed_create_coverage(operation, node=node_schema, schemas=self.schema)
+            if all(
+                not (
+                    getattr(attribute, "read_only", False) or getattr(attribute, "computed_attribute", None) is not None
+                )
+                for attribute in node_schema.attributes
+                if f"{attribute.name}__value" in (node_schema.human_friendly_id or ())
+            ):
+                self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
 
         source_id = self.source_node.id if self.source_node else None
         owner_id = self.owner_node.id if self.owner_node else None
@@ -1482,6 +1515,17 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
         data = diffsync_to_infrahub(
             ids=ids, attrs=attrs, node_schema=node_schema, store=adapter.client.store, schemas=adapter.schema
         )
+        reason = writable_convergence_reason(
+            node=node_schema,
+            identity_fields=ids,
+            mapped_fields=data,
+            schemas=adapter.schema,
+            identity=ids,
+            check_values=True,
+        )
+        if reason:
+            msg = f"Destination kind {cls.__name__!r}: {reason}. No write was attempted."
+            raise UnkeyedCreateRefusedError(msg)
         unique_id = cls(**ids, **attrs).get_unique_id()
         source_id = adapter.source_node.id if adapter.source_node else None
         owner_id = adapter.owner_node.id if adapter.owner_node else None

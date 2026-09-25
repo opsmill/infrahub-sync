@@ -27,6 +27,7 @@ from infrahub_sync.runtime_schema import (
     RuntimeModelScope,
     RuntimeModelScopeError,
     UnsupportedDestinationProfileError,
+    UnwritableConvergenceIdentityError,
     build_runtime_model_plan,
 )
 from infrahub_sync.runtime_schema import worker as worker_module
@@ -157,6 +158,17 @@ def test_the_plan_carries_fresh_model_classes_for_both_sides(spy: _SnapshotSpy, 
     assert plan.source.models["BuiltinTag"] is not plan.destination.models["BuiltinTag"]
     assert plan.destination.models["LocationSite"]._attributes == ("tags",)
     assert spy.branches == ["main"]
+
+
+def test_registered_plan_refuses_a_server_allocated_only_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    snapshot["BuiltinTag"]["attributes"]["name"]["read_only"] = True
+    monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", _SnapshotSpy(snapshot))
+
+    with pytest.raises(UnwritableConvergenceIdentityError, match="name__value"):
+        _plan(_package(), tmp_path)
 
 
 def test_registered_composition_attaches_the_plan_to_the_runtime_instance(spy: _SnapshotSpy, tmp_path: Path) -> None:

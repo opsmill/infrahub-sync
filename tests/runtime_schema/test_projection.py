@@ -136,6 +136,7 @@ _SEMANTIC_MUTATIONS = (
         ("mapped-attribute", "default_value"), _set("InfraDevice.attributes.role.default_value", value="spine")
     ),
     _SemanticMutation(("mapped-attribute", "unique"), _set("InfraDevice.attributes.role.unique", value=True)),
+    _SemanticMutation(("mapped-attribute", "read_only"), _set("InfraDevice.attributes.role.read_only", value=True)),
     _SemanticMutation(("mapped-relationship", "name"), _rename("InfraDevice.relationships.site", "rack")),
     _SemanticMutation(
         ("mapped-relationship", "peer"), _set("InfraDevice.relationships.site.peer", value="LocationRegion")
@@ -154,6 +155,7 @@ _SEMANTIC_MUTATIONS = (
         ("mandatory-attribute", "default_value"), _set("InfraDevice.attributes.asn.default_value", value=0)
     ),
     _SemanticMutation(("mandatory-attribute", "unique"), _set("InfraDevice.attributes.asn.unique", value=True)),
+    _SemanticMutation(("mandatory-attribute", "read_only"), _set("InfraDevice.attributes.asn.read_only", value=True)),
     _SemanticMutation(("mandatory-relationship", "name"), _rename("InfraDevice.relationships.owner", "tenant")),
     _SemanticMutation(
         ("mandatory-relationship", "peer"),

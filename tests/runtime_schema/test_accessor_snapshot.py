@@ -51,6 +51,7 @@ def test_the_snapshot_carries_every_attribute_and_relationship_property(snapshot
         "optional": True,
         "default_value": "leaf",
         "unique": False,
+        "read_only": False,
     }
     assert snapshot["InfraDevice"]["relationships"]["interfaces"] == {
         "peer": "InfraInterface",

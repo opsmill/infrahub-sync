@@ -37,9 +37,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from infrahub_sync import requested_destination_write_operations
+from infrahub_sync.generator import get_identifiers
+from infrahub_sync.plan.keying import writable_convergence_reason
 from infrahub_sync.runtime_schema import (
     UnsupportedSchemaSemanticsError,
     compute_consumed_schema_fingerprint,
@@ -52,6 +54,8 @@ from .runtime import effective_destination_branch
 from .validation import _finding_message
 
 if TYPE_CHECKING:
+    from infrahub_sdk.schema import NodeSchema
+
     from .models import ConfigurationPackage
 
 _CODE_DESTINATION_SCHEMA_MISMATCH = "destination-schema-mismatch"
@@ -232,9 +236,36 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
             )
         else:
             try:
+                normalized = normalize_destination_schema(snapshot)
                 fingerprint = compute_consumed_schema_fingerprint(
-                    configuration=package.configuration, snapshot=normalize_destination_schema(snapshot)
+                    configuration=package.configuration, snapshot=normalized
                 )
+                references = {
+                    mapping.name: {
+                        field.name: field.reference for field in mapping.fields or () if field.reference is not None
+                    }
+                    for mapping in package.configuration.schema_mapping
+                }
+                for index, mapping in enumerate(package.configuration.schema_mapping):
+                    node = normalized.kinds.get(mapping.name)
+                    if node is None:
+                        continue
+                    identifiers = get_identifiers(node=cast("NodeSchema", node), config=package.configuration) or ()
+                    reason = writable_convergence_reason(
+                        node=node,
+                        identity_fields=identifiers,
+                        mapped_fields={field.name for field in mapping.fields or ()},
+                        schemas=normalized.kinds,
+                        references=references,
+                    )
+                    if identifiers and reason:
+                        findings.append(
+                            _finding(
+                                code=_CODE_DESTINATION_SCHEMA_MISMATCH,
+                                location=f"/configuration/schema_mapping/{index}/identifiers",
+                                message=f"destination kind {mapping.name!r}: {reason}",
+                            )
+                        )
             except UnsupportedSchemaSemanticsError:
                 # The worker refuses this snapshot too, so validation names the same
                 # defect rather than reporting only a missing fingerprint.

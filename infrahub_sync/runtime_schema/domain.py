@@ -39,6 +39,7 @@ class NormalizedAttribute:
     optional: bool
     default_value: Any
     unique: bool
+    read_only: bool = False
 
     def mutable_default(self) -> Any:
         """Return this attribute's declared default as a mutable JSON-native value."""
@@ -165,6 +166,7 @@ def _normalized_attribute(name: str, entry: object, *, kind: str) -> NormalizedA
         optional=_require_bool(member["optional"], detail=detail),
         default_value=_require_json_default(member["default_value"], detail=detail),
         unique=_require_bool(member["unique"], detail=detail),
+        read_only=_require_bool(member.get("read_only", False), detail=detail),
     )
 
 

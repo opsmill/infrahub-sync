@@ -44,6 +44,7 @@ def _member_semantics(member: NormalizedAttribute | NormalizedRelationship) -> d
             "optional": member.optional,
             "default_value": member.default_value,
             "unique": member.unique,
+            "read_only": member.read_only,
         }
     return {
         "name": member.name,

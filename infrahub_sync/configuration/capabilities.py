@@ -337,6 +337,7 @@ def _attribute_shape(attribute: Any) -> dict[str, Any]:
         "optional": _exact_bool(attribute.optional),
         "default_value": _json_native_default(attribute.default_value),
         "unique": _exact_bool(attribute.unique),
+        "read_only": _exact_bool(attribute.read_only) or attribute.computed_attribute is not None,
     }
 
 
