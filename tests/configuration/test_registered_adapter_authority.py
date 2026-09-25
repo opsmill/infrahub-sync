@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 import types
@@ -148,6 +149,7 @@ def _install_optional_sdk_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _adapter_module(monkeypatch: pytest.MonkeyPatch, row: AdapterRow) -> types.ModuleType:
+    """Load the adapter module with isolated test dependencies."""
     _install_optional_sdk_stubs(monkeypatch)
     package = importlib.import_module("infrahub_sync.adapters")
     module_names = [row.name]
@@ -160,7 +162,7 @@ def _adapter_module(monkeypatch: pytest.MonkeyPatch, row: AdapterRow) -> types.M
         # alone records nothing when the module was absent before this test.
         monkeypatch.setitem(sys.modules, module_name, types.ModuleType(module_name))
         monkeypatch.setattr(package, name, types.ModuleType(module_name), raising=False)
-        del sys.modules[module_name]
+        monkeypatch.delitem(sys.modules, module_name)
     return importlib.import_module(f"infrahub_sync.adapters.{row.name}")
 
 
@@ -180,6 +182,7 @@ def _instance(row: AdapterRow, settings: Mapping[str, object]) -> SyncInstance:
 def _capture_client(
     monkeypatch: pytest.MonkeyPatch, row: AdapterRow, module: types.ModuleType
 ) -> list[dict[str, object]]:
+    """Capture the client constructed by the adapter."""
     observed: list[dict[str, object]] = []
     dynamic_module = cast("Any", module)
 
@@ -213,9 +216,12 @@ def _capture_client(
     elif row.name == "slurpitsync":
 
         def make_slurpit_client(**kwargs: object) -> object:
+            """Create the stub Slurp'it SDK client."""
             observed.append(kwargs)
 
-            def get_devices() -> list[object]:  # matches the real (synchronous) SDK
+            async def get_devices() -> list[object]:  # matches the current async SDK
+                """Return stub devices from the async SDK client."""
+                await asyncio.sleep(0)
                 return []
 
             return types.SimpleNamespace(device=types.SimpleNamespace(get_devices=get_devices))
