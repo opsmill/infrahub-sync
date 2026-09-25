@@ -1407,7 +1407,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 mapped_fields=data,
                 schemas=self.schema,
                 identity=operation.identity,
-                check_values=_has_unwritable_hfid_attribute(node_schema),
+                check_values=_has_unwritable_hfid_component(node_schema),
             )
             if reason:
                 msg = (
@@ -1416,7 +1416,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 )
                 raise UnkeyedCreateRefusedError(msg)
             refuse_unkeyed_create_coverage(operation, node=node_schema, schemas=self.schema)
-            if not _has_unwritable_hfid_attribute(node_schema):
+            if not _has_unwritable_hfid_component(node_schema):
                 self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
 
         source_id = self.source_node.id if self.source_node else None
@@ -1483,13 +1483,17 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         raise UnaccountedIdentityComponentError(msg)
 
 
-def _has_unwritable_hfid_attribute(node_schema: NodeSchemaAPI) -> bool:
-    """Whether an HFID attribute is omitted or computed by the destination."""
+def _has_unwritable_hfid_component(node_schema: NodeSchemaAPI) -> bool:
+    """Whether an HFID member is omitted or computed by the destination."""
     hfid = set(node_schema.human_friendly_id or ())
     return any(
         f"{attribute.name}__value" in hfid
         and (getattr(attribute, "read_only", False) or getattr(attribute, "computed_attribute", None) is not None)
         for attribute in node_schema.attributes
+    ) or any(
+        getattr(relationship, "read_only", False)
+        and any(component == relationship.name or component.startswith(f"{relationship.name}__") for component in hfid)
+        for relationship in node_schema.relationships
     )
 
 

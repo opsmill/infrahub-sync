@@ -148,6 +148,28 @@ def test_writable_rule_key_allows_repeated_writes_with_a_read_only_display_id() 
     assert stateful_client.read_back("edge-1") == [first]
 
 
+def test_read_only_hfid_relationship_accepts_a_complete_writable_constraint() -> None:
+    """A read-only display relationship does not block a selected writable key."""
+    schema = ALL_SCHEMAS[DEVICE_KIND].model_copy(
+        update={
+            "relationships": [
+                relationship.model_copy(update={"read_only": True})
+                for relationship in ALL_SCHEMAS[DEVICE_KIND].relationships
+            ],
+            "uniqueness_constraints": [["name__value"]],
+        }
+    )
+    client = RecordingClient()
+    client.schema.set_cache(BranchSchema(hash="fixture", nodes={DEVICE_KIND: schema}))
+    adapter = make_adapter(client)
+    adapter.schema = {DEVICE_KIND: schema}
+    operation = make_operation(kind=DEVICE_KIND, identity={"name": "device-a"}, payload={"name": "device-a"})
+
+    adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert client.mutation_names == [f"{DEVICE_KIND}Upsert"]
+
+
 def update_operation(
     *,
     kind: str,

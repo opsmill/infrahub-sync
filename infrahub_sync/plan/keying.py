@@ -270,9 +270,7 @@ def unkeyed_create_value_reason(
     )
     if not valueless:
         return None
-    return (
-        f"its identity names every human-friendly-ID component but supplies no usable value for {', '.join(valueless)}"
-    )
+    return f"its identity supplies no usable value for human-friendly-ID component(s) {', '.join(valueless)}"
 
 
 def unkeyed_create_reason(

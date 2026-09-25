@@ -10,7 +10,7 @@ import pytest
 from infrahub_sync.plan.derive import warn_missing_convergence_key
 from infrahub_sync.plan.errors import UnkeyedCreateRefusedError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
-from infrahub_sync.plan.keying import writable_convergence_reason
+from infrahub_sync.plan.keying import unkeyed_create_reason, writable_convergence_reason
 from infrahub_sync.plan.models import PlannedOperation
 
 
@@ -123,6 +123,21 @@ def test_unselected_writable_component_has_no_read_only_explanation() -> None:
     assert "site__value" in reason
     assert "server-allocated" not in reason
     assert ". Map and select" in reason
+
+
+def test_unselected_hfid_refusal_does_not_claim_the_identity_names_it() -> None:
+    node = _node(constraint=["hostname__value"])
+    node.attributes[0].read_only = False
+    node.attributes[2].read_only = True
+    node.uniqueness_constraints.append(["site__value"])
+    identity = {"hostname": "edge-1"}
+
+    assert writable_convergence_reason(node=node, identity_fields=identity, mapped_fields=identity) is None
+    reason = unkeyed_create_reason(_create(identity), node=node)
+
+    assert reason is not None
+    assert "rule_id__value" in reason
+    assert "names every" not in reason
 
 
 def test_relationship_crossing_key_checks_the_peer_attribute() -> None:

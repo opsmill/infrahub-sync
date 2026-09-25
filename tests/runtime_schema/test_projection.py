@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
+from infrahub_sync.plan.keying import writable_convergence_reason
 from infrahub_sync.runtime_schema import (
     NormalizedAttribute,
     NormalizedKind,
@@ -202,6 +203,29 @@ def test_the_fingerprint_is_a_full_sha256_digest() -> None:
 
 def test_the_fingerprint_is_stable_across_repeated_projections() -> None:
     assert _fingerprint(_SNAPSHOT) == _fingerprint(copy.deepcopy(_SNAPSHOT))
+
+
+def test_unmapped_peer_key_writability_changes_the_fingerprint() -> None:
+    """A crossing key consumes the peer field even when the peer kind is unmapped."""
+    changed = copy.deepcopy(_SNAPSHOT)
+    changed["LocationSite"]["attributes"]["name"]["read_only"] = True
+    identity = {"name": "device-a", "site": {"peer_kind": "LocationSite", "identity": {"name": "site-a"}}}
+    before = normalize_destination_schema(_SNAPSHOT)
+    after = normalize_destination_schema(changed)
+
+    assert (
+        writable_convergence_reason(
+            node=before.kinds["InfraDevice"], identity_fields=identity, schemas=before.kinds, identity=identity
+        )
+        is None
+    )
+    assert (
+        writable_convergence_reason(
+            node=after.kinds["InfraDevice"], identity_fields=identity, schemas=after.kinds, identity=identity
+        )
+        is not None
+    )
+    assert _fingerprint(changed) != _fingerprint(_SNAPSHOT)
 
 
 @pytest.mark.parametrize(

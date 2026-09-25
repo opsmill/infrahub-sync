@@ -124,8 +124,11 @@ def _netbox_driver(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     driver = cast("Any", types.ModuleType("pynetbox"))
     driver.api = lambda *_args, **_kwargs: types.SimpleNamespace()
     monkeypatch.setitem(sys.modules, "pynetbox", driver)
+    previous = sys.modules.pop("infrahub_sync.adapters.netbox", None)
     yield
     sys.modules.pop("infrahub_sync.adapters.netbox", None)
+    if previous is not None:
+        sys.modules["infrahub_sync.adapters.netbox"] = previous
 
 
 def _instance(package: ConfigurationPackage, tmp_path: Path) -> SyncInstance:

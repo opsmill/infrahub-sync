@@ -160,7 +160,8 @@ _COMPUTED_SCHEMA = {
                 {
                     "name": "display_name",
                     "kind": "Text",
-                    "computed_attribute": {"kind": "Jinja2", "jinja2_template": "{{ hostname.value }}"},
+                    "read_only": True,
+                    "computed_attribute": {"kind": "Jinja2", "jinja2_template": "{{ hostname__value }}"},
                 },
             ],
         }
@@ -465,7 +466,7 @@ def test_a_computed_display_name_converges_on_a_writable_unique_hostname(keyed_w
         timeout=60,
         allow_redirects=False,
     )
-    _raise_for_status_without_redirect(response)
+    assert response.ok, response.text
     _await_schema_kinds(scope.client, scope.branch, (COMPUTED_KIND,))
     scope.adapter.schema = scope.client.schema.all(branch=scope.branch, refresh=True)
     hostname = f"computed-{scope.site_name}"
