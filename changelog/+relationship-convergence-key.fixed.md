@@ -1,1 +1,1 @@
-Refuse Infrahub writes when a relationship peer lookup uses only part of its key instead of warning and continuing.
+Infrahub now refuses any relationship write whose peer identity lacks part of that peer kind's human-friendly ID, naming the missing fields instead of warning and continuing.

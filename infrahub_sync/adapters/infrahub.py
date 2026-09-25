@@ -442,7 +442,7 @@ def _hfid_component_accounted_for(
 
 
 def _refuse_partial_key_peer_filter(operation: PlannedOperation, schemas: Mapping[str, MainSchemaTypesAPI]) -> None:
-    """Refuse any relationship peer whose lookup would omit a key component."""
+    """Refuse partial peer keys before lookup, since one loose match can bind the wrong peer."""
     for reference in operation.relationships or ():
         if not reference.peers:
             continue
@@ -458,6 +458,9 @@ def _refuse_partial_key_peer_filter(operation: PlannedOperation, schemas: Mappin
             msg = f"Expected NodeSchemaAPI for {reference.peer_kind}, got {type(peer_schema).__name__}"
             raise TypeError(msg)
         for peer in reference.peers:
+            # A destination id identifies the peer directly; its HFID need not be present.
+            if isinstance(peer.get("id"), str) and peer["id"].strip():
+                continue
             missing = []
             for component in _hfid_components(peer_schema):
                 value = _identity_path_value(peer, _component_segments(component))
@@ -539,6 +542,7 @@ class PeerResolver:
     def _filter_kwargs(self, *, peer_kind: str, identity: Mapping[str, Any]) -> dict[str, Any]:
         """Build the destination query's filter kwargs from the peer kind's HFID (PD-004).
 
+        An explicit destination id is already a complete peer key and takes precedence.
         An `<attr>__value` path takes its value from the identity's scalar under `<attr>`;
         an `<rel>__<attr>__value` path takes its value from the nested
         `{peer_kind, identity}` pair the identity records under `<rel>`, read at
@@ -585,6 +589,8 @@ class PeerResolver:
                 "destination does not carry"
             )
             raise ValueError(msg)
+        if isinstance(identity.get("id"), str) and identity["id"].strip():
+            return {"id": identity["id"]}
         components = _hfid_components(node_schema)
 
         kwargs: dict[str, Any] = {}
