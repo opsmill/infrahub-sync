@@ -1356,7 +1356,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             )
             raise SkippedDeleteOperation(msg)
 
-        node_schema = self.client.schema.all(refresh=True).get(operation.kind)
+        # Preflight refreshed this cache once for the whole plan. Reuse the schema that
+        # the SDK will render with; a fresh full-branch download per operation is costly
+        # and cannot prevent a server-side schema change between this check and save.
+        node_schema = self.client.schema.all().get(operation.kind)
         if node_schema is None and operation.payload:
             fields = ", ".join(repr(field) for field in sorted(operation.payload))
             msg = (
@@ -1452,15 +1455,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         create_data = self.client.schema.generate_payload_create(
             schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
         )
-        missing_fields = (set(payload) & set(node_schema.attribute_names)) - set(create_data)
-        if missing_fields:
-            fields = ", ".join(repr(field) for field in sorted(missing_fields))
-            msg = (
-                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
-                f"would omit reviewed direct payload field(s) {fields} from the SDK payload. "
-                "No write was made for this operation."
-            )
-            raise ReviewedPayloadFieldMissingError(msg)
         node = self.client.create(kind=operation.kind, data=create_data)
         if operation.action == "update":
             # The recorded id, set on the node rather than put into `data`. The SDK renders
@@ -1469,6 +1463,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # a keyed update of that exact object. Putting `id` into `data` instead would
             # render it as the attribute-shaped `id: {}` and key nothing.
             node.id = operation.destination_id
+        # generate_payload_create retains unknown keys as empty dictionaries. The node
+        # drops them while building the input to the mutation, so check that final input.
+        rendered_data = node._generate_input_data(exclude_hfid=True)["data"]["data"]
+        missing_fields = (set(payload) & set(node_schema.attribute_names)) - set(rendered_data)
+        if missing_fields:
+            fields = ", ".join(repr(field) for field in sorted(missing_fields))
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
+                f"would omit reviewed direct payload field(s) {fields} from the SDK mutation. "
+                "No write was made for this operation."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
         try:
             node.save(allow_upsert=True)
         except GraphQLError as exc:
