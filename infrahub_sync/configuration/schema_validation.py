@@ -37,10 +37,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from infrahub_sync import requested_destination_write_operations
-from infrahub_sync.generator import get_identifiers
 from infrahub_sync.plan.keying import writable_convergence_reason
 from infrahub_sync.runtime_schema import (
     UnsupportedSchemaSemanticsError,
@@ -54,8 +53,6 @@ from .runtime import effective_destination_branch
 from .validation import _finding_message
 
 if TYPE_CHECKING:
-    from infrahub_sdk.schema import NodeSchema
-
     from .models import ConfigurationPackage
 
 _CODE_DESTINATION_SCHEMA_MISMATCH = "destination-schema-mismatch"
@@ -250,11 +247,11 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
                     node = normalized.kinds.get(mapping.name)
                     if node is None:
                         continue
-                    identifiers = get_identifiers(node=cast("NodeSchema", node), config=package.configuration) or ()
+                    mapped_fields = {field.name for field in mapping.fields or ()}
                     reason = writable_convergence_reason(
                         node=node,
-                        identity_fields=identifiers,
-                        mapped_fields={field.name for field in mapping.fields or ()},
+                        identity_fields=mapped_fields,
+                        mapped_fields=mapped_fields,
                         schemas=normalized.kinds,
                         references=references,
                     )

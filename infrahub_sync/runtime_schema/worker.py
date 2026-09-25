@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 from infrahub_sync.configuration.capabilities import (
     DestinationSchemaReadError,
@@ -25,7 +25,6 @@ from infrahub_sync.configuration.capabilities import (
     UnknownAdapterCapabilitiesError as _UnknownAdapterCapabilitiesError,
 )
 from infrahub_sync.configuration.runtime import effective_destination_branch
-from infrahub_sync.generator import get_identifiers
 from infrahub_sync.plan.keying import writable_convergence_reason
 from infrahub_sync.plugin_loader import resolve_installed_adapter_class, resolve_installed_model_base
 
@@ -43,7 +42,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from diffsync import DiffSyncModel
-    from infrahub_sdk.schema import NodeSchema
 
     from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
     from infrahub_sync.configuration.models import ConfigurationPackage
@@ -167,11 +165,11 @@ def build_runtime_model_plan(
         }
         for mapping in instance.schema_mapping:
             node = snapshot.kinds[mapping.name]
-            identifiers = get_identifiers(node=cast("NodeSchema", node), config=instance) or ()
+            mapped_fields = {field.name for field in mapping.fields or ()}
             reason = writable_convergence_reason(
                 node=node,
-                identity_fields=identifiers,
-                mapped_fields={field.name for field in mapping.fields or ()},
+                identity_fields=mapped_fields,
+                mapped_fields=mapped_fields,
                 schemas=snapshot.kinds,
                 references=references,
             )
