@@ -389,12 +389,11 @@ def _identity_path_value(identity: Mapping[str, Any], segments: Sequence[str]) -
 
 
 def _operation_peer_identity(operation: PlannedOperation, field: str) -> Mapping[str, Any] | None:
-    """The nested peer identity the operation records for `field` (AD043, AD051).
+    """Find the peer identity for a single relationship used by a destination key.
 
-    Read from the operation's own **identity** first, where an identity-bearing reference
-    is recorded as a `{"peer_kind", "identity"}` pair, and otherwise from the relationship
-    reference of that name, whose `peers` hold those identities directly. A
-    cardinality-many reference names no single peer, so it supplies no component.
+    A planned identity may carry a nested peer reference, while a hand-built operation
+    may supply it only in its relationship reference. Check both so a relationship
+    component is accepted only when its peer identity supplies the value to be written.
     """
     if field in operation.identity:
         nested = _nested_peer_identity(operation.identity[field])
@@ -445,6 +444,44 @@ def _hfid_component_accounted_for(
         return False
     resolved = _identity_path_value(nested, segments[1:])
     return resolved is not _UNRESOLVED and is_usable_component_value(resolved)
+
+
+def _refuse_partial_key_peer_filter(operation: PlannedOperation, schemas: Mapping[str, MainSchemaTypesAPI]) -> None:
+    """Refuse partial peer keys before lookup, since one loose match can bind the wrong peer."""
+    for reference in operation.relationships or ():
+        if not reference.peers:
+            continue
+        peer_schema = schemas.get(reference.peer_kind)
+        if peer_schema is None:
+            msg = (
+                f"The destination schema declares no kind {reference.peer_kind!r}, so no peer of that kind "
+                "can be resolved. The plan was derived against a configuration or schema this "
+                "destination does not carry"
+            )
+            raise ValueError(msg)
+        if not isinstance(peer_schema, NodeSchemaAPI):
+            msg = f"Expected NodeSchemaAPI for {reference.peer_kind}, got {type(peer_schema).__name__}"
+            raise TypeError(msg)
+        for peer in reference.peers:
+            # A destination id identifies the peer directly; its HFID need not be present.
+            if isinstance(peer.get("id"), str) and peer["id"].strip():
+                continue
+            missing = []
+            for component in _hfid_components(peer_schema):
+                value = _identity_path_value(peer, _component_segments(component))
+                if (
+                    value is _UNRESOLVED
+                    or not is_usable_component_value(value)
+                    or isinstance(value, (Mapping, list, tuple))
+                ):
+                    missing.append(component)
+            if missing:
+                msg = (
+                    f"Operation {operation.operation_id!r} cannot resolve relationship {reference.field!r} "
+                    f"through a partial {reference.peer_kind!r} peer filter; missing: {', '.join(missing)}. "
+                    "No destination write was attempted."
+                )
+                raise UnaccountedIdentityComponentError(msg)
 
 
 class PeerResolver:
@@ -510,6 +547,7 @@ class PeerResolver:
     def _filter_kwargs(self, *, peer_kind: str, identity: Mapping[str, Any]) -> dict[str, Any]:
         """Build the destination query's filter kwargs from the peer kind's HFID (PD-004).
 
+        An explicit destination id is already a complete peer key and takes precedence.
         An `<attr>__value` path takes its value from the identity's scalar under `<attr>`;
         an `<rel>__<attr>__value` path takes its value from the nested
         `{peer_kind, identity}` pair the identity records under `<rel>`, read at
@@ -556,6 +594,8 @@ class PeerResolver:
                 "destination does not carry"
             )
             raise ValueError(msg)
+        if isinstance(identity.get("id"), str) and identity["id"].strip():
+            return {"ids": [identity["id"]]}
         components = _hfid_components(node_schema)
 
         kwargs: dict[str, Any] = {}
@@ -1251,16 +1291,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         forbids. The payload is authoritative for the mapped fields it carries and touches no
         unmapped destination field.
 
-        How the write is keyed depends on the action, and neither way reads the SDK's
-        private pre-save render (AD066/AD067, retired). An **update** carries the
-        destination `id` recorded for it at plan time, set on the node before `save`. A
-        **create** has no id and is keyed by the destination kind's human-friendly-ID
-        components in its payload, which the server matches on — so its completeness is
-        proven here, before the mutation, by the per-component diagnostic below.
-
-        The private render was retired because it stopped agreeing with the wire: on SDK
-        1.23.2 it reports an `hfid` for a kind whose issued mutation carries no key at all,
-        so a gate reading it passes writes that are unkeyed where it matters.
+        An **update** carries the destination `id` recorded at plan time. A **create**
+        is keyed by the destination kind's human-friendly-ID components in its payload,
+        which the server matches on. Each create is checked before mutation so a missing
+        component cannot become an unkeyed write.
 
         That upsert is the **only** destination write the operation makes. It carries every
         cardinality-many relationship as the plan's peer list, and `peers: []` means empty the
@@ -1343,6 +1377,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if value is not None or field not in omitted_null_relationships
         }
         references = list(operation.relationships or ())
+        _refuse_partial_key_peer_filter(operation, self.schema)
         for reference in references:
             peer_ids = [
                 peers.resolve(

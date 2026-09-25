@@ -34,11 +34,17 @@ from tests.adapters.test_infrahub_planned_write import (
     NODE_ID,
     ORPHAN_KIND,
     SCHEMAS,
+    SERVER_KIND,
     SITE_KIND,
+    TAG_KIND,
+    TEAM_KIND,
     RecordingClient,
     _text,
     make_adapter,
+    make_node,
     make_operation,
+    rendered_related_id,
+    rendered_relationship_ids,
 )
 
 if TYPE_CHECKING:
@@ -367,13 +373,12 @@ def test_a_no_hfid_kind_update_is_allowed_where_its_create_is_refused() -> None:
 # The two arms are different mechanisms and must stay so. Identity coverage answers "does
 # the operation even name every component", which is a question about the plan. AD051's
 # `_assert_identity_components_accounted_for` answers "does each named component arrive with
-# a value", which is a question about the assembled write — and it is the only check that
-# can say *which* component is missing. A guard that answered both would make AD051
-# unreachable and lose that diagnosis.
+# a value", which is a question about the assembled write. The peer-filter guard separately
+# names missing components before lookup. Direct values still need AD051's diagnosis.
 
 
-def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refused_by_ad051() -> None:
-    """The relationship-crossing value case: identity names `site`, the peer supplies no name."""
+def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refused() -> None:
+    """Name the missing peer field before lookup so a loose match cannot bind a wrong peer."""
     client, adapter, peers = keyed_adapter()
     peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
     operation = make_operation(
@@ -388,7 +393,8 @@ def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refuse
     with pytest.raises(UnaccountedIdentityComponentError) as excinfo:
         adapter.apply_planned_operation(operation=operation, peers=peers)
 
-    assert "site__name__value" in str(excinfo.value), "AD051 names the component, which is why it is kept."
+    assert "relationship 'site'" in str(excinfo.value)
+    assert "name__value" in str(excinfo.value)
     assert client.mutation_names == [], "A refused create attempts no destination mutation."
 
 
@@ -456,8 +462,8 @@ def test_an_update_whose_hfid_component_is_blank_still_reaches_the_recorded_id_w
     assert top_level_scalar_id(query) == DESTINATION_ID
 
 
-def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is_written() -> None:
-    """A crossing component the peer identity cannot supply: the recorded id keys the write."""
+def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is_refused() -> None:
+    """A recorded parent id cannot protect a relationship resolved through a loose peer filter."""
     client, adapter, peers = keyed_adapter()
     peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
     operation = update_operation(
@@ -469,9 +475,124 @@ def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is
         ],
     )
 
-    assert adapter.apply_planned_operation(operation=operation, peers=peers) == NODE_ID
-    _name, query = client.mutations[0]
-    assert top_level_scalar_id(query) == DESTINATION_ID
+    with pytest.raises(UnaccountedIdentityComponentError, match="name__value"):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.mutation_names == []
+
+
+def test_a_peer_kind_without_hfid_can_resolve_by_its_direct_identity() -> None:
+    """A schema without an HFID has no components for the peer guard to require."""
+    client, adapter, peers = keyed_adapter()
+    adapter.schema[SITE_KIND] = SCHEMAS[SITE_KIND].model_copy(update={"human_friendly_id": []})
+    client.filter_results = [[make_node(client, SITE_KIND, "site-id-1")]]
+    operation = make_operation(
+        kind=SERVER_KIND,
+        identity={"name": "server-a"},
+        payload={"name": "server-a"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": "site-a"}])
+        ],
+    )
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.resolver_queries[0]["name__value"] == "site-a"
+    assert rendered_related_id(client.mutations[0][1], "site") == "site-id-1"
+
+
+def test_a_peer_destination_id_is_a_complete_lookup_without_an_hfid() -> None:
+    """An explicit destination id identifies one peer even when its HFID is absent."""
+    client, adapter, peers = keyed_adapter()
+    client.filter_results = [[make_node(client, SITE_KIND, "site-id-1")]]
+    operation = make_operation(
+        kind=SERVER_KIND,
+        identity={"name": "server-a"},
+        payload={"name": "server-a"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"id": "site-id-1"}])
+        ],
+    )
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.resolver_queries[0]["ids"] == ["site-id-1"]
+    assert "name__value" not in client.resolver_queries[0]
+    assert rendered_related_id(client.mutations[0][1], "site") == "site-id-1"
+
+
+def test_a_complete_cardinality_many_peer_set_is_written() -> None:
+    """Checking every peer still permits a complete two-member relationship set."""
+    client, adapter, peers = keyed_adapter()
+    client.filter_results = [
+        [make_node(client, TAG_KIND, "tag-id-1")],
+        [make_node(client, TAG_KIND, "tag-id-2")],
+    ]
+    operation = make_operation(
+        kind=TEAM_KIND,
+        action="update",
+        identity={"name": "team-a"},
+        payload={"name": "team-a"},
+        relationships=[
+            RelationshipReference(
+                field="members", peer_kind=TAG_KIND, cardinality="many", peers=[{"name": "tag-a"}, {"name": "tag-b"}]
+            )
+        ],
+    )
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert len(client.resolver_queries) == 2
+    assert rendered_relationship_ids(client.mutations[0][1], "members") == ["tag-id-1", "tag-id-2"]
+
+
+def test_an_omitted_optional_null_relationship_does_not_require_a_peer() -> None:
+    """A null optional peer is omitted, so no peer key is needed for this update."""
+    client, adapter, peers = keyed_adapter()
+    operation = update_operation(
+        kind=TEAM_KIND,
+        identity={"name": "team-a"},
+        payload={"name": "team-a", "owner": None},
+    )
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.resolver_queries == []
+    assert "owner" not in client.mutations[0][1]
+
+
+def test_an_update_with_an_unchanged_relationship_needs_no_peer_lookup() -> None:
+    """Only relationship writes need peer validation; the recorded id keys this update."""
+    client, adapter, peers = keyed_adapter()
+    operation = update_operation(
+        kind=SERVER_KIND,
+        identity={"name": "server-a"},
+        payload={"name": "server-a"},
+    )
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.resolver_queries == []
+    assert top_level_scalar_id(client.mutations[0][1]) == DESTINATION_ID
+
+
+def test_a_relationship_peer_with_no_destination_schema_is_refused() -> None:
+    """An unknown peer kind cannot be checked or resolved, so no write is safe."""
+    client, adapter, peers = keyed_adapter()
+    operation = make_operation(
+        kind=SERVER_KIND,
+        identity={"name": "server-a"},
+        payload={"name": "server-a"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind="TestMissing", cardinality="one", peers=[{"name": "x"}])
+        ],
+    )
+
+    with pytest.raises(ValueError, match="destination schema declares no kind 'TestMissing'"):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.resolver_queries == []
+    assert client.mutations == []
 
 
 def test_the_same_blank_component_as_a_create_is_still_refused_by_ad051() -> None:
