@@ -117,3 +117,43 @@ def test_netbox_example_device_mapping_keeps_devices_without_a_role(index: int) 
     filtered = DiffSyncModelMixin.filter_records(records=[record], schema_mapping=mapping)
 
     assert filtered == [record]
+
+
+# ---------------------------------------------------------------------------
+# Interfaces: the payload's embedded device object is brief (no `role`), so
+# the patch-panel exclusion is mirrored here by device name instead.
+# ---------------------------------------------------------------------------
+
+INTERFACE_MAPPING_TYPES = {
+    "InterfacePhysical": "8p8c",
+    "InterfaceVirtual": "virtual",
+    "InterfaceLag": "lag",
+}
+
+
+@pytest.mark.parametrize("mapping_name", INTERFACE_MAPPING_TYPES)
+def test_netbox_example_interface_mapping_excludes_patch_panel_interfaces(mapping_name: str) -> None:
+    mapping = _mapping(mapping_name)
+    record = {
+        "name": "1",
+        "type": {"value": INTERFACE_MAPPING_TYPES[mapping_name], "label": ""},
+        "device": {"id": 1, "url": "", "display": "PP:MDF", "name": "PP:MDF", "description": ""},
+    }
+
+    filtered = DiffSyncModelMixin.filter_records(records=[record], schema_mapping=mapping)
+
+    assert filtered == []
+
+
+@pytest.mark.parametrize("mapping_name", INTERFACE_MAPPING_TYPES)
+def test_netbox_example_interface_mapping_keeps_interfaces_of_other_devices(mapping_name: str) -> None:
+    mapping = _mapping(mapping_name)
+    record = {
+        "name": "1",
+        "type": {"value": INTERFACE_MAPPING_TYPES[mapping_name], "label": ""},
+        "device": {"id": 2, "url": "", "display": "core-switch-01", "name": "core-switch-01", "description": ""},
+    }
+
+    filtered = DiffSyncModelMixin.filter_records(records=[record], schema_mapping=mapping)
+
+    assert filtered == [record]

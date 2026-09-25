@@ -192,10 +192,13 @@ Open `sync-projects/netbox-demo/config.yml` in an editor and scan the top-level 
 The worker reads the `source.settings.url` and `destination.settings.url` values from the
 registered package itself, not from the environment — the `NETBOX_URL` and
 `INFRAHUB_ADDRESS` variables exported above only matter to the `invoke load-schema` task and
-other project-template commands that run outside Infrahub Sync. Edit those two URLs directly
-in `config.yml` before registering the package if either target isn't at the address already
-in the file. Only the two credentials (`NETBOX_TOKEN` and `INFRAHUB_API_TOKEN`) come from the
-worker's environment, resolved through the `credentials` block at the bottom of `package.yml`.
+other project-template commands that run outside Infrahub Sync. `config.yml` and
+`package.yml` are separate copies, and only `package.yml` gets registered, so if either
+target isn't at the address already in the file, edit those two URLs directly in
+`sync-projects/netbox-demo/package.yml` (matching them in `config.yml` too keeps the two
+files consistent, but only the `package.yml` values reach the worker). Only the two
+credentials (`NETBOX_TOKEN` and `INFRAHUB_API_TOKEN`) come from the worker's environment,
+resolved through the `credentials` block at the bottom of `package.yml`.
 
 This tutorial registers the package, uses `diff` to create a service plan, reviews that
 plan, and then submits a confirmed sync. See [Run a sync](../running-a-sync.mdx) when you
@@ -461,9 +464,7 @@ and `INFRAHUB_API_TOKEN`, and the worker reads their values. Export these variab
 starting the Prefect worker:
 
 ```bash
-export NETBOX_URL="https://demo.netbox.dev"
 export NETBOX_TOKEN="<your-netbox-token>"
-export INFRAHUB_ADDRESS="http://localhost:8000"
 export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 ```
 
