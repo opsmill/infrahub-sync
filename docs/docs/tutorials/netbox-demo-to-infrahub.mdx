@@ -189,7 +189,16 @@ Open `sync-projects/netbox-demo/config.yml` in an editor and scan the top-level 
 - `destination` configures the Infrahub adapter.
 - `schema_mapping` defines how NetBox API resources become Infrahub objects.
 
-The configuration includes default endpoint values, but the environment variables exported above take precedence for tokens and URLs.
+The worker reads the `source.settings.url` and `destination.settings.url` values from the
+registered package itself, not from the environment — the `NETBOX_URL` and
+`INFRAHUB_ADDRESS` variables exported above only matter to the `invoke load-schema` task and
+other project-template commands that run outside Infrahub Sync. `config.yml` and
+`package.yml` are separate copies, and only `package.yml` gets registered, so if either
+target isn't at the address already in the file, edit those two URLs directly in
+`sync-projects/netbox-demo/package.yml` (matching them in `config.yml` too keeps the two
+files consistent, but only the `package.yml` values reach the worker). Only the two
+credentials (`NETBOX_TOKEN` and `INFRAHUB_API_TOKEN`) come from the worker's environment,
+resolved through the `credentials` block at the bottom of `package.yml`.
 
 This tutorial registers the package, uses `diff` to create a service plan, reviews that
 plan, and then submits a confirmed sync. See [Run a sync](../running-a-sync.mdx) when you
@@ -402,6 +411,21 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
 
    :::info This is a minimal mapping
    Some records and relationships may be missing — that doesn't mean the sync failed.
+
+   Two exclusions keep this mapping working against the current demo data. VLAN names in
+   NetBox are only unique within a VLAN group, but Infrahub's `IpamVLAN` identifies a VLAN by
+   name alone. The mapping puts the VLAN group's name and its length before the VLAN name
+   (for example, `Data` in group `Site A` becomes `6:Site A:Data`). The length keeps pairs
+   with hyphens or colons in their names distinct. `DcimDevice` also identifies
+   a device by name alone. The demo names its patch panels with a `PP:` prefix, so the
+   mapping skips devices and their interfaces when the device name contains `PP:`. If your
+   NetBox data uses other patch-panel names, adapt both device and interface filters.
+
+   Racks can share a name across sites in NetBox. The demo has a `Comms closet` rack at
+   several sites. The mapping prefixes each Infrahub rack name with the length of the site
+   name and the site name (for example, `6:Site A:Comms closet`). The length keeps pairs
+   with separators in their names distinct. Device references to racks use the corresponding
+   NetBox rack ID and resolve to the renamed rack.
    :::
 
 3. Once you're happy with the data, open a proposed change from `netbox-import` toward `main` so the import can be reviewed before it's merged.
@@ -447,9 +471,7 @@ and `INFRAHUB_API_TOKEN`, and the worker reads their values. Export these variab
 starting the Prefect worker:
 
 ```bash
-export NETBOX_URL="https://demo.netbox.dev"
 export NETBOX_TOKEN="<your-netbox-token>"
-export INFRAHUB_ADDRESS="http://localhost:8000"
 export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 ```
 
@@ -475,6 +497,11 @@ Two source records resolved to one identifier while NetBox was being read. The r
 there — before a plan exists and before anything is written to Infrahub — so the state at the
 destination is whatever the last successful run left. The kind in the message says which of
 two different problems you have.
+
+The public NetBox demo is shared. Other visitors can create duplicate records, such as
+two identical prefixes in one VRF. If the error names `IpamPrefix` and shows the same
+prefix and namespace, inspect those prefixes in NetBox. Remove or rename the duplicate
+in the demo if you can identify it, or retry after the demo resets.
 
 #### Two IP addresses or prefixes in one namespace
 

@@ -49,10 +49,11 @@ configuration:
 
   # Each token above is a reference, resolved by the service worker from its own
   # environment. No credential value is ever written here, posted to the Sync
-  # API, or recorded in a registered version. Export before starting the worker:
-  #   export NETBOX_URL="https://demo.netbox.dev"
+  # API, or recorded in a registered version. The worker uses the URLs above
+  # from this registered package. Keep this configuration body synchronized
+  # with config.yml. Environment variables supply only the two credentials.
+  # Export them before starting the worker:
   #   export NETBOX_TOKEN="nbt_..."
-  #   export INFRAHUB_ADDRESS="http://localhost:8000"
   #   export INFRAHUB_API_TOKEN="..."
   # The CLI separately uses INFRAHUB_SYNC_API_URL and INFRAHUB_SYNC_API_TOKEN to
   # authenticate to the Sync API.
@@ -142,7 +143,8 @@ configuration:
       identifiers: ["name", "site"]
       fields:
         - name: name
-          mapping: name
+          # The schema requires a unique rack name even when sites differ.
+          mapping: unique_name
         - name: site
           mapping: site
           reference: LocationSite
@@ -158,6 +160,9 @@ configuration:
         # NOTE: current schema doesn't support role for racks (see related note)
         # - name: role
         #   mapping: role.slug
+      transforms:
+        - field: unique_name
+          expression: "{{ (site.name | length) ~ ':' ~ site.name ~ ':' ~ name }}"
 
     # Manufacturers / Platforms / Device Types
     - name: OrganizationManufacturer
@@ -265,6 +270,10 @@ configuration:
           operation: "is_not_empty"
         - field: name # /!\ Netbox allows empty name for devices
           operation: "is_not_empty"
+        # The demo names patch panels with PP:. Adapt this filter for other names.
+        - field: name
+          operation: "not contains"
+          value: "PP:"
 
     - name: DcimDevice
       identifiers: ["location", "name"]
@@ -305,6 +314,10 @@ configuration:
           operation: "is_empty"
         - field: name # /!\ Netbox allows empty name for devices
           operation: "is_not_empty"
+        # The demo names patch panels with PP:. Adapt this filter for other names.
+        - field: name
+          operation: "not contains"
+          value: "PP:"
 
     # TODO: Add support for cluster, VM, servers ...
 
@@ -362,18 +375,12 @@ configuration:
         - field: type.value
           operation: "not contains"
           value: "lag"
-        # NOTE: must mirror the DcimDevice-level exclusions — otherwise an
-        # interface can reference a device that was filtered out of the sync,
-        # and the `device` reference lookup fails ("Unable to locate the node").
-        # Only `name` can be checked here: Netbox's interface payload embeds a
-        # *brief* device object (id/url/display/name/description only), which
-        # never carries `parent_device` — so we can't replicate the
-        # `parent_device is_empty` exclusion at this level. Not an issue today
-        # (no devices in this dataset have parent_device set), but if you add
-        # sub-devices later, their interfaces will need filtering out some
-        # other way (e.g. a follow-up id-based exclusion list).
+        # Match the device name filter; interface payloads carry no device role.
         - field: device.name
           operation: "is_not_empty"
+        - field: device.name
+          operation: "not contains"
+          value: "PP:"
 
     - name: InterfaceVirtual
       identifiers: ["device", "name"]
@@ -406,10 +413,12 @@ configuration:
         - field: type.value
           operation: "=="
           value: "virtual"
-        # NOTE: must mirror the DcimDevice-level `name` exclusion — see
-        # InterfacePhysical for why `parent_device` can't be checked here too.
+        # Match the device name filter.
         - field: device.name
           operation: "is_not_empty"
+        - field: device.name
+          operation: "not contains"
+          value: "PP:"
 
     - name: InterfaceLag
       identifiers: ["device", "name"]
@@ -452,10 +461,12 @@ configuration:
         - field: type.value
           operation: "=="
           value: "lag"
-        # NOTE: must mirror the DcimDevice-level `name` exclusion — see
-        # InterfacePhysical for why `parent_device` can't be checked here too.
+        # Match the device name filter.
         - field: device.name
           operation: "is_not_empty"
+        - field: device.name
+          operation: "not contains"
+          value: "PP:"
 
     # TODO: Many other types of interface to handle
 
@@ -552,8 +563,11 @@ configuration:
       mapping: ipam.vlans
       identifiers: ["name", "vlan_id", "vlan_group"]
       fields:
-        - name: name
-          mapping: name
+        - name: name # /!\ Infrahub's IpamVLAN HFID is name alone, but Netbox only
+          # enforces unique (group, name) — the same name (e.g. "Data") repeats
+          # across every VLAN group. Encode the length of the group name before
+          # the group and VLAN names so different pairs cannot produce one name.
+          mapping: unique_name
         - name: vlan_id
           mapping: vid
         - name: description
@@ -566,6 +580,9 @@ configuration:
         - name: vlan_group
           mapping: group
           reference: IpamVLANGroup
+      transforms:
+        - field: unique_name
+          expression: "{{ (group.name | length) ~ ':' ~ group.name ~ ':' ~ name }}"
       # vlan_group is required (optional: false) in the schema, but Netbox
       # VLANs can have no group at all — skip those rather than fail the sync.
       filters:
