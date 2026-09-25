@@ -1387,6 +1387,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         Raises:
             SkippedDeleteOperation: the operation is a recorded delete (a designed
                 limitation, not a failure), and no skip is recorded — see above.
+            ReviewedPayloadFieldMissingError: the live schema or SDK mutation would omit
+                a reviewed direct payload field, so no write is made for this operation.
             UnaccountedIdentityComponentError: a human-friendly-ID component of the
                 destination kind is not accounted for by the payload and the operation.
             StaleDestinationIdError: an update's recorded destination id matches no object
