@@ -903,7 +903,7 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
         of_kind = [operation for operation in operations if operation.kind == kind]
         creates = [operation for operation in of_kind if operation.action == "create"]
         for operation in creates:
-            refuse_unkeyed_create(operation, node=node)
+            refuse_unkeyed_create(operation, node=node, schemas=schema)
         _refuse_destination_identity_collisions(kind=kind, node=node, creates=creates)
 
         # The merge direction applies to every action: a create whose identity is finer than

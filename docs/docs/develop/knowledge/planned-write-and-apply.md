@@ -175,6 +175,15 @@ warning about it, and refuses with `UnkeyedCreateRefusedError` when it cannot:
   fully covered by the identity — the destination refuses the duplicate there (transport 200,
   `extensions.http_status` 422) — and refused otherwise, because it would duplicate on every write.
 
+The selected key must also be writable. A read-only, server-allocated attribute such as
+`rule_id` cannot recreate the source value during a create, even when it appears in the
+human-friendly ID. Validation names the unusable components before extraction, and the
+destination checks again before mutation. Map and select every component of an independent
+writable uniqueness constraint to use a computed or read-only display ID safely. Registered
+apply compares the bound schema fingerprint, including attribute writability, before writing.
+This changes the fingerprint for existing saved plans, so review and save a new plan after
+upgrading before you apply it.
+
 Several creates projecting onto **one** destination human-friendly ID are refused as
 `DestinationIdentityCollisionError`: the sync tells them apart and the destination does not, so
 applying them would converge them onto one object each and lose the rest at exit 0. Updates are

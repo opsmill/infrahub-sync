@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from infrahub_sync import requested_destination_write_operations
+from infrahub_sync.plan.keying import writable_convergence_reason
 from infrahub_sync.runtime_schema import (
     UnsupportedSchemaSemanticsError,
     compute_consumed_schema_fingerprint,
@@ -232,9 +233,36 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
             )
         else:
             try:
+                normalized = normalize_destination_schema(snapshot)
                 fingerprint = compute_consumed_schema_fingerprint(
-                    configuration=package.configuration, snapshot=normalize_destination_schema(snapshot)
+                    configuration=package.configuration, snapshot=normalized
                 )
+                references = {
+                    mapping.name: {
+                        field.name: field.reference for field in mapping.fields or () if field.reference is not None
+                    }
+                    for mapping in package.configuration.schema_mapping
+                }
+                for index, mapping in enumerate(package.configuration.schema_mapping):
+                    node = normalized.kinds.get(mapping.name)
+                    if node is None:
+                        continue
+                    mapped_fields = {field.name for field in mapping.fields or ()}
+                    reason = writable_convergence_reason(
+                        node=node,
+                        identity_fields=mapped_fields,
+                        mapped_fields=mapped_fields,
+                        schemas=normalized.kinds,
+                        references=references,
+                    )
+                    if reason:
+                        findings.append(
+                            _finding(
+                                code=_CODE_DESTINATION_SCHEMA_MISMATCH,
+                                location=f"/configuration/schema_mapping/{index}/identifiers",
+                                message=f"destination kind {mapping.name!r}: {reason}",
+                            )
+                        )
             except UnsupportedSchemaSemanticsError:
                 # The worker refuses this snapshot too, so validation names the same
                 # defect rather than reporting only a missing fingerprint.

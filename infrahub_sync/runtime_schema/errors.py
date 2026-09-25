@@ -31,5 +31,9 @@ class MissingMappedKindError(RuntimeSchemaError):
     """The destination schema does not declare a kind the configuration maps."""
 
 
+class UnwritableConvergenceIdentityError(RuntimeSchemaError):
+    """A mapped kind has no complete writable destination identity."""
+
+
 class RuntimeModelScopeError(RuntimeSchemaError):
     """A run asked a runtime model plan for a side that plan does not carry."""

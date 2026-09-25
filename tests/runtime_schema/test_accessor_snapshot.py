@@ -51,13 +51,53 @@ def test_the_snapshot_carries_every_attribute_and_relationship_property(snapshot
         "optional": True,
         "default_value": "leaf",
         "unique": False,
+        "read_only": False,
     }
     assert snapshot["InfraDevice"]["relationships"]["interfaces"] == {
         "peer": "InfraInterface",
         "cardinality": "many",
         "optional": True,
         "kind": "Component",
+        "read_only": False,
     }
+
+
+@pytest.mark.parametrize(
+    ("computed_attribute", "read_only"),
+    [
+        ({"kind": "User"}, False),
+        ({"kind": "Jinja2", "jinja2_template": "{{ hostname.value }}"}, True),
+    ],
+)
+def test_computed_attribute_writability_is_captured_in_snapshot(
+    computed_attribute: dict[str, str], *, read_only: bool
+) -> None:
+    node = NodeSchemaAPI.model_validate(
+        {
+            **_NODE,
+            "attributes": [
+                {**_NODE["attributes"][0], "computed_attribute": computed_attribute},
+                _NODE["attributes"][1],
+            ],
+        }
+    )
+
+    snapshot = capabilities_module._build_schema_snapshot({node.kind: node})
+
+    assert snapshot["InfraDevice"]["attributes"]["name"]["read_only"] is read_only
+
+
+def test_read_only_relationship_is_captured_in_snapshot() -> None:
+    node = NodeSchemaAPI.model_validate(
+        {
+            **_NODE,
+            "relationships": [{**_NODE["relationships"][0], "read_only": True}, _NODE["relationships"][1]],
+        }
+    )
+
+    snapshot = capabilities_module._build_schema_snapshot({node.kind: node})
+
+    assert snapshot["InfraDevice"]["relationships"]["site"]["read_only"] is True
 
 
 def test_the_delivered_snapshot_normalizes_into_the_closed_domain(snapshot: dict[str, Any]) -> None:

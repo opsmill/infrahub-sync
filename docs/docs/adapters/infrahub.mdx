@@ -153,6 +153,23 @@ fields:
     reference: BuiltinTag
 ```
 
+### Destination identity for writes
+
+For each mapped kind, select and map every field of a complete writable destination key. The key can be the Infrahub human-friendly ID or a declared uniqueness constraint. A partial key, a key with an unmapped field, or a kind with no key is refused before data extraction or planning.
+
+A read-only, server-allocated value or a server-computed value cannot serve as a writable key. For example, if Infrahub allocates `rule_id` and declares `hostname__value` as a separate uniqueness constraint, select and map `hostname`:
+
+```yaml
+schema_mapping:
+  - name: TestRule
+    identifiers: ["hostname"]
+    fields:
+      - name: hostname
+        mapping: hostname
+```
+
+The read-only `rule_id` may remain in the destination schema. If no complete writable key exists, exclude the kind from the package until the destination schema provides one.
+
 ## Lineage tracking
 
 When syncing data into Infrahub, the adapter tracks the source and owner of each record using Infrahub's lineage system. This enables:
@@ -208,6 +225,12 @@ This allows you to:
 - Ensure your Infrahub schema matches the expected node types in schema_mapping
 - Run `infrahubctl schema load` to update the schema if needed
 - Verify field names match the Infrahub schema attribute names
+
+### No writable destination identity
+
+- An error containing `no complete writable destination convergence identity` names the unusable key components. Check that every component is selected in `identifiers`, mapped in `fields`, and writable in the Infrahub schema.
+- If the human-friendly ID uses a read-only or server-computed value, select and map every component of a separate writable uniqueness constraint. A kind with no such key cannot be synced safely.
+- After upgrading, review and save a new plan before applying it. Existing saved plans have an older schema fingerprint because writability is now part of the fingerprint.
 
 ### Relationship resolution failures
 

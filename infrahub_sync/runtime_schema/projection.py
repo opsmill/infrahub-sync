@@ -5,11 +5,12 @@ registered configuration consumes — each configured kind, its effective DiffSy
 identifiers, its ordered destination human-friendly ID and uniqueness-constraint
 component paths, every mapped field's model- and write-affecting properties, and the
 semantics of every mandatory-without-default field on those kinds, mapped or not,
-because such a field can reject a retained create.
+because such a field can reject a retained create. Key paths that cross relationships
+also consume the traversed members of otherwise unmapped peer kinds.
 
-Everything else is compatible growth: an unmapped kind, an optional or defaulted
-unmapped field, and any difference in snapshot delivery order leave the projection —
-and so the fingerprint — unchanged.
+Everything else is compatible growth: an unrelated unmapped kind, an optional or
+defaulted unmapped field, and any difference in snapshot delivery order leave the
+projection — and so the fingerprint — unchanged.
 
 Registered configuration validation and registered worker construction compute this
 today. Recording it on a saved plan, and comparing a plan's recorded value against the
@@ -44,6 +45,7 @@ def _member_semantics(member: NormalizedAttribute | NormalizedRelationship) -> d
             "optional": member.optional,
             "default_value": member.default_value,
             "unique": member.unique,
+            "read_only": member.read_only,
         }
     return {
         "name": member.name,
@@ -52,6 +54,7 @@ def _member_semantics(member: NormalizedAttribute | NormalizedRelationship) -> d
         "cardinality": member.cardinality,
         "optional": member.optional,
         "kind": member.kind,
+        "read_only": member.read_only,
     }
 
 
@@ -62,7 +65,46 @@ def _is_mandatory_without_default(member: NormalizedAttribute | NormalizedRelati
     return member.default_value is None if isinstance(member, NormalizedAttribute) else True
 
 
-def _kind_projection(node: NormalizedKind, configuration: SyncConfig) -> dict[str, Any]:
+def _peer_key_fields(
+    node: NormalizedKind, configuration: SyncConfig, snapshot: DestinationSchemaSnapshot
+) -> list[dict[str, Any]]:
+    """Project peer members traversed by this kind's destination key paths."""
+    references = {
+        mapping.name: {field.name: field.reference for field in mapping.fields if field.reference}
+        for mapping in configuration.schema_mapping
+    }
+    component_paths = (
+        *node.human_friendly_id,
+        *(component for key in node.uniqueness_constraints for component in key),
+    )
+    consumed: dict[tuple[str, str], dict[str, Any]] = {}
+    for component in component_paths:
+        current = node
+        segments = component.split("__")
+        for index, segment in enumerate(segments[:-1]):
+            relationship = next((item for item in current.relationships if item.name == segment), None)
+            if relationship is None:
+                if index and segment != "value":
+                    attribute = next((item for item in current.attributes if item.name == segment), None)
+                    consumed[current.kind, segment] = {
+                        "kind": current.kind,
+                        "member": _member_semantics(attribute) if attribute is not None else None,
+                    }
+                break
+            if index:
+                consumed[current.kind, segment] = {"kind": current.kind, "member": _member_semantics(relationship)}
+            peer_kind = references.get(current.kind, {}).get(segment) or relationship.peer
+            peer = snapshot.kinds.get(peer_kind)
+            if peer is None:
+                consumed[peer_kind, ""] = {"kind": peer_kind, "member": None}
+                break
+            current = peer
+    return [consumed[key] for key in sorted(consumed)]
+
+
+def _kind_projection(
+    node: NormalizedKind, configuration: SyncConfig, snapshot: DestinationSchemaSnapshot
+) -> dict[str, Any]:
     """Project one consumed kind's identity, mapped fields, and mandatory fields."""
     members = (*node.attributes, *node.relationships)
     mapped = {
@@ -77,6 +119,7 @@ def _kind_projection(node: NormalizedKind, configuration: SyncConfig) -> dict[st
         # The outer list is sorted because the destination does not order its constraints
         # against each other; the components inside one constraint stay in declared order.
         "uniqueness_constraints": sorted(list(constraint) for constraint in node.uniqueness_constraints),
+        "peer_key_fields": _peer_key_fields(node, configuration, snapshot),
         "fields": [_member_semantics(mapped[name]) for name in sorted(mapped)],
         "mandatory_without_default": [
             _member_semantics(member)
@@ -93,7 +136,7 @@ def canonical_consumed_schema_projection(
     return [
         {"kind": mapping.name, "present": False}
         if mapping.name not in snapshot.kinds
-        else _kind_projection(snapshot.kinds[mapping.name], configuration)
+        else _kind_projection(snapshot.kinds[mapping.name], configuration, snapshot)
         for mapping in sorted(configuration.schema_mapping, key=lambda mapping: mapping.name)
     ]
 
