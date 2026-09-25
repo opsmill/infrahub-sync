@@ -571,6 +571,36 @@ def _site_schema_without_description() -> BranchSchema:
     return BranchSchema(hash="without-description", nodes={**SCHEMAS, SITE_KIND: site})
 
 
+def _site_schema_with_relationship_instead_of_description() -> BranchSchema:
+    """A live schema that reused a reviewed scalar name for a relationship."""
+    site = SITE_SCHEMA.model_copy(
+        update={
+            "attributes": [SITE_SCHEMA.attributes[0], SITE_SCHEMA.attributes[2]],
+            "relationships": [
+                RelationshipSchemaAPI(
+                    id="site-description-peer",
+                    name="description",
+                    peer=TAG_KIND,
+                    cardinality=RelationshipCardinality.ONE,
+                    kind=RelationshipKind.ATTRIBUTE,
+                    optional=True,
+                    identifier="site__description",
+                )
+            ],
+        }
+    )
+    return BranchSchema(hash="description-as-relationship", nodes={**SCHEMAS, SITE_KIND: site})
+
+
+def _site_schema_with_read_only_description() -> BranchSchema:
+    """A live schema where the reviewed scalar can no longer be written."""
+    description = SITE_SCHEMA.attributes[1].model_copy(update={"read_only": True})
+    site = SITE_SCHEMA.model_copy(
+        update={"attributes": [SITE_SCHEMA.attributes[0], description, SITE_SCHEMA.attributes[2]]}
+    )
+    return BranchSchema(hash="read-only-description", nodes={**SCHEMAS, SITE_KIND: site})
+
+
 def test_direct_apply_refuses_the_entire_plan_before_any_write_when_a_reviewed_field_is_removed(
     tmp_path: Path,
 ) -> None:
@@ -593,6 +623,36 @@ def test_direct_apply_refuses_the_entire_plan_before_any_write_when_a_reviewed_f
     assert SITE_KIND in str(outcome)
     assert "description" in str(outcome)
     assert "no destination write was attempted" in str(outcome)
+    assert "Create a new plan" in str(outcome)
+    assert client.mutations == []
+
+
+@pytest.mark.parametrize(
+    "drifted_schema",
+    [_site_schema_with_relationship_instead_of_description(), _site_schema_with_read_only_description()],
+    ids=["scalar-became-relationship", "scalar-became-read-only"],
+)
+def test_direct_apply_refuses_unwritable_reviewed_field_before_any_write(
+    tmp_path: Path, drifted_schema: BranchSchema
+) -> None:
+    """A later field that is no longer a writable scalar stops the whole plan."""
+    directory = apply_run_dir(tmp_path)
+    first = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
+    second = operation_record(
+        kind=SITE_KIND,
+        identity={"name": "site-b"},
+        payload={"name": "site-b", "description": "reviewed"},
+    )
+    write_artifact(directory, [first, second], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    client.live_schema = drifted_schema
+
+    state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "failed"
+    assert isinstance(outcome, ReviewedPayloadFieldMissingError)
+    assert SITE_KIND in str(outcome)
+    assert "description" in str(outcome)
     assert "Create a new plan" in str(outcome)
     assert client.mutations == []
 
@@ -720,20 +780,69 @@ def test_sdk_node_input_omission_refuses_the_operation_before_the_mutation() -> 
     assert client.mutations == []
 
 
-def test_null_direct_scalar_omitted_by_sdk_is_refused_before_the_mutation() -> None:
-    """The SDK must not turn a reviewed null scalar into an unreported no-op."""
+@pytest.mark.parametrize("action", ["create", "update"])
+def test_null_direct_scalar_omitted_by_sdk_is_an_ordinary_write(action: str) -> None:
+    """An optional null scalar may be absent from the SDK mutation input."""
     client = RecordingClient()
     adapter = make_adapter(client)
     operation = make_operation(
         kind=SITE_KIND,
+        action=action,
         identity={"name": "site-a"},
         payload={"name": "site-a", "description": None},
     )
 
-    with pytest.raises(ReviewedPayloadFieldMissingError) as caught:
-        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+    adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
 
-    assert "description" in str(caught.value)
+    assert len(client.mutations) == 1
+    assert "description" not in client.mutations[0][1]
+
+
+def test_null_direct_scalar_on_later_operation_does_not_fail_apply(tmp_path: Path) -> None:
+    """A null scalar in a later operation cannot leave a partial apply record."""
+    directory = apply_run_dir(tmp_path)
+    first = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
+    second = operation_record(
+        kind=SITE_KIND,
+        identity={"name": "site-b"},
+        payload={"name": "site-b", "description": None},
+    )
+    write_artifact(directory, [first, second], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+
+    state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "applied"
+    assert isinstance(outcome, ApplyRecord)
+    assert outcome.applied_operations == (first["operation_id"], second["operation_id"])
+    assert len(client.mutations) == 2
+
+
+def test_sdk_omission_in_later_operation_refuses_plan_before_any_write(tmp_path: Path) -> None:
+    """Preflight renders all reviewed direct values before dispatching the first write."""
+    directory = apply_run_dir(tmp_path)
+    first = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
+    second = operation_record(
+        kind=SITE_KIND,
+        identity={"name": "site-b"},
+        payload={"name": "site-b", "description": "reviewed"},
+    )
+    write_artifact(directory, [first, second], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    render = client.schema.generate_payload_create
+
+    def omit_description(**kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+        payload = render(**kwargs)
+        payload.pop("description", None)
+        return payload
+
+    with patch.object(client.schema, "generate_payload_create", omit_description):
+        state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "failed"
+    assert isinstance(outcome, ReviewedPayloadFieldMissingError)
+    assert SITE_KIND in str(outcome)
+    assert "description" in str(outcome)
     assert client.mutations == []
 
 
@@ -765,15 +874,15 @@ def test_a_create_omits_a_null_optional_cardinality_one_relationship() -> None:
     operation = make_operation(
         kind=TEAM_KIND,
         identity={"name": "team-a"},
-        payload={"name": "team-a", "description": "ordinary", "owner": None},
+        payload={"name": "team-a", "description": None, "owner": None},
     )
 
     with record_payload_create(client) as calls:
         adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
 
     _, query = client.mutations[0]
-    assert calls[0]["data"] == {"name": "team-a", "description": "ordinary"}, (
-        "Filtering must preserve an ordinary scalar while omitting the null optional relationship."
+    assert calls[0]["data"] == {"name": "team-a", "description": None}, (
+        "Filtering must preserve a null scalar while omitting the null optional relationship."
     )
     assert "owner" not in query, f"A null optional to-one relationship must be omitted. Rendered:\n{query}"
     assert 'id: "None"' not in query, f"A null relationship must never become the string id `None`. Rendered:\n{query}"
@@ -789,16 +898,16 @@ def test_an_update_warns_that_a_null_optional_cardinality_one_relationship_is_a_
         kind=TEAM_KIND,
         action="update",
         identity={"name": "team-a"},
-        payload={"name": "team-a", "description": "ordinary", "owner": None},
+        payload={"name": "team-a", "description": None, "owner": None},
     )
 
     with record_payload_create(client) as calls:
         adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
 
-    assert calls[0]["data"] == {"name": "team-a", "description": "ordinary"}, (
-        "The ambiguous relationship null must be a no-op without dropping an ordinary scalar."
+    assert calls[0]["data"] == {"name": "team-a", "description": None}, (
+        "The ambiguous relationship null must be a no-op without dropping a null scalar."
     )
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert"], "The ordinary update must still be applied."
+    assert client.mutation_names == [f"{TEAM_KIND}Upsert"], "The update must still be applied."
     _, query = client.mutations[0]
     assert "owner" not in query
     assert 'id: "None"' not in query
