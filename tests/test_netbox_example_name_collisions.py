@@ -4,7 +4,7 @@ The NetBox demo data reuses VLAN, rack, and device names:
 
 * NetBox only enforces a unique VLAN name within a VLAN group, so the same name (for
   example `Data`) repeats across every group. `examples/netbox_to_infrahub/config.yml`
-  renders the Infrahub VLAN name as `"{{ group.name }}-{{ name }}"` so it stays unique.
+  length-prefixes the group name before the VLAN name to keep pairs distinct.
 * NetBox lets several devices share a name across different sites. The demo data does this
   for patch panels (`PP:MDF` at more than one site), so devices and interfaces with `PP:`
   in the device name are filtered out together.
@@ -42,31 +42,38 @@ def _mapping(name: str, *, index: int = 0, config_path: Path = CONFIG_PATH):
 # ---------------------------------------------------------------------------
 
 
-def test_netbox_example_vlan_name_carries_the_group() -> None:
-    mapping = _mapping("IpamVLAN")
+@pytest.mark.parametrize("config_path", [CONFIG_PATH, EXAMPLE_DIR / "package.yml"])
+def test_netbox_example_vlan_name_carries_the_group(config_path: Path) -> None:
+    """Render the group and VLAN name with an unambiguous boundary."""
+    mapping = _mapping("IpamVLAN", config_path=config_path)
     name_field = next(field for field in mapping.fields if field.name == "name")
     assert name_field.mapping is not None
 
     record = {"name": "Data", "group": {"id": 1, "name": "Site A"}}
     transformed = DiffSyncModelMixin.transform_records(records=[record], schema_mapping=mapping)[0]
 
-    assert get_value(transformed, name_field.mapping) == "Site A-Data"
+    assert get_value(transformed, name_field.mapping) == "6:Site A:Data"
 
 
-def test_netbox_example_vlan_names_that_collide_in_netbox_dont_collide_in_infrahub() -> None:
-    """The exact scenario in the demo data: one name, several groups."""
-    mapping = _mapping("IpamVLAN")
+@pytest.mark.parametrize("config_path", [CONFIG_PATH, EXAMPLE_DIR / "package.yml"])
+def test_netbox_example_vlan_names_that_collide_in_netbox_dont_collide_in_infrahub(config_path: Path) -> None:
+    """Distinct NetBox group/name pairs remain distinct with separators in either name."""
+    mapping = _mapping("IpamVLAN", config_path=config_path)
     name_field = next(field for field in mapping.fields if field.name == "name")
     assert name_field.mapping is not None
 
-    groups = [{"id": 1, "name": "Site A"}, {"id": 2, "name": "Site B"}, {"id": 3, "name": "Site C"}]
-    rendered_names = set()
-    for group in groups:
-        record = {"name": "Data", "group": group}
-        transformed = DiffSyncModelMixin.transform_records(records=[record], schema_mapping=mapping)[0]
-        rendered_names.add(get_value(transformed, name_field.mapping))
+    records = [
+        {"name": "Data", "group": {"id": 1, "name": "Site A"}},
+        {"name": "Data", "group": {"id": 2, "name": "Site B"}},
+        {"name": "B-C", "group": {"id": 3, "name": "A"}},
+        {"name": "C", "group": {"id": 4, "name": "A-B"}},
+        {"name": "B:C", "group": {"id": 5, "name": "A"}},
+        {"name": "C", "group": {"id": 6, "name": "A:B"}},
+    ]
+    transformed = DiffSyncModelMixin.transform_records(records=records, schema_mapping=mapping)
+    rendered_names = [get_value(record, name_field.mapping) for record in transformed]
 
-    assert len(rendered_names) == len(groups)
+    assert len(set(rendered_names)) == len(records)
 
 
 @pytest.mark.parametrize("config_path", [CONFIG_PATH, EXAMPLE_DIR / "package.yml"])

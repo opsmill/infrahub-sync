@@ -49,9 +49,10 @@ configuration:
 
   # Each token above is a reference, resolved by the service worker from its own
   # environment. No credential value is ever written here, posted to the Sync
-  # API, or recorded in a registered version. The URLs above come from this
-  # registered file itself, not from the environment — only the two credentials
-  # do. Export before starting the worker:
+  # API, or recorded in a registered version. The worker uses the URLs above
+  # from this registered package. Keep this configuration body synchronized
+  # with config.yml. Environment variables supply only the two credentials.
+  # Export them before starting the worker:
   #   export NETBOX_TOKEN="nbt_..."
   #   export INFRAHUB_API_TOKEN="..."
   # The CLI separately uses INFRAHUB_SYNC_API_URL and INFRAHUB_SYNC_API_TOKEN to
@@ -564,8 +565,8 @@ configuration:
       fields:
         - name: name # /!\ Infrahub's IpamVLAN HFID is name alone, but Netbox only
           # enforces unique (group, name) — the same name (e.g. "Data") repeats
-          # across every VLAN group. Prefix it with the group name below so it's
-          # unique the way Infrahub needs it to be.
+          # across every VLAN group. Encode the length of the group name before
+          # the group and VLAN names so different pairs cannot produce one name.
           mapping: unique_name
         - name: vlan_id
           mapping: vid
@@ -581,7 +582,7 @@ configuration:
           reference: IpamVLANGroup
       transforms:
         - field: unique_name
-          expression: "{{ group.name ~ '-' ~ name }}"
+          expression: "{{ (group.name | length) ~ ':' ~ group.name ~ ':' ~ name }}"
       # vlan_group is required (optional: false) in the schema, but Netbox
       # VLANs can have no group at all — skip those rather than fail the sync.
       filters:

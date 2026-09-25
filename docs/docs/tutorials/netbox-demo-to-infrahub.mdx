@@ -414,8 +414,9 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
 
    Two exclusions keep this mapping working against the current demo data. VLAN names in
    NetBox are only unique within a VLAN group, but Infrahub's `IpamVLAN` identifies a VLAN by
-   name alone — so the mapping prefixes the Infrahub name with the VLAN group name (for
-   example, `Data` in group `Site A` becomes `Site A-Data`). `DcimDevice` also identifies
+   name alone. The mapping puts the VLAN group's name and its length before the VLAN name
+   (for example, `Data` in group `Site A` becomes `6:Site A:Data`). The length keeps pairs
+   with hyphens or colons in their names distinct. `DcimDevice` also identifies
    a device by name alone. The demo names its patch panels with a `PP:` prefix, so the
    mapping skips devices and their interfaces when the device name contains `PP:`. If your
    NetBox data uses other patch-panel names, adapt both device and interface filters.
