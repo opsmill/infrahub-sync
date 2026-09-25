@@ -132,12 +132,13 @@ INTERFACE_MAPPING_TYPES = {
 
 
 @pytest.mark.parametrize("mapping_name", INTERFACE_MAPPING_TYPES)
-def test_netbox_example_interface_mapping_excludes_patch_panel_interfaces(mapping_name: str) -> None:
+@pytest.mark.parametrize("device_name", ["PP:MDF", "PP:IDF"])
+def test_netbox_example_interface_mapping_excludes_patch_panel_interfaces(mapping_name: str, device_name: str) -> None:
     mapping = _mapping(mapping_name)
     record = {
         "name": "1",
         "type": {"value": INTERFACE_MAPPING_TYPES[mapping_name], "label": ""},
-        "device": {"id": 1, "url": "", "display": "PP:MDF", "name": "PP:MDF", "description": ""},
+        "device": {"id": 1, "url": "", "display": device_name, "name": device_name, "description": ""},
     }
 
     filtered = DiffSyncModelMixin.filter_records(records=[record], schema_mapping=mapping)

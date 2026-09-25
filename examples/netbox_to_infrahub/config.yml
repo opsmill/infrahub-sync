@@ -381,16 +381,19 @@ schema_mapping:
       # *brief* device object (id/url/display/name/description only), which
       # never carries `parent_device` or `role` — so we can't replicate the
       # `parent_device is_empty` exclusion, or the patch-panel `role.slug`
-      # exclusion, at this level. Not an issue today (no devices in this
-      # dataset have parent_device set, and the demo's patch panels carry no
+      # exclusion, at this level. The demo's patch panels all carry a `PP:`
+      # prefix (`PP:MDF`, `PP:IDF`, ...), so match on that prefix rather than
+      # one literal name — otherwise a patch panel excluded at the device
+      # level keeps its interfaces synced, and their `device` reference lookup
+      # fails. Not an issue today (the demo's patch panels carry no
       # interfaces), but if you add sub-devices or patch-panel interfaces
       # later, they'll need filtering out some other way (e.g. a follow-up
       # id-based exclusion list).
       - field: device.name
         operation: "is_not_empty"
       - field: device.name
-        operation: "!="
-        value: "PP:MDF"
+        operation: "not contains"
+        value: "PP:"
 
   - name: InterfaceVirtual
     identifiers: ["device", "name"]
@@ -429,8 +432,8 @@ schema_mapping:
       - field: device.name
         operation: "is_not_empty"
       - field: device.name
-        operation: "!="
-        value: "PP:MDF"
+        operation: "not contains"
+        value: "PP:"
 
   - name: InterfaceLag
     identifiers: ["device", "name"]
@@ -479,8 +482,8 @@ schema_mapping:
       - field: device.name
         operation: "is_not_empty"
       - field: device.name
-        operation: "!="
-        value: "PP:MDF"
+        operation: "not contains"
+        value: "PP:"
 
   # TODO: Many other types of interface to handle
 
