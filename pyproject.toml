@@ -101,15 +101,6 @@ service = [
     # packaging dependency, not a supported source-server profile.
     "pynautobot>=2.5,<3; python_version >= '3.11'",
     "pynetbox>=7.6,<8; python_version >= '3.11'",
-    # The SDK the bundled Slurp'it source adapter imports at module top, from the
-    # `slurpit-sdk` distribution (the module name `slurpit` is unrelated to the
-    # `slurpit_sk` package, which does not carry this client). The floor and
-    # ceiling hold to the 0.9 series: `slurpit.api.__init__` accepts `url` and
-    # `api_key` across both 0.9.32 (resolved here) and 0.9.146 (latest); a future
-    # major is not verified. Neither release accepts a `verify_ssl` keyword; the
-    # adapter logs a warning and continues with verification enabled when a
-    # configured `verify_ssl: false` can't be honored.
-    "slurpit-sdk>=0.9,<0.10; python_version >= '3.11'",
     "uvicorn>=0.34,<1; python_version >= '3.11'",
 ]
 # The SDK the bundled IP Fabric source adapter imports at module top, kept out of
@@ -118,7 +109,7 @@ service = [
 # which in turn requires `urllib3-future`. `urllib3-future` ships a `.pth` hook that
 # replaces the real `urllib3` package in `site-packages` at interpreter start, for
 # every process in the image, not just this adapter — moving every other
-# requests-based adapter (`pynetbox`, `pynautobot`, `slurpit-sdk`, the generic REST
+# requests-based adapter (`pynetbox`, `pynautobot`, the generic REST
 # adapter) onto it too. No niquests-free release exists to declare instead (checked
 # 7.5.2 through 8.1.0b0 on PyPI). A custom image that needs the IP Fabric adapter
 # installs this extra explicitly; see `docs/docs/adapters/ipfabric.mdx`.
@@ -129,6 +120,15 @@ ipfabric = [
     # the adapter renames it before construction, so a configured `verify_ssl`
     # setting is honored, not silently dropped.
     "ipfabric>=8.0,<9; python_version >= '3.11'",
+]
+# The Slurp'it adapter uses the async SDK API. Version 0.9.52 is the first
+# inspected release with async device/planning/site calls, Planning.slug,
+# search_plannings(limit=...), and api(verify=...); 0.9.47 lacks verify.
+# The 0.9 line requires httpx<0.28. Keep it separate from service so the
+# default image retains its current httpx. These extras need separate uv
+# resolutions because the SDK's httpx<0.28 would lower service's httpx.
+slurpit = [
+    "slurpit-sdk>=0.9.52,<0.10; python_version >= '3.11'",
 ]
 dev = [
     "yamllint>=1.37.1",
@@ -151,6 +151,9 @@ dev = [
     "towncrier>=24.8,<27",
     "rumdl>=0.1.68",
 ]
+
+[tool.uv]
+conflicts = [[{ extra = "service" }, { extra = "slurpit" }]]
 
 [build-system]
 requires = ["hatchling"]

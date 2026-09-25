@@ -61,7 +61,16 @@ START_TIMEOUT_SECONDS = 900
 BUSY_OBSERVATION_SECONDS = 30
 
 # Every service the bundle declares, used to bound what `logs` may print.
-SERVICES = ("postgres", "db-bootstrap", "object-store", "prefect-server", "sync-bootstrap", "sync-api", "sync-worker")
+SERVICES = (
+    "postgres",
+    "db-bootstrap",
+    "object-store-init",
+    "object-store",
+    "prefect-server",
+    "sync-bootstrap",
+    "sync-api",
+    "sync-worker",
+)
 
 # The settings `init` generates. Their values reach real processes, so the log
 # sweep looks for them rather than for a string planted only to be found.
