@@ -389,7 +389,12 @@ def _identity_path_value(identity: Mapping[str, Any], segments: Sequence[str]) -
 
 
 def _operation_peer_identity(operation: PlannedOperation, field: str) -> Mapping[str, Any] | None:
-    """The nested peer identity the operation records for `field` (AD043, AD051)."""
+    """Find the peer identity for a single relationship used by a destination key.
+
+    A planned identity may carry a nested peer reference, while a hand-built operation
+    may supply it only in its relationship reference. Check both so a relationship
+    component is accepted only when its peer identity supplies the value to be written.
+    """
     if field in operation.identity:
         nested = _nested_peer_identity(operation.identity[field])
         if nested is not None:
@@ -590,7 +595,7 @@ class PeerResolver:
             )
             raise ValueError(msg)
         if isinstance(identity.get("id"), str) and identity["id"].strip():
-            return {"id": identity["id"]}
+            return {"ids": [identity["id"]]}
         components = _hfid_components(node_schema)
 
         kwargs: dict[str, Any] = {}

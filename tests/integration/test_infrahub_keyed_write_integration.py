@@ -18,9 +18,10 @@ Five primary cases, on the smallest fixture that can carry them:
 5. an update whose payload omits a human-friendly-ID component still lands on the object its
    recorded id names.
 
-Two supporting cases run alongside them: a peer whose own key crosses a relationship is
-resolved through the nested filter (the read half), and the run is shown to write nothing
-outside the branch it owns.
+Four supporting cases run alongside them: a peer whose own key crosses a relationship is
+resolved through the nested filter (the read half), an explicit peer destination id resolves
+one node while an unknown id refuses the write, and the run is shown to write nothing outside
+the branch it owns.
 
 **Everything this module touches lives on one branch it creates and deletes.** The sibling
 modules load their throwaway schema onto `main`, which makes two concurrent runs — or a run
@@ -50,7 +51,7 @@ import pytest
 import requests
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
-from infrahub_sync.plan.errors import StaleDestinationIdError
+from infrahub_sync.plan.errors import PeerNotFoundError, StaleDestinationIdError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
@@ -203,14 +204,20 @@ def _device_operation(device_name: str, site_name: str) -> PlannedOperation:
     )
 
 
-def _mount_operation(mount_name: str, device_name: str, site_name: str) -> PlannedOperation:
+def _mount_operation(
+    mount_name: str, device_name: str, site_name: str, *, peer_id: str | None = None
+) -> PlannedOperation:
     """One planned create for the keyed consumer, referencing the crossing peer.
 
-    The reference carries the peer's identity as AD043 records it — a nested
-    `{peer_kind, identity}` pair, because the peer's own key crosses `site` — so resolving it
-    is what forces the nested filter spelling at the destination.
+    By default the reference carries the peer's nested identity as AD043 records it,
+    exercising the nested filter. A supplied destination id instead exercises the direct
+    peer lookup available to hand-built or future plans.
     """
-    peer_identity = {"name": device_name, "site": {"peer_kind": SITE_KIND, "identity": {"name": site_name}}}
+    peer_identity = (
+        {"id": peer_id}
+        if peer_id is not None
+        else {"name": device_name, "site": {"peer_kind": SITE_KIND, "identity": {"name": site_name}}}
+    )
     identity = canonical_identity({"name": mount_name}, kind=MOUNT_KIND)
     return PlannedOperation(
         operation_id=operation_id("create", MOUNT_KIND, identity),
@@ -527,6 +534,47 @@ def test_a_keyed_consumer_resolves_a_crossing_peer_through_the_nested_filter(
     assert written.name.value == mount_name, "The keyed consumer was not written as planned."
     assert written.device.id is not None, "The consumer was written without the peer it referenced."
     assert scope.client.count(kind=MOUNT_KIND, branch=scope.branch) == 1
+
+
+def test_a_keyed_consumer_resolves_a_peer_by_destination_id(keyed_write_scope: KeyedWriteScope) -> None:
+    """An id-only peer reference resolves through Infrahub's ids filter."""
+    scope = keyed_write_scope
+    device = next(
+        node
+        for node in scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False)
+        if node.name.value == scope.device_name
+    )
+    mount_name = f"id-peer-{scope.branch.rsplit('-', maxsplit=1)[-1]}"
+
+    written_id = scope.adapter.apply_planned_operation(
+        operation=_mount_operation(mount_name, scope.device_name, scope.site_name, peer_id=device.id),
+        peers=scope.adapter.new_peer_resolver(),
+    )
+
+    written = scope.client.get(kind=MOUNT_KIND, id=written_id, branch=scope.branch, include=["device"])
+    assert written.name.value == mount_name
+    assert written.device.id == device.id
+
+
+def test_an_unknown_peer_destination_id_is_refused_before_write(keyed_write_scope: KeyedWriteScope) -> None:
+    """An id-only reference with no match cannot create a wrongly linked consumer."""
+    scope = keyed_write_scope
+    device = next(
+        node
+        for node in scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False)
+        if node.name.value == scope.device_name
+    )
+    unknown_id = device.id[:-1] + ("0" if device.id[-1] != "0" else "1")
+    assert scope.client.filters(kind=DEVICE_KIND, ids=[unknown_id], branch=scope.branch, populate_store=False) == []
+    before = scope.client.count(kind=MOUNT_KIND, branch=scope.branch)
+
+    with pytest.raises(PeerNotFoundError):
+        scope.adapter.apply_planned_operation(
+            operation=_mount_operation("unknown-id-peer", scope.device_name, scope.site_name, peer_id=unknown_id),
+            peers=scope.adapter.new_peer_resolver(),
+        )
+
+    assert scope.client.count(kind=MOUNT_KIND, branch=scope.branch) == before
 
 
 def test_the_run_writes_nothing_outside_the_branch_it_owns(keyed_write_scope: KeyedWriteScope) -> None:

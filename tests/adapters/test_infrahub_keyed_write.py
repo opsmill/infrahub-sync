@@ -516,7 +516,7 @@ def test_a_peer_destination_id_is_a_complete_lookup_without_an_hfid() -> None:
 
     adapter.apply_planned_operation(operation=operation, peers=peers)
 
-    assert client.resolver_queries[0]["id"] == "site-id-1"
+    assert client.resolver_queries[0]["ids"] == ["site-id-1"]
     assert "name__value" not in client.resolver_queries[0]
     assert rendered_related_id(client.mutations[0][1], "site") == "site-id-1"
 
