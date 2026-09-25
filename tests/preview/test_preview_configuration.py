@@ -211,7 +211,10 @@ def test_preview_minio_healthcheck_is_self_contained_before_bootstrap() -> None:
     minio_service = compose[minio_start:bootstrap_start]
     bootstrap_service = compose[bootstrap_start:bootstrap_end]
 
-    assert 'test: ["CMD", "curl", "--fail", "http://localhost:9000/minio/health/live"]' in minio_service
+    assert (
+        'test: ["CMD", "wget", "--quiet", "--tries=1", "--output-document=/dev/null", "http://localhost:9000/minio/health/live"]'
+        in minio_service
+    )
     assert "mc ready" not in minio_service
     assert "depends_on:\n      sync-minio:\n        condition: service_healthy" in bootstrap_service
 
@@ -226,6 +229,11 @@ def test_preview_prefect_waits_for_successful_minio_bootstrap() -> None:
     result = subprocess.run(command, check=True, capture_output=True, text=True)  # noqa: S603
     services = json.loads(result.stdout)["services"]
 
+    minio_image = (
+        "cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba"
+    )
+    assert services["sync-minio"]["image"] == minio_image
+    assert services["sync-minio-bootstrap"]["image"] == minio_image
     assert services["sync-minio-bootstrap"]["depends_on"]["sync-minio"]["condition"] == "service_healthy"
     assert (
         services["sync-prefect"]["depends_on"]["sync-minio-bootstrap"]["condition"] == "service_completed_successfully"
