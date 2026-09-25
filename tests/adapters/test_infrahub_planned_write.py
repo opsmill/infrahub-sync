@@ -28,6 +28,7 @@ import pytest
 from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, ServerNotResponsiveError
 from infrahub_sdk.node import InfrahubNodeSync
+from infrahub_sdk.node.attribute import Attribute
 from infrahub_sdk.schema import NodeSchemaAPI
 from infrahub_sdk.schema.main import (
     AttributeKind,
@@ -657,6 +658,37 @@ def test_direct_apply_refuses_unwritable_reviewed_field_before_any_write(
     assert client.mutations == []
 
 
+def test_null_scalar_changed_to_relationship_refuses_whole_plan_and_operation(tmp_path: Path) -> None:
+    """A reviewed null remains a direct field even if its name becomes a relationship."""
+    directory = apply_run_dir(tmp_path)
+    first = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
+    second = operation_record(
+        kind=SITE_KIND,
+        identity={"name": "site-b"},
+        payload={"name": "site-b", "description": None},
+    )
+    write_artifact(directory, [first, second], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    client.live_schema = _site_schema_with_relationship_instead_of_description()
+    adapter = make_adapter(client)
+
+    state, outcome = apply_and_record_state(engine_over(directory, adapter))
+
+    assert state == "failed"
+    assert isinstance(outcome, ReviewedPayloadFieldMissingError)
+    assert "description" in str(outcome)
+    assert client.mutations == []
+
+    operation = make_operation(
+        kind=SITE_KIND,
+        identity={"name": "site-b"},
+        payload={"name": "site-b", "description": None},
+    )
+    with pytest.raises(ReviewedPayloadFieldMissingError, match="description"):
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+    assert client.mutations == []
+
+
 def test_preflight_schema_transport_failure_names_the_run_without_a_write(tmp_path: Path) -> None:
     """A failed schema refresh reports the run and leaves the destination untouched."""
     directory = apply_run_dir(tmp_path)
@@ -768,8 +800,12 @@ def test_sdk_node_input_omission_refuses_the_operation_before_the_mutation() -> 
     )
     drifted_site = _site_schema_without_description().nodes[SITE_KIND]
 
+    def create_with_drifted_node(*, kind: str, data: dict[str, Any]) -> InfrahubNodeSync:
+        assert kind == SITE_KIND
+        return InfrahubNodeSync(client=client, schema=drifted_site, data=data)
+
     with (
-        patch.object(client.schema, "get", return_value=drifted_site),
+        patch.object(client, "create", side_effect=create_with_drifted_node),
         pytest.raises(ReviewedPayloadFieldMissingError) as caught,
     ):
         adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
@@ -781,8 +817,8 @@ def test_sdk_node_input_omission_refuses_the_operation_before_the_mutation() -> 
 
 
 @pytest.mark.parametrize("action", ["create", "update"])
-def test_null_direct_scalar_omitted_by_sdk_is_an_ordinary_write(action: str) -> None:
-    """An optional null scalar may be absent from the SDK mutation input."""
+def test_null_direct_scalar_is_written_and_read_back(action: str) -> None:
+    """A reviewed null is sent explicitly and remains null in the SDK's saved node."""
     client = RecordingClient()
     adapter = make_adapter(client)
     operation = make_operation(
@@ -792,10 +828,14 @@ def test_null_direct_scalar_omitted_by_sdk_is_an_ordinary_write(action: str) -> 
         payload={"name": "site-a", "description": None},
     )
 
-    adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+    node_id = adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
 
     assert len(client.mutations) == 1
-    assert "description" not in client.mutations[0][1]
+    assert re.search(r"description:\s*\{\s*value:\s*null", client.mutations[0][1])
+    saved_node = client.store.get(key=node_id, kind=SITE_KIND)
+    assert isinstance(saved_node, InfrahubNodeSync)
+    assert isinstance(saved_node.description, Attribute)
+    assert saved_node.description.value is None
 
 
 def test_null_direct_scalar_on_later_operation_does_not_fail_apply(tmp_path: Path) -> None:
@@ -816,6 +856,7 @@ def test_null_direct_scalar_on_later_operation_does_not_fail_apply(tmp_path: Pat
     assert isinstance(outcome, ApplyRecord)
     assert outcome.applied_operations == (first["operation_id"], second["operation_id"])
     assert len(client.mutations) == 2
+    assert re.search(r"description:\s*\{\s*value:\s*null", client.mutations[1][1])
 
 
 def test_sdk_omission_in_later_operation_refuses_plan_before_any_write(tmp_path: Path) -> None:
@@ -867,59 +908,21 @@ def test_direct_apply_writes_every_reviewed_field_without_drift(tmp_path: Path) 
     assert client.schema_fetches == 1
 
 
-def test_a_create_omits_a_null_optional_cardinality_one_relationship() -> None:
-    """A create omits an absent optional peer while preserving ordinary scalar data."""
+@pytest.mark.parametrize("action", ["create", "update"])
+def test_ambiguous_null_optional_relationship_is_refused(action: str) -> None:
+    """A payload null cannot be assumed to be a relationship after schema drift."""
     client = RecordingClient()
     adapter = make_adapter(client)
     operation = make_operation(
         kind=TEAM_KIND,
+        action=action,
         identity={"name": "team-a"},
         payload={"name": "team-a", "description": None, "owner": None},
     )
 
-    with record_payload_create(client) as calls:
+    with pytest.raises(ReviewedPayloadFieldMissingError, match="owner"):
         adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
-
-    _, query = client.mutations[0]
-    assert calls[0]["data"] == {"name": "team-a", "description": None}, (
-        "Filtering must preserve a null scalar while omitting the null optional relationship."
-    )
-    assert "owner" not in query, f"A null optional to-one relationship must be omitted. Rendered:\n{query}"
-    assert 'id: "None"' not in query, f"A null relationship must never become the string id `None`. Rendered:\n{query}"
-
-
-def test_an_update_warns_that_a_null_optional_cardinality_one_relationship_is_a_no_op(
-    captured_logs: pytest.LogCaptureFixture,
-) -> None:
-    """The v1 plan cannot distinguish an absent optional peer from an intended clear."""
-    client = RecordingClient()
-    adapter = make_adapter(client)
-    operation = make_operation(
-        kind=TEAM_KIND,
-        action="update",
-        identity={"name": "team-a"},
-        payload={"name": "team-a", "description": None, "owner": None},
-    )
-
-    with record_payload_create(client) as calls:
-        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
-
-    assert calls[0]["data"] == {"name": "team-a", "description": None}, (
-        "The ambiguous relationship null must be a no-op without dropping a null scalar."
-    )
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert"], "The update must still be applied."
-    _, query = client.mutations[0]
-    assert "owner" not in query
-    assert 'id: "None"' not in query
-    warnings = [record for record in captured_logs.records if "cannot distinguish" in record.getMessage()]
-    assert len(warnings) == 1
-    warning = warnings[0]
-    assert warning.levelno >= logging.WARNING
-    message = warning.getMessage()
-    assert operation.operation_id in message
-    assert TEAM_KIND in message
-    assert "owner" in message
-    assert "not cleared" in message
+    assert client.mutations == []
 
 
 def test_a_null_mandatory_cardinality_one_relationship_is_refused_before_any_write() -> None:

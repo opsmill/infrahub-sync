@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import requests
+from infrahub_sdk.node.attribute import Attribute
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
 from infrahub_sync.plan.identity import canonical_identity, operation_id
@@ -85,7 +86,10 @@ _SCHEMA = {
             "namespace": "Test",
             "include_in_menu": False,
             "human_friendly_id": ["name__value"],
-            "attributes": [{"name": "name", "kind": "Text", "unique": True}],
+            "attributes": [
+                {"name": "name", "kind": "Text", "unique": True},
+                {"name": "description", "kind": "Text", "optional": True},
+            ],
             "relationships": [
                 {
                     "name": "members",
@@ -364,3 +368,33 @@ def test_shrinking_a_cardinality_many_peer_set_removes_surplus_peers(
         "The emptying apply maps only `members`, so it must leave `lead` exactly as it found it. "
         "An unmapped optional cardinality-one relationship was cleared by the write."
     )
+
+
+def test_planned_create_and_update_write_a_reviewed_null_attribute(
+    live_shrink_fixture: tuple[InfrahubClientSync, InfrahubAdapter, dict[str, str], str, str],
+) -> None:
+    """Read back a null attribute from the destination after both planned writes."""
+    client, adapter, _, team_name, branch = live_shrink_fixture
+
+    def read_description(team_id: str) -> str | None:
+        node = client.get(kind=TEAM_KIND, id=team_id, branch=branch)
+        description = node.description
+        assert isinstance(description, Attribute)
+        return description.value
+
+    create = _team_operation(team_name, [], action="create")
+    create = create.model_copy(update={"payload": {"name": team_name, "description": None}})
+    team_id = adapter.apply_planned_operation(operation=create, peers=adapter.new_peer_resolver())
+    assert read_description(team_id) is None
+
+    team = client.get(kind=TEAM_KIND, id=team_id, branch=branch)
+    description = team.description
+    assert isinstance(description, Attribute)
+    description.value = "old value"
+    team.save()
+    assert read_description(team_id) == "old value"
+
+    update = _team_operation(team_name, [], action="update", destination_id=team_id)
+    update = update.model_copy(update={"payload": {"name": team_name, "description": None}})
+    adapter.apply_planned_operation(operation=update, peers=adapter.new_peer_resolver())
+    assert read_description(team_id) is None

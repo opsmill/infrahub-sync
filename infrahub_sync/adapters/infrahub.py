@@ -1305,20 +1305,21 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
     @staticmethod
     def _reviewed_direct_fields(*, operation: PlannedOperation, node_schema: NodeSchemaAPI) -> set[str]:
-        """Return payload fields, apart from the legacy null to-one relationship case.
+        """Return direct payload fields, including nulls whose names became relationships.
 
-        Plan derivation puts relationship references in ``operation.relationships``.
-        A hand-built plan can also carry a null to-one relationship in its payload.
-        A non-null payload field stays direct even if schema drift reused its name
-        for a relationship.
+        Derived plans put relationships in ``operation.relationships``. The legacy
+        mandatory null relationship check remains at the operation boundary.
         """
         payload = operation.payload or {}
-        null_relationships = {
+        mandatory_null_relationships = {
             relationship.name
             for relationship in node_schema.relationships
-            if relationship.cardinality == "one" and relationship.name in payload and payload[relationship.name] is None
+            if relationship.cardinality == "one"
+            and not relationship.optional
+            and relationship.name in payload
+            and payload[relationship.name] is None
         }
-        return set(payload) - null_relationships
+        return set(payload) - mandatory_null_relationships
 
     @classmethod
     def _unwritable_reviewed_fields(cls, *, operation: PlannedOperation, node_schema: NodeSchemaAPI) -> set[str]:
@@ -1327,18 +1328,29 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         return cls._reviewed_direct_fields(operation=operation, node_schema=node_schema) - writable
 
     def _omitted_rendered_fields(self, *, operation: PlannedOperation, node_schema: NodeSchemaAPI) -> set[str]:
-        """Find non-null direct values the SDK would leave out of its mutation input."""
+        """Find reviewed direct values the SDK would leave out of its mutation input."""
         payload = operation.payload or {}
         data = self.client.schema.generate_payload_create(schema=node_schema, data=payload)
         node = self.client.create(kind=operation.kind, data=data)
         if operation.action == "update":
             node.id = operation.destination_id
+        self._set_reviewed_null_attributes(node=node, operation=operation, node_schema=node_schema)
         rendered_data = node._generate_input_data(exclude_hfid=True)["data"]["data"]
         return {
             field
             for field in self._reviewed_direct_fields(operation=operation, node_schema=node_schema)
-            if payload[field] is not None and field not in rendered_data
+            if field not in rendered_data
         }
+
+    @staticmethod
+    def _set_reviewed_null_attributes(
+        *, node: InfrahubNodeSync, operation: PlannedOperation, node_schema: NodeSchemaAPI
+    ) -> None:
+        """Mark reviewed null attributes as writes in the SDK mutation input."""
+        payload = operation.payload or {}
+        for attribute in node_schema.attributes:
+            if attribute.name in payload and payload[attribute.name] is None:
+                getattr(node, attribute.name).value = None
 
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
         """Execute one planned operation convergently. Returns the destination node id.
@@ -1410,14 +1422,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             raise TypeError(msg)
 
         # The payload is `keys` union `source_attrs`, so it already carries the identity
-        # components the convergent write keys on (AD042). No plan format distinguishes an
-        # absent optional to-one relationship from an intended clear. Keep create's
-        # established omission behavior; on update, disclose that the null is a no-op rather
-        # than silently claiming convergence. Derivation drops a null cardinality-one peer
-        # before the operation is recorded and warns there (S7), so this arm is reached only
-        # by a hand-built artifact that carries one — which is why it is kept rather than
-        # removed. A mandatory null is invalid and must stop here before the SDK can render
-        # it as a relationship id.
+        # components the convergent write keys on (AD042). Derived plans put relationships
+        # in `operation.relationships`; a null payload field is reviewed as an attribute.
+        # Keep the legacy mandatory null relationship error for hand-built artifacts.
         payload = operation.payload or {}
         missing_fields = self._unwritable_reviewed_fields(operation=operation, node_schema=node_schema)
         if missing_fields:
@@ -1445,25 +1452,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             )
             raise NullRelationshipValueError(msg)
 
-        optional_null_fields = sorted(
-            relationship.name for relationship in null_to_one_relationships if relationship.optional
-        )
-        if operation.action == "update" and optional_null_fields:
-            logger.warning(
-                "Planned update %s for destination kind %s carries null for optional cardinality-one "
-                "relationship field(s) %s. The plan format cannot distinguish an absent relationship "
-                "from an intended clear, so the field is omitted and the destination relationship is "
-                "not cleared. Clear it directly at the destination if the clear was intended.",
-                operation.operation_id,
-                operation.kind,
-                ", ".join(optional_null_fields),
-            )
-        omitted_null_relationships = set(optional_null_fields)
-        data: dict[str, Any] = {
-            field: value
-            for field, value in payload.items()
-            if value is not None or field not in omitted_null_relationships
-        }
+        data: dict[str, Any] = dict(payload)
         references = list(operation.relationships or ())
         _refuse_partial_key_peer_filter(operation, self.schema)
         for reference in references:
@@ -1500,13 +1489,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # a keyed update of that exact object. Putting `id` into `data` instead would
             # render it as the attribute-shaped `id: {}` and key nothing.
             node.id = operation.destination_id
+        self._set_reviewed_null_attributes(node=node, operation=operation, node_schema=node_schema)
         # generate_payload_create retains unknown keys as empty dictionaries. The node
         # drops them while building the input to the mutation, so check that final input.
         rendered_data = node._generate_input_data(exclude_hfid=True)["data"]["data"]
         missing_fields = {
             field
             for field in self._reviewed_direct_fields(operation=operation, node_schema=node_schema)
-            if payload[field] is not None and field not in rendered_data
+            if field not in rendered_data
         }
         if missing_fields:
             fields = ", ".join(repr(field) for field in sorted(missing_fields))
