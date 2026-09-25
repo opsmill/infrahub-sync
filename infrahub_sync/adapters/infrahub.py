@@ -441,37 +441,39 @@ def _hfid_component_accounted_for(
     return resolved is not _UNRESOLVED and is_usable_component_value(resolved)
 
 
-def _refuse_partial_key_peer_filter(
-    operation: PlannedOperation, node_schema: NodeSchemaAPI, schemas: Mapping[str, MainSchemaTypesAPI]
-) -> None:
-    """Keep a relationship key from relying on a partial peer lookup."""
-    for component in _hfid_components(node_schema):
-        segments = _component_segments(component)
-        if len(segments) == 1:
+def _refuse_partial_key_peer_filter(operation: PlannedOperation, schemas: Mapping[str, MainSchemaTypesAPI]) -> None:
+    """Refuse any relationship peer whose lookup would omit a key component."""
+    for reference in operation.relationships or ():
+        if not reference.peers:
             continue
-        reference = next((item for item in operation.relationships or () if item.field == segments[0]), None)
-        if reference is None or not reference.peers:
-            continue  # The component check reports the absent reference.
-        peer_schema = schemas[reference.peer_kind]
+        peer_schema = schemas.get(reference.peer_kind)
+        if peer_schema is None:
+            msg = (
+                f"The destination schema declares no kind {reference.peer_kind!r}, so no peer of that kind "
+                "can be resolved. The plan was derived against a configuration or schema this "
+                "destination does not carry"
+            )
+            raise ValueError(msg)
         if not isinstance(peer_schema, NodeSchemaAPI):
             msg = f"Expected NodeSchemaAPI for {reference.peer_kind}, got {type(peer_schema).__name__}"
             raise TypeError(msg)
-        missing = []
-        for peer_component in _hfid_components(peer_schema):
-            value = _identity_path_value(reference.peers[0], _component_segments(peer_component))
-            if (
-                value is _UNRESOLVED
-                or not is_usable_component_value(value)
-                or isinstance(value, (Mapping, list, tuple))
-            ):
-                missing.append(peer_component)
-        if missing:
-            msg = (
-                f"Operation {operation.operation_id!r} cannot key its {component!r} relationship through "
-                f"a partial {reference.peer_kind!r} peer filter; missing: {', '.join(missing)}. "
-                "No destination write was attempted."
-            )
-            raise UnaccountedIdentityComponentError(msg)
+        for peer in reference.peers:
+            missing = []
+            for component in _hfid_components(peer_schema):
+                value = _identity_path_value(peer, _component_segments(component))
+                if (
+                    value is _UNRESOLVED
+                    or not is_usable_component_value(value)
+                    or isinstance(value, (Mapping, list, tuple))
+                ):
+                    missing.append(component)
+            if missing:
+                msg = (
+                    f"Operation {operation.operation_id!r} cannot resolve relationship {reference.field!r} "
+                    f"through a partial {reference.peer_kind!r} peer filter; missing: {', '.join(missing)}. "
+                    "No destination write was attempted."
+                )
+                raise UnaccountedIdentityComponentError(msg)
 
 
 class PeerResolver:
@@ -1364,6 +1366,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if value is not None or field not in omitted_null_relationships
         }
         references = list(operation.relationships or ())
+        _refuse_partial_key_peer_filter(operation, self.schema)
         for reference in references:
             peer_ids = [
                 peers.resolve(
@@ -1384,7 +1387,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # `client.create` and read the cached schema and the operation alone.
             refuse_unkeyed_create_coverage(operation, node=node_schema)
             self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
-            _refuse_partial_key_peer_filter(operation, node_schema, self.schema)
 
         source_id = self.source_node.id if self.source_node else None
         owner_id = self.owner_node.id if self.owner_node else None

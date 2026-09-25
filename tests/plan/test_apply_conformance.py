@@ -444,8 +444,9 @@ def test_a_relationship_crossing_kind_is_keyed_and_repeated_apply_reuses_the_nod
     assert len(client.nodes) == 1
 
 
-def test_partial_relationship_filter_cannot_weaken_the_write_key(caplog: pytest.LogCaptureFixture) -> None:
-    """A peer found through a partial filter cannot make a partial HFID writable."""
+@pytest.mark.parametrize("lookup_outcome", ["missing", "found"])
+def test_partial_relationship_filter_is_refused_before_lookup(lookup_outcome: str) -> None:
+    """An incomplete peer key is diagnosed whether or not lookup would find a peer."""
     client = ConformanceClient()
     adapter = make_adapter(client)
     peers = PeerResolver(adapter)
@@ -460,17 +461,16 @@ def test_partial_relationship_filter_cannot_weaken_the_write_key(caplog: pytest.
     )
 
     with (
-        patch.object(client, "filters", return_value=[peer]),
-        caplog.at_level("WARNING"),
-        pytest.raises(UnaccountedIdentityComponentError, match="site__name__value"),
+        patch.object(client, "filters", return_value=[peer] if lookup_outcome == "found" else []) as lookup,
+        pytest.raises(UnaccountedIdentityComponentError, match="name__value"),
     ):
         adapter.apply_planned_operation(operation=operation, peers=peers)
 
-    assert "PARTIAL filter" in caplog.text
+    lookup.assert_not_called()
     assert client.mutations == []
 
 
-def test_partial_peer_filter_cannot_key_a_relationship_create(caplog: pytest.LogCaptureFixture) -> None:
+def test_partial_peer_filter_cannot_key_a_relationship_create() -> None:
     """A complete parent HFID still needs a fully identified relationship peer."""
     client = ConformanceClient()
     site_schema = SCHEMAS[SITE_KIND].model_copy(update={"human_friendly_id": ["name__value", "region__value"]})
@@ -480,13 +480,45 @@ def test_partial_peer_filter_cannot_key_a_relationship_create(caplog: pytest.Log
     peer = InfrahubNodeSync(client=client, schema=site_schema, data={"id": "conf-site-id-1"})
 
     with (
-        patch.object(client, "filters", return_value=[peer]),
-        caplog.at_level("WARNING"),
+        patch.object(client, "filters", return_value=[peer]) as lookup,
         pytest.raises(UnaccountedIdentityComponentError, match="region__value"),
     ):
         adapter.apply_planned_operation(operation=device_operation(), peers=peers)
 
-    assert "PARTIAL filter" in caplog.text
+    lookup.assert_not_called()
+    assert client.mutations == []
+
+
+@pytest.mark.parametrize("action", ["create", "update"])
+def test_every_non_key_relationship_peer_needs_a_complete_filter(action: str) -> None:
+    """A partial second peer cannot bind a wrong relationship on create or update."""
+    client = ConformanceClient()
+    adapter = make_adapter(client)
+    adapter.schema[TAG_KIND] = SCHEMAS[TAG_KIND].model_copy(
+        update={"human_friendly_id": ["name__value", "code__value"]}
+    )
+    operation = make_operation(
+        kind=TEAM_KIND,
+        action=action,
+        identity={"name": "team-a"},
+        payload={"name": "team-a"},
+        relationships=[
+            RelationshipReference(
+                field=REPLACED_RELATIONSHIP,
+                peer_kind=TAG_KIND,
+                cardinality="many",
+                peers=[{"name": "tag-a", "code": "a"}, {"name": "tag-b"}],
+            )
+        ],
+    )
+
+    with (
+        patch.object(client, "filters") as lookup,
+        pytest.raises(UnaccountedIdentityComponentError, match="code__value"),
+    ):
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    lookup.assert_not_called()
     assert client.mutations == []
 
 

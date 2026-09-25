@@ -367,13 +367,12 @@ def test_a_no_hfid_kind_update_is_allowed_where_its_create_is_refused() -> None:
 # The two arms are different mechanisms and must stay so. Identity coverage answers "does
 # the operation even name every component", which is a question about the plan. AD051's
 # `_assert_identity_components_accounted_for` answers "does each named component arrive with
-# a value", which is a question about the assembled write — and it is the only check that
-# can say *which* component is missing. A guard that answered both would make AD051
-# unreachable and lose that diagnosis.
+# a value", which is a question about the assembled write. The peer-filter guard separately
+# names missing components before lookup. Direct values still need AD051's diagnosis.
 
 
-def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refused_by_ad051() -> None:
-    """The relationship-crossing value case: identity names `site`, the peer supplies no name."""
+def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refused() -> None:
+    """A missing peer component is diagnosed before the relationship lookup."""
     client, adapter, peers = keyed_adapter()
     peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
     operation = make_operation(
@@ -388,7 +387,8 @@ def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refuse
     with pytest.raises(UnaccountedIdentityComponentError) as excinfo:
         adapter.apply_planned_operation(operation=operation, peers=peers)
 
-    assert "site__name__value" in str(excinfo.value), "AD051 names the component, which is why it is kept."
+    assert "relationship 'site'" in str(excinfo.value)
+    assert "name__value" in str(excinfo.value)
     assert client.mutation_names == [], "A refused create attempts no destination mutation."
 
 
@@ -456,8 +456,8 @@ def test_an_update_whose_hfid_component_is_blank_still_reaches_the_recorded_id_w
     assert top_level_scalar_id(query) == DESTINATION_ID
 
 
-def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is_written() -> None:
-    """A crossing component the peer identity cannot supply: the recorded id keys the write."""
+def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is_refused() -> None:
+    """The recorded id cannot make a partial peer lookup safe for a relationship write."""
     client, adapter, peers = keyed_adapter()
     peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
     operation = update_operation(
@@ -469,9 +469,10 @@ def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is
         ],
     )
 
-    assert adapter.apply_planned_operation(operation=operation, peers=peers) == NODE_ID
-    _name, query = client.mutations[0]
-    assert top_level_scalar_id(query) == DESTINATION_ID
+    with pytest.raises(UnaccountedIdentityComponentError, match="name__value"):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.mutation_names == []
 
 
 def test_the_same_blank_component_as_a_create_is_still_refused_by_ad051() -> None:
