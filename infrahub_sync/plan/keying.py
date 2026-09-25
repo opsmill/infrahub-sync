@@ -53,13 +53,16 @@ def _writable_component(
     field, _, rest = component.partition(COMPONENT_PATH_SEPARATOR)
     for attribute in getattr(node, "attributes", ()):
         if attribute.name == field:
+            computed = getattr(attribute, "computed_attribute", None)
             return (
                 rest in ("", "value")
                 and not getattr(attribute, "read_only", False)
-                and getattr(attribute, "computed_attribute", None) is None
+                and (computed is None or getattr(computed, "kind", None) == "User")
             )
     for relationship in getattr(node, "relationships", ()):
         if relationship.name == field:
+            if getattr(relationship, "read_only", False):
+                return False
             if not rest or schemas is None:
                 return True
             reference = identity.get(field) if identity is not None else None
@@ -116,8 +119,8 @@ def writable_convergence_reason(
         unusable.update(missing)
     detail = ", ".join(sorted(unusable)) or "no declared destination key"
     explanation = (
-        "A server-allocated, read-only value cannot be recreated from its mapped source value; "
-        "neither can a computed value. "
+        "Read-only values (including server-allocated values) and server-computed values "
+        "cannot be recreated from mapped source values. "
         if unwritable
         else ""
     )
@@ -202,7 +205,6 @@ def unkeyed_create_coverage_reason(
     `unkeyed_create_value_reason` below.
     """
     identity = operation.identity
-    convergence = writable_convergence_reason(node=node, identity_fields=identity, schemas=schemas, identity=identity)
     if any(
         not _writable_component(component, node, schemas, identity)
         for key in [
@@ -211,7 +213,7 @@ def unkeyed_create_coverage_reason(
         ]
         for component in key
     ):
-        return convergence
+        return writable_convergence_reason(node=node, identity_fields=identity, schemas=schemas, identity=identity)
     human_friendly_id = list(getattr(node, "human_friendly_id", None) or ())
     if human_friendly_id:
         uncovered = sorted(component for component in human_friendly_id if _component_field(component) not in identity)

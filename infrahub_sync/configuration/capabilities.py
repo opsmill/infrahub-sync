@@ -20,8 +20,8 @@ ConfigurationValidator = Callable[[ConfigurationPackage, AdapterRole], Sequence[
 # The destination-schema accessor contract: (package, branch) -> one JSON-native schema
 # snapshot, mapping each kind name to its ordered "human_friendly_id" and
 # "uniqueness_constraints" component paths, its attributes
-# (name -> {"kind", "optional", "default_value", "unique"}), and its relationships
-# (name -> {"peer", "cardinality", "optional", "kind"}). Raises DestinationSchemaReadError
+# (name -> {"kind", "optional", "default_value", "unique", "read_only"}), and its relationships
+# (name -> {"peer", "cardinality", "optional", "kind", "read_only"}). Raises DestinationSchemaReadError
 # and nothing else for a read that fails; performs I/O only when called, never at import.
 DestinationSchemaAccessor = Callable[[ConfigurationPackage, str], Mapping[str, Any]]
 _SCHEMA_READ_REASON = re.compile(r"^[a-z]{1,32}$")
@@ -332,12 +332,14 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
 
 def _attribute_shape(attribute: Any) -> dict[str, Any]:
     """The attribute properties that can change a runtime model or a planned write."""
+    computed = getattr(attribute, "computed_attribute", None)
     return {
         "kind": _member_text(attribute.kind),
         "optional": _exact_bool(attribute.optional),
         "default_value": _json_native_default(attribute.default_value),
         "unique": _exact_bool(attribute.unique),
-        "read_only": _exact_bool(attribute.read_only) or attribute.computed_attribute is not None,
+        "read_only": _exact_bool(getattr(attribute, "read_only", False))
+        or (computed is not None and getattr(computed, "kind", None) != "User"),
     }
 
 
@@ -348,6 +350,7 @@ def _relationship_shape(relationship: Any) -> dict[str, Any]:
         "cardinality": _member_text(relationship.cardinality),
         "optional": _exact_bool(relationship.optional),
         "kind": _member_text(relationship.kind),
+        "read_only": _exact_bool(getattr(relationship, "read_only", False)),
     }
 
 

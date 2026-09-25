@@ -48,7 +48,8 @@ def test_server_allocated_identity_is_refused_before_plan_creation() -> None:
     reason = writable_convergence_reason(node=node, identity_fields={"rule_id"}, mapped_fields={"rule_id", "payload"})
     assert reason is not None
     assert "rule_id__value" in reason
-    assert "server-allocated, read-only" in reason
+    assert "server-allocated" in reason
+    assert "Read-only values" in reason
 
     with pytest.raises(UnkeyedCreateRefusedError, match="rule_id__value"):
         warn_missing_convergence_key(
@@ -78,6 +79,16 @@ def test_computed_only_identity_is_refused() -> None:
         warn_missing_convergence_key(
             destination=SimpleNamespace(schema={"TestRule": node}), operations=[_create({"rule_id": 999})]
         )
+
+
+def test_user_computed_identity_is_writable() -> None:
+    node = _node()
+    node.attributes[0].read_only = False
+    node.attributes[0].computed_attribute = SimpleNamespace(kind="User")
+    identity = {"rule_id": 999}
+
+    assert writable_convergence_reason(node=node, identity_fields=identity, mapped_fields=identity) is None
+    warn_missing_convergence_key(destination=SimpleNamespace(schema={"TestRule": node}), operations=[_create(identity)])
 
 
 def test_partial_alternative_is_refused_even_when_one_component_is_writable() -> None:
@@ -134,3 +145,18 @@ def test_relationship_crossing_key_checks_the_peer_attribute() -> None:
     )
     assert early_reason is not None
     assert "owner__rule_id__value" in early_reason
+
+
+@pytest.mark.parametrize("component", ["owner", "owner__hostname__value"])
+def test_read_only_relationship_cannot_supply_a_key(component: str) -> None:
+    node = _node(constraint=[component])
+    node.human_friendly_id = []
+    node.relationships = [SimpleNamespace(name="owner", peer="TestRule", read_only=True)]
+    identity = {"owner": {"peer_kind": "TestRule", "identity": {"hostname": "edge-1"}}}
+
+    reason = writable_convergence_reason(
+        node=node, identity_fields=identity, mapped_fields=identity, schemas={"TestRule": node}, identity=identity
+    )
+
+    assert reason is not None
+    assert component in reason

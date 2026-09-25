@@ -53,6 +53,7 @@ def _member_semantics(member: NormalizedAttribute | NormalizedRelationship) -> d
         "cardinality": member.cardinality,
         "optional": member.optional,
         "kind": member.kind,
+        "read_only": member.read_only,
     }
 
 

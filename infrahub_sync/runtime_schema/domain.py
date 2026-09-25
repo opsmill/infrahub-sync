@@ -55,6 +55,7 @@ class NormalizedRelationship:
     cardinality: str
     optional: bool
     kind: str
+    read_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +186,7 @@ def _normalized_relationship(name: str, entry: object, *, kind: str) -> Normaliz
         cardinality=cardinality,
         optional=_require_bool(member["optional"], detail=detail),
         kind=_require_str(member["kind"], detail=detail),
+        read_only=_require_bool(member.get("read_only", False), detail=detail),
     )
 
 

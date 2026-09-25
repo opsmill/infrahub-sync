@@ -148,6 +148,9 @@ _SEMANTIC_MUTATIONS = (
         ("mapped-relationship", "optional"), _set("InfraDevice.relationships.site.optional", value=False)
     ),
     _SemanticMutation(("mapped-relationship", "kind"), _set("InfraDevice.relationships.site.kind", value="Component")),
+    _SemanticMutation(
+        ("mapped-relationship", "read_only"), _set("InfraDevice.relationships.site.read_only", value=True)
+    ),
     _SemanticMutation(("mandatory-attribute", "name"), _rename("InfraDevice.attributes.asn", "serial")),
     _SemanticMutation(("mandatory-attribute", "kind"), _set("InfraDevice.attributes.asn.kind", value="Text")),
     _SemanticMutation(("mandatory-attribute", "optional"), _set("InfraDevice.attributes.asn.optional", value=True)),
@@ -170,6 +173,9 @@ _SEMANTIC_MUTATIONS = (
     ),
     _SemanticMutation(
         ("mandatory-relationship", "kind"), _set("InfraDevice.relationships.owner.kind", value="Component")
+    ),
+    _SemanticMutation(
+        ("mandatory-relationship", "read_only"), _set("InfraDevice.relationships.owner.read_only", value=True)
     ),
 )
 

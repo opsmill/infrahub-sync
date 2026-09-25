@@ -1,1 +1,1 @@
-Reject mapped kinds that previously accepted only a read-only destination identity and duplicated on rerun, while allowing complete writable alternative keys; saved plans created before this change need a new review because schema fingerprints now include writability.
+Registration and planning now refuse mappings without a complete writable destination key, including mappings previously accepted with only a read-only identity, an unmapped key component, or no key; review and save new plans after upgrading because schema fingerprints now include writability.
