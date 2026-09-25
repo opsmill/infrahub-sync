@@ -419,6 +419,11 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
    a device by name alone. The demo names its patch panels with a `PP:` prefix, so the
    mapping skips devices and their interfaces when the device name contains `PP:`. If your
    NetBox data uses other patch-panel names, adapt both device and interface filters.
+
+   Racks can share a name across sites in NetBox. The demo has a `Comms closet` rack at
+   several sites. The mapping prefixes each Infrahub rack name with its site name (for
+   example, `Site A-Comms closet`) so those racks remain separate. Device references to
+   racks use the corresponding NetBox rack ID and resolve to the renamed rack.
    :::
 
 3. Once you're happy with the data, open a proposed change from `netbox-import` toward `main` so the import can be reviewed before it's merged.
@@ -490,6 +495,11 @@ Two source records resolved to one identifier while NetBox was being read. The r
 there — before a plan exists and before anything is written to Infrahub — so the state at the
 destination is whatever the last successful run left. The kind in the message says which of
 two different problems you have.
+
+The public NetBox demo is shared. Other visitors can create duplicate records, such as
+two identical prefixes in one VRF. If the error names `IpamPrefix` and shows the same
+prefix and namespace, inspect those prefixes in NetBox. Remove or rename the duplicate
+in the demo if you can identify it, or retry after the demo resets.
 
 #### Two IP addresses or prefixes in one namespace
 

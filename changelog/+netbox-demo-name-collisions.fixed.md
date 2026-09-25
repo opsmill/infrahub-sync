@@ -1,1 +1,1 @@
-Prefix the NetBox example's VLAN name with its VLAN group and skip patch-panel devices, so the demo dataset's name collisions no longer refuse the plan.
+The NetBox example now qualifies VLAN names by group and rack names by site, and skips patch panels whose names contain `PP:` and their interfaces, so the official demo dataset imports with distinct racks.

@@ -142,7 +142,8 @@ configuration:
       identifiers: ["name", "site"]
       fields:
         - name: name
-          mapping: name
+          # The schema requires a unique rack name even when sites differ.
+          mapping: unique_name
         - name: site
           mapping: site
           reference: LocationSite
@@ -158,6 +159,9 @@ configuration:
         # NOTE: current schema doesn't support role for racks (see related note)
         # - name: role
         #   mapping: role.slug
+      transforms:
+        - field: unique_name
+          expression: "{{ site.name ~ '-' ~ name }}"
 
     # Manufacturers / Platforms / Device Types
     - name: OrganizationManufacturer

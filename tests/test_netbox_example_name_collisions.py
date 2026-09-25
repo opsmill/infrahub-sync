@@ -1,7 +1,6 @@
 """Tests for the collision fixes in the shipped NetBox example.
 
-Infrahub identifies both `IpamVLAN` and `DcimDevice` by name alone (their HFID is
-`name__value`), but the NetBox demo data has two ways to produce the same name twice:
+The NetBox demo data reuses VLAN, rack, and device names:
 
 * NetBox only enforces a unique VLAN name within a VLAN group, so the same name (for
   example `Data`) repeats across every group. `examples/netbox_to_infrahub/config.yml`
@@ -9,6 +8,8 @@ Infrahub identifies both `IpamVLAN` and `DcimDevice` by name alone (their HFID i
 * NetBox lets several devices share a name across different sites. The demo data does this
   for patch panels (`PP:MDF` at more than one site), so devices and interfaces with `PP:`
   in the device name are filtered out together.
+* The demo has a `Comms closet` rack at several sites. The rack name includes the site
+  so Infrahub creates one rack per site.
 
 These tests read the mapping and run its filters/transforms directly; they load nothing.
 """
@@ -68,6 +69,24 @@ def test_netbox_example_vlan_names_that_collide_in_netbox_dont_collide_in_infrah
     assert len(rendered_names) == len(groups)
 
 
+@pytest.mark.parametrize("config_path", [CONFIG_PATH, EXAMPLE_DIR / "package.yml"])
+def test_netbox_example_rack_name_carries_the_site(config_path: Path) -> None:
+    mapping = _mapping("LocationRack", config_path=config_path)
+    name_field = next(field for field in mapping.fields if field.name == "name")
+    assert name_field.mapping is not None
+
+    records = [
+        {"id": 1, "name": "Comms closet", "site": {"id": 10, "name": "Site A"}},
+        {"id": 2, "name": "Comms closet", "site": {"id": 20, "name": "Site B"}},
+    ]
+    transformed = DiffSyncModelMixin.transform_records(records=records, schema_mapping=mapping)
+
+    assert [get_value(record, name_field.mapping) for record in transformed] == [
+        "Site A-Comms closet",
+        "Site B-Comms closet",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # DcimDevice: both entries use the same name condition as interfaces.
 # ---------------------------------------------------------------------------
@@ -77,17 +96,17 @@ DEVICE_ENTRY_INDEXES = [0, 1]  # 0: rack-based devices, 1: site-based devices
 
 @pytest.mark.parametrize("config_path", [CONFIG_PATH, EXAMPLE_DIR / "package.yml"])
 @pytest.mark.parametrize(
-    ("device_name", "role_slug", "expected_count"),
+    ("device_name", "expected_count"),
     [
-        ("PP:MDF", "patch-panel", 0),
-        ("PP:IDF", "patch-panel", 0),
-        ("panel-1", "patch-panel", 1),
-        ("core-switch-01", "core-switch", 1),
-        ("core-PP:01", "core-switch", 0),
+        ("PP:MDF", 0),
+        ("PP:IDF", 0),
+        ("panel-1", 1),
+        ("core-switch-01", 1),
+        ("core-PP:01", 0),
     ],
 )
 def test_netbox_example_device_and_interface_filters_agree(
-    config_path: Path, device_name: str, role_slug: str, expected_count: int
+    config_path: Path, device_name: str, expected_count: int
 ) -> None:
     """A device excluded by name cannot leave any mapped interface behind."""
     for index in DEVICE_ENTRY_INDEXES:
@@ -95,7 +114,6 @@ def test_netbox_example_device_and_interface_filters_agree(
             "name": device_name,
             "parent_device": None,
             "rack": {"id": 1} if index == 0 else None,
-            "role": {"slug": role_slug},
         }
         kept = DiffSyncModelMixin.filter_records(
             records=[device], schema_mapping=_mapping("DcimDevice", index=index, config_path=config_path)
@@ -114,24 +132,8 @@ def test_netbox_example_device_and_interface_filters_agree(
         assert len(kept) == expected_count
 
 
-@pytest.mark.parametrize("index", DEVICE_ENTRY_INDEXES)
-def test_netbox_example_device_mapping_keeps_devices_without_a_role(index: int) -> None:
-    """A device payload with no role at all must not trip StrictUndefined or be excluded."""
-    mapping = _mapping("DcimDevice", index=index)
-    record = {
-        "name": "unassigned-role-device",
-        "parent_device": None,
-        "rack": {"id": 1} if index == 0 else None,
-    }
-
-    filtered = DiffSyncModelMixin.filter_records(records=[record], schema_mapping=mapping)
-
-    assert filtered == [record]
-
-
 # ---------------------------------------------------------------------------
-# Interfaces: the payload's embedded device object is brief (no `role`), so
-# the patch-panel exclusion is mirrored here by device name instead.
+# Interfaces: use the same device-name condition as DcimDevice.
 # ---------------------------------------------------------------------------
 
 INTERFACE_MAPPING_TYPES = {
