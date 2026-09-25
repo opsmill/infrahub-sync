@@ -265,13 +265,10 @@ configuration:
           operation: "is_not_empty"
         - field: name # /!\ Netbox allows empty name for devices
           operation: "is_not_empty"
-        # Patch panels don't carry a unique Infrahub identity: the demo data
-        # names several "PP:MDF" at different sites, and DcimDevice's HFID is
-        # name alone. They're passive, so skipping them loses nothing worth
-        # syncing today; a real Infrahub identity for them is future work.
-        - field: role.slug
-          operation: "!="
-          value: "patch-panel"
+        # The demo names patch panels with PP:. Adapt this filter for other names.
+        - field: name
+          operation: "not contains"
+          value: "PP:"
 
     - name: DcimDevice
       identifiers: ["location", "name"]
@@ -312,11 +309,10 @@ configuration:
           operation: "is_empty"
         - field: name # /!\ Netbox allows empty name for devices
           operation: "is_not_empty"
-        # See the rack-based DcimDevice entry above: patch panels collide on
-        # Infrahub's name-only HFID and are skipped here too.
-        - field: role.slug
-          operation: "!="
-          value: "patch-panel"
+        # The demo names patch panels with PP:. Adapt this filter for other names.
+        - field: name
+          operation: "not contains"
+          value: "PP:"
 
     # TODO: Add support for cluster, VM, servers ...
 
@@ -374,21 +370,7 @@ configuration:
         - field: type.value
           operation: "not contains"
           value: "lag"
-        # NOTE: must mirror the DcimDevice-level exclusions — otherwise an
-        # interface can reference a device that was filtered out of the sync,
-        # and the `device` reference lookup fails ("Unable to locate the node").
-        # Only `name` can be checked here: Netbox's interface payload embeds a
-        # *brief* device object (id/url/display/name/description only), which
-        # never carries `parent_device` or `role` — so we can't replicate the
-        # `parent_device is_empty` exclusion, or the patch-panel `role.slug`
-        # exclusion, at this level. The demo's patch panels all carry a `PP:`
-        # prefix (`PP:MDF`, `PP:IDF`, ...), so match on that prefix rather than
-        # one literal name — otherwise a patch panel excluded at the device
-        # level keeps its interfaces synced, and their `device` reference lookup
-        # fails. Not an issue today (the demo's patch panels carry no
-        # interfaces), but if you add sub-devices or patch-panel interfaces
-        # later, they'll need filtering out some other way (e.g. a follow-up
-        # id-based exclusion list).
+        # Match the device name filter; interface payloads carry no device role.
         - field: device.name
           operation: "is_not_empty"
         - field: device.name
@@ -426,9 +408,7 @@ configuration:
         - field: type.value
           operation: "=="
           value: "virtual"
-        # NOTE: must mirror the DcimDevice-level `name` and patch-panel exclusions
-        # — see InterfacePhysical for why `parent_device`/`role` can't be checked
-        # here too.
+        # Match the device name filter.
         - field: device.name
           operation: "is_not_empty"
         - field: device.name
@@ -476,9 +456,7 @@ configuration:
         - field: type.value
           operation: "=="
           value: "lag"
-        # NOTE: must mirror the DcimDevice-level `name` and patch-panel exclusions
-        # — see InterfacePhysical for why `parent_device`/`role` can't be checked
-        # here too.
+        # Match the device name filter.
         - field: device.name
           operation: "is_not_empty"
         - field: device.name

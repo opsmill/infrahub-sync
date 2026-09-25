@@ -7,8 +7,8 @@ Infrahub identifies both `IpamVLAN` and `DcimDevice` by name alone (their HFID i
   example `Data`) repeats across every group. `examples/netbox_to_infrahub/config.yml`
   renders the Infrahub VLAN name as `"{{ group.name }}-{{ name }}"` so it stays unique.
 * NetBox lets several devices share a name across different sites. The demo data does this
-  for patch panels (`PP:MDF` at more than one site), so both `DcimDevice` entries filter out
-  devices whose role is `patch-panel`.
+  for patch panels (`PP:MDF` at more than one site), so devices and interfaces with `PP:`
+  in the device name are filtered out together.
 
 These tests read the mapping and run its filters/transforms directly; they load nothing.
 """
@@ -27,9 +27,10 @@ EXAMPLE_DIR = Path(__file__).resolve().parent.parent / "examples" / "netbox_to_i
 CONFIG_PATH = EXAMPLE_DIR / "config.yml"
 
 
-def _mapping(name: str, *, index: int = 0):
+def _mapping(name: str, *, index: int = 0, config_path: Path = CONFIG_PATH):
     """Return the `index`-th schema_mapping entry named `name` (DcimDevice appears twice)."""
-    config = SyncConfig(**yaml.safe_load(CONFIG_PATH.read_text()))
+    content = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config = SyncConfig(**(content.get("configuration", content)))
     matches = [mapping for mapping in config.schema_mapping if mapping.name == name]
     return matches[index]
 
@@ -68,40 +69,49 @@ def test_netbox_example_vlan_names_that_collide_in_netbox_dont_collide_in_infrah
 
 
 # ---------------------------------------------------------------------------
-# DcimDevice: both entries skip patch panels.
+# DcimDevice: both entries use the same name condition as interfaces.
 # ---------------------------------------------------------------------------
 
 DEVICE_ENTRY_INDEXES = [0, 1]  # 0: rack-based devices, 1: site-based devices
 
 
-@pytest.mark.parametrize("index", DEVICE_ENTRY_INDEXES)
-def test_netbox_example_device_mapping_filters_out_patch_panels(index: int) -> None:
-    mapping = _mapping("DcimDevice", index=index)
-    record = {
-        "name": "PP:MDF",
-        "parent_device": None,
-        "rack": {"id": 1} if index == 0 else None,
-        "role": {"id": 9, "name": "Patch Panel", "slug": "patch-panel"},
-    }
+@pytest.mark.parametrize("config_path", [CONFIG_PATH, EXAMPLE_DIR / "package.yml"])
+@pytest.mark.parametrize(
+    ("device_name", "role_slug", "expected_count"),
+    [
+        ("PP:MDF", "patch-panel", 0),
+        ("PP:IDF", "patch-panel", 0),
+        ("panel-1", "patch-panel", 1),
+        ("core-switch-01", "core-switch", 1),
+        ("core-PP:01", "core-switch", 0),
+    ],
+)
+def test_netbox_example_device_and_interface_filters_agree(
+    config_path: Path, device_name: str, role_slug: str, expected_count: int
+) -> None:
+    """A device excluded by name cannot leave any mapped interface behind."""
+    for index in DEVICE_ENTRY_INDEXES:
+        device = {
+            "name": device_name,
+            "parent_device": None,
+            "rack": {"id": 1} if index == 0 else None,
+            "role": {"slug": role_slug},
+        }
+        kept = DiffSyncModelMixin.filter_records(
+            records=[device], schema_mapping=_mapping("DcimDevice", index=index, config_path=config_path)
+        )
+        assert len(kept) == expected_count
 
-    filtered = DiffSyncModelMixin.filter_records(records=[record], schema_mapping=mapping)
-
-    assert filtered == []
-
-
-@pytest.mark.parametrize("index", DEVICE_ENTRY_INDEXES)
-def test_netbox_example_device_mapping_keeps_devices_with_other_roles(index: int) -> None:
-    mapping = _mapping("DcimDevice", index=index)
-    record = {
-        "name": "core-switch-01",
-        "parent_device": None,
-        "rack": {"id": 1} if index == 0 else None,
-        "role": {"id": 3, "name": "Core Switch", "slug": "core-switch"},
-    }
-
-    filtered = DiffSyncModelMixin.filter_records(records=[record], schema_mapping=mapping)
-
-    assert filtered == [record]
+    for mapping_name, interface_type in INTERFACE_MAPPING_TYPES.items():
+        interface = {
+            "name": "1",
+            "type": {"value": interface_type, "label": ""},
+            "device": {"id": 1, "name": device_name},
+        }
+        kept = DiffSyncModelMixin.filter_records(
+            records=[interface], schema_mapping=_mapping(mapping_name, config_path=config_path)
+        )
+        assert len(kept) == expected_count
 
 
 @pytest.mark.parametrize("index", DEVICE_ENTRY_INDEXES)
