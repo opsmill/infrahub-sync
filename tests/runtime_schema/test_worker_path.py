@@ -121,14 +121,22 @@ def _credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(name="netbox_driver", autouse=True)
 def _netbox_driver(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Make the NetBox adapter importable without its optional driver installed."""
+    import infrahub_sync.adapters as adapters_package
+
     driver = cast("Any", types.ModuleType("pynetbox"))
     driver.api = lambda *_args, **_kwargs: types.SimpleNamespace()
     monkeypatch.setitem(sys.modules, "pynetbox", driver)
     previous = sys.modules.pop("infrahub_sync.adapters.netbox", None)
+    missing = object()
+    previous_attribute = vars(adapters_package).get("netbox", missing)
     yield
     sys.modules.pop("infrahub_sync.adapters.netbox", None)
     if previous is not None:
         sys.modules["infrahub_sync.adapters.netbox"] = previous
+    if previous_attribute is missing:
+        vars(adapters_package).pop("netbox", None)
+    else:
+        vars(adapters_package)["netbox"] = previous_attribute
 
 
 def _instance(package: ConfigurationPackage, tmp_path: Path) -> SyncInstance:
