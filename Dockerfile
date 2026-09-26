@@ -7,10 +7,15 @@
 
 FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b603332063cb5c6e32bd220c3e6e AS base
 
-# The pinned base predates Debian's fix for CVE-2026-86145. Pin the fixed
-# package too, so rebuilds cannot silently fall back to the vulnerable release.
+# The pinned base predates Debian's fixes for CVE-2026-86145 (libpcre2-8-0) and
+# CVE-2026-75803, CVE-2026-63072, CVE-2026-63076, CVE-2026-54874 (libssl3,
+# openssl). Pin the fixed packages too, so rebuilds cannot silently fall back
+# to the vulnerable releases.
 RUN apt-get update \
- && apt-get install --yes --no-install-recommends libpcre2-8-0=10.42-1+deb12u1 \
+ && apt-get install --yes --no-install-recommends \
+    libpcre2-8-0=10.42-1+deb12u1 \
+    libssl3=3.0.22-1~deb12u1 \
+    openssl=3.0.22-1~deb12u1 \
  && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
