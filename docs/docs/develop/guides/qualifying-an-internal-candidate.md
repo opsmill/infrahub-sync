@@ -114,7 +114,10 @@ a result.
 The route also runs `packet` and `packet-rehearsal`. They build and rehearse the
 Linux amd64 tester packet — a separate artifact, described in [Building a
 private tester packet](building-a-tester-packet.md) — from what `candidate`
-retained. This procedure does not depend on either one.
+retained. This procedure does not read the packet's bytes to qualify the
+candidate by hand, but step 2 still requires the packet artifact among the
+eight it checks: a failed `packet` job means this run is not an acceptable
+candidate, even though nothing after step 2 opens what it built.
 
 ### 2. Check what the service is holding, before downloading any of it
 

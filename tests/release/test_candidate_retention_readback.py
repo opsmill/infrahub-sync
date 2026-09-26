@@ -17,6 +17,13 @@ the text under test here is the text the runner executes. `gh` and `date` are
 stubbed because the point is the script's arithmetic, not the service's API or
 the host's date implementation — the stub converts ISO instants exactly, so any
 disagreement is the script's.
+
+The workflow writes this read-back once per producing job -- `candidate`,
+which retains seven groups, and `packet`, which retains its own one -- because
+the packet's own group does not exist yet when the first script runs. Every
+case below is parametrized over both scripts so each job's tolerance is
+actually exercised here, not just asserted as text in
+`tests/test_workflow_contracts.py`.
 """
 
 from __future__ import annotations
@@ -40,7 +47,7 @@ DAY = 86400
 # The step is found by what it does, not by its name.
 READBACK_MARKERS = ("actions/runs", "expires_at")
 
-GROUPS = (
+CANDIDATE_GROUPS: tuple[str, ...] = (
     "infrahub-sync-candidate-image",
     "infrahub-sync-candidate-identity",
     "infrahub-sync-candidate-distributions",
@@ -49,6 +56,9 @@ GROUPS = (
     "infrahub-sync-qualification-kit",
     "infrahub-sync-qualification-record",
 )
+PACKET_GROUPS: tuple[str, ...] = ("infrahub-sync-candidate-packet",)
+GROUPS_BY_JOB: dict[str, tuple[str, ...]] = {"candidate": CANDIDATE_GROUPS, "packet": PACKET_GROUPS}
+JOBS = tuple(GROUPS_BY_JOB)
 
 # A `gh` that prints whatever the case put in a file, and a `date` that converts
 # an ISO instant the way GNU coreutils does. Both are argv-shaped stubs rather
@@ -69,22 +79,22 @@ print(int(parsed.timestamp()))
 """
 
 
-def readback_script() -> str:
-    """Return the one step of the candidate job that reads the granted window back."""
+def readback_script(job: str) -> str:
+    """Return the one step of the named job that reads the granted window back."""
     document = yaml.safe_load(CANDIDATE_WORKFLOW.read_text(encoding="utf-8"))
     reading = [
         step
-        for step in document["jobs"]["candidate"]["steps"]
+        for step in document["jobs"][job]["steps"]
         if all(marker in str(step.get("run", "")) for marker in READBACK_MARKERS)
     ]
-    assert len(reading) == 1, f"{len(reading)} steps read the granted retention back"
+    assert len(reading) == 1, f"{len(reading)} steps of {job!r} read the granted retention back"
     return str(reading[0]["run"])
 
 
-def inventory(rows: dict[str, int], *, absent: tuple[str, ...] = ()) -> str:
+def inventory(groups: tuple[str, ...], rows: dict[str, int], *, absent: tuple[str, ...] = ()) -> str:
     """Render a service inventory where each group's window is the given seconds."""
     lines = []
-    for name in GROUPS:
+    for name in groups:
         if name in absent:
             continue
         elapsed = rows.get(name, WINDOW * DAY)
@@ -111,12 +121,12 @@ def stubs(tmp_path: Path) -> Path:
     return binaries
 
 
-def read_back(tmp_path: Path, binaries: Path, body: str) -> subprocess.CompletedProcess[str]:
-    """Run the workflow's own read-back against one rendered inventory."""
+def read_back(tmp_path: Path, binaries: Path, job: str, body: str) -> subprocess.CompletedProcess[str]:
+    """Run the named job's own read-back against one rendered inventory."""
     fixture = tmp_path / "inventory.tsv"
     fixture.write_text(body, encoding="utf-8")
     return subprocess.run(  # noqa: S603 -- the workflow's own script, fixed argv
-        [SHELL, "-c", readback_script()],
+        [SHELL, "-c", readback_script(job)],
         cwd=tmp_path,
         check=False,
         capture_output=True,
@@ -133,76 +143,95 @@ def read_back(tmp_path: Path, binaries: Path, body: str) -> subprocess.Completed
     )
 
 
-def test_it_accepts_the_window_the_service_nominally_granted(tmp_path: Path, stubs: Path) -> None:
+@pytest.mark.parametrize("job", JOBS)
+def test_it_accepts_the_window_the_service_nominally_granted(tmp_path: Path, stubs: Path, job: str) -> None:
     """The control. Exactly thirty days, to the second."""
-    finished = read_back(tmp_path, stubs, inventory({}))
+    finished = read_back(tmp_path, stubs, job, inventory(GROUPS_BY_JOB[job], {}))
 
     assert finished.returncode == 0, finished.stdout + finished.stderr
 
 
+@pytest.mark.parametrize("job", JOBS)
 @pytest.mark.parametrize("drift", [-1, 1], ids=lambda drift: f"{drift:+d}s")
-def test_it_accepts_one_second_of_timestamp_drift(tmp_path: Path, stubs: Path, drift: int) -> None:
+def test_it_accepts_one_second_of_timestamp_drift(tmp_path: Path, stubs: Path, job: str, drift: int) -> None:
     """The API reports both instants at second resolution and records them independently.
 
     A pair that differs by a second does not mean the window differed, so the
     check tolerates exactly that and truncating the elapsed seconds -- which
     turns one second short into twenty-nine days -- does not.
     """
-    finished = read_back(tmp_path, stubs, inventory({GROUPS[0]: WINDOW * DAY + drift}))
+    groups = GROUPS_BY_JOB[job]
+    finished = read_back(tmp_path, stubs, job, inventory(groups, {groups[0]: WINDOW * DAY + drift}))
 
     assert finished.returncode == 0, finished.stdout + finished.stderr
 
 
+@pytest.mark.parametrize("job", JOBS)
 @pytest.mark.parametrize("drift", [-2, 2], ids=lambda drift: f"{drift:+d}s")
-def test_it_refuses_more_than_one_second_of_drift(tmp_path: Path, stubs: Path, drift: int) -> None:
+def test_it_refuses_more_than_one_second_of_drift(tmp_path: Path, stubs: Path, job: str, drift: int) -> None:
     """One second is the resolution of the timestamps; two is a different window.
 
     The bound has to be narrow or it stops being about the window at all. This is
     the pair that pins it: a second is tolerated and two are not.
     """
-    finished = read_back(tmp_path, stubs, inventory({GROUPS[0]: WINDOW * DAY + drift}))
+    groups = GROUPS_BY_JOB[job]
+    finished = read_back(tmp_path, stubs, job, inventory(groups, {groups[0]: WINDOW * DAY + drift}))
 
     assert finished.returncode != 0, f"a window {drift:+d}s from the one asked for was accepted"
-    assert GROUPS[0] in finished.stdout + finished.stderr
+    assert groups[0] in finished.stdout + finished.stderr
 
 
+@pytest.mark.parametrize("job", JOBS)
 @pytest.mark.parametrize(
     "shortfall",
     [DAY // 2 - 1, DAY // 2, DAY, 3600],
     ids=["just-under-half-a-day", "half-a-day", "a-day", "an-hour"],
 )
-def test_it_refuses_a_window_short_of_the_one_asked_for(tmp_path: Path, stubs: Path, shortfall: int) -> None:
+def test_it_refuses_a_window_short_of_the_one_asked_for(tmp_path: Path, stubs: Path, job: str, shortfall: int) -> None:
     """Rounding to the nearest day accepted almost twelve hours less than the window.
 
     That is the defect this bound replaces: an approval bound to thirty days of
     retention would have been taken against bytes the service was keeping for
     twenty-nine and a half.
     """
-    finished = read_back(tmp_path, stubs, inventory({GROUPS[0]: WINDOW * DAY - shortfall}))
+    groups = GROUPS_BY_JOB[job]
+    finished = read_back(tmp_path, stubs, job, inventory(groups, {groups[0]: WINDOW * DAY - shortfall}))
 
     assert finished.returncode != 0, f"a window {shortfall}s short was accepted"
 
 
+@pytest.mark.parametrize("job", JOBS)
 @pytest.mark.parametrize("granted", [7, 29, 31, 90], ids=lambda granted: f"{granted}d")
-def test_it_refuses_a_window_that_is_not_the_one_asked_for(tmp_path: Path, stubs: Path, granted: int) -> None:
+def test_it_refuses_a_window_that_is_not_the_one_asked_for(tmp_path: Path, stubs: Path, job: str, granted: int) -> None:
     """Rounding to the nearest day is not rounding to the nearest acceptable answer."""
-    finished = read_back(tmp_path, stubs, inventory({GROUPS[0]: granted * DAY}))
+    groups = GROUPS_BY_JOB[job]
+    finished = read_back(tmp_path, stubs, job, inventory(groups, {groups[0]: granted * DAY}))
 
     assert finished.returncode != 0, f"a {granted}-day window was accepted"
-    assert GROUPS[0] in finished.stdout + finished.stderr
+    assert groups[0] in finished.stdout + finished.stderr
 
 
 def test_it_refuses_a_run_that_is_missing_a_group(tmp_path: Path, stubs: Path) -> None:
     """A window nothing was granted is not a window that passed."""
-    finished = read_back(tmp_path, stubs, inventory({}, absent=(GROUPS[4],)))
+    finished = read_back(tmp_path, stubs, "candidate", inventory(CANDIDATE_GROUPS, {}, absent=(CANDIDATE_GROUPS[4],)))
 
     assert finished.returncode != 0, "a run holding six of seven groups was accepted"
-    assert GROUPS[4] in finished.stdout + finished.stderr
+    assert CANDIDATE_GROUPS[4] in finished.stdout + finished.stderr
 
 
+def test_it_refuses_a_run_missing_its_only_group(tmp_path: Path, stubs: Path) -> None:
+    """The packet job retains exactly one group, so missing it is missing all of them."""
+    finished = read_back(tmp_path, stubs, "packet", inventory(PACKET_GROUPS, {}, absent=(PACKET_GROUPS[0],)))
+
+    assert finished.returncode != 0, "a run holding none of its groups was accepted"
+    assert PACKET_GROUPS[0] in finished.stdout + finished.stderr
+
+
+@pytest.mark.parametrize("job", JOBS)
 @pytest.mark.parametrize("excess", [3600, DAY // 2, DAY], ids=["an-hour", "half-a-day", "a-day"])
-def test_it_refuses_a_window_longer_than_the_one_asked_for(tmp_path: Path, stubs: Path, excess: int) -> None:
+def test_it_refuses_a_window_longer_than_the_one_asked_for(tmp_path: Path, stubs: Path, job: str, excess: int) -> None:
     """Longer is not safer. The record binds an approval to a stated window, not a minimum."""
-    finished = read_back(tmp_path, stubs, inventory({GROUPS[0]: WINDOW * DAY + excess}))
+    groups = GROUPS_BY_JOB[job]
+    finished = read_back(tmp_path, stubs, job, inventory(groups, {groups[0]: WINDOW * DAY + excess}))
 
     assert finished.returncode != 0, f"a window {excess}s long was accepted"

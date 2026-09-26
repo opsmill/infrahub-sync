@@ -551,9 +551,11 @@ jobs:
 
   # The tester path, rehearsed from what a tester actually receives: one
   # download, on a host that has never seen this repository and never pulled
-  # this image. Nothing here reads a candidate artifact directly -- everything
-  # the packet's own README asks a tester to check or run is checked or run
-  # here, and nothing else.
+  # this image. Nothing here reads a candidate artifact directly -- every
+  # command the packet's own README gives a tester is run here, plus
+  # verification that what happened matches what the README claims (the image
+  # labels, the empty registry) and the teardown (`reset`) that leaves the
+  # runner as it was found.
   packet-rehearsal:
     name: "Tester packet rehearsal (linux/amd64, no checkout, no preloaded images)"
     needs: ["packet"]
@@ -612,4 +614,6 @@ jobs:
         run: |
           set +e
           bundle_dir=$(find . -mindepth 3 -maxdepth 3 -type d -name 'infrahub-sync-compose-*')
-          [ -d "$bundle_dir" ] && "$bundle_dir/infrahub-sync-compose" logs
+          if [ -d "$bundle_dir" ]; then
+            "$bundle_dir/infrahub-sync-compose" logs
+          fi

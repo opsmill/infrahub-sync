@@ -70,23 +70,28 @@ nothing else: one artifact, `infrahub-sync-candidate-packet`, on a runner that
 has never checked this repository out and has never pulled or loaded the
 image. That is the same starting point a tester's own host has.
 
-The rehearsal follows the packet's own README exactly:
+The rehearsal runs every command the packet's own README gives a tester, and
+adds verification that a tester's own read of the README would not catch on
+its own:
 
 1. Verify the outer archive against its `.sha256`, extract it, then verify
-   `SHA256SUMS` inside `linux-amd64/`.
-2. `docker load` the image archive and confirm the loaded image's
-   `org.opencontainers.image.version` and `org.opencontainers.image.revision`
-   labels match the `Version:` and `Commit:` the README states.
-3. Extract the Compose bundle, then `init`, `start`, and `status` it — `status`
-   has to report `READY`.
+   `SHA256SUMS` inside `linux-amd64/` — the README's own commands.
+2. `docker load` the image archive — the README's own command — then confirm
+   the loaded image's `org.opencontainers.image.version` and
+   `org.opencontainers.image.revision` labels match the `Version:` and
+   `Commit:` the README states, which the README does not itself check.
+3. Extract the Compose bundle, then `init`, `start`, and `status` it — the
+   README's own commands; `status` has to report `READY`.
 4. Confirm `./infrahub-sync-compose cli configs list` answers with nothing: a
-   tester's first deployment has an empty configuration registry.
-5. Tear the deployment down with `./infrahub-sync-compose reset`.
+   tester's first deployment has an empty configuration registry, which the
+   README does not itself check.
+5. Tear the deployment down with `./infrahub-sync-compose reset`, cleanup the
+   README does not ask a tester to do but the rehearsal runner needs anyway.
 
 A failing rehearsal means the packet a tester would receive does not work, not
-that some other candidate artifact is wrong: nothing here reads any input but
+that some other candidate artifact is wrong. Nothing here reads any input but
 the packet itself.
 
-Dispatching the workflow is the only way to run this end to end; nobody has
-done that yet; what a pull request can show is that the workflow validates and
-that `tests/test_workflow_contracts.py` passes.
+Dispatching the workflow is the only way to run this end to end, and nobody
+has done that yet. What a pull request can show is that the workflow
+validates and that `tests/test_workflow_contracts.py` passes.
