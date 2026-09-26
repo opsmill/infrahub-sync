@@ -612,9 +612,6 @@ jobs:
           test -z "$registered" \
             || { echo "the configuration registry is not empty: $registered" >&2; exit 1; }
 
-          instance=$(sed -n 's/^INFRAHUB_SYNC_INSTANCE=//p' .instance)
-          ./infrahub-sync-compose reset "$instance"
-
       - name: "Report this deployment's logs"
         if: failure()
         working-directory: packet
@@ -623,4 +620,16 @@ jobs:
           bundle_dir=$(find . -mindepth 3 -maxdepth 3 -type d -name 'infrahub-sync-compose-*')
           if [ -d "$bundle_dir" ]; then
             "$bundle_dir/infrahub-sync-compose" logs
+          fi
+
+      - name: "Tear down the rehearsal deployment"
+        if: always()
+        working-directory: packet
+        run: |
+          set +e
+          bundle_dir=$(find . -mindepth 3 -maxdepth 3 -type d -name 'infrahub-sync-compose-*')
+          if [ -d "$bundle_dir" ]; then
+            cd "$bundle_dir"
+            instance=$(sed -n 's/^INFRAHUB_SYNC_INSTANCE=//p' .instance)
+            ./infrahub-sync-compose reset "$instance"
           fi

@@ -75,13 +75,13 @@ adds verification that a tester's own read of the README would not catch on
 its own:
 
 1. Verify the outer archive against its `.sha256`, extract it, then verify
-   `SHA256SUMS` inside `linux-amd64/` — the README's own commands.
-2. `docker load` the image archive — the README's own command — then confirm
-   the loaded image's `org.opencontainers.image.version` and
+   `SHA256SUMS` inside `linux-amd64/` — commands the README itself gives.
+2. `docker load` the image archive — a command the README itself gives —
+   then confirm the loaded image's `org.opencontainers.image.version` and
    `org.opencontainers.image.revision` labels match the `Version:` and
    `Commit:` the README states, which the README does not itself check.
-3. Extract the Compose bundle, then `init`, `start`, and `status` it — the
-   README's own commands; `status` has to report `READY`.
+3. Extract the Compose bundle, then `init`, `start`, and `status` it —
+   commands the README itself gives; `status` has to report `READY`.
 4. Confirm `./infrahub-sync-compose cli configs list` answers with nothing: a
    tester's first deployment has an empty configuration registry, which the
    README does not itself check.
