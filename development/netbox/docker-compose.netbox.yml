@@ -51,7 +51,8 @@ services:
       SUPERUSER_NAME: "admin"
       SUPERUSER_PASSWORD: "${NETBOX_ADMIN_PASSWORD}"
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--output-document=/dev/null", "http://localhost:8080/login/"]  # yamllint disable-line rule:line-length
+      # The image ships curl but not wget; a probe that cannot run never reports healthy.
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://localhost:8080/login/"]  # yamllint disable-line rule:line-length
       interval: 10s
       timeout: 5s
       retries: 12

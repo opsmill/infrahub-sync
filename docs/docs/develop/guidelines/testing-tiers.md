@@ -120,7 +120,9 @@ provisioning step this page is the only place that names:
   migration twice; on a small host that first migration can take 15 minutes or more. Use
   `netbox.up` on its own only for an empty NetBox with nothing loaded, or to reprint the
   banner later without touching the already-running containers.
-  `netbox.seed` accepts `--dataset`; only `seed` (the default) exists today. Point
+  `netbox.seed` accepts `--dataset`: `seed` (the default) for this test, or `demo` for
+  [the `from-netbox` example check](#the-from-netbox-example-check). Each dataset replaces
+  the whole NetBox database. Point
   `INFRAHUB_ADDRESS` and
   `INFRAHUB_API_TOKEN` at a disposable Infrahub with the pinned schema library loaded (see the
   NetBox tutorial) — the test writes to it and does not clean up, so reset it
@@ -178,6 +180,84 @@ point them at:
 - **Every other live-backed family** mutates, locks or writes the target it names — Infrahub
   branches and nodes, the guard and product-store databases, the durable store, Redis, or the
   development stack. Point each of those at something disposable.
+
+##### The `from-netbox` example check
+
+The `from-netbox` example check runs the shipped `examples/netbox_to_infrahub` package
+through the Sync API: register it, then `diff` and `sync` into an Infrahub branch. It is not a
+pytest test. Run it by hand when you change the example mapping, the NetBox adapter, or the
+pinned NetBox image, and record the result in the pull request.
+
+It runs against the local `demo` dataset, never the public NetBox demo. The public demo is
+shared, so other users change its data between runs. The `demo` dataset is the official
+NetBox demo data from `netbox-community/netbox-demo-data`, restored from a SQL dump that is
+pinned to one commit and one SHA-256 checksum. `netbox.seed --dataset demo` downloads the
+dump into the gitignored `.netbox/` directory. It stops before it touches the database if the
+checksum does not match.
+
+Run these commands from the repository root:
+
+1. Load the `demo` dataset. The task prints the NetBox URL, `http://localhost:8082`, and the
+   development token.
+
+   ```bash
+   uv run invoke netbox.seed --dataset demo
+   ```
+
+2. Start a fresh preview stack. The worker resolves the package's `netbox-token` credential
+   from its own environment, so export the printed NetBox token before `preview.up` starts
+   it. `preview.up` sets `INFRAHUB_API_TOKEN` for the worker itself.
+
+   ```bash
+   uv run invoke preview.down --volumes
+   NETBOX_TOKEN="nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000" uv run invoke preview.up
+   ```
+
+3. Load the schema library into the preview Infrahub. The example maps onto the 16 schemas
+   of the `infrahub/traditional-infrastructure-sot` Marketplace collection. The token is
+   the preview's development admin token from `development/preview.env`.
+
+   ```bash
+   export INFRAHUB_ADDRESS="http://localhost:8080"
+   export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
+   uv run infrahubctl marketplace get infrahub/traditional-infrastructure-sot --collection --output-dir .netbox/schemas
+   uv run infrahubctl schema load .netbox/schemas --wait 60
+   ```
+
+4. Write the local package and register it. The shipped package names the public NetBox
+   demo and an Infrahub on port 8000. `netbox.demo-package` writes
+   `.netbox/from-netbox.local.yml`, a copy that points at the local NetBox and the preview
+   Infrahub. The mapping and the credential references stay the same. Pass
+   `--infrahub-url` to use another Infrahub address.
+
+   ```bash
+   uv run invoke netbox.demo-package
+   export INFRAHUB_SYNC_API_URL="http://localhost:8010"
+   export INFRAHUB_SYNC_API_TOKEN="preview-tester-token-0001"
+   uv run infrahub-sync configs register .netbox/from-netbox.local.yml --reason "register the local NetBox demo import"
+   ```
+
+5. Create the branch, then run `diff` and `sync` with the `config_id` and `registry_version`
+   from the registration.
+
+   ```bash
+   uv run infrahubctl branch create netbox-import
+   uv run infrahub-sync diff --config-id <config-id> --version <version> --branch netbox-import --reason "review the local NetBox demo import"
+   uv run infrahub-sync sync --config-id <config-id> --version <version> --branch netbox-import --reason "import the local NetBox demo data"
+   ```
+
+On the pinned dataset and the current example mapping, the plan has 1,688 operations: 1,687
+creates and one delete, which apply does not execute. After the sync, the object count of
+each kind on the `netbox-import` branch equals that kind's planned operations. A different
+count means that the mapping, the adapter, or the pinned data changed. Explain that change
+in the pull request.
+
+When you finish, remove both stacks and their data volumes:
+
+```bash
+uv run invoke preview.down --volumes
+uv run invoke netbox.down
+```
 
 #### Preview smoke
 
