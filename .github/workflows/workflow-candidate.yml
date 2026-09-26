@@ -336,6 +336,16 @@ jobs:
               exit 1
               ;;
           esac
+          # Bounded by digit count, not value, so this never runs the
+          # arithmetic comparisons below on a number outside bash's signed
+          # 64-bit range -- that would make `[ -gt ]` error out silently
+          # under `set -e` and let an oversized tolerance mask a too-short
+          # retention window.
+          if [ "${#RETENTION_DRIFT_TOLERANCE_SECONDS}" -gt 6 ]; then
+            echo "RETENTION_DRIFT_TOLERANCE_SECONDS must be at most 6 digits (999999 seconds)," \
+              "got '${RETENTION_DRIFT_TOLERANCE_SECONDS}'" >&2
+            exit 1
+          fi
           gh api --paginate "repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
             --jq '.artifacts[] | [.name, .created_at, .expires_at] | @tsv' > "${RUNNER_TEMP}/retention.tsv"
           missing=""
@@ -483,6 +493,16 @@ jobs:
               exit 1
               ;;
           esac
+          # Bounded by digit count, not value, so this never runs the
+          # arithmetic comparisons below on a number outside bash's signed
+          # 64-bit range -- that would make `[ -gt ]` error out silently
+          # under `set -e` and let an oversized tolerance mask a too-short
+          # retention window.
+          if [ "${#RETENTION_DRIFT_TOLERANCE_SECONDS}" -gt 6 ]; then
+            echo "RETENTION_DRIFT_TOLERANCE_SECONDS must be at most 6 digits (999999 seconds)," \
+              "got '${RETENTION_DRIFT_TOLERANCE_SECONDS}'" >&2
+            exit 1
+          fi
           gh api --paginate "repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
             --jq '.artifacts[] | [.name, .created_at, .expires_at] | @tsv' > "${RUNNER_TEMP}/retention.tsv"
           name=infrahub-sync-candidate-packet

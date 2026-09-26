@@ -252,15 +252,28 @@ def test_it_refuses_a_window_longer_than_the_one_asked_for(tmp_path: Path, stubs
 @pytest.mark.parametrize("job", JOBS)
 @pytest.mark.parametrize(
     "value",
-    ["", "1h", "3600s", " 3600", "-5", "3.5", "0x10"],
-    ids=["empty", "unit-suffixed", "trailing-unit", "leading-space", "negative", "fractional", "hex"],
+    ["", "1h", "3600s", " 3600", "-5", "3.5", "0x10", "9" * 25],
+    ids=[
+        "empty",
+        "unit-suffixed",
+        "trailing-unit",
+        "leading-space",
+        "negative",
+        "fractional",
+        "hex",
+        "beyond-int64-range",
+    ],
 )
 def test_it_refuses_a_tolerance_that_is_not_a_plain_integer(tmp_path: Path, stubs: Path, job: str, value: str) -> None:
     """RETENTION_DRIFT_TOLERANCE_SECONDS feeds a shell `-gt` comparison directly.
 
     A value that is not a plain non-negative integer makes that comparison
     fail open rather than fail the run, silently accepting any window at all.
-    The guard has to reject it before the comparison ever runs.
+    The guard has to reject it before the comparison ever runs. All-digit
+    strings pass the digit-only check, so a value wide enough to overflow
+    bash's signed 64-bit integers (`9` * 25 here) is exactly the case that
+    check alone lets through: `[ -gt ]` on it errors out instead of
+    comparing, and that error does not trip `set -e` inside the `if`.
     """
     groups = GROUPS_BY_JOB[job]
     finished = read_back(tmp_path, stubs, job, inventory(groups, {}), tolerance=value)
