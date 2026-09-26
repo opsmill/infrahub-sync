@@ -79,7 +79,7 @@ def archive(tmp_path: Path) -> Path:
     """A one-image archive with two layers: one uncompressed, one gzipped."""
     config = json.dumps(CONFIG_DOCUMENT).encode("utf-8")
     first = plain_layer()
-    second = gzip.compress(first)
+    second = gzip.compress(first, mtime=0)
     return write_archive(
         tmp_path / "image-linux-amd64.tar",
         entries=[
@@ -106,7 +106,7 @@ def test_the_synthesized_manifest_is_the_compact_schema2_document() -> None:
     """
     config = json.dumps(CONFIG_DOCUMENT).encode("utf-8")
     first = plain_layer()
-    second = gzip.compress(first)
+    second = gzip.compress(first, mtime=0)
 
     document = image.synthesized_manifest(
         (CONFIG_MEDIA_TYPE, digest_of(config), len(config)),
@@ -133,7 +133,7 @@ def test_the_archive_identity_is_the_digest_of_that_document(archive: Path) -> N
     """The archive is read once and the identity is the hash of what it describes."""
     config = json.dumps(CONFIG_DOCUMENT).encode("utf-8")
     first = plain_layer()
-    second = gzip.compress(first)
+    second = gzip.compress(first, mtime=0)
     document = image.synthesized_manifest(
         (CONFIG_MEDIA_TYPE, digest_of(config), len(config)),
         [
