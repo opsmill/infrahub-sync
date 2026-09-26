@@ -490,12 +490,13 @@ def test_the_candidate_input_contains_only_what_clean_host_needs(
     archive: Path, identity: release.ReleaseIdentity
 ) -> None:
     """The preliminary manifest is input to qualification, never a qualification result."""
-    document = release.candidate_input_document(digests(), identity, archive)
+    document = release.candidate_input_document(digests(), identity, archive, archive)
 
     assert document == {
         "bundle": {"name": identity.bundle, "sha256": release._digest(archive)},
+        "example": {"name": "example-package.yml", "sha256": release._digest(release.EXAMPLE_PACKAGE)},
         "identity": {"tag": identity.tag, "version": identity.version},
-        "image": {"platforms": {"linux/amd64": {"config": AMD64_CONFIG}}},
+        "image": {"platforms": {"linux/amd64": {"config": AMD64_CONFIG, "sha256": release._digest(archive)}}},
     }
     assert "tests" not in json.dumps(document)
 
@@ -521,12 +522,13 @@ def test_release_kit_writes_the_candidate_input_beside_the_bundle(
     monkeypatch.setattr(image, "read_digests", digests)
     monkeypatch.setattr(image, "transferable_archive", lambda *_args: tmp_path / "image.tar")
     monkeypatch.setattr(image, "archive_manifest", lambda _archive: LOADED_MANIFEST)
+    (tmp_path / "image.tar").write_bytes(b"image archive")
 
     release.kit(Context())
 
     candidate_input = release.BUNDLE_DIR / release.CANDIDATE_INPUT_NAME
     assert json.loads(candidate_input.read_text(encoding="utf-8")) == release.candidate_input_document(
-        digests(), identity, release.BUNDLE_DIR / identity.bundle
+        digests(), identity, release.BUNDLE_DIR / identity.bundle, tmp_path / "image.tar"
     )
 
 

@@ -1,0 +1,40 @@
+---
+# Replace the URL placeholders and load a matching destination schema before registration.
+# Supply token values through the named environment variables, never in this file.
+# Set NETBOX_TOKEN and INFRAHUB_API_TOKEN in the generated operator.env file.
+format_version: 1
+configuration:
+  name: netbox-evaluation
+  source:
+    name: netbox
+    settings:
+      url: REPLACE_WITH_NETBOX_URL
+      token: {$credential: netbox-token}
+  destination:
+    name: infrahub
+    settings:
+      url: REPLACE_WITH_INFRAHUB_URL
+      token: {$credential: infrahub-token}
+  schema_mapping:
+    - name: TestingSite
+      mapping: dcim.sites
+      identifiers: [name]
+      fields:
+        - name: name
+          mapping: name
+    - name: TestingDevice
+      mapping: dcim.devices
+      identifiers: [name]
+      fields:
+        - name: name
+          mapping: name
+        - name: model
+          mapping: device_type.model
+        - name: serial
+          mapping: serial
+        - name: site
+          mapping: site
+          reference: TestingSite
+credentials:
+  netbox-token: {provider: env, identifier: NETBOX_TOKEN}
+  infrahub-token: {provider: env, identifier: INFRAHUB_API_TOKEN}
