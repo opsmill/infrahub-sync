@@ -100,10 +100,33 @@ tier:
 | Product store on PostgreSQL | A disposable PostgreSQL at `PRODUCT_STORE_TEST_POSTGRESQL_DSN`, plus `psycopg` | [`tests/product_store/test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_contract.py), [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_configuration_baseline.py), [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_write_admission.py), [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/service/test_apply_versus_verify_race.py) |
 | Redis store compatibility | A reachable `REDIS_URL` | [`tests/test_redis_store_compat.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/test_redis_store_compat.py) |
 
-Three of those get their setup stated here rather than by reference. The two live-store families
-sit outside `tests/integration/` entirely, and the Prefect module, though it is in that
-directory, carries no setup detail in its docstring:
+Four of those get their setup stated here rather than by reference. The two live-store families
+sit outside `tests/integration/` entirely, the Prefect module, though it is in that
+directory, carries no setup detail in its docstring, and the saved-plan family needs a
+provisioning step this page is the only place that names:
 
+- **Saved-plan apply** needs a NetBox reachable at `NETBOX_URL`, seeded with the fixed dataset
+  the test module's own docstring describes (sites `site-a`/`site-b`/`site-c`, racks
+  `rack-site-<x>-<n>`, devices `dev-01`…`dev-40`, tags `tag-01`…`tag-10`). `development/netbox/`
+  provisions exactly that NetBox, disposable and local, following the same pattern as the
+  preview environment's `development/docker-compose.preview.yml`:
+
+  ```bash
+  uv run invoke netbox.up          # starts NetBox, prints its URL and development token
+  uv run invoke netbox.seed        # empties it, then loads the `seed` dataset
+  ```
+
+  `netbox.seed` accepts `--dataset`; only `seed` (the default) exists today. `netbox.up` prints
+  the values to export as `NETBOX_URL` and `NETBOX_TOKEN`. Point `INFRAHUB_ADDRESS` and
+  `INFRAHUB_API_TOKEN` at a disposable Infrahub with the pinned schema library loaded (see the
+  NetBox tutorial) — the test writes to it and does not clean up, so reset it
+  (`invoke preview.down --volumes`, `preview.up`, reload the schema) between runs. Then:
+
+  ```bash
+  uv run pytest -m integration tests/integration/test_saved_plan_apply_integration.py
+  ```
+
+  `uv run invoke netbox.down` removes the NetBox containers and their data volumes.
 - **Prefect idempotency** needs no external service. It skips unless `prefect` and
   `opsmill_prefect_extras` import, then starts Prefect's own isolated temporary API server with
   `PREFECT_HOME` and `PREFECT_LOCAL_STORAGE_PATH` redirected under `tmp_path`. It writes only

@@ -43,7 +43,15 @@ erroring on a clone the schema was always going to refuse. Nothing in the test b
 mocked or deleted: the check is over the schema as data, and a schema declaring a referenced kind
 whose constraints leave a filtered component free runs the whole test rather than skipping it.
 
-Run them with a reachable destination and source::
+A local, disposable source NetBox for this test — seeded with exactly the dataset below — is
+provisioned by `development/netbox/` (see `development/README.md` and
+[Testing tiers](../../docs/docs/develop/guidelines/testing-tiers.md#integration)):
+
+    uv run invoke netbox.up          # starts NetBox, prints its URL and development token
+    uv run invoke netbox.seed        # empties it, then loads the `seed` dataset
+
+Export the printed URL and token as `NETBOX_URL` and `NETBOX_TOKEN`, then run them with a
+reachable destination::
 
     export INFRAHUB_ADDRESS="http://localhost:8000"
     export INFRAHUB_API_TOKEN="<token>"
@@ -53,8 +61,9 @@ Run them with a reachable destination and source::
 
 The destination needs the pinned schema library loaded (see the NetBox tutorial). The source
 needs the deterministic seeded dataset: sites `site-a`/`site-b`/`site-c`, racks
-`rack-site-<x>-<n>`, devices `dev-01`…`dev-40`, tags `tag-01`…`tag-10`. `ADDED_FILTERS` bounds
-the run to `site-a`; the fixture raises a named setup error if that bounding stops matching.
+`rack-site-<x>-<n>`, devices `dev-01`…`dev-40`, tags `tag-01`…`tag-10` — exactly what
+`uv run invoke netbox.seed` loads. `ADDED_FILTERS` bounds the run to `site-a`; the fixture
+raises a named setup error if that bounding stops matching.
 
 **These tests write to the destination and do not clean up after themselves.** SC-002 and
 SC-003 measure convergence, which is not observable without writing, so point them at a
