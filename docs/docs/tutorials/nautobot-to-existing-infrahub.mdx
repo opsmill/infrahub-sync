@@ -24,8 +24,8 @@ fresh local Infrahub and the public NetBox demo, follow the
   together before continuing.
 
 Run all commands from the extracted deployment directory on the Docker host.
-For Candidate 4, this is `linux-amd64/infrahub-sync-compose-3.0.0a4` under the
-verified download.
+This is `linux-amd64/infrahub-sync-compose-<version>/` under the verified
+download.
 
 The two YAML files have different purposes:
 
@@ -149,8 +149,8 @@ continuing. Registering a Sync package does not load this schema.
 
 ## Create and edit package.yml
 
-Candidate 4's `linux-amd64/example-package.yml`, beside the extracted
-`infrahub-sync-compose-3.0.0a4` directory, is a **NetBox** example. Nautobot uses
+The private candidate's `linux-amd64/example-package.yml`, beside the extracted
+`infrahub-sync-compose-<version>/` directory, is a **NetBox** example. Nautobot uses
 locations and different relationship fields, so create `package.yml` in the
 deployment directory with this complete Nautobot mapping:
 
