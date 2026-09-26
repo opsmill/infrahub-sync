@@ -5,9 +5,9 @@ human procedures remain authoritative; the skills help an agent choose the
 right procedure, gather the missing facts, and stop before an operator-only
 action.
 
-These skills are unreleased source content. They are not in Candidate 4
-(`3.0.0a4`). They ship only in a later Compose bundle built from a revision that
-contains these files.
+Whether these skills are included depends on your candidate; check its
+release notes. If they are, they ship inside the Compose bundle at this
+directory.
 
 ## Available skills
 

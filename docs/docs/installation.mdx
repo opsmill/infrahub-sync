@@ -16,30 +16,31 @@ migration.
 
 ## Get the private candidate
 
-Candidate 4 (`3.0.0a4`) is available from the
-[private release](https://github.com/opsmill/infrahub-sync-lab/releases/tag/private-sync-v3-3.0.0a4-f98a845-h1.1).
+The private candidate is available from the
+[private release list](https://github.com/opsmill/infrahub-sync-lab/releases).
 Sign in to GitHub with an account that has access to `opsmill/infrahub-sync-lab`.
-If you cannot open the release or download its attachments, contact the person
-who provided the candidate.
+If you cannot open a release or download its attachments, contact the person
+who provided the candidate. The release page and the file names show the candidate's
+version.
 
 Download both release attachments:
 
-- `private-candidate-3.0.0a4-f98a845-h1.1.tar.gz`
-- `private-candidate-3.0.0a4-f98a845-h1.1.tar.gz.sha256`
+- `private-candidate-<version>-<sha7>.tar.gz`
+- `private-candidate-<version>-<sha7>.tar.gz.sha256`
 
-For Candidate 4, follow the [Quick Start][candidate-quickstart] linked from its
-release notes to verify both checksum layers, load the image, extract the Compose
-bundle, and run `init` and `start`. Continue only when `status` reports `READY`.
-Those instructions are pinned to Candidate 4-compatible guides; the current
-development documentation can change independently.
+Follow the [Quick Start][candidate-quickstart] to verify both checksum layers,
+load the image, extract the Compose bundle, and run `init` and `start`.
+Continue only when `status` reports `READY`. Your release notes may also link
+a guide revision pinned to your candidate; prefer that link if it is given, since
+this page can change independently.
 
 The public [PyPI package](https://pypi.org/project/infrahub-sync/) is V2, not this
 private candidate's client. Follow the bundled CLI route below for V3 testing.
 
 ## Run the included CLI {#install-the-command-line-client}
 
-From the extracted `infrahub-sync-compose-3.0.0a4` directory on the Docker host,
-run:
+From the extracted `infrahub-sync-compose-<version>/` directory on the Docker
+host, run:
 
 ```bash
 ./infrahub-sync-compose cli configs list
@@ -53,17 +54,18 @@ On a fresh deployment, the registry is empty: the command prints no configuratio
 output and exits zero. Docker Compose may print container progress messages.
 This checks access to the Sync API, not a connection to your source or destination.
 If it fails, check `./infrahub-sync-compose status` and follow the
-[Candidate 4 operator guide][candidate-operator] for diagnosis.
+[operator guide][candidate-operator] for diagnosis, or the guide revision
+linked from your release notes if one is given.
 
 The extracted bundle also includes `OPERATING.md` for local operating instructions.
 Use it after the release's download and checksum steps.
 
 ## Next step
 
-Prepare a configuration using the source tutorials linked from the
-[Candidate 4 release notes](https://github.com/opsmill/infrahub-sync-lab/releases/tag/private-sync-v3-3.0.0a4-f98a845-h1.1),
-then follow its [operator guide][candidate-operator] to register the package and
+Prepare a configuration using the source tutorials linked from your candidate's
+[release notes](https://github.com/opsmill/infrahub-sync-lab/releases), then
+follow the [operator guide][candidate-operator] to register the package and
 review a plan.
 
-[candidate-quickstart]: https://github.com/opsmill/infrahub-sync/blob/28cd2f1d049097053a28c0b168da58efb2d9dfd2/docs/docs/quickstart-compose.mdx
-[candidate-operator]: https://github.com/opsmill/infrahub-sync/blob/28cd2f1d049097053a28c0b168da58efb2d9dfd2/docs/docs/compose-deployment.mdx
+[candidate-quickstart]: ./quickstart-compose.mdx
+[candidate-operator]: ./compose-deployment.mdx

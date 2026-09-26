@@ -24,8 +24,8 @@ fresh local Infrahub and the public NetBox demo, follow the
   together before continuing.
 
 Run all commands from the extracted deployment directory on the Docker host.
-For Candidate 4, this is `linux-amd64/infrahub-sync-compose-3.0.0a4` under the
-verified download.
+This is `linux-amd64/infrahub-sync-compose-<version>/` under the verified
+download.
 
 The two YAML files have different purposes:
 
@@ -143,21 +143,22 @@ continuing. Registering a Sync package does not load this schema.
 
 For an agent-assisted draft, follow
 [Use Infrahub Sync with an AI agent](../use-with-an-ai-agent.mdx), then review
-the package here before registration. That guide uses unreleased source skills.
+the package here before registration. Whether that guide's skills come with
+your candidate depends on your release; check its release notes.
 
-Candidate 4 includes a NetBox example at
+The private candidate includes a NetBox example at
 `linux-amd64/example-package.yml`. It is beside the extracted
-`infrahub-sync-compose-3.0.0a4` directory:
+`infrahub-sync-compose-<version>/` directory:
 
 ```text
 linux-amd64/
 ├── example-package.yml
-└── infrahub-sync-compose-3.0.0a4/
+└── infrahub-sync-compose-<version>/
     ├── infrahub-sync-compose
     └── operator.env
 ```
 
-From inside `infrahub-sync-compose-3.0.0a4`, copy it:
+From inside `infrahub-sync-compose-<version>/`, copy it:
 
 ```sh
 cp ../example-package.yml package.yml
