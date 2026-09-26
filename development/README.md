@@ -77,3 +77,35 @@ Runtime state (process pids, logs, sync and product caches) lives under
 smoke suite is `tests/preview/`, opt-in via `pytest -m preview` and driven by
 `preview.smoke`; see
 [Testing tiers](../docs/docs/develop/guidelines/testing-tiers.md) for what each suite needs.
+
+## Local NetBox for the saved-plan apply test
+
+`tests/integration/test_saved_plan_apply_integration.py` needs a source NetBox seeded with a
+fixed, deterministic dataset — sites `site-a`/`site-b`/`site-c`, racks
+`rack-site-<x>-<n>`, devices `dev-01`…`dev-40`, tags `tag-01`…`tag-10`. `development/netbox/`
+provisions exactly that, disposable and local, following the same pattern as the preview
+environment above.
+
+```bash
+uv run invoke netbox.seed        # starts NetBox, resets it, loads the `seed` dataset, and prints the URL and token
+```
+
+`netbox.seed` starts NetBox itself and prints its URL and development token when it
+finishes — there is no need to run `netbox.up` first. Doing so anyway makes NetBox run its
+first migration twice; on a small host that first migration can take 15 minutes or more. Run
+`netbox.up` on its own only when you want an empty NetBox with nothing loaded, or to reprint
+the banner later without touching the already-running containers. `netbox.seed` takes
+`--dataset` (default `seed`; the task structure leaves room for a second, `demo`, dataset).
+Starting any dataset resets the database first, so re-running `netbox.seed` is safe to
+repeat. Export the printed values as `NETBOX_URL` and `NETBOX_TOKEN`, point
+`INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN` at a disposable Infrahub with the pinned schema
+library loaded, then run the test — see
+[Testing tiers](../docs/docs/develop/guidelines/testing-tiers.md#integration) for the full
+sequence. `uv run invoke netbox.down` removes the containers and their data volumes.
+
+| File | Role |
+| --- | --- |
+| `netbox/docker-compose.netbox.yml` | A pinned, disposable NetBox instance (image pinned by digest). |
+| `netbox/netbox.env` | Shipped defaults — the host port and development-only NetBox credentials. Nothing here is a secret; never point these values at a shared or internet-facing instance. |
+| `netbox/netbox.local.env` | Your personal overrides (gitignored). |
+| `netbox/datasets/seed_netbox.py` | The `seed` dataset's seeder script. Asserts the instance is empty before writing and never deletes. |

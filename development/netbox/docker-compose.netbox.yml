@@ -1,0 +1,69 @@
+---
+# Local, disposable NetBox for the saved-plan apply integration tests
+# (`tests/integration/test_saved_plan_apply_integration.py`). Every image is pinned by
+# digest; refresh with `docker buildx imagetools inspect name:tag` and use the top-level
+# index Digest so both linux/amd64 and linux/arm64 manifests resolve.
+services:
+  netbox-database:
+    image: "postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"  # yamllint disable-line rule:line-length
+    environment:
+      POSTGRES_DB: netbox
+      POSTGRES_USER: netbox
+      POSTGRES_PASSWORD: "${NETBOX_DB_PASSWORD}"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q -d netbox -U netbox"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - netbox-postgres-data:/var/lib/postgresql/data
+
+  netbox-redis:
+    image: "valkey/valkey:9.1-alpine@sha256:48332870af354a799964c0012ae1194a0bf2bf894eb508f945810596dc2d8d11"  # yamllint disable-line rule:line-length
+    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  netbox:
+    image: "netboxcommunity/netbox:v4.7-5.1.1@sha256:59e3e5954d0243d8648f2fa7ba82cf7c7770aaeef392026cca8b21cd67411e74"  # yamllint disable-line rule:line-length
+    depends_on:
+      netbox-database:
+        condition: service_healthy
+      netbox-redis:
+        condition: service_healthy
+    environment:
+      ALLOWED_HOSTS: "*"
+      API_TOKEN_PEPPER_1: "${NETBOX_TOKEN_PEPPER}"
+      CENSUS_REPORTING_ENABLED: "False"
+      DB_HOST: netbox-database
+      DB_NAME: netbox
+      DB_USER: netbox
+      DB_PASSWORD: "${NETBOX_DB_PASSWORD}"
+      REDIS_HOST: netbox-redis
+      SECRET_KEY: "${NETBOX_SECRET_KEY}"
+      SKIP_SUPERUSER: "false"
+      SUPERUSER_API_TOKEN: "${NETBOX_TOKEN}"
+      SUPERUSER_API_KEY: "${NETBOX_TOKEN_KEY}"
+      SUPERUSER_EMAIL: "admin@localhost"
+      SUPERUSER_NAME: "admin"
+      SUPERUSER_PASSWORD: "${NETBOX_ADMIN_PASSWORD}"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--output-document=/dev/null", "http://localhost:8080/login/"]  # yamllint disable-line rule:line-length
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      # Every `netbox.seed` runs every migration from scratch: it always drops the volume
+      # first, so there is no fast path against an existing one (`netbox.up` against a kept
+      # volume does not re-migrate). A live run measured
+      # roughly 16 minutes end to end, so this leaves real headroom rather than racing that
+      # -- it must clear `tasks/netbox.py`'s WAIT_TIMEOUT_SECONDS with margin, since
+      # `netbox.up`/`netbox.seed` give up once that elapses.
+      start_period: 1700s
+    ports:
+      - "127.0.0.1:${NETBOX_PORT:-8082}:8080"
+
+volumes:
+  netbox-postgres-data:
