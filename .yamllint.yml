@@ -6,6 +6,9 @@ ignore: |
   /examples
   /docs/node_modules
   /docs/pnpm-lock.yaml
+  # Downloaded schemas and the generated package for the local NetBox demo check;
+  # gitignored and not authored here.
+  /.netbox
   # Agent tooling trees: the agent source-of-truth plus the Claude and Codex
   # aliases that point at it. Managed by the agentic structure, not
   # hand-authored here, so they follow their own formatting conventions.
