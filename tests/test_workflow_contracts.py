@@ -165,6 +165,12 @@ BUILD_ACTIONS = ("docker/setup-qemu-action", "docker/setup-buildx-action", "astr
 CANDIDATE_WINDOW_NAME = "CANDIDATE_RETENTION_DAYS"
 CANDIDATE_WINDOW = "${{ env.CANDIDATE_RETENTION_DAYS }}"
 CANDIDATE_WINDOW_DAYS = 30
+# How far the granted window may drift from the requested one before the
+# read-back refuses it. `created_at` trails the start of the upload it
+# belongs to, so this covers an upload's own duration without being wide
+# enough to miss a real cap on retention.
+RETENTION_DRIFT_TOLERANCE_NAME = "RETENTION_DRIFT_TOLERANCE_SECONDS"
+RETENTION_DRIFT_TOLERANCE_SECONDS = 3600
 CANDIDATE_GROUPS = frozenset(
     {
         "infrahub-sync-candidate-image",
@@ -1502,6 +1508,7 @@ def test_every_upload_states_the_window_its_kind_of_artifact_is_kept_for() -> No
     assert load(CANDIDATE_WORKFLOW)["env"] == {
         CANDIDATE_WINDOW_NAME: CANDIDATE_WINDOW_DAYS,
         "DIAGNOSTIC_RETENTION_DAYS": WINDOWS["DIAGNOSTIC_RETENTION_DAYS"],
+        RETENTION_DRIFT_TOLERANCE_NAME: RETENTION_DRIFT_TOLERANCE_SECONDS,
     }
 
 
