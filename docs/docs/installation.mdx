@@ -28,11 +28,11 @@ Download both release attachments:
 - `private-candidate-<version>-<sha7>.tar.gz`
 - `private-candidate-<version>-<sha7>.tar.gz.sha256`
 
-Follow the [Quick Start][candidate-quickstart] linked from the release notes to
-verify both checksum layers, load the image, extract the Compose bundle, and run
-`init` and `start`. Continue only when `status` reports `READY`. Those
-instructions are pinned to guides compatible with your candidate; the current
-development documentation can change independently.
+Follow the [Quick Start][candidate-quickstart] to verify both checksum layers,
+load the image, extract the Compose bundle, and run `init` and `start`.
+Continue only when `status` reports `READY`. Your release notes may also link
+a guide revision pinned to your candidate; prefer that link if it is given, since
+this page can change independently.
 
 The public [PyPI package](https://pypi.org/project/infrahub-sync/) is V2, not this
 private candidate's client. Follow the bundled CLI route below for V3 testing.
@@ -54,7 +54,8 @@ On a fresh deployment, the registry is empty: the command prints no configuratio
 output and exits zero. Docker Compose may print container progress messages.
 This checks access to the Sync API, not a connection to your source or destination.
 If it fails, check `./infrahub-sync-compose status` and follow the
-[operator guide][candidate-operator] for diagnosis.
+[operator guide][candidate-operator] for diagnosis, or the guide revision
+linked from your release notes if one is given.
 
 The extracted bundle also includes `OPERATING.md` for local operating instructions.
 Use it after the release's download and checksum steps.
@@ -66,5 +67,5 @@ Prepare a configuration using the source tutorials linked from your candidate's
 follow its [operator guide][candidate-operator] to register the package and
 review a plan.
 
-[candidate-quickstart]: https://github.com/opsmill/infrahub-sync/blob/28cd2f1d049097053a28c0b168da58efb2d9dfd2/docs/docs/quickstart-compose.mdx
-[candidate-operator]: https://github.com/opsmill/infrahub-sync/blob/28cd2f1d049097053a28c0b168da58efb2d9dfd2/docs/docs/compose-deployment.mdx
+[candidate-quickstart]: ./quickstart-compose.mdx
+[candidate-operator]: ./compose-deployment.mdx
