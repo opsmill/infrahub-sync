@@ -112,12 +112,16 @@ provisioning step this page is the only place that names:
   preview environment's `development/docker-compose.preview.yml`:
 
   ```bash
-  uv run invoke netbox.up          # starts NetBox, prints its URL and development token
-  uv run invoke netbox.seed        # empties it, then loads the `seed` dataset
+  uv run invoke netbox.seed        # starts NetBox, then loads the `seed` dataset
+  uv run invoke netbox.up          # idempotent; prints the URL and development token
   ```
 
-  `netbox.seed` accepts `--dataset`; only `seed` (the default) exists today. `netbox.up` prints
-  the values to export as `NETBOX_URL` and `NETBOX_TOKEN`. Point `INFRAHUB_ADDRESS` and
+  `netbox.seed` starts NetBox itself — running `netbox.up` first is unnecessary and makes
+  NetBox run its first migration twice, roughly 16 minutes each on this machine. Use
+  `netbox.up` on its own only for an empty NetBox with nothing loaded, or after `netbox.seed`
+  to print the URL and token banner; it does not touch the already-running containers.
+  `netbox.seed` accepts `--dataset`; only `seed` (the default) exists today. Point
+  `INFRAHUB_ADDRESS` and
   `INFRAHUB_API_TOKEN` at a disposable Infrahub with the pinned schema library loaded (see the
   NetBox tutorial) — the test writes to it and does not clean up, so reset it
   (`invoke preview.down --volumes`, `preview.up`, reload the schema) between runs. Then:

@@ -1,3 +1,4 @@
+---
 # Local, disposable NetBox for the saved-plan apply integration tests
 # (`tests/integration/test_saved_plan_apply_integration.py`). Every image is pinned by
 # digest; refresh with `docker buildx imagetools inspect name:tag` and use the top-level

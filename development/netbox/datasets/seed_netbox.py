@@ -7,8 +7,8 @@ saved-plan apply integration test
 `tag-01`..`tag-10`. Safe to run only against a fresh instance — it asserts emptiness
 first and never deletes.
 
-Every address below is documentation or RFC 1918 space (RFC 5737, RFC 1918); none of
-it is reachable or real.
+Every address below is shared private-use space (RFC 1918, RFC 6598); none of it is
+reachable or real.
 
 Usage:
     uv run python development/netbox/datasets/seed_netbox.py --url http://localhost:8082 --token <token>
@@ -20,7 +20,7 @@ import argparse
 import json
 import sys
 
-import pynetbox
+import pynetbox  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
 
 
 def main() -> None:
