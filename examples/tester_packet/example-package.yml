@@ -1,6 +1,7 @@
 ---
 # Replace the URL placeholders and load a matching destination schema before registration.
 # Supply token values through the named environment variables, never in this file.
+# Set NETBOX_TOKEN and INFRAHUB_API_TOKEN in the generated operator.env file.
 format_version: 1
 configuration:
   name: netbox-evaluation
