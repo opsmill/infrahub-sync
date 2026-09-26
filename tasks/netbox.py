@@ -1,10 +1,10 @@
 """Local, disposable NetBox: the fixed dataset the saved-plan apply integration test needs.
 
 `invoke netbox.up` starts a disposable local NetBox instance and prints its URL and
-development token. `invoke netbox.seed` resets the database and loads a named dataset --
+development token. `invoke netbox.seed` resets the database, loads a named dataset --
 today only `seed`, the deterministic dataset
-`tests/integration/test_saved_plan_apply_integration.py` requires. `invoke netbox.down`
-removes the containers and their volumes.
+`tests/integration/test_saved_plan_apply_integration.py` requires -- and prints the same
+URL and token banner. `invoke netbox.down` removes the containers and their volumes.
 
 Configuration ships in `development/netbox/netbox.env` (no secrets -- local-only
 defaults); personal overrides belong in the gitignored
@@ -148,15 +148,19 @@ def reset_database(context: Context, values: dict[str, str]) -> None:
     _wait_for_http(f"{netbox_url(values)}/api/", "NetBox")
 
 
+def _print_ready_banner(values: dict[str, str]) -> None:
+    print(f" - [{NAMESPACE}] NetBox ready")
+    print(f"     URL:   {netbox_url(values)}")
+    print(f"     Token: {netbox_token(values)}")
+
+
 @task
 def up(context: Context) -> None:
     """Bring up the disposable local NetBox, then print its URL and development token."""
     values = load_netbox_env()
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", values)
     _wait_for_http(f"{netbox_url(values)}/api/", "NetBox")
-    print(f" - [{NAMESPACE}] NetBox ready")
-    print(f"     URL:   {netbox_url(values)}")
-    print(f"     Token: {netbox_token(values)}")
+    _print_ready_banner(values)
 
 
 @task
@@ -172,6 +176,7 @@ def seed(context: Context, dataset: str = DEFAULT_DATASET) -> None:
             f"--url {shlex.quote(netbox_url(values))} --token {shlex.quote(netbox_token(values))}",
             pty=False,
         )
+    _print_ready_banner(values)
 
 
 @task

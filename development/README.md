@@ -87,19 +87,17 @@ provisions exactly that, disposable and local, following the same pattern as the
 environment above.
 
 ```bash
-uv run invoke netbox.seed        # starts NetBox, then loads the `seed` dataset
-uv run invoke netbox.up          # idempotent; prints the URL and development token
+uv run invoke netbox.seed        # starts NetBox, resets it, loads the `seed` dataset, and prints the URL and token
 ```
 
-`netbox.seed` starts NetBox itself — there is no need to run `netbox.up` first. Doing so
-anyway makes NetBox run its first migration twice; on a small host that first migration can
-take 15 minutes or more. Run `netbox.up` on its own only when you want an empty NetBox with
-nothing loaded; run it
-after `netbox.seed` only to print the URL and token banner, which it does without touching
-the already-running containers. `netbox.seed` takes `--dataset` (default `seed`; the task
-structure leaves room for a second, `demo`, dataset). Starting any dataset resets the
-database first, so re-running `netbox.seed` is safe to repeat. Export the printed values
-as `NETBOX_URL` and `NETBOX_TOKEN`, point
+`netbox.seed` starts NetBox itself and prints its URL and development token when it
+finishes — there is no need to run `netbox.up` first. Doing so anyway makes NetBox run its
+first migration twice; on a small host that first migration can take 15 minutes or more. Run
+`netbox.up` on its own only when you want an empty NetBox with nothing loaded, or to reprint
+the banner later without touching the already-running containers. `netbox.seed` takes
+`--dataset` (default `seed`; the task structure leaves room for a second, `demo`, dataset).
+Starting any dataset resets the database first, so re-running `netbox.seed` is safe to
+repeat. Export the printed values as `NETBOX_URL` and `NETBOX_TOKEN`, point
 `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN` at a disposable Infrahub with the pinned schema
 library loaded, then run the test — see
 [Testing tiers](../docs/docs/develop/guidelines/testing-tiers.md#integration) for the full

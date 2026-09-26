@@ -55,8 +55,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-      # Every bring-up runs every migration from scratch: `netbox.seed` always drops the
-      # volume first, so there is no fast path against an existing one. A live run measured
+      # Every `netbox.seed` runs every migration from scratch: it always drops the volume
+      # first, so there is no fast path against an existing one (`netbox.up` against a kept
+      # volume does not re-migrate). A live run measured
       # roughly 16 minutes end to end, so this leaves real headroom rather than racing that
       # -- it must clear `tasks/netbox.py`'s WAIT_TIMEOUT_SECONDS with margin, since
       # `netbox.up`/`netbox.seed` give up once that elapses.

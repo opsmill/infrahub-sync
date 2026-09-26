@@ -135,6 +135,22 @@ def test_seed_resets_the_database_before_loading_the_dataset(monkeypatch: pytest
     assert "--token nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000" in run_event[1]
 
 
+def test_seed_prints_the_url_and_token_banner(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    context = Context()
+    monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
+    monkeypatch.setattr(netbox, "reset_database", lambda _context, _values: None)
+    monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
+    monkeypatch.setattr(context, "run", lambda _command, **_kwargs: None)
+
+    cast("Task", netbox.seed).body(context, dataset="seed")
+
+    printed = capsys.readouterr().out
+    assert "http://localhost:8082" in printed
+    assert "nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000" in printed
+
+
 def test_seed_refuses_an_unknown_dataset_before_touching_the_database(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     context = Context()
