@@ -47,8 +47,7 @@ A local, disposable source NetBox for this test — seeded with exactly the data
 provisioned by `development/netbox/` (see `development/README.md` and
 [Testing tiers](../../docs/docs/develop/guidelines/testing-tiers.md#integration)):
 
-    uv run invoke netbox.up          # starts NetBox, prints its URL and development token
-    uv run invoke netbox.seed        # empties it, then loads the `seed` dataset
+    uv run invoke netbox.seed        # starts NetBox, resets it, and loads the `seed` dataset
 
 Export the printed URL and token as `NETBOX_URL` and `NETBOX_TOKEN`, then run them with a
 reachable destination::

@@ -92,8 +92,9 @@ uv run invoke netbox.up          # idempotent; prints the URL and development to
 ```
 
 `netbox.seed` starts NetBox itself — there is no need to run `netbox.up` first. Doing so
-anyway makes NetBox run its first migration twice, roughly 16 minutes each on this machine.
-Run `netbox.up` on its own only when you want an empty NetBox with nothing loaded; run it
+anyway makes NetBox run its first migration twice; on a small host that first migration can
+take 15 minutes or more. Run `netbox.up` on its own only when you want an empty NetBox with
+nothing loaded; run it
 after `netbox.seed` only to print the URL and token banner, which it does without touching
 the already-running containers. `netbox.seed` takes `--dataset` (default `seed`; the task
 structure leaves room for a second, `demo`, dataset). Starting any dataset resets the

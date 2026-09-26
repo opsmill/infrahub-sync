@@ -157,7 +157,6 @@ def up(context: Context) -> None:
     print(f" - [{NAMESPACE}] NetBox ready")
     print(f"     URL:   {netbox_url(values)}")
     print(f"     Token: {netbox_token(values)}")
-    print(f"     Nothing has been seeded; run `uv run invoke netbox.seed` to load the {DEFAULT_DATASET!r} dataset.")
 
 
 @task

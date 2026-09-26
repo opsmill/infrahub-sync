@@ -117,7 +117,8 @@ provisioning step this page is the only place that names:
   ```
 
   `netbox.seed` starts NetBox itself — running `netbox.up` first is unnecessary and makes
-  NetBox run its first migration twice, roughly 16 minutes each on this machine. Use
+  NetBox run its first migration twice; on a small host that first migration can take 15
+  minutes or more. Use
   `netbox.up` on its own only for an empty NetBox with nothing loaded, or after `netbox.seed`
   to print the URL and token banner; it does not touch the already-running containers.
   `netbox.seed` accepts `--dataset`; only `seed` (the default) exists today. Point
