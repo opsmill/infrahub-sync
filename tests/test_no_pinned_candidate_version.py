@@ -57,7 +57,8 @@ def _text_to_check(page: Path) -> str:
     text = page.read_text(encoding="utf-8")
     if page == CONTAINER_IMAGE_DOC:
         for allowed in CONTAINER_IMAGE_ALLOWED_VERSIONS:
-            text = text.replace(allowed, "x" * len(allowed))
+            pattern = re.compile(r"\b" + re.escape(allowed) + r"\b")
+            text = pattern.sub("x" * len(allowed), text)
     return text
 
 
