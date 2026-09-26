@@ -234,6 +234,20 @@ def test_an_export_that_holds_another_platform_is_refused(candidate: Recorder) -
         image.sbom(candidate, platform="linux/amd64")
 
 
+def test_later_image_checks_keep_the_archive_recorded_by_the_kit(candidate: Recorder) -> None:
+    """The packet must receive the same export bytes whose SHA-256 the kit recorded."""
+    archive = image.archive_file("linux/amd64")
+    write_archive(archive, CONFIGURATIONS["linux/amd64"])
+    archive.write_bytes(archive.read_bytes() + b"retained export marker")
+    before = archive.read_bytes()
+
+    image.sbom(candidate, platform="linux/amd64")
+    image.smoke(candidate, platform="linux/amd64")
+
+    assert archive.read_bytes() == before
+    assert not any("skopeo" in command for command in candidate.commands)
+
+
 def test_an_export_that_is_not_a_readable_archive_is_refused(tmp_path: Path) -> None:
     broken = tmp_path / "image-linux-amd64.tar"
     broken.write_bytes(b"not an archive")

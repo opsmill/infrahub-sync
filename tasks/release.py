@@ -24,16 +24,14 @@ from hashlib import sha256
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as installed_version
 from io import BytesIO
+from pathlib import Path
 from shutil import copyfile, rmtree
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 from invoke import Context, task
 from packaging.version import InvalidVersion, Version
 
 from .utils import ESCAPED_REPO_PATH, REPO_BASE
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 NAMESPACE = "INFRAHUB-SYNC-RELEASE"
 
@@ -43,6 +41,8 @@ RECORD_FILE = RECORD_DIR / "identity.json"
 DIST_DIR = RECORD_DIR / "dist"
 BUNDLE_DIR = RECORD_DIR / "bundle"
 CANDIDATE_INPUT_NAME = "candidate-input.json"
+EXAMPLE_PACKAGE = REPO_ROOT / "examples" / "tester_packet" / "example-package.yml"
+PACKET_DIR = RECORD_DIR / "packet"
 QUALIFICATION_DIR = RECORD_DIR / "qualification"
 QUALIFICATION_FILE = RECORD_DIR / "qualification.json"
 RESULTS_DIR = RECORD_DIR / "results"
@@ -485,11 +485,13 @@ def image_binding(digests: Mapping[str, Any], identity: ReleaseIdentity, *, load
 def write_checksum(archive: Path) -> Path:
     """Write the archive's SHA-256 in the two-space form a clean host's tools read."""
     checksum = archive.with_name(archive.name + CHECKSUM_SUFFIX)
-    checksum.write_text(f"{sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n", encoding="utf-8")
+    checksum.write_text(f"{_digest(archive)}  {archive.name}\n", encoding="utf-8")
     return checksum
 
 
-def candidate_input_document(digests: Mapping[str, Any], identity: ReleaseIdentity, archive: Path) -> dict[str, object]:
+def candidate_input_document(
+    digests: Mapping[str, Any], identity: ReleaseIdentity, archive: Path, image_archive: Path
+) -> dict[str, object]:
     """Return the narrow manifest a qualification consumer may read before gates pass."""
     built = identity_from(digests.get("provenance"), "the digest record")
     if built != identity:
@@ -505,8 +507,9 @@ def candidate_input_document(digests: Mapping[str, Any], identity: ReleaseIdenti
         raise ReleaseTaskError(msg)
     return {
         "bundle": {"name": archive.name, "sha256": _digest(archive)},
+        "example": {"name": EXAMPLE_PACKAGE.name, "sha256": _digest(EXAMPLE_PACKAGE)},
         "identity": {"tag": identity.tag, "version": identity.version},
-        "image": {"platforms": {BINDING_PLATFORM: {"config": qualified["config"]}}},
+        "image": {"platforms": {BINDING_PLATFORM: {"config": qualified["config"], "sha256": _digest(image_archive)}}},
     }
 
 
@@ -704,13 +707,14 @@ def kit(context: Context) -> None:
     identity = read_recorded_identity()
     require_archivable_bundle(context)
     record = read_digests()
-    manifest = archive_manifest(transferable_archive(context, record, BINDING_PLATFORM))
+    image_archive = transferable_archive(context, record, BINDING_PLATFORM)
+    manifest = archive_manifest(image_archive)
     binding = image_binding(record, identity, loaded_manifest=manifest)
     archive = write_bundle(identity, bundle_paths(context), BUNDLE_DIR, generated={BINDING_MEMBER: binding})
     checksum = write_checksum(archive)
     candidate_input = BUNDLE_DIR / CANDIDATE_INPUT_NAME
     candidate_input.write_text(
-        json.dumps(candidate_input_document(record, identity, archive), indent=2, sort_keys=True) + "\n",
+        json.dumps(candidate_input_document(record, identity, archive, image_archive), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
     build_qualification_kit()
@@ -804,5 +808,205 @@ def qualify(context: Context) -> None:
     print(f" - [{NAMESPACE}] Qualification record written to {QUALIFICATION_FILE}")
 
 
+def packet_readme(identity: ReleaseIdentity) -> bytes:
+    """Give a tester the commands and documentation for these exact source bytes."""
+    root = f"private-candidate-{identity.version}-{identity.revision[:7]}"
+    guides = (
+        ("Compose quickstart", "quickstart-compose.mdx"),
+        ("Compose deployment", "compose-deployment.mdx"),
+        ("NetBox tutorial", "tutorials/netbox-to-existing-infrahub.mdx"),
+        ("Nautobot tutorial", "tutorials/nautobot-to-existing-infrahub.mdx"),
+    )
+    links = "\n".join(
+        f"- [{title}](https://github.com/opsmill/infrahub-sync/blob/{identity.revision}/docs/docs/{path})"
+        for title, path in guides
+    )
+    return f"""# Infrahub Sync private tester packet
+
+Version: {identity.version}
+Commit: {identity.revision}
+Platform: Linux amd64
+
+Verify the outer download before extracting it. Then verify the three input files
+inside the packet before loading or unpacking them:
+
+```sh
+set -eu
+sha256sum -c {root}.tar.gz.sha256
+tar -xzf {root}.tar.gz
+cd {root}/linux-amd64
+sha256sum -c SHA256SUMS
+docker load -i image-linux-amd64.tar
+tar -xzf {identity.bundle}
+cd {BUNDLE_STEM}-{identity.version}
+./infrahub-sync-compose init
+./infrahub-sync-compose start
+./infrahub-sync-compose status
+```
+
+The Infrahub Sync image is loaded from this packet and is never pulled. Docker
+still pulls the PostgreSQL, Prefect, and object-store images from the internet.
+The example package is not registered automatically. Replace its URL placeholders,
+provide the referenced credentials, and load a matching destination schema first.
+
+Guides for the exact commit in this packet:
+
+{links}
+""".encode()
+
+
+def _recorded_checksum(record: Mapping[str, Any], section: str, name: str) -> str:
+    """Read a named SHA-256 from a candidate input record."""
+    entry = record.get(section)
+    digest = entry.get("sha256") if isinstance(entry, Mapping) and entry.get("name") == name else None
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        msg = f"candidate input does not record a SHA-256 for {name}"
+        raise ReleaseTaskError(msg)
+    return digest
+
+
+def _packet_document(path: Path) -> dict[str, Any]:
+    """Read a required packet build record with a release-specific error."""
+    if not path.is_file():
+        msg = f"{path} is missing; build and qualify the candidate first"
+        raise ReleaseTaskError(msg)
+    return identity_document(path)
+
+
+def _verify_packet_inputs(
+    identity: ReleaseIdentity, image_archive: Path, bundle: Path, example: Path, candidate: dict[str, Any]
+) -> None:
+    """Refuse input bytes that the build and qualification records do not name."""
+    from .image import archive_configuration  # noqa: PLC0415 -- release and image import each other
+
+    qualified = _packet_document(QUALIFICATION_FILE)
+    if identity_from(qualified.get("identity"), str(QUALIFICATION_FILE)) != identity:
+        msg = "qualification record names a different release"
+        raise ReleaseTaskError(msg)
+    if candidate.get("identity") != {"tag": identity.tag, "version": identity.version}:
+        msg = "candidate input names a different release"
+        raise ReleaseTaskError(msg)
+    qualified_bundle = qualified.get("bundle")
+    qualified_image = qualified.get("image")
+    image_platforms = qualified_image.get("platforms") if isinstance(qualified_image, Mapping) else None
+    image_record = image_platforms.get(BINDING_PLATFORM) if isinstance(image_platforms, Mapping) else None
+    candidate_image = candidate.get("image")
+    candidate_platforms = candidate_image.get("platforms") if isinstance(candidate_image, Mapping) else None
+    candidate_platform = candidate_platforms.get(BINDING_PLATFORM) if isinstance(candidate_platforms, Mapping) else None
+    expected_config = image_record.get("config") if isinstance(image_record, Mapping) else None
+    if not isinstance(expected_config, str) or not isinstance(candidate_platform, Mapping):
+        msg = "build and qualification records do not name the Linux amd64 image"
+        raise ReleaseTaskError(msg)
+    if candidate_platform.get("config") != expected_config:
+        msg = "candidate input image differs from the qualified image"
+        raise ReleaseTaskError(msg)
+    results = qualified.get("tests")
+    gates = (
+        {
+            result.get("gate")
+            for result in results
+            if isinstance(result, Mapping)
+            and result.get("platform") == BINDING_PLATFORM
+            and result.get("image") == expected_config
+        }
+        if isinstance(results, list)
+        else set()
+    )
+    if not {"image-smoke", "compose-lifecycle"} <= gates:
+        msg = "qualification record does not show the Linux amd64 image and Compose checks"
+        raise ReleaseTaskError(msg)
+    image_digest = candidate_platform.get("sha256")
+    if (
+        image_archive.name != "image-linux-amd64.tar"
+        or not isinstance(image_digest, str)
+        or not re.fullmatch(r"[0-9a-f]{64}", image_digest)
+    ):
+        msg = "candidate input does not record the Linux amd64 archive SHA-256"
+        raise ReleaseTaskError(msg)
+    checksums = (
+        (image_archive, image_digest),
+        (bundle, _recorded_checksum(candidate, "bundle", bundle.name)),
+        (example, _recorded_checksum(candidate, "example", example.name)),
+    )
+    for path, digest in checksums:
+        if not path.is_file():
+            msg = f"{path} is missing"
+            raise ReleaseTaskError(msg)
+        if _digest(path) != digest:
+            msg = f"{path.name} checksum does not match the candidate build record"
+            raise ReleaseTaskError(msg)
+    if qualified_bundle != candidate.get("bundle"):
+        msg = "candidate input bundle differs from the qualified bundle"
+        raise ReleaseTaskError(msg)
+    if archive_configuration(image_archive) != expected_config:
+        msg = "image archive does not hold the qualified Linux amd64 image"
+        raise ReleaseTaskError(msg)
+
+
+def write_packet(identity: ReleaseIdentity, image_archive: Path, bundle: Path, example: Path, output: Path) -> Path:
+    """Write the tester layout and its reproducible outer archive."""
+    root_name = f"private-candidate-{identity.version}-{identity.revision[:7]}"
+    root = output / root_name
+    platform_dir = root / "linux-amd64"
+    rmtree(root, ignore_errors=True)
+    platform_dir.mkdir(parents=True)
+    for source, name in (
+        (image_archive, "image-linux-amd64.tar"),
+        (bundle, identity.bundle),
+        (example, "example-package.yml"),
+    ):
+        copyfile(source, platform_dir / name)
+    checksums = "".join(
+        f"{_digest(platform_dir / name)}  {name}\n"
+        for name in ("example-package.yml", "image-linux-amd64.tar", identity.bundle)
+    )
+    (platform_dir / "SHA256SUMS").write_text(checksums, encoding="utf-8")
+    (platform_dir / "README.md").write_bytes(packet_readme(identity))
+    archive = output / f"{root_name}.tar.gz"
+    with (
+        archive.open("wb") as raw,
+        gzip.GzipFile(
+            fileobj=raw, mode="wb", compresslevel=GZIP_LEVEL, filename="", mtime=identity.timestamp
+        ) as compressed,
+        tarfile.open(fileobj=compressed, mode="w", format=ARCHIVE_FORMAT) as opened,
+    ):
+        for path in (root, platform_dir, *sorted(platform_dir.iterdir())):
+            entry = tarfile.TarInfo(path.relative_to(output).as_posix())
+            entry.mtime = identity.timestamp
+            entry.mode = DIRECTORY_MODE if path.is_dir() else 0o644
+            entry.uid = entry.gid = ARCHIVE_OWNER
+            entry.uname = entry.gname = ARCHIVE_OWNER_NAME
+            if path.is_dir():
+                entry.type = tarfile.DIRTYPE
+                opened.addfile(entry)
+            else:
+                entry.size = path.stat().st_size
+                with path.open("rb") as content:
+                    opened.addfile(entry, content)
+    write_checksum(archive)
+    rmtree(root)
+    return archive
+
+
+@task(name="packet")
+def packet(context: Context, output: str = "") -> None:
+    """Build a Linux amd64 tester packet from recorded qualified inputs."""
+    del context
+    from .image import archive_file  # noqa: PLC0415 -- release and image import each other
+
+    identity = read_recorded_identity()
+    candidate = _packet_document(BUNDLE_DIR / CANDIDATE_INPUT_NAME)
+    image_archive = archive_file(BINDING_PLATFORM)
+    bundle = BUNDLE_DIR / identity.bundle
+    _verify_packet_inputs(identity, image_archive, bundle, EXAMPLE_PACKAGE, candidate)
+    archive = write_packet(identity, image_archive, bundle, EXAMPLE_PACKAGE, Path(output) if output else PACKET_DIR)
+    print(f" - [{NAMESPACE}] Packet    {archive}")
+    print(f" - [{NAMESPACE}] Checksum  {archive.with_name(archive.name + CHECKSUM_SUFFIX)}")
+
+
 def _digest(path: Path) -> str:
-    return sha256(path.read_bytes()).hexdigest()
+    digest = sha256()
+    with path.open("rb") as content:
+        for chunk in iter(lambda: content.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
