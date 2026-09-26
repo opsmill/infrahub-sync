@@ -26,12 +26,12 @@ EXCLUDED_DIRS = (DOCS_ROOT / "release-notes", DOCS_ROOT / "develop")
 GUIDE_SUFFIXES = frozenset({".mdx", ".md"})
 
 CANDIDATE_VERSION = re.compile(
-    r"""\b
+    r"""(?<![A-Za-z0-9.])
     v?\d+\.\d+\.\d+                # major.minor.patch, optional leading v
     [-.]?                          # optional separator before the pre-release segment
     (?:a|b|rc|alpha|beta|candidate)
     \d+                            # pre-release number
-    \b""",
+    (?![A-Za-z0-9])""",
     re.IGNORECASE | re.VERBOSE,
 )
 CANDIDATE_NUMBER = re.compile(r"\bCandidate\s+\d+\b", re.IGNORECASE)
@@ -43,11 +43,11 @@ CONTAINER_IMAGE_ALLOWED_VERSIONS = ("3.0.0-a1", "3.0.0alpha1", "v3.0.0a1", "3.0.
 
 def guide_pages() -> list[Path]:
     """Every user-facing docs page plus the bundled skills README, not excluded above."""
-    pages = [
+    pages = sorted(
         path
         for path in DOCS_ROOT.rglob("*")
         if path.suffix in GUIDE_SUFFIXES and not any(excluded in path.parents for excluded in EXCLUDED_DIRS)
-    ]
+    )
     pages.append(REPO_ROOT / "deploy" / "compose" / "skills" / "README.md")
     return pages
 
@@ -72,3 +72,16 @@ def test_no_guide_page_names_a_pinned_candidate(page: Path) -> None:
 
     number_match = CANDIDATE_NUMBER.search(text)
     assert number_match is None, f"{page.relative_to(REPO_ROOT)} names a candidate number: {number_match.group(0)!r}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "infrahub_sync_compose_3.0.0a4/",
+        "image_3.0.0a4.tar",
+        "3.0.0a4_linux",
+    ],
+)
+def test_candidate_version_regex_catches_underscore_adjacent_versions(text: str) -> None:
+    """A version pin next to an underscore, not just a hyphen or space, is still a pin."""
+    assert CANDIDATE_VERSION.search(text) is not None, f"{text!r} should match CANDIDATE_VERSION"
