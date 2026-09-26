@@ -21,7 +21,7 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 # The selected V3 MVP identity. It appears here and in the package metadata; every
 # artifact name below is derived rather than written down a second time.
-VERSION = "3.0.0a4"
+VERSION = "3.0.0a5"
 
 COMMIT = "708a8fca4b3fe300ae33242ddcd791a181926eeb"
 # The two forms Git writes for a commit's own timestamp: a numeric offset, and
@@ -235,7 +235,7 @@ def test_the_dry_run_refuses_a_distribution_the_identity_does_not_name(
     """A distribution named something else is one an upload would publish as this release."""
     _recorded(tmp_path, monkeypatch)
 
-    with pytest.raises(release.ReleaseTaskError, match=r"not the 3\.0\.0a4 distributions"):
+    with pytest.raises(release.ReleaseTaskError, match=r"not the 3\.0\.0a5 distributions"):
         release.build(StubContext(builds=produced))
 
 
