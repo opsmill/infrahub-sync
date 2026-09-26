@@ -1,1 +1,1 @@
-Widen the candidate build's retention read-back tolerance so an upload's own duration no longer fails a fully granted window.
+The candidate build's retention read-back now tolerates the drift an upload's own duration produces, instead of failing a fully granted window.

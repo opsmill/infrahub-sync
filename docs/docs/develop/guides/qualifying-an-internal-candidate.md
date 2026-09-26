@@ -133,9 +133,15 @@ gh api --paginate "repos/$REPO/actions/runs/$RUN/artifacts" \
 cat "$INVENTORY"
 ```
 
-Check that all eight are present, none has expired, and each was granted exactly
-30 days. Asking for a window is not being given one, so this reads what the
-service actually returned:
+Check that all eight are present, none has expired, and each was granted the
+full 30-day window, within the same one-hour drift tolerance the workflow's own
+read-back allows (`RETENTION_DRIFT_TOLERANCE_SECONDS` in
+`workflow-candidate.yml`) — `created_at` trails the start of the upload it
+belongs to, so a window compared against it always looks a little short.
+Truncating to whole days before comparing would hide that shortfall behind a
+day boundary instead of measuring it, so this compares in seconds. Asking for a
+window is not being given one, so this reads what the service actually
+returned:
 
 ```bash
 for name in \
@@ -156,11 +162,15 @@ do
   created=$(printf '%s' "$entry" | cut -f4)
   expires=$(printf '%s' "$entry" | cut -f5)
   expired=$(printf '%s' "$entry" | cut -f6)
-  granted=$(( ( $(date -u -d "$expires" +%s) - $(date -u -d "$created" +%s) ) / 86400 ))
-  if [ "$granted" -eq 30 ] && [ "$expired" = "false" ]; then
-    printf 'OK       %-42s granted %sd, expires %s\n' "$name" "$granted" "$expires"
+  granted=$(( $(date -u -d "$expires" +%s) - $(date -u -d "$created" +%s) ))
+  drift=$(( granted - 30 * 86400 ))
+  if [ "$drift" -lt 0 ]; then
+    drift=$(( -drift ))
+  fi
+  if [ "$drift" -le 3600 ] && [ "$expired" = "false" ]; then
+    printf 'OK       %-42s granted %ss, expires %s\n' "$name" "$granted" "$expires"
   else
-    printf 'WRONG    %-42s granted %sd, expired=%s\n' "$name" "$granted" "$expired"
+    printf 'WRONG    %-42s granted %ss, expired=%s\n' "$name" "$granted" "$expired"
   fi
 done
 ```

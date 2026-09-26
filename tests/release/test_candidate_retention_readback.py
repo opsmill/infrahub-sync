@@ -139,7 +139,9 @@ def stubs(tmp_path: Path) -> Path:
     return binaries
 
 
-def read_back(tmp_path: Path, binaries: Path, job: str, body: str) -> subprocess.CompletedProcess[str]:
+def read_back(
+    tmp_path: Path, binaries: Path, job: str, body: str, *, tolerance: str = str(TOLERANCE)
+) -> subprocess.CompletedProcess[str]:
     """Run the named job's own read-back against one rendered inventory."""
     fixture = tmp_path / "inventory.tsv"
     fixture.write_text(body, encoding="utf-8")
@@ -157,7 +159,7 @@ def read_back(tmp_path: Path, binaries: Path, job: str, body: str) -> subprocess
             "REPOSITORY": "opsmill/infrahub-sync",
             "RUN_ID": "1",
             "CANDIDATE_RETENTION_DAYS": str(WINDOW),
-            "RETENTION_DRIFT_TOLERANCE_SECONDS": str(TOLERANCE),
+            "RETENTION_DRIFT_TOLERANCE_SECONDS": tolerance,
         },
     )
 
@@ -174,7 +176,7 @@ def test_it_accepts_the_window_the_service_nominally_granted(tmp_path: Path, stu
 @pytest.mark.parametrize(
     "drift",
     [-TOLERANCE, -DAY // 48, -50, -1, 1, DAY // 48, TOLERANCE],
-    ids=["-1h", "-30m", "-50s", "-1s", "+1s", "+30m", "+1h"],
+    ids=lambda drift: f"{drift:+d}s",
 )
 def test_it_accepts_a_window_within_the_drift_tolerance(tmp_path: Path, stubs: Path, job: str, drift: int) -> None:
     """`created_at` trails the start of the upload it belongs to.
@@ -194,7 +196,7 @@ def test_it_accepts_a_window_within_the_drift_tolerance(tmp_path: Path, stubs: P
 @pytest.mark.parametrize(
     "shortfall",
     [TOLERANCE + 1, DAY // 2, DAY],
-    ids=["just-over-an-hour", "half-a-day", "a-day"],
+    ids=lambda shortfall: f"-{shortfall}s",
 )
 def test_it_refuses_a_window_short_of_the_one_asked_for(tmp_path: Path, stubs: Path, job: str, shortfall: int) -> None:
     """Beyond the tolerance, short is short. A day or more must still refuse.
@@ -238,10 +240,39 @@ def test_it_refuses_a_run_missing_its_only_group(tmp_path: Path, stubs: Path) ->
 
 
 @pytest.mark.parametrize("job", JOBS)
-@pytest.mark.parametrize("excess", [TOLERANCE + 1, DAY // 2, DAY], ids=["just-over-an-hour", "half-a-day", "a-day"])
+@pytest.mark.parametrize("excess", [TOLERANCE + 1, DAY // 2, DAY], ids=lambda excess: f"+{excess}s")
 def test_it_refuses_a_window_longer_than_the_one_asked_for(tmp_path: Path, stubs: Path, job: str, excess: int) -> None:
     """Longer is not safer. The record binds an approval to a stated window, not a minimum."""
     groups = GROUPS_BY_JOB[job]
     finished = read_back(tmp_path, stubs, job, inventory(groups, {groups[0]: WINDOW * DAY + excess}))
 
     assert finished.returncode != 0, f"a window {excess}s long was accepted"
+
+
+@pytest.mark.parametrize("job", JOBS)
+@pytest.mark.parametrize(
+    "value",
+    ["", "1h", "3600s", " 3600", "-5", "3.5", "0x10"],
+    ids=["empty", "unit-suffixed", "trailing-unit", "leading-space", "negative", "fractional", "hex"],
+)
+def test_it_refuses_a_tolerance_that_is_not_a_plain_integer(tmp_path: Path, stubs: Path, job: str, value: str) -> None:
+    """RETENTION_DRIFT_TOLERANCE_SECONDS feeds a shell `-gt` comparison directly.
+
+    A value that is not a plain non-negative integer makes that comparison
+    fail open rather than fail the run, silently accepting any window at all.
+    The guard has to reject it before the comparison ever runs.
+    """
+    groups = GROUPS_BY_JOB[job]
+    finished = read_back(tmp_path, stubs, job, inventory(groups, {}), tolerance=value)
+
+    assert finished.returncode != 0, f"tolerance {value!r} was accepted"
+    assert "RETENTION_DRIFT_TOLERANCE_SECONDS" in finished.stdout + finished.stderr
+
+
+@pytest.mark.parametrize("job", JOBS)
+def test_it_accepts_a_tolerance_of_zero(tmp_path: Path, stubs: Path, job: str) -> None:
+    """0 is a plain non-negative integer, so the guard passes it through -- exact equality is still valid."""
+    groups = GROUPS_BY_JOB[job]
+    finished = read_back(tmp_path, stubs, job, inventory(groups, {}), tolerance="0")
+
+    assert finished.returncode == 0, finished.stdout + finished.stderr
