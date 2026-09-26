@@ -205,12 +205,13 @@ Run these commands from the repository root:
    ```
 
 2. Start a fresh preview stack. The worker resolves the package's `netbox-token` credential
-   from its own environment, so export the printed NetBox token before `preview.up` starts
-   it. `preview.up` sets `INFRAHUB_API_TOKEN` for the worker itself.
+   from its own environment, so set `NETBOX_TOKEN` to the token that step 1 printed before
+   `preview.up` starts the worker. `preview.up` sets `INFRAHUB_API_TOKEN` for the worker
+   itself.
 
    ```bash
    uv run invoke preview.down --volumes
-   NETBOX_TOKEN="nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000" uv run invoke preview.up
+   NETBOX_TOKEN="<token printed by netbox.seed>" uv run invoke preview.up
    ```
 
 3. Load the schema library into the preview Infrahub. The example maps onto the 16 schemas
@@ -223,6 +224,9 @@ Run these commands from the repository root:
    uv run infrahubctl marketplace get infrahub/traditional-infrastructure-sot --collection --output-dir .netbox/schemas
    uv run infrahubctl schema load .netbox/schemas --wait 60
    ```
+
+   The Marketplace sometimes takes longer to answer than `marketplace get` waits. If the
+   command fails with `Marketplace request failed: ReadTimeout`, run it again.
 
 4. Write the local package and register it. The shipped package names the public NetBox
    demo and an Infrahub on port 8000. `netbox.demo-package` writes

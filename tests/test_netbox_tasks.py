@@ -334,9 +334,57 @@ def test_seed_demo_restores_into_a_fresh_database_then_creates_the_token(
     )
     assert "Token.objects.create(" in events[5]
     assert events[6:] == ["wait NetBox"]
+    # The changed copy is removed once restored; only the verified dump stays.
+    assert not restore_file.exists()
+    assert sql_file.exists()
     printed = capsys.readouterr().out
     assert "http://localhost:8082" in printed
     assert "nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000" in printed
+
+
+def test_seed_demo_refuses_a_dump_without_the_search_path_line_before_touching_the_database(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sql_file = tmp_path / "demo.sql"
+    sql_file.write_text("SELECT 1;\n", encoding="utf-8")
+    restore_file = tmp_path / "demo.restore.sql"
+    real_prepare = netbox.prepare_restore_sql
+    events: list[str] = []
+    monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
+    monkeypatch.setattr(netbox, "fetch_demo_sql", lambda: sql_file)
+    monkeypatch.setattr(netbox, "prepare_restore_sql", lambda source: real_prepare(source, restore_file))
+    monkeypatch.setattr(netbox, "_compose", lambda _context, arguments, _values: events.append(arguments))
+    monkeypatch.setattr(netbox, "_wait_for_http", lambda *_args, **_kwargs: events.append("wait"))
+
+    with pytest.raises(netbox.NetboxError, match="exactly once, found 0"):
+        cast("Task", netbox.seed).body(Context(), dataset="demo")
+
+    assert events == []
+    assert not restore_file.exists()
+
+
+def test_restore_demo_database_removes_the_changed_copy_when_the_restore_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sql_file = tmp_path / "demo.sql"
+    sql_file.write_text(f"{netbox.DEMO_SQL_SEARCH_PATH_LINE}\nSELECT 1;\n", encoding="utf-8")
+    restore_file = tmp_path / "demo.restore.sql"
+    real_prepare = netbox.prepare_restore_sql
+    monkeypatch.setattr(netbox, "prepare_restore_sql", lambda source: real_prepare(source, restore_file))
+
+    def compose(_context: Context, arguments: str, _values: dict[str, str]) -> None:
+        if "ON_ERROR_STOP" in arguments:
+            assert restore_file.exists()
+            msg = "restore failed"
+            raise netbox.NetboxError(msg)
+
+    monkeypatch.setattr(netbox, "_compose", compose)
+
+    with pytest.raises(netbox.NetboxError, match="restore failed"):
+        netbox.restore_demo_database(Context(), REQUIRED_VALUES, sql_file)
+
+    assert not restore_file.exists()
+    assert sql_file.exists()
 
 
 def test_prepare_restore_sql_changes_only_the_search_path_line(tmp_path: Path) -> None:
@@ -374,6 +422,16 @@ def test_local_package_text_replaces_only_the_two_urls() -> None:
     local_package["configuration"]["destination"]["settings"]["url"] = netbox.SHIPPED_INFRAHUB_URL
     assert local_package == shipped_package
     assert len(local.splitlines()) == len(shipped.splitlines())
+
+
+def test_local_package_text_accepts_a_netbox_url_equal_to_the_shipped_infrahub_url() -> None:
+    """A local NetBox on port 8000 must not make the shipped Infrahub line count twice."""
+    shipped = netbox.SHIPPED_PACKAGE.read_text(encoding="utf-8")
+
+    local = yaml.safe_load(netbox.local_package_text(shipped, netbox.SHIPPED_INFRAHUB_URL, "http://localhost:8080"))
+
+    assert local["configuration"]["source"]["settings"]["url"] == netbox.SHIPPED_INFRAHUB_URL
+    assert local["configuration"]["destination"]["settings"]["url"] == "http://localhost:8080"
 
 
 def test_local_package_text_refuses_a_package_without_the_public_demo_url() -> None:

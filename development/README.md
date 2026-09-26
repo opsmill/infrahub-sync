@@ -143,4 +143,4 @@ lists every command, from a fresh Infrahub to `diff` and `sync`.
 | `netbox/netbox.local.env` | Your personal overrides (gitignored). |
 | `netbox/datasets/seed_netbox.py` | The `seed` dataset's seeder script. Asserts the instance is empty before writing and never deletes. |
 | `../tasks/netbox.py` | The `demo` dataset's pinned commit, URL, and SHA-256, and the restore steps. |
-| `../.netbox/` | Gitignored. The downloaded demo dump, the copy that is restored, and the generated `from-netbox.local.yml`. |
+| `../.netbox/` | Gitignored. The downloaded demo dump and the generated `from-netbox.local.yml`. The restore writes a changed copy of the dump here and deletes it when the restore ends. |

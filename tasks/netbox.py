@@ -293,7 +293,8 @@ def restore_demo_database(context: Context, values: dict[str, str], sql_file: Pa
     an empty database first. The dump assigns its schema to a `postgres` role, which this
     image does not have, so an empty role of that name is created before the restore. The
     restore runs in one transaction and stops at the first error. NetBox then starts
-    against the restored data and applies only migrations newer than the dump.
+    against the restored data and applies only migrations newer than the dump. The
+    restored copy of the dump is deleted once the restore finishes or fails.
     """
     restore_file = prepare_restore_sql(sql_file)
     print(f" - [{NAMESPACE}] Resetting the local NetBox database")
@@ -302,11 +303,15 @@ def restore_demo_database(context: Context, values: dict[str, str], sql_file: Pa
     psql = "exec -T netbox-database psql --quiet --username netbox --dbname netbox"
     _compose(context, f"{psql} --command {shlex.quote('CREATE ROLE postgres NOLOGIN')}", values)
     print(f" - [{NAMESPACE}] Restoring {sql_file}")
-    _compose(
-        context,
-        f"{psql} --set ON_ERROR_STOP=1 --single-transaction --output /dev/null < {shlex.quote(str(restore_file))}",
-        values,
-    )
+    try:
+        _compose(
+            context,
+            f"{psql} --set ON_ERROR_STOP=1 --single-transaction --output /dev/null < {shlex.quote(str(restore_file))}",
+            values,
+        )
+    finally:
+        # The copy is regenerated from the verified dump on every restore; keep only the dump.
+        restore_file.unlink(missing_ok=True)
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", values)
     _compose(
         context,
@@ -324,15 +329,25 @@ def local_package_text(shipped: str, netbox: str, infrahub: str) -> str:
     shipped package changed shape, and a guessed replacement could point the copy at the
     public demo.
     """
-    text = shipped
-    for current, replacement in ((SHIPPED_NETBOX_URL, netbox), (SHIPPED_INFRAHUB_URL, infrahub)):
-        line = f"url: {json.dumps(current)}"
-        count = text.count(line)
+    replacements = {
+        f"url: {json.dumps(SHIPPED_NETBOX_URL)}": f"url: {json.dumps(netbox)}",
+        f"url: {json.dumps(SHIPPED_INFRAHUB_URL)}": f"url: {json.dumps(infrahub)}",
+    }
+    # Count both lines in the shipped text before replacing either: a replacement URL can
+    # equal the other shipped URL (a local NetBox on port 8000), and counting after the first
+    # replacement would then blame the shipped package.
+    for line in replacements:
+        count = shipped.count(line)
         if count != 1:
             msg = f"{SHIPPED_PACKAGE} must contain {line!r} exactly once, found {count}"
             raise NetboxError(msg)
-        text = text.replace(line, f"url: {json.dumps(replacement)}")
-    return text
+    lines = shipped.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        for current, replacement in replacements.items():
+            if current in line:
+                lines[index] = line.replace(current, replacement)
+                break
+    return "".join(lines)
 
 
 def _print_ready_banner(values: dict[str, str]) -> None:
