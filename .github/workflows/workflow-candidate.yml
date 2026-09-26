@@ -329,6 +329,13 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
+          case "$RETENTION_DRIFT_TOLERANCE_SECONDS" in
+            ''|*[!0-9]*)
+              echo "RETENTION_DRIFT_TOLERANCE_SECONDS must be a positive integer of seconds," \
+                "got '${RETENTION_DRIFT_TOLERANCE_SECONDS}'" >&2
+              exit 1
+              ;;
+          esac
           gh api --paginate "repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
             --jq '.artifacts[] | [.name, .created_at, .expires_at] | @tsv' > "${RUNNER_TEMP}/retention.tsv"
           missing=""
@@ -469,6 +476,13 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
+          case "$RETENTION_DRIFT_TOLERANCE_SECONDS" in
+            ''|*[!0-9]*)
+              echo "RETENTION_DRIFT_TOLERANCE_SECONDS must be a positive integer of seconds," \
+                "got '${RETENTION_DRIFT_TOLERANCE_SECONDS}'" >&2
+              exit 1
+              ;;
+          esac
           gh api --paginate "repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
             --jq '.artifacts[] | [.name, .created_at, .expires_at] | @tsv' > "${RUNNER_TEMP}/retention.tsv"
           name=infrahub-sync-candidate-packet

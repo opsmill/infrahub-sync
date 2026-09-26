@@ -48,9 +48,19 @@ CANDIDATE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "workflow-candidate.y
 SHELL = shutil.which("bash") or "bash"
 WINDOW = 30
 DAY = 86400
-# Kept in sync with RETENTION_DRIFT_TOLERANCE_SECONDS in the workflow itself;
-# these cases pin the workflow's value indirectly by asserting the boundary.
-TOLERANCE = 3600
+
+
+def _workflow_tolerance() -> int:
+    """Read RETENTION_DRIFT_TOLERANCE_SECONDS from the workflow's own env block.
+
+    A boundary case that hardcoded this value would keep passing even if the
+    workflow's tolerance changed, so it would stop actually pinning anything.
+    """
+    document = yaml.safe_load(CANDIDATE_WORKFLOW.read_text(encoding="utf-8"))
+    return int(document["env"]["RETENTION_DRIFT_TOLERANCE_SECONDS"])
+
+
+TOLERANCE = _workflow_tolerance()
 
 # The step is found by what it does, not by its name.
 READBACK_MARKERS = ("actions/runs", "expires_at")
