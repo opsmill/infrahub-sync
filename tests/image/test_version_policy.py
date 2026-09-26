@@ -29,6 +29,7 @@ LOCK = REPO_ROOT / "uv.lock"
 RUNTIME_BASE_TAG = "python:3.13-slim-bookworm"
 RUNTIME_PYTHON_FLOOR = Version("3.13.14")
 PCRE2_SECURITY_RELEASE = "10.42-1+deb12u1"
+OPENSSL_SECURITY_RELEASE = "3.0.22-1~deb12u1"
 
 PYARROW_FIX = Version("23.0.1")
 
@@ -78,6 +79,15 @@ def test_the_runtime_installs_the_pcre2_security_release() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
 
     assert f"libpcre2-8-0={PCRE2_SECURITY_RELEASE}" in dockerfile
+
+
+@pytest.mark.parametrize("package", ["libssl3", "openssl"])
+def test_the_runtime_installs_the_openssl_security_release(package: str) -> None:
+    """The pinned base predates the Debian security update for CVE-2026-75803,
+    CVE-2026-63072, CVE-2026-63076, and CVE-2026-54874."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert f"{package}={OPENSSL_SECURITY_RELEASE}" in dockerfile
 
 
 @pytest.mark.parametrize(("package", "accepted"), sorted(FIX_RANGES.items()))
