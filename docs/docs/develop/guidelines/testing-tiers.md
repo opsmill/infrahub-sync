@@ -192,8 +192,8 @@ It runs against the local `demo` dataset, never the public NetBox demo. The publ
 shared, so other users change its data between runs. The `demo` dataset is the official
 NetBox demo data from `netbox-community/netbox-demo-data`, restored from a SQL dump that is
 pinned to one commit and one SHA-256 checksum. `netbox.seed --dataset demo` downloads the
-dump into the gitignored `.netbox/` directory. It stops before it touches the database if the
-checksum does not match.
+dump into the `.netbox/` directory, which Git ignores. It stops before it touches the database
+if the checksum does not match.
 
 Run these commands from the repository root:
 
