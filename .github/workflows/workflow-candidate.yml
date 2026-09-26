@@ -377,6 +377,109 @@ jobs:
           if-no-files-found: ignore
           retention-days: ${{ env.DIAGNOSTIC_RETENTION_DAYS }}
 
+  # Built from this run's own uploads rather than inline in the job above: the
+  # raw archive the packet ships is gone by the time qualification finishes
+  # (`compose.reclaim` frees the disk the lifecycle needs before it runs), so the
+  # bytes a tester gets can only come from what the candidate job already
+  # retained. A private packet, never published: the same read-only permissions
+  # and the same 30-day window as everything else this route keeps.
+  packet:
+    name: "Build the Linux amd64 tester packet"
+    needs: ["candidate"]
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: "Check out the exact commit this run was told to build"
+        uses: "actions/checkout@v5"
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+
+      - name: "Install uv"
+        uses: "astral-sh/setup-uv@v4"
+        with:
+          version: "latest"
+          python-version: "3.13"
+
+      - name: "Install dependencies"
+        run: uv sync --frozen --extra dev --extra prefect --extra service
+
+      # The image artifact still holds the archive `compose.reclaim` deleted from
+      # this run's own disk, because it was uploaded before that step ran.
+      - name: "Download the image this run built"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-candidate-image
+          path: .image
+
+      - name: "Download the recorded identity"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-candidate-identity
+          path: .release
+
+      - name: "Download the deployment bundle and its recorded candidate input"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-candidate-bundle
+          path: .release/bundle
+
+      - name: "Download the qualification record"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-qualification-record
+          path: .release
+
+      # Refuses before writing anything if one of the four downloads above does
+      # not match what the candidate job actually qualified.
+      - name: "Build the Linux amd64 tester packet"
+        run: uv run --no-sync invoke release.packet
+
+      - name: "Publish the tester packet and its checksum"
+        id: candidate-packet
+        uses: actions/upload-artifact@v4
+        with:
+          name: infrahub-sync-candidate-packet
+          path: .release/packet/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: ${{ env.CANDIDATE_RETENTION_DAYS }}
+
+      # This job's own proof, for the one artifact it retains: asking for a
+      # window is not being granted one.
+      - name: "Prove the service granted the window this packet asked for"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
+            --jq '.artifacts[] | [.name, .created_at, .expires_at] | @tsv' > "${RUNNER_TEMP}/retention.tsv"
+          name=infrahub-sync-candidate-packet
+          entry=$(awk -F'\t' -v wanted="$name" '$1 == wanted {print $2 "\t" $3; exit}' "${RUNNER_TEMP}/retention.tsv")
+          if [ -z "$entry" ]; then
+            echo "this run is holding no artifact named $name" >&2
+            exit 1
+          fi
+          created=$(printf '%s' "$entry" | cut -f1)
+          expires=$(printf '%s' "$entry" | cut -f2)
+          expected=$(( CANDIDATE_RETENTION_DAYS * 86400 ))
+          elapsed=$(( $(date -u -d "$expires" +%s) - $(date -u -d "$created" +%s) ))
+          drift=$(( elapsed - expected ))
+          if [ "$drift" -lt 0 ]; then
+            drift=$(( -drift ))
+          fi
+          if [ "$drift" -gt 1 ]; then
+            echo "$name was granted ${elapsed}s, not the ${expected}s" \
+              "(${CANDIDATE_RETENTION_DAYS} days) an approval needs" >&2
+            exit 1
+          fi
+          echo "$name expires $expires, ${elapsed}s after its upload"
+
   # A host that has never seen this repository: no checkout, no interpreter, and
   # nothing but what the job above retained. Every download is of this run's own
   # artifacts, because naming another run's would qualify a candidate some other
@@ -445,3 +548,68 @@ jobs:
           path: kit/work/diagnostic.txt
           if-no-files-found: ignore
           retention-days: ${{ env.DIAGNOSTIC_RETENTION_DAYS }}
+
+  # The tester path, rehearsed from what a tester actually receives: one
+  # download, on a host that has never seen this repository and never pulled
+  # this image. Nothing here reads a candidate artifact directly -- everything
+  # the packet's own README asks a tester to check or run is checked or run
+  # here, and nothing else.
+  packet-rehearsal:
+    name: "Tester packet rehearsal (linux/amd64, no checkout, no preloaded images)"
+    needs: ["packet"]
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 45
+    steps:
+      - name: "Download the tester packet this run built"
+        uses: actions/download-artifact@v4
+        with:
+          name: infrahub-sync-candidate-packet
+          path: packet
+
+      - name: "Rehearse the tester path from the packet alone"
+        timeout-minutes: 30
+        working-directory: packet
+        run: |
+          set -euo pipefail
+          archive=$(ls -- *.tar.gz)
+          sha256sum -c "${archive}.sha256"
+          tar -xzf "$archive"
+          root=${archive%.tar.gz}
+          cd "$root/linux-amd64"
+          sha256sum -c SHA256SUMS
+
+          version=$(sed -n 's/^Version: //p' README.md)
+          revision=$(sed -n 's/^Commit: //p' README.md)
+          test -n "$version" && test -n "$revision"
+
+          loaded=$(docker load -i image-linux-amd64.tar | sed -n 's/^Loaded image[^:]*: //p')
+          version_format='{{index .Config.Labels "org.opencontainers.image.version"}}'
+          revision_format='{{index .Config.Labels "org.opencontainers.image.revision"}}'
+          image_version=$(docker image inspect --format "$version_format" "$loaded")
+          image_revision=$(docker image inspect --format "$revision_format" "$loaded")
+          test "$image_version" = "$version" \
+            || { echo "the loaded image's version label $image_version does not match $version" >&2; exit 1; }
+          test "$image_revision" = "$revision" \
+            || { echo "the loaded image's revision label $image_revision does not match $revision" >&2; exit 1; }
+
+          bundle=$(ls -- infrahub-sync-compose-*.tar.gz)
+          tar -xzf "$bundle"
+          cd "${bundle%.tar.gz}"
+          ./infrahub-sync-compose init
+          ./infrahub-sync-compose start
+          ./infrahub-sync-compose status
+
+          registered=$(./infrahub-sync-compose cli configs list)
+          test -z "$registered" \
+            || { echo "the configuration registry is not empty: $registered" >&2; exit 1; }
+
+          instance=$(sed -n 's/^INFRAHUB_SYNC_INSTANCE=//p' .instance)
+          ./infrahub-sync-compose reset "$instance"
+
+      - name: "Report this deployment's logs"
+        if: failure()
+        working-directory: packet
+        run: |
+          set +e
+          bundle_dir=$(find . -mindepth 3 -maxdepth 3 -type d -name 'infrahub-sync-compose-*')
+          [ -d "$bundle_dir" ] && "$bundle_dir/infrahub-sync-compose" logs

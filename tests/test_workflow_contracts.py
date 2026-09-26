@@ -138,6 +138,15 @@ DOWNLOAD_ACTION = "actions/download-artifact"
 # driver on the same kind of host, so every property of the job holds on both.
 CLEAN_HOST_ROUTES = (IMAGE_WORKFLOW, CANDIDATE_WORKFLOW)
 
+# The candidate route's own two jobs: one builds the tester packet from what the
+# candidate job retained -- the raw archive is gone from disk by the time
+# qualification finishes, so it can only be built from the upload -- and the
+# other rehearses the tester path from that one download, on a host that has
+# never seen this repository and never pulled the image either.
+PACKET_JOB = "packet"
+PACKET_REHEARSAL_JOB = "packet-rehearsal"
+PACKET_ARTIFACT = "infrahub-sync-candidate-packet"
+
 # The manual candidate route. The commit to build is an input rather than the
 # ref's tip: `workflow_dispatch` runs against a ref, so a branch that moved
 # between the merge and the dispatch would build different source.
@@ -165,6 +174,7 @@ CANDIDATE_GROUPS = frozenset(
         "infrahub-sync-candidate-sboms",
         "infrahub-sync-qualification-kit",
         "infrahub-sync-qualification-record",
+        "infrahub-sync-candidate-packet",
     }
 )
 # Asking for a window is not being granted one, so the run reads its own
@@ -1273,32 +1283,150 @@ def test_the_candidate_route_retains_every_group_for_exactly_the_window_it_names
     assert load(CANDIDATE_WORKFLOW)["env"][CANDIDATE_WINDOW_NAME] == CANDIDATE_WINDOW_DAYS
 
 
-def test_the_candidate_run_reads_back_the_window_the_service_actually_granted() -> None:
+def test_every_candidate_producing_job_reads_back_the_window_the_service_actually_granted() -> None:
     """Requesting 30 days is not being given 30 days, and the difference is only visible after upload.
 
-    Every group the workflow uploads is named in the read-back, derived from the
+    Every group the workflow uploads is named in a read-back, derived from the
     uploads themselves: a group added without being read back would be retained
-    on a promise instead of on the expiry the service returned.
+    on a promise instead of on the expiry the service returned. Read back inside
+    the job that made the upload, one script per job: the packet is a second
+    job's own retained bytes, built after the first job already reported what it
+    was granted, so its proof cannot live in that first script without naming an
+    artifact that does not exist yet when it runs.
     """
-    reading = [
-        step
-        for step in candidate_steps("candidate")
-        if all(marker in str(step.get("run", "")) for marker in RETENTION_READBACK)
+    by_job: dict[str, set[str]] = {}
+    for path, job, _step, declared in candidates():
+        if path == CANDIDATE_WORKFLOW:
+            by_job.setdefault(job, set()).add(str(declared["name"]))
+
+    assert by_job, f"{CANDIDATE_WORKFLOW.name} retains nothing to read back"
+    for job, names in by_job.items():
+        reading = [
+            step
+            for step in candidate_steps(job)
+            if all(marker in str(step.get("run", "")) for marker in RETENTION_READBACK)
+        ]
+
+        assert len(reading) == 1, f"{len(reading)} steps of {job!r} read the granted retention back"
+        script = str(reading[0]["run"])
+        for name in names:
+            assert name in script, f"{job!r}'s read-back never names {name}"
+        assert CANDIDATE_WINDOW_NAME in script, f"{job!r}'s read-back compares the expiry against no window"
+        assert re.search(r"exit\s+1", script), f"{job!r}'s read-back cannot fail a run whose bytes will not survive"
+        # How wide the tolerance is, and whether it is a tolerance at all, is
+        # proved by running this script in
+        # `tests/release/test_candidate_retention_readback.py`. Pinning the
+        # arithmetic here as text would fix the spelling of a bound rather than
+        # the bound, so what is asserted is only that the comparison is made in
+        # seconds against the declared window.
+        assert "86400" in script, f"{job!r}'s read-back does not compare against the window in seconds"
+
+
+def test_the_packet_job_builds_from_this_runs_own_uploads_and_installs_no_publication() -> None:
+    """The raw archive is gone by the time qualification finishes, so the packet can only come from a download.
+
+    `compose.reclaim` frees the disk the lifecycle needs before it runs, deleting
+    the exported archive from the candidate job's own filesystem. The image
+    artifact still holds it, because the upload ran before the reclaim. Building
+    the packet from anywhere but that download, and the bundle, identity and
+    qualification-record uploads beside it, would either fail on a missing file
+    or read a stale one a later re-run of the same job left behind.
+    """
+    steps = candidate_steps(PACKET_JOB)
+    downloaded = {
+        str((step.get("with") or {}).get("name", ""))
+        for step in steps
+        if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
+    }
+    building = [step for step in steps if "invoke release.packet" in str(step.get("run", ""))]
+
+    assert {
+        "infrahub-sync-candidate-image",
+        "infrahub-sync-candidate-identity",
+        "infrahub-sync-candidate-bundle",
+        "infrahub-sync-qualification-record",
+    } <= downloaded, f"{PACKET_JOB!r} downloads {sorted(downloaded)}, missing a recorded input `release.packet` reads"
+    assert len(building) == 1, f"{len(building)} steps of {PACKET_JOB!r} run `invoke release.packet`"
+
+
+def test_the_packet_job_downloads_only_this_runs_own_artifacts() -> None:
+    """Naming a `run-id` is the one edit that would package a candidate some other commit built."""
+    downloads = [
+        step for step in candidate_steps(PACKET_JOB) if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
     ]
 
-    assert len(reading) == 1, f"{len(reading)} steps read the granted retention back"
-    script = str(reading[0]["run"])
-    for path, _job, _step, declared in candidates():
-        if path == CANDIDATE_WORKFLOW:
-            assert str(declared["name"]) in script, f"the read-back never names {declared['name']}"
-    assert CANDIDATE_WINDOW_NAME in script, "the read-back compares the expiry against no window"
-    assert re.search(r"exit\s+1", script), "the read-back cannot fail a run whose bytes will not survive"
-    # How wide the tolerance is, and whether it is a tolerance at all, is proved
-    # by running this script in `tests/release/test_candidate_retention_readback.py`.
-    # Pinning the arithmetic here as text would fix the spelling of a bound
-    # rather than the bound, so what is asserted is only that the comparison is
-    # made in seconds against the declared window.
-    assert "86400" in script, "the read-back does not compare against the window in seconds"
+    assert downloads, f"{PACKET_JOB!r} downloads nothing, so it packages nothing"
+    for step in downloads:
+        assert "run-id" not in (step.get("with") or {}), f"{_step_name(step)!r} downloads from another run"
+
+
+def test_the_packet_job_checks_out_the_named_commit_with_the_required_profile() -> None:
+    """The packet job runs Invoke tasks, so it needs the same commit and profile the candidate job used."""
+    steps = candidate_steps(PACKET_JOB)
+    checkouts = [step for step in steps if str(step.get("uses", "")).startswith(CHECKOUT_ACTION)]
+    installs = [str(step.get("run", "")) for step in steps if "uv sync" in str(step.get("run", ""))]
+
+    assert len(checkouts) == 1, f"{len(checkouts)} steps of {PACKET_JOB!r} check something out"
+    declared = checkouts[0]["with"]
+    assert declared["ref"] == f"${{{{ inputs.{SHA_INPUT} }}}}", f"the checkout takes {declared.get('ref')!r}"
+    assert declared.get(PERSISTED_CREDENTIALS) is False, f"{PACKET_JOB!r} keeps the run's token in its checkout"
+    assert installs == ["uv sync --frozen --extra dev --extra prefect --extra service"]
+
+
+def test_the_packet_rehearsal_job_needs_the_job_that_builds_the_packet() -> None:
+    """A literal job name is not evidence that the dependency still produces the packet."""
+    downloaded = {
+        str((step.get("with") or {}).get("name", ""))
+        for step in candidate_steps(PACKET_REHEARSAL_JOB)
+        if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
+    }
+    producing = {
+        job
+        for path, job, _step, declared in candidates()
+        if path == CANDIDATE_WORKFLOW and str(declared.get("name", "")) in downloaded
+    }
+
+    assert downloaded == {PACKET_ARTIFACT}, (
+        f"{PACKET_REHEARSAL_JOB!r} downloads {sorted(downloaded)}, not the packet alone"
+    )
+    assert producing <= set(_needs(job_of(CANDIDATE_WORKFLOW, PACKET_REHEARSAL_JOB))), (
+        f"{PACKET_REHEARSAL_JOB!r} does not need {sorted(producing)}, which produces what it downloads"
+    )
+
+
+def test_the_packet_rehearsal_job_checks_nothing_out_and_installs_no_interpreter() -> None:
+    """The subject is the packet a tester receives, so nothing this repository built directly is present."""
+    job = job_of(CANDIDATE_WORKFLOW, PACKET_REHEARSAL_JOB)
+    rendered = yaml.safe_dump(job)
+
+    assert CHECKOUT_ACTION not in rendered
+    for action in INTERPRETER_ACTIONS:
+        assert action not in rendered, f"{PACKET_REHEARSAL_JOB!r} sets up an interpreter with {action}"
+    for step in job["steps"]:
+        for tool in HOST_TOOLS:
+            assert tool not in str(step.get("run", "")), f"{PACKET_REHEARSAL_JOB!r} runs {tool.strip()} on the host"
+
+
+def test_the_packet_rehearsal_verifies_both_checksums_the_image_labels_and_the_empty_registry() -> None:
+    """Every claim the packet's own README makes to a tester is exercised here, and nothing else.
+
+    The outer archive, the inner layout, the loaded image's identity, a `READY`
+    deployment, and an empty configuration registry -- the same five things
+    `docs/docs/develop/guides/building-a-tester-packet.md` tells a tester to
+    check, run from the one download this job takes.
+    """
+    steps = candidate_steps(PACKET_REHEARSAL_JOB)
+    script = "\n".join(str(step.get("run", "")) for step in steps)
+
+    assert script.count("sha256sum -c") == 2, "the rehearsal does not verify both the outer and inner checksums"
+    assert "docker load" in script, "the rehearsal never loads the image the packet ships"
+    assert "org.opencontainers.image.version" in script, "the rehearsal never reads the loaded image's version label"
+    assert "org.opencontainers.image.revision" in script, "the rehearsal never reads the loaded image's revision label"
+    assert "./infrahub-sync-compose init" in script
+    assert "./infrahub-sync-compose start" in script
+    assert "./infrahub-sync-compose status" in script
+    assert "configs list" in script, "the rehearsal never checks that the configuration registry is empty"
+    assert "./infrahub-sync-compose reset" in script, "the rehearsal never tears the deployment down"
 
 
 def test_the_candidate_route_reaches_no_publication_of_any_kind() -> None:
