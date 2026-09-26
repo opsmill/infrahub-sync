@@ -78,34 +78,69 @@ smoke suite is `tests/preview/`, opt-in via `pytest -m preview` and driven by
 `preview.smoke`; see
 [Testing tiers](../docs/docs/develop/guidelines/testing-tiers.md) for what each suite needs.
 
-## Local NetBox for the saved-plan apply test
+## Local NetBox
 
-`tests/integration/test_saved_plan_apply_integration.py` needs a source NetBox seeded with a
-fixed, deterministic dataset — sites `site-a`/`site-b`/`site-c`, racks
-`rack-site-<x>-<n>`, devices `dev-01`…`dev-40`, tags `tag-01`…`tag-10`. `development/netbox/`
-provisions exactly that, disposable and local, following the same pattern as the preview
-environment above.
+`development/netbox/` provisions a disposable, local NetBox, following the same pattern as
+the preview environment above. It loads one of two datasets. Each dataset replaces the whole
+NetBox database, so only one is loaded at a time.
+
+| Dataset | Contents | Used by |
+| --- | --- | --- |
+| `seed` (default) | A fixed, deterministic dataset: sites `site-a`/`site-b`/`site-c`, racks `rack-site-<x>-<n>`, devices `dev-01`…`dev-40`, tags `tag-01`…`tag-10`. | `tests/integration/test_saved_plan_apply_integration.py` |
+| `demo` | The official NetBox demo data from `netbox-community/netbox-demo-data` (MIT license), pinned to one commit and one SHA-256 checksum. | The `from-netbox` example check |
 
 ```bash
-uv run invoke netbox.seed        # starts NetBox, resets it, loads the `seed` dataset, and prints the URL and token
+uv run invoke netbox.seed                  # the `seed` dataset
+uv run invoke netbox.seed --dataset demo   # the `demo` dataset
 ```
 
-`netbox.seed` starts NetBox itself and prints its URL and development token when it
-finishes — there is no need to run `netbox.up` first. Doing so anyway makes NetBox run its
-first migration twice; on a small host that first migration can take 15 minutes or more. Run
-`netbox.up` on its own only when you want an empty NetBox with nothing loaded, or to reprint
-the banner later without touching the already-running containers. `netbox.seed` takes
-`--dataset` (default `seed`; the task structure leaves room for a second, `demo`, dataset).
-Starting any dataset resets the database first, so re-running `netbox.seed` is safe to
-repeat. Export the printed values as `NETBOX_URL` and `NETBOX_TOKEN`, point
-`INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN` at a disposable Infrahub with the pinned schema
-library loaded, then run the test — see
+`netbox.seed` resets the database, loads the dataset, and prints the NetBox URL and
+development token. It starts NetBox itself, so you do not need to run `netbox.up` first.
+Doing so anyway makes NetBox run its first migration twice; on a small host that first
+migration can take 15 minutes or more. The `demo` dataset skips most of that wait, because
+NetBox starts against the restored data. Run `netbox.up` on its own only
+when you want an empty NetBox with nothing loaded, or to reprint the banner later without
+touching the already-running containers. Every load resets the database first, so you can
+run `netbox.seed` again at any time. `uv run invoke netbox.down` removes the containers and
+their data volumes.
+
+For the `demo` dataset, `netbox.seed` does the following:
+
+1. Downloads `sql/netbox-demo-v4.7.sql` at the pinned commit into `.netbox/` at the repository
+   root. This directory is gitignored, so the dump is never committed. A later run reuses the
+   downloaded file.
+2. Checks the file's SHA-256 against the pinned value. On a mismatch it stops before it
+   touches the database. A download that fails the check is deleted. A previously downloaded
+   file that fails it is kept, and the error tells you to delete it.
+3. Recreates the database volume and restores the dump in one transaction that stops at the
+   first error. The restore uses a copy of the dump with `public` on the `search_path`. The
+   unchanged dump names `ltree` operators that PostgreSQL cannot resolve with an empty
+   `search_path`, and without the change the restore fails.
+4. Starts NetBox, which applies only the migrations that are newer than the dump.
+5. Gives the demo's own `admin` user the development password and API token from
+   `netbox/netbox.env`. The image's own superuser setup skips a user that already exists.
+
+### Saved-plan apply test
+
+Load the `seed` dataset, then export the printed values as `NETBOX_URL` and `NETBOX_TOKEN`.
+Point `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN` at a disposable Infrahub with the pinned
+schema library loaded, then run the test. See
 [Testing tiers](../docs/docs/develop/guidelines/testing-tiers.md#integration) for the full
-sequence. `uv run invoke netbox.down` removes the containers and their data volumes.
+sequence.
+
+### The `from-netbox` example check
+
+The check runs the shipped `examples/netbox_to_infrahub` package against the `demo` dataset
+and a fresh preview stack. The shipped package names the public NetBox demo, so
+`netbox.demo-package` writes a copy to `.netbox/from-netbox.local.yml` that differs only in
+its two `url` settings. [Testing tiers](../docs/docs/develop/guidelines/testing-tiers.md#the-from-netbox-example-check)
+lists every command, from a fresh Infrahub to `diff` and `sync`.
 
 | File | Role |
 | --- | --- |
-| `netbox/docker-compose.netbox.yml` | A pinned, disposable NetBox instance (image pinned by digest). |
+| `netbox/docker-compose.netbox.yml` | A pinned, disposable NetBox instance (image pinned by digest). The `demo` dump matches this image's NetBox version; change the dump and the image together. |
 | `netbox/netbox.env` | Shipped defaults — the host port and development-only NetBox credentials. Nothing here is a secret; never point these values at a shared or internet-facing instance. |
 | `netbox/netbox.local.env` | Your personal overrides (gitignored). |
 | `netbox/datasets/seed_netbox.py` | The `seed` dataset's seeder script. Asserts the instance is empty before writing and never deletes. |
+| `../tasks/netbox.py` | The `demo` dataset's pinned commit, URL, and SHA-256, and the restore steps. |
+| `../.netbox/` | Gitignored. The downloaded demo dump and the generated `from-netbox.local.yml`. The restore writes a changed copy of the dump here and deletes it when the restore ends. |
