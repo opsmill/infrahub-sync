@@ -383,9 +383,13 @@ jobs:
   # bytes a tester gets can only come from what the candidate job already
   # retained. A private packet, never published: the same read-only permissions
   # and the same 30-day window as everything else this route keeps.
+  #
+  # Also needs `clean-host`: without it, a commit whose clean-host qualification
+  # fails would still walk away with a 30-day tester packet, as if the same
+  # commit had qualified.
   packet:
     name: "Build the Linux amd64 tester packet"
-    needs: ["candidate"]
+    needs: ["candidate", "clean-host"]
     runs-on: "ubuntu-22.04"
     timeout-minutes: 30
     permissions:
@@ -583,6 +587,9 @@ jobs:
           version=$(sed -n 's/^Version: //p' README.md)
           revision=$(sed -n 's/^Commit: //p' README.md)
           test -n "$version" && test -n "$revision"
+
+          test -z "$(docker image ls -aq)" \
+            || { echo "this runner's Docker daemon already holds images, so loading proves nothing" >&2; exit 1; }
 
           loaded=$(docker load -i image-linux-amd64.tar | sed -n 's/^Loaded image[^:]*: //p')
           version_format='{{index .Config.Labels "org.opencontainers.image.version"}}'

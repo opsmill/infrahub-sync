@@ -1373,6 +1373,18 @@ def test_the_packet_job_checks_out_the_named_commit_with_the_required_profile() 
     assert installs == ["uv sync --frozen --extra dev --extra prefect --extra service"]
 
 
+def test_the_packet_job_needs_clean_host_to_have_passed() -> None:
+    """A failed clean-host qualification must not still leave a 30-day tester packet behind.
+
+    `packet` also needs `candidate`, which `clean-host` itself needs, so this
+    does not change what commit is packaged -- only that the packaging waits
+    for clean-host's verdict before it runs.
+    """
+    needed = set(_needs(job_of(CANDIDATE_WORKFLOW, PACKET_JOB)))
+
+    assert CLEAN_HOST_JOB in needed, f"{PACKET_JOB!r} needs {sorted(needed)}, so clean-host failing does not stop it"
+
+
 def test_the_packet_rehearsal_job_needs_the_job_that_builds_the_packet() -> None:
     """A literal job name is not evidence that the dependency still produces the packet."""
     downloaded = {
@@ -1408,7 +1420,7 @@ def test_the_packet_rehearsal_job_checks_nothing_out_and_installs_no_interpreter
 
 
 def test_the_packet_rehearsal_verifies_both_checksums_the_image_labels_and_the_empty_registry() -> None:
-    """Every claim the packet's own README makes to a tester is exercised here, and nothing else.
+    """Every claim the packet's own README makes to a tester is exercised here.
 
     The outer archive, the inner layout, the loaded image's identity, a `READY`
     deployment, and an empty configuration registry -- the same five things
@@ -1419,6 +1431,11 @@ def test_the_packet_rehearsal_verifies_both_checksums_the_image_labels_and_the_e
     script = "\n".join(str(step.get("run", "")) for step in steps)
 
     assert script.count("sha256sum -c") == 2, "the rehearsal does not verify both the outer and inner checksums"
+    empty_check = "docker image ls -aq"
+    assert empty_check in script, "the rehearsal never checks that the Docker daemon starts out with no images"
+    assert script.index(empty_check) < script.index("docker load"), (
+        "the rehearsal checks the daemon is empty after loading the image, not before"
+    )
     assert "docker load" in script, "the rehearsal never loads the image the packet ships"
     assert "org.opencontainers.image.version" in script, "the rehearsal never reads the loaded image's version label"
     assert "org.opencontainers.image.revision" in script, "the rehearsal never reads the loaded image's revision label"
