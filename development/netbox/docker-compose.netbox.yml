@@ -55,9 +55,11 @@ services:
       timeout: 5s
       retries: 12
       # First bring-up runs every migration from scratch, which is slow and disk-bound;
-      # a re-seed against the existing volume is fast. Generous so `netbox.up`/`netbox.seed`
-      # do not fail a slow first migration.
-      start_period: 900s
+      # a re-seed against the existing volume is fast. A live run measured roughly 16
+      # minutes end to end, so this leaves real headroom rather than racing that -- it
+      # must clear `tasks/netbox.py`'s WAIT_TIMEOUT_SECONDS with margin, since
+      # `netbox.up`/`netbox.seed` give up once that elapses.
+      start_period: 1700s
     ports:
       - "${NETBOX_PORT:-8082}:8080"
 

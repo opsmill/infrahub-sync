@@ -39,7 +39,9 @@ DATASETS: dict[str, Path] = {
     "seed": DATASETS_DIR / "seed_netbox.py",
 }
 DEFAULT_DATASET = "seed"
-WAIT_TIMEOUT_SECONDS = 960
+# NetBox's first migration run took roughly 16 minutes on the reference machine, right at
+# the previous 960s ceiling -- this leaves real headroom instead of racing it.
+WAIT_TIMEOUT_SECONDS = 1800
 
 _REQUIRED_ENV_KEYS = (
     "COMPOSE_PROJECT_NAME",

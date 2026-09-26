@@ -50,9 +50,13 @@ def main() -> None:
     sites = nb.dcim.sites.create(
         [
             {
-                "name": f"site-{c}", "slug": f"site-{c}", "status": "active",
-                "facility": f"FAC-{c.upper()}", "physical_address": f"1 {c} street",
-                "time_zone": "UTC", "tags": tag_pair(i),
+                "name": f"site-{c}",
+                "slug": f"site-{c}",
+                "status": "active",
+                "facility": f"FAC-{c.upper()}",
+                "physical_address": f"1 {c} street",
+                "time_zone": "UTC",
+                "tags": tag_pair(i),
             }
             for i, c in enumerate(["a", "b", "c"])
         ]
@@ -63,11 +67,17 @@ def main() -> None:
     racks = nb.dcim.racks.create(
         [
             {
-                "name": f"rack-{s.slug}-{n}", "site": s.id, "u_height": 42, "status": "active",
-                "serial": f"RSER-{s.slug}-{n}", "asset_tag": f"RAT-{s.slug}-{n}",
-                "facility_id": f"RF-{s.slug}-{n}", "tags": tag_pair(i),
+                "name": f"rack-{s.slug}-{n}",
+                "site": s.id,
+                "u_height": 42,
+                "status": "active",
+                "serial": f"RSER-{s.slug}-{n}",
+                "asset_tag": f"RAT-{s.slug}-{n}",
+                "facility_id": f"RF-{s.slug}-{n}",
+                "tags": tag_pair(i),
             }
-            for i, s in enumerate(sites) for n in (1, 2)
+            for i, s in enumerate(sites)
+            for n in (1, 2)
         ]
     )
     rack_ids = [r.id for r in racks]
@@ -94,14 +104,46 @@ def main() -> None:
     # Fractional u_height / weight exercise the ceil transforms.
     dtypes = nb.dcim.device_types.create(
         [
-            {"model": "acme-router-1", "slug": "acme-router-1", "manufacturer": mfrs[0].id,
-             "u_height": 1.5, "part_number": "AR1", "is_full_depth": True, "weight": 4.2, "weight_unit": "kg"},
-            {"model": "acme-switch-1", "slug": "acme-switch-1", "manufacturer": mfrs[0].id,
-             "u_height": 1, "part_number": "AS1", "is_full_depth": False, "weight": 3, "weight_unit": "kg"},
-            {"model": "globex-router-1", "slug": "globex-router-1", "manufacturer": mfrs[1].id,
-             "u_height": 2.5, "part_number": "GR1", "is_full_depth": True, "weight": 7.7, "weight_unit": "kg"},
-            {"model": "globex-switch-1", "slug": "globex-switch-1", "manufacturer": mfrs[1].id,
-             "u_height": 1, "part_number": "GS1", "is_full_depth": False, "weight": 2, "weight_unit": "kg"},
+            {
+                "model": "acme-router-1",
+                "slug": "acme-router-1",
+                "manufacturer": mfrs[0].id,
+                "u_height": 1.5,
+                "part_number": "AR1",
+                "is_full_depth": True,
+                "weight": 4.2,
+                "weight_unit": "kg",
+            },
+            {
+                "model": "acme-switch-1",
+                "slug": "acme-switch-1",
+                "manufacturer": mfrs[0].id,
+                "u_height": 1,
+                "part_number": "AS1",
+                "is_full_depth": False,
+                "weight": 3,
+                "weight_unit": "kg",
+            },
+            {
+                "model": "globex-router-1",
+                "slug": "globex-router-1",
+                "manufacturer": mfrs[1].id,
+                "u_height": 2.5,
+                "part_number": "GR1",
+                "is_full_depth": True,
+                "weight": 7.7,
+                "weight_unit": "kg",
+            },
+            {
+                "model": "globex-switch-1",
+                "slug": "globex-switch-1",
+                "manufacturer": mfrs[1].id,
+                "u_height": 1,
+                "part_number": "GS1",
+                "is_full_depth": False,
+                "weight": 2,
+                "weight_unit": "kg",
+            },
         ]
     )
     counts["dcim/device-types"] = len(dtypes)
@@ -110,19 +152,30 @@ def main() -> None:
 
     # --- VLAN groups / VLANs (before interfaces need them) -------------------
     vgroups = nb.ipam.vlan_groups.create(
-        [{"name": "grp-a", "slug": "grp-a", "description": "seed"}, {"name": "grp-b", "slug": "grp-b", "description": "seed"}]
+        [
+            {"name": "grp-a", "slug": "grp-a", "description": "seed"},
+            {"name": "grp-b", "slug": "grp-b", "description": "seed"},
+        ]
     )
     counts["ipam/vlan-groups"] = len(vgroups)
 
     grouped_vlans = nb.ipam.vlans.create(
         [
-            {"name": f"vlan-{100 + i}", "vid": 100 + i, "status": "active",
-             "group": vgroups[i % 2].id, "description": "seed grouped"}
+            {
+                "name": f"vlan-{100 + i}",
+                "vid": 100 + i,
+                "status": "active",
+                "group": vgroups[i % 2].id,
+                "description": "seed grouped",
+            }
             for i in range(12)
         ]
     )
     ungrouped = nb.ipam.vlans.create(
-        [{"name": f"vlan-nogroup-{i}", "vid": 900 + i, "status": "active", "description": "seed skip-case"} for i in range(2)]
+        [
+            {"name": f"vlan-nogroup-{i}", "vid": 900 + i, "status": "active", "description": "seed skip-case"}
+            for i in range(2)
+        ]
     )
     counts["ipam/vlans"] = len(grouped_vlans) + len(ungrouped)
 
@@ -133,9 +186,14 @@ def main() -> None:
         # platform manufacturer must match the device type's manufacturer (NetBox constraint)
         platform = platforms[(d - 1) % 2] if dtype_idx < 2 else platforms[2]
         payload = {
-            "name": f"dev-{d:02d}", "role": role.id, "status": "active",
-            "device_type": dtypes[dtype_idx].id, "platform": platform.id,
-            "serial": f"DSER-{d:04d}", "description": f"seed device {d}", "tags": tag_pair(d),
+            "name": f"dev-{d:02d}",
+            "role": role.id,
+            "status": "active",
+            "device_type": dtypes[dtype_idx].id,
+            "platform": platform.id,
+            "serial": f"DSER-{d:04d}",
+            "description": f"seed device {d}",
+            "tags": tag_pair(d),
         }
         if d <= 30:  # racked: 5 per rack, distinct u positions, front face
             rack_idx = (d - 1) // 5
@@ -148,8 +206,14 @@ def main() -> None:
         device_payloads.append(payload)
     # skip-case: unnamed devices (config filters name is_not_empty)
     device_payloads += [
-        {"name": None, "role": role.id, "status": "active", "device_type": dtypes[0].id,
-         "site": site_ids[0], "description": f"seed unnamed {i}"}
+        {
+            "name": None,
+            "role": role.id,
+            "status": "active",
+            "device_type": dtypes[0].id,
+            "site": site_ids[0],
+            "description": f"seed unnamed {i}",
+        }
         for i in range(2)
     ]
     devices = nb.dcim.devices.create(device_payloads)
@@ -213,20 +277,32 @@ def main() -> None:
 
     by_dev_name = {}
     for i in interfaces:
-        by_dev_name[(i.device.id, i.name)] = i
+        by_dev_name[i.device.id, i.name] = i
     # LAG membership: eth4/eth5 join Po1
     for d in named:
-        po1 = by_dev_name[(d.id, "Po1")]
+        po1 = by_dev_name[d.id, "Po1"]
         for n in (4, 5):
-            eth = by_dev_name[(d.id, f"eth{n}")]
+            eth = by_dev_name[d.id, f"eth{n}"]
             eth.lag = po1.id
             eth.save()
 
     # --- IPAM: RIRs, aggregates, RTs, VRFs, prefixes, IPs ---------------------
     rirs = nb.ipam.rirs.create(
         [
-            {"name": "rir-private", "slug": "rir-private", "is_private": True, "description": "seed", "tags": tag_pair(2)},
-            {"name": "rir-public", "slug": "rir-public", "is_private": False, "description": "seed", "tags": tag_pair(3)},
+            {
+                "name": "rir-private",
+                "slug": "rir-private",
+                "is_private": True,
+                "description": "seed",
+                "tags": tag_pair(2),
+            },
+            {
+                "name": "rir-public",
+                "slug": "rir-public",
+                "is_private": False,
+                "description": "seed",
+                "tags": tag_pair(3),
+            },
         ]
     )
     counts["ipam/rirs"] = len(rirs)
@@ -241,19 +317,27 @@ def main() -> None:
     )
     counts["ipam/aggregates"] = len(aggregates)
 
-    rts = nb.ipam.route_targets.create(
-        [{"name": f"65000:{i}", "description": f"seed rt {i}"} for i in range(1, 5)]
-    )
+    rts = nb.ipam.route_targets.create([{"name": f"65000:{i}", "description": f"seed rt {i}"} for i in range(1, 5)])
     counts["ipam/route-targets"] = len(rts)
 
     vrfs = nb.ipam.vrfs.create(
         [
-            {"name": "vrf-red", "rd": "65000:100", "enforce_unique": True,
-             "import_targets": [rts[0].id, rts[1].id], "export_targets": [rts[2].id, rts[3].id],
-             "description": "seed"},
-            {"name": "vrf-blue", "rd": "65000:200", "enforce_unique": True,
-             "import_targets": [rts[2].id, rts[3].id], "export_targets": [rts[0].id, rts[1].id],
-             "description": "seed"},
+            {
+                "name": "vrf-red",
+                "rd": "65000:100",
+                "enforce_unique": True,
+                "import_targets": [rts[0].id, rts[1].id],
+                "export_targets": [rts[2].id, rts[3].id],
+                "description": "seed",
+            },
+            {
+                "name": "vrf-blue",
+                "rd": "65000:200",
+                "enforce_unique": True,
+                "import_targets": [rts[2].id, rts[3].id],
+                "export_targets": [rts[0].id, rts[1].id],
+                "description": "seed",
+            },
         ]
     )
     counts["ipam/vrfs"] = len(vrfs)
@@ -267,8 +351,12 @@ def main() -> None:
         for i in range(10)
     ]
     prefix_payloads += [
-        {"prefix": f"192.168.{i}.0/24", "status": "active", "vrf": vrfs[i % 2].id,
-         "description": "seed formerly-global prefix"}
+        {
+            "prefix": f"192.168.{i}.0/24",
+            "status": "active",
+            "vrf": vrfs[i % 2].id,
+            "description": "seed formerly-global prefix",
+        }
         for i in range(8)
     ]
     prefixes = nb.ipam.prefixes.create(prefix_payloads)
@@ -276,21 +364,33 @@ def main() -> None:
 
     ip_payloads = []
     for idx, d in enumerate(named, start=1):
-        eth0 = by_dev_name[(d.id, "eth0")]
-        vlan_if = by_dev_name[(d.id, "vlan100")]
-        ip_payloads.append(
-            {"address": f"10.1.{idx}.1/24", "status": "active", "vrf": vrfs[idx % 2].id,
-             "description": "seed eth0",
-             "assigned_object_type": "dcim.interface", "assigned_object_id": eth0.id}
-        )
-        ip_payloads.append(
-            {"address": f"10.2.{idx}.1/24", "status": "active", "vrf": vrfs[idx % 2].id,
-             "description": "seed vlan100",
-             "assigned_object_type": "dcim.interface", "assigned_object_id": vlan_if.id}
-        )
-        ip_payloads.append(
-            {"address": f"10.3.{idx}.1/24", "status": "active", "vrf": vrfs[idx % 2].id,
-             "description": "seed loose"}
+        eth0 = by_dev_name[d.id, "eth0"]
+        vlan_if = by_dev_name[d.id, "vlan100"]
+        ip_payloads.extend(
+            [
+                {
+                    "address": f"10.1.{idx}.1/24",
+                    "status": "active",
+                    "vrf": vrfs[idx % 2].id,
+                    "description": "seed eth0",
+                    "assigned_object_type": "dcim.interface",
+                    "assigned_object_id": eth0.id,
+                },
+                {
+                    "address": f"10.2.{idx}.1/24",
+                    "status": "active",
+                    "vrf": vrfs[idx % 2].id,
+                    "description": "seed vlan100",
+                    "assigned_object_type": "dcim.interface",
+                    "assigned_object_id": vlan_if.id,
+                },
+                {
+                    "address": f"10.3.{idx}.1/24",
+                    "status": "active",
+                    "vrf": vrfs[idx % 2].id,
+                    "description": "seed loose",
+                },
+            ]
         )
     ips = nb.ipam.ip_addresses.create(ip_payloads)
     counts["ipam/ip-addresses"] = len(ips)
@@ -309,8 +409,14 @@ def main() -> None:
     counts["circuits/providers"] = len(providers)
     circuits = nb.circuits.circuits.create(
         [
-            {"cid": f"CIR-{i:03d}", "provider": providers[i % 2].id, "type": ctype.id,
-             "status": "active", "commit_rate": 1000 * (i + 1), "description": "seed"}
+            {
+                "cid": f"CIR-{i:03d}",
+                "provider": providers[i % 2].id,
+                "type": ctype.id,
+                "status": "active",
+                "commit_rate": 1000 * (i + 1),
+                "description": "seed",
+            }
             for i in range(4)
         ]
     )
