@@ -63,7 +63,7 @@ services:
       # `netbox.up`/`netbox.seed` give up once that elapses.
       start_period: 1700s
     ports:
-      - "${NETBOX_PORT:-8082}:8080"
+      - "127.0.0.1:${NETBOX_PORT:-8082}:8080"
 
 volumes:
   netbox-postgres-data:
