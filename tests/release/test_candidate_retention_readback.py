@@ -1,15 +1,20 @@
 """The candidate run's granted-window check, executed rather than read.
 
 The window is compared by arithmetic on two timestamps the service records
-independently, so it is exactly the kind of check that reads as correct and is
-off by one. Truncating the elapsed seconds rejects a nominal thirty-day window
-that came back a second short — a candidate the service retained correctly,
-failed by the step that was meant to confirm it.
+independently: `created_at`, which GitHub reports when an artifact's upload
+finishes, and `expires_at`. The upload of a large or slow artifact can take
+tens of seconds, so a window read back this way is short by roughly that
+duration even though the service granted the full window from the moment the
+upload began. Treating that as drift and refusing it fails a candidate the
+service retained correctly.
 
-The tolerance has to be narrow. Rounding to the nearest day looks reasonable and
-accepts a window almost twelve hours short of the one an approval is bound to,
-so what is allowed here is the second of resolution the API's own timestamps
-carry, and nothing wider.
+The tolerance has to be wide enough to absorb an upload's duration without
+going so wide it stops catching a real cap. Rounding to the nearest day looks
+reasonable and accepts a window almost twelve hours short of the one an
+approval is bound to, so what is allowed here is a fixed number of seconds
+(`RETENTION_DRIFT_TOLERANCE_SECONDS`, documented next to it in the workflow)
+generous enough for any upload this job produces, and nothing wider: a window
+short by a day or more still fails.
 
 These cases run the workflow's own script text against a stubbed inventory. The
 step passes everything through the environment rather than interpolating it, so
@@ -43,6 +48,19 @@ CANDIDATE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "workflow-candidate.y
 SHELL = shutil.which("bash") or "bash"
 WINDOW = 30
 DAY = 86400
+
+
+def _workflow_tolerance() -> int:
+    """Read RETENTION_DRIFT_TOLERANCE_SECONDS from the workflow's own env block.
+
+    A boundary case that hardcoded this value would keep passing even if the
+    workflow's tolerance changed, so it would stop actually pinning anything.
+    """
+    document = yaml.safe_load(CANDIDATE_WORKFLOW.read_text(encoding="utf-8"))
+    return int(document["env"]["RETENTION_DRIFT_TOLERANCE_SECONDS"])
+
+
+TOLERANCE = _workflow_tolerance()
 
 # The step is found by what it does, not by its name.
 READBACK_MARKERS = ("actions/runs", "expires_at")
@@ -121,7 +139,9 @@ def stubs(tmp_path: Path) -> Path:
     return binaries
 
 
-def read_back(tmp_path: Path, binaries: Path, job: str, body: str) -> subprocess.CompletedProcess[str]:
+def read_back(
+    tmp_path: Path, binaries: Path, job: str, body: str, *, tolerance: str = str(TOLERANCE)
+) -> subprocess.CompletedProcess[str]:
     """Run the named job's own read-back against one rendered inventory."""
     fixture = tmp_path / "inventory.tsv"
     fixture.write_text(body, encoding="utf-8")
@@ -139,6 +159,7 @@ def read_back(tmp_path: Path, binaries: Path, job: str, body: str) -> subprocess
             "REPOSITORY": "opsmill/infrahub-sync",
             "RUN_ID": "1",
             "CANDIDATE_RETENTION_DAYS": str(WINDOW),
+            "RETENTION_DRIFT_TOLERANCE_SECONDS": tolerance,
         },
     )
 
@@ -152,13 +173,18 @@ def test_it_accepts_the_window_the_service_nominally_granted(tmp_path: Path, stu
 
 
 @pytest.mark.parametrize("job", JOBS)
-@pytest.mark.parametrize("drift", [-1, 1], ids=lambda drift: f"{drift:+d}s")
-def test_it_accepts_one_second_of_timestamp_drift(tmp_path: Path, stubs: Path, job: str, drift: int) -> None:
-    """The API reports both instants at second resolution and records them independently.
+@pytest.mark.parametrize(
+    "drift",
+    [-TOLERANCE, -DAY // 48, -50, -1, 1, DAY // 48, TOLERANCE],
+    ids=lambda drift: f"{drift:+d}s",
+)
+def test_it_accepts_a_window_within_the_drift_tolerance(tmp_path: Path, stubs: Path, job: str, drift: int) -> None:
+    """`created_at` trails the start of the upload it belongs to.
 
-    A pair that differs by a second does not mean the window differed, so the
-    check tolerates exactly that and truncating the elapsed seconds -- which
-    turns one second short into twenty-nine days -- does not.
+    A 50-second-short window is exactly what an 890 MB image upload produces,
+    and the service still granted the full thirty days from the moment that
+    upload began. The tolerance has to cover it -- and, since the timestamps
+    are independent, cover the same drift in the other direction too.
     """
     groups = GROUPS_BY_JOB[job]
     finished = read_back(tmp_path, stubs, job, inventory(groups, {groups[0]: WINDOW * DAY + drift}))
@@ -167,32 +193,18 @@ def test_it_accepts_one_second_of_timestamp_drift(tmp_path: Path, stubs: Path, j
 
 
 @pytest.mark.parametrize("job", JOBS)
-@pytest.mark.parametrize("drift", [-2, 2], ids=lambda drift: f"{drift:+d}s")
-def test_it_refuses_more_than_one_second_of_drift(tmp_path: Path, stubs: Path, job: str, drift: int) -> None:
-    """One second is the resolution of the timestamps; two is a different window.
-
-    The bound has to be narrow or it stops being about the window at all. This is
-    the pair that pins it: a second is tolerated and two are not.
-    """
-    groups = GROUPS_BY_JOB[job]
-    finished = read_back(tmp_path, stubs, job, inventory(groups, {groups[0]: WINDOW * DAY + drift}))
-
-    assert finished.returncode != 0, f"a window {drift:+d}s from the one asked for was accepted"
-    assert groups[0] in finished.stdout + finished.stderr
-
-
-@pytest.mark.parametrize("job", JOBS)
 @pytest.mark.parametrize(
     "shortfall",
-    [DAY // 2 - 1, DAY // 2, DAY, 3600],
-    ids=["just-under-half-a-day", "half-a-day", "a-day", "an-hour"],
+    [TOLERANCE + 1, DAY // 2, DAY],
+    ids=lambda shortfall: f"-{shortfall}s",
 )
 def test_it_refuses_a_window_short_of_the_one_asked_for(tmp_path: Path, stubs: Path, job: str, shortfall: int) -> None:
-    """Rounding to the nearest day accepted almost twelve hours less than the window.
+    """Beyond the tolerance, short is short. A day or more must still refuse.
 
-    That is the defect this bound replaces: an approval bound to thirty days of
-    retention would have been taken against bytes the service was keeping for
-    twenty-nine and a half.
+    Rounding to the nearest day accepted almost twelve hours less than the
+    window -- the defect this bound replaces: an approval bound to thirty days
+    of retention would have been taken against bytes the service was keeping
+    for twenty-nine and a half.
     """
     groups = GROUPS_BY_JOB[job]
     finished = read_back(tmp_path, stubs, job, inventory(groups, {groups[0]: WINDOW * DAY - shortfall}))
@@ -228,10 +240,52 @@ def test_it_refuses_a_run_missing_its_only_group(tmp_path: Path, stubs: Path) ->
 
 
 @pytest.mark.parametrize("job", JOBS)
-@pytest.mark.parametrize("excess", [3600, DAY // 2, DAY], ids=["an-hour", "half-a-day", "a-day"])
+@pytest.mark.parametrize("excess", [TOLERANCE + 1, DAY // 2, DAY], ids=lambda excess: f"+{excess}s")
 def test_it_refuses_a_window_longer_than_the_one_asked_for(tmp_path: Path, stubs: Path, job: str, excess: int) -> None:
     """Longer is not safer. The record binds an approval to a stated window, not a minimum."""
     groups = GROUPS_BY_JOB[job]
     finished = read_back(tmp_path, stubs, job, inventory(groups, {groups[0]: WINDOW * DAY + excess}))
 
     assert finished.returncode != 0, f"a window {excess}s long was accepted"
+
+
+@pytest.mark.parametrize("job", JOBS)
+@pytest.mark.parametrize(
+    "value",
+    ["", "1h", "3600s", " 3600", "-5", "3.5", "0x10", "9" * 25],
+    ids=[
+        "empty",
+        "unit-suffixed",
+        "trailing-unit",
+        "leading-space",
+        "negative",
+        "fractional",
+        "hex",
+        "beyond-int64-range",
+    ],
+)
+def test_it_refuses_a_tolerance_that_is_not_a_plain_integer(tmp_path: Path, stubs: Path, job: str, value: str) -> None:
+    """RETENTION_DRIFT_TOLERANCE_SECONDS feeds a shell `-gt` comparison directly.
+
+    A value that is not a plain non-negative integer makes that comparison
+    fail open rather than fail the run, silently accepting any window at all.
+    The guard has to reject it before the comparison ever runs. All-digit
+    strings pass the digit-only check, so a value wide enough to overflow
+    bash's signed 64-bit integers (`9` * 25 here) is exactly the case that
+    check alone lets through: `[ -gt ]` on it errors out instead of
+    comparing, and that error does not trip `set -e` inside the `if`.
+    """
+    groups = GROUPS_BY_JOB[job]
+    finished = read_back(tmp_path, stubs, job, inventory(groups, {}), tolerance=value)
+
+    assert finished.returncode != 0, f"tolerance {value!r} was accepted"
+    assert "RETENTION_DRIFT_TOLERANCE_SECONDS" in finished.stdout + finished.stderr
+
+
+@pytest.mark.parametrize("job", JOBS)
+def test_it_accepts_a_tolerance_of_zero(tmp_path: Path, stubs: Path, job: str) -> None:
+    """0 is a plain non-negative integer, so the guard passes it through -- exact equality is still valid."""
+    groups = GROUPS_BY_JOB[job]
+    finished = read_back(tmp_path, stubs, job, inventory(groups, {}), tolerance="0")
+
+    assert finished.returncode == 0, finished.stdout + finished.stderr

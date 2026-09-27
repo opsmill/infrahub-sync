@@ -42,6 +42,14 @@ permissions:
 env:
   CANDIDATE_RETENTION_DAYS: 30
   DIAGNOSTIC_RETENTION_DAYS: 7
+  # How far the granted window may drift from the requested one before the
+  # read-back below refuses it. `created_at` is reported when an artifact's
+  # upload finishes, not when it started, so a large or slow upload reads as
+  # short by roughly its own duration even though the service granted the full
+  # window from the moment the upload began. An hour covers any upload this
+  # job produces with room to spare, while still catching a real cap: a
+  # repository or organization limit that shortens retention by a day or more.
+  RETENTION_DRIFT_TOLERANCE_SECONDS: 3600
 
 jobs:
   candidate:
@@ -321,6 +329,23 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
+          case "$RETENTION_DRIFT_TOLERANCE_SECONDS" in
+            ''|*[!0-9]*)
+              echo "RETENTION_DRIFT_TOLERANCE_SECONDS must be a positive integer of seconds," \
+                "got '${RETENTION_DRIFT_TOLERANCE_SECONDS}'" >&2
+              exit 1
+              ;;
+          esac
+          # Bounded by digit count, not value, so this never runs the
+          # arithmetic comparisons below on a number outside bash's signed
+          # 64-bit range -- that would make `[ -gt ]` error out silently
+          # under `set -e` and let an oversized tolerance mask a too-short
+          # retention window.
+          if [ "${#RETENTION_DRIFT_TOLERANCE_SECONDS}" -gt 6 ]; then
+            echo "RETENTION_DRIFT_TOLERANCE_SECONDS must be at most 6 digits (999999 seconds)," \
+              "got '${RETENTION_DRIFT_TOLERANCE_SECONDS}'" >&2
+            exit 1
+          fi
           gh api --paginate "repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
             --jq '.artifacts[] | [.name, .created_at, .expires_at] | @tsv' > "${RUNNER_TEMP}/retention.tsv"
           missing=""
@@ -340,20 +365,20 @@ jobs:
             fi
             created=$(printf '%s' "$entry" | cut -f1)
             expires=$(printf '%s' "$entry" | cut -f2)
-            # Compared in seconds against the exact window, with one second of
-            # slack and no more. The API reports both instants at second
-            # resolution and records them independently, so the pair can differ
-            # by a second without the window differing at all -- but nothing
-            # wider than that is drift. Rounding to the nearest day would accept
-            # anything within twelve hours, which is most of a day short of the
-            # window an approval is bound to.
+            # Compared in seconds against the exact window, allowing the
+            # documented drift tolerance and no more. `created_at` trails the
+            # start of the upload it belongs to, so a window read back against
+            # it always looks a little short -- by the upload's own duration,
+            # not by anything the service failed to grant. Rounding to the
+            # nearest day would accept anything within twelve hours, which is
+            # most of a day short of the window an approval is bound to.
             expected=$(( CANDIDATE_RETENTION_DAYS * 86400 ))
             elapsed=$(( $(date -u -d "$expires" +%s) - $(date -u -d "$created" +%s) ))
             drift=$(( elapsed - expected ))
             if [ "$drift" -lt 0 ]; then
               drift=$(( -drift ))
             fi
-            if [ "$drift" -gt 1 ]; then
+            if [ "$drift" -gt "$RETENTION_DRIFT_TOLERANCE_SECONDS" ]; then
               echo "$name was granted ${elapsed}s, not the ${expected}s" \
                 "(${CANDIDATE_RETENTION_DAYS} days) an approval needs" >&2
               exit 1
@@ -461,6 +486,23 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
+          case "$RETENTION_DRIFT_TOLERANCE_SECONDS" in
+            ''|*[!0-9]*)
+              echo "RETENTION_DRIFT_TOLERANCE_SECONDS must be a positive integer of seconds," \
+                "got '${RETENTION_DRIFT_TOLERANCE_SECONDS}'" >&2
+              exit 1
+              ;;
+          esac
+          # Bounded by digit count, not value, so this never runs the
+          # arithmetic comparisons below on a number outside bash's signed
+          # 64-bit range -- that would make `[ -gt ]` error out silently
+          # under `set -e` and let an oversized tolerance mask a too-short
+          # retention window.
+          if [ "${#RETENTION_DRIFT_TOLERANCE_SECONDS}" -gt 6 ]; then
+            echo "RETENTION_DRIFT_TOLERANCE_SECONDS must be at most 6 digits (999999 seconds)," \
+              "got '${RETENTION_DRIFT_TOLERANCE_SECONDS}'" >&2
+            exit 1
+          fi
           gh api --paginate "repos/${REPOSITORY}/actions/runs/${RUN_ID}/artifacts" \
             --jq '.artifacts[] | [.name, .created_at, .expires_at] | @tsv' > "${RUNNER_TEMP}/retention.tsv"
           name=infrahub-sync-candidate-packet
@@ -471,13 +513,16 @@ jobs:
           fi
           created=$(printf '%s' "$entry" | cut -f1)
           expires=$(printf '%s' "$entry" | cut -f2)
+          # See the candidate job's own read-back for why this allows the
+          # documented drift tolerance rather than exact equality:
+          # `created_at` trails the start of the upload it belongs to.
           expected=$(( CANDIDATE_RETENTION_DAYS * 86400 ))
           elapsed=$(( $(date -u -d "$expires" +%s) - $(date -u -d "$created" +%s) ))
           drift=$(( elapsed - expected ))
           if [ "$drift" -lt 0 ]; then
             drift=$(( -drift ))
           fi
-          if [ "$drift" -gt 1 ]; then
+          if [ "$drift" -gt "$RETENTION_DRIFT_TOLERANCE_SECONDS" ]; then
             echo "$name was granted ${elapsed}s, not the ${expected}s" \
               "(${CANDIDATE_RETENTION_DAYS} days) an approval needs" >&2
             exit 1
