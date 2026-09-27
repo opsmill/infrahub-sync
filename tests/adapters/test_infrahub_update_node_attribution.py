@@ -13,6 +13,7 @@ plumbing is needed.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -376,3 +377,32 @@ def test_update_node_fetches_many_relationship_before_reconciling_peers(patch_re
     assert manager.peer_ids == ["a-uid", "c-uid"]
     assert manager.removed == ["b-uid"]
     assert manager.added == [{"id": "c-uid", "source": SOURCE_ID, "owner": OWNER_ID}]
+
+
+def test_update_node_keeps_many_peers_when_desired_peer_is_unresolved(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    rel = FakeRelSchema(name="tags", peer="BuiltinTag", cardinality="many")
+    schema = FakeSchema(relationships=[rel], relationship_names=["tags"])
+    manager = LazyFakeRelManager(remote_ids=["a-uid", "b-uid"])
+    node = FakeNode(
+        schema=schema,
+        client=FakeClient(peers={"BuiltinTag": object()}),
+        many_managers={"tags": manager},
+    )
+
+    def resolve(key: str, **_kwargs: object) -> MagicMock | None:
+        if key == "b-uid":
+            return None
+        peer = MagicMock()
+        peer.id = key
+        return peer
+
+    monkeypatch.setattr(infrahub_adapter, "resolve_peer_node", resolve)
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"):
+        _run_update(node, {"tags": ["a-uid", "b-uid", "c-uid"]})
+
+    assert manager.peer_ids == ["a-uid", "b-uid", "c-uid"]
+    assert manager.removed == []
+    assert manager.added == [{"id": "c-uid"}]
+    assert [record.message for record in caplog.records] == ["Unable to find BuiltinTag [b-uid] in the Store - Ignored"]
