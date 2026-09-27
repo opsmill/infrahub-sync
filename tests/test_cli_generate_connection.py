@@ -2,7 +2,7 @@
 
 Address precedence is `INFRAHUB_ADDRESS`, then `INFRAHUB_URL`, then `settings.url`;
 token precedence is `INFRAHUB_API_TOKEN`, then `settings.token`. Branch precedence
-is `settings.branch`, then `INFRAHUB_DEFAULT_BRANCH`, then `--branch`, then `main`.
+is `settings.branch`, then `--branch`, then `INFRAHUB_DEFAULT_BRANCH`, then `main`.
 
 Every case drives the real command through `CliRunner`, so the captured `config` is the
 SDK `Config` that `get_infrahub_config` actually builds.
