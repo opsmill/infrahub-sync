@@ -16,7 +16,6 @@ from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from infrahub_sdk.utils import compare_lists
 from pydantic import ValidationError
-from structlog.stdlib import get_logger
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -29,7 +28,6 @@ from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.generator import has_field
 
 logger = logging.getLogger(__name__)
-structured_logger = get_logger(__name__)
 
 # GraphQL filter kwarg for timestamp-based incremental queries.
 # Verified against a live Infrahub via __type introspection — every node
@@ -309,13 +307,18 @@ class PeerIdentifierError(ValueError):
             if rel_name == "<self>"
             else f"peer {peer_kind}[{peer_id}] (relationship {parent_kind}.{rel_name}, parent id={parent_id})"
         )
+        cause = (
+            "the record was not loaded with that field populated"
+            if rel_name == "<self>"
+            else "the peer record was not loaded with that field populated"
+        )
         msg = (
             f"Cannot build unique_id for {subject}: "
             f"missing identifier key(s) {list(missing_keys)}; "
             f"required identifiers={list(identifiers)}, present keys={list(present_keys)}. "
             "Likely cause: schema_mapping does not declare a 'fields:' entry for the missing "
-            "key, or the peer record was not loaded with that field populated. "
-            "Re-run with --continue-on-error to skip these peers."
+            f"key, or {cause}. "
+            "Re-run with --continue-on-error to skip these records or peers."
         )
         super().__init__(msg)
 
@@ -421,7 +424,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             **filter_kwargs,
         )
         for node in nodes:
-            yield self.infrahub_node_to_diffsync(node=node)
+            try:
+                yield self.infrahub_node_to_diffsync(node=node)
+            except PeerIdentifierError as exc:
+                if not self.continue_on_error:
+                    raise
+                logger.warning("Skipping %s[%s]: %s", model_name, node.id, exc)
 
     def list_existing_ids(self, model_name: str) -> Iterator[str]:
         """Yield unique IDs for all Infrahub nodes of `model_name`.
@@ -470,7 +478,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 except PeerIdentifierError as exc:
                     if not self.continue_on_error:
                         raise
-                    structured_logger.warning("Skipping model", model=model_name, node_id=node.id, error=str(exc))
+                    logger.warning("Skipping %s[%s]: %s", model_name, node.id, exc)
             total = len(nodes)
 
             # Extract the list of dicts for filtering and transforming
@@ -531,13 +539,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         except PeerIdentifierError as exc:
             if not self.continue_on_error:
                 raise
-            structured_logger.warning(
-                "Skipping peer relationship",
-                peer=peer_kind,
-                peer_id=peer_node.id,
-                relationship=rel_name,
-                error=str(exc),
-            )
+            logger.warning("Skipping peer relationship %s[%s].%s: %s", peer_kind, peer_node.id, rel_name, exc)
             return None
         identifiers = tuple(peer_model._identifiers)
         missing = tuple(k for k in identifiers if k not in peer_data or peer_data[k] is None)
@@ -553,7 +555,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 present_keys=tuple(peer_data.keys()),
             )
             if self.continue_on_error:
-                logger.warning("Skipping peer relationship: %s", err)
+                logger.warning("Skipping peer relationship %s[%s].%s: %s", peer_kind, peer_node.id, rel_name, err)
                 return None
             raise err
 

@@ -27,6 +27,7 @@ converter handles absent and null fields independently of the strict client fake
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
@@ -386,6 +387,34 @@ def test_model_loader_requests_identifiers_for_an_identifier_only_model() -> Non
     assert _loaded(adapter, InfraTag, "blue").local_id == "id-1"
 
 
+@pytest.mark.parametrize("missing_shape", ["absent", "null"])
+def test_model_loader_skips_record_with_missing_identifier(
+    missing_shape: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Continue on error skips an invalid record through the module logger."""
+    attributes: dict[str, Any] = {"description": "east"}
+    if missing_shape == "null":
+        attributes["name"] = None
+    client = StrictClient(rows={"LocationSite": [_Row("id-1", attributes)]})
+    adapter = _Harness(
+        config=_config({"LocationSite": ["name", "description"]}),
+        client=client,
+        schema={"LocationSite": _adapter_schema("LocationSite", ["name", "description"])},
+    )
+    adapter.continue_on_error = True
+
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"):
+        adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    assert adapter.count("LocationSite") == 0
+    assert any(
+        record.name == "infrahub_sync.adapters.infrahub"
+        and "Skipping LocationSite[id-1]" in record.message
+        and "name" in record.message
+        for record in caplog.records
+    )
+
+
 def test_model_loader_resolves_a_relationship_peer_identifier_under_a_strict_response() -> None:
     """A peer loaded under a strict response must still carry its identifier.
 
@@ -558,9 +587,11 @@ def test_sdk_model_identifier_missing_or_null_raises_named_error(missing_shape: 
     with pytest.raises(PeerIdentifierError, match="name") as excinfo:
         adapter.infrahub_node_to_diffsync(node)
     assert excinfo.value.missing_keys == ("name",)
+    assert "the record was not loaded" in str(excinfo.value)
+    assert "the peer record" not in str(excinfo.value)
 
 
-def test_sdk_peer_null_identifier_raises_named_error() -> None:
+def test_sdk_peer_null_identifier_raises_named_error(caplog: pytest.LogCaptureFixture) -> None:
     """A peer cannot be looked up under the stringified value of None."""
     client = InfrahubClientSync(address="http://localhost:8000", config=Config(api_token=None))
     schema = _sdk_schema("LocationSite")
@@ -574,7 +605,14 @@ def test_sdk_peer_null_identifier_raises_named_error() -> None:
     assert excinfo.value.missing_keys == ("name",)
 
     adapter.continue_on_error = True
-    assert adapter._resolve_peer_unique_id(parent_node=parent, rel_name="site", peer_node=peer) is None
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"):
+        assert adapter._resolve_peer_unique_id(parent_node=parent, rel_name="site", peer_node=peer) is None
+    assert any(
+        record.name == "infrahub_sync.adapters.infrahub"
+        and "Skipping peer relationship LocationSite[site-1].site" in record.message
+        and "name" in record.message
+        for record in caplog.records
+    )
 
 
 def test_sdk_complete_node_converts_but_missing_non_identifier_still_raises() -> None:

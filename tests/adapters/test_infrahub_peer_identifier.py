@@ -113,7 +113,12 @@ def test_missing_identifier_skipped_when_continue_on_error(caplog: pytest.LogCap
         result = harness._resolve_peer_unique_id(parent_node=parent, rel_name="location", peer_node=peer)  # ty: ignore[invalid-argument-type]
 
     assert result is None
-    assert any("Skipping peer relationship" in rec.message for rec in caplog.records)
+    assert any(
+        rec.name == "infrahub_sync.adapters.infrahub"
+        and "Skipping peer relationship LocationGeneric[peer-id].location" in rec.message
+        and "organization" in rec.message
+        for rec in caplog.records
+    )
 
 
 def test_complete_peer_returns_unique_id() -> None:

@@ -5,7 +5,7 @@ Infrahub-sync: synchronize data between infrastructure sources and destinations.
 **Usage**:
 
 ```console
-$ infrahub-sync [OPTIONS] COMMAND [ARGS]...
+$ infrahub-sync [OPTIONS] [COMMAND] [ARGS]...
 ```
 
 **Options**:
@@ -84,7 +84,7 @@ $ infrahub-sync sync [OPTIONS]
 * `--adapter-path TEXT`: Paths to look for adapters. Can be specified multiple times.
 * `--parallel / --no-parallel`: Sync tier-by-tier using the auto-computed dep graph. Requires order: to be omitted from config.yml.  [default: parallel]
 * `--allow-rowcount-drop / --no-allow-rowcount-drop`: Skip the rowcount drop guardrail. Use only when you know the source intentionally shrank.  [default: no-allow-rowcount-drop]
-* `--continue-on-error / --no-continue-on-error`: Log and skip peer relationships whose identifier values are missing instead of aborting. Useful when source data is partial; review the warnings before relying on the result.  [default: no-continue-on-error]
+* `--continue-on-error / --no-continue-on-error`: Log and skip loaded records or peer relationships whose identifier values are missing or null instead of aborting. Useful when source data is partial; review the warnings before relying on the result.  [default: no-continue-on-error]
 * `--concurrent-load / --no-concurrent-load`: Load source and destination concurrently. Disable when a custom adapter isn&#x27;t thread-safe.  [default: concurrent-load]
 * `--full-extract / --no-full-extract`: Re-extract every resource from scratch (default). Pass --no-full-extract to enable the cursor-driven incremental path on warm runs — see docs/reference/incremental-extraction.  [default: full-extract]
 * `--help`: Show this message and exit.

@@ -54,5 +54,5 @@ duckdb -c "SELECT action, resource, source_id, new_value FROM read_parquet('.inf
   against the destination without re-extracting the source. Refuses if the
   destination's schema sub-hash has drifted.
 - `--allow-rowcount-drop` (on `sync`) bypasses the rowcount guardrail when the operator knows the source has legitimately shrunk.
-- `--continue-on-error` (on `sync`) skips peer relationships missing identifier values rather than aborting; the engine logs each skip so you can review what was dropped.
+- `--continue-on-error` (on `sync`) skips loaded records or peer relationships with missing or null identifier values rather than aborting; the engine logs each skip so you can review what was dropped.
 - `--no-concurrent-load` (on `diff` and `sync`) falls back to loading source then destination sequentially. The default (concurrent) is safe with all built-in adapters and roughly halves load wall-clock time on real APIs.

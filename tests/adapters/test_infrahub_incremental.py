@@ -1,5 +1,8 @@
+import logging
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
+
+import pytest
 
 from infrahub_sync.cache.cursors import CursorTier
 
@@ -69,6 +72,43 @@ def test_list_changed_since_uses_updated_at_filter() -> None:
         node_metadata__updated_at__after="2026-05-17T10:00:00Z",
     )
     assert rows == [{"local_id": "1", "name": "leaf1"}]
+
+
+def test_list_changed_since_skips_missing_identifier_when_continuing(caplog: pytest.LogCaptureFixture) -> None:
+    """Incremental extraction skips a bad record and still yields later rows."""
+    from infrahub_sync.adapters.infrahub import PeerIdentifierError
+    from infrahub_sync.cache.cursors import CursorState
+
+    adapter = _make_adapter(["InfraDevice"])
+    adapter.continue_on_error = True
+    bad_node = MagicMock(id="bad-id")
+    good_node = MagicMock(id="good-id")
+    adapter.client.filters.return_value = [bad_node, good_node]  # ty: ignore[unresolved-attribute]
+    error = PeerIdentifierError(
+        parent_kind="InfraDevice",
+        parent_id="bad-id",
+        rel_name="<self>",
+        peer_kind="InfraDevice",
+        peer_id="bad-id",
+        identifiers=("name",),
+        missing_keys=("name",),
+        present_keys=(),
+    )
+    adapter.infrahub_node_to_diffsync = MagicMock(  # ty: ignore[invalid-assignment]
+        side_effect=[error, {"local_id": "good-id", "name": "leaf1"}]
+    )
+    cursor = CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00Z")
+
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"):
+        rows = list(adapter.list_changed_since("InfraDevice", cursor))
+
+    assert rows == [{"local_id": "good-id", "name": "leaf1"}]
+    assert any(
+        record.name == "infrahub_sync.adapters.infrahub"
+        and "Skipping InfraDevice[bad-id]" in record.message
+        and "name" in record.message
+        for record in caplog.records
+    )
 
 
 def test_list_changed_since_raises_for_unknown_model() -> None:

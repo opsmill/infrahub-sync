@@ -190,7 +190,7 @@ def sync_cmd(
     continue_on_error: bool = typer.Option(
         default=False,
         help=(
-            "Log and skip peer relationships whose identifier values are missing instead of aborting. "
+            "Log and skip loaded records or peer relationships whose identifier values are missing or null instead of aborting. "
             "Useful when source data is partial; review the warnings before relying on the result."
         ),
     ),
