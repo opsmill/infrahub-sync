@@ -537,7 +537,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 self.client.store.set(key=unique_id, node=original_node)
                 self.update_or_add_model_instance(item)
 
-    # pylint: disable=too-many-return-statements,too-many-branches -- distinct skip and resolution paths
+    # Distinct skip and resolution paths.
+    # pylint: disable=too-many-return-statements,too-many-branches
     def _resolve_peer_unique_id(  # noqa: PLR0911 -- distinct skip and resolution paths
         self,
         *,
