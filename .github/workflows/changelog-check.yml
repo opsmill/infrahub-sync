@@ -11,10 +11,15 @@ name: Changelog
 # (release-publish.yml). A pull request into `stable` promotes work that was
 # already gated on its way into `main`, so asking for a second fragment there
 # would duplicate the entry rather than add one.
+# ROLLBACK 2026-09-16: the news-fragment gate is disabled while the towncrier
+# rollout is reconsidered. The check below is left intact — only its trigger is
+# commented out. To restore: uncomment the `pull_request:` block and drop
+# `workflow_dispatch:`.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
-    branches: [main]
+  workflow_dispatch:
+  # pull_request:
+  #   types: [opened, synchronize, reopened, labeled, unlabeled]
+  #   branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -88,7 +93,7 @@ jobs:
           # one. Note the REST field is `.filename`, not `.path`.
           ADDED=$(gh api --paginate \
             "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files?per_page=100" \
-            --jq '.[] | select(.additions > 0) | .filename' \
+            --jq '.[] | select(.status == "added") | .filename' \
             | { grep -E "${FRAGMENT}" || true; } \
             | { grep -v '^changelog/towncrier\.md\.template$' || true; })
 

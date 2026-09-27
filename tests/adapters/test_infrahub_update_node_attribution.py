@@ -95,7 +95,11 @@ class FakeRelManager:
 
 
 class FakeNode:
-    """Stand-in for ``InfrahubNodeSync`` exposing only what ``update_node`` reads."""
+    """Stand-in for ``InfrahubNodeSync`` exposing only what ``update_node`` reads.
+
+    ``update_node`` takes its ``schema`` and ``client`` as arguments, so they are held
+    here only to keep each test's fixture in one place.
+    """
 
     def __init__(
         self,
@@ -104,13 +108,16 @@ class FakeNode:
         attr_holders: dict[str, FakeAttr] | None = None,
         many_managers: dict[str, FakeRelManager] | None = None,
     ) -> None:
-        self._schema = schema
-        self._client = client
-        self._branch = "main"
+        self.schema = schema
+        self.client = client
+        self.branch = "main"
         for name, holder in (attr_holders or {}).items():
             setattr(self, name, holder)
         for name, manager in (many_managers or {}).items():
             setattr(self, name, manager)
+
+    def get_branch(self) -> str:
+        return self.branch
 
 
 def _run_update(node: FakeNode, attrs: dict[str, object], source: str | None = None, owner: str | None = None) -> None:
@@ -118,13 +125,19 @@ def _run_update(node: FakeNode, attrs: dict[str, object], source: str | None = N
 
     ``update_node`` is annotated for ``InfrahubNodeSync`` but only touches members
     ``FakeNode`` provides, so the type mismatch is suppressed here once rather than
-    at every call site (mirrors ``_serialise`` in test_infrahub_node_to_diffsync).
+    at every call site.
     """
-    update_node(node, attrs, source=source, owner=owner)  # ty: ignore[invalid-argument-type]
+    update_node(node, attrs, node.client, node.schema, source=source, owner=owner)  # ty: ignore[invalid-argument-type]
 
 
-def _make_sdk_relationship_nodes(*, resource_pool: bool = False) -> tuple[InfrahubNodeSync, InfrahubNodeSync]:
-    """Build real SDK nodes for a cardinality-one update without network access."""
+def _make_sdk_relationship_nodes(
+    *, resource_pool: bool = False
+) -> tuple[InfrahubNodeSync, InfrahubNodeSync, MagicMock, NodeSchemaAPI]:
+    """Build real SDK nodes for a cardinality-one update without network access.
+
+    The client and the node's schema come back with the nodes because ``update_node``
+    is given both explicitly rather than reading them off the node.
+    """
     relationship_schema = RelationshipSchemaAPI(
         name="location", peer="LocationRack", cardinality=RelationshipCardinality.ONE
     )
@@ -140,7 +153,7 @@ def _make_sdk_relationship_nodes(*, resource_pool: bool = False) -> tuple[Infrah
     client.schema.all.return_value = {relationship_schema.peer: peer_schema}
     node = InfrahubNodeSync(client=client, schema=node_schema, data={"id": "device-id"})
     peer = InfrahubNodeSync(client=client, schema=peer_schema, data={"id": "pool-id" if resource_pool else "rack-id"})
-    return node, peer
+    return node, peer, client, node_schema
 
 
 @pytest.fixture
@@ -239,10 +252,10 @@ def test_update_node_attribute_no_attribution_when_unset() -> None:
 
 
 def test_update_node_relationship_one_gets_attribution(monkeypatch: pytest.MonkeyPatch) -> None:
-    node, peer = _make_sdk_relationship_nodes()
+    node, peer, client, node_schema = _make_sdk_relationship_nodes()
     monkeypatch.setattr(infrahub_adapter, "resolve_peer_node", lambda **_kwargs: peer)
 
-    update_node(node, {"location": "rack-uid"}, source=SOURCE_ID, owner=OWNER_ID)
+    update_node(node, {"location": "rack-uid"}, client, node_schema, source=SOURCE_ID, owner=OWNER_ID)
 
     relationship = cast("RelatedNodeSync", node.location)
     assert relationship.peer is peer
@@ -256,10 +269,10 @@ def test_update_node_relationship_one_gets_attribution(monkeypatch: pytest.Monke
 
 
 def test_update_node_relationship_one_no_attribution_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    node, peer = _make_sdk_relationship_nodes()
+    node, peer, client, node_schema = _make_sdk_relationship_nodes()
     monkeypatch.setattr(infrahub_adapter, "resolve_peer_node", lambda **_kwargs: peer)
 
-    update_node(node, {"location": "rack-uid"})
+    update_node(node, {"location": "rack-uid"}, client, node_schema)
 
     relationship = cast("RelatedNodeSync", node.location)
     assert relationship.peer is peer
@@ -269,10 +282,10 @@ def test_update_node_relationship_one_no_attribution_when_unset(monkeypatch: pyt
 
 
 def test_update_node_relationship_one_preserves_resource_pool_allocation(monkeypatch: pytest.MonkeyPatch) -> None:
-    node, pool = _make_sdk_relationship_nodes(resource_pool=True)
+    node, pool, client, node_schema = _make_sdk_relationship_nodes(resource_pool=True)
     monkeypatch.setattr(infrahub_adapter, "resolve_peer_node", lambda **_kwargs: pool)
 
-    update_node(node, {"location": "pool-uid"}, source=SOURCE_ID, owner=OWNER_ID)
+    update_node(node, {"location": "pool-uid"}, client, node_schema, source=SOURCE_ID, owner=OWNER_ID)
 
     relationship = cast("RelatedNodeSync", node.location)
     assert relationship.peer is pool
