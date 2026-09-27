@@ -133,6 +133,24 @@ class FakeRelatedNode:
     id: str | None
 
 
+def _adapter_schema(kind: str, fields: list[str], rel_schemas: list[FakeRelSchema] | None = None) -> FakeNodeSchema:
+    """Build the adapter-side schema entry ``infrahub_node_to_diffsync`` now reads.
+
+    Since PR #227, the converter reads ``self.schema[node_kind]`` instead of the
+    node's own ``_schema``, so this must list exactly the fields the strict
+    response actually carries for the node being converted — otherwise the
+    converter tries to read an attribute the fake node never set.
+    """
+    rel_schemas = rel_schemas or []
+    return FakeNodeSchema(
+        kind=kind,
+        attribute_names=list(fields),
+        attributes=[FakeAttrSchema(name=name) for name in fields],
+        relationships=rel_schemas,
+        relationship_names=[rel.name for rel in rel_schemas],
+    )
+
+
 class StrictNode:
     """Node carrying only the fields the query asked for.
 
@@ -300,7 +318,7 @@ def test_model_loader_requests_identifiers_alongside_attributes() -> None:
     adapter = _Harness(
         config=_config({"LocationSite": ["name", "description"]}),
         client=client,
-        schema={"LocationSite": FakeNodeSchema(kind="LocationSite")},
+        schema={"LocationSite": _adapter_schema("LocationSite", ["name", "description"])},
     )
 
     adapter.model_loader(model_name="LocationSite", model=LocationSite)
@@ -314,7 +332,7 @@ def test_model_loader_keeps_identifier_and_local_id_under_a_strict_response() ->
     adapter = _Harness(
         config=_config({"LocationSite": ["name", "description"]}),
         client=client,
-        schema={"LocationSite": FakeNodeSchema(kind="LocationSite")},
+        schema={"LocationSite": _adapter_schema("LocationSite", ["name", "description"])},
     )
 
     adapter.model_loader(model_name="LocationSite", model=LocationSite)
@@ -333,7 +351,7 @@ def test_model_loader_keeps_identifier_order_for_a_multi_identifier_model() -> N
     adapter = _Harness(
         config=_config({"InfraCircuit": ["name", "site", "description"]}),
         client=client,
-        schema={"InfraCircuit": FakeNodeSchema(kind="InfraCircuit")},
+        schema={"InfraCircuit": _adapter_schema("InfraCircuit", ["name", "site", "description"])},
     )
 
     adapter.model_loader(model_name="InfraCircuit", model=InfraCircuit)
@@ -347,7 +365,7 @@ def test_model_loader_requests_identifiers_for_an_identifier_only_model() -> Non
     adapter = _Harness(
         config=_config({"InfraTag": ["name"]}),
         client=client,
-        schema={"InfraTag": FakeNodeSchema(kind="InfraTag")},
+        schema={"InfraTag": _adapter_schema("InfraTag", ["name"])},
     )
 
     adapter.model_loader(model_name="InfraTag", model=InfraTag)
@@ -379,8 +397,12 @@ def test_model_loader_resolves_a_relationship_peer_identifier_under_a_strict_res
         config=_config({"LocationSite": ["name", "description"], "InfraDevice": ["name", "description", "site"]}),
         client=client,
         schema={
-            "LocationSite": FakeNodeSchema(kind="LocationSite"),
-            "InfraDevice": FakeNodeSchema(kind="InfraDevice"),
+            "LocationSite": _adapter_schema("LocationSite", ["name", "description"]),
+            "InfraDevice": _adapter_schema(
+                "InfraDevice",
+                ["name", "description"],
+                rel_schemas=[FakeRelSchema(name="site", peer="LocationSite")],
+            ),
         },
     )
     adapter.LocationSite = LocationSite  # ty: ignore[unresolved-attribute]
@@ -411,8 +433,12 @@ def test_model_loader_reports_a_peer_whose_identifier_was_never_requested() -> N
         config=_config({"LocationSite": ["name", "description"], "InfraDevice": ["name", "description", "site"]}),
         client=client,
         schema={
-            "LocationSite": FakeNodeSchema(kind="LocationSite"),
-            "InfraDevice": FakeNodeSchema(kind="InfraDevice"),
+            "LocationSite": _adapter_schema("LocationSite", list(LocationSite._attributes)),
+            "InfraDevice": _adapter_schema(
+                "InfraDevice",
+                ["name", "description"],
+                rel_schemas=[FakeRelSchema(name="site", peer="LocationSite")],
+            ),
         },
     )
     adapter.LocationSite = LocationSite  # ty: ignore[unresolved-attribute]
@@ -444,7 +470,7 @@ def test_list_existing_ids_requests_every_field_its_converter_reads() -> None:
     adapter = _Harness(
         config=_config({"InfraCircuit": ["name", "site", "description"]}),
         client=client,
-        schema={"InfraCircuit": FakeNodeSchema(kind="InfraCircuit")},
+        schema={"InfraCircuit": _adapter_schema("InfraCircuit", ["name", "site", "description"])},
     )
     adapter.InfraCircuit = InfraCircuit  # ty: ignore[unresolved-attribute]
 
