@@ -389,7 +389,7 @@ def generate(
     elif sync_instance.source.name == "infrahub" and (sync_instance.source.settings or environment_address):
         infrahub_adapter = sync_instance.source
 
-    # Resolve the connection the same way the runtime adapter does, so the environment wins
+    # Use runtime address and token precedence; an explicit branch wins over the environment default.
     if infrahub_adapter is None:
         client = InfrahubClientSync(address="", config=None)
     else:

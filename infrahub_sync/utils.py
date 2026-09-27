@@ -318,12 +318,12 @@ def get_infrahub_config(settings: dict[str, Any], branch: str | None) -> Config:
 
     Args:
         settings: Infrahub connection settings, including token, branch, and verify_ssl.
-        branch: The CLI branch used when no setting or environment branch is provided.
+        branch: The CLI branch used when no configured branch is provided.
 
     Returns:
         Config: A Config instance. `api_token` is omitted when neither the environment nor the
             settings supply one, so the SDK falls back to its own settings sources.
     """
     _, infrahub_token = resolve_infrahub_connection(settings=settings)
-    infrahub_branch = settings.get("branch") or os.environ.get("INFRAHUB_DEFAULT_BRANCH") or branch or "main"
+    infrahub_branch = settings.get("branch") or branch or os.environ.get("INFRAHUB_DEFAULT_BRANCH") or "main"
     return build_infrahub_config(token=infrahub_token, branch=infrahub_branch, verify_ssl=settings.get("verify_ssl"))

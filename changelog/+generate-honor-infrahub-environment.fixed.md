@@ -1,1 +1,1 @@
-The `generate` command now honors the Infrahub environment address, token, and default branch, and uses the configured TLS verification setting when fetching schema.
+The `generate` command now honors the Infrahub environment address and token, uses `INFRAHUB_DEFAULT_BRANCH` when `--branch` is omitted, and applies configured TLS verification and a 60-second timeout when fetching schema.
