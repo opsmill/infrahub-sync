@@ -555,7 +555,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         for attr_name in node_schema.attribute_names:
             if has_field(config=self.config, name=node_kind, field=attr_name):
-                attr = getattr(node, attr_name)
+                try:
+                    attr = getattr(node, attr_name)
+                except AttributeError:
+                    # The field was requested by the caller's `include`, but the response
+                    # (or a peer already in the store from an earlier, narrower request)
+                    # does not carry it. Leave it out of `data`; the identifier check in
+                    # `_resolve_peer_unique_id` turns an absent identifier into a named
+                    # `PeerIdentifierError` instead of surfacing this as a crash.
+                    continue
                 val = attr.value
                 # IP types come back from the Infrahub SDK as ipaddress
                 # objects; DiffSync models store them as their string form

@@ -1,0 +1,1 @@
+The `update-infrahub-sdk` workflow now checks out the branch named in its own build matrix instead of the workflow's trigger ref, and updates the locked `infrahub-sdk` version without rewriting the version range declared in `pyproject.toml`.

@@ -1,1 +1,1 @@
-The generator no longer maps the String and Integer attribute kinds to str and int; use the SDK's current Text and Number kinds instead.
+The generator no longer maps the legacy String and Integer attribute kinds explicitly; a schema still declaring one of them now generates a plain `str` field (previously `str` and `int` respectively) instead of the SDK's current Text and Number kinds. Update your schema to Text or Number to keep the original type.

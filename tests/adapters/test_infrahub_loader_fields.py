@@ -15,7 +15,11 @@ strict response is a boundary model of a future server/SDK contract, not a claim
 about what 1.23.2 returns today.
 
 The fake node here exposes exactly the requested fields: unrequested attributes
-are absent from the node and from its schema's ``attribute_names``.
+are absent from the node itself. The adapter's own schema entry (``adapter.schema``),
+by contrast, always lists the full kind schema, as production loads it via
+``client.schema.all()`` — never narrowed to what a given query requested. A test
+that narrowed the schema too would hide the gap between what the schema promises
+and what the node actually carries.
 """
 
 from __future__ import annotations
@@ -137,9 +141,12 @@ def _adapter_schema(kind: str, fields: list[str], rel_schemas: list[FakeRelSchem
     """Build the adapter-side schema entry ``infrahub_node_to_diffsync`` now reads.
 
     Since PR #227, the converter reads ``self.schema[node_kind]`` instead of the
-    node's own ``_schema``, so this must list exactly the fields the strict
-    response actually carries for the node being converted — otherwise the
-    converter tries to read an attribute the fake node never set.
+    node's own ``_schema``. Callers must pass the kind's *full* field list here —
+    identifiers and attributes alike — matching what production loads once via
+    ``client.schema.all()``, regardless of what any single query's ``include``
+    requested. The converter is expected to tolerate a schema field the node
+    itself does not carry (see ``StrictNode``), not to be shielded from it by a
+    narrowed fake schema.
     """
     rel_schemas = rel_schemas or []
     return FakeNodeSchema(
@@ -433,7 +440,7 @@ def test_model_loader_reports_a_peer_whose_identifier_was_never_requested() -> N
         config=_config({"LocationSite": ["name", "description"], "InfraDevice": ["name", "description", "site"]}),
         client=client,
         schema={
-            "LocationSite": _adapter_schema("LocationSite", list(LocationSite._attributes)),
+            "LocationSite": _adapter_schema("LocationSite", ["name", "description"]),
             "InfraDevice": _adapter_schema(
                 "InfraDevice",
                 ["name", "description"],
