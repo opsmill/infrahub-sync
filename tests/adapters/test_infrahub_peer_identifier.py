@@ -24,7 +24,7 @@ from infrahub_sdk.exceptions import NodeNotFoundError
 from pydantic import ValidationError
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
-from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError, resolve_peer_node
+from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError, PeerSdkAliasError, resolve_peer_node
 
 
 class _KindedNode(Protocol):
@@ -158,6 +158,12 @@ class _Harness(InfrahubAdapter):
         self._instances: list[object] = []
         # Register the fake peer model under its kind so getattr(self, kind) works.
         self.LocationGeneric: type[_FakePeerModel] = _FakePeerModel
+        self.schema = {  # ty: ignore[invalid-assignment]
+            "LocationGeneric": SimpleNamespace(
+                attributes=[SimpleNamespace(name=name) for name in ("name", "organization")],
+                relationships=[],
+            ),
+        }
 
     def update_or_add_model_instance(self, item: object) -> None:  # ty: ignore[invalid-method-override]
         self._instances.append(item)
@@ -861,7 +867,53 @@ def test_unresolvable_sdk_alias_fails_loudly() -> None:
     harness = _Harness(rehydrated_peer=hydrated_peer)
     peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
 
-    with pytest.raises(RuntimeError, match="Cannot cache SDK peer"):
+    with pytest.raises(PeerSdkAliasError, match=r"LocationGeneric\[peer-id\].*InfraDevice.location") as excinfo:
+        harness._resolve_peer_unique_id(
+            parent_node=_make_node("InfraDevice", "parent-id", {}),  # ty: ignore[invalid-argument-type]
+            rel_name="location",
+            peer_node=peer,  # ty: ignore[invalid-argument-type]
+        )
+    assert excinfo.value.unique_id == "dc-east|acme"
+
+
+def test_cached_unresolvable_sdk_alias_names_relationship() -> None:
+    harness = _Harness()
+    harness._peer_unique_ids["LocationGeneric", "peer-id"] = "dc-east|acme"
+    with pytest.raises(PeerSdkAliasError, match=r"LocationGeneric\[peer-id\].*InfraDevice.location"):
+        harness._resolve_peer_unique_id(
+            parent_node=_make_node("InfraDevice", "parent-id", {}),  # ty: ignore[invalid-argument-type]
+            rel_name="location",
+            peer_node=_make_node("LocationGeneric", "peer-id", {}),  # ty: ignore[invalid-argument-type]
+        )
+
+
+def test_sdk_alias_uses_adapter_schema_when_node_has_no_private_schema() -> None:
+    harness = _Harness()
+    peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east", "organization": "acme"})
+    del peer._schema
+
+    result = harness._resolve_peer_unique_id(
+        parent_node=_make_node("InfraDevice", "parent-id", {}),  # ty: ignore[invalid-argument-type]
+        rel_name="location",
+        peer_node=peer,  # ty: ignore[invalid-argument-type]
+    )
+
+    assert result == "dc-east|acme"
+    assert harness.client.store.get(kind="LocationGeneric", key=result) is peer
+
+
+def test_many_relationship_identifier_raises_named_alias_error() -> None:
+    harness = _Harness()
+    harness.schema = {  # ty: ignore[invalid-assignment]
+        "LocationGeneric": SimpleNamespace(
+            attributes=[SimpleNamespace(name="name")],
+            relationships=[SimpleNamespace(name="organization", cardinality="many")],
+        ),
+    }
+    peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east", "organization": "acme"})
+    peer.organization = SimpleNamespace(id="organization-id")
+
+    with pytest.raises(PeerSdkAliasError, match=r"LocationGeneric\[peer-id\].*InfraDevice.location"):
         harness._resolve_peer_unique_id(
             parent_node=_make_node("InfraDevice", "parent-id", {}),  # ty: ignore[invalid-argument-type]
             rel_name="location",
@@ -963,7 +1015,7 @@ def test_reconciliation_rejects_null_attribute_identifier() -> None:
 
 
 def test_reconciliation_rejects_null_cardinality_one_relationship_identifier() -> None:
-    harness = _Harness()
+    harness = _RelationshipHarness(rehydrated_peer=object())
     incomplete_peer = SimpleNamespace(
         id="lag-id",
         get_kind=lambda: "InterfaceLag",
@@ -990,7 +1042,8 @@ def test_reconciliation_rejects_null_cardinality_one_relationship_identifier() -
 
 
 def test_reconciliation_rejects_cardinality_many_relationship_identifier() -> None:
-    harness = _Harness()
+    harness = _RelationshipHarness(rehydrated_peer=object())
+    cast("Any", harness.schema["InterfaceLag"].relationships[0]).cardinality = "many"
     incomplete_peer = SimpleNamespace(
         id="lag-id",
         get_kind=lambda: "InterfaceLag",

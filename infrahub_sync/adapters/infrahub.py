@@ -265,7 +265,11 @@ def diffsync_to_infrahub(
     return data
 
 
-class PeerIdentifierError(ValueError):
+class PeerIdentityError(ValueError):
+    """Base error for a relationship peer whose identity cannot be used."""
+
+
+class PeerIdentifierError(PeerIdentityError):
     """Raised when an Infrahub peer node is missing a value required to build its DiffSync identifier.
 
     Carries enough context (parent kind/id, relationship name, peer kind/id, missing keys,
@@ -304,11 +308,25 @@ class PeerIdentifierError(ValueError):
         super().__init__(msg)
 
 
-def _sdk_node_has_identifiers(node: object, identifiers: tuple[str, ...]) -> bool:
+class PeerSdkAliasError(PeerIdentityError):
+    """Raised when no SDK node can be cached under a resolved peer identity."""
+
+    def __init__(self, *, parent_kind: str, rel_name: str, peer_kind: str, peer_id: str, unique_id: str) -> None:
+        self.parent_kind = parent_kind
+        self.rel_name = rel_name
+        self.peer_kind = peer_kind
+        self.peer_id = peer_id
+        self.unique_id = unique_id
+        super().__init__(
+            f"Cannot cache SDK peer {peer_kind}[{peer_id}] under identity {unique_id} "
+            f"for relationship {parent_kind}.{rel_name}"
+        )
+
+
+def _sdk_node_has_identifiers(node: object, identifiers: tuple[str, ...], node_schema: MainSchemaTypesAPI) -> bool:
     """Return whether an SDK node carries every DiffSync identifier value."""
-    schema = getattr(node, "_schema", None)
-    attributes = {attribute.name for attribute in getattr(schema, "attributes", ())}
-    relationships = {relationship.name: relationship for relationship in getattr(schema, "relationships", ())}
+    attributes = {attribute.name for attribute in node_schema.attributes}
+    relationships = {relationship.name: relationship for relationship in node_schema.relationships}
     for identifier in identifiers:
         if identifier in attributes:
             attribute = getattr(node, identifier, None)
@@ -554,11 +572,17 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                     identifiers=identifiers,
                 )
                 if not aliased:
-                    msg = f"Cannot cache SDK peer {peer_kind}[{peer_id}] under identity {cached_unique_id}"
+                    err = PeerSdkAliasError(
+                        parent_kind=parent_node.get_kind(),
+                        rel_name=rel_name,
+                        peer_kind=peer_kind,
+                        peer_id=peer_id,
+                        unique_id=cached_unique_id,
+                    )
                     if self.continue_on_error:
-                        logger.warning("Skipping peer relationship: %s", msg)
+                        logger.warning("Skipping peer relationship: %s", err)
                         return None
-                    raise RuntimeError(msg)
+                    raise err
                 return cached_unique_id
 
         peer_data, hydrated_peer = self._peer_data_with_hydration(
@@ -619,12 +643,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             fallback_node=hydrated_peer or peer_node,
         )
         if not aliased:
-            msg = f"Cannot cache SDK peer {peer_kind}[{peer_id}] under identity {unique_id}"
+            err = PeerSdkAliasError(
+                parent_kind=parent_node.get_kind(),
+                rel_name=rel_name,
+                peer_kind=peer_kind,
+                peer_id=peer_id,
+                unique_id=unique_id,
+            )
             if self.continue_on_error:
-                logger.warning("Skipping peer relationship: %s", msg)
+                logger.warning("Skipping peer relationship: %s", err)
                 self._peer_unique_ids[cache_key] = None
                 return None
-            raise RuntimeError(msg)
+            raise err
         resolved_unique_id = peer_item.get_unique_id()
         self._peer_unique_ids[cache_key] = resolved_unique_id
         return resolved_unique_id
@@ -682,7 +712,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             (
                 peer
                 for peer in (sdk_peer_by_uuid, sdk_peer_by_identity, fallback_node)
-                if peer is not None and _sdk_node_has_identifiers(peer, identifiers)
+                if peer is not None and _sdk_node_has_identifiers(peer, identifiers, self.schema[peer_kind])
             ),
             None,
         )
