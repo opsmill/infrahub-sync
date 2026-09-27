@@ -16,6 +16,7 @@ from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from infrahub_sdk.utils import compare_lists
 from pydantic import ValidationError
+from structlog.stdlib import get_logger
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -28,6 +29,7 @@ from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.generator import has_field
 
 logger = logging.getLogger(__name__)
+structured_logger = get_logger(__name__)
 
 # GraphQL filter kwarg for timestamp-based incremental queries.
 # Verified against a live Infrahub via __type introspection — every node
@@ -468,7 +470,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 except PeerIdentifierError as exc:
                     if not self.continue_on_error:
                         raise
-                    logger.warning("Skipping %s[%s]: %s", model_name, node.id, exc)
+                    structured_logger.warning("Skipping model", model=model_name, node_id=node.id, error=str(exc))
             total = len(nodes)
 
             # Extract the list of dicts for filtering and transforming
@@ -529,7 +531,13 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         except PeerIdentifierError as exc:
             if not self.continue_on_error:
                 raise
-            logger.warning("Skipping peer relationship: %s", exc)
+            structured_logger.warning(
+                "Skipping peer relationship",
+                peer=peer_kind,
+                peer_id=peer_node.id,
+                relationship=rel_name,
+                error=str(exc),
+            )
             return None
         identifiers = tuple(peer_model._identifiers)
         missing = tuple(k for k in identifiers if k not in peer_data or peer_data[k] is None)
