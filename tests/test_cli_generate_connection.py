@@ -17,6 +17,8 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from infrahub_sync import SyncAdapter, SyncConfig
+from infrahub_sync.adapters.infrahub import InfrahubAdapter
 from infrahub_sync.cli import app
 
 if TYPE_CHECKING:
@@ -258,3 +260,77 @@ def test_environment_branch_is_used_without_cli_branch(
     run_generate(config_path)
 
     assert captured_client["kwargs"]["config"].default_branch == "environment-branch"
+
+
+@pytest.mark.parametrize(
+    ("settings", "execution"),
+    [
+        ({"url": CONFIG_URL, "token": CONFIG_CREDENTIAL, "branch": "configured", "verify_ssl": False}, ({}, None)),
+        (
+            {"url": CONFIG_URL, "token": CONFIG_CREDENTIAL, "verify_ssl": True},
+            ({"INFRAHUB_ADDRESS": ENV_ADDRESS, "INFRAHUB_API_TOKEN": ENV_CREDENTIAL}, "cli-branch"),
+        ),
+        (
+            {"url": CONFIG_URL, "token": CONFIG_CREDENTIAL, "verify_ssl": False},
+            ({"INFRAHUB_DEFAULT_BRANCH": "environment-branch"}, None),
+        ),
+    ],
+    ids=["configured", "environment-overrides", "environment-branch"],
+)
+def test_generate_and_runtime_adapter_use_matching_connection(
+    settings: dict[str, Any],
+    execution: tuple[dict[str, str], str | None],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    captured_client: dict[str, Any],
+) -> None:
+    """Generation and the runtime adapter resolve the same SDK connection fields."""
+    environment, branch = execution
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+
+    destination = {"name": "infrahub", "settings": settings}
+    config_path = write_config(tmp_path, source=NETBOX_SIDE, destination=destination)
+    run_generate(config_path, *(["--branch", branch] if branch else []))
+    generated = captured_client["kwargs"]
+
+    runtime: dict[str, Any] = {}
+
+    class RuntimeSchema:
+        @staticmethod
+        def all(**_kwargs: object) -> dict[str, Any]:
+            return {}
+
+    class RuntimeClient:
+        def __init__(self, **kwargs: object) -> None:
+            runtime.update(kwargs)
+            self.schema = RuntimeSchema()
+
+        @staticmethod
+        def get(**_kwargs: object) -> None:
+            return None
+
+    monkeypatch.setattr("infrahub_sync.adapters.infrahub.InfrahubClientSync", RuntimeClient)
+    sync_config = SyncConfig(
+        name="test-sync", source=SyncAdapter(name="netbox"), destination=SyncAdapter(name="infrahub", settings=settings)
+    )
+    InfrahubAdapter(target="destination", adapter=sync_config.destination, config=sync_config, branch=branch)
+
+    assert runtime["address"] == generated["address"]
+    for field in ("api_token", "default_branch", "tls_insecure", "timeout"):
+        assert getattr(runtime["config"], field) == getattr(generated["config"], field)
+
+
+@pytest.mark.parametrize("settings", [{"url": CONFIG_URL}, {"token": CONFIG_CREDENTIAL}])
+def test_runtime_adapter_still_requires_url_and_token(
+    settings: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shared resolver preserves the runtime adapter's missing-connection error."""
+    for name in [key for key in os.environ if key.startswith("INFRAHUB_")]:
+        monkeypatch.delenv(name, raising=False)
+    sync_config = SyncConfig(
+        name="test-sync", source=SyncAdapter(name="netbox"), destination=SyncAdapter(name="infrahub", settings=settings)
+    )
+
+    with pytest.raises(ValueError, match="Both url and token must be specified!"):
+        InfrahubAdapter(target="destination", adapter=sync_config.destination, config=sync_config)
