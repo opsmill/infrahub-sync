@@ -251,7 +251,7 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
 
    The name is what does the separating, so two cases still share a namespace. Two distinct NetBox VRFs that happen to carry the same name resolve to one Infrahub namespace, and a NetBox VRF actually named `default` shares the built-in namespace with everything that has no VRF. If networks you need to keep apart sit in VRFs whose names repeat, give those VRFs distinct names or adjust the mapping before you rely on the import.
 
-   If you already imported this data with an earlier version of the example, its prefixes and addresses stayed in Infrahub's `default` namespace. Running this updated example does not move or clean up those old objects — it creates new ones in the resolved namespace alongside them.
+   If you already imported this data with an earlier version of the example, its prefixes and addresses stayed in Infrahub's `default` namespace. Running this updated example does not move or clean up those old objects. A prefix or address whose VRF still resolves to `default` — no VRF, or a VRF actually named `default` — matches its existing object there; only one that now resolves to a VRF-named namespace gets a new object alongside the old one.
 
    :::info This is a minimal mapping
    Some records and relationships may be missing — that doesn't mean the sync failed.
