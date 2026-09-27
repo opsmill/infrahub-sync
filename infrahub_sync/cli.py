@@ -383,9 +383,10 @@ def generate(
     # Determine if infrahub is in source or destination
     # We are using the destination as the "constraint", if there is 2 infrahubs instance
     infrahub_adapter = None
-    if sync_instance.destination.name == "infrahub":
+    environment_address, _ = resolve_infrahub_connection(settings={})
+    if sync_instance.destination.name == "infrahub" and (sync_instance.destination.settings or environment_address):
         infrahub_adapter = sync_instance.destination
-    elif sync_instance.source.name == "infrahub":
+    elif sync_instance.source.name == "infrahub" and (sync_instance.source.settings or environment_address):
         infrahub_adapter = sync_instance.source
 
     # Resolve the connection the same way the runtime adapter does, so the environment wins

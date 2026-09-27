@@ -2,7 +2,7 @@
 
 Address precedence is `INFRAHUB_ADDRESS`, then `INFRAHUB_URL`, then `settings.url`;
 token precedence is `INFRAHUB_API_TOKEN`, then `settings.token`. Branch precedence
-(`settings.branch`, then `--branch`, then `main`) is unchanged and is locked here too.
+is `settings.branch`, then `INFRAHUB_DEFAULT_BRANCH`, then `--branch`, then `main`.
 
 Every case drives the real command through `CliRunner`, so the captured `config` is the
 SDK `Config` that `get_infrahub_config` actually builds.
@@ -144,6 +144,36 @@ def test_configured_connection_is_preserved_without_environment(
     assert kwargs["config"].api_token == CONFIG_CREDENTIAL
 
 
+def test_empty_destination_falls_through_to_configured_source(tmp_path: Path, captured_client: dict[str, Any]) -> None:
+    """Use the configured Infrahub source when the Infrahub destination has no settings."""
+    config_path = write_config(
+        tmp_path,
+        source={"name": "infrahub", "settings": {"url": CONFIG_URL, "token": CONFIG_CREDENTIAL}},
+        destination={"name": "infrahub"},
+    )
+
+    run_generate(config_path)
+
+    kwargs = captured_client["kwargs"]
+    assert kwargs["address"] == CONFIG_URL
+    assert kwargs["config"].api_token == CONFIG_CREDENTIAL
+
+
+def test_generate_configures_tls_and_timeout_like_runtime(tmp_path: Path, captured_client: dict[str, Any]) -> None:
+    """Pass the runtime adapter's TLS choice and 60-second timeout to the SDK."""
+    config_path = write_config(
+        tmp_path,
+        source=NETBOX_SIDE,
+        destination={"name": "infrahub", "settings": {"url": CONFIG_URL, "verify_ssl": False}},
+    )
+
+    run_generate(config_path)
+
+    sdk_config = captured_client["kwargs"]["config"]
+    assert sdk_config.tls_insecure is True
+    assert sdk_config.timeout == 60
+
+
 def test_env_token_used_when_config_has_no_token(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured_client: dict[str, Any]
 ) -> None:
@@ -214,3 +244,17 @@ def test_branch_precedence_is_unchanged(
     run_generate(config_path, "--branch", "x")
 
     assert captured_client["kwargs"]["config"].default_branch == expected_branch
+
+
+def test_environment_branch_is_used_without_cli_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured_client: dict[str, Any]
+) -> None:
+    """Use INFRAHUB_DEFAULT_BRANCH when neither settings nor the command specifies a branch."""
+    monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH", "environment-branch")
+    config_path = write_config(
+        tmp_path, source=NETBOX_SIDE, destination={"name": "infrahub", "settings": {"url": CONFIG_URL}}
+    )
+
+    run_generate(config_path)
+
+    assert captured_client["kwargs"]["config"].default_branch == "environment-branch"

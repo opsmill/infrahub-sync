@@ -1,1 +1,1 @@
-The `generate` command now reads the Infrahub address from `INFRAHUB_ADDRESS` or `INFRAHUB_URL` and the token from `INFRAHUB_API_TOKEN`, matching the behaviour of `diff` and `sync`.
+The `generate` command now honors the Infrahub environment address, token, and default branch, and uses the configured TLS verification setting when fetching schema.
