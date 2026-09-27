@@ -20,6 +20,9 @@ by contrast, always lists the full kind schema, as production loads it via
 ``client.schema.all()`` — never narrowed to what a given query requested. A test
 that narrowed the schema too would hide the gap between what the schema promises
 and what the node actually carries.
+
+The final tests use real SDK nodes with the same full schema to check how the
+converter handles absent and null fields independently of the strict client fake.
 """
 
 from __future__ import annotations
@@ -29,6 +32,9 @@ from typing import Any, TypeVar
 
 import pytest
 from diffsync import Adapter
+from infrahub_sdk import Config, InfrahubClientSync
+from infrahub_sdk.node import InfrahubNodeSync
+from infrahub_sdk.schema.main import AttributeKind, AttributeSchemaAPI, NodeSchemaAPI
 
 from infrahub_sync import (
     SchemaMappingField,
@@ -144,9 +150,8 @@ def _adapter_schema(kind: str, fields: list[str], rel_schemas: list[FakeRelSchem
     node's own ``_schema``. Callers must pass the kind's *full* field list here —
     identifiers and attributes alike — matching what production loads once via
     ``client.schema.all()``, regardless of what any single query's ``include``
-    requested. The converter is expected to tolerate a schema field the node
-    itself does not carry (see ``StrictNode``), not to be shielded from it by a
-    narrowed fake schema.
+    requested. A missing identifier gets a named error; a missing non-identifier
+    remains an error. A narrowed fake schema would hide both cases.
     """
     rel_schemas = rel_schemas or []
     return FakeNodeSchema(
@@ -504,3 +509,85 @@ def test_field_union_is_ordered_and_deduplicated() -> None:
         _attributes = ("site", "description", "name")
 
     assert identifier_and_attribute_fields(_Stub) == ["name", "site", "description"]  # ty: ignore[invalid-argument-type]
+
+
+def _sdk_schema(kind: str) -> NodeSchemaAPI:
+    """Return the full schema independently loaded by a production adapter."""
+    namespace, name = ("Location", "Site") if kind == "LocationSite" else ("Infra", "Device")
+    return NodeSchemaAPI(
+        name=name,
+        namespace=namespace,
+        attributes=[
+            AttributeSchemaAPI(name="name", kind=AttributeKind.TEXT, optional=False),
+            AttributeSchemaAPI(name="description", kind=AttributeKind.TEXT, optional=True),
+        ],
+    )
+
+
+def _sdk_adapter(client: InfrahubClientSync, schemas: dict[str, NodeSchemaAPI]) -> InfrahubAdapter:
+    """Build an adapter with a real SDK store and full loaded schemas."""
+    adapter = InfrahubAdapter.__new__(InfrahubAdapter)
+    Adapter.__init__(adapter)  # noqa: PLC2801 - skip the adapter's network setup
+    adapter.client = client
+    adapter.schema = schemas
+    adapter.config = _config({kind: ["name", "description"] for kind in schemas})
+    adapter.continue_on_error = False
+    adapter.LocationSite = LocationSite
+    adapter.InfraDevice = InfraDevice
+    return adapter
+
+
+def _sdk_node(client: InfrahubClientSync, schema: NodeSchemaAPI, *, name: str | None = "dc-east") -> InfrahubNodeSync:
+    """Create the node shape returned by the installed SDK for a full schema."""
+    data: dict[str, Any] = {"id": "site-1", "description": {"value": "east"}}
+    if name is not None:
+        data["name"] = {"value": name}
+    return InfrahubNodeSync(client=client, schema=schema, branch="main", data=data)
+
+
+@pytest.mark.parametrize("missing_shape", ["absent", "null"])
+def test_sdk_model_identifier_missing_or_null_raises_named_error(missing_shape: str) -> None:
+    """A model cannot be converted with an absent or null identifier."""
+    client = InfrahubClientSync(address="http://localhost:8000", config=Config(api_token=None))
+    schema = _sdk_schema("LocationSite")
+    adapter = _sdk_adapter(client, {"LocationSite": schema})
+    node = _sdk_node(client, schema, name=None)
+    if missing_shape == "absent":
+        node._attribute_data.pop("name")
+
+    with pytest.raises(PeerIdentifierError, match="name") as excinfo:
+        adapter.infrahub_node_to_diffsync(node)
+    assert excinfo.value.missing_keys == ("name",)
+
+
+def test_sdk_peer_null_identifier_raises_named_error() -> None:
+    """A peer cannot be looked up under the stringified value of None."""
+    client = InfrahubClientSync(address="http://localhost:8000", config=Config(api_token=None))
+    schema = _sdk_schema("LocationSite")
+    adapter = _sdk_adapter(client, {"LocationSite": schema})
+    peer = _sdk_node(client, schema, name=None)
+    parent_schema = _sdk_schema("InfraDevice")
+    parent = InfrahubNodeSync(client=client, schema=parent_schema, branch="main", data={"id": "dev-1"})
+
+    with pytest.raises(PeerIdentifierError, match="name") as excinfo:
+        adapter._resolve_peer_unique_id(parent_node=parent, rel_name="site", peer_node=peer)
+    assert excinfo.value.missing_keys == ("name",)
+
+    adapter.continue_on_error = True
+    assert adapter._resolve_peer_unique_id(parent_node=parent, rel_name="site", peer_node=peer) is None
+
+
+def test_sdk_complete_node_converts_but_missing_non_identifier_still_raises() -> None:
+    """A complete node converts; an omitted optional field still fails loudly."""
+    client = InfrahubClientSync(address="http://localhost:8000", config=Config(api_token=None))
+    schema = _sdk_schema("LocationSite")
+    adapter = _sdk_adapter(client, {"LocationSite": schema})
+    node = _sdk_node(client, schema)
+    assert adapter.infrahub_node_to_diffsync(node) == {
+        "local_id": "site-1",
+        "name": "dc-east",
+        "description": "east",
+    }
+    node._attribute_data.pop("description")
+    with pytest.raises(AttributeError, match="description"):
+        adapter.infrahub_node_to_diffsync(node)

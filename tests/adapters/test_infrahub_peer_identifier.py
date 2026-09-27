@@ -70,7 +70,7 @@ class _Harness(InfrahubAdapter):
     def update_or_add_model_instance(self, item: object) -> None:  # ty: ignore[invalid-method-override]
         self._instances.append(item)
 
-    def infrahub_node_to_diffsync(self, node: object) -> dict[str, Any]:  # noqa: PLR6301
+    def infrahub_node_to_diffsync(self, node: object, **_kwargs: object) -> dict[str, Any]:  # noqa: PLR6301
         # Return whatever fake data the test attached to the node.
         return dict(node._fake_diffsync_data)  # ty: ignore[unresolved-attribute]
 

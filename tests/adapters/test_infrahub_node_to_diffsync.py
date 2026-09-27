@@ -94,7 +94,9 @@ def _make_config(kind: str, field_names: list[str]) -> SyncConfig:
             SchemaMappingModel(
                 name=kind,
                 mapping=kind,
-                identifiers=["name"],
+                # These tests isolate value conversion; identifier validation is
+                # covered with full-schema SDK nodes in test_infrahub_loader_fields.
+                identifiers=[],
                 fields=[SchemaMappingField(name=n, mapping=n) for n in field_names],
             ),
         ],

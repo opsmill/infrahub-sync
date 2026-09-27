@@ -302,9 +302,13 @@ class PeerIdentifierError(ValueError):
         self.identifiers = identifiers
         self.missing_keys = missing_keys
         self.present_keys = present_keys
+        subject = (
+            f"{peer_kind}[{peer_id}]"
+            if rel_name == "<self>"
+            else f"peer {peer_kind}[{peer_id}] (relationship {parent_kind}.{rel_name}, parent id={parent_id})"
+        )
         msg = (
-            f"Cannot build unique_id for peer {peer_kind}[{peer_id}] "
-            f"(relationship {parent_kind}.{rel_name}, parent id={parent_id}): "
+            f"Cannot build unique_id for {subject}: "
             f"missing identifier key(s) {list(missing_keys)}; "
             f"required identifiers={list(identifiers)}, present keys={list(present_keys)}. "
             "Likely cause: schema_mapping does not declare a 'fields:' entry for the missing "
@@ -457,8 +461,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             )
 
             # Transform the list of InfrahubNodeSync into a list of (node, dict) tuples
-            node_dict_pairs = [(node, self.infrahub_node_to_diffsync(node=node)) for node in nodes]
-            total = len(node_dict_pairs)
+            node_dict_pairs = []
+            for node in nodes:
+                try:
+                    node_dict_pairs.append((node, self.infrahub_node_to_diffsync(node=node)))
+                except PeerIdentifierError as exc:
+                    if not self.continue_on_error:
+                        raise
+                    logger.warning("Skipping %s[%s]: %s", model_name, node.id, exc)
+            total = len(nodes)
 
             # Extract the list of dicts for filtering and transforming
             list_obj = [pair[1] for pair in node_dict_pairs]
@@ -513,9 +524,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             logger.warning("Unable to map '%s' with kind '%s' - Ignored", peer_node, peer_kind)
             return None
 
-        peer_data = self.infrahub_node_to_diffsync(peer_node)
+        try:
+            peer_data = self.infrahub_node_to_diffsync(peer_node, parent_node=parent_node, rel_name=rel_name)
+        except PeerIdentifierError as exc:
+            if not self.continue_on_error:
+                raise
+            logger.warning("Skipping peer relationship: %s", exc)
+            return None
         identifiers = tuple(peer_model._identifiers)
-        missing = tuple(k for k in identifiers if k not in peer_data)
+        missing = tuple(k for k in identifiers if k not in peer_data or peer_data[k] is None)
         if missing:
             err = PeerIdentifierError(
                 parent_kind=parent_node.get_kind(),
@@ -540,7 +557,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             self.client.store.set(key=unique_id, node=peer_node)
         return peer_item.get_unique_id()
 
-    def infrahub_node_to_diffsync(self, node: InfrahubNodeSync) -> dict[str, Any]:
+    def infrahub_node_to_diffsync(
+        self, node: InfrahubNodeSync, *, parent_node: InfrahubNodeSync | None = None, rel_name: str = "<self>"
+    ) -> dict[str, Any]:
         """
         Convert an Infrahub node into a dictionary suitable for creating a DiffSyncModel.
 
@@ -553,17 +572,36 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # and a lookup there could fetch.
         node_schema = self.schema[node_kind]
 
+        model_cls = getattr(self, node_kind, None)
+        if model_cls is not None:
+            identifiers = tuple(model_cls._identifiers)
+        else:
+            mapping = next((item for item in self.config.schema_mapping if item.name == node_kind), None)
+            identifiers = tuple(mapping.identifiers or ()) if mapping else ()
+        missing = []
+        for name in identifiers:
+            field = getattr(node, name, None)
+            value = (
+                getattr(field, "id", None) if name in node_schema.relationship_names else getattr(field, "value", None)
+            )
+            if value is None:
+                missing.append(name)
+        if missing:
+            context_node = parent_node or node
+            raise PeerIdentifierError(
+                parent_kind=context_node.get_kind(),
+                parent_id=str(context_node.id),
+                rel_name=rel_name,
+                peer_kind=node_kind,
+                peer_id=str(node.id),
+                identifiers=identifiers,
+                missing_keys=tuple(missing),
+                present_keys=tuple(name for name in identifiers if name not in missing),
+            )
+
         for attr_name in node_schema.attribute_names:
             if has_field(config=self.config, name=node_kind, field=attr_name):
-                try:
-                    attr = getattr(node, attr_name)
-                except AttributeError:
-                    # The field was requested by the caller's `include`, but the response
-                    # (or a peer already in the store from an earlier, narrower request)
-                    # does not carry it. Leave it out of `data`; the identifier check in
-                    # `_resolve_peer_unique_id` turns an absent identifier into a named
-                    # `PeerIdentifierError` instead of surfacing this as a crash.
-                    continue
+                attr = getattr(node, attr_name)
                 val = attr.value
                 # IP types come back from the Infrahub SDK as ipaddress
                 # objects; DiffSync models store them as their string form
