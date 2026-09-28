@@ -20,8 +20,9 @@ for a model. It returns a `CursorTier` (an `IntEnum`, defined in
 | Tier | Value | Meaning |
 |------|-------|---------|
 | `NONE` | 0 | The source cannot filter by change; always full extract. The default. |
-| `ID` | 1 | The source exposes a stable id set; changes are detected by comparing ids. |
+| `PAGE_TOKEN` | 1 | The source paginates with an opaque `?next=` token; a crashed extraction resumes mid-page instead of restarting. |
 | `TIMESTAMP` | 2 | The source can filter by modification time (for example NetBox / Nautobot `last_updated__gte`); extract only changed-since records. |
+| `INFRAHUB_DIFF` | 3 | The Infrahub destination's diff API returns the changed records directly. |
 
 Higher tiers extract less data. NetBox returns `TIMESTAMP` for mapped kinds and `NONE`
 otherwise; an adapter with no incremental support inherits the `NONE` default from
@@ -63,8 +64,11 @@ Cached side snapshots (also Parquet) and cursor state live alongside the plan.
 
 The cache root defaults to `<cwd>/.infrahub-sync-cache/<sync_name>/`, with each run under its
 own `<run_id>/`. Set `INFRAHUB_SYNC_CACHE_DIR` to relocate it (for example to a shared volume);
-the path may not contain `..` traversal segments. Cursor state is written by
-`persist_cursors_for_run()` at the end of a successful run and read at the start of the next.
+the path may not contain `..` traversal segments. `persist_cursors_for_run()` writes cursor
+state at the end of a successful run and reads it at the start of the next, but this is the
+direct engine method, not a currently reachable path: every managed stage and every CLI entry
+point starts from an empty private directory and extracts in full, so no current caller
+invokes it outside tests.
 
 ### The row-count baseline
 
