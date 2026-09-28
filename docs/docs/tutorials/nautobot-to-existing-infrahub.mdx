@@ -198,6 +198,10 @@ credentials:
   infrahub-token: {provider: env, identifier: INFRAHUB_API_TOKEN}
 ```
 
+This mapping sends every Nautobot location to `TestingSite`, whatever its `location_type`.
+To import only one type, add a `filters` entry on the `TestingSite` mapping — see the
+[Schema mapping reference](../reference/schema-mapping.mdx).
+
 Before registering `package.yml`:
 
 - Replace both URLs with addresses the **worker container** can reach.

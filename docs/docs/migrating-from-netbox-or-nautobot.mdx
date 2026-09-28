@@ -193,13 +193,19 @@ The diff prints the proposed changes to the terminal without modifying Infrahub.
 - Are relationships between models being resolved correctly?
 - Are there any unexpected creates, updates, or deletes?
 
-When the diff looks correct, run the sync:
+When the diff looks correct, review the saved plan and apply it by checksum:
 
 ```shell
-infrahub-sync sync --config-id <config-id> --version <version> --reason "seed Infrahub"
+infrahub-sync runs plan <run-id> --detail
+infrahub-sync apply <run-id> --expected-checksum <checksum> --reason "seed Infrahub"
 ```
 
-The sync applies changes in the order defined by the project's `order` key. Independent models are created first, then dependent models, then models that reference earlier ones.
+If the `diff` used `--branch`, pass the same `--branch` to `apply`, as the Compose operator
+sequence does. `apply` writes exactly what you reviewed. `infrahub-sync sync --config-id
+<config-id> --version <version> --reason "..."` is the one-step alternative: it calculates
+and applies a new plan in the same run, without a stop for review.
+
+Applied changes follow the order defined by the project's `order` key. Independent models are created first, then dependent models, then models that reference earlier ones.
 
 ### Migrate one model at a time
 

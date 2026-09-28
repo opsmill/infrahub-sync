@@ -2,11 +2,15 @@
 title: Create a sync project
 ---
 
-A sync configuration is a package — a YAML or JSON file — that defines one synchronization
-between two systems. It has four parts: source and destination, sync order, schema
-mapping, and sync behavior. A Nautobot → Infrahub example runs through each. The package is
-registered with the Sync API; the service, not the file on disk, is what a run reads from.
-See [Configuration package](./configuration-package.mdx) for the full envelope shape, what
+A sync configuration is a package — a YAML or JSON file — assembled from fragments that
+together show the parts of one package: `format_version`, a `configuration` with `source`,
+`destination`, `order`, `schema_mapping`, and `diffsync_flags`, plus `credentials`. A
+Nautobot → Infrahub example runs through each fragment. The example kinds, `InfraDevice`
+and `InfraInterface`, need a matching Infrahub schema; the [Nautobot tutorial](./tutorials/nautobot-to-existing-infrahub.mdx)
+registers a complete package with its schema, while the Compose quickstart example uses the
+different `TestingSite`/`TestingDevice` schema. The package is registered with the Sync
+API; the service, not the file on disk, is what a run reads from. See
+[Configuration package](./configuration-package.mdx) for the full envelope shape, what
 registration returns, and how versions and validation work.
 
 ## Define the source and destination
@@ -56,6 +60,9 @@ the engine derives the sequence from the `reference` entries in `schema_mapping`
 
 ```yaml
   order:
+    - "InfraLocation"
+    - "InfraRole"
+    - "InfraPlatform"
     - "InfraDevice"
     - "InfraInterface"
 ```
@@ -120,7 +127,7 @@ Available flags:
 
 | Flag | Description |
 |------|-------------|
-| `SKIP_UNMATCHED_DST` | Skip objects in the destination that don't exist in the source (prevents deletion) |
+| `SKIP_UNMATCHED_DST` | Skip objects in the destination that don't exist in the source (prevents deletion by `sync` and by the live comparison `diff` prints; a saved plan still records these as deletes, see below) |
 | `SKIP_UNMATCHED_SRC` | Skip objects in the source that don't exist in the destination (prevents creation) |
 | `SKIP_MODIFIED` | Skip objects that exist in both systems but have different values (prevents updates) |
 

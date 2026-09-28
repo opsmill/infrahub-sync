@@ -34,9 +34,6 @@ uv run infrahub-sync apply <run-id> \
 - `LocationRack` uses `name` plus `site` in this configuration, while the current
   destination schema keys racks by `name` alone. Reapplying or replanning racks is not
   convergent when different sites contain racks with the same name.
-- After a write creates physical interfaces bundled into a LAG, a later plan can fail while
-  loading the destination. The [tutorial troubleshooting section](../../docs/docs/tutorials/netbox-demo-to-infrahub.mdx#diff-fails-after-a-sync-that-wrote-interfaces)
-  records the error, cause, and recovery procedure.
 
 The bounded live acceptance test in
 `tests/integration/test_saved_plan_apply_integration.py` exercises the internal worker
