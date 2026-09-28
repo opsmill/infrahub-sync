@@ -66,7 +66,9 @@ infrahubctl schema load schema.yml
 
 `infrahub-sync` allows defining what gets synchronized from a source to a destination. Register
 `examples/slurpit_to_infrahub/package.yml` — a complete [configuration package](../configuration-package.mdx) —
-directly. Its `configuration:` body matches `config.yml`, kept alongside it for reference.
+directly. Its `configuration:` body matches `config.yml`, kept alongside it for reference only:
+`config.yml`'s `$credential` references resolve only through registration, not through the legacy
+config.yml discovery path.
 
 <ReferenceLink title="package.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/slurpit_to_infrahub/package.yml" openInNewTab />
 

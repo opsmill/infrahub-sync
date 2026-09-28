@@ -55,6 +55,10 @@ configuration:
         - name: status
           mapping: status_t
 
+      # The four {} lookups below are safe only because `mode: scrape` above hits exactly one
+      # exporter URL, so every metric pool holds one target's samples. Reusing these against an
+      # API-mode schema_mapping that aggregates several targets would attach one host's data to
+      # another; match on labels.instance there instead.
       transforms:
         # total memory in bytes
         - field: mem_total_t
@@ -105,7 +109,7 @@ configuration:
           mapping: duplex_val
 
       transforms:
-        # VM name (no instance in scrape mode)
+        # VM name — safe with {} for the same single-target reason as above
         - field: vm_name
           expression: "{{ lookup('node_uname_info', {}, 'labels.nodename') or 'unknown' }}"
 

@@ -1,1 +1,1 @@
-Fix broken YAML examples, empty adapter pages, and inaccurate write-back claims on the adapter documentation.
+Fix broken YAML examples, empty adapter pages, and inaccurate write-back claims on the adapter documentation. The Prometheus lookup examples now warn against reusing an empty match across multiple targets and use labels both joined metrics actually carry. The Slurp'it `config.yml` example now says plainly that its `$credential` references only resolve through package registration, not through the legacy config.yml path.

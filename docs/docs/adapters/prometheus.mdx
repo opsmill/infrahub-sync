@@ -165,34 +165,46 @@ entry's `transforms` list, alongside `fields`:
 
 ```yaml
 schema_mapping:
-  - name: VirtualizationVirtualMachine
-    mapping: node_uname_info
+  - name: VirtualizationVMNetworkInterface
+    mapping: node_network_mtu_bytes
     identifiers: ["name"]
     fields:
       - name: name
-        mapping: labels.nodename
-      - name: mem_total_bytes
-        mapping: mem_total_t
+        mapping: labels.device
+      - name: mtu
+        mapping: value
       - name: mac_address
         mapping: mac_addr_t
 
     transforms:
       # Syntax: lookup(metric_name, match_criteria, value_path [, default])
 
-      # Join memory from a different metric by matching the shared "nodename" label
-      - field: mem_total_t
-        expression: "{{ lookup('node_memory_MemTotal_bytes', 'labels.nodename', 'value') or 0 }}"
-
-      # Match on a different shared label
+      # Join the MAC address from node_network_info by the interface's "device"
+      # label — both node_network_mtu_bytes and node_network_info carry it for
+      # every interface on the same target, so the join always has a value on
+      # both sides.
       - field: mac_addr_t
         expression: "{{ lookup('node_network_info', 'labels.device', 'labels.address') or '' }}"
 ```
 
+Choose a `match_criteria` label that both metrics actually carry — check both in your scraped or
+queried data first. `labels.device` works above because both metrics describe network interfaces.
+It would not work to join, say, `node_uname_info` (labels: `nodename`, `sysname`, ...) with
+`node_memory_MemTotal_bytes` (no labels at all in raw `node_exporter` output): neither metric has
+`device`, and neither has any label the other one has, so the lookup returns `None` on every record
+and the transform silently falls back to its default. For that pairing, see the empty-criteria
+pattern under [Example: Node Exporter to Infrahub](#example-node-exporter-to-infrahub) below, which
+is safe there only because scrape mode always covers exactly one target per run.
+
 An empty `match_criteria` (`''`, `'*'`, or omitted) does not match against the current record at
 all — it returns the first sample of `metric_name` that has a value at `value_path`, out of every
-record being processed. Use it only when the looked-up metric has a single, unambiguous sample;
-otherwise pass a dotted path such as `labels.nodename` or `labels.device` so the lookup joins on
-a label the two metrics share.
+record being processed. Use it only when the looked-up metric has a single, unambiguous sample
+(guaranteed by the single-target nature of scrape mode) or you have separately guaranteed the pool
+holds exactly one target's data; otherwise pass a dotted path such as `labels.device` so the lookup
+joins on a label the two metrics share, and confirm both metrics expose it. In API mode, if
+`promql.resources` may return more than one target, match on `labels.instance` instead — Prometheus
+attaches it to every result it stores, including metrics that carry no labels of their own in the
+exporter's raw output.
 
 ### Lookup function parameters
 
@@ -207,7 +219,22 @@ a label the two metrics share.
 
 <ReferenceLink title="Node Exporter Example" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/prometheus_to_infrahub%20(node_exporter)" openInNewTab />
 
-This example syncs `node_exporter` metrics to create virtual machine records in Infrahub:
+This example syncs `node_exporter` metrics to create virtual machine records in Infrahub. It uses
+`mode: scrape` against a single exporter URL (`examples/prometheus_to_infrahub (node_exporter)/package.yml`),
+so every metric pool below holds samples from exactly one target. That single-target guarantee —
+not the label content of any metric — is what makes the empty `{}` lookups below correct: each one
+returns the pool's only sample of that metric, and there is never a second target's sample to
+mix in. `node_memory_MemTotal_bytes`, `node_netstat_Ip_Forwarding`, `node_nf_conntrack_entries_limit`,
+and `node_time_seconds` also have no labels of their own in raw `node_exporter` output, so a
+label-based `match_criteria` is not available here even if you wanted one.
+
+:::warning
+Do not copy these `{}` lookups into a config that aggregates more than one target — for example an
+API-mode `schema_mapping` reusing these same metric names against `promql.resources` results for
+several instances. There, `{}` returns the first target's sample for every record, silently
+attaching one host's data to another. Match on `labels.instance` instead in that case; see
+[Using the lookup function](#using-the-lookup-function) above.
+:::
 
 ```yaml
 schema_mapping:
@@ -225,11 +252,11 @@ schema_mapping:
         mapping: status_t
 
     transforms:
-      # Join memory info from separate metric
+      # Safe with {} only because scrape mode covers exactly one target per run — see the warning above
       - field: mem_total_t
         expression: "{{ lookup('node_memory_MemTotal_bytes', {}, 'value') or 0 }}"
 
-      # Derive status from exporter availability
+      # Derive status from exporter availability — also single-target-safe
       - field: status_t
         expression: "{{ 'active' if ((lookup('node_time_seconds', {}, 'value') | float) > 0) else 'unknown' }}"
 
@@ -245,7 +272,7 @@ schema_mapping:
         mapping: value
 
     transforms:
-      # Link to parent VM
+      # Link to the parent VM — single-target-safe for the same reason
       - field: vm_name
         expression: "{{ lookup('node_uname_info', {}, 'labels.nodename') or 'unknown' }}"
 ```
