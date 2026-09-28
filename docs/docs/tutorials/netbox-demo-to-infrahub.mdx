@@ -168,21 +168,19 @@ Export the complete `nbt_...` token value. Do not include an authorization prefi
 
 ## Create the sync project
 
-A sync project is a directory containing a `config.yml` file. The configuration names the source and destination adapters, maps source fields to destination fields, and includes references that let Infrahub Sync compute write order.
+A sync project is a directory containing a `package.yml` file. Its `configuration` key names the source and destination adapters, maps source fields to destination fields, and includes references that let Infrahub Sync compute write order.
 
-From your project directory (`infrahub-automation`), create a sync project directory and download the example NetBox to Infrahub configuration.
+From your project directory (`infrahub-automation`), create a sync project directory and download the example NetBox to Infrahub package.
 
 ```bash
 mkdir -p sync-projects/netbox-demo
-cp ../infrahub-sync/examples/netbox_to_infrahub/config.yml \
-  sync-projects/netbox-demo/config.yml
 cp ../infrahub-sync/examples/netbox_to_infrahub/package.yml \
   sync-projects/netbox-demo/package.yml
 ```
 
 The copied configuration is named `from-netbox`. It maps selected NetBox objects onto the Infrahub schema.
 
-Open `sync-projects/netbox-demo/config.yml` in an editor and scan the top-level keys:
+Open `sync-projects/netbox-demo/package.yml` in an editor and scan the top-level keys under `configuration`:
 
 - `name` identifies the sync project.
 - `source` configures the NetBox adapter.
@@ -192,13 +190,11 @@ Open `sync-projects/netbox-demo/config.yml` in an editor and scan the top-level 
 The worker reads the `source.settings.url` and `destination.settings.url` values from the
 registered package itself, not from the environment — the `NETBOX_URL` and
 `INFRAHUB_ADDRESS` variables exported above only matter to the `invoke load-schema` task and
-other project-template commands that run outside Infrahub Sync. `config.yml` and
-`package.yml` are separate copies, and only `package.yml` gets registered, so if either
-target isn't at the address already in the file, edit those two URLs directly in
-`sync-projects/netbox-demo/package.yml` (matching them in `config.yml` too keeps the two
-files consistent, but only the `package.yml` values reach the worker). Only the two
-credentials (`NETBOX_TOKEN` and `INFRAHUB_API_TOKEN`) come from the worker's environment,
-resolved through the `credentials` block at the bottom of `package.yml`.
+other project-template commands that run outside Infrahub Sync. If either target isn't at
+the address already in the file, edit those two URLs directly in
+`sync-projects/netbox-demo/package.yml`. Only the two credentials (`NETBOX_TOKEN` and
+`INFRAHUB_API_TOKEN`) come from the worker's environment, resolved through the
+`credentials` block at the bottom of the file.
 
 This tutorial registers the package, uses `diff` to create a service plan, reviews that
 plan, and then submits a confirmed sync. See [Run a sync](../running-a-sync.mdx) when you
@@ -439,7 +435,7 @@ You used Infrahub Sync to move data from NetBox into Infrahub in a controlled se
 1. Infrahub provided the destination graph and schema.
 2. NetBox provided the source data.
 3. A branch isolated the import from `main` so it could be reviewed first.
-4. `config.yml` described the adapters, field mappings, references, filters, and Transformations.
+4. `package.yml` described the adapters, field mappings, references, filters, and Transformations.
 5. The Sync API registered the configuration and issued the run identity.
 6. `diff` asked the worker to compare the source and destination without writing changes.
 7. `sync` asked the worker to calculate and apply a new confirmed plan to the branch.
@@ -465,7 +461,7 @@ ERROR | infrahub_sync.cli | Failed to initialize the Sync Instance: Error initia
 ```
 
 The service worker cannot resolve a credential reference declared by the package. The
-package and `config.yml` contain credential references and declarations, but secret
+package contains credential references and declarations, but secret
 credential values belong only in the worker environment. The package names `NETBOX_TOKEN`
 and `INFRAHUB_API_TOKEN`, and the worker reads their values. Export these variables before
 starting the Prefect worker:
