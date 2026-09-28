@@ -153,6 +153,7 @@ A single Compose file at the repository root builds the image from your working 
 runs the whole stack — API, worker, PostgreSQL, object store, and Prefect:
 
 ```bash
+uv sync --extra dev    # once: installs invoke and the other development tools
 uv run invoke start
 ```
 
@@ -177,7 +178,12 @@ uv run invoke destroy                    # stop and reset
 
 This stack reaches no destination on its own. To sync against a local Infrahub, start one
 with `uv run invoke preview.up` and set `INFRAHUB_API_TOKEN` before `invoke start`; the
-worker already resolves `host.docker.internal`.
+worker already resolves `host.docker.internal`. Inside the worker, `localhost` is the
+container itself, so set the registered package's destination URL to
+`http://host.docker.internal:8080` (the preview Infrahub's host port) before you register it.
+
+`invoke preview.up` remains the stack for running the service from source on your host
+next to a bundled Infrahub; this stack runs the image your working tree builds.
 
 Two things worth knowing. This is **not** the supported deployment — that is the Compose
 bundle described in the [deployment guide](https://docs.infrahub.app/sync/compose-deployment),
