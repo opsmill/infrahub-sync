@@ -498,6 +498,7 @@ def _forbid_live_sync_update() -> Iterator[None]:
     """Saved-plan apply must not dispatch through the inherited model update."""
 
     def forbidden(*_args: object, **_kwargs: object) -> None:
+        """Fail if saved-plan apply reaches the model's in-memory update method."""
         msg = "InfrahubModel.update was reached during saved-plan apply."
         raise AssertionError(msg)
 

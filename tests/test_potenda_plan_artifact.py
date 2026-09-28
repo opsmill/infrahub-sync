@@ -166,6 +166,7 @@ class _FakeAdapter:
         schema: Mapping[str, Any] | None = None,
         emit_deletes: bool = False,
     ) -> None:
+        """Prepare in-memory records and a store for plan derivation tests."""
         self.name = name
         self.top_level: list[str] = []
         self.store = _FakeStore()

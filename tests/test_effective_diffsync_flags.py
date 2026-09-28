@@ -179,6 +179,7 @@ def test_diff_requests_no_delete_for_destination_only_object() -> None:
 
 
 def test_plan_records_delete_without_dispatching_model_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Record a destination-only delete without calling the model delete hook."""
     monkeypatch.setattr(_SpiedWidget, "delete_calls", [])
     engine, _ = _engine_with_destination_only_object(["SKIP_UNMATCHED_SRC"])
     engine.run_dir = tmp_path
@@ -194,6 +195,7 @@ def test_plan_records_delete_without_dispatching_model_delete(tmp_path: Path, mo
 
 
 def test_plan_preserves_destination_only_object(tmp_path: Path) -> None:
+    """Keep destination-only records in memory while recording their deletion."""
     engine, destination = _engine_with_destination_only_object(["SKIP_UNMATCHED_SRC"])
     engine.run_dir = tmp_path
     engine.run_id = "flags-plan-preservation"

@@ -166,6 +166,7 @@ class _FakePotenda:
         load_error: BaseException | None = None,
         write_result: object = None,
     ) -> None:
+        """Store the fake engine state used by plan lifecycle tests."""
         self.run_dir = run_dir
         self.run_id = run_dir.name
         self.top_level = ["InfraDevice"]
@@ -195,6 +196,7 @@ class _FakePotenda:
         return list(diff.rows)
 
     def write_plan(self, diff: _FakeDiff) -> object:
+        """Persist the fake diff and record that the plan was written."""
         write_plan(run_dir=self.run_dir, rows=list(diff.rows))
         self.plan_written = True
         return self.write_result
@@ -1481,6 +1483,7 @@ def test_successful_plan_writes_the_diff_lifecycle(
     cache_root: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Return the saved plan result after loading and writing a nonempty diff."""
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     rows = [_plan_row("create", "core01"), _plan_row("create", "core02"), _plan_row("update", "edge01")]
     factory = _SpyFactory(cache_root=cache_root, rows=rows)
