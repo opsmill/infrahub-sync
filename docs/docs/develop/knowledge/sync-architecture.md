@@ -72,8 +72,9 @@ Verification can also run as a separate stage; it checks the retained plan witho
 constructing adapters. A confirmed `sync` combines planning, verification and apply in one
 service execution, publishing the plan before the first destination write.
 Both `sync` and saved-plan `apply` hold a PostgreSQL advisory lock for the configuration
-while applying. This serializes writes for that configuration; it is not a lock on every
-destination object that other configurations or external tools might change.
+while they work. For `sync`, the lock covers planning, verification and apply. This serializes
+writes for that configuration; it is not a lock on every destination object that other
+configurations or external tools might change.
 
 For command examples, follow the [reviewed-run procedure](../../compose-deployment.mdx#the-operator-sequence).
 For the stage entrypoints, see [Prefect orchestration](orchestration-prefect.md#registered-service-integration).

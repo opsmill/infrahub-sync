@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-from typing_extensions import Self
+from typing import TYPE_CHECKING
 
 from infrahub_sync.adapters.genericrestapi import GenericrestapiAdapter, GenericrestapiModel
 
 if TYPE_CHECKING:
-    from diffsync import Adapter
-
     from infrahub_sync import (
         SyncAdapter,
         SyncConfig,
@@ -49,13 +45,3 @@ class PeeringmanagerAdapter(GenericrestapiAdapter):
 
 class PeeringmanagerModel(GenericrestapiModel):
     """PeeringManager model that extends the generic REST API model."""
-
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        # TODO: To implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)

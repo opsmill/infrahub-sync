@@ -121,9 +121,9 @@ class MyAdapter(DiffSyncMixin, Adapter):
 ```
 
 `PlannedWriteDestination` is a `runtime_checkable` Protocol, so the engine's gate checks **member
-presence only, never signatures**. Half-implementing it therefore passes the gate and fails later, at a
-worse moment. If your adapter is not a planned-write destination, implement neither member and let the
-gate refuse it by name — that is the designed outcome, not a gap. See
+presence only, never signatures**. An adapter with only one member fails the gate before writing.
+If your adapter is not a planned-write destination, implement neither member and let the
+gate refuse it by name. See
 [Planned writes and apply](../knowledge/planned-write-and-apply.md).
 
 Within `apply_planned_operation`:
