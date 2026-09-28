@@ -106,9 +106,10 @@ a credential, or an environment override.
 Credentials and endpoints stay in the runner's environment. They are never accepted as
 parameters and never appear in a returned result.
 
-Failure messages are additionally redacted by value: every configured credential value
-found in a message — or anywhere in its cause chain — is replaced with `***`, because
-replacing a shorter value can corrupt ordinary message text (`within 6***.0 seconds`).
+Failure messages are additionally redacted by value: every configured credential value of
+six characters or more found in a message — or anywhere in its cause chain — is replaced
+with `***`, because replacing a shorter value can corrupt ordinary message text
+(`within 6***.0 seconds`).
 
 :::warning Short credentials are not redacted
 
