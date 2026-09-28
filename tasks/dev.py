@@ -2,8 +2,8 @@
 
 Nothing here is pinned, qualified, or reproducible, and nothing here is the supported
 deployment -- `deploy/compose` is, and it runs one digest-pinned image it was qualified
-against. These two tasks build whatever the working tree holds, for the host's own
-architecture, and start it.
+against. These tasks build whatever the working tree holds, for the host's own
+architecture, start it, and remove it again.
 """
 
 from __future__ import annotations
@@ -38,4 +38,18 @@ def start(context: Context) -> None:
     print(f" - [{NAMESPACE}] Sync API    {API_URL}  (bearer {API_TOKEN})")
     print(f" - [{NAMESPACE}] Prefect UI  {PREFECT_URL}")
     print(f" - [{NAMESPACE}] After a code change: `uv run invoke build && uv run invoke start`")
-    print(f" - [{NAMESPACE}] Stop and reset:      `docker compose down --volumes`")
+    print(f" - [{NAMESPACE}] Stop and reset:      `uv run invoke destroy`")
+
+
+@task(name="destroy")
+def destroy(context: Context) -> None:
+    """Remove the local development stack, along with its data volumes.
+
+    Destructive by design: the Postgres databases and the object store's buckets go with
+    it, which is what makes the next `invoke start` a first start again. The image the
+    working tree built is kept, so that start does not rebuild.
+    """
+    with context.cd(ESCAPED_REPO_PATH):
+        context.run("docker compose down --volumes --remove-orphans", pty=True)
+    print(f" - [{NAMESPACE}] Removed the stack and its data; infrahub-sync:dev is kept")
+    print(f" - [{NAMESPACE}] Start again with `uv run invoke start`")

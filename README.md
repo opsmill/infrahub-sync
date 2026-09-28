@@ -172,7 +172,7 @@ uv run invoke build && uv run invoke start
 ```bash
 curl -sf http://127.0.0.1:8030/version
 curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8030/status
-docker compose down --volumes            # stop and reset
+uv run invoke destroy                    # stop and reset
 ```
 
 This stack reaches no destination on its own. To sync against a local Infrahub, start one
