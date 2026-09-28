@@ -6,16 +6,16 @@ For sync sources or destinations that use TLS certificates signed by an internal
 
 ## Trusting the CLI-to-API connection
 
-The one TLS connection the CLI host makes is to the Sync API (`INFRAHUB_SYNC_API_URL`). If that API is served behind a certificate signed by an internal CA, install the CA in the system trust store of the shell that runs `infrahub-sync`, then point Python's HTTP client at that store:
+The one TLS connection the CLI host makes is to the Sync API (`INFRAHUB_SYNC_API_URL`). The CLI's HTTP client is `httpx`, not `requests`, so it does not honor `REQUESTS_CA_BUNDLE`. If that API is served behind a certificate signed by an internal CA, install the CA in the system trust store of the shell that runs `infrahub-sync`, then point `httpx` (via the standard `ssl` module) at that store:
 
 ```bash
 sudo mkdir /usr/local/share/ca-certificates/custom-ca
 sudo cp customRCA.crt /usr/local/share/ca-certificates/custom-ca/
 sudo update-ca-certificates
-export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ```
 
-The exact paths above are for Debian/Ubuntu systems. On other distributions the trust store lives elsewhere (`/etc/pki/ca-trust/source/anchors/` on RHEL/Fedora, for example) — adapt accordingly. This setting affects only the CLI host; it has no effect on the worker that runs the sync.
+The exact paths above are for Debian/Ubuntu systems. On other distributions the trust store lives elsewhere (`/etc/pki/ca-trust/source/anchors/` on RHEL/Fedora, for example) — adapt accordingly, and use `SSL_CERT_DIR` instead of `SSL_CERT_FILE` if the distribution keeps the trust anchors as a directory of individual certificates. This setting affects only the CLI host; it has no effect on the worker that runs the sync.
 
 ## Trusting the source and destination connections
 

@@ -41,7 +41,10 @@ dependency, and registers the `from-netbox` configuration package. Use
 for Nautobot 2.0 and later as a configuration reference, and replace its model and field
 names with the equivalents in your Infrahub schema. Neither Nautobot example ships a
 package envelope yet; wrap its `config.yml` in a `format_version`/`configuration`/`credentials`
-package as described below before registering it.
+package as described below before registering it. Its `source.settings.token` is also an
+inline placeholder value, not a real credential — replace it with a `$credential` reference
+before registering, as described in [Credentials](./configuration-package.mdx#credentials).
+Registration rejects a literal token in `configuration`.
 
 ## Phase 2 — Build the sync project
 
@@ -117,7 +120,7 @@ Changing a mapping or its `identifiers` changes what later runs create and match
 
 Nothing retires the superseded objects for you. A saved plan records a `delete` for every destination object the source no longer accounts for, whatever `diffsync_flags` are set, but `apply` never executes one: it reports how many deletes it skipped and completes. The old records therefore stay exactly where they are, still carrying their relationships.
 
-Review the plan before you write, and into a branch. Plan the run with `infrahub-sync diff --config-id <config-id> --version <version> --branch <branch> --reason "..."`, read it with `infrahub-sync runs plan <run-id> --detail`, and apply it by checksum with `infrahub-sync apply <run-id> --expected-checksum <checksum> --reason "..."`. The saved plan names every create it intends, so you can see which prefixes and addresses are about to appear under a new namespace before any of them exists. Afterwards, audit the old objects and everything pointing at them — interfaces, devices and any other relationship bound to the prefix or address — and retire or re-point them deliberately. Infrahub Sync does not migrate them for you, and wiping the destination is not a substitute: it discards Infrahub-only data the sync never owned.
+Review the plan before you write, and into a branch. Plan the run with `infrahub-sync diff --config-id <config-id> --version <version> --branch <branch> --reason "..."`, read it with `infrahub-sync runs plan <run-id> --detail`, and apply it by checksum with `infrahub-sync apply <run-id> --expected-checksum <checksum> --branch <branch> --reason "..."`, passing the same `--branch` the plan was built against. `apply` binds the reviewed plan to the destination it names; omitting `--branch` selects `main` instead and the apply is refused on a destination-binding mismatch against a plan built for another branch. The saved plan names every create it intends, so you can see which prefixes and addresses are about to appear under a new namespace before any of them exists. Afterwards, audit the old objects and everything pointing at them — interfaces, devices and any other relationship bound to the prefix or address — and retire or re-point them deliberately. Infrahub Sync does not migrate them for you, and wiping the destination is not a substitute: it discards Infrahub-only data the sync never owned.
 
 ## Phase 3 — Seed Infrahub with initial data
 

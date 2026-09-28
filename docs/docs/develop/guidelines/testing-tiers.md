@@ -275,7 +275,7 @@ are seeded, and `DcimDevice` is the kind under test. Every one declares
 needs the pinned schema library loaded, a NetBox carrying the deterministic
 dataset (sites `site-a`/`site-b`/`site-c`, devices `dev-01`…`dev-40`, tags
 `tag-01`…`tag-10`), and `NETBOX_URL` / `NETBOX_TOKEN` alongside the Infrahub
-variables — see [Saved-plan apply](#the-from-netbox-example-check) above for
+variables — see [Saved-plan apply](#integration) above for
 provisioning. **Six tests must pass.** A seventh is optional: SC-016's ambiguous-peer
 half skips when the destination schema admits no genuinely ambiguous peer, which
 is the case on a keyed slice, since every kind is filtered on exactly the
