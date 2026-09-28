@@ -202,9 +202,12 @@ record being processed. Use it only when the looked-up metric has a single, unam
 (guaranteed by the single-target nature of scrape mode) or you have separately guaranteed the pool
 holds exactly one target's data; otherwise pass a dotted path such as `labels.device` so the lookup
 joins on a label the two metrics share, and confirm both metrics expose it. In API mode, if
-`promql.resources` may return more than one target, match on `labels.instance` instead — Prometheus
-attaches it to every result it stores, including metrics that carry no labels of their own in the
-exporter's raw output.
+`promql.resources` may return more than one target, `labels.instance` is usually available since
+Prometheus attaches it when scraping, but it is not guaranteed on every query result: an
+aggregating PromQL expression (`sum by (...)`, `avg by (...)`, and similar) drops any label,
+including `instance`, that its `by`/`without` clause does not keep, and a scalar-typed result
+carries no labels at all. Check the actual response for your query before relying on
+`labels.instance` as a join key, the same as for any other `match_criteria`.
 
 ### Lookup function parameters
 
