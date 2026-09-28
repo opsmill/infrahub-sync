@@ -431,10 +431,11 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
    NetBox rack ID and resolve to the renamed rack.
    :::
 
-3. Once you're happy with the data, create a proposed change with `netbox-import` as the
-   source branch and `main` as the destination, so the import can be reviewed before it's
-   merged. See [Infrahub version control](https://docs.infrahub.app/topics/version-control/)
-   for the steps to open one.
+3. Once you're happy with the data, open a proposed change in the Infrahub UI: select
+   **Proposed changes** in the left navigation, click **+ Create a proposed change**, set
+   `netbox-import` as the source branch and `main` as the destination, add a name and
+   description, and click **Create**. See [Infrahub version control](https://docs.infrahub.app/topics/version-control/)
+   for how proposed changes and branch merges work.
 
 If you switch back to `main`, none of this data is there yet — that's expected, since it's still isolated in the branch.
 
