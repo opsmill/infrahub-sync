@@ -123,6 +123,10 @@ without a human-friendly ID, the model's identifiers must cover at least one dec
 uniqueness constraint so the destination refuses duplicates. `diff` refuses missing
 coverage or unusable values, naming the kind and what is missing.
 
+`diff` also refuses multiple creates that share any declared uniqueness rule: the
+human-friendly ID, a unique attribute (including an inherited one), or a uniqueness
+constraint. `apply` checks a saved plan for the same collisions before its first write.
+
 **Updates are not subject to that rule.** An update carries the destination object's own
 id, recorded when the plan was built, so it writes the object it means even where
 `identifiers` and the human-friendly ID differ — including a kind whose human-friendly ID
@@ -138,11 +142,10 @@ creates key themselves. A namespace backed by a NetBox VRF resolves from the sou
 like any other peer, including a VRF named `default`. Where the source holds no namespace of
 that name — the usual case for objects with no VRF — the built-in `default` is recorded as a
 literal identity and resolved at apply against the destination's human-friendly ID for that
-kind. Separately, `LocationRack` is not
-convergent when different sites contain racks with the same name — the configuration
-identifies a rack by `name` and `site` while the current schema-library revision keys it
-by `name` alone — and `diff` now refuses those creates as a destination-identity collision
-rather than silently merging them.
+kind. Separately, `LocationRack` is not convergent when different sites contain racks
+with the same name. The configuration identifies a rack by `name` and `site`, while an
+inherited unique `name` rule can match them as one object. `diff` names that rule when
+it refuses the creates instead of silently merging them.
 
 **Plans written by an earlier version cannot be applied.** The saved-plan format is now
 version 3, which records the destination id on updates. A format-2 plan can still be read

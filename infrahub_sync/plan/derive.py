@@ -67,7 +67,7 @@ from infrahub_sync.plan.errors import (
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.keying import (
     _component_field,
-    _refuse_destination_identity_collisions,
+    refuse_destination_identity_collisions,
     refuse_unkeyed_create,
 )
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
@@ -895,6 +895,8 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
         return
 
     by_kind = _identity_attributes_by_kind(operations)
+    if hasattr(schema, "get"):
+        refuse_destination_identity_collisions(schema=schema, operations=operations)
     for kind in sorted(by_kind):
         node = schema.get(kind) if hasattr(schema, "get") else None
         if node is None:
@@ -904,7 +906,6 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
         creates = [operation for operation in of_kind if operation.action == "create"]
         for operation in creates:
             refuse_unkeyed_create(operation, node=node, schemas=schema)
-        _refuse_destination_identity_collisions(kind=kind, node=node, creates=creates)
 
         # The merge direction applies to every action: a create whose identity is finer than
         # the destination's key converges onto an object it did not mean just as an update

@@ -184,10 +184,11 @@ apply compares the bound schema fingerprint, including attribute writability, be
 This changes the fingerprint for existing saved plans, so review and save a new plan after
 upgrading before you apply it.
 
-Several creates projecting onto **one** destination human-friendly ID are refused as
-`DestinationIdentityCollisionError`: the sync tells them apart and the destination does not, so
-applying them would converge them onto one object each and lose the rest at exit 0. Updates are
-excluded from that count, since an id-keyed write cannot converge onto another operation's object.
+Several creates sharing a destination human-friendly ID, a unique attribute (including an
+inherited one), or a uniqueness constraint are refused as `DestinationIdentityCollisionError`.
+The error names the colliding rule. Applying those creates could converge distinct source
+objects onto one destination object. Updates are excluded, since each is keyed by its
+recorded destination id. The saved-plan apply gate checks the same rules before its first write.
 
 The write surface applies the same rule, from the same function, before `client.create` — so a create
 refused at plan time and the same create arriving in a hand-built artifact are refused for the same

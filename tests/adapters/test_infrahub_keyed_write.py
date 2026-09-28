@@ -26,6 +26,7 @@ from infrahub_sdk.schema.main import BranchSchema, NodeSchemaAPI
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerResolver
 from infrahub_sync.plan.errors import (
+    DestinationIdentityCollisionError,
     ReviewedPayloadFieldMissingError,
     UnaccountedIdentityComponentError,
     UnkeyedCreateRefusedError,
@@ -33,6 +34,7 @@ from infrahub_sync.plan.errors import (
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 from tests.adapters.test_infrahub_planned_write import (
+    APPLY_RUN_ID,
     DEVICE_KIND,
     KEYLESS_KIND,
     NODE_ID,
@@ -44,15 +46,20 @@ from tests.adapters.test_infrahub_planned_write import (
     TEAM_KIND,
     RecordingClient,
     _text,
+    apply_run_dir,
+    engine_over,
     make_adapter,
     make_node,
     make_operation,
     rendered_related_id,
     rendered_relationship_ids,
 )
+from tests.plan.artifact_fixtures import CONFIG_VERSION, write_artifact
+from tests.plan.ownership_fixtures import granted_ownership
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
 DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
 STALE_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169d0"
@@ -85,6 +92,35 @@ def keyed_adapter() -> tuple[RecordingClient, InfrahubAdapter, PeerResolver]:
     adapter = make_adapter(client)
     adapter.schema = dict(ALL_SCHEMAS)
     return client, adapter, PeerResolver(adapter)
+
+
+def test_saved_plan_collision_is_refused_before_any_mutation(tmp_path: Path) -> None:
+    """The whole-plan apply gate rejects two creates sharing a unique attribute."""
+    client, adapter, _peers = keyed_adapter()
+    operations = [
+        make_operation(
+            kind=DEVICE_KIND,
+            identity={"name": "Comms closet", "site": {"peer_kind": SITE_KIND, "identity": {"name": site}}},
+            payload={"name": "Comms closet"},
+            relationships=[
+                RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": site}])
+            ],
+        )
+        for site in ("site-a", "site-b")
+    ]
+
+    directory = apply_run_dir(tmp_path)
+    write_artifact(
+        directory,
+        [operation.model_dump(mode="json", exclude_none=True) for operation in operations],
+        run_id=APPLY_RUN_ID,
+        config_version=CONFIG_VERSION,
+    )
+
+    with pytest.raises(DestinationIdentityCollisionError, match=r"unique attribute.*name__value"):
+        engine_over(directory, adapter).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
+
+    assert client.mutation_names == []
 
 
 def _read_only_rule_adapter(*, writable_alternative: bool) -> tuple[RecordingClient, InfrahubAdapter, PeerResolver]:

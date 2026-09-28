@@ -54,7 +54,8 @@ import pytest
 import requests
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
-from infrahub_sync.plan.errors import PeerNotFoundError, StaleDestinationIdError
+from infrahub_sync.plan.derive import warn_missing_convergence_key
+from infrahub_sync.plan.errors import DestinationIdentityCollisionError, PeerNotFoundError, StaleDestinationIdError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
@@ -65,6 +66,7 @@ pytestmark = pytest.mark.integration
 
 SITE_KIND = "TestUnkeyedSite"
 DEVICE_KIND = "TestUnkeyedDevice"
+RACK_KIND = "TestUnkeyedRack"
 MOUNT_KIND = "TestUnkeyedMount"
 RENAMABLE_KIND = "TestUnkeyedRenamable"
 COMPUTED_KIND = "TestUnkeyedComputed"
@@ -83,6 +85,13 @@ COMPUTED_KIND = "TestUnkeyedComputed"
 # and AD043's nested `{peer_kind, identity}` walk run against a real destination.
 _SCHEMA = {
     "version": "1.0",
+    "generics": [
+        {
+            "name": "UnkeyedHosting",
+            "namespace": "Test",
+            "attributes": [{"name": "name", "kind": "Text", "unique": True}],
+        }
+    ],
     "nodes": [
         {
             "name": "UnkeyedSite",
@@ -111,6 +120,16 @@ _SCHEMA = {
                     "kind": "Attribute",
                     "optional": False,
                 },
+            ],
+        },
+        {
+            "name": "UnkeyedRack",
+            "namespace": "Test",
+            "include_in_menu": False,
+            "inherit_from": ["TestUnkeyedHosting"],
+            "human_friendly_id": ["site__name__value", "name__value"],
+            "relationships": [
+                {"name": "site", "peer": SITE_KIND, "cardinality": "one", "kind": "Attribute", "optional": False}
             ],
         },
         {
@@ -230,6 +249,24 @@ def _device_operation(device_name: str, site_name: str) -> PlannedOperation:
     )
 
 
+def _rack_operation(rack_name: str, site_name: str) -> PlannedOperation:
+    """A rack create keyed by site and name, with the same name across sites."""
+    identity = canonical_identity(
+        {"name": rack_name, "site": {"peer_kind": SITE_KIND, "identity": {"name": site_name}}}, kind=RACK_KIND
+    )
+    return PlannedOperation(
+        operation_id=operation_id("create", RACK_KIND, identity),
+        action="create",
+        kind=RACK_KIND,
+        identity=identity,
+        tier=0,
+        payload={"name": rack_name},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": site_name}])
+        ],
+    )
+
+
 def _mount_operation(
     mount_name: str, device_name: str, site_name: str, *, peer_id: str | None = None
 ) -> PlannedOperation:
@@ -321,7 +358,7 @@ def keyed_write_scope() -> Iterator[KeyedWriteScope]:
             allow_redirects=False,
         )
         _raise_for_status_without_redirect(schema_response)
-        _await_schema_kinds(client, branch, (SITE_KIND, DEVICE_KIND, MOUNT_KIND, RENAMABLE_KIND))
+        _await_schema_kinds(client, branch, (SITE_KIND, DEVICE_KIND, RACK_KIND, MOUNT_KIND, RENAMABLE_KIND))
 
         site_name = f"unkeyed-site-{suffix}"
         site = client.create(kind=SITE_KIND, branch=branch, data={"name": site_name})
@@ -453,6 +490,37 @@ def test_a_relationship_crossing_create_converges_instead_of_duplicating(
         if node.name.value == created_name
     ]
     assert len(matching) == 1, f"The re-apply duplicated {created_name!r} at the destination: {matching}"
+
+
+def test_rack_name_unique_outside_hfid_is_refused_before_apply(keyed_write_scope: KeyedWriteScope) -> None:
+    """The live server merges on an inherited unique name; the plan refuses first."""
+    scope = keyed_write_scope
+    second_site_name = f"second-{scope.site_name}"
+    second_site = scope.client.create(kind=SITE_KIND, branch=scope.branch, data={"name": second_site_name})
+    second_site.save()
+    first_site = next(
+        node
+        for node in scope.client.filters(kind=SITE_KIND, branch=scope.branch, populate_store=False)
+        if node.name.value == scope.site_name
+    )
+    rack_name = f"Comms closet {scope.site_name}"
+    first = scope.client.create(kind=RACK_KIND, branch=scope.branch, data={"name": rack_name, "site": first_site.id})
+    first.save(allow_upsert=True)
+    second = scope.client.create(kind=RACK_KIND, branch=scope.branch, data={"name": rack_name, "site": second_site.id})
+    second.save(allow_upsert=True)
+    assert second.id == first.id, "The second rack must merge into the first by its inherited unique name."
+    matching = [
+        node
+        for node in scope.client.filters(kind=RACK_KIND, branch=scope.branch, populate_store=False)
+        if node.name.value == rack_name
+    ]
+    assert [node.id for node in matching] == [first.id]
+
+    operations = [_rack_operation(rack_name, site) for site in (scope.site_name, second_site_name)]
+    with pytest.raises(DestinationIdentityCollisionError, match="unique attribute"):
+        warn_missing_convergence_key(destination=scope.adapter, operations=operations)
+    with pytest.raises(DestinationIdentityCollisionError, match="unique attribute"):
+        scope.adapter.validate_planned_payload_fields(operations)
 
 
 def test_a_computed_display_name_converges_on_a_writable_unique_hostname(keyed_write_scope: KeyedWriteScope) -> None:

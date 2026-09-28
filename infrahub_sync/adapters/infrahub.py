@@ -1111,6 +1111,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
     def validate_planned_payload_fields(self, operations: Sequence[PlannedOperation]) -> None:
         """Check every reviewed direct field and SDK input before the first write."""
+        from infrahub_sync.plan.keying import refuse_destination_identity_collisions
+
         if not any(operation.action != "delete" for operation in operations):
             return
         schemas = self.client.schema.all(refresh=True)
@@ -1138,6 +1140,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 "no destination write was attempted."
             )
             raise ReviewedPayloadFieldMissingError(msg)
+        refuse_destination_identity_collisions(schema=schemas, operations=operations)
 
     @staticmethod
     def _reviewed_direct_fields(*, operation: PlannedOperation, node_schema: NodeSchemaAPI) -> set[str]:
