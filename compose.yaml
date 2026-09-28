@@ -47,35 +47,27 @@ services:
       - "127.0.0.1:5440:5432"
     volumes:
       - "postgres-data:/var/lib/postgresql/data"
+    # The two databases the stack needs, from the `init-databases` config below. The
+    # entrypoint runs this only when it initializes the data directory, so a volume
+    # that predates a new database in that file never gains it; the healthcheck turns
+    # that into a failed start rather than a puzzling one downstream.
+    configs:
+      - source: init-databases
+        target: /docker-entrypoint-initdb.d/10-databases.sql
+    # Reads the catalog over TCP, rather than pinging. The entrypoint runs the init
+    # file against a server that listens on the socket alone, so a socket ping reports
+    # healthy while the databases may not exist and no dependent can connect yet.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      test:
+        - "CMD-SHELL"
+        - >-
+          PGPASSWORD="$$POSTGRES_PASSWORD" psql --host 127.0.0.1 --username "$$POSTGRES_USER"
+          --dbname postgres --tuples-only --no-align
+          --command "SELECT count(*) = 2 FROM pg_database WHERE datname IN ('infrahub_sync', 'prefect')"
+          | grep -qx t
       interval: 5s
       timeout: 5s
       retries: 30
-
-  # The two databases the stack needs, through the superuser. No owner roles, no
-  # mounted script, no secret file. Not `docker-entrypoint-initdb.d`, which runs
-  # only on a first init and would skip silently on a reused volume.
-  db-bootstrap:
-    image: "postgres:16-alpine"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      PGHOST: "postgres"
-      PGUSER: "postgres"
-      PGPASSWORD: "devpassword"
-      PGDATABASE: "postgres"
-    entrypoint:
-      - "sh"
-      - "-c"
-      - |
-        set -eu
-        for database in infrahub_sync prefect; do
-          if [ "$$(psql -tAc "SELECT 1 FROM pg_database WHERE datname='$$database'")" != "1" ]; then
-            psql -c "CREATE DATABASE $$database"
-          fi
-        done
 
   object-store:
     image: "quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"
@@ -96,8 +88,8 @@ services:
     image: "prefecthq/prefect:3.8.1-python3.12"
     command: ["prefect", "server", "start", "--host", "0.0.0.0", "--port", "4200"]
     depends_on:
-      db-bootstrap:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
     environment:
       PREFECT_SERVER_DATABASE_CONNECTION_URL: "postgresql+asyncpg://postgres:devpassword@postgres:5432/prefect"
       PREFECT_SERVER_API_HOST: "0.0.0.0"
@@ -125,8 +117,8 @@ services:
     build: *sync-build
     command: ["python", "-m", "infrahub_sync.service.bootstrap"]
     depends_on:
-      db-bootstrap:
-        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
       object-store:
         condition: service_healthy
       prefect-server:
@@ -183,6 +175,15 @@ services:
     # this laptop needs one, and it costs nothing when unused.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+configs:
+  # Read once, when Postgres initializes an empty data directory. Adding a database
+  # here does not reach a volume that already exists: `docker compose down --volumes`
+  # does.
+  init-databases:
+    content: |
+      CREATE DATABASE infrahub_sync;
+      CREATE DATABASE prefect;
 
 volumes:
   postgres-data:
