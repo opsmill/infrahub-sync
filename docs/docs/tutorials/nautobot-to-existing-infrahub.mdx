@@ -200,7 +200,10 @@ credentials:
 
 This mapping sends every Nautobot location to `TestingSite`, whatever its `location_type`.
 To import only one type, add a `filters` entry on the `TestingSite` mapping — see the
-[Schema mapping reference](../reference/schema-mapping.mdx).
+[Schema mapping reference](../reference/schema-mapping.mdx). If you do, every location that a
+mapped device points to through `location` must still pass that same filter: `TestingDevice`
+resolves `site` from `TestingSite`, so a device whose location is filtered out has no site to
+resolve against, and planning fails.
 
 Before registering `package.yml`:
 

@@ -204,8 +204,9 @@ credentials (`NETBOX_TOKEN` and `INFRAHUB_API_TOKEN`) come from the worker's env
 resolved through the `credentials` block at the bottom of `package.yml`.
 
 This tutorial registers the package, uses `diff` to create a service plan, reviews that
-plan, and then submits a confirmed sync. See [Run a sync](../running-a-sync.mdx) when you
-need to apply the exact reviewed plan checksum instead of creating a new composed sync.
+plan, and then applies it by its checksum, so the writes are exactly what you reviewed. See
+[Run a sync](../running-a-sync.mdx) for the one-step `sync` alternative, which calculates
+and writes a new plan in the same run instead of applying a plan you already reviewed.
 
 For a fuller explanation of this file, see [Create a sync project](../creating-a-sync-project.mdx) and the [schema mapping reference](../reference/schema-mapping.mdx).
 
@@ -345,7 +346,7 @@ Infrahub tracks changes through branches, so you can review a batch of imported 
 uv run infrahubctl branch create netbox-import
 ```
 
-The rest of this tutorial runs `diff` and `sync` against this branch with
+The rest of this tutorial runs `diff` and `apply` against this branch with
 `--branch netbox-import`, so you can inspect the destination changes before merging the
 Infrahub branch. For more about branches and proposed changes, see
 [Infrahub version control](https://docs.infrahub.app/topics/version-control/).
@@ -368,7 +369,7 @@ Review it again with `infrahub-sync runs plan <run-id> --detail`.
 
 Review the output before continuing. On a first run against an empty branch, most planned changes should be creates. Exact counts depend on the current public NetBox demo data.
 
-## Sync the data
+## Apply the reviewed plan
 
 Apply the reviewed plan with its checksum, so the writes are exactly what you reviewed:
 
@@ -447,9 +448,9 @@ You used Infrahub Sync to move data from NetBox into Infrahub in a controlled se
 4. `config.yml` described the adapters, field mappings, references, filters, and Transformations.
 5. The Sync API registered the configuration and issued the run identity.
 6. `diff` asked the worker to compare the source and destination without writing changes.
-7. `sync` asked the worker to calculate and apply a new confirmed plan to the branch.
+7. `apply` wrote the exact reviewed plan, bound to its checksum, to the branch.
 
-The same pattern applies to larger migrations: start with a clear schema, map a small set of objects, condition source data where needed, review the diff inside a branch, and then synchronize before opening a proposed change toward `main`.
+The same pattern applies to larger migrations: start with a clear schema, map a small set of objects, condition source data where needed, review the diff inside a branch, and then apply the reviewed plan before opening a proposed change toward `main`.
 
 ## Stop the local services
 

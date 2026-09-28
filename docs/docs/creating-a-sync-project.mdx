@@ -54,15 +54,17 @@ For the full list of adapters and their connection parameters, see [Choose an ad
 ## Set the sync order
 
 The `order` key, under `configuration`, specifies the sequence in which objects should be
-synchronized. Order matters because some objects depend on others — a device cannot be
-created until its location, role, and platform already exist in the destination. Omit it and
-the engine derives the sequence from the `reference` entries in `schema_mapping` instead.
+synchronized. Order matters because some objects depend on others — an interface cannot be
+created until its device already exists in the destination. Omit it and the engine derives
+the sequence from the `reference` entries in `schema_mapping` instead. Every kind listed here
+needs its own entry in `schema_mapping` below; a kind in `order` with no matching mapping
+fails while the package loads, before any sync runs. A real deployment's order list is
+usually longer than the two kinds this example maps — `InfraLocation`, `InfraRole`, and
+`InfraPlatform` might come first if your destination doesn't already have them — but each one
+you add needs a `schema_mapping` entry alongside it.
 
 ```yaml
   order:
-    - "InfraLocation"
-    - "InfraRole"
-    - "InfraPlatform"
     - "InfraDevice"
     - "InfraInterface"
 ```
