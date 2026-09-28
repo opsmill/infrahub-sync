@@ -20,11 +20,13 @@ for a model. It returns a `CursorTier` (an `IntEnum`, defined in
 | Tier | Value | Meaning |
 |------|-------|---------|
 | `NONE` | 0 | The source cannot filter by change; always full extract. The default. |
-| `PAGE_TOKEN` | 1 | The source paginates with an opaque `?next=` token; a crashed extraction resumes mid-page instead of restarting. |
+| `PAGE_TOKEN` | 1 | Intended for a source that paginates with an opaque `?next=` token, so a crashed extraction could resume mid-page instead of restarting. No product adapter returns this tier yet, and no product entry point persists a cursor across a restart, so the resume behavior is not currently reachable. |
 | `TIMESTAMP` | 2 | The source can filter by modification time (for example NetBox / Nautobot `last_updated__gte`); extract only changed-since records. |
 | `INFRAHUB_DIFF` | 3 | The Infrahub destination's diff API returns the changed records directly. |
 
-Higher tiers extract less data. NetBox returns `TIMESTAMP` for mapped kinds and `NONE`
+`TIMESTAMP` and `INFRAHUB_DIFF` extract less data than `NONE` by filtering at the source or
+destination; `PAGE_TOKEN` is about resuming a paginated extraction, not reducing what it reads,
+so it does not fit that ordering. NetBox returns `TIMESTAMP` for mapped kinds and `NONE`
 otherwise; an adapter with no incremental support inherits the `NONE` default from
 `DiffSyncMixin`.
 
@@ -65,10 +67,10 @@ Cached side snapshots (also Parquet) and cursor state live alongside the plan.
 The cache root defaults to `<cwd>/.infrahub-sync-cache/<sync_name>/`, with each run under its
 own `<run_id>/`. Set `INFRAHUB_SYNC_CACHE_DIR` to relocate it (for example to a shared volume);
 the path may not contain `..` traversal segments. `persist_cursors_for_run()` writes cursor
-state at the end of a successful run and reads it at the start of the next, but this is the
-direct engine method, not a currently reachable path: every managed stage and every CLI entry
-point starts from an empty private directory and extracts in full, so no current caller
-invokes it outside tests.
+state at the end of a successful run, and `load_one_side()` reads it back at the start of the
+next via `load_cursors()`, but these are direct engine methods, not a currently reachable path:
+every managed stage and every CLI entry point starts from an empty private directory and
+extracts in full, so no current caller invokes them outside tests.
 
 ### The row-count baseline
 
