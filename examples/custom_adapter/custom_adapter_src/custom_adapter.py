@@ -2,15 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
-
-try:
-    from typing import Self
-except ImportError:
-    from typing_extensions import Self
-
 
 from diffsync import Adapter, DiffSyncModel
 
@@ -209,17 +202,3 @@ class MockdbAdapter(DiffSyncMixin, Adapter):
 
 class MockdbModel(DiffSyncModelMixin, DiffSyncModel):
     """A custom model for demonstration purposes."""
-
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: Mapping[Any, Any],
-        attrs: Mapping[Any, Any],
-    ) -> Self | None:
-        # TODO: To implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        # TODO: To implement
-        return super().update(attrs=attrs)

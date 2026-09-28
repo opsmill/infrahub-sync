@@ -90,9 +90,8 @@ grouping operations into write units at either level.
 *many* set is expressible, an emptied *one* peer is not. `cardinality: "one"` requires exactly one
 peer, and an absent reference means "this operation carries no value for that field", not "empty it" —
 so nothing in the format says *clear this*. Derivation cannot produce it either: a reference field
-whose mapped value is `None` is treated as absent and skipped. This is an intended v1 scope limit and
-**parity with live `sync`**, which skips a `None` there for the same reason; a relationship a plan does
-not mention is one the apply leaves alone. Clearing a cardinality-one peer is done at the destination,
+whose mapped value is `None` is treated as absent and skipped. This is an intended v1 scope limit: a
+relationship a plan does not mention is one the apply leaves alone. Clearing a cardinality-one peer is done at the destination,
 and encoding it requires a future `format_version` extension.
 
 #### The payload carries the identity

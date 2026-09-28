@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 import pynetbox  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
 from diffsync import Adapter, DiffSyncModel
 from requests import Session
-from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -231,16 +230,4 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
 
 
 class NetboxModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        # TODO: To implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        # TODO: To implement
-        return super().update(attrs)
+    """DiffSync model for netbox records."""

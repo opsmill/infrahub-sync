@@ -6,7 +6,6 @@ import os
 from typing import Any, ClassVar
 
 from diffsync import Adapter, DiffSyncModel
-from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -150,16 +149,4 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
 
 
 class IpfabricsyncModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        # TODO: To Implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        # TODO: To Implement
-        return super().update(attrs=attrs)
+    """DiffSync model for ipfabricsync records."""

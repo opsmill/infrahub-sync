@@ -139,22 +139,12 @@ Within `apply_planned_operation`:
   data value. Plan operations carry peer identities as nested `{peer_kind, identity}` pairs precisely so
   you do not have to.
 
-### Do not change an existing write path to tidy a new one
+### Keep model writes inherited
 
-**Always confine a new write path's corrections to the new code:**
-
-A shared helper that behaves one way on a new path and another way on the live `sync` path is a poor
-shape, and that is still not authority to change what an existing command does to destination data.
-During this work, a prescription to correct `update_node`'s peer-set ordering was ratified and then
-withdrawn once its only caller turned out to be the live `sync` write path: applying it would have made
-`infrahub-sync sync` start **removing** destination relationship peers on configurations that had never
-removed one.
-
-- Check who calls a function before correcting it. "Only caller is the live write path" changes the
-  decision.
-- Prefer duplicating a few lines on the new path over altering the behaviour of a shipped command.
-- Record the untouched defect where the next reader will meet it, and leave it to an outcome that owns
-  it.
+Models inherit `create`, `update` and `delete` from DiffSync. V3 does not call those methods.
+The service composes `sync` from plan, verify and apply. During apply, the engine calls the
+destination adapter's `apply_planned_operation`, with a resolver from `new_peer_resolver`.
+If a destination does not implement both methods, the pre-write gate refuses `sync` and `apply`.
 
 ### Anti-patterns
 
@@ -164,7 +154,7 @@ removed one.
 | Whole-node re-render to change one relationship | Write `id` plus only the fields being replaced |
 | Splitting a `unique_id` on `__` to get identifiers | Read the nested `{peer_kind, identity}` pair |
 | Silently dropping an unresolvable peer on the apply path | Raise, naming the peer and the next action |
-| "Fixing" a shared helper that the live `sync` path calls | Confine the change to the new path |
+| Implementing model `create` / `update` / `delete` for V3 writes | Implement the planned-write surface on the adapter |
 | Inline filtering / transforming in the adapter | `model.filter_records` / `model.transform_records` |
 | Hand-rolled HTTP for a REST source | Subclass `GenericrestapiAdapter` |
 | `except Exception: pass` | Catch the specific error; surface the rest |
