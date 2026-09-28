@@ -13,7 +13,7 @@ For the first connection and preview with existing systems, follow the
 
 ## The gradual migration approach
 
-A one-shot cutover from NetBox or Nautobot to Infrahub carries real risk: the new system has to be completely ready, all dependent automation has to switch at the same time, and rollback is hard if something surfaces afterward. The gradual approach removes that risk by syncing data into Infrahub model by model, verifying each step, and migrating dependent workflows on your own schedule.
+A one-shot cutover from NetBox or Nautobot to Infrahub requires the new system to be completely ready and all dependent automation to switch at the same time, and rolling back is difficult if a problem appears afterward. The gradual approach avoids those problems by syncing data into Infrahub model by model, verifying each step, and migrating dependent workflows on your own schedule.
 
 The phases:
 
@@ -37,51 +37,31 @@ For a concrete NetBox starting point, follow the
 fresh Infrahub instance, loads the matching schema-library revision, configures the
 Sync API and service worker, creates a current NetBox demo token, installs the adapter
 dependency, and registers the `from-netbox` configuration package. Use
-`examples/nautobot_to_infrahub/` as a configuration reference for Nautobot, and replace
-its model and field names with the equivalents in your Infrahub schema.
+`examples/nautobot-v1_to_infrahub/` for Nautobot 1.x or `examples/nautobot-v2_to_infrahub/`
+for Nautobot 2.0 and later as a configuration reference, and replace its model and field
+names with the equivalents in your Infrahub schema. Neither Nautobot example ships a
+package envelope yet; wrap its `config.yml` in a `format_version`/`configuration`/`credentials`
+package as described below before registering it.
 
 ## Phase 2 — Build the sync project
 
-A sync project is a directory containing a `config.yml` that defines the source (NetBox or Nautobot), the destination (Infrahub), and the per-model schema mapping.
+Create a configuration package file (for example `package.yml`) with `format_version`,
+a `configuration` object, and a `credentials` block; see
+[Configuration package](./configuration-package.mdx). The `configuration` object defines
+the source (NetBox or Nautobot), the destination (Infrahub), and the per-model schema
+mapping.
 
 ### Start from the example
 
 The Infrahub Sync repository includes configuration examples at
-`examples/netbox_to_infrahub/` and `examples/nautobot_to_infrahub/`. Copy the
-directory matching your source system as the starting point. For NetBox, use the
+`examples/netbox_to_infrahub/` and `examples/nautobot-v1_to_infrahub/` or
+`examples/nautobot-v2_to_infrahub/`. `examples/netbox_to_infrahub/package.yml` is a
+complete, registrable package; the Nautobot examples still need the package envelope
+added around their `config.yml`. Copy the example matching your source system as the
+starting point. For NetBox, use the
 [demo tutorial](./tutorials/netbox-demo-to-infrahub.mdx) to provision the schema
 and source credentials that the example expects. Update model and field names to
 match the schema you chose in Phase 1.
-
-### Define sync order
-
-Models must be synced in dependency order: anything referenced by another model must be synced first. A typical order:
-
-1. Independent objects: tags, locations, manufacturers, device roles, platforms
-2. IP namespaces (nothing else has to exist first)
-3. Rack and site data (depends on locations)
-4. Devices (depends on locations, roles, manufacturers, platforms)
-5. Interfaces (depends on devices)
-6. IP addresses and prefixes (depends on IP namespaces, interfaces, VRFs)
-7. VLANs and VLAN groups
-
-The exact order depends on your schema. See [Sync instance configuration](./reference/config.mdx) for the syntax of the `order` key.
-
-IP namespaces are on that list because Infrahub identifies a prefix by namespace plus prefix, and an IP address by namespace plus address. Which mapping you need depends on whether your source has a namespace object of its own.
-
-**NetBox and Nautobot 1.x** have none, so the namespace has to be derived. The NetBox example creates one Infrahub IP namespace per VRF name and sends objects with no VRF to Infrahub's built-in `default` namespace. Do the same in your own mapping if your source can hold the same prefix in more than one VRF — otherwise those prefixes collide with each other, and the run refuses rather than keeping them apart. Derive the namespace from something the source cannot repeat if its VRF names are not unique.
-
-**Nautobot 2.0 and later** have [native IPAM namespaces](https://docs.nautobot.com/projects/core/en/stable/user-guide/core-data-model/ipam/namespace/), added in 2.0.0. Map those directly and carry them into the prefix and address identities, as `examples/nautobot-v2_to_infrahub/` does with its `NautobotNamespace` entry mapped from `ipam.namespaces`. Do not derive the namespace from the VRF name there: the source already separates the objects, and keying on the VRF name instead would make two VRFs that happen to share a name collide with each other.
-
-Under the VRF-name pattern the namespace is keyed by that name, so it works only while the names are distinct. Two VRFs sharing a name produce one namespace record twice: the load refuses the second and the run fails against the source, before a plan exists. It is a refusal, not a merge. A VRF named `default` is a different case: its objects share the built-in namespace with every object that has no VRF, and a prefix or address value repeated inside that shared namespace collides there. Check your source for repeated VRF names before you depend on the split, or key the namespace on the source's own VRF ID instead, as [Key the namespace on the VRF ID instead of its name](./reference/schema-mapping.mdx#key-the-namespace-on-the-vrf-id-instead-of-its-name) does for NetBox — no source renaming required. Note that under an ID-derived recipe a VRF named `default` gets its own namespace rather than the built-in one. A source with native namespaces is not affected, because its namespaces are carried rather than derived.
-
-### Adopt namespaces in an Infrahub that already holds imported data
-
-Changing a mapping or its `identifiers` changes what later runs create and match. It does not move objects an earlier sync already wrote. Only the objects whose resolved namespace changes take on a new identity: a prefix or address that was imported into `default` and still resolves to `default` goes on matching the object already there, while one that now resolves to a VRF-named namespace is created as a new object beside the old one.
-
-Nothing retires the superseded objects for you. A saved plan records a `delete` for every destination object the source no longer accounts for, whatever `diffsync_flags` are set, but `apply` never executes one: it reports how many deletes it skipped and completes. The old records therefore stay exactly where they are, still carrying their relationships.
-
-Review the plan before you write, and into a branch. Plan the run with `infrahub-sync diff --config-id <config-id> --version <version> --branch <branch> --reason "..."`, read it with `infrahub-sync runs plan <run-id> --detail`, and apply it by checksum with `infrahub-sync apply <run-id> --expected-checksum <checksum> --reason "..."`. The saved plan names every create it intends, so you can see which prefixes and addresses are about to appear under a new namespace before any of them exists. Afterwards, audit the old objects and everything pointing at them — interfaces, devices and any other relationship bound to the prefix or address — and retire or re-point them deliberately. Infrahub Sync does not migrate them for you, and wiping the destination is not a substitute: it discards Infrahub-only data the sync never owned.
 
 ### Map fields between the source system and Infrahub
 
@@ -103,6 +83,41 @@ If a refusal names one of your models, either add the missing field to that mode
 adjust the human-friendly ID in the destination schema.
 
 :::
+
+### Define sync order
+
+Models must be synced in dependency order: anything referenced by another model must be synced first. infrahub-sync derives this automatically from the `reference` fields in your schema mapping, or you can set it explicitly with the `order` key. A typical order:
+
+1. Independent objects: tags, locations, manufacturers, device roles, platforms
+2. IP namespaces (nothing else has to exist first)
+3. Rack and site data (depends on locations)
+4. Devices (depends on locations, roles, manufacturers, platforms)
+5. Interfaces (depends on devices)
+6. IP addresses and prefixes (depends on IP namespaces, interfaces, VRFs)
+7. VLANs and VLAN groups
+
+The exact order depends on your schema. When you set an explicit `order` key it always wins;
+when you omit it, infrahub-sync derives the write order from the `reference` fields in your
+schema mapping instead. See [Sync instance configuration](./reference/config.mdx) for the
+`order` syntax and how the automatic ordering works.
+
+IP namespaces are on that list because Infrahub identifies a prefix by namespace plus prefix, and an IP address by namespace plus address. Which mapping you need depends on whether your source has a namespace object of its own.
+
+**NetBox and Nautobot 1.x** have none, so the namespace has to be derived. The NetBox example creates one Infrahub IP namespace per VRF name and sends objects with no VRF to Infrahub's built-in `default` namespace. Do the same in your own mapping if your source can hold the same prefix in more than one VRF — otherwise those prefixes collide with each other, and the run refuses rather than keeping them apart. Derive the namespace from something the source cannot repeat if its VRF names are not unique.
+
+**Nautobot 2.0 and later** have [native IPAM namespaces](https://docs.nautobot.com/projects/core/en/stable/user-guide/core-data-model/ipam/namespace/), added in 2.0.0. Map those directly and carry them into the prefix and address identities, as `examples/nautobot-v2_to_infrahub/` does with its `NautobotNamespace` entry mapped from `ipam.namespaces`. Do not derive the namespace from the VRF name there: the source already separates the objects, and keying on the VRF name instead would make two VRFs that happen to share a name collide with each other.
+
+Under the VRF-name pattern the namespace is keyed by that name, so it works only while the names are distinct. Two VRFs sharing a name produce one namespace record twice: the load refuses the second and the run fails against the source, before a plan exists. It is a refusal, not a merge. A VRF named `default` is a different case: its objects share the built-in namespace with every object that has no VRF, and a prefix or address value repeated inside that shared namespace collides there. Check your source for repeated VRF names before you depend on the split, or key the namespace on the source's own VRF ID instead, as [Key the namespace on the VRF ID instead of its name](./reference/schema-mapping.mdx#key-the-namespace-on-the-vrf-id-instead-of-its-name) does for NetBox — no source renaming required. Note that under an ID-derived recipe a VRF named `default` gets its own namespace rather than the built-in one. A source with native namespaces is not affected, because its namespaces are carried rather than derived.
+
+### Adopt namespaces in an Infrahub that already holds imported data
+
+This is an edge case: it applies only when you change a mapping's namespace strategy or its `identifiers` after an earlier sync has already written data, not to a first import.
+
+Changing a mapping or its `identifiers` changes what later runs create and match. It does not move objects an earlier sync already wrote. Only the objects whose resolved namespace changes take on a new identity: a prefix or address that was imported into `default` and still resolves to `default` goes on matching the object already there, while one that now resolves to a VRF-named namespace is created as a new object beside the old one.
+
+Nothing retires the superseded objects for you. A saved plan records a `delete` for every destination object the source no longer accounts for, whatever `diffsync_flags` are set, but `apply` never executes one: it reports how many deletes it skipped and completes. The old records therefore stay exactly where they are, still carrying their relationships.
+
+Review the plan before you write, and into a branch. Plan the run with `infrahub-sync diff --config-id <config-id> --version <version> --branch <branch> --reason "..."`, read it with `infrahub-sync runs plan <run-id> --detail`, and apply it by checksum with `infrahub-sync apply <run-id> --expected-checksum <checksum> --reason "..."`. The saved plan names every create it intends, so you can see which prefixes and addresses are about to appear under a new namespace before any of them exists. Afterwards, audit the old objects and everything pointing at them — interfaces, devices and any other relationship bound to the prefix or address — and retire or re-point them deliberately. Infrahub Sync does not migrate them for you, and wiping the destination is not a substitute: it discards Infrahub-only data the sync never owned.
 
 ## Phase 3 — Seed Infrahub with initial data
 
@@ -148,41 +163,10 @@ rather than silently merging them.
 version 3, which records the destination id on updates. A format-2 plan can still be read
 and reviewed; `apply` refuses it and asks for a fresh `diff`.
 
-Three live qualifications exercise the saved-plan write surface.
-
-`tests/integration/test_saved_plan_apply_integration.py` runs the full
-NetBox → Infrahub path on a **keyed slice**: `BuiltinTag`, `LocationSite`,
-`LocationRack`, `OrganizationManufacturer`, `DcimPlatform` and `DcimDeviceType`
-are seeded, and `DcimDevice` is the kind under test. Every one declares
-`human_friendly_id: ['name__value']`, so every planned write renders a key. It
-needs the pinned schema library loaded, a NetBox carrying the deterministic
-dataset (sites `site-a`/`site-b`/`site-c`, devices `dev-01`…`dev-40`, tags
-`tag-01`…`tag-10`), and `NETBOX_URL` / `NETBOX_TOKEN` alongside the Infrahub
-variables. **Six tests must pass.** A seventh is optional: SC-016's ambiguous-peer
-half skips when the destination schema admits no genuinely ambiguous peer, which
-is the case on a keyed slice, since every kind is filtered on exactly the
-component its uniqueness constraint pins. The skip message names the constraint
-that establishes it.
-
-**It needs a fresh disposable Infrahub for each run.** The suite writes and does
-not clean up: it perturbs the destination with a per-run canary and then asserts
-the derived plan carries the create, update and delete those perturbations imply.
-A second run against the same instance sees the first run's canary and fails in
-setup. Reset between runs.
-
-Two further qualifications need no source system, only `INFRAHUB_ADDRESS` and
-`INFRAHUB_API_TOKEN`:
-
-- `tests/integration/test_infrahub_replace_set_shrink_integration.py` — keyed
-  planned writes, applied and re-applied with the same result;
-- `tests/integration/test_infrahub_keyed_write_integration.py` — a kind whose
-  human-friendly ID crosses a relationship, created and then re-applied to prove it
-  converges rather than duplicating; an update keyed by its recorded id, renaming in
-  place; and a recorded id the destination cannot find, refused with nothing written.
-  Each runs on a branch the test creates and deletes.
-
-The interface kinds are covered there: they are written like any other kind now, and
-what the test pins is that the destination converges them.
+Three live qualifications exercise the saved-plan write surface end to end and must pass
+before you rely on it in production. See
+[The saved-plan write-surface qualifications](./develop/guidelines/testing-tiers.md#the-saved-plan-write-surface-qualifications)
+for what each one covers and needs.
 
 :::
 
@@ -199,7 +183,9 @@ When the diff looks correct, run the sync:
 infrahub-sync sync --config-id <config-id> --version <version> --reason "seed Infrahub"
 ```
 
-The sync applies changes in the order defined by the project's `order` key. Independent models are created first, then dependent models, then models that reference earlier ones.
+Sync writes in the configured `order` when one is present; otherwise it derives the write
+order from the mapping's `reference` fields, so independent kinds are written before the
+kinds that reference them.
 
 ### Migrate one model at a time
 
@@ -213,11 +199,17 @@ Infrahub Sync has no built-in scheduler. Use cron, CI, Prefect, or another workf
 
 ### Default behavior preserves Infrahub-only data
 
-By default, the `SKIP_UNMATCHED_DST` flag is enabled — Infrahub objects without a corresponding object in the source system are left alone. This is the safe default. Add Infrahub-only data (new schemas, design objects, intent data) without worrying that a sync run will delete it.
+`SKIP_UNMATCHED_DST` is invariant — Infrahub objects without a corresponding object in the
+source system are always left alone, whatever `diffsync_flags` you configure. Add
+Infrahub-only data (new schemas, design objects, intent data) without worrying that a
+`sync` or `apply` run will delete it.
 
-To change this behavior for `sync` — for example, removing Infrahub objects when they're deleted in the source system — adjust the `diffsync_flags` in the sync configuration. See [Sync instance configuration](./reference/config.mdx).
-
-The saved-plan path behaves differently and the flags do not change it. A plan **records** a delete for every Infrahub object missing from the source, but `apply` never executes one: it applies the non-deletes, completes successfully, and reports how many deletes it skipped. Reviewing a plan against a destination holding Infrahub-only data will therefore show a non-zero delete count that no apply will act on. See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
+No `diffsync_flags` setting makes `sync` or `apply` delete anything. A plan **records** a
+delete for every Infrahub object missing from the source, but `apply` never executes one:
+it applies the non-deletes, completes successfully, and reports how many deletes it
+skipped. Reviewing a plan against a destination holding Infrahub-only data will therefore
+show a non-zero delete count that no apply will act on. See
+[Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 
 ### Decide on conflict policy early
 
@@ -248,13 +240,13 @@ Many teams reach a stable side-by-side state and stay there indefinitely. See [U
 The same phases apply for both source systems. The mechanical differences:
 
 - Use the [NetBox adapter](./adapters/netbox.mdx) for NetBox sources and the [Nautobot adapter](./adapters/nautobot.mdx) for Nautobot sources.
-- Start from `examples/netbox_to_infrahub/` for NetBox, `examples/nautobot_to_infrahub/` for Nautobot.
+- Start from `examples/netbox_to_infrahub/` for NetBox, `examples/nautobot-v1_to_infrahub/` or `examples/nautobot-v2_to_infrahub/` for Nautobot.
 - Field names and nested structures differ between the two systems — for example, Nautobot status fields are objects while NetBox status fields are strings. The schema mapping work is source-specific, but the overall approach is identical.
 
 ## Common issues
 
 - **Sync runs slowly on large datasets.** Initial syncs of large source-system installations can take a while. Sync performance is an active area of development. Recurring sync runs are typically fast — only deltas are applied.
-- **A model is being created in Infrahub that should not be.** Check the sync project's `order` key and per-model filters — the model may be enabled when it shouldn't be, or a reference from another model may be pulling it in.
+- **A model is being created in Infrahub that should not be.** Check the configuration's `order` key (or the `reference` fields driving the automatic write order) and per-model filters — the model may be enabled when it shouldn't be, or a reference from another model may be pulling it in.
 - **Field values are not mapping correctly.** Check the schema mapping section of the YAML. Common causes: a source field has a different name than expected, or a relationship reference is not resolving because the referenced model was not synced first.
 - **Custom fields in the source system are not appearing in Infrahub.** NetBox and Nautobot custom fields require explicit mapping in the YAML — they are not synced automatically.
 

@@ -263,6 +263,45 @@ uv run invoke preview.down --volumes
 uv run invoke netbox.down
 ```
 
+##### The saved-plan write-surface qualifications
+
+Three live qualifications exercise the saved-plan write surface end to end.
+
+`tests/integration/test_saved_plan_apply_integration.py` runs the full
+NetBox → Infrahub path on a **keyed slice**: `BuiltinTag`, `LocationSite`,
+`LocationRack`, `OrganizationManufacturer`, `DcimPlatform` and `DcimDeviceType`
+are seeded, and `DcimDevice` is the kind under test. Every one declares
+`human_friendly_id: ['name__value']`, so every planned write renders a key. It
+needs the pinned schema library loaded, a NetBox carrying the deterministic
+dataset (sites `site-a`/`site-b`/`site-c`, devices `dev-01`…`dev-40`, tags
+`tag-01`…`tag-10`), and `NETBOX_URL` / `NETBOX_TOKEN` alongside the Infrahub
+variables — see [Saved-plan apply](#the-from-netbox-example-check) above for
+provisioning. **Six tests must pass.** A seventh is optional: SC-016's ambiguous-peer
+half skips when the destination schema admits no genuinely ambiguous peer, which
+is the case on a keyed slice, since every kind is filtered on exactly the
+component its uniqueness constraint pins. The skip message names the constraint
+that establishes it.
+
+**It needs a fresh disposable Infrahub for each run.** The suite writes and does
+not clean up: it perturbs the destination with a per-run canary and then asserts
+the derived plan carries the create, update and delete those perturbations imply.
+A second run against the same instance sees the first run's canary and fails in
+setup. Reset between runs.
+
+Two further qualifications need no source system, only `INFRAHUB_ADDRESS` and
+`INFRAHUB_API_TOKEN`:
+
+- `tests/integration/test_infrahub_replace_set_shrink_integration.py` — keyed
+  planned writes, applied and re-applied with the same result;
+- `tests/integration/test_infrahub_keyed_write_integration.py` — a kind whose
+  human-friendly ID crosses a relationship, created and then re-applied to prove it
+  converges rather than duplicating; an update keyed by its recorded id, renaming in
+  place; and a recorded id the destination cannot find, refused with nothing written.
+  Each runs on a branch the test creates and deletes.
+
+The interface kinds are covered there: they are written like any other kind now, and
+what the test pins is that the destination converges them.
+
 #### Preview smoke
 
 ```bash
