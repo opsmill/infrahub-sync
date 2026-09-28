@@ -147,6 +147,46 @@ fixture is deterministic; the review still uses a live, writable Infrahub destin
 
 ---
 
+## Run It Locally With Docker
+
+A single Compose file at the repository root builds the image from your working tree and
+runs the whole stack — API, worker, PostgreSQL, object store, and Prefect:
+
+```bash
+uv run invoke start
+```
+
+That is enough from a clean checkout: Compose builds the image when it is absent. After a
+code change, rebuild and restart:
+
+```bash
+uv run invoke build && uv run invoke start
+```
+
+| | |
+|---|---|
+| **Sync API** | `http://127.0.0.1:8030` — bearer token `infrahub-sync-dev-token` |
+| **Prefect UI** | `http://127.0.0.1:4230` |
+| **PostgreSQL** | `127.0.0.1:5440` |
+
+```bash
+curl -sf http://127.0.0.1:8030/version
+curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8030/status
+docker compose down --volumes            # stop and reset
+```
+
+This stack reaches no destination on its own. To sync against a local Infrahub, start one
+with `uv run invoke preview.up` and set `INFRAHUB_API_TOKEN` before `invoke start`; the
+worker already resolves `host.docker.internal`.
+
+Two things worth knowing. This is **not** the supported deployment — that is the Compose
+bundle described in the [deployment guide](https://docs.infrahub.app/sync/compose-deployment),
+which runs one digest-pinned image it was qualified against. And this build keeps its own
+BuildKit cache, separate from the one `invoke image.build` uses, so the first build each
+way is cold.
+
+---
+
 ## Going Deeper
 
 | | |
