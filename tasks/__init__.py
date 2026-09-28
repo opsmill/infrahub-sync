@@ -2,7 +2,7 @@
 
 from invoke import Collection, Context, task
 
-from . import compose, docs, image, linter, netbox, preview, release, tests
+from . import compose, dev, docs, image, linter, netbox, preview, release, tests
 from .utils import ESCAPED_REPO_PATH, REPO_BASE
 
 NAMESPACE = "INFRAHUB-SYNC"
@@ -127,3 +127,6 @@ ns.add_task(tests_integration)
 ns.add_task(generate_doc)
 ns.add_task(docusaurus)
 ns.add_task(check_310)
+ns.add_task(dev.build)
+ns.add_task(dev.start)
+ns.add_task(dev.destroy)
