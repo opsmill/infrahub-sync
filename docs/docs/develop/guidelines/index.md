@@ -18,9 +18,10 @@ testing, and secret redaction. For how the system works, see
 ### Repository-wide
 
 - [Testing](testing.md) — what makes a test worth having: breaking the code under test must
-  break the test (killing the mutation), a negative claim (such as "this import did not
-  happen") must be asserted in a fresh process rather than the current one, and a security- or
-  boundary-relevant fix needs its own review pass over its diff, not just a green suite.
+  break the test (killing the mutation), an import-absence claim (such as "this optional
+  dependency was never imported") must be asserted in a fresh process rather than checked
+  against the current one's `sys.modules`, and a security- or boundary-relevant fix needs its
+  own review pass over its diff, not just a green suite.
 - [Testing tiers](testing-tiers.md) — which command runs which tier, what each one needs
   before it proves anything, what it writes, and why a skipped check is not a pass.
 - [Secret redaction](secret-redaction.md) — rules for any failure path that crosses a

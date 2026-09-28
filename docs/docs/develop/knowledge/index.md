@@ -22,14 +22,16 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 ### Adapters
 
 - [Adapter anatomy](adapter-anatomy.md) — the two classes every adapter provides, the
-  `DiffSyncMixin` / `DiffSyncModelMixin` contract (the base classes an adapter's source and
-  destination models implement), and what you implement versus what you get for free.
+  `DiffSyncMixin` (the adapter base an adapter's source and destination classes implement) /
+  `DiffSyncModelMixin` (the model base their record types implement) contract, and what you
+  implement versus what you get for free.
 - [Schema mapping](schema-mapping.md) — how `config.yml` maps source resources to
   destination models: fields, identifiers, references, filters, and transforms.
 - [Incremental sync and cache](incremental-and-cache.md) — cursors (per-adapter bookmarks of
   what was already read), the write-order tiers derived from `schema_mapping`, plans, and
-  row-count guardrails (limits that bound how much a single extraction can read), and what
-  an adapter implements to participate.
+  row-count guardrails (an unwired comparison that would refuse a per-resource count drop
+  against a previous baseline; no product path calls it today), and what an adapter
+  implements to participate.
 
 ### Plans and applying them
 

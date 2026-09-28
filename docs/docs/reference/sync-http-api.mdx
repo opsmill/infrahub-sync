@@ -262,8 +262,10 @@ verdict still carries that execution's live detail.
 
 ## Routes
 
-Every route below requires `Authorization: Bearer <token>`. Every `POST` route also requires a
-non-empty `Idempotency-Key` header and a non-empty `reason` in its JSON body.
+Every route below requires `Authorization: Bearer <token>`. Every `POST` route that writes or
+requests a change also requires a non-empty `Idempotency-Key` header and a non-empty `reason` in
+its JSON body; `POST /configs/{config_id}/versions/{registry_version}/validate` is the one
+exception, since it only re-checks an already-registered version and takes no body.
 
 | Route | Behavior |
 | --- | --- |
