@@ -384,9 +384,12 @@ def generate(
     # We are using the destination as the "constraint", if there is 2 infrahubs instance
     infrahub_adapter = None
     environment_address, _ = resolve_infrahub_connection(settings={})
-    if sync_instance.destination.name == "infrahub" and (sync_instance.destination.settings or environment_address):
+    configured_source = sync_instance.source.name == "infrahub" and bool(sync_instance.source.settings)
+    if sync_instance.destination.name == "infrahub" and (
+        sync_instance.destination.settings or (environment_address and not configured_source)
+    ):
         infrahub_adapter = sync_instance.destination
-    elif sync_instance.source.name == "infrahub" and (sync_instance.source.settings or environment_address):
+    elif configured_source or (sync_instance.source.name == "infrahub" and environment_address):
         infrahub_adapter = sync_instance.source
 
     # Use runtime address and token precedence; an explicit branch wins over the environment default.

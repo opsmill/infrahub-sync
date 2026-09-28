@@ -34,6 +34,7 @@ CONFIG_URL = "http://config-url:8000"
 # comparisons below as hardcoded credentials.
 ENV_CREDENTIAL = "env-api-value"
 CONFIG_CREDENTIAL = "config-api-value"
+DESTINATION_CREDENTIAL = "destination-api-value"
 
 
 class FakeSchema:
@@ -159,6 +160,54 @@ def test_empty_destination_falls_through_to_configured_source(tmp_path: Path, ca
     kwargs = captured_client["kwargs"]
     assert kwargs["address"] == CONFIG_URL
     assert kwargs["config"].api_token == CONFIG_CREDENTIAL
+
+
+def test_env_address_keeps_configured_source_when_destination_has_no_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured_client: dict[str, Any]
+) -> None:
+    """Use the source token when only the destination lacks settings and an env address exists."""
+    monkeypatch.setenv("INFRAHUB_ADDRESS", ENV_ADDRESS)
+    config_path = write_config(
+        tmp_path,
+        source={"name": "infrahub", "settings": {"url": CONFIG_URL, "token": CONFIG_CREDENTIAL}},
+        destination={"name": "infrahub"},
+    )
+
+    run_generate(config_path)
+
+    kwargs = captured_client["kwargs"]
+    assert kwargs["address"] == ENV_ADDRESS
+    assert kwargs["config"].api_token == CONFIG_CREDENTIAL
+
+
+def test_env_address_selects_destination_when_neither_side_has_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured_client: dict[str, Any]
+) -> None:
+    """Resolve an unconfigured Infrahub destination through the environment address."""
+    monkeypatch.setenv("INFRAHUB_ADDRESS", ENV_ADDRESS)
+    config_path = write_config(tmp_path, source={"name": "infrahub"}, destination={"name": "infrahub"})
+
+    run_generate(config_path)
+
+    assert captured_client["kwargs"]["address"] == ENV_ADDRESS
+
+
+def test_configured_destination_still_wins_over_configured_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured_client: dict[str, Any]
+) -> None:
+    """Keep the destination token when both Infrahub sides have settings."""
+    monkeypatch.setenv("INFRAHUB_ADDRESS", ENV_ADDRESS)
+    config_path = write_config(
+        tmp_path,
+        source={"name": "infrahub", "settings": {"url": CONFIG_URL, "token": CONFIG_CREDENTIAL}},
+        destination={"name": "infrahub", "settings": {"url": ENV_URL, "token": DESTINATION_CREDENTIAL}},
+    )
+
+    run_generate(config_path)
+
+    kwargs = captured_client["kwargs"]
+    assert kwargs["address"] == ENV_ADDRESS
+    assert kwargs["config"].api_token == DESTINATION_CREDENTIAL
 
 
 def test_generate_configures_tls_and_timeout_like_runtime(tmp_path: Path, captured_client: dict[str, Any]) -> None:
