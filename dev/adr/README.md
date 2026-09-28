@@ -41,6 +41,8 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0013 — Writes are keyed by a recorded id and a complete human-friendly ID](0013-writes-are-keyed-by-recorded-id-and-complete-hfid.md)
   — why the private-render gate was retired, how an update is keyed by an id recorded at plan
   time and a create by proving its own payload, and what plan format 3 carries. Closes AD067.
+- [0014 — V3 writes through saved-plan apply](0014-v3-writes-through-saved-plan-apply.md)
+  — why the direct DiffSync write path is removed from v3.
 
 ## Related
 

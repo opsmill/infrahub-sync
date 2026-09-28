@@ -538,11 +538,6 @@ class Potenda:
         self.progress_bar = None
         return self.destination.diff_from(self.source, flags=self.flags, callback=self._print_callback)
 
-    def sync(self, diff: Diff | None = None):
-        logger.info("Sync: Importing data from %s to %s based on Diff", self.source, self.destination)
-        self.progress_bar = None
-        return self.destination.sync_from(self.source, diff=diff, flags=self.flags, callback=self._print_callback)
-
     def _diff_to_rows(self, diff: Any) -> list[dict[str, str]]:
         """Materialize a diffsync.Diff into plan-row dicts (one per change)."""
         import json
@@ -588,8 +583,7 @@ class Potenda:
         Returns the saved artifact's in-memory per-action counts, or `None` when no
         saved artifact can be written. For `operation="plan"`, the shared execution
         surface uses those counts instead of the narrower legacy parquet rows; legacy
-        behavioral engines that return nothing retain the row fallback. Serial-sync
-        results instead report their live diffsync rows.
+        behavioral engines that return nothing retain the row fallback.
         """
         if not self.run_dir:
             return None
