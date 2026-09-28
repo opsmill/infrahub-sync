@@ -5,9 +5,12 @@ title: "Knowledge"
 ## Knowledge
 
 Understand the service components, execution stages and Python modules before changing
-infrahub-sync. Start with the architecture for a registered run or the repository tour
-for a module to edit. For development rules see [Guidelines](../guidelines/index.md);
-for step-by-step procedures see [Guides](../guides/index.md).
+infrahub-sync. A **registered run** is one the Sync HTTP API creates against a
+configuration package registered in PostgreSQL, as opposed to a legacy run resolved from a
+local configuration directory; see [Sync architecture](sync-architecture.md) for the
+lifecycle. Start there, or with the repository tour for a module to edit. For development
+rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
+[Guides](../guides/index.md).
 
 ### Orientation
 
@@ -19,24 +22,29 @@ for step-by-step procedures see [Guides](../guides/index.md).
 ### Adapters
 
 - [Adapter anatomy](adapter-anatomy.md) — the two classes every adapter provides, the
-  `DiffSyncMixin` / `DiffSyncModelMixin` contract, and what you implement versus what you
-  get for free.
+  `DiffSyncMixin` / `DiffSyncModelMixin` contract (the base classes an adapter's source and
+  destination models implement), and what you implement versus what you get for free.
 - [Schema mapping](schema-mapping.md) — how `config.yml` maps source resources to
   destination models: fields, identifiers, references, filters, and transforms.
-- [Incremental sync and cache](incremental-and-cache.md) — cursors, tiers, plans, and
-  row-count guardrails, and what an adapter implements to participate.
+- [Incremental sync and cache](incremental-and-cache.md) — cursors (per-adapter bookmarks of
+  what was already read), the write-order tiers derived from `schema_mapping`, plans, and
+  row-count guardrails (limits that bound how much a single extraction can read), and what
+  an adapter implements to participate.
 
 ### Plans and applying them
 
 - [The saved plan artifact](plan-artifact.md) — the manifest and operations a run records
-  before it writes: layout, canonical encoding, operation identifiers, the checksum, and how
-  a stored plan is read and verified.
+  before it writes: layout, canonical encoding (the exact byte serialization a plan's
+  checksum is computed over), operation identifiers, the checksum, and how a stored plan is
+  read and verified.
 - [Planned writes and apply](planned-write-and-apply.md) — the destination write surface for saved
-  operations, apply-time peer resolution, replace-set semantics, and why recorded deletes
+  operations, apply-time peer resolution (matching a planned reference to the destination
+  object it names before writing), replace-set semantics, and why recorded deletes
   are not executed.
-- [The configuration write guard](apply-guard.md) — the PostgreSQL session advisory lock
-  that serializes one configuration's writes across processes: its direct-connection
-  requirement, key derivation, deadline bounds, ownership proof, and failure sanitizing.
+- [The configuration write guard](apply-guard.md) — the PostgreSQL session advisory lock (a
+  database-held mutual-exclusion lock, not a table row) that serializes one configuration's
+  writes across processes: its direct-connection requirement, key derivation, deadline
+  bounds, ownership proof, and failure sanitizing.
 
 ### Configuration and execution {#running-a-sync-from-something-other-than-the-cli}
 

@@ -7,6 +7,10 @@ import TabItem from '@theme/TabItem';
 
 A configuration package defines the source, destination, and resources for a sync.
 Write the package as YAML or JSON and register it with `infrahub-sync configs register`.
+A configuration package is a YAML or JSON file with a required `configuration` object
+(described on this page), an optional `format_version` (only `1` is accepted, and it is
+the default), and an optional `credentials` block. See
+[Configuration package](../configuration-package.mdx).
 For a complete package, see `examples/netbox_to_infrahub/package.yml`.
 The service worker resolves the registered configuration and loads installed or
 pre-rendered adapter classes. Run commands select the package by the immutable
@@ -25,14 +29,18 @@ Describes the overall synchronization configuration.
 | `source` | `SyncAdapter` | Configuration for the source adapter. | Yes |
 | `destination` | `SyncAdapter` | Configuration for the destination adapter. | Yes |
 | `order` | List of strings | Order in which objects should be synchronized. Optional — when omitted, infrahub-sync auto-computes tiers from schema_mapping. | No |
-| `schema_mapping` | List of `SchemaMappingModel` | Defines how data is mapped from source to destination. | Yes |
+| `schema_mapping` | List of `SchemaMappingModel` | Defines how data is mapped from source to destination. | No; a package without mappings registers but synchronizes nothing. |
 | `diffsync_flags` | List of `DiffSyncFlags` | Instruct Infrahub Sync how to handle some specific situation without changing the data  | No |
 
 ### Automatic write order
 
-`order:` is now optional. When it is omitted, infrahub-sync derives a
-write-order graph from the `reference:` entries in each `schema_mapping`
-field and groups kinds into **tiers**:
+`order:` is optional. Omit it and infrahub-sync computes a write order for
+you from the `reference:` entries in `schema_mapping`, so a kind is always
+written after the kinds it references. Keep it only to override that
+computed order for an adapter quirk.
+
+Internally, infrahub-sync derives a write-order graph from the `reference:`
+entries in each `schema_mapping` field and groups kinds into **tiers**:
 
 - Tier 0: kinds with no outgoing references.
 - Tier N: kinds whose references all live in tiers `0..N-1`.
@@ -66,7 +74,7 @@ Configuration for source and destination adapters.
 | Property | Type | Description | Mandatory |
 | -------- | ---- | ----------- | --------- |
 | name | string | Identifier for the adapter. | Yes |
-| settings | Dictionary | Adapter-specific settings like `url` and `token`. If not provided, values will be loaded from environment variables. | No |
+| settings | Dictionary | Adapter-specific settings such as `url` and `token`. A credential-bearing setting holds a `$credential` reference to the package's `credentials` block, never a literal value; see [Credentials](../configuration-package.mdx#credentials). Registered runs do not read adapter settings from ambient environment variables. | No |
 
 <!-- vale off -->
 
