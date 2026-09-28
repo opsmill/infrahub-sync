@@ -8,7 +8,6 @@ import pynautobot  # ty: ignore[unresolved-import]  # optional dep, absent on th
 import pynautobot.core.query  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
 from diffsync import Adapter, DiffSyncModel
 from pydantic import ValidationError
-from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -307,16 +306,4 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
 
 
 class NautobotModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        # TODO: To implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        # TODO: To implement
-        return super().update(attrs=attrs)
+    """DiffSync model for nautobot records."""

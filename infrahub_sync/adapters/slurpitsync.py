@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import httpx
 import slurpit  # ty: ignore[unresolved-import]  # declared as `slurpit-sdk` in the optional `slurpit` extra
 from diffsync import Adapter, DiffSyncModel
-from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -332,18 +331,4 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
 
 
 class SlurpitsyncModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        """Create a Slurpit-side record from DiffSync ids/attrs (not yet implemented; delegates to the base)."""
-        # TODO: To implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        """Update a Slurpit-side record from DiffSync attrs (not yet implemented; delegates to the base)."""
-        # TODO: To implement
-        return super().update(attrs)
+    """DiffSync model for slurpitsync records."""

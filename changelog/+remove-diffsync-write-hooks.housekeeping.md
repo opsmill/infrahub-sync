@@ -1,0 +1,1 @@
+Removed the unused `DiffSyncModelMixin.get_resource_name` and `RestApiClient.post`, `put`, `patch`, and `delete` methods and adapter model write overrides; plugin destinations use the planned-write interface for v3 writes.

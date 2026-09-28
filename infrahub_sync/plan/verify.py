@@ -396,9 +396,9 @@ def _write_surface_failures(run_id: str, write_surface_missing_on: str | None) -
             expected="a destination adapter that implements the planned-write surface",
             found=f"adapter {write_surface_missing_on!r} does not implement it",
             next_action=(
-                f"The destination adapter {write_surface_missing_on!r} cannot apply a saved plan. Use "
-                f"`infrahub-sync sync` for this destination, or apply against a destination whose "
-                f"adapter implements the planned-write surface."
+                f"The destination adapter {write_surface_missing_on!r} cannot apply a saved plan. "
+                f"Use `infrahub-sync diff` to review changes without writing, or choose a destination "
+                f"whose adapter implements the planned-write surface before running `sync` or `apply`."
             ),
         )
     ]

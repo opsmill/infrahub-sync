@@ -162,7 +162,7 @@ def test_a_destination_without_the_write_surface_is_refused_before_any_write(tmp
     message = str(caught.value)
     assert "write_surface" in message
     assert "SurfacelessDestination" in message
-    assert "infrahub-sync sync" in message
+    assert "infrahub-sync diff" in message
 
 
 def test_a_recorded_delete_is_collected_and_never_dispatched(tmp_path: Path, caplog) -> None:

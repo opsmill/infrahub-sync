@@ -104,15 +104,3 @@ class RestApiClient:
 
     def get(self, endpoint: str, params: dict[str, Any] | None = None) -> Any:
         return self.request("GET", endpoint, params=params)
-
-    def post(self, endpoint: str, data: dict[str, Any] | None = None) -> Any:
-        return self.request("POST", endpoint, data=data)
-
-    def patch(self, endpoint: str, data: dict[str, Any] | None = None) -> Any:
-        return self.request("PATCH", endpoint, data=data)
-
-    def put(self, endpoint: str, data: dict[str, Any] | None = None) -> Any:
-        return self.request("PUT", endpoint, data=data)
-
-    def delete(self, endpoint: str) -> Any:
-        return self.request("DELETE", endpoint)

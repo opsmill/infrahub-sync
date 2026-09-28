@@ -30,9 +30,7 @@ class MyAdapter(DiffSyncMixin, Adapter):
     def model_loader(self, model_name, model): ...
 
 class MyModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(cls, adapter, ids, attrs): ...
-    def update(self, attrs): ...
+    pass
 ```
 
 `DiffSyncMixin` and `DiffSyncModelMixin` live in `infrahub_sync/__init__.py`. The order of
@@ -51,7 +49,7 @@ The mixin defines the surface Potenda calls. Each method is one of three kinds �
 | `cursor_tier_for(model_name)` | Optional | Strongest incremental tier the source supports for this model. Defaults to `CursorTier.NONE` (always full extract). |
 | `list_changed_since(model_name, cursor)` | Conditional | Required only if `cursor_tier_for` returns a non-`NONE` tier. Yields records changed since the cursor, in the same shape `model_loader` produces. |
 | `list_existing_ids(model_name)` | Optional | Yields current `unique_id` strings for delete detection between incremental runs. |
-| `apply_planned_operation(*, operation, peers)` | Optional | Executes one operation from a **saved plan** and returns the destination node id. Only `infrahub-sync apply` calls it. Absent on an adapter, `apply` refuses before writing anything — see [The planned-write surface](#the-planned-write-surface). |
+| `apply_planned_operation(*, operation, peers)` | Optional | Executes one operation from a **saved plan** and returns the destination node id. The apply stage of `sync` or `apply` calls it. Without it, both commands refuse before writing — see [The planned-write surface](#the-planned-write-surface). |
 | `new_peer_resolver()` | Conditional | Required only alongside `apply_planned_operation` — the engine builds the per-apply peer resolver through it. The two together are the planned-write surface; an adapter with only one of them is refused like an adapter with neither. |
 
 A read-only-capable adapter that only ever does full extracts needs just `model_loader`.
@@ -59,9 +57,8 @@ Incremental support is additive — see [Incremental sync and cache](incremental
 
 ### The planned-write surface
 
-`sync` compares both sides live and writes through the **model**'s `create` / `update`.
-`apply` is different: it replays a plan artifact saved by an earlier `diff` without loading
-either side, so it has no model instances to call. It dispatches to one method on the
+Registered `sync` plans, verifies and applies. The apply step replays a saved plan without
+loading either side, so it has no model instances to call. It dispatches to one method on the
 **adapter**:
 
 ```python
@@ -79,12 +76,12 @@ def new_peer_resolver(self) -> PeerResolver:
 ```
 
 The surface is **optional**, and not defining it is a supported position rather than a gap. An
-adapter that lacks either member makes `apply` fail its pre-write verification gate — before any
-write reaches the destination — with an error naming the adapter class and directing the operator
-to `sync` instead. The gate is an `isinstance` check against the protocol, so it verifies that
-both members are **present**, never that their signatures match: a wrong signature is not caught
-there and surfaces at the first operation instead. Every other command, plan review included, is unaffected. `infrahub` is the
-only adapter in this repository that implements it today.
+adapter that lacks either member makes `sync` or `apply` fail its pre-write verification gate.
+The refusal names the adapter class before any write reaches the destination. The gate is an
+`isinstance` check against the protocol, so it verifies that both members are **present**, never
+that their signatures match: a wrong signature surfaces at the first operation instead.
+Other commands, including plan review, are unaffected. `infrahub` is the only adapter in this
+repository that implements the surface today.
 
 An implementation must execute the single recorded operation convergently (a re-apply must not
 duplicate), return the destination node id, resolve every relationship peer through the
@@ -110,25 +107,16 @@ The full contract lives in
 
 ### The model contract (`DiffSyncModelMixin`)
 
-The model mixin gives every model the helpers used during loading and the hooks used during
-writing.
+The model mixin gives every model helpers used during loading.
 
 Provided for you (used inside `model_loader`):
 
 - `filter_records(records, schema_mapping)` — drop records that fail the mapping's filters.
 - `transform_records(records, schema_mapping)` — apply the mapping's Jinja2 transforms.
-- `apply_filters` / `apply_transforms` / `is_list` / `get_resource_name` — the lower-level
-  building blocks the two above are built from.
+- `apply_filters` / `apply_transforms` / `is_list` — lower-level loading helpers.
 
-You implement on the model (used when it is the destination):
-
-- `create(cls, adapter, ids, attrs)` — create the object in the destination, return the
-  instance.
-- `update(self, attrs)` — apply changed attributes.
-- `delete(self)` — inherited from DiffSync; override only if deletion needs custom logic.
-
-If an adapter is only ever a source, its model's `create` / `update` / `delete` are never
-called and can defer to the base implementation.
+Models inherit `create`, `update` and `delete` from DiffSync. V3 does not call them.
+Destinations write through the adapter's `apply_planned_operation` method.
 
 ### From upstream object to DiffSync model
 
