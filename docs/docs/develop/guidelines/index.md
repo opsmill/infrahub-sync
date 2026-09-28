@@ -17,8 +17,11 @@ testing, and secret redaction. For how the system works, see
 
 ### Repository-wide
 
-- [Testing](testing.md) — what makes a test worth having: mutation kill as the acceptance
-  criterion, asserting a negative, and reviewing a remediation over its own diff.
+- [Testing](testing.md) — what makes a test worth having: prove a test catches the bug it
+  claims to catch by breaking the code on purpose and confirming the test fails (a "killed
+  mutation"), assert that something did *not* happen in a fresh interpreter process rather
+  than trusting in-process state, and give a bug fix its own focused review pass instead of
+  trusting a green test suite.
 - [Testing tiers](testing-tiers.md) — which command runs which tier, what each one needs
   before it proves anything, what it writes, and why a skipped check is not a pass.
 - [Secret redaction](secret-redaction.md) — rules for any failure path that crosses a

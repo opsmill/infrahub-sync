@@ -53,7 +53,13 @@ _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
 
-app = typer.Typer(help="Synchronize registered configurations through the Sync API.")
+app = typer.Typer(
+    help=(
+        "Synchronize registered configurations through the Sync API. "
+        "Set INFRAHUB_SYNC_API_TOKEN to the bearer token the Sync API expects; "
+        "there is no flag for it."
+    )
+)
 configs_app = typer.Typer(help="Register and inspect configuration packages.")
 runs_app = typer.Typer(help="Inspect service-owned runs.")
 app.add_typer(configs_app, name="configs")

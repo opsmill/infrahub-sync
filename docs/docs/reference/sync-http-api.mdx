@@ -34,8 +34,7 @@ any of these modules. Ordinary CLI and Python API imports remain Prefect-free.
 You also need:
 
 - a Prefect API and an existing process work pool;
-- a worker with access to the allowed Sync configuration directory;
-- an absolute saved-plan cache path shared by worker processes;
+- a configuration directory, needed only for legacy unregistered runs;
 - PostgreSQL for product records; and
 - an S3-compatible bucket for immutable artifacts.
 
@@ -267,6 +266,13 @@ non-empty `Idempotency-Key` header and a non-empty `reason` in its JSON body.
 
 | Route | Behavior |
 | --- | --- |
+| `POST /configs` | Register a new configuration package. Requires an administrator. |
+| `GET /configs` | List registered configurations. |
+| `GET /configs/{config_id}` | Return one registered configuration. |
+| `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Requires an administrator. |
+| `GET /configs/{config_id}/versions` | List a configuration's registered versions. |
+| `GET /configs/{config_id}/versions/{registry_version}` | Return one registered configuration version. |
+| `POST /configs/{config_id}/versions/{registry_version}/validate` | Validate a registered configuration version and return its findings. |
 | `POST /runs` | Create one Sync run and accept `plan` or confirmed composed `sync`. |
 | `GET /runs/{run_id}` | Return the durable product record, with current linked Prefect detail for non-terminal executions. |
 | `GET /runs/{run_id}/plan` | Return retained saved-plan review data. |
@@ -279,8 +285,7 @@ non-empty `Idempotency-Key` header and a non-empty `reason` in its JSON body.
 
 ### Create a plan
 
-Supply a stable non-secret reference for the exact configuration revision you intend the
-worker to resolve:
+Supply the registered configuration's identity and immutable version:
 
 ```bash
 curl --request POST http://127.0.0.1:8000/runs \
@@ -288,12 +293,19 @@ curl --request POST http://127.0.0.1:8000/runs \
   --header "Idempotency-Key: plan-inventory-2026-08-10" \
   --header "Content-Type: application/json" \
   --data '{
-    "sync_name": "inventory",
     "operation": "plan",
-    "configuration_reference": "sha256:7a15c1e2",
+    "config_id": "<config_id>",
+    "registry_version": 1,
     "reason": "review inventory changes"
   }'
 ```
+
+`config_id` and `registry_version` come from a prior `configs register` or
+`configs create-version` response. `branch` and `confirm_writes` are optional; a
+confirmed composed `sync` also goes through `POST /runs` with `operation: "sync"` and
+`confirm_writes: true`. `POST /runs` accepts only these fields — `CreateRunRequest`
+forbids any other property, so a `sync_name` or `configuration_reference` field is
+rejected.
 
 Acceptance returns `202` with the durable `ProductRun` and its first orchestration link.
 The `run_id` in that response is the identity for every later stage, result, artifact, and
@@ -416,9 +428,10 @@ Sync never calls an adapter or infers success after an uncertain result, and the
 endpoint that clears `reconciliation_required`. Reconcile by planning again:
 
 1. create a new plan run on the same registered configuration;
-2. read its summary. An empty diff means the desired state is already present, and the
-   uncertain run in fact completed its work; and
-3. otherwise review the remaining operations and apply that new plan.
+2. read its summary. A new plan run compares the current source with the current
+   destination under the registered configuration. An empty diff means the destination
+   currently matches the desired state; it does not prove which run made the changes;
+3. otherwise, review the remaining operations and apply the new plan.
 
 ## Errors and retained state
 

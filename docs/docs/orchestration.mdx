@@ -38,9 +38,10 @@ Define the sync as a scheduled workflow in your CI system. CI provides run histo
 
 Infrahub Sync provides two Prefect-backed execution surfaces:
 
-- Install the `prefect` extra to serve one direct deployment for plan and confirmed sync
-  requests through Prefect's API. Sync output is forwarded into the flow-run log. See the
-  [Prefect remote run reference](./reference/prefect-remote-run.mdx) and
+- Install the `prefect` extra to serve one direct deployment that accepts read-only plan
+  requests through Prefect's API; it refuses `operation="sync"`. Use the Sync API for
+  confirmed sync or reviewed-plan apply. Sync output is forwarded into the flow-run log.
+  See the [Prefect remote run reference](./reference/prefect-remote-run.mdx) and
   `examples/prefect_remote_run/README.md` in the repository.
 - Install the `service` extra when an automation client needs a Sync-owned authenticated
   HTTP API, durable records and artifacts, reviewed-plan apply, idempotency, cancellation,
@@ -54,8 +55,8 @@ Infrahub Sync provides two Prefect-backed execution surfaces:
 - You want centralized observability across many sync projects.
 
 **Trade-offs:** Prefect itself has to be operated. If you do not already run it, this adds
-operational surface area. The direct deployment runs and observes one plan or confirmed
-sync; it does not add scheduling, retry, queue, or overlap policy.
+operational surface area. The direct deployment runs and observes one plan; it does not
+add scheduling, retry, queue, or overlap policy.
 
 Use the Sync API for the supported worker-backed run lifecycle. For schedules, retry
 policies, triggers, or composing several syncs into a larger workflow, configure Prefect

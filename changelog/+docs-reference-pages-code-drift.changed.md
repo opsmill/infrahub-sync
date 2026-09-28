@@ -1,0 +1,1 @@
+Correct several v3 reference pages that disagreed with the code: credential references, schema mapping mandatoriness, the Sync HTTP API's main request example and cache prerequisite, the direct Prefect deployment's plan-only scope, and what an empty reconciliation diff proves.

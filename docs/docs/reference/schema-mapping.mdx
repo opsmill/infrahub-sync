@@ -311,7 +311,7 @@ Because the namespace is keyed by that name, this mapping cannot carry two VRFs 
 
 ### Key the namespace on the VRF ID instead of its name
 
-A name-based namespace refuses a source that repeats a VRF name. NetBox IDs cannot repeat, so deriving the namespace from `id` keeps same-name VRFs apart without renaming anything in NetBox. These three entries are the whole recipe — they replace the `IpamNamespace`, `IpamPrefix` and `IpamIPAddress` entries of `examples/netbox_to_infrahub/config.yml`, and the scope note below says what they do and do not cover:
+A name-based namespace refuses a source that repeats a VRF name. NetBox IDs cannot repeat, so deriving the namespace from `id` keeps same-name VRFs apart without renaming anything in NetBox. These three entries replace the `IpamNamespace`, `IpamPrefix`, and `IpamIPAddress` entries and resolve namespace collisions for prefixes and addresses. They do not make the full example accept duplicate VRF names: its `IpamVRF` entry is still keyed on the name and needs its own unique name transform. The scope note below says what they do and do not cover:
 
 ```yaml
 - name: IpamNamespace

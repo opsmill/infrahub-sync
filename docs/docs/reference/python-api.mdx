@@ -66,6 +66,10 @@ with SyncClient.from_environment() as client:
     report = client.validate_config(config_id, registry_version, offset=0, limit=256)
 ```
 
+`package` above is a minimal shape to show the request — it has no `schema_mapping`, so it
+registers but synchronizes nothing. For a complete package, see
+`examples/netbox_to_infrahub/package.yml`.
+
 The client also exposes `create_config_version`, `list_configs`, `get_config`,
 `list_config_versions`, and `get_config_version`. Configuration list methods return the complete
 server response and do not expose pagination arguments. Validation exposes the server's finding
