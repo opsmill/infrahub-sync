@@ -177,17 +177,16 @@ def test_diff_requests_no_delete_for_destination_only_object() -> None:
     assert not diff.has_diffs()
 
 
-def test_custom_delete_implementation_is_never_invoked() -> None:
+def test_diff_does_not_invoke_custom_delete_implementation() -> None:
     engine, _ = _engine_with_destination_only_object(["SKIP_UNMATCHED_SRC"])
-    engine.sync()
+    assert not engine.diff().has_diffs()
     assert _SpiedWidget.delete_calls == []
 
 
-def test_post_sync_destination_view_is_complete() -> None:
-    # The post-sync snapshot is written from the in-memory destination
-    # store; the destination-only object must survive the sync.
+def test_post_diff_destination_view_is_complete() -> None:
+    # A read-only comparison preserves the destination-only object in the store.
     engine, destination = _engine_with_destination_only_object(["SKIP_UNMATCHED_SRC"])
-    engine.sync()
+    assert not engine.diff().has_diffs()
     assert [widget.get_unique_id() for widget in destination.get_all("widget")] == ["stale"]
 
 

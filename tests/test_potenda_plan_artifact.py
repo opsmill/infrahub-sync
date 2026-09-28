@@ -155,9 +155,7 @@ class _FakeAdapter:
 
     `diff_from` compares against `self.top_level` and nothing else, so the `top_level`
     narrowing the tier branch applies around each `diff()` call is observable in the
-    returned result's contents (T040). `sync_from` records both the kinds it was handed and
-    whether the plan artifact was already on disk at that moment, which is FR-001's
-    observable rather than a proxy for it.
+    returned result's contents (T040).
     """
 
     def __init__(
@@ -173,10 +171,7 @@ class _FakeAdapter:
         self.store = _FakeStore()
         self._by_kind: dict[str, list[_FakeRecord]] = {}
         self.load_calls = 0
-        self.sync_calls: list[tuple[str, ...]] = []
-        self.manifest_present_at_sync: list[bool] = []
         self.emit_deletes = emit_deletes
-        self.run_dir: Path | None = None
         for record in records:
             self.add(record)
         if schema is not None:
@@ -207,12 +202,6 @@ class _FakeAdapter:
             kinds=list(self.top_level),
             include_deletes=self.emit_deletes,
         )
-
-    def sync_from(self, _source: _FakeAdapter, *, diff: _FakeDiff | None = None, **_kwargs: object) -> _FakeDiff | None:
-        self.sync_calls.append(() if diff is None else tuple(sorted(diff.children)))
-        if self.run_dir is not None:
-            self.manifest_present_at_sync.append((self.run_dir / PLAN_DIR_NAME / MANIFEST_FILE_NAME).exists())
-        return diff
 
 
 class _FakeElement:
@@ -424,7 +413,6 @@ def build_potenda(  # noqa: PLR0913 — one parameter per axis a plan run varies
     """
     directory = cache_root_for(config.name) / run_id
     directory.mkdir(parents=True, exist_ok=True)
-    destination.run_dir = directory
     return cls(
         source=source,  # ty: ignore[invalid-argument-type]
         destination=destination,  # ty: ignore[invalid-argument-type]
@@ -919,13 +907,8 @@ def test_delete_only_saved_plan_drives_the_execution_result(monkeypatch: pytest.
     assert dict(result.summary) == {"create": 0, "update": 0, "delete": 1}
 
 
-def test_delete_only_live_sync_saves_the_delete_and_executes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A derived delete is saved, and a live sync over that diff executes nothing.
-
-    Driven on the engine directly: the destination-only object reaches the saved plan,
-    while the diff rows a live sync acts on stay empty, so the destination is never
-    asked to synchronize anything.
-    """
+def test_delete_only_plan_records_delete_without_diff_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A destination-only object reaches the saved plan although the diff has no rows."""
     config = build_config(order=["BuiltinTag"])
     run_id = "20260726T1151-de1e7e02"
     destination = destination_with_orphan()
@@ -939,16 +922,13 @@ def test_delete_only_live_sync_saves_the_delete_and_executes_nothing(monkeypatch
     pin_extraction_decisions(monkeypatch, [False, False])
 
     potenda.load_both_sides()
-    live_diff = potenda.diff()
-    potenda.write_plan(live_diff)
-    if live_diff.has_diffs():
-        potenda.sync(diff=live_diff)
+    diff = potenda.diff()
+    potenda.write_plan(diff)
     saved_summary = read_saved_plan(sync_name=config.name, run_id=run_id, config=config).summary()
 
     assert saved_summary.total == 1
     assert saved_summary.by_action == {"delete": 1}
-    assert destination.sync_calls == []
-    assert potenda._diff_to_rows(live_diff) == []
+    assert potenda._diff_to_rows(diff) == []
 
 
 # =======================================================================================
@@ -1255,10 +1235,6 @@ class _RecordingPotenda(Potenda):
         self.events.append(("write_plan_artifact", len(diffs)))
         return super().write_plan_artifact(diffs)
 
-    def sync(self, diff=None):
-        self.events.append(("sync", () if diff is None else tuple(sorted(diff.children))))
-        return super().sync(diff=diff)
-
 
 def test_write_plan_calls_the_public_artifact_writer_hook(monkeypatch: pytest.MonkeyPatch) -> None:
     """A subclass sees the single-diff plan write through the public hook."""
@@ -1313,7 +1289,6 @@ def test_a_plan_records_the_delete_class_without_executing_it(monkeypatch: pytes
     assert recorded, "the fixture's destination orphan produced no delete operation"
     assert {record["kind"] for record in recorded} == {"BuiltinTag"}
     assert read_manifest(plan_run_dir(dry_run))["delete_operations_computed"] is True
-    assert dry_run.destination.sync_calls == []  # ty: ignore[unresolved-attribute]
 
 
 # =======================================================================================
@@ -1836,7 +1811,6 @@ def test_a_derivation_failure_fails_the_plan_run(
 
     _assert_named_failure(raised.value, case)
     assert not manifest_path(potenda).exists()
-    assert case.destination.sync_calls == [], "the destination was written despite a failed derivation"
 
 
 def test_the_source_side_failures_do_not_route_the_operator_at_the_destination() -> None:

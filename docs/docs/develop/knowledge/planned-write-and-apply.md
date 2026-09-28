@@ -6,16 +6,15 @@ title: "Planned writes and apply"
 
 <!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
 
-> Part of: Develop > Knowledge | Related: [The saved plan artifact](plan-artifact.md), [Adapter anatomy](adapter-anatomy.md), [ADR 0002](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0002-planned-write-destination-protocol.md)
+> Part of: Develop > Knowledge | Related: [The saved plan artifact](plan-artifact.md), [The shared execution surface](execution-surface.md), [ADR 0002](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0002-planned-write-destination-protocol.md)
 
-Applying a [saved plan artifact](plan-artifact.md) is a different write path from `sync`. A `sync` walks
-a live comparison result and calls each destination model's `create` / `update` / `delete`; an apply
-walks stored operations and never computes a diff, never extracts either side, and never reads the
-destination the way `sync` does. This page describes what a destination adapter must offer for that to
-work, how peers are resolved without a comparison store, and what the write does about relationships and
-deletes.
+V3 writes through [saved-plan apply](plan-artifact.md). The CLI `sync` command requests a plan,
+verification, and apply through the Sync API. Apply walks stored operations without recomputing a diff
+or extracting either side. This page describes the destination adapter surface, peer resolution without
+a comparison store, relationship writes, and delete handling.
 
-`sync` is untouched by all of this. Everything below is new code on the planned-write path.
+[ADR 0014](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0014-v3-writes-through-saved-plan-apply.md)
+records why the direct DiffSync write path was removed.
 
 ### The write surface
 
@@ -91,7 +90,7 @@ its recorded id — the server is told exactly which object to write — so it m
 fail to resolve a component and still land on the object it means.
 
 Creates and updates both route through the same convergent upsert. Neither routes through
-`InfrahubModel.update`, whose `local_id` keying needs a destination load an apply must not perform.
+a destination load, which apply must not perform.
 
 An update is keyed by the destination `id` recorded for it at plan time; a create carries none and is
 matched by the server on the human-friendly-ID components in its payload, which is why step 4 proves
@@ -244,9 +243,8 @@ dropped operation does, and unlike a skipped delete it is not a designed limitat
 kind whose HFID does not cover its plan identity, the documented fallback is to resolve the reference
 component's own peer first and filter on `<rel>__ids`.
 
-These two refusals belong to **this resolver only**. The live `sync` path's existing warn-and-continue on
-an unresolvable peer, and the SDK's bare `IndexError` on a multi-match, are unchanged, and a test asserts
-they still hold.
+These two refusals belong to **this resolver only**. The destination load path uses a separate
+store lookup when it reads peer nodes.
 
 Dependency-tier ordering guarantees a peer is written before anything referring to it, but only for
 references the dependency graph carries. Three cases it cannot express — a self-reference, a reference
@@ -432,4 +430,4 @@ read unambiguously, and it is **not** guidance either way.
 - [ADR 0012](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0012-the-convergent-upsert-is-the-replace-set-write.md) — one upsert is the
   whole write, and what pins its replace semantics.
 - [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md) — the delete contract.
-- [Adapter anatomy](adapter-anatomy.md) — the `sync`-path contract this sits beside.
+- [The shared execution surface](execution-surface.md) — how plan and apply enter the engine.

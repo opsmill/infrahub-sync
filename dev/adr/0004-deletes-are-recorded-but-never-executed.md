@@ -6,6 +6,8 @@
 `dev/specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md`
 (AD004, AD049, AD055)
 
+> V3 now writes only through saved-plan apply. See [ADR 0014](0014-v3-writes-through-saved-plan-apply.md).
+
 ## Context
 
 A destination object that is mapped by the configuration but absent from the source is a deletion the

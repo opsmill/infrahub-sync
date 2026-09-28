@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import ipaddress
 import logging
 from collections.abc import Mapping
@@ -13,11 +12,8 @@ from infrahub_sdk import (
     InfrahubClientSync,
 )
 from infrahub_sdk.exceptions import GraphQLError, NodeNotFoundError
-from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
-from infrahub_sdk.utils import compare_lists
 from pydantic import ValidationError
-from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -202,113 +198,6 @@ def _refuse_stale_destination_id(exc: GraphQLError, *, operation: PlannedOperati
         "nothing."
     )
     raise StaleDestinationIdError(msg) from exc
-
-
-def _relationship_input_data(peer_id: str | None, source: str | None, owner: str | None) -> dict[str, Any]:
-    """Build cardinality-many relationship input with optional attribution."""
-    data: dict[str, Any] = {"id": peer_id}
-    if source:
-        data["source"] = source
-    if owner:
-        data["owner"] = owner
-    return data
-
-
-def update_node(
-    node: InfrahubNodeSync,
-    attrs: Mapping[str, Any],
-    client: InfrahubClientSync,
-    node_schema: MainSchemaTypesAPI,
-    source: str | None = None,
-    owner: str | None = None,
-) -> InfrahubNodeSync:
-    """
-    Update the given node using the provided attributes and relationship values.
-
-    For relationship attributes, the function uses `resolve_peer_node` or `resolve_peer_nodes`
-    to update one-to-one and one-to-many relationships, respectively.
-
-    Args:
-        node: The node to update.
-        attrs: The attributes and relationships to update.
-        client: The client that owns `node`, used for schema and store lookups.
-        node_schema: The schema of `node`, read once by the caller.
-        source: Optional source ID to set on updated attributes and relationships.
-        owner: Optional owner ID to set on updated attributes and relationships.
-    """
-    schemas: Mapping[str, MainSchemaTypesAPI] = client.schema.all(branch=node.get_branch())
-    for attr_name, attr_value in attrs.items():
-        if attr_name in node_schema.attribute_names:
-            attr = getattr(node, attr_name)
-            attr.value = attr_value
-            if source:
-                attr.source = NodeProperty(data=source)
-            if owner:
-                attr.owner = NodeProperty(data=owner)
-
-        if attr_name in node_schema.relationship_names:
-            for rel_schema in node_schema.relationships:
-                peer_schema = schemas.get(rel_schema.peer)
-                if attr_name != rel_schema.name or peer_schema is None:
-                    continue
-
-                if rel_schema.cardinality == "one":
-                    if attr_value:
-                        peer_node = resolve_peer_node(
-                            key=attr_value,
-                            rel_schema=rel_schema,
-                            peer_schema=peer_schema,
-                            store=client.store,
-                            client=client,
-                            fallback=False,
-                            schemas=schemas,
-                        )
-                        if not peer_node:
-                            logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
-                            continue
-                        # Keep the peer object so the SDK can detect resource pools
-                        # and generate a ``from_pool`` allocation when required.
-                        setattr(node, attr_name, peer_node)
-                        relationship: RelatedNodeSync = getattr(node, attr_name)
-                        # The SDK renders ``from_pool`` before relationship properties,
-                        # so source and owner do not reach resource-pool allocations.
-                        if source:
-                            relationship.source = source
-                        if owner:
-                            relationship.owner = owner
-                    else:
-                        # TODO: delete the old relationship data ?
-                        pass
-
-                elif rel_schema.cardinality == "many":
-                    attr_manager: RelationshipManagerSync = getattr(node, attr_name)
-                    if not attr_manager.initialized:
-                        attr_manager.fetch()
-                    existing_peer_ids = attr_manager.peer_ids
-                    new_peer_ids = []
-
-                    for value in list(attr_value):
-                        peer_node = resolve_peer_node(
-                            key=value,
-                            rel_schema=rel_schema,
-                            peer_schema=peer_schema,
-                            store=client.store,
-                            client=client,
-                            fallback=False,
-                            schemas=schemas,
-                        )
-                        if peer_node:
-                            new_peer_ids.append(peer_node.id)
-
-                    _, existing_only, new_only = compare_lists(existing_peer_ids, new_peer_ids)
-
-                    for existing_id in existing_only:
-                        attr_manager.remove(existing_id)
-
-                    for new_id in new_only:
-                        attr_manager.add(_relationship_input_data(new_id, source, owner))
-
-    return node
 
 
 # An Infrahub schema component path — a human-friendly-ID or uniqueness-constraint entry —
@@ -636,10 +525,8 @@ class PeerResolver:
     def _query(self, *, peer_kind: str, identity: Mapping[str, Any], referring_operation_id: str) -> str:
         """Query the destination for one peer, refusing on zero and on more than one.
 
-        The refusals belong to **this** resolver only (AD048). The live `sync` write path's
-        warn-and-continue on an unresolvable peer, and the SDK's bare `IndexError` on a
-        multi-match, are existing behavior on an existing path and are left exactly as they
-        are.
+        The refusals belong to **this** resolver only (AD048). Destination loading
+        uses a separate store lookup to resolve peer nodes.
 
         An **empty** filter set is refused before the query is issued: an
         unfiltered `client.filters(kind=...)` lists every node of the kind, and with exactly
@@ -693,63 +580,6 @@ class PeerResolver:
             f"Queried with: {sorted(filter_kwargs)}."
         )
         raise PeerAmbiguousError(msg)
-
-
-def diffsync_to_infrahub(
-    ids: Mapping[Any, Any],
-    attrs: Mapping[Any, Any],
-    store: NodeStoreSync,
-    node_schema: NodeSchemaAPI,
-    schemas: Mapping[str, MainSchemaTypesAPI],
-) -> dict[Any, Any]:
-    """
-    Convert DiffSync IDs and attributes into a format suitable for Infrahub.
-
-    Resolves relationship fields using peer node lookup logic.
-    """
-    data: dict[Any, Any] = copy.deepcopy(dict(ids))
-    data.update(dict(attrs))
-
-    for key in list(data.keys()):
-        if key in node_schema.relationship_names:
-            for rel_schema in node_schema.relationships:
-                peer_schema = schemas.get(rel_schema.peer)
-                if key != rel_schema.name or peer_schema is None:
-                    continue
-
-                if rel_schema.cardinality == "one":
-                    if data[key] is None:
-                        del data[key]
-                        continue
-                    peer_node = resolve_peer_node(
-                        key=data[key],
-                        rel_schema=rel_schema,
-                        peer_schema=peer_schema,
-                        store=store,
-                    )
-                    if not peer_node:
-                        logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, data[key])
-                        continue
-                    data[key] = peer_node.id
-
-                elif rel_schema.cardinality == "many":
-                    if data[key] is None:
-                        del data[key]
-                        continue
-                    new_values = []
-                    for value in list(data[key]):
-                        peer_node = resolve_peer_node(
-                            key=value,
-                            rel_schema=rel_schema,
-                            peer_schema=peer_schema,
-                            store=store,
-                        )
-                        if not peer_node:
-                            logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, value)
-                            continue
-                        new_values.append(peer_node.id)
-                    data[key] = new_values
-    return data
 
 
 class PeerIdentifierError(ValueError):
@@ -1372,7 +1202,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         A `create` and an `update` both route through the same convergent upsert —
         `client.create(...)` then `save(allow_upsert=True)` — and neither routes through
-        `InfrahubModel.update`, whose `local_id` keying needs the destination load FR-012
+        a destination load, which saved-plan apply does not perform
         forbids. The payload is authoritative for the mapped fields it carries and touches no
         unmapped destination field.
 
@@ -1594,65 +1424,4 @@ def _has_unwritable_hfid_component(node_schema: NodeSchemaAPI) -> bool:
 
 
 class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        if not isinstance(adapter, InfrahubAdapter):
-            msg = f"{cls.__name__}.create expected an InfrahubAdapter, got {type(adapter).__name__}"
-            raise TypeError(msg)
-        node_schema = adapter.client.schema.get(kind=cls.__name__)
-        # client.schema.get() returns the wider MainSchemaTypesAPI; diffsync_to_infrahub needs NodeSchemaAPI.
-        if not isinstance(node_schema, NodeSchemaAPI):
-            msg = f"Expected NodeSchemaAPI for {cls.__name__}, got {type(node_schema).__name__}"
-            raise TypeError(msg)
-        data = diffsync_to_infrahub(
-            ids=ids, attrs=attrs, node_schema=node_schema, store=adapter.client.store, schemas=adapter.schema
-        )
-        reason = writable_convergence_reason(
-            node=node_schema,
-            identity_fields=ids,
-            mapped_fields=data,
-            schemas=adapter.schema,
-            identity=ids,
-            check_values=True,
-            write_values=data,
-        )
-        if reason:
-            msg = f"Destination kind {cls.__name__!r}: {reason}. No write was attempted."
-            raise UnkeyedCreateRefusedError(msg)
-        unique_id = cls(**ids, **attrs).get_unique_id()
-        source_id = adapter.source_node.id if adapter.source_node else None
-        owner_id = adapter.owner_node.id if adapter.owner_node else None
-        create_data = adapter.client.schema.generate_payload_create(
-            schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
-        )
-        node = adapter.client.create(kind=cls.__name__, data=create_data)
-        node.save(allow_upsert=True)
-        adapter.client.store.set(key=unique_id, node=node)
-
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        adapter = self.adapter
-        if not isinstance(adapter, InfrahubAdapter):
-            msg = f"{self.__class__.__name__}.update expected an InfrahubAdapter, got {type(adapter).__name__}"
-            raise TypeError(msg)
-        node = adapter.client.get(id=self.local_id, kind=self.__class__.__name__)
-        source_id = adapter.source_node.id if adapter.source_node else None
-        owner_id = adapter.owner_node.id if adapter.owner_node else None
-        node_schema = adapter.schema[node.get_kind()]
-        node = update_node(
-            node=node,
-            attrs=attrs,
-            client=adapter.client,
-            node_schema=node_schema,
-            source=source_id,
-            owner=owner_id,
-        )
-        node.save(allow_upsert=True)
-
-        return super().update(attrs=attrs)
+    """DiffSync model for Infrahub records loaded during planning."""

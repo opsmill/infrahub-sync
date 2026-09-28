@@ -166,8 +166,8 @@ These three are development and internal machinery, not the registered route:
 
 ### The engine
 
-[`infrahub_sync/potenda/`][src-infrahub-sync-potenda] is the Potenda engine: it drives load, diff and write for both the
-live compare-and-write path and the apply path, and owns the destination SDK exception
+[`infrahub_sync/potenda/`][src-infrahub-sync-potenda] is the Potenda engine: it drives load and diff for
+planning, then applies verified saved-plan operations. It also owns the destination SDK exception
 boundary. [`infrahub_sync/utils.py`][src-infrahub-sync-utils-py] assembles the pieces — configuration, plugin loading,
 runtime models, cache paths and the engine — into a runnable instance.
 For the service components and registered-run lifecycle, see

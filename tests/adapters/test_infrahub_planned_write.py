@@ -41,9 +41,7 @@ from infrahub_sdk.schema.main import (
 
 from infrahub_sync.adapters.infrahub import (
     InfrahubAdapter,
-    InfrahubModel,
     PeerResolver,
-    update_node,
 )
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
@@ -492,23 +490,6 @@ def issued_reads(client: RecordingClient) -> list[dict[str, Any]]:
     live — not a fetch-and-reconcile round trip.
     """
     return [payload for name, payload in client.events if name == "get"]
-
-
-@pytest.fixture(autouse=True)
-def _forbid_live_sync_update() -> Iterator[None]:
-    """`InfrahubModel.update` is never reached by the planned-write path (FR-013).
-
-    That method opens with `client.get(id=self.local_id, …)` and `local_id` is populated only
-    by a destination load, which FR-012 forbids a saved-plan apply from performing — so a
-    planned update routed through it would key the read on `None`.
-    """
-
-    def forbidden(self: InfrahubModel, attrs: dict) -> None:  # noqa: ARG001
-        msg = "InfrahubModel.update was reached on the planned-write path; it needs a destination load (FR-012)."
-        raise AssertionError(msg)
-
-    with patch.object(InfrahubModel, "update", forbidden):
-        yield
 
 
 @pytest.fixture
@@ -1303,39 +1284,6 @@ def test_a_multi_match_peer_refuses_naming_the_match_count() -> None:
     assert "site-a" in message, "The refusal must name the peer identity."
     assert "2 objects" in message, "The refusal must name the match count."
     assert not client.mutations, "The operation must not be dispatched."
-
-
-def test_the_live_sync_write_path_still_warns_and_continues_on_an_unresolvable_peer(
-    captured_logs: pytest.LogCaptureFixture,
-) -> None:
-    """AD048: the refusal is scoped to the planned-write resolver and has not leaked out."""
-    client = RecordingClient()
-    node = InfrahubNodeSync(client=client, schema=DEVICE_SCHEMA, data={"id": "device-1", "name": {"value": "device-a"}})
-
-    returned = update_node(
-        node=node,
-        attrs={"name": "device-a", "site": "a-key-no-store-holds"},
-        client=client,
-        node_schema=DEVICE_SCHEMA,
-    )
-
-    assert returned is node, "The live path returns the node it was given rather than raising."
-    warnings = [record for record in captured_logs.records if "Ignored" in record.getMessage()]
-    assert warnings, "The live path warns about the peer it could not resolve."
-    assert not client.mutations, "`update_node` itself issues no write; its caller saves."
-
-
-def test_the_live_sync_write_path_still_drops_an_unresolvable_cardinality_many_peer() -> None:
-    """AD048: the cardinality-many arm of the live path is unchanged too."""
-    client = RecordingClient()
-    client.existing_peers[TEAM_KIND, "members"] = []
-    node = InfrahubNodeSync(
-        client=client, schema=TEAM_SCHEMA, data={"id": "team-1", "name": {"value": "team-a"}, "members": []}
-    )
-
-    update_node(node=node, attrs={"members": ["a-key-no-store-holds"]}, client=client, node_schema=TEAM_SCHEMA)
-
-    assert not client.mutations, "Nothing is written and nothing is raised."
 
 
 # ---------------------------------------------------------------------------------------

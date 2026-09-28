@@ -5,6 +5,8 @@
 **Source**: `dev/specs/archive/001-plan-artifact-saved-apply/research.md` (PD-010),
 `dev/specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md` (AD086)
 
+> V3 now writes only through saved-plan apply. See [ADR 0014](0014-v3-writes-through-saved-plan-apply.md).
+
 ## Context
 
 Applying a saved plan needs something from the destination that a `sync` does not: a per-operation
