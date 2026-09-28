@@ -21,17 +21,16 @@ Dependencies and dependents are calculated for each network element, allowing an
 ## Requirements
 
 This Adapter uses the [IP Fabric SDK](https://pypi.org/project/ipfabric), distributed as `ipfabric` on PyPI.
+To use this adapter, build a custom Sync image that also installs the `ipfabric` extra, for example
+by changing the image's `uv sync` step to `--extra service --extra ipfabric`.
 
 `ipfabric` is declared in its own `ipfabric` package extra, not in the `service` extra the default
-Sync image installs. Every current `ipfabric` release depends unconditionally on `niquests`, whose
-`urllib3-future` dependency ships a `.pth` hook that replaces the real `urllib3` package in
+Sync image installs, because every current `ipfabric` release depends unconditionally on `niquests`,
+whose `urllib3-future` dependency ships a `.pth` hook that replaces the real `urllib3` package in
 `site-packages` at interpreter start — for every process in the image, not just this adapter. That
 would silently move every other requests-based adapter (`pynetbox`, `pynautobot`, `slurpit-sdk`, the
-generic REST adapter) onto `urllib3-future` too, so it is not installed by default.
-
-To use this adapter, build a custom Sync image that also installs the `ipfabric` extra, for example
-by changing the image's `uv sync` step to `--extra service --extra ipfabric`. Confirm before doing so
-that `urllib3-future` replacing `urllib3` for the whole image is acceptable for your deployment.
+generic REST adapter) onto `urllib3-future` too. Confirm that `urllib3-future` replacing `urllib3`
+for the whole image is acceptable for your deployment before adding the `ipfabric` extra.
 
 ## Sync directions supported
 
@@ -40,9 +39,7 @@ that `urllib3-future` replacing `urllib3` for the whole image is acceptable for 
 :::info
 
 Currently, the IP Fabric adapter supports only **one-way synchronization** from IP Fabric to Infrahub.
-Syncing data back into IP Fabric is not yet supported.
-
-Although IP Fabric data cannot be edited, additional information such as **`Device Attributes`** and **`Site Separation`** rules can be updated from Infrahub data.
+Syncing data back into IP Fabric is not supported; no operation in this adapter writes to IP Fabric.
 
 :::
 

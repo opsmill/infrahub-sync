@@ -81,9 +81,9 @@ Queries the Prometheus HTTP API using PromQL. Best for aggregating data from mul
       endpoint: "/api/v1/query"
       promql:
         resources:
-          node_info: 'node_uname_info'
-          node_memory: 'node_memory_MemTotal_bytes'
-          node_cpu: 'count(node_cpu_seconds_total{mode="idle"}) by (instance)'
+          node_uname_info: 'node_uname_info'
+          node_memory_MemTotal_bytes: 'node_memory_MemTotal_bytes'
+          node_cpu_idle_count: 'count(node_cpu_seconds_total{mode="idle"}) by (instance)'
 
   destination:
     name: infrahub
@@ -93,6 +93,12 @@ Queries the Prometheus HTTP API using PromQL. Best for aggregating data from mul
 
   </TabItem>
 </Tabs>
+
+Each key under `promql.resources` is a resource name you choose; `schema_mapping.mapping` refers to
+that resource name, not to the PromQL query. In API mode, naming the resource after the metric it
+mostly resembles — as above — keeps `mapping:` consistent with the scrape-mode examples below. A
+resource such as `node_cpu_idle_count`, built from an aggregating query with no single underlying
+metric, needs its own distinct name.
 
 ### Environment variables
 
@@ -154,31 +160,46 @@ schema_mapping:
 
 ### Using the lookup function
 
-The `lookup()` function allows you to join data from different metrics:
+The `lookup()` function joins data from a different metric. It belongs in a schema_mapping
+entry's `transforms` list, alongside `fields`:
 
 ```yaml
-transforms:
-  # Syntax: lookup(metric_name, match_criteria, value_path [, default])
+schema_mapping:
+  - name: VirtualizationVirtualMachine
+    mapping: node_uname_info
+    identifiers: ["name"]
+    fields:
+      - name: name
+        mapping: labels.nodename
+      - name: mem_total_bytes
+        mapping: mem_total_t
+      - name: mac_address
+        mapping: mac_addr_t
 
-  # Get total memory from a different metric
-  - field: mem_total_bytes
-    expression: "{{ lookup('node_memory_MemTotal_bytes', {}, 'value') or 0 }}"
+    transforms:
+      # Syntax: lookup(metric_name, match_criteria, value_path [, default])
 
-  # Match by label value
-  - field: mac_address
-    expression: "{{ lookup('node_network_info', {'device': labels.device}, 'labels.address') or '' }}"
+      # Join memory from a different metric by matching the shared "nodename" label
+      - field: mem_total_t
+        expression: "{{ lookup('node_memory_MemTotal_bytes', 'labels.nodename', 'value') or 0 }}"
 
-  # With default value
-  - field: status
-    expression: "{{ lookup('node_time_seconds', {}, 'value', 0) }}"
+      # Match on a different shared label
+      - field: mac_addr_t
+        expression: "{{ lookup('node_network_info', 'labels.device', 'labels.address') or '' }}"
 ```
+
+An empty `match_criteria` (`''`, `'*'`, or omitted) does not match against the current record at
+all — it returns the first sample of `metric_name` that has a value at `value_path`, out of every
+record being processed. Use it only when the looked-up metric has a single, unambiguous sample;
+otherwise pass a dotted path such as `labels.nodename` or `labels.device` so the lookup joins on
+a label the two metrics share.
 
 ### Lookup function parameters
 
 | Parameter | Description |
 |-----------|-------------|
 | `metric_name` | Name of the metric to look up |
-| `match_criteria` | Dict of label conditions to match (empty `{}` matches first record) |
+| `match_criteria` | Dotted path (for example `labels.nodename`) that must have the same value on the current record and the looked-up record. Leave empty to get the first sample of `metric_name` that has `value_path`, without matching against the current record. |
 | `value_path` | Dot-notation path to extract (for example: `value`, `labels.hostname`) |
 | `default` | Optional default value if lookup fails |
 
@@ -247,7 +268,7 @@ schema_mapping:
 
 - Ensure the metric being looked up exists in the scraped data
 - Verify label names match exactly (case-sensitive)
-- Use empty dict `{}` for `match_criteria` to get the first matching record
+- Pass a dotted `match_criteria` path (for example `labels.nodename`) to join on a shared label; an empty one returns the first sample instead, which is rarely what a per-record join needs
 - Provide default values for optional lookup operations
 
 ### Authentication issues

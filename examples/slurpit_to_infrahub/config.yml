@@ -1,16 +1,19 @@
 ---
 name: from-slurpit
+
 source:
   name: slurpitsync
   settings:
-    url: "<URL>"
-    api_key: "<TOKEN>"
+    url: "https://<SLURPIT-ENDPOINT>"
+    api_key:
+      $credential: slurpit-api-key
 
 destination:
   name: infrahub
   settings:
-    url: "<INFRAHUB_URL>"
-    token: "<TOKEN>"
+    url: "http://localhost:8000"
+    token:
+      $credential: infrahub-token
 
 # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
 # Uncomment and edit only if you need to override the computed order:
@@ -40,7 +43,7 @@ schema_mapping:
 
   - name: LocationGeneric
     mapping: site.get_sites
-    identifiers: ['name']
+    identifiers: ["name"]
     fields:
       - name: name
         mapping: sitename
@@ -103,7 +106,7 @@ schema_mapping:
     filters:
       - field: Name
         operation: is_not_empty
-    identifiers: ['device', 'serial']
+    identifiers: ["device", "serial"]
     mapping: planning_results.hardware-info
     fields:
       - name: name
@@ -121,7 +124,7 @@ schema_mapping:
         reference: InfraDevice
 
   - name: InfraVersion
-    identifiers: ['version']
+    identifiers: ["version"]
     filters:
       - field: Version
         operation: is_not_empty
@@ -136,7 +139,7 @@ schema_mapping:
         reference: InfraDevice
 
   - name: InfraVLAN
-    identifiers: ['vlan_id', "name"]
+    identifiers: ["vlan_id", "name"]
     mapping: planning_results.vlans
     fields:
       - name: name
@@ -172,7 +175,7 @@ schema_mapping:
         reference: InfraDevice
 
   - name: InfraPrefix
-    identifiers: ['vrf', 'prefix']
+    identifiers: ["vrf", "prefix"]
     mapping: filter_networks
     fields:
       - name: prefix
@@ -182,7 +185,7 @@ schema_mapping:
         reference: InfraVRF
 
   - name: InfraIPAddress
-    identifiers: ["address", 'ip_prefix']
+    identifiers: ["address", "ip_prefix"]
     mapping: filter_interfaces
     transforms:
       - field: dev_int

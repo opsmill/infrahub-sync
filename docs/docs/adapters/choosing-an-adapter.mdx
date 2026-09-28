@@ -25,18 +25,25 @@ Each adapter handles two responsibilities for its target system: **communication
 | Slurp'it | Slurp'it → Infrahub | Building Infrahub inventory from Slurp'it network discovery data |
 | Cisco ACI | Cisco ACI → Infrahub | Syncing data from Cisco ACI fabrics into Infrahub |
 | Peering Manager | Peering Manager → Infrahub · Infrahub → Peering Manager | Bi-directional sync between Peering Manager and Infrahub |
-| PeeringDB | PeeringDB → Infrahub | Pulling autonomous system and internet exchange data from PeeringDB into Infrahub |
 | Prometheus | Prometheus → Infrahub | Pulling target or metric metadata from Prometheus into Infrahub |
-| LibreNMS | LibreNMS → Infrahub | Syncing device inventory and metadata from LibreNMS into Infrahub |
-| Observium | Observium → Infrahub | Syncing device inventory and metadata from Observium into Infrahub |
-| Device42 | Device42 → Infrahub | Syncing IT asset and dependency data from Device42 into Infrahub |
 | Generic REST API | external system → Infrahub | Any external system with a REST/JSON API and no dedicated adapter |
+
+No pre-built adapter exists yet for PeeringDB, LibreNMS, Observium, or Device42. Each of those
+pages shows a [Generic REST API](./genericrestapi.mdx) example mapping instead, drawn from the
+matching directory under [`examples/`](https://github.com/opsmill/infrahub-sync/tree/main/examples):
+
+| System | Direction supported | Example mapping |
+| --- | --- | --- |
+| PeeringDB | PeeringDB → Infrahub | [`examples/peeringdb_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/main/examples/peeringdb_to_infrahub) |
+| LibreNMS | LibreNMS → Infrahub | [`examples/librenms_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/main/examples/librenms_to_infrahub) |
+| Observium | Observium → Infrahub | [`examples/observium_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/main/examples/observium_to_infrahub) |
+| Device42 | Device42 → Infrahub | [`examples/device42_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/main/examples/device42_to_infrahub) |
 
 For per-adapter details — connection parameters, supported models, known limitations — see the individual adapter pages in the Adapters sidebar.
 
 ## When to use the Generic REST API adapter
 
-The Generic REST API adapter works with any system that exposes data over HTTP/JSON. It handles authentication and basic data access patterns out of configuration alone. Set the API endpoint, the authentication method, and the structure of the data you want to read in the same YAML format as every other adapter.
+The Generic REST API adapter works with most systems that expose data over HTTP/JSON, within the request and response patterns described on its own page. It handles authentication and basic data access patterns out of configuration alone. Set the API endpoint, the authentication method, and the structure of the data you want to read in the same YAML format as every other adapter.
 
 Common cases where the Generic REST API adapter is the right choice:
 

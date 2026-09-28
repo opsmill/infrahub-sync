@@ -20,9 +20,39 @@ Prepare a [configuration package](../configuration-package.mdx) and register it.
 
 :::info
 
-The Device42 adapter supports only **one-way synchronization** from Device42 to Infrahub. Writing data back into Device42 is not supported.
+There is no dedicated Device42 adapter. Device42 is read through the
+[Generic REST API adapter](./genericrestapi.mdx), which supports only **one-way synchronization**
+from Device42 to Infrahub. Writing data back into Device42 is not supported.
 
 :::
 
-:::warning Under Construction
-:::
+## Configuration
+
+<ReferenceLink title="Example mapping" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/device42_to_infrahub" openInNewTab />
+
+<Tabs>
+  <TabItem value="Source example" default>
+
+  ```yaml
+  ---
+  name: from-device42
+  source:
+    name: genericrestapi
+    settings:
+      url: "https://<DEVICE42-ENDPOINT>"
+      auth_method: "basic"
+      username: "<USERNAME>"
+      password: "<PASSWORD>"
+      api_endpoint: "/api/1.0"
+      response_key_pattern: "objects"
+
+  destination:
+    name: infrahub
+    settings:
+      url: "http://localhost:8000"
+  ```
+
+  </TabItem>
+</Tabs>
+
+See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference.

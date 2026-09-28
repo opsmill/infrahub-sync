@@ -14,15 +14,45 @@ Prepare a [configuration package](../configuration-package.mdx) and register it.
 
 [PeeringDB](https://www.peeringdb.com/) is a free, public, user-maintained database of network peering information. It catalogs autonomous systems, internet exchanges, points of presence, and facilities — the data networks use to find and arrange interconnection with one another.
 
+There is no dedicated PeeringDB adapter. PeeringDB is read through the
+[Generic REST API adapter](./genericrestapi.mdx), pointed at the PeeringDB API.
+
 ## Sync directions supported
 
 - PeeringDB → Infrahub
 
 :::info
 
-The PeeringDB adapter supports only **one-way synchronization** from PeeringDB to Infrahub. PeeringDB is a community-maintained reference database; writing data back into it is not supported.
+PeeringDB is read through the Generic REST API adapter, which supports only **one-way synchronization** from PeeringDB to Infrahub. PeeringDB is a community-maintained reference database; writing data back into it is not supported.
 
 :::
 
-:::warning Under Construction
-:::
+## Configuration
+
+<ReferenceLink title="Example mapping" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/peeringdb_to_infrahub" openInNewTab />
+
+<Tabs>
+  <TabItem value="Source example" default>
+
+  ```yaml
+  ---
+  name: from-peeringdb
+  source:
+    name: genericrestapi
+    settings:
+      url: "https://www.peeringdb.com"
+      api_endpoint: "api"
+      auth_method: "api-key" # Or "none" for PeeringDB's public, rate-limited access
+      token: "<TOKEN>"
+      response_key_pattern: "data" # PeeringDB wraps lists under "data"
+
+  destination:
+    name: infrahub
+    settings:
+      url: "http://localhost:8000"
+  ```
+
+  </TabItem>
+</Tabs>
+
+See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference.
