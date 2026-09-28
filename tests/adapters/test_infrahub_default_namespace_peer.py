@@ -1,4 +1,4 @@
-"""The Infrahub load path resolves the built-in `default` namespace from its store."""
+"""Resolve a built-in namespace by name from the SDK store."""
 
 from __future__ import annotations
 
@@ -57,22 +57,17 @@ def prefix_schema_fixture() -> NodeSchemaAPI:
     )
 
 
-# A namespace takes the name of its NetBox VRF, and NetBox allows any non-empty
-# text there. The store keys these exactly as the mapping produces them.
-
-
 @pytest.fixture(name="store")
 def store_fixture(namespace_schema: NodeSchemaAPI) -> NodeStoreSync:
-    """A destination store holding the built-in `default` namespace and two VRF-named ones."""
+    """A store holding the built-in `default` namespace."""
     client = MagicMock()
     client.default_branch = "main"
     client.request_context = None
     client.schema.all.return_value = {"IpamNamespace": namespace_schema}
 
     store = NodeStoreSync(default_branch="main")
-    for name, node_id in {"default": NAMESPACE_ID}.items():
-        node = InfrahubNodeSync(client=client, schema=namespace_schema, data={"id": node_id, "name": name})
-        store.set(node=node, key=name)
+    node = InfrahubNodeSync(client=client, schema=namespace_schema, data={"id": NAMESPACE_ID, "name": "default"})
+    store.set(node=node, key="default")
     return store
 
 

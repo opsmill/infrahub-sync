@@ -8,6 +8,8 @@ unrelated flags a configuration declares. These tests pin the engine behavior
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -125,7 +127,6 @@ def _engine_with_destination_only_object(
     flags: list[str | DiffSyncFlags] | None,
 ) -> tuple[Potenda, _DestinationAdapter]:
     """Build a Potenda over one empty source and one destination-only widget."""
-    _SpiedWidget.delete_calls.clear()
     source = _SourceAdapter(name="source")
     destination = _DestinationAdapter(name="destination")
     destination.add(_SpiedWidget(name="stale"))
@@ -177,16 +178,27 @@ def test_diff_requests_no_delete_for_destination_only_object() -> None:
     assert not diff.has_diffs()
 
 
-def test_diff_does_not_invoke_custom_delete_implementation() -> None:
+def test_plan_records_delete_without_dispatching_model_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_SpiedWidget, "delete_calls", [])
     engine, _ = _engine_with_destination_only_object(["SKIP_UNMATCHED_SRC"])
-    assert not engine.diff().has_diffs()
+    engine.run_dir = tmp_path
+    engine.run_id = "flags-plan"
+    engine.load_both_sides()
+
+    counts = engine.write_plan(engine.diff())
+    operations = [json.loads(line) for line in (tmp_path / "plan" / "operations.jsonl").read_text().splitlines()]
+
+    assert counts == {"create": 0, "update": 0, "delete": 1}
+    assert [(operation["action"], operation["identity"]) for operation in operations] == [("delete", {"name": "stale"})]
     assert _SpiedWidget.delete_calls == []
 
 
-def test_post_diff_destination_view_is_complete() -> None:
-    # A read-only comparison preserves the destination-only object in the store.
+def test_plan_preserves_destination_only_object(tmp_path: Path) -> None:
     engine, destination = _engine_with_destination_only_object(["SKIP_UNMATCHED_SRC"])
-    assert not engine.diff().has_diffs()
+    engine.run_dir = tmp_path
+    engine.run_id = "flags-plan-preservation"
+    engine.load_both_sides()
+    assert engine.write_plan(engine.diff()) == {"create": 0, "update": 0, "delete": 1}
     assert [widget.get_unique_id() for widget in destination.get_all("widget")] == ["stale"]
 
 

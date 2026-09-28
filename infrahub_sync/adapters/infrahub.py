@@ -526,7 +526,8 @@ class PeerResolver:
         """Query the destination for one peer, refusing on zero and on more than one.
 
         The refusals belong to **this** resolver only (AD048). Destination loading
-        uses a separate store lookup to resolve peer nodes.
+        resolves peers from the SDK store, with a `client.get` fallback when the
+        store misses or holds an incomplete node.
 
         An **empty** filter set is refused before the query is issued: an
         unfiltered `client.filters(kind=...)` lists every node of the kind, and with exactly
@@ -1202,8 +1203,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         A `create` and an `update` both route through the same convergent upsert —
         `client.create(...)` then `save(allow_upsert=True)` — and neither routes through
-        a destination load, which saved-plan apply does not perform
-        forbids. The payload is authoritative for the mapped fields it carries and touches no
+        a destination load, which saved-plan apply does not perform. The payload is
+        authoritative for the mapped fields it carries and touches no
         unmapped destination field.
 
         An **update** carries the destination `id` recorded at plan time. A **create**

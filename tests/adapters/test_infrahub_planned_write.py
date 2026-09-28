@@ -41,6 +41,7 @@ from infrahub_sdk.schema.main import (
 
 from infrahub_sync.adapters.infrahub import (
     InfrahubAdapter,
+    InfrahubModel,
     PeerResolver,
 )
 from infrahub_sync.plan.errors import (
@@ -490,6 +491,18 @@ def issued_reads(client: RecordingClient) -> list[dict[str, Any]]:
     live — not a fetch-and-reconcile round trip.
     """
     return [payload for name, payload in client.events if name == "get"]
+
+
+@pytest.fixture(autouse=True)
+def _forbid_live_sync_update() -> Iterator[None]:
+    """Saved-plan apply must not dispatch through the inherited model update."""
+
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        msg = "InfrahubModel.update was reached during saved-plan apply."
+        raise AssertionError(msg)
+
+    with patch.object(InfrahubModel, "update", forbidden):
+        yield
 
 
 @pytest.fixture

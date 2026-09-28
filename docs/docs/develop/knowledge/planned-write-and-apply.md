@@ -243,8 +243,9 @@ dropped operation does, and unlike a skipped delete it is not a designed limitat
 kind whose HFID does not cover its plan identity, the documented fallback is to resolve the reference
 component's own peer first and filter on `<rel>__ids`.
 
-These two refusals belong to **this resolver only**. The destination load path uses a separate
-store lookup when it reads peer nodes.
+These two refusals belong to **this resolver only**. Destination loading resolves peer nodes
+from the SDK store. If the store misses or holds an incomplete node, it can call `client.get`
+to fetch the peer.
 
 Dependency-tier ordering guarantees a peer is written before anything referring to it, but only for
 references the dependency graph carries. Three cases it cannot express — a self-reference, a reference

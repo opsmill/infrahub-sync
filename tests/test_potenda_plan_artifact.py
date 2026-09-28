@@ -1275,10 +1275,12 @@ def test_a_plan_records_the_delete_class_without_executing_it(monkeypatch: pytes
     config = build_config()
 
     pin_extraction_decisions(monkeypatch, [False, False])
+    destination = destination_with_orphan()
+    destination_records_before = {kind: tuple(destination.get_all(kind)) for kind in KINDS}
     dry_run = build_potenda(
         config=config,
         source=qualified_source(),
-        destination=destination_with_orphan(),
+        destination=destination,
         run_id="20260727T0400-11111111",
     )
     run_plan(dry_run)
@@ -1289,6 +1291,7 @@ def test_a_plan_records_the_delete_class_without_executing_it(monkeypatch: pytes
     assert recorded, "the fixture's destination orphan produced no delete operation"
     assert {record["kind"] for record in recorded} == {"BuiltinTag"}
     assert read_manifest(plan_run_dir(dry_run))["delete_operations_computed"] is True
+    assert {kind: tuple(destination.get_all(kind)) for kind in KINDS} == destination_records_before
 
 
 # =======================================================================================
@@ -1798,6 +1801,7 @@ def test_a_derivation_failure_fails_the_plan_run(
 ) -> None:
     """AD047: each FR-030 failure fails the plan before publishing an artifact."""
     case = build_case()
+    destination_records_before = {kind: tuple(case.destination.get_all(kind)) for kind in case.config.order}
     potenda = build_potenda(
         config=case.config,
         source=case.source,
@@ -1811,6 +1815,7 @@ def test_a_derivation_failure_fails_the_plan_run(
 
     _assert_named_failure(raised.value, case)
     assert not manifest_path(potenda).exists()
+    assert {kind: tuple(case.destination.get_all(kind)) for kind in case.config.order} == destination_records_before
 
 
 def test_the_source_side_failures_do_not_route_the_operator_at_the_destination() -> None:
