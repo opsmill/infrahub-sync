@@ -93,7 +93,7 @@ Each sync run calculates a fresh diff and applies only deltas, so running more o
 Whatever scheduling tool you use, plan for these operational concerns:
 
 - **Logging.** Adapter and lifecycle logs come from the Sync worker that runs the request
-  (`infrahub-sync-compose logs sync-worker` on a Compose deployment); the CLI itself reports
+  (`./infrahub-sync-compose logs sync-worker` on a Compose deployment); the CLI itself reports
   the run ID, the final state, and the exit code. Forward the worker's logs to the logging
   system used by the scheduler.
 - **Failure detection.** The CLI returns a non-zero exit code on failure. Wire the scheduling tool to catch this and alert the appropriate channel.

@@ -19,6 +19,10 @@ The exact paths above are for Debian/Ubuntu systems. On other distributions the 
 
 ## Trusting the source and destination connections
 
-The worker opens the connections that matter for a sync: to the source (NetBox, Nautobot, or another adapter) and to the Infrahub destination. `REQUESTS_CA_BUNDLE` covers only the `requests`-based adapters (NetBox, Nautobot, and the other `requests`-backed adapters); it has no effect on the Infrahub destination, which connects through the Infrahub SDK's own default SSL context rather than through `requests`.
+The worker opens the connections that matter for a sync: to the source (NetBox, Nautobot, or another adapter) and to the Infrahub destination. Set these in the worker's own environment, not the CLI host's:
+
+- `REQUESTS_CA_BUNDLE` covers only the `requests`-based adapters (NetBox, Nautobot, and the other `requests`-backed adapters); it has no effect on the Infrahub destination, which connects through the Infrahub SDK rather than through `requests`.
+- `INFRAHUB_TLS_CA_FILE` sets the CA file the Infrahub SDK uses for the destination connection directly.
+- `SSL_CERT_FILE` (or `SSL_CERT_DIR`) is the fallback for the Infrahub destination when `INFRAHUB_TLS_CA_FILE` is unset: the SDK's default SSL context consults it the same way the CLI-to-API connection does.
 
 The Compose bundle's `sync-worker` service runs with a fixed `environment` list, a read-only root filesystem, and only `tmpfs` mounts — there is no supported way today to add a custom CA bundle to that container. If a source, destination, or the worker's own connections need a CA the public trust store doesn't carry, that CA cannot yet be trusted on a Compose deployment.
