@@ -1,15 +1,16 @@
 """The local development stack: build the image from the working tree, and run it.
 
-Nothing here is pinned, qualified, or reproducible, and nothing here is the supported
-deployment -- `deploy/compose` is, and it runs one digest-pinned image it was qualified
-against. These tasks build whatever the working tree holds, for the host's own
-architecture, start it, and remove it again.
+This is "Run from source". Nothing here is pinned, qualified, or reproducible: a release
+package (`deploy/compose`) runs one digest-pinned image that passed full qualification.
+These tasks build whatever the working tree holds, for the host's own architecture,
+start it, and remove it again.
 """
 
 from __future__ import annotations
 
 from invoke import Context, task
 
+from .netbox import attach_dev_worker, load_netbox_env
 from .utils import ESCAPED_REPO_PATH
 
 NAMESPACE = "INFRAHUB-SYNC-DEV"
@@ -32,9 +33,16 @@ def build(context: Context, no_cache: bool = False) -> None:  # noqa: FBT001, FB
 
 @task(name="start")
 def start(context: Context) -> None:
-    """Start the local development stack, building the image first if it is absent."""
+    """Start the local development stack, building the image first if it is absent.
+
+    When the local NetBox (`invoke netbox.up` or `netbox.seed`) is running, the worker also
+    joins NetBox's network, so a package can read NetBox at `http://netbox:8080`.
+    """
     with context.cd(ESCAPED_REPO_PATH):
         context.run(f"docker compose up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", pty=True)
+    # `up` recreates the worker whenever its settings change, which drops a network it
+    # was connected to afterwards. Reconnect it to the local NetBox, if that is running.
+    attach_dev_worker(context, load_netbox_env())
     print(f" - [{NAMESPACE}] Sync API    {API_URL}  (bearer {API_TOKEN})")
     print(f" - [{NAMESPACE}] Prefect UI  {PREFECT_URL}")
     print(f" - [{NAMESPACE}] After a code change: `uv run invoke build && uv run invoke start`")

@@ -1,13 +1,13 @@
 ---
-# The zero-ceremony local stack:
+# Run from source: the whole Sync service, built from this checkout.
 #
 #     uv run invoke start          # or: docker compose up --detach --wait
 #
-# This is NOT the supported deployment. That is deploy/compose/, which runs one
-# digest-pinned image it was qualified against, behind the infrahub-sync-compose
-# lifecycle wrapper. Nothing here is pinned or qualified, every credential below
-# is a constant in a tracked file, and the image is whatever your working tree
-# builds for your own architecture.
+# A release package is the other way to run V3: deploy/compose/ runs one
+# digest-pinned image that passed full qualification, behind the
+# infrahub-sync-compose lifecycle wrapper. Nothing here is pinned or qualified,
+# every credential below is a constant in a tracked file, and the image is
+# whatever your working tree builds for your own architecture.
 #
 # Compose auto-loads a `.env` beside this file. The repository ignores `*.env`,
 # so a stray root `.env` would feed this stack silently.
@@ -16,6 +16,12 @@
 # and reaches nothing until a package is registered. To sync against a local
 # Infrahub, run `uv run invoke preview.up` and start this stack with
 # INFRAHUB_API_TOKEN set; sync-worker already carries the host route.
+#
+# Source: the local NetBox (`uv run invoke netbox.up` or `netbox.seed`) publishes
+# on the host's loopback address only, which no container can reach. The Invoke
+# tasks connect sync-worker to NetBox's own network instead, where it reads
+# NetBox at http://netbox:8080. `docker compose up` alone does not reconnect a
+# recreated worker; `uv run invoke start` does.
 
 name: infrahub-sync-dev
 
