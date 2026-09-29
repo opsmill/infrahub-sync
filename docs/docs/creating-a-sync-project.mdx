@@ -82,6 +82,8 @@ the source's schema into the destination's schema.
 - The `name` key in the destination model corresponds to the Infrahub attribute.
 - The `mapping` key corresponds to the key in the source payload to use.
 - If `reference` is used, it links to a model that has been synchronized prior to this model.
+  The adapter only resolves a reference field when both `mapping` and `reference` are set;
+  `reference` alone is silently skipped.
 
 :::
 
@@ -119,10 +121,13 @@ the source's schema into the destination's schema.
         - name: "manufacturer"
           mapping: "device_type.manufacturer.name"
         - name: "location"
+          mapping: "location"
           reference: "InfraLocation"
         - name: "role"
+          mapping: "role"
           reference: "InfraRole"
         - name: "platform"
+          mapping: "platform"
           reference: "InfraPlatform"
 
     - name: InfraInterface
@@ -136,6 +141,7 @@ the source's schema into the destination's schema.
         - name: "description"
           mapping: "description"
         - name: "device"
+          mapping: "device"
           reference: "InfraDevice"
 ```
 

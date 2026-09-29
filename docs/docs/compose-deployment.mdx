@@ -107,10 +107,10 @@ PostgreSQL and the object store hold the only volumes that survive a restart.
 
 ## Configuration prerequisites
 
-That writes `.instance`, `secrets/postgres-admin-password`, and `operator.env`
-with generated passwords for the two database owner roles, the object store, and
-one API principal. Nothing in `operator.env` is yours to supply before the first
-start.
+Running `init` writes `.instance`, `secrets/postgres-admin-password`, and
+`operator.env` with generated passwords for the two database owner roles, the
+object store, and one API principal. Nothing in `operator.env` is yours to
+supply before the first start.
 
 `init` needs no Docker. It reads `image.bind`, checks its grammar, and copies the
 index reference into `.instance` as plain text, which is what gives every later
@@ -647,11 +647,12 @@ reaches `READY` with an empty configuration registry, no runs and no artifacts
 behind it. Register your package again afterwards; a reset removes what you
 registered along with everything else.
 
-## Replacing this alpha
+## Resetting this alpha to a fresh deployment
 
 This alpha promises no in-place state migration and no backup or restore.
-Replacing it is the reset above followed by a fresh deployment of the same
-bundle and the same image:
+There is no separate upgrade procedure and no newer release to install here:
+the only way to get a clean deployment is the reset above, followed by a
+fresh deployment of the same bundle and the same image:
 
 Use the quickstart lifecycle commands after reset to create the replacement
 deployment; it receives a new identity and starts empty.

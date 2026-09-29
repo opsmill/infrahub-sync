@@ -22,6 +22,10 @@ fresh local Infrahub and the public NetBox demo, follow the
   If `TestingSite` or `TestingDevice` already exists there with a different
   definition, choose another suitable branch or adapt the schema and mapping
   together before continuing.
+- Every Nautobot Location and Device you plan to sync needs a `status`, and
+  every Device needs a `role`, even though this tutorial's destination schema
+  does not map them. That is a Nautobot data requirement, not a `package.yml`
+  field, and a record missing either fails the run.
 
 Run all commands from the extracted deployment directory on the Docker host.
 This is `linux-amd64/infrahub-sync-compose-<version>/` under the verified
@@ -37,11 +41,10 @@ The two YAML files have different purposes:
 ## Measured scenario
 
 The measured run used Nautobot 2.4.41 with `depth: 1` and Infrahub 1.10.6. It
-verified five devices and their location/model relationships, native namespaces,
-overlapping prefixes in separate namespaces, and an address whose namespace and
-server-computed prefix agreed. Saved run records survived deployment restart.
-The connection example below is intentionally limited to sites and devices.
-These measurements do not establish compatibility with other server versions.
+verified five devices and their location/model relationships, matching this
+tutorial's sites-and-devices mapping. Saved run records survived deployment
+restart. These measurements do not establish compatibility with other server
+versions.
 
 `depth: 1` requests nested objects. Without it, Nautobot 2.4.41 returns a
 shallow `device_type` reference and the required `device_type.model` field is
@@ -149,7 +152,7 @@ continuing. Registering a Sync package does not load this schema.
 
 ## Create and edit package.yml
 
-The private candidate's `linux-amd64/example-package.yml`, beside the extracted
+The [private candidate](../installation.mdx)'s `linux-amd64/example-package.yml`, beside the extracted
 `infrahub-sync-compose-<version>/` directory, is a **NetBox** example. Nautobot uses
 locations and different relationship fields, so create `package.yml` in the
 deployment directory with this complete Nautobot mapping:
@@ -298,7 +301,8 @@ The preview does not create, update, or delete inventory objects in Infrahub.
 Against an existing destination, the plan can include updates and recorded
 deletes as well as creates; review every unexpected operation before proceeding.
 
-If the run fails, inspect its record:
+If the run fails, the CLI's own error output includes `run_id`; use that value
+to inspect the run's record:
 
 ```sh
 ./infrahub-sync-compose cli runs show RUN_ID

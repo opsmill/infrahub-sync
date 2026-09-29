@@ -262,8 +262,15 @@ docker compose -f sync-services.yml up --detach postgres minio
 docker compose -f sync-services.yml run --rm minio-client
 ```
 
-Wait until both containers report ready before continuing. These fixed values are local
-tutorial credentials; do not use them outside an isolated development machine.
+The `minio-client` command above already waits for MinIO before it creates the
+bucket. Confirm PostgreSQL accepts connections before continuing:
+
+```bash
+docker compose -f sync-services.yml exec postgres pg_isready -U sync
+```
+
+Expect `accepting connections`. These fixed values are local tutorial
+credentials; do not use them outside an isolated development machine.
 
 2. In terminal 1, start Prefect:
 

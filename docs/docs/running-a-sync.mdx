@@ -22,11 +22,22 @@ resource. An incompatible service is refused before the bearer token is sent.
 
 On a Compose deployment, run each command below as `./infrahub-sync-compose cli <command>`
 from the bundle directory instead. The wrapper supplies the URL and token, so skip the
-exports above. Register a package from a host file with:
+exports above. A command that reads a host file (`configs register`, `configs version`)
+needs `--package <host-file>` before `--`, which stages that one file into the container
+at `/input/package.yaml`; a command with no file argument (`configs list`, `configs show`,
+`runs plan`, `diff`, `sync`, `apply`) takes no `--package`. Register a package from a host
+file with:
 
 ```bash
 ./infrahub-sync-compose cli --package ./package.yml -- \
   configs register /input/package.yaml --reason "register my configuration"
+```
+
+Create a new version of a registered configuration the same way:
+
+```bash
+./infrahub-sync-compose cli --package ./package.yml -- \
+  configs version <config-id> /input/package.yaml --reason "update inventory mapping"
 ```
 
 See [The operator sequence](./compose-deployment.mdx#the-operator-sequence) for the full
