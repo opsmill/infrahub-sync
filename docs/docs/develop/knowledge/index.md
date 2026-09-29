@@ -28,7 +28,7 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 - [Schema mapping](schema-mapping.md) — how `config.yml` maps source resources to
   destination models: fields, identifiers, references, filters, and transforms.
 - [Incremental sync and cache](incremental-and-cache.md) — cursors (per-adapter bookmarks of
-  what was already read), the write-order tiers derived from `schema_mapping`, plans, and
+  what was already read), the cursor tiers an adapter declares for each model, plans, and
   row-count guardrails (a comparison that would refuse a per-resource count drop
   against a previous baseline; no product path calls it today), and what an adapter
   implements to participate.
