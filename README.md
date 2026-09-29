@@ -223,9 +223,9 @@ default Sync image does not include them; see each adapter's page in the documen
 See the [Python API](https://feature-v3-develop.infrahub-sync.pages.dev/reference/python-api),
 [Prefect remote run](https://feature-v3-develop.infrahub-sync.pages.dev/reference/prefect-remote-run), and
 [Sync HTTP API](https://feature-v3-develop.infrahub-sync.pages.dev/reference/sync-http-api) references
-for their contracts and setup. For a checkout-based live review with a fixed source, follow
-the [`custom-example` plan and apply guide](examples/custom_adapter/README.md). Its source
-fixture is deterministic; the review still uses a live, writable Infrahub destination.
+for their contracts and setup. For a live plan and apply from a checkout, follow
+[Run a first sync](https://feature-v3-develop.infrahub-sync.pages.dev/development-stack#run-a-first-sync),
+which imports the NetBox demo data into a local Infrahub.
 
 ---
 

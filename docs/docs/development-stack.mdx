@@ -30,6 +30,20 @@ storage. It runs on any platform Docker supports, including Apple Silicon. A sou
 build has passed the pull request checks, but not the full deployment tests that each
 release package passes; see [Install Infrahub Sync](./installation.mdx#two-ways-to-run-v3).
 
+### Get the source
+
+You need Docker, Git, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13. Clone the V3
+branch and install the development environment once:
+
+```bash
+git clone --branch feature/v3-develop https://github.com/opsmill/infrahub-sync.git
+cd infrahub-sync
+uv sync --extra dev --extra prefect --extra service
+```
+
+Run every command below from the `infrahub-sync` directory. If you already have a checkout,
+run `git switch feature/v3-develop` and `git pull` instead of cloning.
+
 ### Start the service
 
 ```bash

@@ -21,7 +21,11 @@ instance 3a5dbb1bc6d569b7: container/9c2f1ea41b7d
 
 The refusal name identifies the check that failed, such as `no-instance`,
 `port-occupied`, or `image-unresolvable`. The rest of the message says what to
-correct. The command changes nothing before it refuses.
+correct. A refusal from the checks a command runs before it starts services, such as
+`preflight`, changes nothing. A refusal after services start does not undo them: for example,
+`start` can create and start the containers and then refuse with `not-ready` when no worker
+reports ready in time. Those services keep running; check them with `status`, then run
+`start` again after you fix the cause, or stop them with `stop`.
 
 Use the [log procedure](../compose-deployment#logs) to read service output. Credentials
 are removed from run failures before they are printed.
