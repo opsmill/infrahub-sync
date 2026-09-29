@@ -4,9 +4,11 @@ title: Infrahub Sync
 
 Infrahub Sync synchronizes infrastructure data between Infrahub and external systems —
 NetBox, Nautobot, IP Fabric, Slurp’it, Cisco ACI, Peering Manager,
-ServiceNow-style CMDBs, and any system with a REST/JSON API. Define the synchronization
-declaratively in a configuration package, register an immutable version with the Sync API,
-and use the CLI or Python client to create and inspect service-owned runs.
+ServiceNow-style CMDBs, and any system with a REST/JSON API. You describe what to sync and
+how in a YAML or JSON file, then use the CLI to register it and run it. Typed Python access
+is also available; see [Choose an execution surface](#choose-an-execution-surface) below.
+The [Concepts](#concepts) section below defines the terms this page uses —
+configuration package, the Sync API, and a service-owned run.
 
 Infrahub Sync is open source under Apache 2.0 and maintained on [GitHub](https://github.com/opsmill/infrahub-sync). V2 is available on [PyPI](https://pypi.org/project/infrahub-sync/). For private V3 testing, follow [Install Infrahub Sync](./installation.mdx) to get the candidate and its included CLI.
 

@@ -2,11 +2,16 @@
 title: Create a sync project
 ---
 
-A sync configuration is a package — a YAML or JSON file — that defines one synchronization
-between two systems. It has four parts: source and destination, sync order, schema
-mapping, and sync behavior. A Nautobot → Infrahub example runs through each. The package is
-registered with the Sync API; the service, not the file on disk, is what a run reads from.
-See [Configuration package](./configuration-package.mdx) for the full envelope shape, what
+A sync configuration is a package — a YAML or JSON file — assembled from fragments that
+together show the parts of one package: `format_version`, a `configuration` with `source`,
+`destination`, `order`, `schema_mapping`, and `diffsync_flags`, plus `credentials`. A
+Nautobot → Infrahub example runs through each fragment. The example kinds — `InfraLocation`,
+`InfraRole`, `InfraPlatform`, `InfraDevice`, and `InfraInterface` — need a matching Infrahub
+schema; the [Nautobot tutorial](./tutorials/nautobot-to-existing-infrahub.mdx)
+registers a complete package with its schema, while the Compose quickstart example uses the
+different `TestingSite`/`TestingDevice` schema. The package is registered with the Sync
+API; the service, not the file on disk, is what a run reads from. See
+[Configuration package](./configuration-package.mdx) for the full envelope shape, what
 registration returns, and how versions and validation work.
 
 ## Define the source and destination
@@ -50,12 +55,19 @@ For the full list of adapters and their connection parameters, see [Choose an ad
 ## Set the sync order
 
 The `order` key, under `configuration`, specifies the sequence in which objects should be
-synchronized. Order matters because some objects depend on others — a device cannot be
-created until its location, role, and platform already exist in the destination. Omit it and
-the engine derives the sequence from the `reference` entries in `schema_mapping` instead.
+synchronized. Order matters because some objects depend on others — an interface cannot be
+created until its device already exists in the destination, and a device's location, role,
+and platform references must resolve before the device itself does. Omit it and the engine
+derives the sequence from the `reference` entries in `schema_mapping` instead. Every kind
+listed here needs its own entry in `schema_mapping` below; a kind in `order` with no matching
+mapping is accepted while the package loads, but fails later, during the run, when the
+adapter loads that kind and finds no model bound to it.
 
 ```yaml
   order:
+    - "InfraLocation"
+    - "InfraRole"
+    - "InfraPlatform"
     - "InfraDevice"
     - "InfraInterface"
 ```
@@ -70,11 +82,34 @@ the source's schema into the destination's schema.
 - The `name` key in the destination model corresponds to the Infrahub attribute.
 - The `mapping` key corresponds to the key in the source payload to use.
 - If `reference` is used, it links to a model that has been synchronized prior to this model.
+  The adapter only resolves a reference field when both `mapping` and `reference` are set;
+  `reference` alone is silently skipped.
 
 :::
 
 ```yaml
   schema_mapping:
+    - name: InfraLocation
+      mapping: "dcim.locations"
+      identifiers: ["name"]
+      fields:
+        - name: "name"
+          mapping: "name"
+
+    - name: InfraRole
+      mapping: "extras.roles"
+      identifiers: ["name"]
+      fields:
+        - name: "name"
+          mapping: "name"
+
+    - name: InfraPlatform
+      mapping: "dcim.platforms"
+      identifiers: ["name"]
+      fields:
+        - name: "name"
+          mapping: "name"
+
     - name: InfraDevice
       mapping: "dcim.devices"
       identifiers: ["name"]
@@ -85,6 +120,15 @@ the source's schema into the destination's schema.
           mapping: "device_type.display_name"
         - name: "manufacturer"
           mapping: "device_type.manufacturer.name"
+        - name: "location"
+          mapping: "location"
+          reference: "InfraLocation"
+        - name: "role"
+          mapping: "role"
+          reference: "InfraRole"
+        - name: "platform"
+          mapping: "platform"
+          reference: "InfraPlatform"
 
     - name: InfraInterface
       mapping: "dcim.interfaces"
@@ -97,10 +141,11 @@ the source's schema into the destination's schema.
         - name: "description"
           mapping: "description"
         - name: "device"
+          mapping: "device"
           reference: "InfraDevice"
 ```
 
-In this example, `device_type` and `manufacturer` are attributes of `InfraDevice`. For destination objects that have relationships to other models, the related models must be synchronized first — see how `InfraInterface` references `InfraDevice` via the `reference` key.
+In this example, `device_type` and `manufacturer` are attributes of `InfraDevice`. For destination objects that have relationships to other models, the related models must be synchronized first — see how `InfraDevice` references `InfraLocation`, `InfraRole`, and `InfraPlatform`, and how `InfraInterface` references `InfraDevice`, via the `reference` key. That is why `order` places the three referenced kinds before `InfraDevice`.
 
 For the full mapping syntax — direct mappings, nested attributes, static values, references, identifiers, filters, transforms, and worked examples — see [Schema mapping reference](./reference/schema-mapping.mdx).
 
@@ -120,7 +165,7 @@ Available flags:
 
 | Flag | Description |
 |------|-------------|
-| `SKIP_UNMATCHED_DST` | Skip objects in the destination that don't exist in the source (prevents deletion) |
+| `SKIP_UNMATCHED_DST` | Skip objects in the destination that don't exist in the source (prevents deletion by `sync` and by the live comparison `diff` prints; a saved plan still records these as deletes, see below) |
 | `SKIP_UNMATCHED_SRC` | Skip objects in the source that don't exist in the destination (prevents creation) |
 | `SKIP_MODIFIED` | Skip objects that exist in both systems but have different values (prevents updates) |
 
