@@ -108,7 +108,7 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'category',
-          label: 'Guides',
+          label: 'Developer guides',
           link: {
             type: 'doc',
             id: 'develop/guides/index',
@@ -141,7 +141,7 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Release Notes',
+      label: 'Release notes',
       collapsible: true,
       collapsed: true,
       link: {

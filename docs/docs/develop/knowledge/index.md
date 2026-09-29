@@ -10,7 +10,7 @@ configuration package registered in PostgreSQL, as opposed to a legacy run resol
 local configuration directory; see [Sync architecture](sync-architecture.md) for the
 lifecycle. Start there, or with the repository tour for a module to edit. For development
 rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
-[Guides](../guides/index.md).
+[Developer guides](../guides/index.md).
 
 ### Orientation
 
@@ -67,6 +67,6 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 ### Related
 
 - [Guidelines](../guidelines/index.md) — rules that apply to this code.
-- [Guides](../guides/index.md) — adding and testing an adapter.
+- [Developer guides](../guides/index.md) — step-by-step procedures for adapters, the development environment, and release candidates.
 - [Decision records](../adr-index.mdx) — why the architecture is shaped the way it is.
 - [Constitution](../constitution.md) — project principles these documents serve.

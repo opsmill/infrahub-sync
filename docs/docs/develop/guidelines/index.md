@@ -6,7 +6,7 @@ title: "Guidelines"
 
 Rules for writing and testing Infrahub Sync code, including adapter rules, repository-wide
 testing, and secret redaction. For how the system works, see
-[Knowledge](../knowledge/index.md); for step-by-step procedures, see [Guides](../guides/index.md).
+[Knowledge](../knowledge/index.md); for step-by-step procedures, see [Developer guides](../guides/index.md).
 
 ### Adapters
 
