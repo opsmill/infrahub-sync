@@ -26,7 +26,7 @@ for a model. It returns a `CursorTier` (an `IntEnum`, defined in
 
 `TIMESTAMP` and `INFRAHUB_DIFF` would extract less data than `NONE` by filtering at the source
 or destination — but only on the per-resource incremental branch described below, which no
-current entry point reaches, so every current run still extracts every resource in full.
+current entry point reaches, so every current `plan` and `sync` run still extracts every resource in full.
 `PAGE_TOKEN` is about resuming a paginated extraction, not reducing what it reads, so it does
 not fit that ordering either. NetBox returns `TIMESTAMP` for mapped kinds and `NONE` otherwise;
 an adapter with no incremental support inherits the `NONE` default from `DiffSyncMixin`.
@@ -71,9 +71,10 @@ the path may not contain `..` traversal segments.
 
 `source_load()` and `destination_load()` call `load_one_side()` on every `plan` and `sync`
 extract (`potenda/__init__.py:482,491`), so the method itself always runs. Every current entry
-point passes `full_extract=True` — the `execute_run()` default (`execution.py:1095`) and the
-managed service's hardcoded value (`service/flow.py:288`) — so on every current path
-`load_one_side()` calls `adapter.load()` and returns without reading any cursor
+point runs with `full_extract=True`. The `execute_run()` default is `True` (`execution.py:1095`),
+and the managed service's `execute_run` call (`service/flow.py:201`) does not override it. The
+`BaselineWriteback` at `service/flow.py:288` only records that fact in metadata. So on every
+current path `load_one_side()` calls `adapter.load()` and returns without reading any cursor
 (`potenda/__init__.py:438-440`).
 
 Only a direct `execute_run(full_extract=False)` call, made with a prior successful run present
