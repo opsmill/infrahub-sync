@@ -2,13 +2,9 @@
 title: Observium adapter
 ---
 
-import ReferenceLink from "../../src/components/Card";
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
+## Use this adapter
 
-## V3 route
-
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure.
+In a [configuration package](../configuration-package.mdx), name `genericrestapi` as the source and set its `url` to the Observium API. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
 
 <!-- vale off -->
 ## What is Observium?
@@ -24,36 +20,46 @@ Observium is a network monitoring platform that delivers auto-discovery, detaile
 
 There is no dedicated Observium adapter. Observium is read through the
 [Generic REST API adapter](./genericrestapi.mdx), which supports only **one-way synchronization**
-from Observium to Infrahub. Syncing data back into Observium is not supported.
+from Observium to Infrahub. Writing data back into Observium is not supported.
 
 :::
 
 ## Configuration
 
-<ReferenceLink title="Example mapping" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/observium_to_infrahub" openInNewTab />
+The repository contains a mapping example: [`examples/observium_to_infrahub/config.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/observium_to_infrahub/config.yml). It is a `config.yml` file, not a package, and registration refuses it as it is. To use it, convert it as described in [Convert a config.yml file](../configuration-package.mdx#convert-a-configyml-file).
 
-<Tabs>
-  <TabItem value="Source example" default>
+The package declares the Observium connection in `source.settings`. Credentials are `$credential` references:
 
-  ```yaml
-  ---
+```yaml
+format_version: 1
+configuration:
   name: from-observium
   source:
     name: genericrestapi
     settings:
-      url: "https://<OBSERVIUM-ENDPOINT>"
-      username: "<USERNAME>"
-      password: "<PASSWORD>"
+      url: "https://observium.example.com"
       api_endpoint: "api/v0"
       auth_method: "basic"
-
+      username:
+        $credential: observium-username
+      password:
+        $credential: observium-password
   destination:
     name: infrahub
     settings:
-      url: "http://localhost:8000"
-  ```
+      url: "https://infrahub.example.com"
+      token:
+        $credential: infrahub-token
+credentials:
+  observium-username:
+    provider: env
+    identifier: OBSERVIUM_USERNAME
+  observium-password:
+    provider: env
+    identifier: OBSERVIUM_PASSWORD
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_API_TOKEN
+```
 
-  </TabItem>
-</Tabs>
-
-See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference.
+See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference and for how the adapter reads each response.

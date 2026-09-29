@@ -1,4 +1,7 @@
 ---
+# Reference mapping only. Peering Manager is not a writable destination: it has no
+# planned-write surface, and the Sync worker refuses a registered run whose destination
+# is not Infrahub. See docs/docs/adapters/peering-manager.mdx.
 name: to-peering-manager
 source:
   name: infrahub

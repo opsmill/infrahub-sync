@@ -6,9 +6,11 @@ import ReferenceLink from "../../src/components/Card";
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-## V3 route
+## Use this adapter
 
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure. The Prometheus mapping example is `examples/prometheus_to_infrahub (node_exporter)/package.yml`.
+In a [configuration package](../configuration-package.mdx), name `prometheus` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
+
+The example package is [`examples/prometheus_to_infrahub (node_exporter)/package.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/prometheus_to_infrahub%20(node_exporter)/package.yml).
 
 <!-- vale off -->
 ## What is Prometheus?
@@ -26,9 +28,7 @@ This adapter uses the [prometheus-client](https://pypi.org/project/prometheus-cl
 
 - Prometheus → Infrahub
 
-:::note
-Currently, the Prometheus adapter supports only **one-way synchronization** from Prometheus to Infrahub. Writing data back to Prometheus is not supported as Prometheus is a read-only metrics store.
-:::
+Prometheus is a source only. Infrahub Sync does not write to Prometheus.
 
 ## Operating modes
 
@@ -105,9 +105,9 @@ metric, needs its own distinct name.
 | Variable | Description |
 |----------|-------------|
 | `PROM_URL` or `PROM_ADDRESS` | Prometheus server URL for direct adapter use (takes precedence over `settings.url`); registered packages use their configured or resolved URL |
-| `PROM_TOKEN` | Bearer token for authentication |
-| `PROM_USERNAME` | Username for basic authentication |
-| `PROM_PASSWORD` | Password for basic authentication |
+| `PROM_TOKEN` | Bearer token, for direct adapter use (takes precedence over `settings.token`) |
+| `PROM_USERNAME` | Username for basic authentication, for direct adapter use |
+| `PROM_PASSWORD` | Password for basic authentication, for direct adapter use |
 
 ### Settings reference
 
@@ -119,11 +119,11 @@ metric, needs its own distinct name.
 | `timeout` | number | No | 10 | Request timeout in seconds |
 | `verify_ssl` | boolean | No | true | Verify SSL certificates |
 | `auth_method` | string | No | `none` | Authentication: `none`, `basic`, or `bearer` |
-| `username` | string | No | - | Username for basic auth |
-| `password` | string | No | - | Password for basic auth |
-| `token` | string | No | - | Token for bearer auth |
-| `headers` | object | No | - | Additional HTTP headers |
-| `params` | object | No | - | Query parameters for scrape mode |
+| `username` | `$credential` reference | No | - | Username for basic auth |
+| `password` | `$credential` reference | No | - | Password for basic auth |
+| `token` | `$credential` reference | No | - | Token for bearer auth |
+| `headers` | object | No | - | Additional HTTP headers. Direct adapter use only: registration refuses this setting. |
+| `params` | object | No | - | Query parameters for scrape mode. Direct adapter use only: registration refuses this setting. |
 | `promql.resources` | object | No | - | PromQL queries for API mode (`resource_name`: `query`) |
 
 ## Schema mapping
@@ -225,7 +225,7 @@ carries no labels at all. Check the actual response for your query before relyin
 
 ## Example: Node Exporter to Infrahub
 
-<ReferenceLink title="Node Exporter Example" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/prometheus_to_infrahub%20(node_exporter)" openInNewTab />
+<ReferenceLink title="Node Exporter Example" url="https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples/prometheus_to_infrahub%20(node_exporter)" openInNewTab />
 
 This example syncs `node_exporter` metrics to create virtual machine records in Infrahub. It uses
 `mode: scrape` against a single exporter URL (`examples/prometheus_to_infrahub (node_exporter)/package.yml`),
@@ -311,7 +311,7 @@ schema_mapping:
 
 - For basic auth, set both `username` and `password`
 - For bearer auth, set `auth_method: bearer` and provide `token`
-- Use environment variables (`PROM_USERNAME`, `PROM_PASSWORD`, `PROM_TOKEN`) for credentials
+- In a registered package, declare credentials as `$credential` references and set their variables in the worker environment. `PROM_USERNAME`, `PROM_PASSWORD`, and `PROM_TOKEN` apply only to direct adapter use.
 
 ### API mode specific
 

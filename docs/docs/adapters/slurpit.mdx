@@ -4,9 +4,11 @@ title: Slurp’it adapter
 
 import ReferenceLink from "../../src/components/Card";
 
-## V3 route
+## Use this adapter
 
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure.
+In a [configuration package](../configuration-package.mdx), name `slurpitsync` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
+
+The example package is [`examples/slurpit_to_infrahub/package.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/slurpit_to_infrahub/package.yml).
 
 <!-- vale off -->
 ## What is Slurp’it?
@@ -37,12 +39,7 @@ The `service` and `slurpit` extras are marked as conflicting in uv because `uv s
 
 - Slurp’it → Infrahub
 
-:::info
-
-Currently, the Slurp’it adapter supports only **one-way synchronization** from Slurp’it to Infrahub.
-Syncing data back into Slurp’it is not yet supported.
-
-:::
+Slurp’it is a source only. Infrahub Sync does not write to Slurp’it.
 
 ## Schema
 
@@ -53,13 +50,10 @@ This schema follows best practices for Infrahub, **but it does not map the Slurp
 
 ### Installing the example schema
 
-To install the example schema into Infrahub, follow these steps:
+Download the schema, then load it into the destination Infrahub as described in [Load an example schema into Infrahub](./choosing-an-adapter.mdx#load-an-example-schema-into-infrahub):
 
 ```bash
-mkdir slurpit-sync
-cd slurpit-sync
 curl -o schema.yml https://raw.githubusercontent.com/opsmill/infrahub/refs/heads/stable/models/examples/slurpit/slurpit.yml
-infrahubctl schema load schema.yml
 ```
 
 ## Configuration
