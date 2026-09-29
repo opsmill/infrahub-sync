@@ -2,7 +2,7 @@
 title: Schedule sync runs
 ---
 
-The V3 CLI submits a run to a deployed Sync service and waits for its result. Schedule that CLI command with cron, CI, or a workflow tool.
+The V3 CLI submits a run to a deployed Sync service and waits for its result. This release has no built-in scheduler, so schedule that CLI command with cron, CI, or a workflow tool.
 
 ## Common orchestration options
 
@@ -73,7 +73,7 @@ Any workflow engine that can run a CLI command works the same way as Prefect. Pi
 
 ### Event-driven execution
 
-Some sync use cases are better triggered by an event than by a schedule. For example: "when a device is created in Infrahub, sync its details from the inventory system." For event-driven patterns, Infrahub's trigger event system can call `infrahub-sync` directly instead of running on a fixed cadence.
+Some sync use cases are better started by an event than by a schedule. For example: "when a device is created in Infrahub, sync its details from the inventory system." An event handler that you run, such as a service that receives an Infrahub webhook, can start the run with the CLI or the [Sync HTTP API](./reference/sync-http-api.mdx).
 
 Event-driven sync is the exception, not the rule. Most data movement is well-served by a recurring schedule. Use event-driven patterns when the data volume is small, the freshness requirement is high, or the source system is itself event-driven.
 
@@ -86,7 +86,7 @@ Match the cadence to the rate at which source data changes and your tolerance fo
 - **Daily** — appropriate for slower-moving data or for syncs where the next run can absorb a missed one.
 - **On demand** — for migrations, audits, or one-off seeding rather than steady-state operation.
 
-Each sync run calculates a fresh diff and applies only deltas, so running more often does not multiply work. The constraint is the time the sync takes, not the work it does.
+Each run reads the source and the destination in full, then writes only the differences. A shorter cadence repeats that read more often, so check that each run finishes before the next one starts.
 
 ## Observability and failure handling
 
@@ -99,8 +99,8 @@ Whatever scheduling tool you use, plan for these operational concerns:
 - **Failure detection.** The CLI returns a non-zero exit code on failure. Wire the scheduling tool to catch this and alert the appropriate channel.
 - **Failure recovery.** Inspect the run record and destination after a failed write, then
   calculate a fresh plan. A failed operation can have written part of its change, unless the
-  run records that it wrote nothing; follow the
-  [run recovery guidance](./running-a-sync.mdx).
+  run records that it wrote nothing; follow
+  [When the outcome of a write is uncertain](./compose-deployment.mdx#when-the-outcome-of-a-write-is-uncertain).
 - **Run isolation.** Avoid overlapping runs of the same sync project. Set the cadence longer than the run time, or have the scheduler skip a run if the previous one is still active.
 - **Sync project versioning.** Keep the configuration package files in version control and register each change as a new version.
 
@@ -115,9 +115,9 @@ resolves them — see [Container image](./container-image.mdx) and
 credentials (for example `NETBOX_TOKEN`, `NAUTOBOT_TOKEN`) and `INFRAHUB_API_TOKEN` only to
 the `sync-worker` service; `sync-cli` receives only the Sync API URL and token.
 
-## What's not in Infrahub Sync (and what to use instead)
+## What this release does not include
 
-- **Built-in scheduler.** Use one of the options above.
+- **Built-in scheduler.** This release has no scheduler. Use one of the options above.
 - **Sync history dashboard.** The scheduling tool typically provides this — CI run history, Prefect UI, or aggregated logs.
 - **Built-in retry policies.** Configure retries in the scheduling tool. Treat write
   retries according to the [documented recovery and convergence boundaries](./running-a-sync.mdx).

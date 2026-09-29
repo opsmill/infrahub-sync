@@ -15,18 +15,16 @@ control.
 
 ## Install the service profile
 
-The service profile requires Python 3.11 or later. No published package carries this
-profile yet, so install from a repository checkout on the API host and every worker
-that can run its deployment:
+The service profile requires Python 3.11 or later. Install it from a repository checkout on
+the API host and on every worker that can run its deployment. The `infrahub-sync` package
+on PyPI is the V2 line and does not include this profile:
 
 ```bash
 uv sync --extra dev --extra prefect --extra service
 ```
 
-Once a release with the service profile is published, `pip install
-'infrahub-sync[service]'` becomes the deployment path.
-
-The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.1, Psycopg, and Boto3. The OpsMill
+The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.1, Psycopg, and Boto3. It also installs
+the SDKs of the bundled NetBox and Nautobot adapters, `prometheus-client`, and `infrahubctl`. The OpsMill
 Prefect Extras integration ships with the package itself as a vendored copy of upstream
 commit `97465e75137f6121d0377cd637383cfb3530d734`. The base installation does not import
 any of these modules. Ordinary CLI and Python API imports remain Prefect-free.
@@ -139,7 +137,7 @@ Configure the worker environment before it starts:
 | `INFRAHUB_SYNC_SERVICE_WORK_POOL` | Name of the existing Prefect pool used by the deployment, worker, and API reconciliation. It is never returned by the API. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | Optional decimal integer from 1 through 86400; defaults to 300. An unclaimed execution becomes abandoned at this inclusive deadline. |
 | `PREFECT_WORKER_QUERY_SECONDS` | Prefect worker polling interval. It must be a finite positive decimal no greater than 3600; the API derives its liveness thresholds from the same value. |
-| Adapter credential variables | Credentials required by the selected Sync configuration. Keep them in the worker environment or its secret provider. |
+| Adapter credential variables | The variables that the `credentials` entries of each registered package name, for example `NETBOX_TOKEN`. A registered run reads only these credential values from the worker environment; adapter URL variables such as `NETBOX_URL` do not replace the declared URLs. |
 
 The service flow accepts exactly eight bounded parameters:
 

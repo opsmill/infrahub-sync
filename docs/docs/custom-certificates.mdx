@@ -25,4 +25,11 @@ The worker opens the connections that matter for a sync: to the source (NetBox, 
 - `INFRAHUB_TLS_CA_FILE` sets the CA file the Infrahub SDK uses for the destination connection directly.
 - `SSL_CERT_FILE` (or `SSL_CERT_DIR`) is the fallback for the Infrahub destination when `INFRAHUB_TLS_CA_FILE` is unset: the SDK's default SSL context consults it the same way the CLI-to-API connection does.
 
-The Compose bundle's `sync-worker` service runs with a fixed `environment` list, a read-only root filesystem, and only `tmpfs` mounts — there is no supported way today to add a custom CA bundle to that container. If a source, destination, or the worker's own connections need a CA the public trust store doesn't carry, that CA cannot yet be trusted on a Compose deployment.
+### Current limit of the Compose deployment
+
+In this release, you cannot configure a custom CA for the Sync worker of a Compose deployment:
+
+- **Run a release package:** the `sync-worker` service of the Compose bundle has a fixed `environment` list, a read-only root filesystem, and only `tmpfs` mounts. `operator.env` has no CA setting, so none of the variables above reaches the worker, and no CA file can be mounted.
+- **Run from source:** the `sync-worker` service of the development stack in `compose.yaml` also has a fixed `environment` list without these variables and no CA file mount.
+
+A worker on either deployment trusts only the certificate authorities in the image's default trust store. If a source or the destination uses a certificate that those authorities did not sign, the worker cannot verify it. `verify_ssl: false` turns off verification for the Infrahub destination and for adapters that support that setting. It does not establish trust, so use it only for development.
