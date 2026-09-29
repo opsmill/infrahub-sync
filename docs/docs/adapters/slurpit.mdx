@@ -19,10 +19,9 @@ Slurp’it retrieves and stores network data — devices, sites, interfaces, and
 This Adapter uses the [Slurp’it SDK](https://pypi.org/project/slurpit-sdk), distributed as `slurpit-sdk` on PyPI.
 It is available through the optional `slurpit` extra (`slurpit-sdk>=0.9.52,<0.10`), which uv marks
 as conflicting with the `service` extra the default Sync image and the standard development setup
-both use — `uv sync --extra service --extra slurpit` fails. Running Sync directly, without the
-`service` extra, `uv sync --extra dev --extra prefect --extra slurpit` installs it on Python
-3.11 or newer. On Python 3.10, that command does not install `slurpit-sdk`. To use the SDK
-alongside a `service`-based Sync image, build a custom image instead: copy the repository Dockerfile
+both use — `uv sync --extra service --extra slurpit` fails. The `prefect` and `slurpit` extras
+alone do not install the service dependencies needed by a Sync worker. To use the SDK
+with a Sync worker, build a custom service image: copy the repository Dockerfile
 and add this command in the build stage after the final `uv sync` command:
 
 ```dockerfile
@@ -113,13 +112,8 @@ credentials:
     identifier: INFRAHUB_API_TOKEN
 ```
 
-The worker resolves these references from its own environment. For a direct worker process,
-export both variables before starting it:
-
-```bash
-export SLURPIT_API_KEY="..."
-export INFRAHUB_API_TOKEN="..."
-```
+The worker resolves these references from its own environment. Give both
+`SLURPIT_API_KEY` and `INFRAHUB_API_TOKEN` to the custom service worker.
 
 The bundled [Compose deployment](../compose-deployment.mdx) cannot run this Slurp’it package.
 Its worker uses the bundle's bound image, which does not include the Slurp’it SDK, and the
