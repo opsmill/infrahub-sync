@@ -2,33 +2,50 @@
 title: Compose operator troubleshooting
 ---
 
-This page is for the qualified one-host Docker Compose deployment. It does not
-apply to the local development stack in the NetBox demo tutorial; keep that
-route's troubleshooting in its [NetBox demo tutorial](../tutorials/netbox-demo-to-infrahub).
+Diagnose a release-package deployment on one Docker Compose host. For the local stacks
+that run from source, see [Local development stack](../development-stack.mdx). For the
+NetBox demo tutorial, see its [Troubleshooting](../tutorials/netbox-demo-to-infrahub#troubleshooting)
+section.
 
 ## Start with the deployment state
 
-Run the [status procedure](../compose-deployment#status) first. A refusal names
-its family and explains the next correction; `DEGRADED` and `STOPPED` describe
-different operational states. Use the [log procedure](../compose-deployment#logs)
-for bounded, redacted service output.
+Run the [status procedure](../compose-deployment#status) first.
+
+When the `infrahub-sync-compose` command refuses to run, it exits with code 1 and
+prints a message that starts with a refusal name, for example:
+
+```text
+infrahub-sync: foreign-resource: these existing resources are not labelled for
+instance 3a5dbb1bc6d569b7: container/9c2f1ea41b7d
+```
+
+The refusal name identifies the check that failed, such as `no-instance`,
+`port-occupied`, or `image-unresolvable`. The rest of the message says what to
+correct. The command changes nothing before it refuses.
+
+Use the [log procedure](../compose-deployment#logs) to read service output. Credentials
+are removed from run failures before they are printed.
 
 If a configuration validation reports a finding, use its stable code to find the
 meaning in the [finding-code reference](../reference/durable-product-records#finding-codes).
-The message wording can change; the code is the dependable lookup key.
+The message wording can change; the code stays the same.
 
-## Recover the deployment deliberately
+## Choose a recovery action
 
-Use the [stop, restart, and reset procedure](../compose-deployment#stop-restart-and-reset)
-to select the least disruptive action. A restart keeps durable records; reset is
-destructive and requires the displayed instance identity. When a reset is the
-right choice, use the [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment)
-rather than treating it as an upgrade.
+| Symptom | Action |
+| --- | --- |
+| `status` reports `STOPPED` | Run `./infrahub-sync-compose start`. |
+| `status` reports `DEGRADED` | Read the worker logs, then run `./infrahub-sync-compose restart`. It keeps the durable records. |
+| A token in `operator.env` changed | Run `./infrahub-sync-compose start`. `restart` keeps the old environment. |
+| `start` refuses with `image-unresolvable` | Load `image-linux-amd64.tar` from the same download again; see [The image record](../compose-deployment#the-image-record). |
+| You want to delete all data and begin again | Follow the [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment). `reset` cannot be undone. |
+
+The [stop, restart, and reset procedure](../compose-deployment#stop-restart-and-reset)
+describes each action. `reset` requires the instance identity that it displays. A reset
+followed by a fresh deployment is not an upgrade: the new deployment starts empty.
 
 ## Reconcile before retrying writes
 
 When a write might have reached the destination, do not repeat it. Follow the
 [uncertain-write reconciliation procedure](../compose-deployment#when-the-outcome-of-a-write-is-uncertain):
-read the run record, inspect the destination, and create a fresh plan. This is
-the operator route for a Compose deployment; it does not authorize local adapter
-execution.
+read the run record, inspect the destination, and create a fresh plan.
