@@ -17,7 +17,8 @@ command-line client sends requests to that service.
 
 - **V3 documentation:** [feature-v3-develop.infrahub-sync.pages.dev](https://feature-v3-develop.infrahub-sync.pages.dev/),
   built from this branch.
-- **Testing a V3 candidate?** Start at the [V3 start page](https://github.com/opsmill/infrahub-sync-process#readme).
+- **OpsMill staff testing a V3 candidate:** start at the internal
+  [V3 start page](https://github.com/opsmill/infrahub-sync-process#readme).
 - **V2** is the version on [PyPI](https://pypi.org/project/infrahub-sync/) and on the
   `main` branch. Its documentation is at [docs.infrahub.app/sync](https://docs.infrahub.app/sync).
   `pip install infrahub-sync` installs V2, not V3.
