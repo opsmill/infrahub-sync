@@ -3,8 +3,8 @@
 # example (see examples/netbox_to_infrahub/config.yml for the same pattern): a test enforces
 # that this file and package.yml's `configuration` stay identical, so both name the same
 # $credential references. Register package.yml with `infrahub-sync configs register`; the
-# service worker resolves the $credential references below from its own environment at that
-# point. This file is kept only for comparison and is not a standalone, runnable legacy config:
+# service worker resolves the $credential references below from its own environment when a
+# registered run starts. This file is kept only for comparison and is not a standalone legacy config:
 # the legacy config.yml discovery path does not resolve $credential references, so pointing it
 # at this file directly passes the reference itself, not a secret, to the Slurp'it SDK.
 

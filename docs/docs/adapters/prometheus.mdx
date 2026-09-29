@@ -104,7 +104,7 @@ metric, needs its own distinct name.
 
 | Variable | Description |
 |----------|-------------|
-| `PROM_URL` or `PROM_ADDRESS` | Prometheus server URL (overrides `settings.url`) |
+| `PROM_URL` or `PROM_ADDRESS` | Prometheus server URL for direct adapter use (takes precedence over `settings.url`); registered packages use their configured or resolved URL |
 | `PROM_TOKEN` | Bearer token for authentication |
 | `PROM_USERNAME` | Username for basic authentication |
 | `PROM_PASSWORD` | Password for basic authentication |
@@ -114,7 +114,7 @@ metric, needs its own distinct name.
 | Setting | Type | Required | Default | Description |
 |---------|------|----------|---------|-------------|
 | `mode` | string | No | `scrape` | Operating mode: `scrape` or `api` |
-| `url` | string | Yes | - | Prometheus server or exporter URL |
+| `url` | string | Conditional | - | Prometheus server or exporter URL. Set it in a registered package. For direct adapter use, set it or `PROM_URL`/`PROM_ADDRESS`; an environment variable takes precedence. |
 | `endpoint` | string | No | `/metrics` (scrape) or `/api/v1/query` (API) | Target endpoint |
 | `timeout` | number | No | 10 | Request timeout in seconds |
 | `verify_ssl` | boolean | No | true | Verify SSL certificates |
@@ -205,12 +205,12 @@ record being processed. Use it only when the looked-up metric has a single, unam
 (guaranteed by the single-target nature of scrape mode) or you have separately guaranteed the pool
 holds exactly one target's data; otherwise pass a dotted path shared by both metrics. The lookup
 indexes one label and keeps the last sample for each value. A `device` label can repeat across
-targets, while an `instance` label repeats across interfaces. For multiple targets with interfaces,
-split the data by target before using this example; a single label cannot identify both target and
-interface. In API mode, `labels.instance` is usually available since
-Prometheus attaches it when scraping, but it is not guaranteed on every query result: an
-aggregating PromQL expression (`sum by (...)`, `avg by (...)`, and similar) drops any label,
-including `instance`, that its `by`/`without` clause does not keep, and a scalar-typed result
+targets, while an `instance` label repeats across interfaces. For interfaces on multiple targets,
+run this example once per target in scrape mode. An API-mode result that combines targets cannot
+use this single-key lookup to join on both target and interface. In API mode, `labels.instance`
+is usually available because Prometheus adds it during scraping. It is not guaranteed on every
+query result. An aggregating PromQL expression (`sum by (...)`, `avg by (...)`, and similar)
+drops any label, including `instance`, that its `by`/`without` clause does not keep. A scalar result
 carries no labels at all. Check the actual response for your query before relying on
 `labels.instance` as a join key, the same as for any other `match_criteria`.
 
@@ -230,18 +230,18 @@ carries no labels at all. Check the actual response for your query before relyin
 This example syncs `node_exporter` metrics to create virtual machine records in Infrahub. It uses
 `mode: scrape` against a single exporter URL (`examples/prometheus_to_infrahub (node_exporter)/package.yml`),
 so every metric pool below holds samples from exactly one target. That single-target guarantee —
-not the label content of any metric — is what makes the empty `{}` lookups below correct: each one
+not the label content of any metric — is what makes the empty `{}` lookup calls below correct: each one
 returns the pool's only sample of that metric, and there is never a second target's sample to
 mix in. `node_memory_MemTotal_bytes`, `node_netstat_Ip_Forwarding`, `node_nf_conntrack_entries_limit`,
 and `node_time_seconds` also have no labels of their own in raw `node_exporter` output, so a
 label-based `match_criteria` is not available here even if you wanted one.
 
 :::warning
-Do not copy these `{}` lookups into a config that aggregates more than one target — for example an
+Do not copy these `{}` lookup calls into a configuration that aggregates more than one target — for example an
 API-mode `schema_mapping` reusing these same metric names against `promql.resources` results for
 several instances. There, `{}` returns the first target's sample for every record, silently
-attaching one host's data to another. Separate records by target before applying interface
-lookups; `labels.instance` alone does not identify an interface. See
+attaching one host's data to another. Run one scrape-mode configuration per target for interface
+lookup calls; `labels.instance` alone does not identify an interface. See
 [Using the lookup function](#using-the-lookup-function) above.
 :::
 

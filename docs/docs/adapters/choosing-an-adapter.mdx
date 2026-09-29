@@ -6,7 +6,7 @@ title: Choose an adapter
 
 Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure. The custom-adapter example package is `examples/custom_adapter/package.yml`.
 
-Infrahub Sync includes adapters for the most common infrastructure systems and a Generic REST API adapter for everything else. For systems with non-standard APIs, build a custom adapter.
+Infrahub Sync includes adapters for common infrastructure systems and a Generic REST API adapter for sources with supported REST/JSON patterns. For systems with other data access needs, build a custom adapter.
 
 ## How to choose
 
@@ -14,7 +14,7 @@ If a pre-built adapter exists for the system you want to connect, use it. If the
 
 ## Pre-built adapters
 
-Each adapter handles two responsibilities for its target system: **communication** (talking to the system's API, authentication, request handling) and **translation** (converting the system's data structures into the `diffsync` models the sync engine works with).
+Each adapter handles two responsibilities for its target system: **communication** (talking to the system's API, authentication, request handling) and **translation** (converting the system's data structures into models that the sync engine compares between source and destination).
 
 | Adapter | Direction supported | Best for |
 | --- | --- | --- |
@@ -26,7 +26,7 @@ Each adapter handles two responsibilities for its target system: **communication
 | Cisco ACI | Cisco ACI → Infrahub | Syncing data from Cisco ACI fabrics into Infrahub |
 | Peering Manager | Peering Manager → Infrahub · Infrahub → Peering Manager | Bi-directional sync between Peering Manager and Infrahub |
 | Prometheus | Prometheus → Infrahub | Pulling target or metric metadata from Prometheus into Infrahub |
-| Generic REST API | external system → Infrahub | Any external system with a REST/JSON API and no dedicated adapter |
+| Generic REST API | external system → Infrahub | A source with a REST/JSON API that follows supported request and response patterns |
 
 No pre-built adapter exists yet for PeeringDB, LibreNMS, Observium, or Device42. Each of those
 pages shows a [Generic REST API](./genericrestapi.mdx) example mapping instead, drawn from the

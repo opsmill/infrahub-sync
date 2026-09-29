@@ -1,1 +1,1 @@
-Correct adapter examples and guidance: single-target Prometheus lookups now use matching labels and explicit defaults for missing metrics, while the Slurp'it legacy config is reference-only because credential references require package registration.
+Adapter guides now provide valid YAML examples and supported sync directions, while the Prometheus example handles missing interface metrics and the Slurp'it page explains that its matching legacy file is reference-only because credentials resolve in registered runs.
