@@ -104,7 +104,7 @@ When a destination field is a relationship to another model that is also being s
   reference: Device
 ```
 
-This says: the value of the source's `device.name` field should resolve to the `Device` object with that name in the destination. The referenced model must be synced before this one; infrahub-sync computes that ordering automatically from `reference` fields, or you can override it with the optional `order` key in the project configuration.
+This says: the value of the source's `device.name` field should resolve to the `Device` object with that name in the destination. infrahub-sync computes a write order from `reference` fields so the referenced model is normally synced before this one, but a reference outside the kind's `identifiers` is optional and can be dropped to break a cycle, so that guarantee does not always hold; see [Automatic write order](config.mdx#automatic-write-order). You can override the computed order with the optional `order` key in the project configuration.
 
 ## Identifiers
 

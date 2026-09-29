@@ -39,7 +39,7 @@ you from the `reference:` entries in `schema_mapping`, so a kind is normally
 written after the kinds it references. A self-reference (a kind referencing
 itself) adds no ordering edge, and a reference outside the kind's
 `identifiers` is optional: if keeping it would create a cycle, infrahub-sync
-drops that edge to break the cycle and logs the drop at INFO level, so the
+drops that edge to break the cycle and logs the drop at WARNING level, so the
 kind may be written before that one referenced kind. Keep `order:` only to
 override the computed order for an adapter quirk.
 
