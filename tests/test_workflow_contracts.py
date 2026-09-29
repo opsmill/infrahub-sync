@@ -1185,12 +1185,13 @@ def test_nightly_route_is_dispatch_only_and_requires_an_exact_merged_commit() ->
         "fetch-depth": 0,
         "persist-credentials": False,
     }
-    guard = steps[1]["run"]
+    guard_step = next(step for step in steps if step.get("id") == "sha_guard")
+    guard = guard_step["run"]
     assert "${#expected} -ne 40" in guard
     assert HEAD_READBACK in guard
     assert ANCESTRY_CHECK in guard
     assert "git fetch --no-tags --quiet origin feature/v3-develop" in guard
-    assert steps[1]["env"]["NIGHTLY_SHA"] == f"${{{{ inputs.{SHA_INPUT} }}}}"
+    assert guard_step["env"]["NIGHTLY_SHA"] == f"${{{{ inputs.{SHA_INPUT} }}}}"
 
 
 def test_nightly_suites_report_independently_and_clean_up() -> None:
