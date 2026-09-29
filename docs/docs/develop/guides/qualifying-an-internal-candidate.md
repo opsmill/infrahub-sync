@@ -666,8 +666,8 @@ including the eight-group inventory and the granted 30 days.
 
 ### Reference: the digests
 
-The steps compare four different digests. Using one where another is meant can make a failed
-check look like a pass.
+The steps compare four different digests. Each is computed over something different, so they are
+not the same thing, and using one where another is meant can make a failed check look like a pass.
 
 | Digest | Names | Read from | Checked with |
 | --- | --- | --- | --- |
