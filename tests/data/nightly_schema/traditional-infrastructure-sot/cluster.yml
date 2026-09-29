@@ -1,0 +1,82 @@
+---
+# ---------------------------------------------------------------------------
+# This schema is a starting point for building with Infrahub, not a finished production model.
+# Adapting it for your environment typically requires architectural review, see
+# docs.infrahub.app, or reach out to OpsMill for help.
+# ---------------------------------------------------------------------------
+version: "1.0"
+
+generics:
+  - name: Generic
+    namespace: Cluster
+    description: A cluster of machines hosting services or other machines.
+    icon: mdi:dots-hexagon
+    include_in_menu: false
+    human_friendly_id:
+      - name__value
+    order_by:
+      - name__value
+    display_label: name__value
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+        optional: false
+        description: Name of the cluster.
+        order_weight: 1000
+      - name: description
+        kind: Text
+        optional: true
+        order_weight: 1100
+    relationships:
+      - name: locations
+        peer: LocationGeneric
+        label: Locations
+        kind: Attribute
+        cardinality: many
+        optional: false
+        order_weight: 1400
+      - name: tags
+        peer: BuiltinTag
+        kind: Attribute
+        cardinality: many
+        optional: true
+        order_weight: 2000
+
+  - name: GenericComputeUnitNodes
+    namespace: Cluster
+    description: A generic to apply on clusters that can be built out of generic compute units.
+    include_in_menu: false
+    relationships:
+      - name: nodes
+        peer: ComputeGenericUnit
+        label: Nodes
+        kind: Component
+        cardinality: many
+        optional: true
+        identifier: worker_in_cluster
+        order_weight: 1500
+
+extensions:
+  nodes:
+    - kind: ComputeGenericUnit
+      relationships:
+        - name: worker_in_cluster
+          peer: ClusterGenericComputeUnitNodes
+          label: Worker in cluster
+          kind: Generic
+          cardinality: one
+          optional: true
+          identifier: worker_in_cluster
+          description: This device is a worker node of the specified cluster.
+          order_weight: 1900
+    - kind: LocationGeneric
+      relationships:
+        - name: clusters
+          peer: ClusterGeneric
+          label: Clusters
+          kind: Component
+          cardinality: many
+          optional: true
+          description: All clusters available on that location.
+          order_weight: 1650

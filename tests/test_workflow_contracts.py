@@ -55,6 +55,7 @@ QUALIFIED_TREES = ("infrahub_sync/**", "deploy/compose/**", "tests/compose/**")
 PUBLISH_WORKFLOW = WORKFLOWS / "workflow-publish.yml"
 IMAGE_WORKFLOW = WORKFLOWS / "workflow-image.yml"
 CANDIDATE_WORKFLOW = WORKFLOWS / "workflow-candidate.yml"
+NIGHTLY_WORKFLOW = WORKFLOWS / "workflow-nightly-e2e.yml"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 
 # What sends a built artifact somewhere this repository cannot take it back from:
@@ -1154,7 +1155,7 @@ def test_release_task_changes_raise_the_full_qualification_tier() -> None:
     assert "tasks/release.py" in filter_patterns(ESCALATION_FILTER)
 
 
-def test_the_candidate_route_answers_no_event_and_is_the_only_manual_one() -> None:
+def test_the_candidate_route_answers_no_event_and_is_manual() -> None:
     """The inverse of the pull-request case: this route runs when a person names a commit.
 
     A trigger here would build and retain a candidate nobody asked for, from
@@ -1168,6 +1169,65 @@ def test_the_candidate_route_answers_no_event_and_is_the_only_manual_one() -> No
     assert CLEAN_HOST_JOB in jobs(CANDIDATE_WORKFLOW), (
         f"{CANDIDATE_WORKFLOW.name} holds no {CLEAN_HOST_JOB} job, so this route qualifies nothing"
     )
+
+
+def test_nightly_route_is_dispatch_only_and_requires_an_exact_merged_commit() -> None:
+    """A scheduled or pull-request run must not qualify a moving branch tip."""
+    assert triggers(NIGHTLY_WORKFLOW) == {"workflow_dispatch"}
+    assert NIGHTLY_WORKFLOW not in reachable_from_an_event()
+    declared = triggers_of(NIGHTLY_WORKFLOW)["workflow_dispatch"]["inputs"][SHA_INPUT]
+    assert declared["required"] is True
+    assert declared["type"] == "string"
+    steps = jobs(NIGHTLY_WORKFLOW)["end-to-end"]["steps"]
+    checkout = next(step for step in steps if str(step.get("uses", "")).startswith(CHECKOUT_ACTION))
+    assert checkout["with"] == {
+        "ref": f"${{{{ inputs.{SHA_INPUT} }}}}",
+        "fetch-depth": 0,
+        "persist-credentials": False,
+    }
+    guard_step = next(step for step in steps if step.get("id") == "sha_guard")
+    guard = guard_step["run"]
+    assert "${#expected} -ne 40" in guard
+    assert HEAD_READBACK in guard
+    assert ANCESTRY_CHECK in guard
+    assert "git fetch --no-tags --quiet origin feature/v3-develop" in guard
+    assert guard_step["env"]["NIGHTLY_SHA"] == f"${{{{ inputs.{SHA_INPUT} }}}}"
+
+
+def test_nightly_suites_report_independently_and_clean_up() -> None:
+    """Each selected suite retains evidence and later suites run after a failure."""
+    steps = jobs(NIGHTLY_WORKFLOW)["end-to-end"]["steps"]
+    by_id = {step["id"]: step for step in steps if "id" in step}
+    image_check = next(
+        index for index, step in enumerate(steps) if "nightly_e2e.py verify-images" in str(step.get("run", ""))
+    )
+    for name in ("integration", "preview", "saved-plan", "from-netbox"):
+        step = by_id[name]
+        assert image_check < steps.index(step)
+        assert step["continue-on-error"] is True
+        assert step["if"] == "always() && steps.images.outcome == 'success'"
+        assert f"nightly_e2e.py suite {name}" in step["run"]
+        assert any(
+            other.get("if") == f"always() && steps.{name}.outcome == 'failure'"
+            and other.get("continue-on-error") is True
+            and f"nightly_e2e.py logs {name}" in str(other.get("run", ""))
+            for other in steps
+        )
+    uploads = [step for step in steps if str(step.get("uses", "")).startswith(UPLOAD_ACTION)]
+    assert {step["with"]["path"] for step in uploads} == {
+        ".preview/nightly-e2e/*.xml",
+        ".preview/nightly-e2e/*-containers.log",
+    }
+    assert all(step["if"] == "always()" for step in uploads)
+    assert any(
+        "nightly_e2e.py summary" in str(step.get("run", ""))
+        and step.get("env", {}).get("NIGHTLY_SHA") == "${{ inputs.sha }}"
+        for step in steps
+    )
+    cleanups = [step for step in steps if "down --volumes" in str(step.get("run", ""))]
+    assert len(cleanups) == 2
+    assert all(step["if"] == "always()" for step in cleanups)
+    assert ".github/scripts/nightly_e2e.py" in filter_patterns("sync_all")
 
 
 def test_the_candidate_workflow_takes_the_commit_to_build_as_a_required_input() -> None:
