@@ -239,8 +239,17 @@ configuration with a new `config_id`.
 
 `sync` creates a plan and applies it in the same run, with no pause for review:
 
+Run from source:
+
 ```bash
-infrahub-sync sync --config-id CONFIG_ID --version 1 --branch BRANCH \
+uv run infrahub-sync sync --config-id CONFIG_ID --version 1 --branch BRANCH \
+  --reason "scheduled synchronization"
+```
+
+Run a release package:
+
+```bash
+./infrahub-sync-compose cli sync --config-id CONFIG_ID --version 1 --branch BRANCH \
   --reason "scheduled synchronization"
 ```
 

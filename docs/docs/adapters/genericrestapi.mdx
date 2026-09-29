@@ -8,6 +8,8 @@ Use the Generic REST API adapter to read data from a system with a REST/JSON API
 
 In a [configuration package](../configuration-package.mdx), name `genericrestapi` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
 
+On a Compose deployment, from source or from a release package, the worker receives only the Infrahub, NetBox, and Nautobot tokens, so a source that needs authentication cannot receive its credentials in this release; a source with `auth_method: none` is not affected. See [Credentials on a Compose deployment](./choosing-an-adapter.mdx#credentials-on-a-compose-deployment).
+
 ## Sync directions supported
 
 - REST API source → Infrahub

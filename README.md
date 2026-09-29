@@ -90,7 +90,6 @@ checkout. After a code change, run `uv run invoke build && uv run invoke start`.
 ```bash
 curl -sf http://127.0.0.1:8030/version
 curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8030/status
-uv run invoke destroy                    # stop and delete the stack's data
 ```
 
 The stack starts with no source and no destination. To continue to a first sync from a
@@ -106,6 +105,8 @@ in the documentation. In short:
 - Set `INFRAHUB_API_TOKEN` and `NETBOX_TOKEN`, then run `uv run invoke start` again, so
   the worker has both tokens.
 
+When you are finished, run `uv run invoke destroy` to stop the stack and delete its data.
+
 This build keeps its own BuildKit cache, separate from the one `invoke image.build` uses,
 so the first build each way starts with an empty cache.
 
@@ -114,19 +115,23 @@ so the first build each way starts with an empty cache.
 ## Example: NetBox → Infrahub
 
 The repository includes a NetBox configuration package at
-`examples/netbox_to_infrahub/package.yml`. Register it once, then address the immutable
-configuration version returned by the service:
+`examples/netbox_to_infrahub/package.yml`. This example registers it with a deployed Sync
+service; edit the package's URLs for your NetBox and Infrahub first. For the local NetBox and
+Infrahub above, run `uv run invoke netbox.demo-package --dev-stack` instead, then follow
+[Run a first sync](https://feature-v3-develop.infrahub-sync.pages.dev/development-stack#run-a-first-sync).
+Register the package once, then address the immutable configuration version returned by the
+service:
 
 ```bash
 export INFRAHUB_SYNC_API_URL=https://sync.example.com
 export INFRAHUB_SYNC_API_TOKEN=<token>
 
-infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
+uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
   --reason "register NetBox import"
-infrahub-sync diff --config-id <config-id> --version <version> \
+uv run infrahub-sync diff --config-id <config-id> --version <version> \
   --branch netbox-import --reason "review NetBox import"
-infrahub-sync runs plan <run-id> --detail
-infrahub-sync apply <run-id> --expected-checksum <checksum> \
+uv run infrahub-sync runs plan <run-id> --detail
+uv run infrahub-sync apply <run-id> --expected-checksum <checksum> \
   --branch netbox-import --reason "apply reviewed NetBox import"
 ```
 

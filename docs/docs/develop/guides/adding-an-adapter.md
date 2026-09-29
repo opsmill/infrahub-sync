@@ -186,10 +186,11 @@ Registered V3 `sync` runs plan, verify and apply under one configuration guard. 
 leg runs the same `isinstance(destination, PlannedWriteDestination)` check as saved-plan `apply`.
 A destination lacking the surface is refused by both commands.
 
-What does still work is everything that does not write: `diff` and plan review
-(`runs plan RUN_ID`) are unaffected. `infrahub` is the only one of the nine adapters shipped in
-this repository that implements the surface today; the other eight can be planned and reviewed
-against, and refused at the write gate.
+For registered runs, only Infrahub currently provides destination schema discovery, so a run
+naming any other destination is refused before it can create a plan
+(`infrahub_sync/runtime_schema/worker.py`). `infrahub` is also the only one of the nine adapters
+shipped in this repository that implements the planned-write surface. Adding another writable
+destination requires both schema discovery and the planned-write surface.
 
 The gate is an `isinstance` check against the protocol, which verifies that both members are
 **present** and not that their signatures match. Get a signature wrong and the refusal will not

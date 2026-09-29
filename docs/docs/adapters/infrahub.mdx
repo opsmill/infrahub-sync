@@ -22,7 +22,7 @@ This adapter uses the [Infrahub SDK](https://pypi.org/project/infrahub-sdk), whi
 
 ## Sync directions supported
 
-- Destination: every registered package writes to Infrahub. The Sync worker reads the destination schema before it plans, and Infrahub is the only adapter that supports that read. The worker refuses any other destination before it reads a schema.
+- Destination: Infrahub is currently the only destination for a registered run that can plan or apply. The Sync worker reads the destination schema before it plans, and Infrahub is the only adapter that supports that read. The worker refuses any other destination before it reads a schema.
 - Source: Infrahub can also be the source. The destination is then another Infrahub branch or instance.
 
 A single package moves data one way, from its source to its destination.
