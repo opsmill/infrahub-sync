@@ -2,7 +2,12 @@
 title: Use NetBox or Nautobot with Infrahub
 ---
 
-If you're adopting Infrahub but already have an established system of record in NetBox or Nautobot — with accumulated data, custom fields, and automation built around it — run Infrahub side-by-side with the existing tool and use Infrahub Sync to keep each system's view of the other's data current.
+If you're adopting Infrahub but already have an established system of record in NetBox or Nautobot — with accumulated data, custom fields, and automation built around it — run Infrahub side-by-side with the existing tool and use Infrahub Sync to bring that data into Infrahub.
+
+The NetBox and Nautobot adapters move data one way, into Infrahub, only. Data that Infrahub owns —
+newly modeled objects, edits made in Infrahub, anything not sourced from NetBox or Nautobot — does
+not flow back to the existing system. Keeping NetBox or Nautobot updated from Infrahub needs a
+separate integration; Infrahub Sync does not provide one.
 
 This is the most common adoption pattern, whether you plan to eventually consolidate on Infrahub or keep both systems running long-term.
 
@@ -13,7 +18,7 @@ For the first connection and preview with existing systems, follow the
 
 ## The side-by-side pattern
 
-Both tools continue to operate. The existing system (NetBox or Nautobot) remains the system of record for some data; Infrahub becomes the system of record for the rest. A sync project moves data between them on a defined cadence, so each system holds the data it owns plus a current view of what the other system owns.
+Both tools continue to operate. The existing system (NetBox or Nautobot) remains the system of record for the data it owns; Infrahub becomes the system of record for the rest. A sync project moves the existing system's data into Infrahub on a defined cadence, so Infrahub holds a current view of what NetBox or Nautobot owns, alongside anything modeled only in Infrahub.
 
 The side-by-side pattern fits when:
 
@@ -26,13 +31,13 @@ This pattern is also the typical starting point for a gradual migration. See [Mi
 
 ## Choosing which tool owns which data
 
-Decide which system is authoritative for each type of data before configuring a sync project. Sync behavior on each model is controlled by which side is the source and which is the destination, plus `diffsync_flags` — the setting that governs what each run is allowed to change, for example whether a source-only object is created in the destination. A destination-only object is never deleted, whatever flags are set. See [Sync instance configuration](./reference/config.mdx) for the field and each flag it accepts.
+Decide which system is authoritative for each type of data before configuring a sync project. NetBox and Nautobot are always the source and Infrahub is always the destination, so a synced model's data comes from the existing system; Infrahub only mirrors it, subject to `diffsync_flags` — the setting that governs what each run is allowed to change, for example whether a source-only object is created in the destination. A destination-only object is never deleted, whatever flags are set. See [Sync instance configuration](./reference/config.mdx) for the field.
 
 Common patterns:
 
-- **The existing system is authoritative for everything during initial evaluation.** Sync runs NetBox → Infrahub or Nautobot → Infrahub. Infrahub mirrors the existing system; edits in Infrahub are not propagated back. This is the safest starting configuration.
-- **Infrahub is authoritative for newly modeled data; the existing system stays authoritative for existing data.** The sync project covers only the models that overlap. New data types (intent, design objects, custom schemas) live in Infrahub and are not synced.
-- **Each system owns specific models.** For example, the existing system owns rack and cable data; Infrahub owns device intent, IP allocations, and configuration data. Sync moves only the models each system needs to consume.
+- **The existing system is authoritative for everything during initial evaluation.** Sync runs NetBox → Infrahub or Nautobot → Infrahub for every model in scope. Infrahub mirrors the existing system; edits made directly in Infrahub to a synced model are overwritten on the next run — no `diffsync_flags` setting exempts a matched object from that update. This is the safest starting configuration.
+- **Infrahub is authoritative for newly modeled data; the existing system stays authoritative for existing data.** The sync project covers only the models that come from NetBox or Nautobot. New data types (intent, design objects, custom schemas) live in Infrahub only and are outside the sync project's scope.
+- **Each system owns specific models.** For example, the existing system owns rack and cable data, synced into Infrahub; Infrahub owns device intent, IP allocations, and configuration data that has no NetBox or Nautobot equivalent and is never synced out.
 
 Document the ownership decision in the sync project's configuration comments — anyone reading the YAML later needs to understand the boundary.
 
@@ -72,7 +77,7 @@ For any feature where the existing system has a direct capability and Infrahub d
 - **Run direction matters for conflict handling.** When syncing NetBox → Infrahub or Nautobot → Infrahub, a matched object is always updated from the source, so edits made in Infrahub to a synced model are overwritten on the next sync run — there is no flag that exempts a matched object from that update. Make sure everyone on the team understands which side is the source of truth for each model.
 - **Use `diff` regularly.** Before applying any sync — and especially during initial setup — run `infrahub-sync diff` to verify what would change. The diff is read-only.
 - **Schedule syncs on a cadence that matches data change rates.** If the source data changes hourly, sync hourly. If it changes daily, sync daily. Infrahub Sync has no built-in scheduler — use cron, CI, or a workflow tool. See [Schedule sync runs](./orchestration.mdx).
-- **Set explicit ownership boundaries.** If both tools allow edits to the same model, conflicts will eventually occur. Decide upfront which tool is authoritative; avoid bi-directional syncing of the same model unless conflict resolution is well-defined.
+- **Set explicit ownership boundaries.** If a model is edited both in NetBox or Nautobot and directly in Infrahub, the sync run overwrites the Infrahub edit on that model with the existing system's data every time. Decide upfront which side is authoritative for a given model, and keep direct Infrahub edits out of synced models.
 
 ## When to move toward full migration
 

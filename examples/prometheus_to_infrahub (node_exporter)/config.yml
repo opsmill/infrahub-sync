@@ -109,8 +109,11 @@ schema_mapping:
         expression: "{{ lookup('node_uname_info', {}, 'labels.nodename') or 'unknown' }}"
 
       # MAC address from node_network_info; normalize & blank bogus all-zeroes
+      # A dict criterion here (e.g. {'device': labels.device}) is NOT a per-key match: the
+      # resolver only treats a dotted-path *string* as a join key, so pass 'labels.device'
+      # and rely on the current object sharing that same path.
       - field: mac_raw
-        expression: "{{ lookup('node_network_info', {'device': labels.device}, 'labels.address') or '' }}"
+        expression: "{{ lookup('node_network_info', 'labels.device', 'labels.address', '') }}"
       - field: mac_norm
         expression: "{{ (mac_raw | lower) if mac_raw else '' }}"
       - field: mac_clean
@@ -118,21 +121,21 @@ schema_mapping:
 
       # speed in bytes/sec, some exporters expose negative when unknown -> coerce to 0
       - field: speed_raw
-        expression: "{{ lookup('node_network_speed_bytes', {'device': labels.device}, 'value') or 0 }}"
+        expression: "{{ lookup('node_network_speed_bytes', 'labels.device', 'value', 0) }}"
       - field: speed_clean
         expression: "{{ 0 if (speed_raw | float) < 0 else (speed_raw | float) }}"
 
       # operstatus from node_network_up
       - field: op_status
-        expression: "{{ 'up' if ((lookup('node_network_up', {'device': labels.device}, 'value') or 0) | float) > 0 else 'down' }}"
+        expression: "{{ 'up' if ((lookup('node_network_up', 'labels.device', 'value', 0)) | float) > 0 else 'down' }}"
 
       # carrier boolean
       - field: carrier_b
-        expression: "{{ 1 if ((lookup('node_network_carrier', {'device': labels.device}, 'value') or 0) | float) > 0 else 0 }}"
+        expression: "{{ 1 if ((lookup('node_network_carrier', 'labels.device', 'value', 0)) | float) > 0 else 0 }}"
 
       # duplex from node_network_info (full/half/unknown)
       - field: duplex_raw
-        expression: "{{ (lookup('node_network_info', {'device': labels.device}, 'labels.duplex') or '') | lower }}"
+        expression: "{{ (lookup('node_network_info', 'labels.device', 'labels.duplex', '')) | lower }}"
       - field: duplex_val
         expression: "{{ duplex_raw if duplex_raw in ['full','half'] else 'unknown' }}"
 
@@ -168,15 +171,17 @@ schema_mapping:
       - field: vm_name
         expression: "{{ lookup('node_uname_info', {}, 'labels.nodename') or 'unknown' }}"
 
-      # readonly flag (1 => true)
+      # readonly flag (1 => true). The resolver only supports a single dotted-path join key
+      # (no composite device+mountpoint match), so join on 'labels.mountpoint' alone — unique
+      # per host in the single-target scrape mode this example assumes.
       - field: ro_val
-        expression: "{{ lookup('node_filesystem_readonly', {'device': labels.device, 'mountpoint': labels.mountpoint}, 'value') or 0 }}"
+        expression: "{{ lookup('node_filesystem_readonly', 'labels.mountpoint', 'value', 0) }}"
       - field: ro_b
         expression: "{{ 1 if (ro_val | float) > 0 else 0 }}"
 
       # device error flag (1 => true)
       - field: deverr_val
-        expression: "{{ lookup('node_filesystem_device_error', {'device': labels.device, 'mountpoint': labels.mountpoint}, 'value') or 0 }}"
+        expression: "{{ lookup('node_filesystem_device_error', 'labels.mountpoint', 'value', 0) }}"
       - field: deverr_b
         expression: "{{ 1 if (deverr_val | float) > 0 else 0 }}"
 
@@ -202,6 +207,6 @@ schema_mapping:
 
       # rotational is a LABEL on node_disk_info (string "0"/"1")
       - field: rotational_lbl
-        expression: "{{ lookup('node_disk_info', {'device': labels.device}, 'labels.rotational') or '0' }}"
+        expression: "{{ lookup('node_disk_info', 'labels.device', 'labels.rotational', '0') }}"
       - field: rotational_b
-        expression: "{{ 1 if rotational_lbl == '1' else 0 }}"
+        expression: "{{ 1 if rotational_lbl | string == '1' else 0 }}"

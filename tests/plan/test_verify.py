@@ -504,7 +504,8 @@ def test_the_write_surface_failure_names_the_adapter_that_was_passed_in(tmp_path
     assert MISSING_ADAPTER in _text(failure)
     assert MISSING_ADAPTER in str(failure.found)
     assert MISSING_ADAPTER in failure.next_action
-    assert "sync" in failure.next_action
+    assert "infrahub-sync diff" in failure.next_action
+    assert "before running `sync` or `apply`" in failure.next_action
 
 
 def test_none_means_the_write_surface_is_present(tmp_path: Path) -> None:

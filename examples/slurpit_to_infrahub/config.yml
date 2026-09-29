@@ -1,16 +1,28 @@
 ---
+# from-slurpit — the same parsed configuration as package.yml, like every other V3
+# example (see examples/netbox_to_infrahub/config.yml for the same pattern): a test enforces
+# that this file and package.yml's `configuration` stay identical, so both name the same
+# $credential references. Register package.yml with `infrahub-sync configs register`; the
+# service worker resolves the $credential references below from its own environment when a
+# registered run starts. This file is kept only for comparison and is not a standalone legacy config:
+# the legacy config.yml discovery path does not resolve $credential references, so pointing it
+# at this file directly passes the reference itself, not a secret, to the Slurp'it SDK.
+
 name: from-slurpit
+
 source:
   name: slurpitsync
   settings:
-    url: "<URL>"
-    api_key: "<TOKEN>"
+    url: "https://<SLURPIT-ENDPOINT>"
+    api_key:
+      $credential: slurpit-api-key
 
 destination:
   name: infrahub
   settings:
-    url: "<INFRAHUB_URL>"
-    token: "<TOKEN>"
+    url: "http://localhost:8000"
+    token:
+      $credential: infrahub-token
 
 # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
 # Uncomment and edit only if you need to override the computed order:
@@ -40,7 +52,7 @@ schema_mapping:
 
   - name: LocationGeneric
     mapping: site.get_sites
-    identifiers: ['name']
+    identifiers: ["name"]
     fields:
       - name: name
         mapping: sitename
@@ -103,7 +115,7 @@ schema_mapping:
     filters:
       - field: Name
         operation: is_not_empty
-    identifiers: ['device', 'serial']
+    identifiers: ["device", "serial"]
     mapping: planning_results.hardware-info
     fields:
       - name: name
@@ -121,7 +133,7 @@ schema_mapping:
         reference: InfraDevice
 
   - name: InfraVersion
-    identifiers: ['version']
+    identifiers: ["version"]
     filters:
       - field: Version
         operation: is_not_empty
@@ -136,7 +148,7 @@ schema_mapping:
         reference: InfraDevice
 
   - name: InfraVLAN
-    identifiers: ['vlan_id', "name"]
+    identifiers: ["vlan_id", "name"]
     mapping: planning_results.vlans
     fields:
       - name: name
@@ -172,7 +184,7 @@ schema_mapping:
         reference: InfraDevice
 
   - name: InfraPrefix
-    identifiers: ['vrf', 'prefix']
+    identifiers: ["vrf", "prefix"]
     mapping: filter_networks
     fields:
       - name: prefix
@@ -182,7 +194,7 @@ schema_mapping:
         reference: InfraVRF
 
   - name: InfraIPAddress
-    identifiers: ["address", 'ip_prefix']
+    identifiers: ["address", "ip_prefix"]
     mapping: filter_interfaces
     transforms:
       - field: dev_int

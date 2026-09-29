@@ -104,7 +104,7 @@ When a destination field is a relationship to another model that is also being s
   reference: Device
 ```
 
-This says: the value of the source's `device.name` field should resolve to the `Device` object with that name in the destination. The referenced model must be synced before this one; infrahub-sync computes that ordering automatically from `reference` fields, or you can override it with the optional `order` key in the project configuration.
+This says: the value of the source's `device.name` field should resolve to the `Device` object with that name in the destination. infrahub-sync computes a write order from `reference` fields so the referenced model is normally synced before this one, but a reference outside the kind's `identifiers` is optional and can be dropped to break a cycle, so that guarantee does not always hold; see [Automatic write order](config.mdx#automatic-write-order). You can override the computed order with the optional `order` key in the project configuration.
 
 ## Identifiers
 
@@ -311,7 +311,7 @@ Because the namespace is keyed by that name, this mapping cannot carry two VRFs 
 
 ### Key the namespace on the VRF ID instead of its name
 
-A name-based namespace refuses a source that repeats a VRF name. NetBox IDs cannot repeat, so deriving the namespace from `id` keeps same-name VRFs apart without renaming anything in NetBox. These three entries are the whole recipe — they replace the `IpamNamespace`, `IpamPrefix` and `IpamIPAddress` entries of `examples/netbox_to_infrahub/package.yml`, and the scope note below says what they do and do not cover:
+A name-based namespace refuses a source that repeats a VRF name. NetBox IDs cannot repeat, so deriving the namespace from `id` keeps same-name VRFs apart without renaming anything in NetBox. These three entries replace the `IpamNamespace`, `IpamPrefix`, and `IpamIPAddress` entries and resolve namespace collisions for prefixes and addresses. They do not make the full example accept duplicate VRF names: its `IpamVRF` entry is still keyed on the name and needs its own unique name transform.
 
 ```yaml
 - name: IpamNamespace
@@ -400,7 +400,7 @@ Nautobot's API and model structure are similar to NetBox but with some differenc
 - Nautobot status fields are objects rather than strings — use `status.name` instead of `status.value`.
 - Custom fields and computed fields appear in different sections of the API response.
 
-Start from the `examples/nautobot_to_infrahub/` directory in the Infrahub Sync repository and adapt from there.
+Start from the `examples/nautobot-v1_to_infrahub/` (Nautobot 1.x) or `examples/nautobot-v2_to_infrahub/` (Nautobot 2.0 and later) directory in the Infrahub Sync repository and adapt from there.
 
 ## Related
 

@@ -1712,7 +1712,7 @@ def test_a_destination_missing_only_the_resolver_factory_is_refused_before_any_w
     assert "DestinationWithoutThePeerResolverFactory" in message, (
         "The refusal names the adapter it refused, which is why the verifier receives a name (AD058)."
     )
-    assert "infrahub-sync sync" in message
+    assert "infrahub-sync diff" in message
     assert destination.dispatched == [], "Refused before any write, not part-way through one."
 
 

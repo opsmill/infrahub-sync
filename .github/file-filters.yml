@@ -37,6 +37,7 @@ github_workflows: &github_workflows
 # to any of them changes what that suite asserts, so the suite has to re-run.
 contract_declarations: &contract_declarations
   - ".github/workflows/**"
+  - ".github/scripts/nightly_e2e.py"
   - ".github/file-filters.yml"
   - "Dockerfile"
 

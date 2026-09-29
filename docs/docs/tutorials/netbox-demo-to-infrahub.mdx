@@ -92,9 +92,12 @@ You should see the Infrahub web interface with a navigation menu on the left sid
    keeps the executable, this tutorial, and its example package at one revision:
 
 ```bash
-git clone https://github.com/opsmill/infrahub-sync.git ../infrahub-sync
+git clone --branch feature/v3-develop https://github.com/opsmill/infrahub-sync.git ../infrahub-sync
 uv add --editable "../infrahub-sync[service]" pynetbox
 ```
+
+The repository's default branch is `main`, which is V2. Clone the V3 line explicitly, as
+shown above, or a pinned V3 tag once one exists.
 
 This installs the `infrahub-sync` command. `pynetbox` is required by the NetBox adapter.
 
@@ -197,8 +200,9 @@ the address already in the file, edit those two URLs directly in
 `credentials` block at the bottom of the file.
 
 This tutorial registers the package, uses `diff` to create a service plan, reviews that
-plan, and then submits a confirmed sync. See [Run a sync](../running-a-sync.mdx) when you
-need to apply the exact reviewed plan checksum instead of creating a new composed sync.
+plan, and then applies it by its checksum, so the writes are exactly what you reviewed. See
+[Run a sync](../running-a-sync.mdx) for the one-step `sync` alternative, which calculates
+and writes a new plan in the same run instead of applying a plan you already reviewed.
 
 For a fuller explanation of this file, see [Create a sync project](../creating-a-sync-project.mdx) and the [schema mapping reference](../reference/schema-mapping.mdx).
 
@@ -254,8 +258,15 @@ docker compose -f sync-services.yml up --detach postgres minio
 docker compose -f sync-services.yml run --rm minio-client
 ```
 
-Wait until both containers report ready before continuing. These fixed values are local
-tutorial credentials; do not use them outside an isolated development machine.
+The `minio-client` command above already waits for MinIO before it creates the
+bucket. Confirm PostgreSQL accepts connections before continuing:
+
+```bash
+docker compose -f sync-services.yml exec postgres pg_isready -U sync
+```
+
+Expect `accepting connections`. These fixed values are local tutorial
+credentials; do not use them outside an isolated development machine.
 
 2. In terminal 1, start Prefect:
 
@@ -338,7 +349,7 @@ Infrahub tracks changes through branches, so you can review a batch of imported 
 uv run infrahubctl branch create netbox-import
 ```
 
-The rest of this tutorial runs `diff` and `sync` against this branch with
+The rest of this tutorial runs `diff` and `apply` against this branch with
 `--branch netbox-import`, so you can inspect the destination changes before merging the
 Infrahub branch. For more about branches and proposed changes, see
 [Infrahub version control](https://docs.infrahub.app/topics/version-control/).
@@ -356,36 +367,35 @@ uv run infrahub-sync diff \
 ```
 
 The service worker loads NetBox and Infrahub, compares both sides, and publishes a saved
-plan. The CLI waits by default and prints its summary. Review it again with `infrahub-sync
-runs plan <run-id> --detail`. The `sync` command in the next step creates and applies a new
-plan; it does not apply this saved artifact.
+plan. The CLI waits by default and prints its summary, including the plan's checksum.
+Review it again with `infrahub-sync runs plan <run-id> --detail`.
 
 Review the output before continuing. On a first run against an empty branch, most planned changes should be creates. Exact counts depend on the current public NetBox demo data.
 
-## Sync the data
+## Apply the reviewed plan
 
-After inspecting the diff, run the sync against the same branch. The worker loads both
-systems again, calculates a new plan, and writes it. The CLI prints the service-owned run
-state.
+Apply the reviewed plan with its checksum, so the writes are exactly what you reviewed:
 
 ```bash
-uv run infrahub-sync sync \
-  --config-id <config-id> \
-  --version <version> \
+uv run infrahub-sync apply <run-id> \
+  --expected-checksum <checksum> \
   --branch netbox-import \
   --reason "import NetBox demo data"
 ```
 
-The first sync can take a few minutes because it writes the imported objects and
+The first apply can take a few minutes because it writes the imported objects and
 relationships into the `netbox-import` branch — `main` is untouched until you merge the
 resulting proposed change. Because this configuration omits `order:`, Infrahub Sync
 derives the write order from the mapping references.
 
-:::warning A second `diff` against this branch fails once interfaces exist
+`infrahub-sync sync --config-id <config-id> --version <version> --branch netbox-import
+--reason "..."` is the one-step alternative: it calculates and writes a new plan in the
+same run, with no stop for review. Choose it once you trust the mapping and no longer need
+to review each plan before it writes.
 
-Once the sync has written interfaces, running `diff` or `sync` against the same branch again fails while loading the destination. This is a known defect, and it is not specific to NetBox. See [`diff` fails after a sync that wrote interfaces](#diff-fails-after-a-sync-that-wrote-interfaces) for the error and how to get moving again.
-
-:::
+Run the same `diff` again to confirm the branch matches NetBox. After a successful import,
+the plan lists no creates. It records one delete of the built-in `default` IP namespace,
+and `apply` never runs deletes.
 
 ## Verify the imported data
 
@@ -424,7 +434,11 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
    NetBox rack ID and resolve to the renamed rack.
    :::
 
-3. Once you're happy with the data, open a proposed change from `netbox-import` toward `main` so the import can be reviewed before it's merged.
+3. Once you're happy with the data, open a proposed change in the Infrahub UI: select
+   **Proposed changes** in the left navigation, click **+ Create a proposed change**, set
+   `netbox-import` as the source branch and `main` as the destination, add a name and
+   description, and click **Create**. See [Infrahub version control](https://docs.infrahub.app/topics/version-control/)
+   for how proposed changes and branch merges work.
 
 If you switch back to `main`, none of this data is there yet — that's expected, since it's still isolated in the branch.
 
@@ -438,9 +452,9 @@ You used Infrahub Sync to move data from NetBox into Infrahub in a controlled se
 4. `package.yml` described the adapters, field mappings, references, filters, and Transformations.
 5. The Sync API registered the configuration and issued the run identity.
 6. `diff` asked the worker to compare the source and destination without writing changes.
-7. `sync` asked the worker to calculate and apply a new confirmed plan to the branch.
+7. `apply` wrote the exact reviewed plan, bound to its checksum, to the branch.
 
-The same pattern applies to larger migrations: start with a clear schema, map a small set of objects, condition source data where needed, review the diff inside a branch, and then synchronize before opening a proposed change toward `main`.
+The same pattern applies to larger migrations: start with a clear schema, map a small set of objects, condition source data where needed, review the diff inside a branch, and then apply the reviewed plan before opening a proposed change toward `main`.
 
 ## Stop the local services
 
@@ -525,29 +539,6 @@ The example names each IP namespace after a NetBox VRF, so two VRFs called `MGMT
 Renaming one of the VRFs in NetBox resolves it, but you do not have to touch NetBox: [key the namespace on the VRF ID instead of its name](../reference/schema-mapping.mdx#key-the-namespace-on-the-vrf-id-instead-of-its-name), which uses an identifier NetBox cannot repeat. That recipe covers namespaces, prefixes and addresses; the full example's `IpamVRF` entry is still keyed on the name and needs its own transform before the whole example runs against such a source.
 
 Re-run the command once NetBox or the mapping reflects what you intend. Deleting a row purely to clear the message can destroy real data.
-
-### `diff` fails after a sync that wrote interfaces
-
-```text
-ValueError: An error occurred while loading Infrahub: Cannot build unique_id for peer
-InterfaceLag[18c6…] (relationship InterfacePhysical.bundle, parent id=18c6…): missing
-identifier key(s) ['device']; required identifiers=['device', 'name'], present
-keys=['local_id', 'name', 'description', ...]
-```
-
-A first `diff` succeeds. Once a `sync` or `apply` has written an `InterfacePhysical` whose `bundle` points at an `InterfaceLag`, every later `diff` against that branch fails — while loading the **destination**, before any plan is produced. The message names `Infrahub`, not `Netbox`: the source is not involved. Deleting the interface objects at the destination restores normal behavior, and the cycle repeats.
-
-The cause is that the destination loader rebuilds each related peer's identifier from a cached copy of the peer node, and the copy it finds carries the peer's attributes but not its relationships. `InterfaceLag` is identified by `device` **and** `name`, so its identifier cannot be rebuilt and the load aborts.
-
-The client does not expose a control that changes worker extraction behavior. Delete the
-interface objects at the destination, correct the mapping or destination data, then create
-a new plan. Those objects are re-imported by the next confirmed sync.
-
-Two things to be clear about:
-
-- **This is not a NetBox-specific defect, and it is not introduced by the saved-plan workflow.** It affects any configuration in which a mapped kind references a peer kind whose `identifiers` include a relationship — the `nautobot`, `ipfabric`, `slurpit`, and `aci` example configurations all contain that shape.
-- A source record that references a peer the source itself cannot resolve fails the whole
-  run when the plan is derived. The client cannot soften that worker refusal.
 
 ## Next steps
 

@@ -40,10 +40,11 @@ Prefect runs underneath both packaged execution surfaces — the Sync API and wo
 Compose deployment runs, and the direct deployment below — rather than being something you
 choose instead of Compose:
 
-- Install the `prefect` extra to serve one direct deployment for plan and confirmed sync
-  requests through Prefect's API, without the rest of the Sync service. Sync output is
-  forwarded into the flow-run log. This is a lighter-weight alternative to a full Compose
-  deployment when you only need to trigger runs through Prefect. See the
+- Install the `prefect` extra to serve one direct deployment that accepts read-only plan
+  requests through Prefect's API, without the rest of the Sync service; it refuses
+  `operation="sync"`. Use the Sync API for confirmed sync or reviewed-plan apply. Sync output
+  is forwarded into the flow-run log. This is a lighter-weight alternative to a full Compose
+  deployment when you only need to trigger plan requests through Prefect. See the
   [Prefect remote run reference](./reference/prefect-remote-run.mdx) and
   `examples/prefect_remote_run/README.md` in the repository.
 - Install the `service` extra to run the Sync-owned authenticated HTTP API, durable records
@@ -59,8 +60,8 @@ choose instead of Compose:
 - You want centralized observability across many sync projects.
 
 **Trade-offs:** Prefect itself has to be operated. If you do not already run it, this adds
-operational surface area. The direct deployment runs and observes one plan or confirmed
-sync; it does not add scheduling, retry, queue, or overlap policy.
+operational surface area. The direct deployment runs and observes one plan; it does not add
+scheduling, retry, queue, or overlap policy.
 
 Use the Sync API for the supported worker-backed run lifecycle. For schedules, retry
 policies, triggers, or composing several syncs into a larger workflow, configure Prefect

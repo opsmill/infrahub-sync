@@ -12,14 +12,17 @@ Prepare a [configuration package](../configuration-package.mdx) and register it.
 ## What is Slurp’it?
 <!-- vale on -->
 
-Slurp’it lets you easily retrieve and store any data you want from your network in an offline, structured database. Out of the box, all major vendors and templates are already pre-configured.
-Run the installation wizard and Slurp’it will start mining your network. You can add as many templates as you want.
+Slurp’it retrieves and stores network data — devices, sites, interfaces, and planning results — in a structured database, discovered by scanning a network with its installation wizard.
 
 ## Requirements
 
 This Adapter uses the [Slurp’it SDK](https://pypi.org/project/slurpit-sdk), distributed as `slurpit-sdk` on PyPI.
-It is available through the optional `slurpit` extra (`slurpit-sdk>=0.9.52,<0.10`). The default Sync image installs only `service` and does not include this SDK.
-To add it to a custom Sync image, copy the repository Dockerfile and add this command in the build stage after the final `uv sync` command:
+It is available through the optional `slurpit` extra (`slurpit-sdk>=0.9.52,<0.10`), which uv marks
+as conflicting with the `service` extra the default Sync image and the standard development setup
+both use — `uv sync --extra service --extra slurpit` fails. The `prefect` and `slurpit` extras
+alone do not install the service dependencies needed by a Sync worker. To use the SDK
+with a Sync worker, build a custom service image: copy the repository Dockerfile
+and add this command in the build stage after the final `uv sync` command:
 
 ```dockerfile
 RUN uv pip install --python /opt/infrahub-sync/venv/bin/python \
@@ -61,15 +64,13 @@ infrahubctl schema load schema.yml
 
 ## Configuration
 
-`infrahub-sync` allows defining what gets synchronized from a source to a destination. The shipped `config.yml` is a legacy mapping input that matches the example schema; wrap it in a V3 configuration-package envelope before registration.
+`infrahub-sync` allows defining what gets synchronized from a source to a destination. Register
+`examples/slurpit_to_infrahub/package.yml` — a complete [configuration package](../configuration-package.mdx) —
+directly. Its `configuration:` body matches `config.yml`, kept alongside it for reference only:
+`config.yml`'s `$credential` references resolve only through registration, not through the legacy
+config.yml discovery path.
 
-<ReferenceLink title="config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/slurpit_to_infrahub/config.yml" openInNewTab />
-
-To download the example `config.yml`
-
-```bash
-curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/slurpit_to_infrahub/config.yml > config.yml
-```
+<ReferenceLink title="package.yml" url="https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/slurpit_to_infrahub/package.yml" openInNewTab />
 
 ### Configuration parameters
 
@@ -78,18 +79,49 @@ The `source.name` is set to `slurpitsync`, instructing `infrahub-sync` to use th
 The settings dictionary is passed directly to the Slurp’it Python SDK for authentication and connection details.
 Some of these parameters may be found in the [Slurp’it SDK Repository](https://gitlab.com/slurpit.io/slurpit_sdk).
 
-Below is a snippet from the example config.yml file:
+Below is a snippet from the example `package.yml` file. Both credentials are declared in a
+top-level `credentials` block and resolved by the service worker from its own environment — no
+credential value is ever written into the registered package:
 
 ```yaml
 ---
-name: from-slurpit
-source:
-  name: slurpitsync
-  settings:
-    url: "<URL>"
-    api_key: "<TOKEN>"
-    verify_ssl: true # Default value
+format_version: 1
+configuration:
+  name: from-slurpit
+  source:
+    name: slurpitsync
+    settings:
+      url: "https://<SLURPIT-ENDPOINT>"
+      api_key:
+        $credential: slurpit-api-key
+
+  destination:
+    name: infrahub
+    settings:
+      url: "http://localhost:8000"
+      token:
+        $credential: infrahub-token
+  # ... schema_mapping omitted, see the full file
+
+credentials:
+  slurpit-api-key:
+    provider: env
+    identifier: SLURPIT_API_KEY
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_API_TOKEN
 ```
+
+The worker resolves these references from its own environment. Give both
+`SLURPIT_API_KEY` and `INFRAHUB_API_TOKEN` to the custom service worker.
+
+The bundled [Compose deployment](../compose-deployment.mdx) cannot run this Slurp’it package.
+Its worker uses the bundle's bound image, which does not include the Slurp’it SDK, and the
+worker does not receive `SLURPIT_API_KEY`. Registering the package does not install the SDK
+or pass the key to that worker. To run it with a service worker, deploy a worker image that
+includes the SDK and give `SLURPIT_API_KEY` to that worker's environment.
+
+See [Configuration package](../configuration-package.mdx) for the full envelope reference.
 
 ### Schema mapping
 

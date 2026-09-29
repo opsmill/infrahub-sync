@@ -22,12 +22,38 @@ Observium is a network monitoring platform that delivers auto-discovery, detaile
 
 :::info
 
-Currently, the Observium adapter supports only **one-way synchronization** from Observium to Infrahub.
-Syncing data back into Observium is not yet supported.
+There is no dedicated Observium adapter. Observium is read through the
+[Generic REST API adapter](./genericrestapi.mdx), which supports only **one-way synchronization**
+from Observium to Infrahub. Syncing data back into Observium is not supported.
 
 :::
 
-<!-- vale off -->
-:::warning Under Construction
-:::
-<!-- vale on -->
+## Configuration
+
+<ReferenceLink title="Example mapping" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/observium_to_infrahub" openInNewTab />
+
+<Tabs>
+  <TabItem value="Source example" default>
+
+  ```yaml
+  ---
+  name: from-observium
+  source:
+    name: genericrestapi
+    settings:
+      url: "https://<OBSERVIUM-ENDPOINT>"
+      username: "<USERNAME>"
+      password: "<PASSWORD>"
+      api_endpoint: "api/v0"
+      auth_method: "basic"
+
+  destination:
+    name: infrahub
+    settings:
+      url: "http://localhost:8000"
+  ```
+
+  </TabItem>
+</Tabs>
+
+See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference.
