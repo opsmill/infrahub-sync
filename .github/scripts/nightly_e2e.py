@@ -119,12 +119,13 @@ def parsed_fields(output: str) -> dict[str, str]:
 
 
 def planned_counts(output: str) -> dict[str, int]:
-    """Count planned creates and unexecuted deletes by kind."""
+    """Read operation totals by kind from the saved-plan summary."""
+    by_kind = parsed_fields(output).get("by_kind", "")
     counts: dict[str, int] = {}
-    for line in output.splitlines():
-        match line.split(maxsplit=3):
-            case [_, ("create" | "delete"), kind, *_]:
-                counts[kind] = counts.get(kind, 0) + 1
+    for entry in by_kind.split(", "):
+        if entry:
+            kind, count = entry.split("=", 1)
+            counts[kind] = int(count)
     return counts
 
 
@@ -132,7 +133,7 @@ def check_import_counts(run_id: str, env: dict[str, str]) -> None:
     """Compare branch counts with planned operations, including unexecuted deletes."""
     from infrahub_sdk import Config, InfrahubClientSync  # noqa: PLC0415 -- live-suite dependency
 
-    plan = run("uv", "run", "--no-sync", "infrahub-sync", "runs", "plan", run_id, "--detail", env=env, capture=True)
+    plan = run("uv", "run", "--no-sync", "infrahub-sync", "runs", "plan", run_id, env=env, capture=True)
     expected = planned_counts(plan)
     if not expected or sum(expected.values()) != EXPECTED_DEMO_OPERATIONS:
         msg = f"the local demo plan has {sum(expected.values())} operations, expected 1688"
