@@ -35,9 +35,13 @@ Describes the overall synchronization configuration.
 ### Automatic write order
 
 `order:` is optional. Omit it and infrahub-sync computes a write order for
-you from the `reference:` entries in `schema_mapping`, so a kind is always
-written after the kinds it references. Keep it only to override that
-computed order for an adapter quirk.
+you from the `reference:` entries in `schema_mapping`, so a kind is normally
+written after the kinds it references. A self-reference (a kind referencing
+itself) adds no ordering edge, and a reference outside the kind's
+`identifiers` is optional: if keeping it would create a cycle, infrahub-sync
+drops that edge to break the cycle and logs the drop at INFO level, so the
+kind may be written before that one referenced kind. Keep `order:` only to
+override the computed order for an adapter quirk.
 
 Internally, infrahub-sync derives a write-order graph from the `reference:`
 entries in each `schema_mapping` field and groups kinds into **tiers**:
@@ -48,7 +52,8 @@ entries in each `schema_mapping` field and groups kinds into **tiers**:
 The flattened tier order replaces the manual `order:` list, and every planned operation
 records the tier its kind belongs to. A plan stores its operations ordered by
 `(tier, operation_id)` and an apply executes them in exactly that order, so a kind is
-written after the kinds it references.
+written after the kinds it references — except an optional reference dropped to
+break a cycle, as described above.
 
 If you must override the computed order because it does not match an adapter quirk, keep
 the `order:` list. It always wins: no tiers are computed, and each operation's recorded
