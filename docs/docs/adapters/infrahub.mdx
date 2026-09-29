@@ -6,9 +6,9 @@ import ReferenceLink from "../../src/components/Card";
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-## V3 route
+## Use this adapter
 
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure.
+Name `infrahub` as the destination, or as the source, in a [configuration package](../configuration-package.mdx). Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
 
 <!-- vale off -->
 ## What is Infrahub?
@@ -22,86 +22,108 @@ This adapter uses the [Infrahub SDK](https://pypi.org/project/infrahub-sdk), whi
 
 ## Sync directions supported
 
-- Source: Infrahub can be used as a data source
-- Destination: Infrahub is the primary destination for most sync configurations
+- Destination: every registered package writes to Infrahub. The Sync worker reads the destination schema before it plans, and Infrahub is the only adapter that supports that read. The worker refuses any other destination before it reads a schema.
+- Source: Infrahub can also be the source. The destination is then another Infrahub branch or instance.
 
-:::info
-
-The Infrahub adapter can be configured as either the source or the destination of a sync project — a single project still moves data one way, from its source to its destination. Most commonly, Infrahub is used as the destination, receiving data from other systems like NetBox, Nautobot, or IP Fabric.
-
-:::
+A single package moves data one way, from its source to its destination.
 
 ## Configuration
 
-The adapter reads connection settings from the synchronization configuration and can be overridden by environment variables.
-
-### Configuration parameters
-
 <Tabs>
-  <TabItem value="destination" label="As Destination" default>
+  <TabItem value="destination" label="As destination" default>
 
   ```yaml
-  ---
-  name: from-netbox
-  source:
-    name: netbox
-    settings:
-      url: "https://<NETBOX-ENDPOINT>"
-      token: "<TOKEN>"
-
-  destination:
-    name: infrahub
-    settings:
-      url: "http://localhost:8000"
-      token: "<INFRAHUB_TOKEN>"  # Optional if using env var
-      branch: "main"            # Optional, defaults to main
-      verify_ssl: true          # Optional, defaults to true
-      source: "data-sync"       # Optional, CoreAccountGroup name for lineage source
-      owner: "network-team"     # Optional, CoreAccountGroup name for lineage owner
+  format_version: 1
+  configuration:
+    name: from-netbox
+    source:
+      name: netbox
+      settings:
+        url: "https://netbox.example.com"
+        token:
+          $credential: netbox-token
+    destination:
+      name: infrahub
+      settings:
+        url: "https://infrahub.example.com"
+        token:
+          $credential: infrahub-token
+        branch: "main"            # Optional
+        verify_ssl: true          # Optional, defaults to true
+        source: "data-sync"       # Optional, CoreAccountGroup name for lineage source
+        owner: "network-team"     # Optional, CoreAccountGroup name for lineage owner
+    schema_mapping: []            # See the schema mapping section below
+  credentials:
+    netbox-token:
+      provider: env
+      identifier: NETBOX_TOKEN
+    infrahub-token:
+      provider: env
+      identifier: INFRAHUB_API_TOKEN
   ```
 
   </TabItem>
-  <TabItem value="source" label="As Source">
+  <TabItem value="source" label="As source">
 
   ```yaml
-  ---
-  name: to-peering-manager
-  source:
-    name: infrahub
-    settings:
-      url: "http://localhost:8000"
-      token: "<INFRAHUB_TOKEN>"
-      branch: "main"
-
-  destination:
-    name: peeringmanager
-    settings:
-      url: "https://<PM-ENDPOINT>"
-      token: "<TOKEN>"
+  format_version: 1
+  configuration:
+    name: infrahub-to-infrahub
+    source:
+      name: infrahub
+      settings:
+        url: "https://infrahub-a.example.com"
+        token:
+          $credential: source-infrahub-token
+        branch: "main"
+    destination:
+      name: infrahub
+      settings:
+        url: "https://infrahub-b.example.com"
+        token:
+          $credential: infrahub-token
+    schema_mapping: []
+  credentials:
+    source-infrahub-token:
+      provider: env
+      identifier: SOURCE_INFRAHUB_TOKEN
+    infrahub-token:
+      provider: env
+      identifier: INFRAHUB_API_TOKEN
   ```
 
   </TabItem>
 </Tabs>
 
-### Environment variables
-
-| Variable | Description |
-|----------|-------------|
-| `INFRAHUB_ADDRESS` or `INFRAHUB_URL` | Infrahub server URL (overrides `settings.url`) |
-| `INFRAHUB_API_TOKEN` | API token for authentication (overrides `settings.token`) |
-
 ### Settings reference
 
 | Setting | Type | Required | Default | Description |
 |---------|------|----------|---------|-------------|
-| `url` | string | Yes* | - | Infrahub server URL |
-| `token` | string | Yes* | - | API token for authentication |
-| `branch` | string | No | main | Target branch for operations |
-| `verify_ssl` | boolean | No | true | Verify SSL certificates |
+| `url` | string | Yes | - | Infrahub server URL, as the Sync worker reaches it |
+| `token` | `$credential` reference | Yes | - | API token for authentication |
+| `branch` | string | No | See below | Branch to read or write |
+| `verify_ssl` | boolean | No | true | Verify TLS certificates |
 | `source` | string | No | - | CoreAccountGroup name to use as lineage source |
 | `owner` | string | No | - | CoreAccountGroup name to use as lineage owner |
 
-*Can be provided via environment variables instead.
+For the destination, a declared `branch` takes precedence over the `--branch` option of `diff`, `sync`, and `apply`. The option is used only when the package declares no branch, and `main` is used when neither is set.
+
+### Connection settings in a registered package
+
+A registered package declares its own connection settings:
+
+- The worker connects to the `url` declared in the package, for data and for the destination schema read. `INFRAHUB_ADDRESS` and `INFRAHUB_URL` in the worker environment do not replace it.
+- The worker reads the token from the environment variable that the package's `credentials` entry names, for example `INFRAHUB_API_TOKEN`. Set that variable in the worker environment. On a Compose deployment, set it in `operator.env`.
+- To change a URL or a branch, edit the package and register it as a new version with `configs version`. Then plan with the new version.
+
+### Direct adapter use
+
+The direct [Prefect remote run](../reference/prefect-remote-run.mdx) and Python callers that run a `config.yml` directory do not use a registered package. In that case the adapter reads these environment variables before the declared settings:
+
+| Variable | Replaces |
+|----------|----------|
+| `INFRAHUB_ADDRESS` or `INFRAHUB_URL` | `settings.url` |
+| `INFRAHUB_API_TOKEN` | `settings.token` |
 
 ## Schema mapping
 
@@ -155,20 +177,7 @@ fields:
 
 ### Destination identity for writes
 
-For each mapped kind, select and map every field of a complete writable destination key. The key can be the Infrahub human-friendly ID or a declared uniqueness constraint. A partial key, a key with an unmapped field, or a kind with no key is refused before data extraction or planning.
-
-A read-only, server-allocated value or a server-computed value cannot serve as a writable key. For example, if Infrahub allocates `rule_id` and declares `hostname__value` as a separate uniqueness constraint, select and map `hostname`:
-
-```yaml
-schema_mapping:
-  - name: TestRule
-    identifiers: ["hostname"]
-    fields:
-      - name: hostname
-        mapping: hostname
-```
-
-The read-only `rule_id` may remain in the destination schema. If no complete writable key exists, exclude the kind from the package until the destination schema provides one.
+Infrahub must be able to find each planned object by a key: the kind's human-friendly ID or one of its uniqueness constraints. List every field of one such key in `identifiers` and map it in `fields`. The key cannot contain a value that Infrahub allocates or computes. Sync checks this against the destination schema before it extracts data, and refuses a kind without such a key. See [Destination key for Infrahub writes](../reference/schema-mapping.mdx#destination-key-for-infrahub-writes) for the rules and an example.
 
 ## Lineage tracking
 
@@ -193,8 +202,9 @@ You can override the default behavior by specifying `source` and/or `owner` in t
 destination:
   name: infrahub
   settings:
-    url: "http://localhost:8000"
-    token: "<TOKEN>"
+    url: "https://infrahub.example.com"
+    token:
+      $credential: infrahub-token
     source: "data-sync"      # Uses CoreAccountGroup "data-sync" as source
     owner: "network-team"    # Uses CoreAccountGroup "network-team" as owner
 ```
@@ -216,37 +226,35 @@ This allows you to:
 
 ### Authentication errors
 
-- Verify `INFRAHUB_API_TOKEN` is set correctly
-- Ensure the token has appropriate permissions for the target branch
-- Check that `INFRAHUB_ADDRESS` points to the correct server
+- Check that the worker environment sets the variable that the package's token credential names, for example `INFRAHUB_API_TOKEN`. On a Compose deployment, run `./infrahub-sync-compose start` after you change `operator.env`.
+- Check that the token has permission to read and write the target branch.
+- Check the `url` in the registered package with `configs show <config-id> --version <version>`. The worker does not read `INFRAHUB_ADDRESS`.
 
 ### Schema mismatch errors
 
-- Ensure your Infrahub schema matches the expected node types in schema_mapping
-- Run `infrahubctl schema load` to update the schema if needed
-- Verify field names match the Infrahub schema attribute names
+- Check that every kind in `schema_mapping` exists in the destination schema, on the branch the plan uses.
+- Load or update the schema with `infrahubctl schema load`. See [Load an example schema into Infrahub](./choosing-an-adapter.mdx#load-an-example-schema-into-infrahub).
+- Check that field names match the Infrahub schema attribute and relationship names.
 
 ### No writable destination identity
 
-- An error containing `no complete writable destination convergence identity` names the unusable key components. Check that every component is selected in `identifiers`, mapped in `fields`, and writable in the Infrahub schema.
-- If the human-friendly ID uses a read-only or server-computed value, select and map every component of a separate writable uniqueness constraint. A kind with no such key cannot be synced safely.
-- After upgrading, review and save a new plan before applying it. Existing saved plans have an older schema fingerprint because writability is now part of the fingerprint.
+- An error containing `no complete writable destination convergence identity` names the unusable key fields. See [Destination key for Infrahub writes](../reference/schema-mapping.mdx#destination-key-for-infrahub-writes).
+- After an upgrade, create and review a new plan before you apply. A plan saved by an earlier release can have a different schema fingerprint, and apply refuses it.
 
 ### Relationship resolution failures
 
-- Ensure referenced objects are synced before objects that reference them (check `order` in configuration)
+- Check that each referenced kind has its own `schema_mapping` entry. Sync writes referenced kinds first unless an `order` list in the package overrides that order.
 - Verify the unique identifier used in references matches the target object's identifier
 - Check logs for "Unable to find ... in the Store" messages
 
 ### Branch operations
 
-- Verify the target branch exists in Infrahub
-- Use `infrahubctl branch list` to see available branches
-- Create branches with `infrahubctl branch create <name>` if needed
+- Check that the target branch exists in Infrahub. List branches with `infrahubctl branch list`.
+- Create a branch with `infrahubctl branch create <name>`.
 
 <!-- vale Infrahub.sentence-case = NO -->
 ### SSL certificate issues
 <!-- vale Infrahub.sentence-case = YES -->
 
-- Set `verify_ssl: false` in settings for self-signed certificates (development only)
-- For production, ensure proper CA certificates are installed
+- `verify_ssl: false` turns off certificate verification. Use it only for development.
+- To trust an internal certificate authority, see [Use custom CA certificates](../custom-certificates.mdx). That page also describes the current limit of the Compose deployment.

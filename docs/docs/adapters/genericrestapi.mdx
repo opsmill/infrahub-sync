@@ -1,325 +1,172 @@
 ---
-title: GenericRestAPI adapter
+title: Generic REST API adapter
 ---
 
-import ReferenceLink from "../../src/components/Card";
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
+Use the Generic REST API adapter to read data from a system with a REST/JSON API when no dedicated adapter exists. You configure the base URL, the authentication method, and the location of the records in each response.
 
-## V3 route
+## Use this adapter
 
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure.
-
-The GenericRestAPI adapter is a flexible, configurable adapter that can connect to any REST API following common patterns. It's designed to reduce code duplication and provide a foundation for creating adapters for new systems without having to build them from scratch.
-
-This adapter can be used in two ways:
-
-1. As a standalone adapter for systems that have a REST API
-2. As a base for developing a specialized adapter when configuration alone cannot cover the source API
-
-## Key features
-
-- Flexible authentication methods (token, API key, basic auth)
-- Configurable endpoints and URL structures
-- Response format handling with customizable extraction
-- Transformation and filtering capabilities
-- Environment variable support for credentials
+In a [configuration package](../configuration-package.mdx), name `genericrestapi` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
 
 ## Sync directions supported
 
-- GenericRestAPI → Infrahub
+- REST API source → Infrahub
 
-:::info
+The Generic REST API adapter is a source only. It does not write to the source system.
 
-Currently, the GenericRestAPI adapter supports only **one-way synchronization** from a REST API source to Infrahub.
-Syncing data back to the source is not yet supported and need to be done on custom adapters. Those adapters can use the generic one as base similar to what is done with Peering Manager adapter.
+## How the adapter reads data
 
-:::
+For each `schema_mapping` entry, the adapter sends one `GET` request to `<url>/<api_endpoint>/<mapping>` and reads the records from that one response. It does not follow pagination links. If the API returns records in pages, only the first page is read.
+
+In a registered package, each `mapping` must be a relative path without a query string or fragment, for example `devices` or `api/devices`. Registration refuses a full URL or a path with query parameters.
 
 ## Configuration
 
-### Basic configuration
-
-To use the GenericRestAPI adapter, specify `genericrestapi` as the name in your configuration:
+Set `source.name` to `genericrestapi`. In a registered package, `token`, `username`, and `password` are `$credential` references:
 
 ```yaml
-source:
-  name: genericrestapi
-  settings:
-    url: "https://api.example.com"
-    api_endpoint: "/api/v1"
-    auth_method: "token"
+format_version: 1
+configuration:
+  name: rest-api-example
+  source:
+    name: genericrestapi
+    settings:
+      url: "https://api.example.com"
+      api_endpoint: "api/v1"
+      auth_method: "token"
+      token:
+        $credential: rest-api-token
+  destination:
+    name: infrahub
+    settings:
+      url: "https://infrahub.example.com"
+      token:
+        $credential: infrahub-token
+  schema_mapping:
+    - name: InfraDevice
+      mapping: devices
+      identifiers: ["name"]
+      fields:
+        - name: name
+          mapping: hostname
+        - name: serial_number
+          mapping: serial
+        - name: type
+          static: "Network Device"
+credentials:
+  rest-api-token:
+    provider: env
+    identifier: REST_API_TOKEN
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_API_TOKEN
 ```
-
-For direct adapter use, set `GENERICRESTAPI_TOKEN` in the worker environment. For a registered
-configuration package, declare a credential and set `source.settings.token` to its `$credential`
-reference; see [Configuration package](../configuration-package.mdx).
 
 ### Configuration parameters
 
 | Parameter | Description | Default | Required |
 |-----------|-------------|---------|----------|
 | `url` | Base URL of the API | None | Yes |
-| `api_endpoint` | API endpoint path | `/api/v0` | No |
-| `auth_method` | Authentication method (token, x-auth-token, api-key, key, basic, none) | `token` | No |
-| token | API token for token-based auth | None | For token auth |
-| username | Username for basic auth | None | For basic auth |
-| password | Password for basic auth | None | For basic auth |
-| `verify_ssl` | Whether to verify SSL certificates | `true` | No |
-| timeout | Request timeout in seconds | `30` | No |
-| `params` | Additional query parameters to include in all requests | `{}` | No |
-| `response_key_pattern` | Pattern for extracting data from responses | None | No |
+| `api_endpoint` | Path between the base URL and each mapping path | `/api/v0` | No |
+| `auth_method` | Authentication method: `token`, `x-auth-token`, `api-key`, `key`, `basic`, or `none` | `token` | No |
+| `token` | API token, for the `token`, `x-auth-token`, `api-key`, and `key` methods | None | For those methods |
+| `username` | Username for `basic` | None | For `basic` |
+| `password` | Password for `basic` | None | For `basic` |
+| `verify_ssl` | Verify TLS certificates | `true` | No |
+| `timeout` | Request timeout in seconds | `30` | No |
+| `response_key_pattern` | Key that holds the records in each response. See [Response handling](#response-handling). | None | No |
 
-### Environment variables
+Registration refuses any other setting.
 
-You can specify credentials using environment variables instead of storing them directly in the configuration:
+The authentication methods send these headers:
 
-| Setting | Environment Variables | Description |
-|---------|----------------------|-------------|
-| `url` | `GENERICRESTAPI_URL`, `GENERICRESTAPI_ADDRESS` | API base URL |
-| token | `GENERICRESTAPI_TOKEN` | API token/key |
-| username | `GENERICRESTAPI_USERNAME` | Basic auth username |
-| password | `GENERICRESTAPI_PASSWORD` | Basic auth password |
+| `auth_method` | Request authentication |
+| --- | --- |
+| `token` | `Authorization: Token <token>` |
+| `x-auth-token` | `X-Auth-Token: <token>` |
+| `api-key` | `Authorization: Api-Key <token>` |
+| `key` | `Authorization: Key <token>` |
+| `basic` | HTTP basic authentication |
+| `none` | No authentication |
 
-For direct adapter use, these environment variables take precedence over declared settings. The URL names are checked in the order shown. If you previously relied on bare `URL`, `ADDRESS`, `TOKEN`, `USERNAME`, or `PASSWORD`, rename them with the `GENERICRESTAPI_` prefix; bare names are no longer read. Registered configuration packages use their declared or resolved credential values instead of ambient environment variables.
+### Direct adapter use
 
-### Custom response handling
+A registered package uses its declared settings and resolved credentials. For direct adapter use without a registered package, these environment variables take precedence over the declared settings:
 
-If your API has a specific response format, you can customize how the data is extracted using the `response_key_pattern` setting:
+| Setting | Environment variables |
+|---------|----------------------|
+| `url` | `GENERICRESTAPI_URL`, then `GENERICRESTAPI_ADDRESS` |
+| `token` | `GENERICRESTAPI_TOKEN` |
+| `username` | `GENERICRESTAPI_USERNAME` |
+| `password` | `GENERICRESTAPI_PASSWORD` |
+
+Bare `URL`, `ADDRESS`, `TOKEN`, `USERNAME`, and `PASSWORD` variables are not read.
+
+### Response handling
+
+By default, the adapter reads the records from the response key that matches the last part of the mapping path. For example, the records for `api/devices` are read from the `devices` key. If that key is missing, it tries the full mapping path as the key. The records can be a list or an object whose values are records.
+
+If your API uses another key, set `response_key_pattern`:
 
 ```yaml
 source:
   name: genericrestapi
   settings:
     # ...other settings...
-    response_key_pattern: "data.{resource}.items"
+    response_key_pattern: "data"
 ```
 
-This pattern will be formatted with:
+The pattern can contain two placeholders:
 
-- `{resource}`: The endpoint being queried
-- `{default}`: The default key (last part of the endpoint path)
+- `{resource}`: the mapping path
+- `{default}`: the last part of the mapping path
 
 ## Schema mapping
 
-The schema mapping defines how data from the API is mapped to Infrahub models:
+The schema mapping connects API paths to Infrahub kinds. A field can map a response field, set a static value, or reference another mapped kind:
 
 ```yaml
 schema_mapping:
-  - name: InfraDevice  # Infrahub model
-    mapping: devices   # API endpoint
-    identifiers: ["name"]  # Unique identifier fields
-    filters:  # Optional filters to apply
+  - name: InfraDevice      # Infrahub kind
+    mapping: devices       # API path
+    identifiers: ["name"]
+    filters:
       - field: hostname
         operation: contains
         value: "router"
     fields:
-      - name: name       # Infrahub field
-        mapping: hostname  # API field
-      - name: type
-        mapping: device_type
-      - name: site       # Reference to another model
-        mapping: location
-        reference: LocationSite
-```
-
-### Field mapping types
-
-- **Direct mapping**: Maps a field from the API to an Infrahub field
-- **Static value**: Sets a constant value for an Infrahub field
-- **Reference**: Links to another Infrahub model
-
-```yaml
-fields:
-  # Direct mapping
-  - name: name
-    mapping: hostname
-
-  # Static value
-  - name: type
-    static: "Network Device"
-
-  # Reference to another model
-  - name: site
-    mapping: location_id
-    reference: LocationSite
-```
-
-### Filtering records
-
-You can filter records from the API before processing:
-
-```yaml
-filters:
-  - field: status
-    operation: equals
-    value: "active"
-
-  - field: hostname
-    operation: contains
-    value: "prod"
-```
-
-Supported operations: equals, `not_equals`, contains, `not_contains`, in, `not_in`
-
-## Examples
-
-### Basic REST API example
-
-```yaml
----
-name: rest-api-example
-
-source:
-  name: genericrestapi
-  settings:
-    url: "http://api.example.com"
-    api_endpoint: "/api/v1"
-    auth_method: "token"
-    token: "${API_TOKEN}"  # Uses environment variable
-
-destination:
-  name: infrahub
-  settings:
-    url: "http://localhost:8000"
-
-order: [
-  "InfraDevice",
-  "IpamIPAddress",
-]
-
-schema_mapping:
-  - name: InfraDevice
-    mapping: devices
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: hostname
-      - name: serial_number
-        mapping: serial
+      - name: name         # Infrahub field
+        mapping: hostname  # Response field
       - name: type
         static: "Network Device"
-
-  - name: IpamIPAddress
-    mapping: ips
-    identifiers: ["address"]
-    fields:
-      - name: address
-        mapping: ip_address
-      - name: description
-        mapping: description
-```
-
-### LibreNMS example
-
-LibreNMS is one of the systems that use the GenericRestAPI adapter:
-
-```yaml
----
-name: from-librenms
-
-source:
-  name: genericrestapi
-  settings:
-    url: "http://librenms.example.com"
-    api_endpoint: "api/v0"
-    auth_method: "x-auth-token"
-    token: "${LIBRENMS_TOKEN}"
-
-destination:
-  name: infrahub
-  settings:
-    url: "http://localhost:8000"
-
-order: [
-  "CoreStandardGroup",
-  "LocationSite",
-  "IpamIPAddress",
-  "InfraDevice",
-]
-
-schema_mapping:
-  - name: CoreStandardGroup
-    mapping: devicegroups
-    fields:
-      - name: name
-        mapping: name
-      - name: description
-        mapping: desc
-
-  - name: LocationSite
-    mapping: resources/locations
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: location
-      - name: description
-        mapping: location
-
-  - name: IpamIPAddress
-    mapping: devices
-    identifiers: ["address"]
-    fields:
-      - name: address
-        mapping: ip
-      - name: description
-        mapping: hostname
-
-  - name: InfraDevice
-    mapping: devices
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: hostname
-      - name: serial_number
-        mapping: serial
-      - name: type
-        mapping: hardware
-      - name: site
+      - name: site         # Reference to another mapped kind
         mapping: location
         reference: LocationSite
 ```
+
+Filters remove records before mapping. For the filter operations, such as `==`, `!=`, `contains`, and `regex`, see [Available filter operations](../reference/schema-mapping.mdx#available-filter-operations).
+
+The [LibreNMS](./librenms.mdx), [Observium](./observium.mdx), [Device42](./device42.mdx), and [PeeringDB](./peeringdb.mdx) pages link complete mapping examples for this adapter.
 
 ## Common issues
 
 ### Authentication failures
 
-If you encounter authentication issues:
-
-1. Verify your token/credentials are correct
-2. Check that you're using the correct `auth_method` for your API
-3. Ensure the API endpoint path is correct
+1. Check that the worker environment sets the variable that each credential names.
+2. Check that `auth_method` matches what your API expects.
+3. Check that `url` and `api_endpoint` together form the correct API path.
 
 ### Response parsing errors
 
-If the adapter fails to parse the API response:
+1. Check the response format in the API documentation.
+2. Set `response_key_pattern` to the key that holds the records.
+3. If the API needs logic that configuration cannot express, the system needs a dedicated adapter. See [Choose an adapter](./choosing-an-adapter.mdx#when-to-build-a-custom-adapter).
 
-1. Check the API documentation for the correct response format
-2. Use the `response_key_pattern` setting to customize data extraction
-3. Consider implementing a custom adapter extending GenericRestAPI
+### Timeouts and large responses
 
-### Connection timeout
+1. Increase `timeout`.
+2. Use filters to reduce the records that are mapped. Filters run after the response is read, so they do not reduce the response size.
 
-For slow APIs or large datasets:
+## For adapter developers
 
-1. Increase the timeout setting
-2. Add pagination parameters if the API supports it
-3. Use filters to reduce the amount of data fetched
-
-## Building specialized adapters
-
-You can extend the GenericRestAPI adapter to create more specialized adapters:
-
-```python
-from infrahub_sync.adapters.genericrestapi import GenericrestapiAdapter
-
-class MySpecializedAdapter(GenericrestapiAdapter):
-    def __init__(self, target, adapter, config, *args, **kwargs):
-        # Override adapter_type to change the adapter name in logs
-        super().__init__(target, adapter, config, adapter_type="MySpecialized", *args, **kwargs)
-
-    # Override methods as needed for specialized behavior
-    def _extract_objects_from_response(self, response_data, resource_name, element):
-        # Custom extraction logic
-        return custom_data
-```
+The Peering Manager adapter extends this adapter's classes. To write an adapter for the repository, see [Adding an adapter](../develop/guides/adding-an-adapter.md). A registered package must name a bundled adapter; see [Local adapters](./local-adapters.mdx).

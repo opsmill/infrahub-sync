@@ -93,9 +93,10 @@ def writable_convergence_reason(
 ) -> str | None:
     """Explain why no complete destination key can be recreated from mapped identity fields.
 
-    Direct DiffSync writes supply resolved peer IDs in ``write_values``. A peer ID proves
-    that the relationship has a write value, while a planned identity instead carries
-    the peer's nested identity and is checked component by component.
+    ``write_values`` maps fields to resolved write values; a peer ID there proves that the
+    relationship has a write value. No product caller passes it: planned callers pass
+    ``identity``, whose relationship components carry the peer's nested identity and are
+    checked component by component.
     """
     keys = [list(getattr(node, "human_friendly_id", None) or ())]
     keys.extend(list(key) for key in (getattr(node, "uniqueness_constraints", None) or ()))

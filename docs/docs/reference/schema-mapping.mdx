@@ -130,6 +130,37 @@ All listed fields must be present and unique together. Each identifier field mus
 
 Pick the identifiers your destination actually uses, not the ones the source happens to have. Infrahub keys an address by address plus namespace, while NetBox groups addresses by VRF without requiring them to be unique inside one, so the shipped `examples/netbox_to_infrahub/` mapping turns each VRF name into an IP namespace and identifies on that. That separation lasts only while the VRF names differ: two VRFs sharing a name produce the same namespace record twice and the run fails while loading the source, and an address in a VRF named `default` collides with the same address in no VRF at all. To key the namespace on something NetBox cannot repeat, see [Key the namespace on the VRF ID instead of its name](#key-the-namespace-on-the-vrf-id-instead-of-its-name).
 
+### Destination key for Infrahub writes
+
+Infrahub must be able to find each planned object again by a key. The key is one of these,
+from the destination kind's Infrahub schema:
+
+- the human-friendly ID (`human_friendly_id`), or
+- one uniqueness constraint (`uniqueness_constraints`).
+
+For each mapped kind, choose one of these keys, list each of its fields in `identifiers`,
+and map each one in `fields`. Every field of the key must be writable. A value that
+Infrahub allocates or computes, such as a server-allocated ID, cannot be part of the key.
+
+Sync checks this against the destination schema before it extracts data. It refuses a
+kind with a partial key, a key field that is not mapped, or no key. The error contains
+`no complete writable destination convergence identity` and names the unusable fields.
+
+For example, if Infrahub allocates `rule_id` and also declares `hostname__value` as a
+uniqueness constraint, use `hostname` as the key:
+
+```yaml
+schema_mapping:
+  - name: TestRule
+    identifiers: ["hostname"]
+    fields:
+      - name: hostname
+        mapping: hostname
+```
+
+The read-only `rule_id` can stay in the destination schema. If a kind has no key that Sync
+can write, remove the kind from the package until the destination schema provides one.
+
 ## Filters
 
 Filters control which objects from the source get synced. Apply them at the model level to include or exclude specific objects.
@@ -188,7 +219,7 @@ For cases where a field value needs to be transformed during the mapping — upp
       expression: "{{ name | upper }}"
 ```
 
-Adapters can also register custom Jinja filters via a `_add_custom_filters` class method on the adapter model. The ACI adapter, for example, includes an `aci_device_name` filter for resolving ACI node IDs to device names. See [Local Adapters](../adapters/local-adapters.mdx) for the implementation pattern, and [Sync instance configuration](./config.mdx) for the full `transforms` syntax.
+Adapters can also register custom Jinja filters via a `_add_custom_filters` class method on the adapter model. The ACI adapter, for example, includes an `aci_device_name` filter for resolving ACI node IDs to device names. See [Local adapters](../adapters/local-adapters.mdx) for the implementation pattern, and [Sync instance configuration](./config.mdx) for the full `transforms` syntax.
 
 ## Validating a mapping
 
@@ -199,25 +230,28 @@ infrahub-sync configs validate <config-id> <version>
 infrahub-sync diff --config-id <config-id> --version <version> --reason "review mapping"
 ```
 
-The diff prints every proposed create, update, and delete. Review it model by model:
-
-- Are the field values being mapped correctly?
-- Are references resolving to the right objects in the destination?
-- Are filters excluding the right objects?
-- Are there unexpected creates or deletes?
-
-The same run also saves a plan artifact you can review on its own, per operation and per kind:
+When the plan is ready, `diff` prints its summary: the operation counts by action and by
+kind. To see each operation, review the saved plan:
 
 ```shell
 infrahub-sync runs plan <run-id> --detail
+infrahub-sync runs plan <run-id> --detail --kind <destination-kind>
 ```
 
-A plan **records** deletes but `apply` never executes one — it applies the non-deletes, completes
-successfully, and reports how many deletes it skipped. Deletes are also only computed when the
-destination side ran a full extract; both review depths say which of the two happened. See
-[Create and review a plan](../running-a-sync#create-and-review-a-plan).
+Review it kind by kind:
 
-Adjust the mapping and re-run the diff until it matches expectations. Only then run the sync.
+- Are the field values mapped correctly?
+- Do references resolve to the right objects in the destination?
+- Do the filters exclude the right objects?
+- Are there unexpected creates or updates?
+
+A plan **records** deletes, but `apply` never executes one. It applies the other operations,
+completes, and reports how many deletes it skipped. Deletes are computed only when the
+destination side ran a full extract, and both review depths say which case applies. See
+[Review the plan](../running-a-sync.mdx#review-the-plan).
+
+To change the mapping, edit the package, register it with `configs version`, and create a
+new plan from the new version. Apply a plan only after its review matches your expectations.
 
 ---
 

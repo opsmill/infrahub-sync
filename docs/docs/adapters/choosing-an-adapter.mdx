@@ -2,11 +2,7 @@
 title: Choose an adapter
 ---
 
-## V3 route
-
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure. The custom-adapter example package is `examples/custom_adapter/package.yml`.
-
-Infrahub Sync includes adapters for common infrastructure systems and a Generic REST API adapter for sources with supported REST/JSON patterns. For systems with other data access needs, build a custom adapter.
+Infrahub Sync includes adapters for common infrastructure systems and a Generic REST API adapter for sources with supported REST/JSON patterns. Name one of them in a [configuration package](../configuration-package.mdx), then follow [Run a sync](../running-a-sync.mdx). A system with other data access needs requires a custom adapter, and custom adapters are not qualified for registered packages in this release.
 
 ## How to choose
 
@@ -18,28 +14,34 @@ Each adapter handles two responsibilities for its target system: **communication
 
 | Adapter | Direction supported | Best for |
 | --- | --- | --- |
-| Infrahub | source or destination | Any sync project where Infrahub is one side of the sync |
+| Infrahub | source or destination | The destination of every registered package; also a source |
 | NetBox | NetBox → Infrahub | Existing NetBox deployments migrating to or syncing with Infrahub |
 | Nautobot | Nautobot → Infrahub | Existing Nautobot deployments migrating to or syncing with Infrahub |
 | IP Fabric | IP Fabric → Infrahub | Building Infrahub inventory from IP Fabric network discovery data |
 | Slurp'it | Slurp'it → Infrahub | Building Infrahub inventory from Slurp'it network discovery data |
 | Cisco ACI | Cisco ACI → Infrahub | Syncing data from Cisco ACI fabrics into Infrahub |
-| Peering Manager | Peering Manager → Infrahub · Infrahub → Peering Manager | Bi-directional sync between Peering Manager and Infrahub |
+| Peering Manager | Peering Manager → Infrahub | Syncing peering data from Peering Manager into Infrahub |
 | Prometheus | Prometheus → Infrahub | Pulling target or metric metadata from Prometheus into Infrahub |
 | Generic REST API | external system → Infrahub | A source with a REST/JSON API that follows supported request and response patterns |
 
 No pre-built adapter exists yet for PeeringDB, LibreNMS, Observium, or Device42. Each of those
 pages shows a [Generic REST API](./genericrestapi.mdx) example mapping instead, drawn from the
-matching directory under [`examples/`](https://github.com/opsmill/infrahub-sync/tree/main/examples):
+matching directory under [`examples/`](https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples):
 
 | System | Direction supported | Example mapping |
 | --- | --- | --- |
-| PeeringDB | PeeringDB → Infrahub | [`examples/peeringdb_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/main/examples/peeringdb_to_infrahub) |
-| LibreNMS | LibreNMS → Infrahub | [`examples/librenms_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/main/examples/librenms_to_infrahub) |
-| Observium | Observium → Infrahub | [`examples/observium_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/main/examples/observium_to_infrahub) |
-| Device42 | Device42 → Infrahub | [`examples/device42_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/main/examples/device42_to_infrahub) |
+| PeeringDB | PeeringDB → Infrahub | [`examples/peeringdb_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples/peeringdb_to_infrahub) |
+| LibreNMS | LibreNMS → Infrahub | [`examples/librenms_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples/librenms_to_infrahub) |
+| Observium | Observium → Infrahub | [`examples/observium_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples/observium_to_infrahub) |
+| Device42 | Device42 → Infrahub | [`examples/device42_to_infrahub`](https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples/device42_to_infrahub) |
 
 For per-adapter details — connection parameters, supported models, known limitations — see the individual adapter pages in the Adapters sidebar.
+
+## Credentials on a Compose deployment
+
+The Sync worker reads each credential from the environment variable that the package's `credentials` block names. On a Compose deployment, the worker receives only three of these variables: `INFRAHUB_API_TOKEN`, `NETBOX_TOKEN`, and `NAUTOBOT_TOKEN`. When you run from source, the development stack in `compose.yaml` passes the same three.
+
+A source whose credentials need other variables, such as Cisco ACI, IP Fabric, Slurp’it, Peering Manager, or a Generic REST API source with authentication, cannot receive them on that worker in this release. A source that needs no credential, such as a public API with `auth_method: none`, is not affected. IP Fabric and Slurp’it also need an SDK that the Sync image does not include; see their pages.
 
 ## When to use the Generic REST API adapter
 
@@ -65,7 +67,7 @@ A custom adapter is the right choice when the Generic REST API adapter can't han
 - **Complex pagination or query patterns.** The data access requires logic beyond what configuration can express — for example, conditional pagination based on response content.
 - **Data transformations that exceed Jinja filter capabilities.** The source data requires substantial preprocessing before mapping into `diffsync` models.
 
-A custom adapter is a Python class implementing the same interface as the pre-built adapters. A registered V3 package may declare it only as an installed dotted import target or installed entry point, and only for the source side. See [Local adapters](./local-adapters.mdx) for the registered-worker contract and development-only loader behavior.
+A custom adapter is a Python class that implements the same interface as the pre-built adapters. In this release, a registered package must name a bundled adapter, and running a custom adapter from a registered package is not qualified. See [Local adapters](./local-adapters.mdx).
 
 If you build a custom adapter for a system other teams might use, consider contributing it back to the Infrahub Sync repository.
 
@@ -77,9 +79,36 @@ The Generic REST API adapter is the fallback, not the default.
 
 ## Multiple adapters in one sync project
 
-A sync project has one source adapter and one destination adapter. To sync data from multiple sources into Infrahub, create one sync project per source. Each project has its own configuration, sync order, and schedule.
+A configuration package has one source adapter and one destination adapter. To sync data from several sources into Infrahub, register one package per source. Each package has its own mappings and write order, and you run and review each one separately. A failure in one package's run does not affect the others.
 
-This keeps each sync independent — a failure in one project does not affect others, and each project can be scheduled and operated separately.
+## Load an example schema into Infrahub
+
+Several adapter pages link an example Infrahub schema that matches their example mapping. Registering a package does not load a schema. Load the schema into the destination Infrahub, on the branch that you plan to use, before you create a plan.
+
+1. Install the schema tool, `infrahubctl`, on a machine that can reach the destination Infrahub. It is part of the Infrahub SDK:
+
+   ```sh
+   python3 -m venv .schema-tools
+   .schema-tools/bin/python -m pip install 'infrahub-sdk[ctl]'
+   .schema-tools/bin/infrahubctl version
+   ```
+
+   In a source checkout with the `service` extra installed, `uv run infrahubctl` runs the same tool.
+
+2. Set the address and an API token of the Infrahub instance that your package names as its destination. Use the address that this machine uses to reach Infrahub. It can differ from the `url` in the package, which is the address the Sync worker uses.
+
+   ```sh
+   export INFRAHUB_ADDRESS="https://infrahub.example.com"
+   export INFRAHUB_API_TOKEN="<your Infrahub API token>"
+   ```
+
+3. Load the schema file into the branch:
+
+   ```sh
+   .schema-tools/bin/infrahubctl schema load schema.yml --branch main
+   ```
+
+The [Nautobot tutorial](../tutorials/nautobot-to-existing-infrahub.mdx) shows the same steps for a Compose deployment. It reads the token from `operator.env` without exporting the other values in that file.
 
 ## Related
 

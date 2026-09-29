@@ -74,18 +74,18 @@ For each model, define how source fields map to Infrahub fields. The schema mapp
 
 :::important
 
-**For models the sync will create, `identifiers` must cover the destination kind's human-friendly ID.**
-Infrahub matches a newly created object on the human-friendly-ID values the write carries, and a write
-that omits one does not match an existing object — it creates a second one and reports success. `diff`
-therefore refuses a create it cannot prove carries every component, naming the kind and what is missing,
-rather than letting the duplicate happen.
+**For models the sync will create, `identifiers` must cover a destination key.**
+Infrahub finds a created object by its key: the human-friendly ID, or a uniqueness constraint. A write
+that omits part of the key does not match an existing object; it creates a second one. `diff`
+therefore refuses a create that does not carry every key field, and names the kind and the missing
+field. See [Destination key for Infrahub writes](./reference/schema-mapping.mdx#destination-key-for-infrahub-writes).
 
 Objects that already exist are unaffected: an update is keyed by the destination object's own id,
 recorded when the plan is built, so it changes the object it means even where `identifiers` and the
 human-friendly ID differ — including when a rename changes the human-friendly ID itself.
 
-If a refusal names one of your models, either add the missing field to that model's `identifiers` or
-adjust the human-friendly ID in the destination schema.
+If a refusal names one of your models, either add the missing field to that model's `identifiers` and
+`fields`, or change the key in the destination schema.
 
 :::
 
@@ -212,7 +212,7 @@ For the first sync, enable only the most independent models (tags, locations). V
 
 After the initial seed, schedule the sync to run on a recurring cadence so Infrahub stays current with changes in the source system. The cadence depends on how often the source data changes — hourly, daily, or on-demand are all reasonable.
 
-Infrahub Sync has no built-in scheduler. Use cron, CI, Prefect, or another workflow tool — see [Schedule sync runs](./orchestration.mdx).
+This release of Infrahub Sync has no built-in scheduler. Use cron, CI, Prefect, or another workflow tool — see [Schedule sync runs](./orchestration.mdx).
 
 ### Default behavior preserves Infrahub-only data
 
@@ -262,7 +262,7 @@ The same phases apply for both source systems. The mechanical differences:
 
 ## Common issues
 
-- **Sync runs slowly on large datasets.** Initial syncs of large source-system installations can take a while. Sync performance is an active area of development. Recurring sync runs are typically fast — only deltas are applied.
+- **Sync runs slowly on large datasets.** The first apply of a large source-system installation can take a long time, because every object is a create. A later run writes only the differences, but it still reads the source and the destination in full. Raise `--wait-timeout` for a long apply; see [Waiting for a run](./running-a-sync.mdx#waiting-for-a-run).
 - **A model is being created in Infrahub that should not be.** Check the configuration's `order` key (or the `reference` fields driving the automatic write order) and per-model filters — the model may be enabled when it shouldn't be, or a reference from another model may be pulling it in.
 - **Field values are not mapping correctly.** Check the schema mapping section of the YAML. Common causes: a source field has a different name than expected, or a relationship reference is not resolving because the referenced model was not synced first.
 - **Custom fields in the source system are not appearing in Infrahub.** NetBox and Nautobot custom fields require explicit mapping in the YAML — they are not synced automatically.

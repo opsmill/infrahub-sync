@@ -336,8 +336,8 @@ def test_a_conforming_mapping_yields_no_findings_and_a_fingerprint(monkeypatch: 
 
 def test_an_explicit_request_against_a_non_declaring_destination_is_an_error_finding() -> None:
     # peeringmanager is a real destination that does not declare schema validation, and it
-    # declares update as its only write operation, so the shipped infrahub_to_peering-manager
-    # shape — creates requested, update-only declared — reports both defects (AR5 fixture).
+    # declares no write operation, so the shipped infrahub_to_peering-manager
+    # shape — creates requested, none declared — reports both defects (AR5 fixture).
     data = package_data()
     data["configuration"]["destination"]["name"] = "peeringmanager"
 
@@ -350,7 +350,7 @@ def test_an_explicit_request_against_a_non_declaring_destination_is_an_error_fin
     assert result.schema_fingerprint is None
 
 
-def test_an_update_only_request_against_an_update_only_destination_is_clean() -> None:
+def test_an_update_only_request_against_peeringmanager_is_refused_as_an_unsupported_write() -> None:
     # SKIP_UNMATCHED_SRC removes create, and delete is never requested under the supported
     # live-sync profile even though SKIP_UNMATCHED_DST is not configured (SYNC-78).
     data = package_data()
@@ -359,7 +359,10 @@ def test_an_update_only_request_against_an_update_only_destination_is_clean() ->
 
     result = collect_destination_schema_findings(package(data))
 
-    assert [finding.code for finding in result.findings] == ["destination-schema-validation-unsupported"]
+    assert [finding.code for finding in result.findings] == [
+        "destination-schema-validation-unsupported",
+        "unsupported-destination-write",
+    ]
 
 
 def test_an_unknown_destination_adapter_adds_no_schema_findings() -> None:

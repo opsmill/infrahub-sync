@@ -2093,11 +2093,9 @@ def test_bundled_destination_writes_only_advertise_remote_operations() -> None:
     assert {
         name: capability.supported_destination_write_operations
         for name, capability in BUILTIN_ADAPTER_CAPABILITIES.items()
-        if "destination" in capability.roles
-    } == {
-        "infrahub": frozenset({"create", "update"}),
-        "peeringmanager": frozenset({"update"}),
-    }
+        if capability.supported_destination_write_operations
+    } == {"infrahub": frozenset({"create", "update"})}
+    assert BUILTIN_ADAPTER_CAPABILITIES["peeringmanager"].supported_destination_write_operations == frozenset()
 
 
 @pytest.mark.parametrize("capability", BUILTIN_ADAPTER_CAPABILITIES.values(), ids=lambda item: item.adapter_name)

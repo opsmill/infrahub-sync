@@ -3,12 +3,12 @@ title: NetBox adapter
 ---
 
 import ReferenceLink from "../../src/components/Card";
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
 
-## V3 route
+## Use this adapter
 
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure. The complete example package is `examples/netbox_to_infrahub/package.yml`.
+In a [configuration package](../configuration-package.mdx), name `netbox` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
+
+The example package is [`examples/netbox_to_infrahub/package.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/netbox_to_infrahub/package.yml), and the [NetBox demo tutorial](../tutorials/netbox-demo-to-infrahub.mdx) uses it.
 
 <!-- vale off -->
 ## What is NetBox?
@@ -18,124 +18,89 @@ NetBox is an open-source infrastructure resource management tool that centralize
 
 ## Requirements
 
-This Adapter uses [Netbox SDK](https://pypi.org/project/pynetbox).
-You will need to install it beforehand.
+This adapter uses the [NetBox SDK](https://pypi.org/project/pynetbox), `pynetbox`. The Sync image and the `service` extra install it.
 
 ## Sync directions supported
 
 - NetBox → Infrahub
 
-:::info
-
-Currently, the Netbox adapter supports only **one-way synchronization** from Netbox to Infrahub.
-Syncing data back into Netbox is not yet supported.
-
-:::
+NetBox is a source only. Infrahub Sync does not write to NetBox.
 
 ## Schema
 
-Our `infrahub` repository contains an **example schema** that serves as a starting point for syncing Netbox data into Infrahub.
-This schema follows best practices for Infrahub, **but it does not map the Netbox data model one-to-one** since Infrahub may have additional use cases.
-
-<ReferenceLink title="Schema" url="https://github.com/opsmill/infrahub/blob/stable/models/examples/netbox/netbox.yml" openInNewTab />
-
-### Installing the example schema
-
-To install the example schema into Infrahub, follow these steps:
-
-```bash
-mkdir netbox-sync
-cd netbox-sync
-curl -o schema.yml https://raw.githubusercontent.com/opsmill/infrahub/refs/heads/stable/models/examples/netbox/netbox.yml
-infrahubctl schema load schema.yml
-```
+The example package maps NetBox data into the `infrahub/traditional-infrastructure-sot` schema collection from the [Infrahub Marketplace](https://marketplace.infrahub.app/collections/infrahub/traditional-infrastructure-sot). This schema does not copy the NetBox data model one-to-one. The [NetBox demo tutorial](../tutorials/netbox-demo-to-infrahub.mdx) shows how to download the collection and load it into Infrahub.
 
 ## Configuration
 
-`infrahub-sync` allows defining what gets synchronized from a source to a destination. The shipped `config.yml` is a legacy mapping input that matches the example schema; use `examples/netbox_to_infrahub/package.yml` as the V3 configuration-package envelope for registration.
+Set `source.name` to `netbox`. In a registered package, the token is a `$credential` reference:
 
-<ReferenceLink title="config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/netbox_to_infrahub/config.yml" openInNewTab />
-
-To download the example `config.yml`
-
-```bash
-curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/netbox_to_infrahub/config.yml > config.yml
-```
-
-### Configuration parameters
-
-To use the source-only NetBox adapter, set `source.name` to `netbox`.
-
-Below is a snippet from the example config.yml file:
-
-<Tabs>
-  <TabItem value="Source example" default>
-
-  ```yaml
-  ---
+```yaml
+format_version: 1
+configuration:
   name: from-netbox
   source:
     name: netbox
     settings:
-      url: "https://<NETBOX-ENDPOINT>"
-      token: "<TOKEN>"
+      url: "https://netbox.example.com"
+      token:
+        $credential: netbox-token
       verify_ssl: true # Default value
-  ```
+  destination:
+    name: infrahub
+    settings:
+      url: "https://infrahub.example.com"
+      token:
+        $credential: infrahub-token
+credentials:
+  netbox-token:
+    provider: env
+    identifier: NETBOX_TOKEN
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_API_TOKEN
+```
 
-  </TabItem>
-</Tabs>
+| Setting | Required | Description |
+| --- | --- | --- |
+| `url` | Yes | NetBox URL, as the Sync worker reaches it |
+| `token` | Yes | `$credential` reference to the NetBox API token |
+| `verify_ssl` | No | Verify TLS certificates. Defaults to `true`. |
+
+The worker uses the declared `url`. `NETBOX_ADDRESS` and `NETBOX_URL` in the worker environment do not replace it. The worker reads the token from the environment variable that the credential names. For direct adapter use without a registered package, `NETBOX_ADDRESS`, `NETBOX_URL`, and `NETBOX_TOKEN` take precedence over the declared settings.
 
 ### Schema mapping
 
-The configuration file allows mapping Netbox data to the Infrahub schema, which has been designed to loosely align with the Netbox data model.
-Below is an example showing how to:
-
-- Set the destination Infrahub model (`BuiltinTag` and `LocationGeneric`)
-- Map source data from Netbox (`extras.tags`, `dcim.regions`, and `dcim.sites`)
-- Specify field mappings between Netbox and Infrahub models
-
-As you can see in this example, we can map several paths to the same Infrahub Model.
+The mapping connects NetBox API paths to Infrahub kinds. This excerpt from the example package maps NetBox tags and sites:
 
 ```yaml
-  - name: BuiltinTag
-    mapping: extras.tags
-    identifiers: ["name"]
-    fields:
-      - name: name
-        mapping: name
-      - name: description
-        mapping: description
+  schema_mapping:
+    - name: BuiltinTag
+      mapping: extras.tags
+      identifiers: ["name"]
+      fields:
+        - name: name
+          mapping: name
+        - name: description
+          mapping: description
 
-  - name: LocationGeneric
-    mapping: dcim.regions
-    fields:
-      - name: name
-        mapping: slug
-      - name: description
-        mapping: name
-      - name: type
-        static: "Region"
-      - name: tags
-        mapping: tags
-        reference: BuiltinTag
-
-  - name: LocationGeneric
-    mapping: dcim.sites
-    fields:
-      - name: name
-        mapping: slug
-      - name: description
-        mapping: name
-      - name: type
-        static: "Site"
-      - name: tags
-        mapping: tags
-        reference: BuiltinTag
+    - name: LocationSite
+      mapping: dcim.sites
+      identifiers: ["name"]
+      fields:
+        - name: name
+          mapping: slug
+        - name: description
+          mapping: name
+        - name: status
+          mapping: status.value
+        - name: tags
+          mapping: tags
+          reference: BuiltinTag
 ```
 
-The models available on Netbox can be find in the `/api/schema/swagger-ui` of your instance.
+The NetBox API paths are listed at `/api/schema/swagger-ui/` on your NetBox instance.
 
-<ReferenceLink title="Netbox API Swagger" url="https://demo.netbox.dev/api/schema/swagger-ui" openInNewTab />
+<ReferenceLink title="NetBox API Swagger" url="https://demo.netbox.dev/api/schema/swagger-ui" openInNewTab />
 
 ## Related guides
 

@@ -47,7 +47,7 @@ NetBox and Nautobot each have a fixed schema. Infrahub has a custom schema that 
 
 For a typical mapping:
 
-- Start from the example configuration in the [Infrahub Sync repository](https://github.com/opsmill/infrahub-sync) under `examples/netbox_to_infrahub/`, `examples/nautobot-v1_to_infrahub/`, or `examples/nautobot-v2_to_infrahub/`. The example references the Infrahub demo schema; replace its model and field names with the equivalents in your Infrahub schema.
+- Start from an example in the [Infrahub Sync repository](https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples). `examples/netbox_to_infrahub/package.yml` maps into the Infrahub schema library that the [NetBox demo tutorial](./tutorials/netbox-demo-to-infrahub.mdx) loads. `examples/nautobot-v1_to_infrahub/` and `examples/nautobot-v2_to_infrahub/` contain `config.yml` files that you convert to a package first; see [Convert a config.yml file](./configuration-package.mdx#convert-a-configyml-file). Replace the example kind and field names with the equivalents in your Infrahub schema.
 - For each source model you want to sync (sites, racks, devices, interfaces, IP addresses, VLANs, etc.), find the equivalent Infrahub model and map fields directly.
 - For field name differences (NetBox's `device_role` versus an Infrahub `role` attribute, or Nautobot's `status.name` versus NetBox's `status.value`), the schema mapping section of the YAML handles the translation.
 - For relationship differences, set the `reference` field on a mapping field to the related model. See [Schema mapping reference](./reference/schema-mapping.mdx).
@@ -76,7 +76,7 @@ For any feature where the existing system has a direct capability and Infrahub d
 
 - **Run direction matters for conflict handling.** When syncing NetBox → Infrahub or Nautobot → Infrahub, a matched object is always updated from the source, so edits made in Infrahub to a synced model are overwritten on the next sync run — there is no flag that exempts a matched object from that update. Make sure everyone on the team understands which side is the source of truth for each model.
 - **Use `diff` regularly.** Before applying any sync — and especially during initial setup — run `infrahub-sync diff` to verify what would change. The diff is read-only.
-- **Schedule syncs on a cadence that matches data change rates.** If the source data changes hourly, sync hourly. If it changes daily, sync daily. Infrahub Sync has no built-in scheduler — use cron, CI, or a workflow tool. See [Schedule sync runs](./orchestration.mdx).
+- **Schedule syncs on a cadence that matches data change rates.** If the source data changes hourly, sync hourly. If it changes daily, sync daily. This release of Infrahub Sync has no built-in scheduler — use cron, CI, or a workflow tool. See [Schedule sync runs](./orchestration.mdx).
 - **Set explicit ownership boundaries.** If a model is edited both in NetBox or Nautobot and directly in Infrahub, the sync run overwrites the Infrahub edit on that model with the existing system's data every time. Decide upfront which side is authoritative for a given model, and keep direct Infrahub edits out of synced models.
 
 ## When to move toward full migration
