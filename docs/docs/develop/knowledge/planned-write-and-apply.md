@@ -187,7 +187,8 @@ upgrading before you apply it.
 Several creates sharing a destination human-friendly ID, a unique attribute (including an
 inherited one), or a uniqueness constraint are refused as `DestinationIdentityCollisionError`.
 The error names the colliding rule. Applying those creates could converge distinct source
-objects onto one destination object. Updates are excluded, since each is keyed by its
+objects onto one destination object. A unique attribute inherited from the same generic also
+refuses matching creates of different kinds. Updates are excluded, since each is keyed by its
 recorded destination id. The saved-plan apply gate checks the same rules before its first write.
 
 The write surface applies the same rule, from the same function, before `client.create` — so a create

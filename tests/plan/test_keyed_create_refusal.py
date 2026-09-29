@@ -258,6 +258,45 @@ def test_distinct_hfids_colliding_on_another_rule_are_refused(variant: str, rule
         )
 
     assert "name__value" in str(excinfo.value)
+    assert "Comms closet" in str(excinfo.value)
+
+
+def test_collision_message_withholds_non_name_unique_values() -> None:
+    """A unique credential-like field must never appear in the refusal."""
+    schemas = rack_schema()
+    schemas[DEVICE_KIND] = schemas[DEVICE_KIND].model_copy(
+        update={"attributes": [_text("rack-token", "token", optional=False)]}
+    )
+    first = planned(kind=DEVICE_KIND, identity={"name": "first", "token": "sensitive-value"})
+    second = planned(kind=DEVICE_KIND, identity={"name": "second", "token": "sensitive-value"})
+
+    with pytest.raises(DestinationIdentityCollisionError) as excinfo:
+        warn_missing_convergence_key(destination=SimpleNamespace(schema=schemas), operations=[first, second])
+
+    assert "values withheld" in str(excinfo.value)
+    assert "sensitive-value" not in str(excinfo.value)
+
+
+def test_shared_generic_unique_name_refuses_creates_of_different_kinds() -> None:
+    """Two descendant kinds share the generic's unique name lookup on the server."""
+    schemas = rack_schema(inherited=True)
+    other_kind = "TestOtherRack"
+    schemas[other_kind] = schemas[DEVICE_KIND].model_copy(update={"id": "other-rack-schema", "name": "OtherRack"})
+    first = rack_create("site-a")
+    second = planned(
+        kind=other_kind,
+        identity={"name": "Comms closet", "site": {"peer_kind": SITE_KIND, "identity": {"name": "site-b"}}},
+        payload={"name": "Comms closet"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": "site-b"}])
+        ],
+    )
+
+    with pytest.raises(DestinationIdentityCollisionError, match="inherited unique attribute") as excinfo:
+        warn_missing_convergence_key(destination=SimpleNamespace(schema=schemas), operations=[first, second])
+
+    assert "TestHosting.name__value" in str(excinfo.value)
+    assert "Comms closet" in str(excinfo.value)
 
 
 def test_distinct_unique_values_do_not_collide() -> None:

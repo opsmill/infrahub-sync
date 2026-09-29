@@ -353,6 +353,74 @@ def _create_component_value(operation: PlannedOperation, component: str) -> Any:
     return component_value(operation.identity, component)
 
 
+def _collision_values(components: tuple[str, ...], operation: PlannedOperation) -> str:
+    """Show bounded name values; other unique fields may contain credentials."""
+    if len(components) > 3 or any(
+        component.split(COMPONENT_PATH_SEPARATOR)[-2:] != ["name", "value"] for component in components
+    ):
+        return "values withheld (rule contains a non-name field)"
+    values = [_create_component_value(operation, component) for component in components]
+    if any(not isinstance(value, str) for value in values):
+        return "values withheld (rule contains a non-text value)"
+    return ", ".join(f"{component}={value[:80]!r}" for component, value in zip(components, values, strict=True))
+
+
+def _unique_generic_attributes(node: Any, schema: Mapping[str, Any]) -> set[tuple[str, str]]:
+    """Find unique attributes shared by every kind inheriting each generic."""
+    found: set[tuple[str, str]] = set()
+    pending = list(getattr(node, "inherit_from", ()) or ())
+    seen: set[str] = set()
+    while pending:
+        parent = pending.pop()
+        if parent in seen:
+            continue
+        seen.add(parent)
+        generic = schema.get(parent)
+        if generic is None:
+            continue
+        found.update(
+            (parent, attribute.name)
+            for attribute in getattr(generic, "attributes", ())
+            if getattr(attribute, "unique", False)
+        )
+        pending.extend(getattr(generic, "inherit_from", ()) or ())
+    return found
+
+
+def _refuse_cross_kind_generic_collisions(
+    *, by_kind: Mapping[str, list[PlannedOperation]], schema: Mapping[str, Any]
+) -> None:
+    """Refuse creates matched across kinds by a shared generic's unique attribute."""
+    by_generic_rule: dict[tuple[str, str], list[PlannedOperation]] = {}
+    for kind, creates in by_kind.items():
+        node = schema.get(kind)
+        if node is None:
+            continue
+        for rule in _unique_generic_attributes(node, schema):
+            by_generic_rule.setdefault(rule, []).extend(creates)
+    for (generic, attribute), creates in sorted(by_generic_rule.items()):
+        if len({operation.kind for operation in creates}) < 2:
+            continue
+        component = f"{attribute}__value"
+        by_projection: dict[bytes, list[PlannedOperation]] = {}
+        for operation in creates:
+            value = _create_component_value(operation, component)
+            if _usable(value):
+                by_projection.setdefault(canonical_json_bytes([value], kind=generic), []).append(operation)
+        for group in by_projection.values():
+            if len({operation.kind for operation in group}) < 2:
+                continue
+            kinds = ", ".join(sorted({operation.kind for operation in group}))
+            ids = ", ".join(sorted(operation.operation_id for operation in group[:2]))
+            msg = (
+                f"Planned creates of destination kinds {kinds} collide on inherited unique attribute "
+                f"{generic}.{component}, {_collision_values((component,), group[0])}: {ids}. "
+                "Applying them could match one generic object across kinds. "
+                "The whole plan was refused before any destination write."
+            )
+            raise DestinationIdentityCollisionError(msg)
+
+
 def refuse_destination_identity_collisions(
     *, schema: Mapping[str, Any], operations: Sequence[PlannedOperation]
 ) -> None:
@@ -376,10 +444,15 @@ def refuse_destination_identity_collisions(
             collided = [group for group in by_projection.values() if len(group) > 1]
             if not collided:
                 continue
-            ids = "; ".join(", ".join(sorted(operation.operation_id for operation in group)) for group in collided)
+            group = collided[0]
+            ids = ", ".join(sorted(operation.operation_id for operation in group[:2]))
+            if len(group) > 2:
+                ids += f", and {len(group) - 2} more"
             msg = (
                 f"Planned creates of destination kind {kind!r} collide on {rule_name} "
-                f"({', '.join(components)}): {ids}. Applying them could merge distinct planned objects "
+                f"({', '.join(components)}), {_collision_values(components, group[0])}: {ids}. "
+                "Applying them could merge distinct planned objects "
                 "into one destination object. The whole plan was refused before any destination write."
             )
             raise DestinationIdentityCollisionError(msg)
+    _refuse_cross_kind_generic_collisions(by_kind=by_kind, schema=schema)
