@@ -107,9 +107,7 @@ class MysystemAdapter(DiffSyncMixin, Adapter):
     def model_loader(self, model_name, model): ...
 
 class MysystemModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(cls, adapter, ids, attrs): ...
-    def update(self, attrs): ...
+    pass
 ```
 
 Follow [Writing an adapter](../guidelines/writing-an-adapter.md): mixin first, `structlog`,
@@ -137,14 +135,10 @@ Write the `obj_to_diffsync` helper to walk `element.fields` — `static`, plain 
 `examples/custom_adapter/custom_adapter_src/custom_adapter.py` has a complete version,
 including the single and list reference cases.
 
-#### Step 4: Implement write methods (destination only)
+#### Step 4: Keep model writes inherited
 
-If the adapter can be a destination, implement `create`, `update` and `delete` on the model to
-mutate the target system. A source-only adapter leaves these deferring to the base.
-
-These are the DiffSync-level write methods. Note that at this revision they are not what the
-registered route calls: the service composes `sync` as plan, verify and apply, and the apply
-leg goes through the planned-write surface instead — see Step 5.
+Models inherit `create`, `update` and `delete` from DiffSync. V3 does not call these methods.
+For a destination that can write, implement the adapter-level planned-write surface in Step 5.
 
 #### Step 5: Implement the planned-write surface (optional, destination only)
 
@@ -177,18 +171,14 @@ refused in the pre-write verification gate — **before any write reaches the de
 with an error naming the adapter class:
 
 ```text
-The destination adapter 'MysystemAdapter' cannot apply a saved plan. Use `infrahub-sync sync`
-for this destination, or apply against a destination whose adapter implements the
-planned-write surface.
+The destination adapter 'MysystemAdapter' cannot apply a saved plan. Use `infrahub-sync diff`
+to review changes without writing, or choose a destination whose adapter implements the
+planned-write surface before running `sync` or `apply`.
 ```
 
-**That refusal's advice is stale at this revision. Do not follow it.** Registered V3 `sync` is
-not an independent compare-and-write path: the service composes it as plan, then verify, then
-apply, under one configuration guard, and `execute_run` refuses `operation="sync"` outright for
-exactly that reason. The composed apply leg runs the same
-`isinstance(destination, PlannedWriteDestination)` check, so a destination lacking the surface
-is refused by `sync` and by saved-plan `apply` alike. Reaching for `sync` does not work around
-the missing surface.
+Registered V3 `sync` runs plan, verify and apply under one configuration guard. The apply
+leg runs the same `isinstance(destination, PlannedWriteDestination)` check as saved-plan `apply`.
+A destination lacking the surface is refused by both commands.
 
 What does still work is everything that does not write: `diff` and plan review
 (`runs plan RUN_ID`) are unaffected. `infrahub` is the only one of the nine adapters shipped in

@@ -13,7 +13,6 @@ import urllib3
 from diffsync import Adapter, DiffSyncModel
 from requests import Response
 from requests.adapters import HTTPAdapter
-from typing_extensions import Self
 from urllib3.util.retry import Retry
 
 from infrahub_sync import (
@@ -447,17 +446,3 @@ class AciModel(DiffSyncModelMixin, DiffSyncModel):
             return cls._device_mapping.get(str(node_id), node_id)
 
         native_env.filters["aci_device_name"] = aci_device_name
-
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        # TODO: To implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        # TODO: To implement
-        return super().update(attrs)

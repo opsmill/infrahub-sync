@@ -6,11 +6,13 @@ title: Prefect remote run
 as a Prefect deployment, so a plan can be started and observed over Prefect's own REST API
 instead of by shelling out to the CLI.
 
-This deployment does not write. `operation="sync"` is refused, because a composed sync
-derives its own plan and applies it in one call and can therefore prove nothing about who
-owns the destination between its operations. Writes go through the
+This deployment only plans: `operation="sync"` is refused. Writes go through the
 [Sync HTTP API](./sync-http-api.mdx), which reviews a plan and then applies it while
 holding the registered configuration's write guard.
+
+The reason a composed sync is refused here: it derives its own plan and applies it in one
+call, and can therefore prove nothing about who owns the destination between its
+operations.
 
 The flow parameters, returned result fields, and summary log line form the remote-run
 contract. Changes may extend that contract, but must not silently reshape existing fields.
@@ -104,13 +106,19 @@ a credential, or an environment override.
 Credentials and endpoints stay in the runner's environment. They are never accepted as
 parameters and never appear in a returned result.
 
-Failure messages are additionally redacted by value: every configured credential value
-found in a message — or anywhere in its cause chain — is replaced with `***`. Redaction
-has one deliberate limit: only collected values of **six characters or more** are
-replaced, because replacing a shorter value can corrupt ordinary message text
-(`within 6***.0 seconds`). A credential shorter than that — a
-lab-grade `CISCO_APIC_PASSWORD=admin` — is therefore not redacted from a failure message.
-Use credentials of realistic length on any runner whose logs are not private.
+Failure messages are additionally redacted by value: every configured credential value of
+six characters or more found in a message — or anywhere in its cause chain — is replaced
+with `***`, because replacing a shorter value can corrupt ordinary message text
+(`within 6***.0 seconds`).
+
+:::warning Short credentials are not redacted
+
+Redaction only replaces collected values of **six characters or more**. A credential
+shorter than that — a lab-grade `CISCO_APIC_PASSWORD=admin` — is not redacted from a
+failure message and can appear in failure messages and forwarded log lines. On a runner
+whose logs others can read, use credentials of at least six characters.
+
+:::
 
 ### The write gate
 

@@ -43,7 +43,8 @@ second implementer.
 
 The pre-write gate is `isinstance(destination, PlannedWriteDestination)`, run inside the same gate as
 the artifact verification checks rather than as a per-operation surprise. A destination that is not one
-is refused **before any write**, named, and directed at `sync`.
+is refused **before any write** and named. The operator can review a diff without writing or
+choose a destination whose adapter implements the planned-write surface.
 
 **What that check does and does not verify.** An `isinstance` check against a `runtime_checkable`
 Protocol verifies **member presence only, never signatures**, so against a duck-typed destination it is

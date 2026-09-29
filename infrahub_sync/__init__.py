@@ -393,18 +393,6 @@ class DiffSyncModelMixin:
         return transformed_records
 
     @classmethod
-    def get_resource_name(cls, schema_mapping: list[SchemaMappingModel]) -> str:
-        """Get the resource name from the schema mapping."""
-        for element in schema_mapping:
-            if element.name == cls.__name__:
-                if element.mapping is None:
-                    msg = f"Resource mapping is unset for class {cls.__name__}"
-                    raise ValueError(msg)
-                return element.mapping
-        msg = f"Resource name not found for class {cls.__name__}"
-        raise ValueError(msg)
-
-    @classmethod
     def is_list(cls, name):
         # The declared default decides, not the annotation: a list-typed field
         # left unset is not a list here.

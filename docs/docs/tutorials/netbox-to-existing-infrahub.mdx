@@ -146,7 +146,7 @@ For an agent-assisted draft, follow
 the package here before registration. Whether that guide's skills come with
 your candidate depends on your release; check its release notes.
 
-The private candidate includes a NetBox example at
+The [private candidate](../installation.mdx) includes a NetBox example at
 `linux-amd64/example-package.yml`. It is beside the extracted
 `infrahub-sync-compose-<version>/` directory:
 
@@ -301,7 +301,8 @@ The preview does not create, update, or delete inventory objects in Infrahub.
 Against an existing destination, the plan can include updates and recorded
 deletes as well as creates; review every unexpected operation before proceeding.
 
-If the run fails, inspect its record:
+If the run fails, the CLI's own error output includes `run_id`; use that value
+to inspect the run's record:
 
 ```sh
 ./infrahub-sync-compose cli runs show RUN_ID

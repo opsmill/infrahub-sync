@@ -71,9 +71,10 @@ Prefect execution IDs for the same product run.
 Verification can also run as a separate stage; it checks the retained plan without
 constructing adapters. A confirmed `sync` combines planning, verification and apply in one
 service execution, publishing the plan before the first destination write.
-Both write paths hold a PostgreSQL advisory lock for the configuration while they work.
-This serializes writes for that configuration; it is not a lock on every destination
-object that other configurations or external tools might change.
+Both `sync` and saved-plan `apply` hold a PostgreSQL advisory lock for the configuration
+while they work. For `sync`, the lock covers planning, verification and apply. This serializes
+writes for that configuration; it is not a lock on every destination object that other
+configurations or external tools might change.
 
 For command examples, follow the [reviewed-run procedure](../../compose-deployment.mdx#the-operator-sequence).
 For the stage entrypoints, see [Prefect orchestration](orchestration-prefect.md#registered-service-integration).

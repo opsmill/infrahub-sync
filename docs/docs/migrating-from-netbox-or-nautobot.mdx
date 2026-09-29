@@ -81,7 +81,9 @@ Changing a mapping or its `identifiers` changes what later runs create and match
 
 Nothing retires the superseded objects for you. A saved plan records a `delete` for every destination object the source no longer accounts for, whatever `diffsync_flags` are set, but `apply` never executes one: it reports how many deletes it skipped and completes. The old records therefore stay exactly where they are, still carrying their relationships.
 
-Review the plan before you write, and into a branch. Plan the run with `infrahub-sync diff --config-id <config-id> --version <version> --branch <branch> --reason "..."`, read it with `infrahub-sync runs plan <run-id> --detail`, and apply it by checksum with `infrahub-sync apply <run-id> --expected-checksum <checksum> --reason "..."`. The saved plan names every create it intends, so you can see which prefixes and addresses are about to appear under a new namespace before any of them exists. Afterwards, audit the old objects and everything pointing at them — interfaces, devices and any other relationship bound to the prefix or address — and retire or re-point them deliberately. Infrahub Sync does not migrate them for you, and wiping the destination is not a substitute: it discards Infrahub-only data the sync never owned.
+Review the plan before you write, and into a branch. Before you plan, run `infrahub-sync configs show <config-id> --version <version>` and check the registered package's `destination.settings.branch`: if it names a branch, every run against that package plans and writes on that branch, and a `--branch` flag on `diff` or `apply` is ignored. Only when the package sets no destination branch does `--branch` take effect, and the run falls back to `main` when neither is set. If you need a different branch than the one the package declares, register a new package version with that branch before you plan.
+
+Once the effective branch is what you intend, plan the run with `infrahub-sync diff --config-id <config-id> --version <version> --branch <branch> --reason "..."`, read it with `infrahub-sync runs plan <run-id> --detail`, and apply it by checksum with `infrahub-sync apply <run-id> --expected-checksum <checksum> --branch <branch> --reason "..."`, passing the same `<branch>` argument to both — even though the package's declared branch, if any, still wins over it on both calls. The saved plan records the resolved destination. Apply refuses a destination that differs from that plan. If the package declares no destination branch, changing `--branch` on apply changes that destination and is refused. If the package declares a destination branch, it overrides the flag on both calls. A registered package version is immutable. The saved plan names every create it intends, so you can see which prefixes and addresses are about to appear under a new namespace before any of them exists. Afterwards, audit the old objects and everything pointing at them — interfaces, devices and any other relationship bound to the prefix or address — and retire or re-point them deliberately. Infrahub Sync does not migrate them for you, and wiping the destination is not a substitute: it discards Infrahub-only data the sync never owned.
 
 ### Map fields between the source system and Infrahub
 
@@ -193,13 +195,21 @@ The diff prints the proposed changes to the terminal without modifying Infrahub.
 - Are relationships between models being resolved correctly?
 - Are there any unexpected creates, updates, or deletes?
 
-When the diff looks correct, run the sync:
+When the diff looks correct, review the saved plan and apply it by checksum:
 
 ```shell
-infrahub-sync sync --config-id <config-id> --version <version> --reason "seed Infrahub"
+infrahub-sync runs plan <run-id> --detail
+infrahub-sync apply <run-id> --expected-checksum <checksum> --reason "seed Infrahub"
 ```
 
-The sync applies changes in the order defined by the project's `order` key. Independent models are created first, then dependent models, then models that reference earlier ones.
+If the `diff` used `--branch`, pass the same `--branch` to `apply`, as the Compose operator
+sequence does — and, as [above](#adopt-namespaces-in-an-infrahub-that-already-holds-imported-data),
+check the package's declared destination branch first, since it overrides `--branch` on both
+commands. `apply` writes exactly what you reviewed. `infrahub-sync sync --config-id
+<config-id> --version <version> --reason "..."` is the one-step alternative: it calculates
+and applies a new plan in the same run, without a stop for review.
+
+Applied changes follow the order defined by the project's `order` key. Independent models are created first, then dependent models, then models that reference earlier ones.
 
 ### Migrate one model at a time
 

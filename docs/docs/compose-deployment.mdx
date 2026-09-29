@@ -107,10 +107,10 @@ PostgreSQL and the object store hold the only volumes that survive a restart.
 
 ## Configuration prerequisites
 
-That writes `.instance`, `secrets/postgres-admin-password`, and `operator.env`
-with generated passwords for the two database owner roles, the object store, and
-one API principal. Nothing in `operator.env` is yours to supply before the first
-start.
+Running `init` writes `.instance`, `secrets/postgres-admin-password`, and
+`operator.env` with generated passwords for the two database owner roles, the
+object store, and one API principal. Nothing in `operator.env` is yours to
+supply before the first start.
 
 `init` needs no Docker. It reads `image.bind`, checks its grammar, and copies the
 index reference into `.instance` as plain text, which is what gives every later
@@ -411,6 +411,7 @@ Two things a package declares are resolved elsewhere:
 ./infrahub-sync-compose cli configs show CONFIG_ID
 ./infrahub-sync-compose cli configs versions CONFIG_ID
 ./infrahub-sync-compose cli configs validate CONFIG_ID 1
+./infrahub-sync-compose cli configs show CONFIG_ID --version 1
 ./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'review initial sync'
 ./infrahub-sync-compose cli runs plan RUN_ID --detail
 ./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM --branch main --reason 'apply reviewed initial sync'
@@ -424,6 +425,16 @@ Two things a package declares are resolved elsewhere:
 `CONFIG_ID`, `RUN_ID` and `CHECKSUM` are results the previous commands printed.
 `runs show` reports the run's phase, outcome and Prefect correlation; `runs
 results` prints what the service recorded for it as JSON.
+
+Unlike plain `configs show CONFIG_ID`, which prints only the summary
+(`config_id`, `created_at`), `configs show CONFIG_ID --version 1` prints the
+version's `declared_content`. Check its
+`configuration.destination.settings.branch` before planning: a declared branch
+there overrides `--branch` on both `diff` and `apply`, the run request's
+`--branch` is used only when the package declares none, and the destination
+falls back to `main` when neither is set. If the declared branch is not the
+one you intend to write, register a new version with the intended branch
+before you plan.
 
 On a new deployment, `configs list` prints no command output and exits zero;
 the `Container … Creating/Created` lines are Compose progress. The plan output
@@ -647,11 +658,12 @@ reaches `READY` with an empty configuration registry, no runs and no artifacts
 behind it. Register your package again afterwards; a reset removes what you
 registered along with everything else.
 
-## Replacing this alpha
+## Resetting this alpha to a fresh deployment
 
 This alpha promises no in-place state migration and no backup or restore.
-Replacing it is the reset above followed by a fresh deployment of the same
-bundle and the same image:
+There is no separate upgrade procedure and no newer release to install here:
+the only way to get a clean deployment is the reset above, followed by a
+fresh deployment of the same bundle and the same image:
 
 Use the quickstart lifecycle commands after reset to create the replacement
 deployment; it receives a new identity and starts empty.
