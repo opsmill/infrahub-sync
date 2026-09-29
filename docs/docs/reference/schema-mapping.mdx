@@ -402,6 +402,8 @@ Nautobot's API and model structure are similar to NetBox but with some differenc
 
 Start from the `examples/nautobot-v1_to_infrahub/` (Nautobot 1.x) or `examples/nautobot-v2_to_infrahub/` (Nautobot 2.0 and later) directory in the Infrahub Sync repository and adapt from there.
 
+Neither example is a registrable package: each contains only `config.yml`, and registering it as is is refused. Wrap the configuration in a package envelope (`format_version`, `configuration`, and `credentials` with `$credential` references in place of inline secrets) before you register it. See [Configuration package](../configuration-package.mdx).
+
 ## Related
 
 - [Sync instance configuration](./config.mdx)
