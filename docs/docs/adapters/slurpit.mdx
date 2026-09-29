@@ -121,31 +121,11 @@ export SLURPIT_API_KEY="..."
 export INFRAHUB_API_TOKEN="..."
 ```
 
-For the [Compose deployment](../compose-deployment.mdx), add `SLURPIT_API_KEY` to the
-deployment's Git-ignored `operator.env` beside `INFRAHUB_API_TOKEN`. The bundled Compose
-file passes the Infrahub token to `sync-worker`, but does not pass the Slurp’it key.
-Create `slurpit-worker.override.yaml` in the deployment directory to pass only that
-additional credential to the worker:
-
-```yaml
-services:
-  sync-worker:
-    environment:
-      SLURPIT_API_KEY: ${SLURPIT_API_KEY:?set in operator.env}
-```
-
-After `./infrahub-sync-compose start`, recreate the worker with the override:
-
-```bash
-docker compose \
-  --project-name "infrahub-sync-$(sed -n 's/^INFRAHUB_SYNC_INSTANCE=//p' .instance)" \
-  --env-file defaults.conf --env-file operator.env --env-file .instance \
-  -f compose.yaml -f slurpit-worker.override.yaml \
-  up -d --no-deps --force-recreate sync-worker
-```
-
-Repeat the override command after changing the key or running `./infrahub-sync-compose start`
-again. Restarting the existing container does not reload its environment.
+The bundled [Compose deployment](../compose-deployment.mdx) cannot run this Slurp’it package.
+Its worker uses the bundle's bound image, which does not include the Slurp’it SDK, and the
+worker does not receive `SLURPIT_API_KEY`. Registering the package does not install the SDK
+or pass the key to that worker. To run it with a service worker, deploy a worker image that
+includes the SDK and give `SLURPIT_API_KEY` to that worker's environment.
 
 See [Configuration package](../configuration-package.mdx) for the full envelope reference.
 

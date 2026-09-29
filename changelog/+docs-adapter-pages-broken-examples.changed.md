@@ -1,1 +1,1 @@
-Node exporter plans now use joined source values for interface, filesystem, and disk fields that previously fell back to constants.
+Correct adapter documentation and the shipped node exporter example to show valid mappings and plan joined metric values instead of constant defaults.
