@@ -944,7 +944,7 @@ def test_a_null_mandatory_cardinality_one_relationship_is_refused_before_any_wri
 
 
 def test_generate_payload_create_receives_the_source_owner_and_protection_arguments() -> None:
-    """FR-013: lineage parity with the live `sync` create path."""
+    """FR-013: the planned create passes the source, owner, and protection arguments to payload generation."""
     client = RecordingClient()
     adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
 
