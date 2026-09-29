@@ -35,7 +35,7 @@ Decide which system is authoritative for each type of data before configuring a 
 
 Common patterns:
 
-- **The existing system is authoritative for everything during initial evaluation.** Sync runs NetBox → Infrahub or Nautobot → Infrahub for every model in scope. Infrahub mirrors the existing system; edits made directly in Infrahub to a synced model are overwritten on the next run. This is the safest starting configuration.
+- **The existing system is authoritative for everything during initial evaluation.** Sync runs NetBox → Infrahub or Nautobot → Infrahub for every model in scope. Infrahub mirrors the existing system; edits made directly in Infrahub to a synced model are overwritten on the next run unless `diffsync_flags` prevent that update. This is the safest starting configuration.
 - **Infrahub is authoritative for newly modeled data; the existing system stays authoritative for existing data.** The sync project covers only the models that come from NetBox or Nautobot. New data types (intent, design objects, custom schemas) live in Infrahub only and are outside the sync project's scope.
 - **Each system owns specific models.** For example, the existing system owns rack and cable data, synced into Infrahub; Infrahub owns device intent, IP allocations, and configuration data that has no NetBox or Nautobot equivalent and is never synced out.
 

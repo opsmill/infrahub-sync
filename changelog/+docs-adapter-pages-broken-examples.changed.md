@@ -1,1 +1,1 @@
-Adapter guides now provide valid YAML examples and supported sync directions, while the Prometheus example handles missing interface metrics and the Slurp'it page explains that its matching legacy file is reference-only because credentials resolve in registered runs.
+Node exporter plans now use joined source values for interface, filesystem, and disk fields that previously fell back to constants.

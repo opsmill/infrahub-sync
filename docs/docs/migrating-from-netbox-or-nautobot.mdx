@@ -249,7 +249,7 @@ For each migrated workflow, you can also stop writing to the source system for t
 Once all dependent workflows read from Infrahub and the legacy system is no longer the source of truth for any data:
 
 - **Decommission the legacy system entirely** if it's no longer needed.
-- **Keep the legacy system running for specific workflows** (rack elevation, cable tracing, or any other capability you prefer there). Keep syncing the models those workflows need into Infrahub, or stop syncing entirely once no workflow reads that data from Infrahub.
+- **Keep the legacy system running for specific workflows** (rack elevation, cable tracing, or any other capability you prefer there). Continue syncing a model into Infrahub only while a workflow there needs to read it. A workflow that runs only in the legacy system does not require that sync.
 
 Many teams reach a stable side-by-side state and stay there indefinitely. See [Use NetBox or Nautobot with Infrahub](./using-netbox-or-nautobot-with-infrahub.mdx).
 

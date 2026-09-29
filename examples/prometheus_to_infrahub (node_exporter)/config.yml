@@ -209,4 +209,4 @@ schema_mapping:
       - field: rotational_lbl
         expression: "{{ lookup('node_disk_info', 'labels.device', 'labels.rotational', '0') }}"
       - field: rotational_b
-        expression: "{{ 1 if rotational_lbl == '1' else 0 }}"
+        expression: "{{ 1 if rotational_lbl | string == '1' else 0 }}"

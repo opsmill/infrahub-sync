@@ -20,7 +20,8 @@ This Adapter uses the [Slurp’it SDK](https://pypi.org/project/slurpit-sdk), di
 It is available through the optional `slurpit` extra (`slurpit-sdk>=0.9.52,<0.10`), which uv marks
 as conflicting with the `service` extra the default Sync image and the standard development setup
 both use — `uv sync --extra service --extra slurpit` fails. Running Sync directly, without the
-`service` extra, `uv sync --extra dev --extra prefect --extra slurpit` installs it. To use the SDK
+`service` extra, `uv sync --extra dev --extra prefect --extra slurpit` installs it on Python
+3.11 or newer. On Python 3.10, that command does not install `slurpit-sdk`. To use the SDK
 alongside a `service`-based Sync image, build a custom image instead: copy the repository Dockerfile
 and add this command in the build stage after the final `uv sync` command:
 
@@ -112,12 +113,39 @@ credentials:
     identifier: INFRAHUB_API_TOKEN
 ```
 
-Export the referenced environment variables before starting the worker:
+The worker resolves these references from its own environment. For a direct worker process,
+export both variables before starting it:
 
 ```bash
 export SLURPIT_API_KEY="..."
 export INFRAHUB_API_TOKEN="..."
 ```
+
+For the [Compose deployment](../compose-deployment.mdx), add `SLURPIT_API_KEY` to the
+deployment's Git-ignored `operator.env` beside `INFRAHUB_API_TOKEN`. The bundled Compose
+file passes the Infrahub token to `sync-worker`, but does not pass the Slurp’it key.
+Create `slurpit-worker.override.yaml` in the deployment directory to pass only that
+additional credential to the worker:
+
+```yaml
+services:
+  sync-worker:
+    environment:
+      SLURPIT_API_KEY: ${SLURPIT_API_KEY:?set in operator.env}
+```
+
+After `./infrahub-sync-compose start`, recreate the worker with the override:
+
+```bash
+docker compose \
+  --project-name "infrahub-sync-$(sed -n 's/^INFRAHUB_SYNC_INSTANCE=//p' .instance)" \
+  --env-file defaults.conf --env-file operator.env --env-file .instance \
+  -f compose.yaml -f slurpit-worker.override.yaml \
+  up -d --no-deps --force-recreate sync-worker
+```
+
+Repeat the override command after changing the key or running `./infrahub-sync-compose start`
+again. Restarting the existing container does not reload its environment.
 
 See [Configuration package](../configuration-package.mdx) for the full envelope reference.
 
