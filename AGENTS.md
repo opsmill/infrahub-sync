@@ -21,8 +21,8 @@ Use Python 3.11–3.13 for the full development profile. The former private
 uv sync --extra dev --extra prefect --extra service
 ```
 
-On Python 3.10, install the direct Prefect profile instead. Sync supports Python
-3.11–3.13 only:
+On Python 3.10, install the direct Prefect profile instead. The Sync service supports
+Python 3.11–3.13 only:
 
 ```bash
 uv sync --python 3.10 --extra dev --extra prefect
@@ -61,13 +61,9 @@ uv run infrahub-sync configs --help
 uv run infrahub-sync runs --help
 ```
 
-The `from-netbox` example check is integration-backed. Before running it,
-follow the [NetBox demo tutorial](docs/docs/tutorials/netbox-demo-to-infrahub.mdx)
-through **Register the configuration package**. That setup uses a fresh Infrahub
-instance, loads the matching schema library, creates a current `nbt_...` NetBox
-demo token, and installs `pynetbox`. The public demo data changes over time; the
-bounded live acceptance test records its current data preconditions in
-`tests/integration/test_saved_plan_apply_integration.py`.
+The `from-netbox` example check is integration-backed. It needs a local NetBox with
+the pinned `demo` dataset, the preview stack, and the schema library. Follow
+[The `from-netbox` example check](docs/docs/develop/guidelines/testing-tiers.md#the-from-netbox-example-check).
 
 **Docs** (only if user-facing changes — see [Documentation](#documentation)):
 
@@ -80,7 +76,7 @@ uv run invoke docs.docusaurus
 
 - New or changed code is Ruff-clean and typed where touched (docstrings, specific exceptions).
 - The codebase is clean under ty with no `[[tool.ty.overrides]]` blocks in `pyproject.toml`. Don't reintroduce overrides to mask type errors — fix the underlying issue, or use a targeted `# ty: ignore[<rule>]` with a short TODO at the call site. Run `uv run ty check .` in the full Python 3.11–3.13 profile (the frozen vendored upstream tests are excluded via `[tool.ty.src]` in `pyproject.toml`; the vendored package itself stays checked). On Python 3.10, run `uv run ty check --exclude infrahub_sync/service --exclude tests/service .`.
-- If you add tests, run `uv run pytest -q`.
+- If you add tests, run `uv run invoke tests.tests-unit`.
 
 ## Repository Structure
 
@@ -153,14 +149,17 @@ Add targeted tests for new features or bug fixes:
 - Keep tests atomic and single-purpose.
 
 ```bash
-uv run pytest -q
+uv run invoke tests.tests-unit
 ```
+
+This runs the offline unit tier. The live tiers and their settings are in
+[`develop/guidelines/testing-tiers.md`](docs/docs/develop/guidelines/testing-tiers.md).
 
 ## Documentation
 
 - Update `docs/` for any user-visible changes (flags, config, adapters). Keep examples minimal, accurate, and redacted.
 - Generate CLI docs: `uv run invoke docs.generate`
-- Build site (run `cd docs && pnpm install` once): `uv run invoke docs.docusaurus`
+- Build site (run `cd docs && pnpm install --frozen-lockfile` once; `pnpm` must be on your `PATH`, for example through Corepack): `uv run invoke docs.docusaurus`
 - Lint Markdown/MDX with `rumdl` (config in `pyproject.toml`; also via `uv run invoke docs.rumdl`):
 
 ```bash
@@ -170,7 +169,7 @@ uv run rumdl fmt .     # fix
 
 ## Changelog
 
-Release notes are written by contributors, not generated from PR titles. Every pull request into `main` must add a news fragment under `changelog/`, and `changelog-check.yml` fails the PR if it does not.
+Release notes are written by contributors, not generated from PR titles. Every pull request must add a news fragment under `changelog/`, including pull requests into `feature/v3-develop`. The `changelog-check.yml` workflow that enforces this for `main` is disabled at present: its `pull_request` trigger is commented out, so it runs only when dispatched manually. Reviewers check for the fragment.
 
 Create one with towncrier, naming it after the issue or PR number:
 
@@ -184,9 +183,9 @@ The file must be a direct child of `changelog/` named `<id>.<type>.md`. The seve
 
 Use `+` as the id for a change with no issue number (`+short-slug.housekeeping.md`). Nested paths and unknown types are ignored by towncrier, so the check rejects them rather than let an entry vanish at release time. A fragment that is empty or whitespace-only fails the release build, which names the file.
 
-Label a pull request `ci/skip-changelog` when it genuinely needs no entry — a dependency bump or a typo fix. Dependabot applies that label itself.
+Label a pull request `ci/skip-changelog` when it needs no entry, for example a dependency bump or a typo fix. Dependabot applies that label itself.
 
-**Versions and `CHANGELOG.md` are never edited by hand.** Merging to `main` does not prepare a release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md).
+**Versions and `CHANGELOG.md` are never edited manually.** For a V2 release from `main`, merging does not prepare the release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md). V3 pre-release candidates are built by `workflow-candidate.yml` instead; see [`develop/guides/qualifying-an-internal-candidate.md`](docs/docs/develop/guides/qualifying-an-internal-candidate.md).
 
 ## Invoke Tasks (reference)
 
@@ -233,11 +232,12 @@ If unsure, stop and ask with a concrete question.
 
 ## Platform-Specific Notes
 
-This file (`AGENTS.md`) is the single source of truth. Platform-specific files should point here and only contain overrides:
+This file (`AGENTS.md`) is the single source of truth. Platform-specific files point here and contain only overrides:
 
-- `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/dev-standard.mdc`
+- `CLAUDE.md` imports this file with `@AGENTS.md`.
+- `.github/copilot-instructions.md` is a symbolic link to this file, so it always has the same content.
 
-Each should include the "Required Development Workflow" block and the "Approval checklist" verbatim.
+A platform file that copies text instead must include the "Required Development Workflow" block and the "Approval checklist" verbatim.
 
 ## Adding a New Adapter
 
