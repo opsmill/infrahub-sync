@@ -20,12 +20,16 @@ for a model. It returns a `CursorTier` (an `IntEnum`, defined in
 | Tier | Value | Meaning |
 |------|-------|---------|
 | `NONE` | 0 | The source cannot filter by change; always full extract. The default. |
-| `ID` | 1 | The source exposes a stable id set; changes are detected by comparing ids. |
+| `PAGE_TOKEN` | 1 | Intended for a source that paginates with an opaque `?next=` token, so a crashed extraction could resume mid-page instead of restarting. No product adapter returns this tier yet, and no product entry point persists a cursor across a restart, so the resume behavior is not currently reachable. |
 | `TIMESTAMP` | 2 | The source can filter by modification time (for example NetBox / Nautobot `last_updated__gte`); extract only changed-since records. |
+| `INFRAHUB_DIFF` | 3 | Intended for the Infrahub destination's diff API to return the changed records directly. No adapter returns this tier yet; the Infrahub adapter returns `TIMESTAMP` for kinds present in its schema and `NONE` otherwise. |
 
-Higher tiers extract less data. NetBox returns `TIMESTAMP` for mapped kinds and `NONE`
-otherwise; an adapter with no incremental support inherits the `NONE` default from
-`DiffSyncMixin`.
+`TIMESTAMP` and `INFRAHUB_DIFF` would extract less data than `NONE` by filtering at the source
+or destination — but only on the per-resource incremental branch described below, which no
+current entry point reaches, so every current `plan` and `sync` run still extracts every resource in full.
+`PAGE_TOKEN` is about resuming a paginated extraction, not reducing what it reads, so it does
+not fit that ordering either. NetBox returns `TIMESTAMP` for mapped kinds and `NONE` otherwise;
+an adapter with no incremental support inherits the `NONE` default from `DiffSyncMixin`.
 
 ### What an adapter implements
 
@@ -63,8 +67,27 @@ Cached side snapshots (also Parquet) and cursor state live alongside the plan.
 
 The cache root defaults to `<cwd>/.infrahub-sync-cache/<sync_name>/`, with each run under its
 own `<run_id>/`. Set `INFRAHUB_SYNC_CACHE_DIR` to relocate it (for example to a shared volume);
-the path may not contain `..` traversal segments. Cursor state is written by
-`persist_cursors_for_run()` at the end of a successful run and read at the start of the next.
+the path may not contain `..` traversal segments.
+
+`source_load()` and `destination_load()` call `load_one_side()` on every `plan` and `sync`
+extract (`potenda/__init__.py:482,491`), so the method itself always runs. Every current entry
+point runs with `full_extract=True`. The `execute_run()` default is `True` (`execution.py:1095`),
+and the managed service's `execute_run` call (`service/flow.py:201`) does not override it. The
+`BaselineWriteback` at `service/flow.py:288` only records that fact in metadata. So on every
+current path `load_one_side()` calls `adapter.load()` and returns without reading any cursor
+(`potenda/__init__.py:438-440`).
+
+Only a direct `execute_run(full_extract=False)` call, made with a prior successful run present
+and a matching schema sub-hash, reaches the per-resource branch instead
+(`potenda/__init__.py:446-477`). There, `load_cursors()` returns `{}` (`cache/incremental.py:99-114`)
+because no product code has ever written `cursors.json`: `persist_cursors_for_run()`
+(`potenda/__init__.py:954`) is the direct engine method that would write it, and nothing calls
+it. With no saved cursor, that branch still falls to `model_loader` for every resource, one
+resource at a time; `hydrate_from_parquet()` plus `list_changed_since()` run only for a
+resource that does have a saved cursor, which does not happen on any current path.
+
+`verify` and `apply` do not extract at all: verify reads the saved plan back, and apply opens
+and applies it through `PlanApplier.open_existing`.
 
 ### The row-count baseline
 
