@@ -710,6 +710,9 @@ exec "REAL_GREP" "$@"
 
 STATE_FILE_NAME = ".instance"
 
+# Each wait of the interruption test: for the marker, and for the exit after SIGINT.
+INTERRUPT_STEP_SECONDS = 180
+
 
 @pytest.fixture
 def state_shim(shim: Path) -> Path:
@@ -784,18 +787,33 @@ def test_an_interrupted_state_write_leaves_the_old_state_and_no_scratch_beside_i
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    reached = False
+    exited: int | None = None
     try:
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline and not ready.is_file():
+        # The entry point runs a dozen stand-in subprocesses before the write, so a
+        # full unit run on a busy machine can be slow to get here. Stop early only
+        # when the process is gone, which no amount of waiting would change.
+        deadline = time.monotonic() + INTERRUPT_STEP_SECONDS
+        while time.monotonic() < deadline and process.poll() is None and not ready.is_file():
             time.sleep(0.2)
-        assert ready.is_file(), "the interrupted run never reached the state write"
-        os.killpg(os.getpgid(process.pid), signal.SIGINT)
-        process.wait(timeout=60)
+        reached = ready.is_file()
+        if reached:
+            os.killpg(os.getpgid(process.pid), signal.SIGINT)
+            try:
+                exited = process.wait(timeout=INTERRUPT_STEP_SECONDS)
+            except subprocess.TimeoutExpired:
+                exited = None
     finally:
         if process.poll() is None:
             process.kill()
-            process.wait(timeout=30)
+        process.wait(timeout=30)
+        stderr = process.stderr.read().decode(errors="replace") if process.stderr else ""
+        for stream in (process.stdout, process.stderr):
+            if stream:
+                stream.close()
 
+    assert reached, f"the run never reached the state write (exit {process.returncode}); stderr: {stderr}"
+    assert exited is not None, f"the run did not exit within {INTERRUPT_STEP_SECONDS}s of SIGINT; stderr: {stderr}"
     assert (initialized / STATE_FILE_NAME).read_bytes() == before
     assert scratch_files(initialized) == [], "an interrupted write left a scratch state file behind"
 
