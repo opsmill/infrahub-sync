@@ -24,7 +24,7 @@ uv sync --extra dev --extra prefect --extra service
 ```
 
 The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.1, Psycopg, and Boto3. It also installs
-the SDKs of the bundled NetBox and Nautobot adapters, `prometheus-client`, and `infrahubctl`. The OpsMill
+the client libraries of the bundled NetBox and Nautobot adapters, `prometheus-client`, and `infrahubctl`. The OpsMill
 Prefect Extras integration ships with the package itself as a vendored copy of upstream
 commit `97465e75137f6121d0377cd637383cfb3530d734`. The base installation does not import
 any of these modules. Ordinary CLI and Python API imports remain Prefect-free.

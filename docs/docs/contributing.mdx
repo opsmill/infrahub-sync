@@ -16,7 +16,7 @@ describes how a V3 pre-release candidate is built and checked.
 - Git
 - Docker with the Compose plugin. The unit tests call `docker compose config`, and both
   local stacks run in containers.
-- Node.js 18 or later and pnpm, only if you build the documentation site
+- Node.js 18 or later and `pnpm`, only if you build the documentation site
 
 ## Setting up your development environment
 
@@ -290,7 +290,7 @@ uv run invoke docs.generate
 
 ### Build documentation site
 
-First-time setup. `docs/package.json` pins the pnpm version, and Corepack, which ships with
+First-time setup. `docs/package.json` pins the `pnpm` version, and `corepack`, which ships with
 Node.js, provides it. If `pnpm` is not on your `PATH`, run `corepack enable pnpm` first, or
 prefix each `pnpm` command with `corepack`:
 
