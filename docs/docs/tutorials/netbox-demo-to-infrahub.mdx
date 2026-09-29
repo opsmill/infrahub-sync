@@ -3,26 +3,24 @@ title: Sync the public NetBox demo to a local Infrahub
 description: Set up a local Infrahub instance, load a data model, and synchronize infrastructure data from the public NetBox demo.
 ---
 
-This tutorial is for people getting started with Infrahub: it starts from a blank page, with no existing Infrahub instance or schema required. We will use Infrahub Sync to copy data from the [public NetBox demo](https://demo.netbox.dev) into Infrahub, installing and configuring everything we need along the way. This tutorial covers the fundamental work needed to get started; more advanced topics will be covered in subsequent guides.
+By the end of this tutorial you will have run a local Infrahub and the Sync service,
+loaded a schema that covers locations, devices, interfaces, IPAM, and organizations, and
+imported data from the [public NetBox demo](https://demo.netbox.dev) into an Infrahub
+branch that you can review as a proposed change. You start with no Infrahub instance and
+no schema.
 
-:::tip Already running Infrahub?
-For an existing NetBox and Infrahub with a Compose Sync deployment, follow
-[Preview NetBox data in an existing Infrahub](netbox-to-existing-infrahub).
-That tutorial ends with a saved preview; this local demo continues through an import.
+:::tip Other routes
+
+- For an existing NetBox and Infrahub with a Compose Sync deployment, follow
+  [Preview NetBox data in an existing Infrahub](netbox-to-existing-infrahub).
+  That tutorial ends with a saved preview; this local demo continues through an import.
+- To run the Sync service from a checkout in containers, with a local NetBox instead
+  of the public demo, follow [Run from source](../development-stack.mdx#run-from-source).
+  It uses the same example package and ends with the same import.
+
 :::
 
-By the end of this tutorial, you will know how to:
-
-- run Infrahub and the Sync service locally
-- install Infrahub Sync
-- load a schema into Infrahub
-- create a NetBox → Infrahub sync project
-- synchronize NetBox objects into Infrahub
-- review the import in a branch and open a proposed change
-
 **Time**: ~30 minutes
-
-**What you will build**: A running Infrahub instance with a production-grade schema covering the same core domains as NetBox (locations, devices, interfaces, IPAM, and organizations), populated with data synchronized from the public NetBox demo into a branch, ready to review as a proposed change.
 
 **Prerequisites**:
 
@@ -113,13 +111,9 @@ For more about supported adapters and their Python requirements, see the [NetBox
 
 Infrahub stores data according to its schema. Before we can import any data, we need Infrahub to know the kinds of objects that the sync will create.
 
-We provide a production-grade Infrahub schema covering DCIM and IPAM features similar to NetBox's. It is not a one-to-one port of NetBox's own data model, and that's intentional.
-
-:::info
-
-This is a production-grade Infrahub schema, not a copy of NetBox's data model. Infrahub gives you a flexible graph model, so a real migration can preserve the parts of NetBox that matter to you while adapting the model to your own workflows.
-
-:::
+The schema for this tutorial covers DCIM and IPAM features similar to NetBox's. It is
+not a copy of NetBox's data model. A real migration can keep the parts of NetBox that
+matter to you and adapt the model to your own workflows.
 
 The schemas are published on the [Infrahub Marketplace](https://marketplace.infrahub.app/collections/infrahub/traditional-infrastructure-sot) as the `infrahub/traditional-infrastructure-sot` collection. Download it with `infrahubctl`, which the project template already installs:
 
@@ -128,6 +122,14 @@ uv run infrahubctl marketplace get infrahub/traditional-infrastructure-sot --col
 ```
 
 The command writes the collection's 16 schema files into `schemas/traditional-infrastructure-sot/`. It reads from the marketplace only, so your Infrahub instance does not need to be reachable yet.
+
+The command can fail with `Marketplace request failed: ReadTimeout`. If it does, copy the
+same 16 files from the Infrahub Sync checkout instead. The nightly tests load this copy:
+
+```bash
+mkdir -p schemas
+cp -R ../infrahub-sync/tests/data/nightly_schema/traditional-infrastructure-sot schemas/
+```
 
 :::success Verification
 Run `ls schemas/traditional-infrastructure-sot`. You should see files including `dcim.yml`, `location.yml`, `ipam.yml`, and `organization.yml`.
@@ -142,7 +144,7 @@ export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 
 This is the default admin token that the project's Docker Compose stack seeds automatically, and it matches the default already configured in `infrahubctl.toml`. Do not reuse it for an internet-facing or shared Infrahub instance.
 
-Then load the schema into Infrahub using the project's `load-schema` task, which walks the `schemas/` folder recursively and picks up everything you just downloaded:
+Then load the schema into Infrahub using the project's `load-schema` task, which walks the `schemas/` folder recursively and loads every file you downloaded:
 
 ```bash
 uv run invoke load-schema
@@ -163,7 +165,6 @@ Create a token in the public NetBox demo instance so Infrahub Sync can read data
 Export the token locally:
 
 ```bash
-export NETBOX_URL="https://demo.netbox.dev"
 export NETBOX_TOKEN="nbt_..."
 ```
 
@@ -191,13 +192,13 @@ Open `sync-projects/netbox-demo/package.yml` in an editor and scan the top-level
 - `schema_mapping` defines how NetBox API resources become Infrahub objects.
 
 The worker reads the `source.settings.url` and `destination.settings.url` values from the
-registered package itself, not from the environment — the `NETBOX_URL` and
-`INFRAHUB_ADDRESS` variables exported above only matter to the `invoke load-schema` task and
-other project-template commands that run outside Infrahub Sync. If either target isn't at
-the address already in the file, edit those two URLs directly in
-`sync-projects/netbox-demo/package.yml`. Only the two credentials (`NETBOX_TOKEN` and
-`INFRAHUB_API_TOKEN`) come from the worker's environment, resolved through the
-`credentials` block at the bottom of the file.
+registered package itself, not from the environment. The `INFRAHUB_ADDRESS` variable
+exported above is used only by `infrahubctl`, the `invoke load-schema` task, and other
+project-template commands that run outside Infrahub Sync. If either target is not at the
+address already in the file, edit those two URLs in
+`sync-projects/netbox-demo/package.yml` before you register it. Only the two credentials
+(`NETBOX_TOKEN` and `INFRAHUB_API_TOKEN`) come from the worker's environment, resolved
+through the `credentials` block at the bottom of the file.
 
 This tutorial registers the package, uses `diff` to create a service plan, reviews that
 plan, and then applies it by its checksum, so the writes are exactly what you reviewed. See
@@ -288,7 +289,6 @@ export AWS_SECRET_ACCESS_KEY="sync-local-secret"
 export INFRAHUB_SYNC_SERVICE_WORK_POOL="sync-process-pool"
 export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/sync-projects"
 export INFRAHUB_SYNC_SERVICE_BEARER_TOKENS='{"tutorial-admin":{"token":"tutorial-sync-api-token","administrator":true}}'
-export NETBOX_URL="https://demo.netbox.dev"
 export NETBOX_TOKEN="nbt_..."
 export INFRAHUB_ADDRESS="http://localhost:8000"
 export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"

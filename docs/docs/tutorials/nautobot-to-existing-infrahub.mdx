@@ -3,8 +3,15 @@ title: Preview Nautobot data in an existing Infrahub
 ---
 
 Preview the locations and devices from your existing Nautobot instance in an
-existing Infrahub. You will prepare two destination kinds, register a Sync
-configuration, and review a saved plan before importing inventory data. For a
+existing Infrahub. You will:
+
+- load two destination kinds, the Infrahub schema types that receive the data, into
+  an Infrahub branch. A branch holds changes apart from `main` until you merge them.
+- register a Sync configuration package.
+- review a saved plan: the list of creates, updates, and deletes that the Sync
+  service calculates and stores before it writes anything.
+
+This tutorial writes no inventory data. It ends with the saved plan. For a
 fresh local Infrahub and the public NetBox demo, follow the
 [local demo tutorial](netbox-demo-to-infrahub) instead.
 
@@ -328,7 +335,7 @@ edits, run `start` again; after package edits, register and validate the new ver
 You now have a registered configuration and a saved preview to review. For
 later approved writes and deployment maintenance, see the
 [Compose operator sequence](../compose-deployment#the-operator-sequence) and
-[day 2 operations](../operations/day-2-operations.mdx).
+[Operate a Compose deployment](../operations/day-2-operations.mdx).
 
 The following notes concern larger mappings beyond this first preview.
 
