@@ -1,0 +1,1 @@
+Correct the migration, orchestration, custom-certificate, and side-by-side NetBox/Nautobot guides to describe the V3 configuration package, Sync-service execution, and worker-side TLS trust instead of the retired V2 CLI-driven model.

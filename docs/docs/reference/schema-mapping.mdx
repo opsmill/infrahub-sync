@@ -2,7 +2,7 @@
 title: Schema mapping reference
 ---
 
-The schema mapping section of a sync project's `config.yml` defines how data translates between the source system and the destination system. Worked examples for NetBox → Infrahub and Nautobot → Infrahub appear at the end.
+The schema mapping section of a sync project's `package.yml` defines how data translates between the source system and the destination system. Worked examples for NetBox → Infrahub and Nautobot → Infrahub appear at the end.
 
 For the full configuration schema (not just the mapping section), see [Sync instance configuration](./config.mdx).
 
@@ -286,7 +286,7 @@ The patterns below cover the most common NetBox → Infrahub mappings. Adapt the
 
 ### IP addresses with namespace and VRF references
 
-The namespace is what identifies the address; the VRF is kept as an ordinary relationship. `namespace_name` is produced by a transform that reads the source VRF name and falls back to Infrahub's built-in `default` namespace when there is no VRF — see the shipped `examples/netbox_to_infrahub/config.yml` for the exact expression.
+The namespace is what identifies the address; the VRF is kept as an ordinary relationship. `namespace_name` is produced by a transform that reads the source VRF name and falls back to Infrahub's built-in `default` namespace when there is no VRF — see the shipped `examples/netbox_to_infrahub/package.yml` for the exact expression.
 
 Because the namespace is keyed by that name, this mapping cannot carry two VRFs that share one. The namespace records come from the same VRF list, so the second one raises `ObjectAlreadyExists` and the run stops while loading the source — before a plan exists and before anything is written at the destination. It does not merge the two. A VRF named `default` is a different case: its objects share the built-in namespace with every object that has no VRF, and any prefix or address value repeated inside that shared namespace collides there. [Key the namespace on the VRF ID instead of its name](#key-the-namespace-on-the-vrf-id-instead-of-its-name) avoids both without touching NetBox. Adding either mapping to an Infrahub that already holds imported data does not move the objects a previous sync created; see [Migrate from NetBox or Nautobot](../migrating-from-netbox-or-nautobot.mdx) for how to handle that.
 
@@ -400,7 +400,9 @@ Nautobot's API and model structure are similar to NetBox but with some differenc
 - Nautobot status fields are objects rather than strings — use `status.name` instead of `status.value`.
 - Custom fields and computed fields appear in different sections of the API response.
 
-Start from the `examples/nautobot_to_infrahub/` directory in the Infrahub Sync repository and adapt from there.
+Start from the `examples/nautobot-v1_to_infrahub/` (Nautobot 1.x) or `examples/nautobot-v2_to_infrahub/` (Nautobot 2.0 and later) directory in the Infrahub Sync repository and adapt from there.
+
+Neither example is a registrable package: each contains only `config.yml`, and registering it as is is refused. Wrap the configuration in a package envelope (`format_version`, `configuration`, and `credentials` with `$credential` references in place of inline secrets) before you register it. See [Configuration package](../configuration-package.mdx).
 
 ## Related
 

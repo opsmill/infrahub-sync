@@ -2,31 +2,27 @@
 title: Use custom CA certificates
 ---
 
-For sync sources or destinations that use TLS certificates signed by an internal CA — common in enterprise networks — install the CA in the system trust store, then point Python's HTTP client at that store.
+For sync sources or destinations that use TLS certificates signed by an internal CA — common in enterprise networks — the CA has to be trusted by whichever process actually opens that connection. The V3 CLI does not connect to sources or destinations itself; it submits a run to the Sync API and waits. The Sync worker is what builds the adapters and opens the source and destination connections, so a custom CA has to be trusted there.
 
-## Add the certificate to the system trust store
+## Trusting the CLI-to-API connection
 
-Create a subdirectory for the custom CA and copy the root certificate into it:
+The one TLS connection the CLI host makes is to the Sync API (`INFRAHUB_SYNC_API_URL`). The CLI's HTTP client is `httpx`, not `requests`, so it does not honor `REQUESTS_CA_BUNDLE`. If that API is served behind a certificate signed by an internal CA, install the CA in the system trust store of the shell that runs `infrahub-sync`, then point `httpx` (via the standard `ssl` module) at that store:
 
 ```bash
 sudo mkdir /usr/local/share/ca-certificates/custom-ca
 sudo cp customRCA.crt /usr/local/share/ca-certificates/custom-ca/
-```
-
-Then load the certificates into the trusted root store:
-
-```bash
 sudo update-ca-certificates
+export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ```
 
-The exact paths above are for Debian/Ubuntu systems. On other distributions the trust store lives elsewhere (`/etc/pki/ca-trust/source/anchors/` on RHEL/Fedora, for example) — adapt accordingly.
+The exact paths above are for Debian/Ubuntu systems. On other distributions the trust store lives elsewhere (`/etc/pki/ca-trust/source/anchors/` on RHEL/Fedora, for example) — adapt accordingly, and use `SSL_CERT_DIR` instead of `SSL_CERT_FILE` if the distribution keeps the trust anchors as a directory of individual certificates. This setting affects only the CLI host; it has no effect on the worker that runs the sync.
 
-## Point Python's HTTP client at the trust store
+## Trusting the source and destination connections
 
-Infrahub Sync uses `requests` under the hood, which reads the `REQUESTS_CA_BUNDLE` environment variable to find a custom certificate bundle:
+The worker opens the connections that matter for a sync: to the source (NetBox, Nautobot, or another adapter) and to the Infrahub destination. Set these in the worker's own environment, not the CLI host's:
 
-```bash
-export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
-```
+- `REQUESTS_CA_BUNDLE` covers only the `requests`-based adapters (NetBox, Nautobot, and the other `requests`-backed adapters); it has no effect on the Infrahub destination, which connects through the Infrahub SDK rather than through `requests`.
+- `INFRAHUB_TLS_CA_FILE` sets the CA file the Infrahub SDK uses for the destination connection directly.
+- `SSL_CERT_FILE` (or `SSL_CERT_DIR`) is the fallback for the Infrahub destination when `INFRAHUB_TLS_CA_FILE` is unset: the SDK's default SSL context consults it the same way the CLI-to-API connection does.
 
-Set this in the same shell environment where `infrahub-sync` runs — either exported in the user's shell profile, set in the scheduler that runs the sync, or passed in the container environment if running containerized.
+The Compose bundle's `sync-worker` service runs with a fixed `environment` list, a read-only root filesystem, and only `tmpfs` mounts — there is no supported way today to add a custom CA bundle to that container. If a source, destination, or the worker's own connections need a CA the public trust store doesn't carry, that CA cannot yet be trusted on a Compose deployment.
