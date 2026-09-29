@@ -411,6 +411,7 @@ Two things a package declares are resolved elsewhere:
 ./infrahub-sync-compose cli configs show CONFIG_ID
 ./infrahub-sync-compose cli configs versions CONFIG_ID
 ./infrahub-sync-compose cli configs validate CONFIG_ID 1
+./infrahub-sync-compose cli configs show CONFIG_ID --version 1
 ./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'review initial sync'
 ./infrahub-sync-compose cli runs plan RUN_ID --detail
 ./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM --branch main --reason 'apply reviewed initial sync'
@@ -424,6 +425,16 @@ Two things a package declares are resolved elsewhere:
 `CONFIG_ID`, `RUN_ID` and `CHECKSUM` are results the previous commands printed.
 `runs show` reports the run's phase, outcome and Prefect correlation; `runs
 results` prints what the service recorded for it as JSON.
+
+Unlike plain `configs show CONFIG_ID`, which prints only the summary
+(`config_id`, `created_at`), `configs show CONFIG_ID --version 1` prints the
+version's `declared_content`. Check its
+`configuration.destination.settings.branch` before planning: a declared branch
+there overrides `--branch` on both `diff` and `apply`, the run request's
+`--branch` is used only when the package declares none, and the destination
+falls back to `main` when neither is set. If the declared branch is not the
+one you intend to write, register a new version with the intended branch
+before you plan.
 
 On a new deployment, `configs list` prints no command output and exits zero;
 the `Container … Creating/Created` lines are Compose progress. The plan output
