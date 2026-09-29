@@ -1,4 +1,4 @@
-"""Packaged Prefect flow that runs one Infrahub Sync plan or confirmed sync.
+"""Packaged Prefect flow that runs one read-only Infrahub Sync plan; it refuses `sync`.
 
 Requires the optional `prefect` extra — from the repository checkout,
 `pip install -e '.[prefect]'` (or `uv pip install -e '.[prefect]'`). A
@@ -156,7 +156,7 @@ def infrahub_sync_run(
     confirm_writes: bool = False,
     branch: str | None = None,
 ) -> dict[str, Any]:
-    """Run one Infrahub Sync plan or explicitly confirmed sync via the shared surface.
+    """Run one read-only Infrahub Sync plan via the shared surface; `operation="sync"` is refused.
 
     EXACTLY these four parameters; none accepts paths, CLI fragments,
     credentials, or environment overrides. The configuration directory comes
