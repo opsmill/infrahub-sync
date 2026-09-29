@@ -1,1 +1,1 @@
-Fix broken YAML examples, empty adapter pages, and inaccurate claims on the adapter documentation, including the Prometheus lookup join keys and a broken Slurp'it package link.
+Correct adapter examples and guidance: single-target Prometheus lookups now use matching labels and explicit defaults for missing metrics, while the Slurp'it legacy config is reference-only because credential references require package registration.

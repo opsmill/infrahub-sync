@@ -1,5 +1,5 @@
 ---
-# from-slurpit — the `configuration` body of package.yml, byte for byte, like every other V3
+# from-slurpit — the same parsed configuration as package.yml, like every other V3
 # example (see examples/netbox_to_infrahub/config.yml for the same pattern): a test enforces
 # that this file and package.yml's `configuration` stay identical, so both name the same
 # $credential references. Register package.yml with `infrahub-sync configs register`; the
