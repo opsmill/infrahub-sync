@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 import xml.etree.ElementTree as ET  # noqa: S405 -- generated local reports only
 from pathlib import Path
 from types import ModuleType
@@ -94,7 +95,97 @@ def test_preview_resets_and_starts_its_own_stack(runner: ModuleType, monkeypatch
     assert "pytest -m preview" in events[3]
 
 
-def test_planned_counts_ignore_unexecuted_deletes(runner: ModuleType) -> None:
-    """The branch count comparison uses only creates from plan details."""
-    output = "by_kind: DcimDevice=2, LocationSite=1\na create DcimDevice name=one\nb create DcimDevice name=two\nc delete LocationSite name=old\n"
-    assert runner.planned_counts(output) == {"DcimDevice": 2}
+def test_integration_seeds_the_live_branch(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The integration suite seeds the branch its live write tests require."""
+    events: list[str] = []
+    monkeypatch.setattr(runner, "environment", lambda: {"NETBOX_URL": "unused", "NETBOX_TOKEN": "unused"})
+    monkeypatch.setattr(runner, "start_preview", lambda _env: events.append("up"))
+
+    def record(*command: str, **_kwargs: object) -> str:
+        events.append(" ".join(command))
+        return ""
+
+    monkeypatch.setattr(runner, "run", record)
+    runner.suite("integration")
+    assert events[0] == "up"
+    assert events[1].endswith("invoke preview.seed")
+    assert "pytest -m integration" in events[2]
+
+
+def test_planned_counts_include_unexecuted_deletes(runner: ModuleType) -> None:
+    """The branch count includes a built-in object whose delete is not executed."""
+    output = (
+        "operations: 3\nby_kind: IpamNamespace=2, DcimDevice=1\n"
+        "a create IpamNamespace name=MGMT\n"
+        "b create DcimDevice name=router\n"
+        "c delete IpamNamespace name=default (not executed)\n"
+    )
+    assert runner.planned_counts(output) == {"IpamNamespace": 2, "DcimDevice": 1}
+
+
+def test_from_netbox_accepts_cli_terminal_outcomes(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A completed diff is planned and a completed sync is applied."""
+    checked: list[str] = []
+
+    def cli(*command: str, **_kwargs: object) -> str:
+        if "netbox.demo-package" in command or "branch" in command:
+            return ""
+        if "register" in command:
+            return "config_id: config-1\nregistry_version: 1\n"
+        if "diff" in command:
+            return "run_id: diff-1\noperations: 1688\n"
+        if "sync" in command:
+            return "run_id: sync-1\n"
+        if "show" in command:
+            return "outcome: planned\n" if "diff-1" in command else "outcome: applied\n"
+        pytest.fail(f"unexpected command: {command}")
+
+    monkeypatch.setattr(runner, "run", cli)
+    monkeypatch.setattr(runner, "check_import_counts", lambda run_id, _env: checked.append(run_id))
+    runner.from_netbox({})
+    assert checked == ["diff-1"]
+
+
+def test_import_counts_match_planned_operations(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The existing default namespace accounts for the unexecuted delete."""
+    plan = "operations: 1688\nby_kind: DcimDevice=1681, IpamNamespace=7\n"
+    plan += "".join(f"{index} create DcimDevice name=device-{index}\n" for index in range(1681))
+    plan += "".join(f"{index} create IpamNamespace name=namespace-{index}\n" for index in range(6))
+    plan += "delete-1 delete IpamNamespace name=default (not executed)\n"
+    monkeypatch.setattr(runner, "run", lambda *_args, **_kwargs: plan)
+    sdk = ModuleType("infrahub_sdk")
+    monkeypatch.setattr(sdk, "Config", lambda **_kwargs: object(), raising=False)
+
+    class Client:
+        """Return the branch counts observed after the demo import."""
+
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        @staticmethod
+        def count(*, kind: str, branch: str) -> int:
+            assert branch == "netbox-import"
+            return {"DcimDevice": 1681, "IpamNamespace": 7}[kind]
+
+    monkeypatch.setattr(sdk, "InfrahubClientSync", Client, raising=False)
+    monkeypatch.setitem(sys.modules, "infrahub_sdk", sdk)
+    runner.check_import_counts("diff-1", {"INFRAHUB_ADDRESS": "unused", "INFRAHUB_API_TOKEN": "unused"})
+
+
+def test_schema_loads_the_pinned_bundle(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both NetBox suites use the bundled schema without a Marketplace request."""
+    path = runner.ROOT / "tests" / "data" / "nightly_schema"
+    assert len(list(path.rglob("*.yml"))) == 16
+    assert runner.schema_digest(path) == runner.SCHEMA_SHA256
+    commands: list[tuple[str, ...]] = []
+    monkeypatch.setattr(runner, "run", lambda *command, **_kwargs: commands.append(command))
+    runner.schema({})
+    assert commands == [("uv", "run", "--no-sync", "infrahubctl", "schema", "load", str(path), "--wait", "120")]
+
+
+def test_summary_names_sha_refusal(runner: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The summary identifies why all four suites were left unstarted."""
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    runner.summarize("bad-sha", sha_guard="failure")
+    assert "Requested commit refused by the merged-commit SHA guard." in summary.read_text()

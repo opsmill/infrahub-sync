@@ -36,6 +36,7 @@ jobs:
 
       # Match the candidate workflow's exact-checkout and merged-ancestor guard.
       - name: "Refuse an abbreviated, different, or unmerged commit"
+        id: sha_guard
         env:
           NIGHTLY_SHA: ${{ inputs.sha }}
         run: |
@@ -128,6 +129,7 @@ jobs:
         if: always() && steps.checkout.outcome == 'success'
         env:
           NIGHTLY_SHA: ${{ inputs.sha }}
+          NIGHTLY_SHA_GUARD: ${{ steps.sha_guard.outcome }}
         run: python3 .github/scripts/nightly_e2e.py summary "$NIGHTLY_SHA"
 
       - name: "Upload per-suite JUnit reports"
@@ -168,6 +170,7 @@ jobs:
       - name: "Fail the run if a suite did not pass"
         if: always()
         env:
+          SHA_GUARD: ${{ steps.sha_guard.outcome }}
           DEPENDENCIES: ${{ steps.dependencies.outcome }}
           IMAGES: ${{ steps.images.outcome }}
           INTEGRATION: ${{ steps.integration.outcome }}
@@ -175,7 +178,8 @@ jobs:
           SAVED_PLAN: ${{ steps.saved-plan.outcome }}
           FROM_NETBOX: ${{ steps.from-netbox.outcome }}
         run: |
-          for outcome in "$DEPENDENCIES" "$IMAGES" "$INTEGRATION" "$PREVIEW" "$SAVED_PLAN" "$FROM_NETBOX"; do
+          for outcome in "$SHA_GUARD" "$DEPENDENCIES" "$IMAGES" "$INTEGRATION" \
+            "$PREVIEW" "$SAVED_PLAN" "$FROM_NETBOX"; do
             if [ "$outcome" != success ]; then
               echo "At least one end-to-end suite or prerequisite did not pass" >&2
               exit 1

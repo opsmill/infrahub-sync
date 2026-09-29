@@ -11,12 +11,14 @@ import subprocess  # noqa: S404 -- fixed commands run against this checkout's di
 import sys
 import time
 import xml.etree.ElementTree as ET  # noqa: S405 -- only local pytest reports are parsed
+from hashlib import sha256
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORTS = ROOT / ".preview" / "nightly-e2e"
 SUITES = ("integration", "preview", "saved-plan", "from-netbox")
-EXPECTED_DEMO_CREATES = 1687
+EXPECTED_DEMO_OPERATIONS = 1688
+SCHEMA_SHA256 = "b74a0ff09cde3aafb1275293be7523f1b377d64073c43aca3ccc14cbe4c5a025"
 
 
 def run(*command: str, env: dict[str, str] | None = None, capture: bool = False) -> str:
@@ -83,28 +85,22 @@ def assert_pinned_images() -> None:
             raise RuntimeError(msg)
 
 
+def schema_digest(path: Path) -> str:
+    """Hash schema paths and content to pin the bundled collection."""
+    digest = sha256()
+    for file in sorted(path.rglob("*.yml")):
+        digest.update(file.relative_to(path).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(file.read_bytes())
+    return digest.hexdigest()
+
+
 def schema(env: dict[str, str]) -> None:
-    """Load the Marketplace schema required by both NetBox checks."""
-    path = ROOT / ".netbox" / "schemas"
-    path.parent.mkdir(exist_ok=True)
-    if not path.exists():
-        command = (
-            "uv",
-            "run",
-            "--no-sync",
-            "infrahubctl",
-            "marketplace",
-            "get",
-            "infrahub/traditional-infrastructure-sot",
-            "--collection",
-            "--output-dir",
-            str(path),
-        )
-        try:
-            run(*command, env=env)
-        except subprocess.CalledProcessError:
-            time.sleep(30)
-            run(*command, env=env)
+    """Load the bundled collection required by both NetBox checks."""
+    path = ROOT / "tests" / "data" / "nightly_schema"
+    if schema_digest(path) != SCHEMA_SHA256:
+        msg = "the bundled nightly schema differs from its recorded content digest"
+        raise RuntimeError(msg)
     run("uv", "run", "--no-sync", "infrahubctl", "schema", "load", str(path), "--wait", "120", env=env)
 
 
@@ -123,23 +119,23 @@ def parsed_fields(output: str) -> dict[str, str]:
 
 
 def planned_counts(output: str) -> dict[str, int]:
-    """Count executable creates by kind in a detailed saved plan."""
+    """Count planned creates and unexecuted deletes by kind."""
     counts: dict[str, int] = {}
     for line in output.splitlines():
         match line.split(maxsplit=3):
-            case [_, "create", kind, *_]:
+            case [_, ("create" | "delete"), kind, *_]:
                 counts[kind] = counts.get(kind, 0) + 1
     return counts
 
 
 def check_import_counts(run_id: str, env: dict[str, str]) -> None:
-    """Compare the applied branch with creates in the saved plan, kind by kind."""
+    """Compare branch counts with planned operations, including unexecuted deletes."""
     from infrahub_sdk import Config, InfrahubClientSync  # noqa: PLC0415 -- live-suite dependency
 
     plan = run("uv", "run", "--no-sync", "infrahub-sync", "runs", "plan", run_id, "--detail", env=env, capture=True)
     expected = planned_counts(plan)
-    if not expected or sum(expected.values()) != EXPECTED_DEMO_CREATES:
-        msg = f"the local demo plan has {sum(expected.values())} creates, expected 1687"
+    if not expected or sum(expected.values()) != EXPECTED_DEMO_OPERATIONS:
+        msg = f"the local demo plan has {sum(expected.values())} operations, expected 1688"
         raise RuntimeError(msg)
     client = InfrahubClientSync(config=Config(address=env["INFRAHUB_ADDRESS"], api_token=env["INFRAHUB_API_TOKEN"]))
     actual = {kind: client.count(kind=kind, branch="netbox-import") for kind in expected}
@@ -195,7 +191,8 @@ def from_netbox(env: dict[str, str]) -> None:
         completed = parsed_fields(
             run("uv", "run", "--no-sync", "infrahub-sync", "runs", "show", fields["run_id"], env=env, capture=True)
         )
-        if completed.get("outcome") != "succeeded":
+        expected_outcome = "planned" if operation == "diff" else "applied"
+        if completed.get("outcome") != expected_outcome:
             msg = f"the {operation} run ended with {completed.get('outcome', 'no outcome')}"
             raise RuntimeError(msg)
     check_import_counts(plan_run_id, env)
@@ -214,6 +211,7 @@ def suite(name: str) -> None:
         env = environment()
         if name == "integration":
             start_preview(env)
+            run("uv", "run", "--no-sync", "invoke", "preview.seed", env=env)
             # The saved-plan case needs its own fresh destination and seed dataset.
             env.pop("NETBOX_URL")
             env.pop("NETBOX_TOKEN")
@@ -299,14 +297,15 @@ def collect_logs(name: str) -> None:
                 output.write(log.read_text(encoding="utf-8", errors="replace"))
 
 
-def summarize(sha: str) -> None:
+def summarize(sha: str, *, sha_guard: str = "success") -> None:
     """Write per-suite JUnit counts and durations to the GitHub job summary."""
     lines = [
         f"## Nightly end-to-end run for `{sha}`",
         "",
-        "| Suite | Passed | Failed | Skipped | Duration |",
-        "| --- | ---: | ---: | ---: | ---: |",
     ]
+    if sha_guard != "success":
+        lines.extend(("Requested commit refused by the merged-commit SHA guard.", ""))
+    lines.extend(("| Suite | Passed | Failed | Skipped | Duration |", "| --- | ---: | ---: | ---: | ---: |"))
     for name in SUITES:
         report = REPORTS / f"{name}.xml"
         if not report.exists():
@@ -353,7 +352,7 @@ if __name__ == "__main__":
         case ["logs", name] if name in SUITES:
             logs(name)
         case ["summary", sha]:
-            summarize(sha)
+            summarize(sha, sha_guard=os.environ.get("NIGHTLY_SHA_GUARD", "success"))
         case _:
             msg = "usage: nightly_e2e.py verify-images | suite NAME | logs NAME | summary SHA"
             raise SystemExit(msg)

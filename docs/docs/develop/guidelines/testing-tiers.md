@@ -275,6 +275,10 @@ manually, use a full commit SHA already merged into `feature/v3-develop`:
 gh workflow run workflow-nightly-e2e.yml --ref feature/v3-develop -f sha=<full-40-character-sha>
 ```
 
+The NetBox suites load the bundled `traditional-infrastructure-sot` schema snapshot from
+`tests/data/nightly_schema/` and verify its content digest. Review the schema and expected
+demo counts before updating the snapshot and digest.
+
 The requested commit must contain `.github/scripts/nightly_e2e.py` and this
 workflow. An older commit cannot run these suites, even if the dispatch uses
 the current workflow file.
