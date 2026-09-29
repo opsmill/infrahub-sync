@@ -26,8 +26,8 @@ def tests_unit(context: Context) -> None:
 def tests_integration(context: Context) -> None:
     """Run integration tests against a live Infrahub.
 
-    Requires INFRAHUB_ADDRESS and INFRAHUB_API_TOKEN in the environment;
-    tests skip themselves when those aren't set.
+    Each test family skips when its settings are missing; see
+    docs/docs/develop/guidelines/testing-tiers.md#integration.
     """
     with context.cd(MAIN_DIRECTORY):
         context.run("pytest -m integration", pty=True)

@@ -101,10 +101,12 @@ Use the [Python API](./reference/python-api.mdx),
 - **Sync service** — the Sync API registers packages, admits runs, and keeps run records,
   saved plans, and artifacts. A Prefect worker reads the source and destination and
   writes the reviewed plan.
-- **Custom CA certificates** — connect to systems with certificates from an internal CA.
+- **Custom CA certificates** — trust an internal CA for the CLI's connection to the Sync API. A
+  Compose worker cannot trust a custom CA yet; see [Use custom CA certificates](./custom-certificates.mdx).
 
-A registered package can name only the adapters bundled with Infrahub Sync. A custom
-adapter loads only in development; see [Local adapters](./adapters/local-adapters.mdx).
+A registered package must name an adapter bundled with Infrahub Sync. Running a custom
+adapter from a registered package is not qualified in this release; see
+[Local adapters](./adapters/local-adapters.mdx).
 
 ### Adapter reference
 
@@ -115,7 +117,7 @@ adapter loads only in development; see [Local adapters](./adapters/local-adapter
 | Nautobot | Nautobot → Infrahub |
 | IP Fabric | IP Fabric → Infrahub |
 | Cisco ACI | Cisco ACI → Infrahub |
-| Peering Manager | Peering Manager → Infrahub · Infrahub → Peering Manager |
+| Peering Manager | Peering Manager → Infrahub |
 | Prometheus | Prometheus → Infrahub |
 | Slurp’it | Slurp’it → Infrahub |
 | Generic REST API | external system → Infrahub |

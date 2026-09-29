@@ -1,6 +1,5 @@
-"""22 developer and reference pages were published but reachable only through a link on
-an index page, not through the sidebar itself. Docusaurus renders no navigation entry,
-and search engines see no path to them, for a page the sidebar omits.
+"""22 developer and reference pages were published and linked from index pages, but the
+sidebar omitted them, so Docusaurus rendered no navigation entry for them.
 """
 
 from pathlib import Path

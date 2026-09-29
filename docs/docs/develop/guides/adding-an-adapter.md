@@ -462,10 +462,14 @@ delete and failure behavior.
 
 ### The current boundary for adapters outside the distribution
 
-**At this revision, an adapter installed outside the distribution has no admitted execution
-path.** A package naming it is refused at registration, and no configuration or version row is
-created. This is a confirmed product limitation, recorded here so you do not discover it after
-writing a connector. It is not a configuration mistake you can work around.
+**At this revision, an adapter installed outside the distribution has no qualified execution
+path.** A package whose `source.name` or `destination.name` is not a bundled adapter is refused at
+registration, and no configuration or version row is created. One narrower route is admitted but
+not qualified: a package whose `source.name` is a bundled adapter may set `source.adapter` to the
+import path of an adapter class in an installed distribution, and the worker then runs that class
+as the source (`infrahub_sync/configuration/models.py`, `_require_strict_model`; test
+`test_an_installed_dotted_source_with_an_infrahub_destination_may_execute`). The destination may not
+name one. This is recorded here so you do not discover the boundary after writing a connector.
 
 What the evidence shows, reproduced read-only and in-process against the shipped
 `examples/custom_adapter/package.yml` at revision `61b6a1b9dccae637b522084f563858dfcd5e31a9`.
@@ -481,7 +485,9 @@ with the same message.
 2. Validation resolves capabilities from the package's **`source.name`** — the short
    configuration name — and never from `source.adapter`. So an installed dotted import target
    or entry point does not make the package admissible on its own; the missing piece is the
-   capability declaration, and only a bundled adapter has one.
+   capability declaration, and only a bundled adapter has one. When `source.name` is bundled,
+   the capabilities checked are that bundled adapter's, not those of the class `source.adapter`
+   names.
 
 3. The refusal is produced in `_accumulate` in
    [`infrahub_sync/configuration/validation.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/configuration/validation.py),

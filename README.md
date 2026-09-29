@@ -172,7 +172,7 @@ Apply never executes those deletes.
 | Nautobot | Nautobot → Infrahub |
 | IP Fabric | IP Fabric → Infrahub |
 | Cisco ACI | Cisco ACI → Infrahub |
-| Peering Manager | Peering Manager → Infrahub · Infrahub → Peering Manager |
+| Peering Manager | Peering Manager → Infrahub |
 | Prometheus | Prometheus → Infrahub |
 | Slurp'it | Slurp'it → Infrahub |
 | Generic REST API | external system → Infrahub |
@@ -186,8 +186,8 @@ default Sync image does not include them; see each adapter's page in the documen
 - If your source has a REST API but no dedicated adapter (ServiceNow, Infoblox, internal
   IPAM, and others), start with the Generic REST API adapter. The `examples/` directory
   includes Generic REST API configurations for LibreNMS, Observium, Device42, and PeeringDB.
-- A registered package can name only the adapters bundled with Infrahub Sync. A custom
-  adapter loads only in development; see the
+- A registered package must name an adapter bundled with Infrahub Sync. Running a custom
+  adapter from a registered package is not qualified in this release; see the
   [local adapters guide](https://feature-v3-develop.infrahub-sync.pages.dev/adapters/local-adapters)
   and the template at `examples/custom_adapter/`.
 
@@ -202,7 +202,8 @@ default Sync image does not include them; see each adapter's page in the documen
   mapping's references.
 - **Typer-based CLI.** Register and inspect configuration packages, create plan or sync
   runs, review saved plans, and apply a reviewed checksum through the Sync API.
-- **Custom CA certificates.** Connect to systems with certificates from an internal CA.
+- **Custom CA certificates.** Trust an internal CA for the CLI's connection to the Sync API. A
+  Compose worker cannot trust a custom CA yet; see the custom certificates guide.
 
 ### Execution surfaces
 

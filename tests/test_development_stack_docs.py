@@ -14,7 +14,7 @@ PAGE = REPO_ROOT / "docs" / "docs" / f"{DOCUMENT_ID}.mdx"
 SIDEBAR = REPO_ROOT / "docs" / "sidebars.ts"
 # The link has to be a Markdown target, not the address written somewhere in prose:
 # only a target is what a reader can follow.
-README_LINK = re.compile(rf"\]\(https://docs\.infrahub\.app/sync/{re.escape(DOCUMENT_ID)}\)")
+README_LINK = re.compile(rf"\]\(https://feature-v3-develop\.infrahub-sync\.pages\.dev/{re.escape(DOCUMENT_ID)}(?:#[^)]*)?\)")
 
 
 def sync_sidebar() -> str:

@@ -1,0 +1,1 @@
+Peering Manager no longer declares that it can update objects as a destination. Registered runs already refused a Peering Manager destination, and package validation now reports that it cannot be written to.

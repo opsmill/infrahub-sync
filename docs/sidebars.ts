@@ -8,6 +8,7 @@ const sidebars: SidebarsConfig = {
       label: 'Get started',
       items: [
         'installation',
+        'development-stack',
         'quickstart-compose',
         'creating-a-sync-project',
         'configuration-package',
@@ -165,7 +166,6 @@ const sidebars: SidebarsConfig = {
         },
       ],
     },
-    'development-stack',
     'container-image',
     'compose-deployment',
     'contributing',
