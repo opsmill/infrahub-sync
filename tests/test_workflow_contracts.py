@@ -1204,10 +1204,11 @@ def test_nightly_suites_report_independently_and_clean_up() -> None:
         step = by_id[name]
         assert image_check < steps.index(step)
         assert step["continue-on-error"] is True
-        assert step["if"] == "steps.images.outcome == 'success'"
+        assert step["if"] == "always() && steps.images.outcome == 'success'"
         assert f"nightly_e2e.py suite {name}" in step["run"]
         assert any(
-            other.get("if") == f"steps.{name}.outcome == 'failure'"
+            other.get("if") == f"always() && steps.{name}.outcome == 'failure'"
+            and other.get("continue-on-error") is True
             and f"nightly_e2e.py logs {name}" in str(other.get("run", ""))
             for other in steps
         )

@@ -78,46 +78,50 @@ jobs:
 
       - name: "Run the integration suite"
         id: integration
-        if: steps.images.outcome == 'success'
+        if: always() && steps.images.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 45
         run: uv run --no-sync python .github/scripts/nightly_e2e.py suite integration
 
       - name: "Save integration container logs on failure"
-        if: steps.integration.outcome == 'failure'
+        if: always() && steps.integration.outcome == 'failure'
+        continue-on-error: true
         run: python3 .github/scripts/nightly_e2e.py logs integration
 
       - name: "Run the preview smoke suite"
         id: preview
-        if: steps.images.outcome == 'success'
+        if: always() && steps.images.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 30
         run: uv run --no-sync python .github/scripts/nightly_e2e.py suite preview
 
       - name: "Save preview container logs on failure"
-        if: steps.preview.outcome == 'failure'
+        if: always() && steps.preview.outcome == 'failure'
+        continue-on-error: true
         run: python3 .github/scripts/nightly_e2e.py logs preview
 
       - name: "Run the saved-plan live suite with the seed dataset"
         id: saved-plan
-        if: steps.images.outcome == 'success'
+        if: always() && steps.images.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 60
         run: uv run --no-sync python .github/scripts/nightly_e2e.py suite saved-plan
 
       - name: "Save saved-plan container logs on failure"
-        if: steps.saved-plan.outcome == 'failure'
+        if: always() && steps.saved-plan.outcome == 'failure'
+        continue-on-error: true
         run: python3 .github/scripts/nightly_e2e.py logs saved-plan
 
       - name: "Run the from-netbox example with the demo dataset"
         id: from-netbox
-        if: steps.images.outcome == 'success'
+        if: always() && steps.images.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 60
         run: uv run --no-sync python .github/scripts/nightly_e2e.py suite from-netbox
 
       - name: "Save from-netbox container logs on failure"
-        if: steps.from-netbox.outcome == 'failure'
+        if: always() && steps.from-netbox.outcome == 'failure'
+        continue-on-error: true
         run: python3 .github/scripts/nightly_e2e.py logs from-netbox
 
       - name: "Summarize each suite"

@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 REPORTS = ROOT / ".preview" / "nightly-e2e"
 SUITES = ("integration", "preview", "saved-plan", "from-netbox")
+EXPECTED_DEMO_CREATES = 1687
 
 
 def run(*command: str, env: dict[str, str] | None = None, capture: bool = False) -> str:
@@ -83,11 +84,11 @@ def assert_pinned_images() -> None:
 
 
 def schema(env: dict[str, str]) -> None:
-    """Load the pinned Marketplace schema required by both NetBox checks."""
+    """Load the Marketplace schema required by both NetBox checks."""
     path = ROOT / ".netbox" / "schemas"
     path.parent.mkdir(exist_ok=True)
     if not path.exists():
-        run(
+        command = (
             "uv",
             "run",
             "--no-sync",
@@ -98,8 +99,12 @@ def schema(env: dict[str, str]) -> None:
             "--collection",
             "--output-dir",
             str(path),
-            env=env,
         )
+        try:
+            run(*command, env=env)
+        except subprocess.CalledProcessError:
+            time.sleep(30)
+            run(*command, env=env)
     run("uv", "run", "--no-sync", "infrahubctl", "schema", "load", str(path), "--wait", "120", env=env)
 
 
@@ -115,6 +120,32 @@ def start_preview(env: dict[str, str]) -> None:
 def parsed_fields(output: str) -> dict[str, str]:
     """Read the CLI's named fields without depending on their display order."""
     return dict(line.strip().split(": ", 1) for line in output.splitlines() if ": " in line)
+
+
+def planned_counts(output: str) -> dict[str, int]:
+    """Count executable creates by kind in a detailed saved plan."""
+    counts: dict[str, int] = {}
+    for line in output.splitlines():
+        match line.split(maxsplit=3):
+            case [_, "create", kind, *_]:
+                counts[kind] = counts.get(kind, 0) + 1
+    return counts
+
+
+def check_import_counts(run_id: str, env: dict[str, str]) -> None:
+    """Compare the applied branch with creates in the saved plan, kind by kind."""
+    from infrahub_sdk import Config, InfrahubClientSync  # noqa: PLC0415 -- live-suite dependency
+
+    plan = run("uv", "run", "--no-sync", "infrahub-sync", "runs", "plan", run_id, "--detail", env=env, capture=True)
+    expected = planned_counts(plan)
+    if not expected or sum(expected.values()) != EXPECTED_DEMO_CREATES:
+        msg = f"the local demo plan has {sum(expected.values())} creates, expected 1687"
+        raise RuntimeError(msg)
+    client = InfrahubClientSync(config=Config(address=env["INFRAHUB_ADDRESS"], api_token=env["INFRAHUB_API_TOKEN"]))
+    actual = {kind: client.count(kind=kind, branch="netbox-import") for kind in expected}
+    if actual != expected:
+        msg = f"netbox-import object counts differ from the plan: expected {expected}, found {actual}"
+        raise RuntimeError(msg)
 
 
 def from_netbox(env: dict[str, str]) -> None:
@@ -139,6 +170,7 @@ def from_netbox(env: dict[str, str]) -> None:
     version = registered["registry_version"]
     run("uv", "run", "--no-sync", "infrahubctl", "branch", "create", "netbox-import", env=env)
     common = ("--config-id", config_id, "--version", version, "--branch", "netbox-import")
+    plan_run_id = ""
     for operation in ("diff", "sync"):
         result = run(
             "uv",
@@ -158,12 +190,15 @@ def from_netbox(env: dict[str, str]) -> None:
         if operation == "diff" and fields.get("operations") != "1688":
             msg = f"the local demo plan has {fields.get('operations', 'no')} operations, expected 1688"
             raise RuntimeError(msg)
+        if operation == "diff":
+            plan_run_id = fields["run_id"]
         completed = parsed_fields(
             run("uv", "run", "--no-sync", "infrahub-sync", "runs", "show", fields["run_id"], env=env, capture=True)
         )
         if completed.get("outcome") != "succeeded":
             msg = f"the {operation} run ended with {completed.get('outcome', 'no outcome')}"
             raise RuntimeError(msg)
+    check_import_counts(plan_run_id, env)
 
 
 def suite(name: str) -> None:
@@ -171,7 +206,7 @@ def suite(name: str) -> None:
     if name not in SUITES:
         msg = f"unknown suite: {name}"
         raise ValueError(msg)
-    REPORTS.mkdir(exist_ok=True)
+    REPORTS.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     report = REPORTS / f"{name}.xml"
     failure = ""
@@ -184,6 +219,8 @@ def suite(name: str) -> None:
             env.pop("NETBOX_TOKEN")
             run("uv", "run", "--no-sync", "pytest", "-m", "integration", "--junitxml", str(report), env=env)
         elif name == "preview":
+            run("uv", "run", "--no-sync", "invoke", "preview.down", "--volumes", env=env)
+            start_preview(env)
             run("uv", "run", "--no-sync", "invoke", "preview.seed", env=env)
             run(
                 "uv",
@@ -240,6 +277,7 @@ def suite(name: str) -> None:
 
 def collect_logs(name: str) -> None:
     """Save container and host process logs before a later suite resets the stacks."""
+    REPORTS.mkdir(parents=True, exist_ok=True)
     path = REPORTS / f"{name}-containers.log"
     with path.open("w", encoding="utf-8") as output:
         for env_file, *files in (
@@ -293,6 +331,19 @@ def summarize(sha: str) -> None:
         summary.write("\n".join(lines) + "\n")
 
 
+def logs(name: str) -> None:
+    """Preserve evidence when the suite step stopped before writing a report."""
+    REPORTS.mkdir(parents=True, exist_ok=True)
+    report = REPORTS / f"{name}.xml"
+    if not report.exists():
+        case = ET.Element("testcase", name=name)
+        ET.SubElement(case, "failure", message="suite step failed or timed out")
+        root = ET.Element("testsuite", name=name, tests="1", failures="1")
+        root.append(case)
+        ET.ElementTree(root).write(report, encoding="unicode", xml_declaration=True)
+    collect_logs(name)
+
+
 if __name__ == "__main__":
     match sys.argv[1:]:
         case ["verify-images"]:
@@ -300,15 +351,7 @@ if __name__ == "__main__":
         case ["suite", name]:
             suite(name)
         case ["logs", name] if name in SUITES:
-            REPORTS.mkdir(exist_ok=True)
-            report = REPORTS / f"{name}.xml"
-            if not report.exists():
-                case = ET.Element("testcase", name=name)
-                ET.SubElement(case, "failure", message="suite step failed or timed out")
-                root = ET.Element("testsuite", name=name, tests="1", failures="1")
-                root.append(case)
-                ET.ElementTree(root).write(report, encoding="unicode", xml_declaration=True)
-            collect_logs(name)
+            logs(name)
         case ["summary", sha]:
             summarize(sha)
         case _:
