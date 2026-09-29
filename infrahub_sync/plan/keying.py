@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from typing import TYPE_CHECKING, Any
 
+from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.errors import DestinationIdentityCollisionError, UnkeyedCreateRefusedError
 
 if TYPE_CHECKING:
@@ -312,37 +313,146 @@ def _refuse(reason: str | None, operation: PlannedOperation) -> None:
     raise UnkeyedCreateRefusedError(msg)
 
 
-def _refuse_destination_identity_collisions(*, kind: str, node: Any, creates: Sequence[PlannedOperation]) -> None:
-    """Refuse where two or more creates project onto one destination human-friendly ID.
+def _uniqueness_rules(node: Any, schemas: Mapping[str, Any]) -> list[tuple[str, tuple[str, ...]]]:
+    """Return the kind's HFID, unique attributes, and composite constraints."""
+    rules: list[tuple[str, tuple[str, ...]]] = []
+    hfid = tuple(getattr(node, "human_friendly_id", None) or ())
+    if hfid:
+        rules.append(("human-friendly ID", hfid))
+    seen_attributes: set[str] = set()
+    seen_constraints: set[tuple[str, ...]] = set()
+    seen_parents: set[str] = set()
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        for attribute in getattr(current, "attributes", ()):
+            if getattr(attribute, "unique", False) and attribute.name not in seen_attributes:
+                rules.append(("unique attribute", (f"{attribute.name}__value",)))
+                seen_attributes.add(attribute.name)
+        for constraint in getattr(current, "uniqueness_constraints", None) or ():
+            components = tuple(constraint)
+            if components and components not in seen_constraints:
+                rules.append(("uniqueness constraint", components))
+                seen_constraints.add(components)
+        for parent in getattr(current, "inherit_from", ()) or ():
+            inherited = schemas.get(parent)
+            if inherited is not None and parent not in seen_parents:
+                pending.append(inherited)
+                seen_parents.add(parent)
+    return rules
 
-    Projected onto the **kind's actual** human-friendly ID rather than onto whichever key the
-    merge warning picked as closest: the question is what the destination will converge, and
-    only its own identity answers that.
 
-    Creates alone. An update is keyed by its recorded destination id and cannot converge onto
-    another operation's object, so counting it here would refuse a plan that is safe.
-    """
-    human_friendly_id = list(getattr(node, "human_friendly_id", None) or ())
-    if not human_friendly_id or len(creates) < 2:
-        return
-    by_projection: dict[tuple[Any, ...], list[PlannedOperation]] = {}
-    for operation in creates:
-        projection = tuple(component_value(operation.identity, component) for component in human_friendly_id)
-        if any(value is None for value in projection):
+def _create_component_value(operation: PlannedOperation, component: str) -> Any:
+    """Read a direct write value from the payload, or a peer path from identity."""
+    field, _, rest = component.partition(COMPONENT_PATH_SEPARATOR)
+    payload = operation.payload or {}
+    if rest in ("", "value") and field in payload:
+        return payload[field]
+    if not rest and isinstance(operation.identity.get(field), Mapping):
+        return operation.identity[field]
+    return component_value(operation.identity, component)
+
+
+def _collision_values(components: tuple[str, ...], operation: PlannedOperation) -> str:
+    """Show bounded name values; other unique fields may contain credentials."""
+    if len(components) > 3 or any(
+        component.split(COMPONENT_PATH_SEPARATOR)[-2:] != ["name", "value"] for component in components
+    ):
+        return "values withheld (rule contains a non-name field)"
+    values = [_create_component_value(operation, component) for component in components]
+    if any(not isinstance(value, str) for value in values):
+        return "values withheld (rule contains a non-text value)"
+    return ", ".join(f"{component}={value[:80]!r}" for component, value in zip(components, values, strict=True))
+
+
+def _unique_generic_attributes(node: Any, schema: Mapping[str, Any]) -> set[tuple[str, str]]:
+    """Find unique attributes shared by every kind inheriting each generic."""
+    found: set[tuple[str, str]] = set()
+    pending = list(getattr(node, "inherit_from", ()) or ())
+    seen: set[str] = set()
+    while pending:
+        parent = pending.pop()
+        if parent in seen:
             continue
-        by_projection.setdefault(projection, []).append(operation)
-    collided = {projection: group for projection, group in by_projection.items() if len(group) > 1}
-    if not collided:
-        return
-    detail = "; ".join(
-        f"{', '.join(str(value) for value in projection)} <- "
-        f"{', '.join(operation.operation_id for operation in sorted(group, key=lambda item: item.operation_id))}"
-        for projection, group in sorted(collided.items(), key=lambda item: [str(part) for part in item[0]])
-    )
-    total = sum(len(group) for group in collided.values())
-    msg = (
-        f"{total} planned creates of destination kind {kind!r} project onto {len(collided)} destination "
-        f"human-friendly ID(s) ({', '.join(human_friendly_id)}): {detail}. The destination cannot tell them "
-        "apart, so applying them would converge them onto one object each and lose the rest silently."
-    )
-    raise DestinationIdentityCollisionError(msg)
+        seen.add(parent)
+        generic = schema.get(parent)
+        if generic is None:
+            continue
+        found.update(
+            (parent, attribute.name)
+            for attribute in getattr(generic, "attributes", ())
+            if getattr(attribute, "unique", False)
+        )
+        pending.extend(getattr(generic, "inherit_from", ()) or ())
+    return found
+
+
+def _refuse_cross_kind_generic_collisions(
+    *, by_kind: Mapping[str, list[PlannedOperation]], schema: Mapping[str, Any]
+) -> None:
+    """Refuse creates matched across kinds by a shared generic's unique attribute."""
+    by_generic_rule: dict[tuple[str, str], list[PlannedOperation]] = {}
+    for kind, creates in by_kind.items():
+        node = schema.get(kind)
+        if node is None:
+            continue
+        for rule in _unique_generic_attributes(node, schema):
+            by_generic_rule.setdefault(rule, []).extend(creates)
+    for (generic, attribute), creates in sorted(by_generic_rule.items()):
+        if len({operation.kind for operation in creates}) < 2:
+            continue
+        component = f"{attribute}__value"
+        by_projection: dict[bytes, list[PlannedOperation]] = {}
+        for operation in creates:
+            value = _create_component_value(operation, component)
+            if _usable(value):
+                by_projection.setdefault(canonical_json_bytes([value], kind=generic), []).append(operation)
+        for group in by_projection.values():
+            if len({operation.kind for operation in group}) < 2:
+                continue
+            kinds = ", ".join(sorted({operation.kind for operation in group}))
+            ids = ", ".join(sorted(operation.operation_id for operation in group[:2]))
+            msg = (
+                f"Planned creates of destination kinds {kinds} collide on inherited unique attribute "
+                f"{generic}.{component}, {_collision_values((component,), group[0])}: {ids}. "
+                "Applying them could match one generic object across kinds. "
+                "The whole plan was refused before any destination write."
+            )
+            raise DestinationIdentityCollisionError(msg)
+
+
+def refuse_destination_identity_collisions(
+    *, schema: Mapping[str, Any], operations: Sequence[PlannedOperation]
+) -> None:
+    """Refuse creates sharing any declared destination uniqueness rule before a write."""
+    by_kind: dict[str, list[PlannedOperation]] = {}
+    for operation in operations:
+        if operation.action == "create":
+            by_kind.setdefault(operation.kind, []).append(operation)
+    for kind, creates in sorted(by_kind.items()):
+        node = schema.get(kind)
+        if node is None or len(creates) < 2:
+            continue
+        for rule_name, components in _uniqueness_rules(node, schema):
+            by_projection: dict[bytes, list[PlannedOperation]] = {}
+            for operation in creates:
+                values = [_create_component_value(operation, component) for component in components]
+                if not all(_usable(value) for value in values):
+                    continue
+                projection = canonical_json_bytes(values, kind=kind)
+                by_projection.setdefault(projection, []).append(operation)
+            collided = [group for group in by_projection.values() if len(group) > 1]
+            if not collided:
+                continue
+            group = collided[0]
+            ids = ", ".join(sorted(operation.operation_id for operation in group[:2]))
+            if len(group) > 2:
+                ids += f", and {len(group) - 2} more"
+            msg = (
+                f"Planned creates of destination kind {kind!r} collide on {rule_name} "
+                f"({', '.join(components)}), {_collision_values(components, group[0])}: {ids}. "
+                "Applying them could merge distinct planned objects "
+                "into one destination object. The whole plan was refused before any destination write."
+            )
+            raise DestinationIdentityCollisionError(msg)
+    _refuse_cross_kind_generic_collisions(by_kind=by_kind, schema=schema)

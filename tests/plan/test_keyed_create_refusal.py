@@ -24,12 +24,14 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from infrahub_sdk.schema.main import NodeSchemaAPI
 
 from infrahub_sync.plan.derive import warn_missing_convergence_key
+from infrahub_sync.plan.errors import DestinationIdentityCollisionError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 from tests.adapters.test_infrahub_keyed_write import ALL_SCHEMAS, CONSTRAINED_KIND
-from tests.adapters.test_infrahub_planned_write import DEVICE_KIND, KEYLESS_KIND, SITE_KIND
+from tests.adapters.test_infrahub_planned_write import DEVICE_KIND, DEVICE_SCHEMA, KEYLESS_KIND, SITE_KIND, _text
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -72,6 +74,41 @@ def planned(
 def check(*operations: PlannedOperation) -> None:
     """Run FR-024 over `operations` against the fixture destination."""
     warn_missing_convergence_key(destination=destination(), operations=list(operations))
+
+
+def rack_schema(*, inherited: bool = False, constraint: bool = False) -> dict[str, NodeSchemaAPI]:
+    """A rack whose site and name form the HFID but name also keys another rule."""
+    rack = DEVICE_SCHEMA.model_copy(
+        update={
+            "attributes": [_text("rack-name", "name", optional=inherited or constraint)],
+            "inherit_from": ["TestHosting"] if inherited else [],
+            "uniqueness_constraints": [["name__value"]] if constraint else [],
+        }
+    )
+    schemas = {**ALL_SCHEMAS, DEVICE_KIND: rack}
+    if inherited:
+        schemas["TestHosting"] = NodeSchemaAPI(
+            id="hosting-schema",
+            name="Hosting",
+            namespace="Test",
+            label="Hosting",
+            default_filter="name__value",
+            attributes=[_text("hosting-name", "name", optional=False)],
+            relationships=[],
+        )
+    return schemas
+
+
+def rack_create(site: str) -> PlannedOperation:
+    """One create with a site-qualified HFID and a repeated rack name."""
+    return planned(
+        kind=DEVICE_KIND,
+        identity={"name": "Comms closet", "site": {"peer_kind": SITE_KIND, "identity": {"name": site}}},
+        payload={"name": "Comms closet"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": site}])
+        ],
+    )
 
 
 def site_create(name: str, description: str) -> PlannedOperation:
@@ -205,6 +242,95 @@ def test_two_creates_projecting_onto_one_destination_hfid_are_refused() -> None:
         check(site_create("site-a", "first"), site_create("site-a", "second"))
 
     assert SITE_KIND in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    ("variant", "rule"),
+    [("direct", "unique attribute"), ("inherited", "unique attribute"), ("constraint", "uniqueness constraint")],
+)
+def test_distinct_hfids_colliding_on_another_rule_are_refused(variant: str, rule: str) -> None:
+    """Each destination rule refuses a repeated rack name despite different sites."""
+    schemas = rack_schema(inherited=variant == "inherited", constraint=variant == "constraint")
+
+    with pytest.raises(DestinationIdentityCollisionError, match=rule) as excinfo:
+        warn_missing_convergence_key(
+            destination=SimpleNamespace(schema=schemas), operations=[rack_create("site-a"), rack_create("site-b")]
+        )
+
+    assert "name__value" in str(excinfo.value)
+    assert "Comms closet" in str(excinfo.value)
+
+
+def test_collision_message_withholds_non_name_unique_values() -> None:
+    """A unique credential-like field must never appear in the refusal."""
+    schemas = rack_schema()
+    schemas[DEVICE_KIND] = schemas[DEVICE_KIND].model_copy(
+        update={"attributes": [_text("rack-token", "token", optional=False)]}
+    )
+    first = planned(kind=DEVICE_KIND, identity={"name": "first", "token": "sensitive-value"})
+    second = planned(kind=DEVICE_KIND, identity={"name": "second", "token": "sensitive-value"})
+
+    with pytest.raises(DestinationIdentityCollisionError) as excinfo:
+        warn_missing_convergence_key(destination=SimpleNamespace(schema=schemas), operations=[first, second])
+
+    assert "values withheld" in str(excinfo.value)
+    assert "sensitive-value" not in str(excinfo.value)
+
+
+def test_shared_generic_unique_name_refuses_creates_of_different_kinds() -> None:
+    """Two descendant kinds share the generic's unique name lookup on the server."""
+    schemas = rack_schema(inherited=True)
+    other_kind = "TestOtherRack"
+    schemas[other_kind] = schemas[DEVICE_KIND].model_copy(update={"id": "other-rack-schema", "name": "OtherRack"})
+    first = rack_create("site-a")
+    second = planned(
+        kind=other_kind,
+        identity={"name": "Comms closet", "site": {"peer_kind": SITE_KIND, "identity": {"name": "site-b"}}},
+        payload={"name": "Comms closet"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": "site-b"}])
+        ],
+    )
+
+    with pytest.raises(DestinationIdentityCollisionError, match="inherited unique attribute") as excinfo:
+        warn_missing_convergence_key(destination=SimpleNamespace(schema=schemas), operations=[first, second])
+
+    assert "TestHosting.name__value" in str(excinfo.value)
+    assert "Comms closet" in str(excinfo.value)
+
+
+def test_distinct_unique_values_do_not_collide() -> None:
+    """A shared site is safe when the declared unique names differ."""
+    schemas = rack_schema()
+    first = rack_create("site-a")
+    second = planned(
+        kind=DEVICE_KIND,
+        identity={"name": "Other rack", "site": {"peer_kind": SITE_KIND, "identity": {"name": "site-a"}}},
+        payload={"name": "Other rack"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": "site-a"}])
+        ],
+    )
+
+    warn_missing_convergence_key(destination=SimpleNamespace(schema=schemas), operations=[first, second])
+
+
+def test_relationship_uniqueness_constraint_uses_the_peer_identity() -> None:
+    """A constraint on a relationship refuses two creates naming the same peer."""
+    schemas = rack_schema(constraint=True)
+    schemas[DEVICE_KIND] = schemas[DEVICE_KIND].model_copy(update={"uniqueness_constraints": [["site"]]})
+    first = rack_create("site-a")
+    second = planned(
+        kind=DEVICE_KIND,
+        identity={"name": "Other rack", "site": {"peer_kind": SITE_KIND, "identity": {"name": "site-a"}}},
+        payload={"name": "Other rack"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": "site-a"}])
+        ],
+    )
+
+    with pytest.raises(DestinationIdentityCollisionError, match=r"uniqueness constraint \(site\)"):
+        warn_missing_convergence_key(destination=SimpleNamespace(schema=schemas), operations=[first, second])
 
 
 def test_a_create_and_an_update_sharing_a_projection_are_not_a_collision() -> None:

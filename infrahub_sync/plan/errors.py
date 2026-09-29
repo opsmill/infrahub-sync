@@ -327,7 +327,7 @@ class UnkeyedCreateRefusedError(PlanArtifactError):
 
 
 class DestinationIdentityCollisionError(PlanArtifactError):
-    """Several planned creates project onto one destination human-friendly ID.
+    """Several planned creates share a destination uniqueness rule.
 
     The sync distinguishes these source objects; the destination cannot. Applying them
     would converge them onto a single object and lose the surplus silently, at exit 0. Only
