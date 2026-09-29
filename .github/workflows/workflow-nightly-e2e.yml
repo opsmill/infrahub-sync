@@ -1,0 +1,179 @@
+---
+# yamllint disable rule:truthy
+name: "Run nightly end-to-end suites on a merged commit"
+run-name: "Nightly E2E ${{ inputs.sha }}"
+
+# An external scheduler dispatches this workflow against feature/v3-develop.
+# GitHub schedules run only from the default branch, which is not the v3 line.
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "The full 40-character commit merged into feature/v3-develop"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-nightly-${{ inputs.sha }}
+  cancel-in-progress: false
+
+jobs:
+  end-to-end:
+    name: "Integration, preview, saved plan, and local NetBox example"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    steps:
+      - name: "Check out the requested commit"
+        id: checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Match the candidate workflow's exact-checkout and merged-ancestor guard.
+      - name: "Refuse an abbreviated, different, or unmerged commit"
+        env:
+          NIGHTLY_SHA: ${{ inputs.sha }}
+        run: |
+          set -eu
+          expected=${NIGHTLY_SHA:?the commit to test is required}
+          case $expected in
+            *[!0-9a-f]*)
+              echo "the requested commit $expected is not a hexadecimal object name" >&2
+              exit 1
+              ;;
+          esac
+          if [ ${#expected} -ne 40 ]; then
+            echo "the requested commit $expected is abbreviated; name the full 40-character commit" >&2
+            exit 1
+          fi
+          actual=$(git rev-parse HEAD)
+          if [ "$actual" != "$expected" ]; then
+            echo "the checkout landed on $actual, not the $expected it was told to test" >&2
+            exit 1
+          fi
+          git fetch --no-tags --quiet origin feature/v3-develop
+          if ! git merge-base --is-ancestor "$expected" FETCH_HEAD; then
+            echo "$expected is not merged into feature/v3-develop" >&2
+            exit 1
+          fi
+
+      - name: "Install uv"
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: latest
+          python-version: "3.13"
+
+      - name: "Install test dependencies"
+        id: dependencies
+        run: uv sync --frozen --extra dev --extra prefect --extra service
+
+      - name: "Check every Compose image digest"
+        id: images
+        run: uv run --no-sync python .github/scripts/nightly_e2e.py verify-images
+
+      - name: "Run the integration suite"
+        id: integration
+        if: steps.images.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 45
+        run: uv run --no-sync python .github/scripts/nightly_e2e.py suite integration
+
+      - name: "Save integration container logs on failure"
+        if: steps.integration.outcome == 'failure'
+        run: python3 .github/scripts/nightly_e2e.py logs integration
+
+      - name: "Run the preview smoke suite"
+        id: preview
+        if: steps.images.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 30
+        run: uv run --no-sync python .github/scripts/nightly_e2e.py suite preview
+
+      - name: "Save preview container logs on failure"
+        if: steps.preview.outcome == 'failure'
+        run: python3 .github/scripts/nightly_e2e.py logs preview
+
+      - name: "Run the saved-plan live suite with the seed dataset"
+        id: saved-plan
+        if: steps.images.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 60
+        run: uv run --no-sync python .github/scripts/nightly_e2e.py suite saved-plan
+
+      - name: "Save saved-plan container logs on failure"
+        if: steps.saved-plan.outcome == 'failure'
+        run: python3 .github/scripts/nightly_e2e.py logs saved-plan
+
+      - name: "Run the from-netbox example with the demo dataset"
+        id: from-netbox
+        if: steps.images.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 60
+        run: uv run --no-sync python .github/scripts/nightly_e2e.py suite from-netbox
+
+      - name: "Save from-netbox container logs on failure"
+        if: steps.from-netbox.outcome == 'failure'
+        run: python3 .github/scripts/nightly_e2e.py logs from-netbox
+
+      - name: "Summarize each suite"
+        if: always() && steps.checkout.outcome == 'success'
+        env:
+          NIGHTLY_SHA: ${{ inputs.sha }}
+        run: python3 .github/scripts/nightly_e2e.py summary "$NIGHTLY_SHA"
+
+      - name: "Upload per-suite JUnit reports"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-e2e-junit
+          path: .preview/nightly-e2e/*.xml
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: "Upload logs from failed suites"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-e2e-failed-container-logs
+          path: .preview/nightly-e2e/*-containers.log
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: "Stop preview services and remove volumes"
+        if: always()
+        run: |
+          uv run --no-sync invoke preview.down --volumes || \
+            docker compose --env-file development/preview.env \
+              -f development/docker-compose.infrahub.yml \
+              -f development/docker-compose.preview.yml down --volumes
+
+      - name: "Stop NetBox services and remove volumes"
+        if: always()
+        run: |
+          uv run --no-sync invoke netbox.down || \
+            docker compose --env-file development/netbox/netbox.env \
+              -f development/netbox/docker-compose.netbox.yml down --volumes
+
+      - name: "Fail the run if a suite did not pass"
+        if: always()
+        env:
+          DEPENDENCIES: ${{ steps.dependencies.outcome }}
+          IMAGES: ${{ steps.images.outcome }}
+          INTEGRATION: ${{ steps.integration.outcome }}
+          PREVIEW: ${{ steps.preview.outcome }}
+          SAVED_PLAN: ${{ steps.saved-plan.outcome }}
+          FROM_NETBOX: ${{ steps.from-netbox.outcome }}
+        run: |
+          for outcome in "$DEPENDENCIES" "$IMAGES" "$INTEGRATION" "$PREVIEW" "$SAVED_PLAN" "$FROM_NETBOX"; do
+            if [ "$outcome" != success ]; then
+              echo "At least one end-to-end suite or prerequisite did not pass" >&2
+              exit 1
+            fi
+          done

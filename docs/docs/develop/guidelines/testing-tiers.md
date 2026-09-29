@@ -186,7 +186,8 @@ point them at:
 The `from-netbox` example check runs the shipped `examples/netbox_to_infrahub` package
 through the Sync API: register it, then `diff` and `sync` into an Infrahub branch. It is not a
 pytest test. Run it by hand when you change the example mapping, the NetBox adapter, or the
-pinned NetBox image, and record the result in the pull request.
+pinned NetBox image, and record the result in the pull request. The nightly
+end-to-end workflow also runs it against the pinned local `demo` dataset.
 
 It runs against the local `demo` dataset, never the public NetBox demo. The public demo is
 shared, so other users change its data between runs. The `demo` dataset is the official
@@ -262,6 +263,25 @@ When you finish, remove both stacks and their data volumes:
 uv run invoke preview.down --volumes
 uv run invoke netbox.down
 ```
+
+#### Nightly end-to-end report
+
+`.github/workflows/workflow-nightly-e2e.yml` runs the integration tests, preview
+smoke tests, saved-plan live tests, and `from-netbox` check against disposable
+services. A scheduler outside GitHub can dispatch it each night. To dispatch one run
+manually, use a full commit SHA already merged into `feature/v3-develop`:
+
+```bash
+gh workflow run workflow-nightly-e2e.yml --ref feature/v3-develop -f sha=<full-40-character-sha>
+```
+
+The workflow checks out that exact commit and refuses one that is not an ancestor
+of the current `feature/v3-develop` head. In the GitHub Actions run, open the job
+summary for pass, fail, and skip counts and duration by suite. Download the
+`nightly-e2e-junit` artifact for individual test results. A failed suite also
+uploads its container and preview process logs in
+`nightly-e2e-failed-container-logs`. The workflow reports failures but is not a
+required pull-request check and does not publish a release candidate.
 
 #### Preview smoke
 
