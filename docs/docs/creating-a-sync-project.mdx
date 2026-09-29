@@ -2,45 +2,61 @@
 title: Create a sync project
 ---
 
-A sync configuration is a package — a YAML or JSON file — assembled from fragments that
-together show the parts of one package: `format_version`, a `configuration` with `source`,
-`destination`, `order`, `schema_mapping`, and `diffsync_flags`, plus `credentials`. A
-Nautobot → Infrahub example runs through each fragment. The example kinds — `InfraLocation`,
-`InfraRole`, `InfraPlatform`, `InfraDevice`, and `InfraInterface` — need a matching Infrahub
-schema; the [Nautobot tutorial](./tutorials/nautobot-to-existing-infrahub.mdx)
-registers a complete package with its schema, while the Compose quickstart example uses the
-different `TestingSite`/`TestingDevice` schema. The package is registered with the Sync
-API; the service, not the file on disk, is what a run reads from. See
-[Configuration package](./configuration-package.mdx) for the full envelope shape, what
-registration returns, and how versions and validation work.
+A sync project is one configuration package: a YAML or JSON file that tells the Sync
+service where to read data, where to write it, and how source records map to destination
+kinds. This guide explains each part of a package, using a Nautobot → Infrahub example.
 
-## Define the source and destination
+Before you start:
 
-The `source` and `destination` keys identify which adapter to use on each side of the sync and
-how to connect to each system. A credential-bearing setting holds a `$credential` reference
-rather than a literal value; the referenced name resolves to the name of an environment
-variable set on the deployment (`operator.env`) — see
-[Reading from NetBox or Nautobot](./compose-deployment.mdx#reading-from-netbox-or-nautobot).
+- Have a running Sync deployment and a CLI that can reach it. See
+  [Run a sync](./running-a-sync.mdx#connect-the-cli-to-the-sync-api).
+- Have a destination Infrahub whose schema contains the kinds that the package maps.
+  Registering a package does not load a schema.
+
+## The complete package
+
+This package maps Nautobot locations and devices to the `TestingSite` and `TestingDevice`
+kinds. It is the package from the
+[Nautobot tutorial](./tutorials/nautobot-to-existing-infrahub.mdx), which also provides the
+matching Infrahub schema:
 
 ```yaml
 format_version: 1
 configuration:
-  name: example-sync-task
-
+  name: my-nautobot-evaluation
   source:
     name: nautobot
     settings:
-      url: "https://nautobot.example.com"
+      url: https://nautobot.example.invalid
       token:
         $credential: nautobot-token
-
+      depth: 1
   destination:
     name: infrahub
     settings:
-      url: "https://infrahub.example.com"
+      url: https://infrahub.example.invalid
       token:
         $credential: infrahub-token
-
+  schema_mapping:
+    - name: TestingSite
+      mapping: dcim.locations
+      identifiers: [name]
+      fields:
+        - name: name
+          mapping: name
+    - name: TestingDevice
+      mapping: dcim.devices
+      identifiers: [name]
+      fields:
+        - name: name
+          mapping: name
+        - name: model
+          mapping: device_type.model
+        - name: serial
+          mapping: serial
+        - name: site
+          mapping: location
+          reference: TestingSite
 credentials:
   nautobot-token:
     provider: env
@@ -50,135 +66,96 @@ credentials:
     identifier: INFRAHUB_API_TOKEN
 ```
 
-For the full list of adapters and their connection parameters, see [Choose an adapter](./adapters/choosing-an-adapter.mdx).
+The sections below explain each part. For the package format itself, see
+[Configuration package](./configuration-package.mdx).
 
-## Set the sync order
+## Source and destination
 
-The `order` key, under `configuration`, specifies the sequence in which objects should be
-synchronized. Order matters because some objects depend on others — an interface cannot be
-created until its device already exists in the destination, and a device's location, role,
-and platform references must resolve before the device itself does. Omit it and the engine
-derives the sequence from the `reference` entries in `schema_mapping` instead. Every kind
-listed here needs its own entry in `schema_mapping` below; a kind in `order` with no matching
-mapping is accepted while the package loads, but fails later, during the run, when the
-adapter loads that kind and finds no model bound to it.
+`source` and `destination` each name an adapter and its connection settings:
+
+- `name` selects a bundled adapter. See [Choose an adapter](./adapters/choosing-an-adapter.mdx)
+  for the adapters and their settings.
+- `url` is the address that the Sync worker uses. On a Compose deployment, `localhost`
+  refers to the worker container, so use an address that the container can reach.
+- A token or password is a `$credential` reference, never a literal value.
+
+A registered run can write only to Infrahub, so `destination.name` is `infrahub`.
+
+## Credentials
+
+The `credentials` block declares each `$credential` reference. `identifier` is the name of
+the environment variable that the Sync worker reads when a run starts. In this example, the
+worker needs `NAUTOBOT_TOKEN` and `INFRAHUB_API_TOKEN`. On a Compose deployment, set them in
+`operator.env`, then run `./infrahub-sync-compose start`. See
+[Credentials](./configuration-package.mdx#credentials).
+
+## Schema mapping
+
+Each `schema_mapping` entry maps one source path to one destination kind:
+
+- `name` is the Infrahub kind, for example `TestingDevice`.
+- `mapping` is the source path, for example the Nautobot API path `dcim.devices`.
+- `identifiers` lists the fields that identify one object. Infrahub must be able to find the
+  object by these fields; see
+  [Destination key for Infrahub writes](./reference/schema-mapping.mdx#destination-key-for-infrahub-writes).
+- Each `fields` entry sets one destination field. `mapping` names the source field. A dotted
+  path, such as `device_type.model`, reads a nested value. `static` sets a fixed value
+  instead.
+- `reference` makes the field a relationship to another mapped kind. In the example, the
+  device's `site` points to the `TestingSite` object whose `name` matches the device's
+  Nautobot location. A reference needs both `mapping` and `reference`; a field with only
+  `reference` is skipped.
+
+For all mapping options, including filters and transforms, see the
+[Schema mapping reference](./reference/schema-mapping.mdx).
+
+## Write order
+
+Sync writes a referenced kind before the kinds that reference it. In the example,
+`TestingSite` objects are written before `TestingDevice` objects, because `site` references
+`TestingSite`. You do not need to declare this order.
+
+If an adapter needs a different order, add an `order` list under `configuration`. It
+replaces the computed order, and every kind in it needs a `schema_mapping` entry:
 
 ```yaml
   order:
-    - "InfraLocation"
-    - "InfraRole"
-    - "InfraPlatform"
-    - "InfraDevice"
-    - "InfraInterface"
+    - "TestingSite"
+    - "TestingDevice"
 ```
 
-## Map the schema fields
+See [Automatic write order](./reference/config.mdx#automatic-write-order).
 
-The `schema_mapping` section, also under `configuration`, defines how data is translated from
-the source's schema into the destination's schema.
+## Creates, updates, and deletes
 
-:::info
+A plan contains three kinds of operations:
 
-- The `name` key in the destination model corresponds to the Infrahub attribute.
-- The `mapping` key corresponds to the key in the source payload to use.
-- If `reference` is used, it links to a model that has been synchronized prior to this model.
-  The adapter only resolves a reference field when both `mapping` and `reference` are set;
-  `reference` alone is silently skipped.
+- A **create** for a source object that the destination does not contain.
+- An **update** for an object in both systems whose values differ.
+- A **delete** for a destination object that the source does not contain.
 
-:::
-
-```yaml
-  schema_mapping:
-    - name: InfraLocation
-      mapping: "dcim.locations"
-      identifiers: ["name"]
-      fields:
-        - name: "name"
-          mapping: "name"
-
-    - name: InfraRole
-      mapping: "extras.roles"
-      identifiers: ["name"]
-      fields:
-        - name: "name"
-          mapping: "name"
-
-    - name: InfraPlatform
-      mapping: "dcim.platforms"
-      identifiers: ["name"]
-      fields:
-        - name: "name"
-          mapping: "name"
-
-    - name: InfraDevice
-      mapping: "dcim.devices"
-      identifiers: ["name"]
-      fields:
-        - name: "name"
-          mapping: "name"
-        - name: "device_type"
-          mapping: "device_type.display_name"
-        - name: "manufacturer"
-          mapping: "device_type.manufacturer.name"
-        - name: "location"
-          mapping: "location"
-          reference: "InfraLocation"
-        - name: "role"
-          mapping: "role"
-          reference: "InfraRole"
-        - name: "platform"
-          mapping: "platform"
-          reference: "InfraPlatform"
-
-    - name: InfraInterface
-      mapping: "dcim.interfaces"
-      identifiers: ["device", "name"]
-      fields:
-        - name: "name"
-          mapping: "name"
-        - name: "interface_type"
-          static: "10gbe"
-        - name: "description"
-          mapping: "description"
-        - name: "device"
-          mapping: "device"
-          reference: "InfraDevice"
-```
-
-In this example, `device_type` and `manufacturer` are attributes of `InfraDevice`. For destination objects that have relationships to other models, the related models must be synchronized first — see how `InfraDevice` references `InfraLocation`, `InfraRole`, and `InfraPlatform`, and how `InfraInterface` references `InfraDevice`, via the `reference` key. That is why `order` places the three referenced kinds before `InfraDevice`.
-
-For the full mapping syntax — direct mappings, nested attributes, static values, references, identifiers, filters, transforms, and worked examples — see [Schema mapping reference](./reference/schema-mapping.mdx).
-
-## Tune sync behavior
-
-The `diffsync_flags` key, under `configuration`, controls how the synchronization handles three scenarios: unmatched objects in the destination, unmatched objects in the source, and modified objects.
-
-```yaml
-  # Optional: control sync behavior with diffsync flags
-  diffsync_flags:
-    - "SKIP_UNMATCHED_DST"  # Skip objects in destination that don't exist in source
-```
-
-:::info Understanding diffsync flags
-
-Available flags:
-
-| Flag | Description |
-|------|-------------|
-| `SKIP_UNMATCHED_DST` | Skip objects in the destination that don't exist in the source (prevents deletion by `sync` and by the live comparison `diff` prints; a saved plan still records these as deletes, see below) |
-| `SKIP_UNMATCHED_SRC` | Skip objects in the source that don't exist in the destination (prevents creation) |
-| `SKIP_MODIFIED` | Skip objects that exist in both systems but have different values (prevents updates) |
-
-If no flags are specified, `SKIP_UNMATCHED_DST` is used by default — destination objects that don't exist in the source are preserved rather than deleted.
-
-These flags govern the live comparison that `diff` prints and that `sync` writes. They do **not**
-govern the saved plan artifact: a plan records a `delete` for every destination object missing from
-the source regardless of `SKIP_UNMATCHED_DST`. Recording one is not executing it — `apply` never
-executes a delete, and completes successfully while reporting how many it skipped. See
+Apply writes creates and updates. It never executes a delete: it records the delete in the
+plan, skips it, and reports how many deletes it skipped. Deletes are recorded only when the
+destination side was read in full. See
 [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 
-:::
+The optional `diffsync_flags` list under `configuration` changes which operations a plan
+contains:
 
-For more on the structural field reference, see [Sync instance configuration](./reference/config.mdx).
+| Flag | Effect |
+| --- | --- |
+| `SKIP_UNMATCHED_SRC` | The plan contains no creates. Only objects that already exist in the destination are updated. |
+| `SKIP_UNMATCHED_DST` | Always in effect. Listing it changes nothing. |
 
-When the package is complete, register it — see [Run a sync](./running-a-sync.mdx).
+No flag makes apply execute a delete.
+
+```yaml
+  diffsync_flags:
+    - "SKIP_UNMATCHED_SRC"
+```
+
+## Register the package
+
+When the package is complete, register it, validate it, and create a plan. See
+[Run a sync](./running-a-sync.mdx). For the other fields of `configuration`, see
+[Sync instance configuration](./reference/config.mdx).

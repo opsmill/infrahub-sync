@@ -5,18 +5,15 @@ title: Sync instance configuration
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-A configuration package defines the source, destination, and resources for a sync.
-Write the package as YAML or JSON and register it with `infrahub-sync configs register`.
-A configuration package is a YAML or JSON file with a required `configuration` object
-(described on this page), an optional `format_version` (only `1` is accepted, and it is
-the default), and an optional `credentials` block. See
-[Configuration package](../configuration-package.mdx).
-For a complete package, see `examples/netbox_to_infrahub/package.yml`.
-The service worker resolves the registered configuration and loads installed or
-pre-rendered adapter classes. Run commands select the package by the immutable
-configuration ID and registry version returned during registration.
+The `configuration` object of a [configuration package](../configuration-package.mdx)
+defines the source, the destination, and the mappings of one sync. A package also has an
+optional `format_version` (only `1`, the default) and an optional `credentials` block. For
+a complete package, see `examples/netbox_to_infrahub/package.yml`.
 
-The following settings can be defined:
+Write the package as YAML or JSON and register it with `infrahub-sync configs register`.
+Run commands then select it by its configuration ID and registry version. The service
+worker resolves the registered configuration and loads installed or pre-rendered adapter
+classes. It reads the registered content, not the file.
 
 ## Configuration fields
 
@@ -30,7 +27,7 @@ Describes the overall synchronization configuration.
 | `destination` | `SyncAdapter` | Configuration for the destination adapter. | Yes |
 | `order` | List of strings | Order in which objects should be synchronized. Optional — when omitted, infrahub-sync auto-computes tiers from schema_mapping. | No |
 | `schema_mapping` | List of `SchemaMappingModel` | Defines how data is mapped from source to destination. | No; a package without mappings registers but synchronizes nothing. |
-| `diffsync_flags` | List of `DiffSyncFlags` | Instruct Infrahub Sync how to handle some specific situation without changing the data  | No |
+| `diffsync_flags` | List of DiffSync flag names | Changes which operations a plan contains. `SKIP_UNMATCHED_SRC` removes creates. `SKIP_UNMATCHED_DST` is always in effect. No flag makes apply execute a delete. See [Creates, updates, and deletes](../creating-a-sync-project.mdx#creates-updates-and-deletes). | No |
 
 ### Automatic write order
 
@@ -78,8 +75,29 @@ Configuration for source and destination adapters.
 
 | Property | Type | Description | Mandatory |
 | -------- | ---- | ----------- | --------- |
-| name | string | Identifier for the adapter. | Yes |
-| settings | Dictionary | Adapter-specific settings such as `url` and `token`. A credential-bearing setting holds a `$credential` reference to the package's `credentials` block, never a literal value; see [Credentials](../configuration-package.mdx#credentials). Registered runs do not read adapter settings from ambient environment variables. | No |
+| name | string | Name of a bundled adapter. See [Choose an adapter](../adapters/choosing-an-adapter.mdx). | Yes |
+| settings | Dictionary | Adapter-specific settings such as `url` and `token`. A credential-bearing setting holds a `$credential` reference to the package's `credentials` block, never a literal value; see [Credentials](../configuration-package.mdx#credentials). | No |
+
+#### Settings in a registered package
+
+A registered run uses the settings declared in the package:
+
+- The worker connects to the declared `url` of each adapter. Environment URL variables such
+  as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not replace it. The destination schema read uses
+  the same declared URL.
+- Each `$credential` reference resolves when a run starts, from the environment variable that
+  its `credentials` entry names in the worker environment.
+- To change a URL or another setting, edit the package and register a new version with
+  `configs version`. Then run the new version.
+
+Two adapters also read the worker environment in a registered run. Cisco ACI reads
+`CISCO_APIC_VERIFY` when it is set, and IP Fabric reads `IPF_URL` and `IPF_TOKEN` when
+`base_url` or `auth` is not declared.
+
+Direct adapter use without a registered package is different. The
+[Prefect remote run](./prefect-remote-run.mdx) and Python callers that load a `config.yml`
+directory let each adapter read its environment variables, such as `NETBOX_URL`, before the
+declared settings. Each adapter page lists its variables.
 
 <!-- vale off -->
 
