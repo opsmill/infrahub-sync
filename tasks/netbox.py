@@ -14,6 +14,12 @@ prints the same URL and token banner:
 points at this local NetBox and the preview Infrahub. `invoke netbox.down` removes the
 containers and their volumes.
 
+NetBox publishes its port on the host's loopback address only. A container cannot reach
+that address, so the local development stack's worker (`compose.yaml`, `invoke start`)
+joins NetBox's own Compose network instead and reads NetBox at `WORKER_NETBOX_URL`. These
+tasks connect the worker when NetBox becomes ready and disconnect it before NetBox's
+network is removed; `invoke start` connects a recreated worker again.
+
 Configuration ships in `development/netbox/netbox.env` (no secrets -- local-only
 defaults); personal overrides belong in the gitignored
 `development/netbox/netbox.local.env`. Downloaded and generated files live in the
@@ -100,6 +106,13 @@ SHIPPED_PACKAGE = REPO_ROOT / "examples" / "netbox_to_infrahub" / "package.yml"
 LOCAL_PACKAGE = STATE_DIR / "from-netbox.local.yml"
 SHIPPED_NETBOX_URL = "https://demo.netbox.dev"
 SHIPPED_INFRAHUB_URL = "http://localhost:8000"
+# The local development stack (`compose.yaml`) and its one service that reads a source. Its
+# project name is fixed by the file's top-level `name:`.
+DEV_STACK_PROJECT = "infrahub-sync-dev"
+DEV_STACK_WORKER_SERVICE = "sync-worker"
+# The address the dev stack's worker uses for NetBox once it has joined NetBox's network:
+# the NetBox Compose service name and its container port, not the host port.
+WORKER_NETBOX_URL = "http://netbox:8080"
 # NetBox's first migration run took roughly 16 minutes on the reference machine, right at
 # the previous 960s ceiling -- this leaves real headroom instead of racing it.
 WAIT_TIMEOUT_SECONDS = 1800
@@ -172,6 +185,71 @@ def _compose(context: Context, arguments: str, values: dict[str, str]) -> None:
         context.run(command, env=values, pty=False)
 
 
+def netbox_network(values: dict[str, str]) -> str:
+    """The name of the default network Compose creates for this NetBox project."""
+    return f"{values['COMPOSE_PROJECT_NAME']}_default"
+
+
+def _docker_output(context: Context, arguments: str) -> str | None:
+    """Run a read-only Docker command quietly; return its output, or None if it failed."""
+    result = context.run(f"docker {arguments}", hide=True, warn=True, pty=False)
+    if result is None or not result.ok:
+        return None
+    return result.stdout.strip()
+
+
+def dev_worker_containers(context: Context) -> list[str]:
+    """The container IDs of the dev stack's worker, running or stopped."""
+    output = _docker_output(
+        context,
+        f"ps --all --quiet --filter label=com.docker.compose.project={DEV_STACK_PROJECT} "
+        f"--filter label=com.docker.compose.service={DEV_STACK_WORKER_SERVICE}",
+    )
+    return output.split() if output else []
+
+
+def _attached_networks(context: Context, container: str) -> set[str]:
+    output = _docker_output(
+        context,
+        "inspect --format "
+        + shlex.quote("{{range $name, $_ := .NetworkSettings.Networks}}{{$name}} {{end}}")
+        + f" {shlex.quote(container)}",
+    )
+    return set(output.split()) if output else set()
+
+
+def attach_dev_worker(context: Context, values: dict[str, str]) -> bool:
+    """Connect the dev stack's worker to NetBox's network, when both exist.
+
+    Safe to repeat: a worker that is already connected is left as it is. Returns whether
+    a worker is connected when this returns. Does nothing when NetBox's network or the
+    worker does not exist, so neither stack depends on the other being started.
+    """
+    network = netbox_network(values)
+    if _docker_output(context, f"network inspect --format '{{{{.Name}}}}' {shlex.quote(network)}") is None:
+        return False
+    containers = dev_worker_containers(context)
+    for container in containers:
+        if network in _attached_networks(context, container):
+            continue
+        context.run(f"docker network connect {shlex.quote(network)} {shlex.quote(container)}", pty=False)
+    if containers:
+        print(f" - [{NAMESPACE}] The dev stack's worker is on {network}; it reads NetBox at {WORKER_NETBOX_URL}")
+    return bool(containers)
+
+
+def detach_dev_worker(context: Context, values: dict[str, str]) -> None:
+    """Disconnect the dev stack's worker from NetBox's network before that network is removed.
+
+    Docker refuses to remove a network that still has a connected container, so this runs
+    before every `down`.
+    """
+    network = netbox_network(values)
+    for container in dev_worker_containers(context):
+        if network in _attached_networks(context, container):
+            context.run(f"docker network disconnect {shlex.quote(network)} {shlex.quote(container)}", pty=False)
+
+
 _SERVER_ERROR_FLOOR = 500
 
 
@@ -204,6 +282,7 @@ def reset_database(context: Context, values: dict[str, str]) -> None:
     this is what makes loading a dataset safe to repeat.
     """
     print(f" - [{NAMESPACE}] Resetting the local NetBox database")
+    detach_dev_worker(context, values)
     _compose(context, "down --volumes", values)
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", values)
     _wait_for_http(f"{netbox_url(values)}/api/", "NetBox")
@@ -298,6 +377,7 @@ def restore_demo_database(context: Context, values: dict[str, str], sql_file: Pa
     """
     restore_file = prepare_restore_sql(sql_file)
     print(f" - [{NAMESPACE}] Resetting the local NetBox database")
+    detach_dev_worker(context, values)
     _compose(context, "down --volumes", values)
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} netbox-database netbox-redis", values)
     psql = "exec -T netbox-database psql --quiet --username netbox --dbname netbox"
@@ -350,9 +430,13 @@ def local_package_text(shipped: str, netbox: str, infrahub: str) -> str:
     return "".join(lines)
 
 
-def _print_ready_banner(values: dict[str, str]) -> None:
+def _ready(context: Context, values: dict[str, str]) -> None:
+    """Connect the dev stack's worker, if it exists, then print the URL and token banner."""
+    worker_attached = attach_dev_worker(context, values)
     print(f" - [{NAMESPACE}] NetBox ready")
     print(f"     URL:   {netbox_url(values)}")
+    if worker_attached:
+        print(f"     URL from the dev stack's worker: {WORKER_NETBOX_URL}")
     print(f"     Token: {netbox_token(values)}")
 
 
@@ -362,7 +446,7 @@ def up(context: Context) -> None:
     values = load_netbox_env()
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", values)
     _wait_for_http(f"{netbox_url(values)}/api/", "NetBox")
-    _print_ready_banner(values)
+    _ready(context, values)
 
 
 @task
@@ -373,7 +457,7 @@ def seed(context: Context, dataset: str = DEFAULT_DATASET) -> None:
         # Verified before anything is reset: a refused download leaves NetBox as it was.
         sql_file = fetch_demo_sql()
         restore_demo_database(context, values, sql_file)
-        _print_ready_banner(values)
+        _ready(context, values)
         return
     script = dataset_script(dataset)
     values = load_netbox_env()
@@ -385,23 +469,31 @@ def seed(context: Context, dataset: str = DEFAULT_DATASET) -> None:
             f"--url {shlex.quote(netbox_url(values))} --token {shlex.quote(netbox_token(values))}",
             pty=False,
         )
-    _print_ready_banner(values)
+    _ready(context, values)
 
 
 @task(name="demo-package")
-def demo_package(_context: Context, infrahub_url: str = "") -> None:
+def demo_package(_context: Context, infrahub_url: str = "", dev_stack: bool = False) -> None:  # noqa: FBT001, FBT002 -- Invoke boolean flag idiom
     """Write a copy of the `from-netbox` package for this NetBox and the preview Infrahub.
 
     The copy keeps the shipped mapping and credential references and changes only the two
-    URLs. `--infrahub-url` defaults to the preview Infrahub address.
+    URLs. `--infrahub-url` defaults to the preview Infrahub address. `--dev-stack` writes
+    the addresses the local development stack's worker uses instead: NetBox on its own
+    network, and the preview Infrahub through `host.docker.internal`.
     """
     values = load_netbox_env()
-    destination = infrahub_url or preview_urls(load_preview_env())["infrahub"]
-    text = local_package_text(SHIPPED_PACKAGE.read_text(encoding="utf-8"), netbox_url(values), destination)
+    source = WORKER_NETBOX_URL if dev_stack else netbox_url(values)
+    destination = infrahub_url
+    if not destination:
+        destination = preview_urls(load_preview_env())["infrahub"]
+        if dev_stack:
+            # Inside the worker container `localhost` is the container itself.
+            destination = destination.replace("http://localhost:", "http://host.docker.internal:", 1)
+    text = local_package_text(SHIPPED_PACKAGE.read_text(encoding="utf-8"), source, destination)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     LOCAL_PACKAGE.write_text(text, encoding="utf-8")
     print(f" - [{NAMESPACE}] Wrote {LOCAL_PACKAGE}")
-    print(f"     NetBox:   {netbox_url(values)}")
+    print(f"     NetBox:   {source}")
     print(f"     Infrahub: {destination}")
 
 
@@ -409,5 +501,6 @@ def demo_package(_context: Context, infrahub_url: str = "") -> None:
 def down(context: Context) -> None:
     """Stop the local NetBox and remove its containers and data volumes."""
     values = load_netbox_env()
+    detach_dev_worker(context, values)
     _compose(context, "down --volumes", values)
     print(f" - [{NAMESPACE}] Local NetBox stopped and data volumes removed")

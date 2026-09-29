@@ -2,11 +2,26 @@
 title: Supported platforms and limits
 ---
 
-This page is the general compatibility statement for Infrahub Sync's Compose
-deployment. A qualified deployment is one Linux amd64 host running Docker
+There are [two ways to run V3](../installation.mdx#two-ways-to-run-v3). Both run the
+same Sync service. A source build has passed the pull request checks, but not the full
+deployment tests that each release package passes.
+
+## Release package qualification
+
+Each release package passes full qualification on one Linux amd64 host running Docker
 Compose 2.17.3 or later, following the checkout-free clean-host procedure in
-[Qualifying an internal candidate](../develop/guides/qualifying-an-internal-candidate.md);
-that page also names the qualification record each candidate build produces.
+[Qualifying an internal candidate](../develop/guides/qualifying-an-internal-candidate.md).
+That page also names the qualification record each candidate build produces.
+
+The candidate build also builds an arm64 image and runs the image test suite against
+it in continuous integration (CI), under emulation on an amd64 runner. Those tests are
+not a qualification: a release package is qualified on Linux amd64 only.
+
+## Other platforms, including Apple Silicon
+
+To run V3 on another platform that Docker supports, such as a Mac with Apple Silicon,
+[run from source](../development-stack.mdx#run-from-source). The image is built from your
+checkout for your host's own architecture.
 
 ## Measured versions
 
@@ -16,21 +31,21 @@ The measured destination is Infrahub 1.10.6. The measured sources are NetBox
 version numbers come from working through the
 [NetBox](../tutorials/netbox-to-existing-infrahub.mdx) and
 [Nautobot](../tutorials/nautobot-to-existing-infrahub.mdx) tutorials against
-those source versions and this destination version; they are not an automated
-compatibility matrix, and these measurements do not claim that other Infrahub,
-NetBox, or Nautobot versions are unsupported.
-
-## Architecture qualification
-
-The project builds arm64 images and smokes them in CI. That availability is not
-Compose deployment qualification: an arm64 Compose deployment is not qualified.
+those source versions and this destination version. They are not an automated
+compatibility matrix. Other Infrahub, NetBox, or Nautobot versions are not
+measured, and they are not excluded.
 
 ## Product limits
 
 - Deletes are recorded in plans but are not executed.
-- Clearing an optional cardinality-one relationship is unsupported.
+- A sync cannot remove an optional single-object relationship from a destination
+  object, for example the rack of a device. When the source value is empty, apply
+  leaves the destination value in place and the worker logs a warning. Remove the
+  relationship in Infrahub directly.
 - There is no verified in-place upgrade, migration, rollback, backup, or restore
   procedure.
+- There is no built-in schedule. Start each run with the CLI or the Sync API, for
+  example from cron or a CI job.
 
-For the exact operating procedure, including replacement of this alpha, use the
-[Compose deployment guide](../compose-deployment).
+For the operating procedure of a release package, including replacement with a
+fresh deployment, use the [Compose deployment guide](../compose-deployment).
