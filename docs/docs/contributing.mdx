@@ -2,7 +2,11 @@
 title: Contributing
 ---
 
-This guide covers how to set up a development environment for `infrahub-sync` and contribute to the project. For the release runbook, see [RELEASING.md](https://github.com/opsmill/infrahub-sync/blob/main/RELEASING.md) at the repository root — that's maintainer-only.
+This guide explains how to set up a development environment for `infrahub-sync` and contribute changes.
+
+Two maintainer documents describe releases. [RELEASING.md](https://github.com/opsmill/infrahub-sync/blob/main/RELEASING.md)
+describes V2 releases from `main`. [Qualifying an internal candidate](develop/guides/qualifying-an-internal-candidate.md)
+describes how a V3 pre-release candidate is built and checked.
 
 ## Prerequisites
 
@@ -10,6 +14,9 @@ This guide covers how to set up a development environment for `infrahub-sync` an
   everything except the Sync service.
 - [uv](https://docs.astral.sh/uv/) for dependency management
 - Git
+- Docker with the Compose plugin. The unit tests call `docker compose config`, and both
+  local stacks run in containers.
+- Node.js 18 or later and pnpm, only if you build the documentation site
 
 ## Setting up your development environment
 
@@ -17,7 +24,8 @@ This guide covers how to set up a development environment for `infrahub-sync` an
 
 For V3 development, clone the `feature/v3-develop` branch. The default `main` branch
 contains V2 and does not define the `prefect` and `service` extras required below.
-To install the released private candidate, follow [Install Infrahub Sync](./installation.mdx).
+This is the "Run from source" route. To run a release package instead, follow
+[Install Infrahub Sync](./installation.mdx).
 
 ```bash
 git clone --branch feature/v3-develop https://github.com/opsmill/infrahub-sync.git
@@ -34,7 +42,7 @@ The expected output is `feature/v3-develop`.
 
 ### Install uv
 
-If you don't have uv installed, you can install it with:
+If uv is not installed, install it with:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -48,12 +56,13 @@ Or see the [uv installation guide](https://docs.astral.sh/uv/getting-started/ins
 uv sync --extra dev --extra prefect --extra service
 ```
 
-The `prefect` and `service` extras are not optional for development. Without them the type
+The `prefect` and `service` extras are required for development. Without them the type
 checker cannot resolve the imports in `infrahub_sync/orchestration/` and
-`infrahub_sync/service/`, and the tests that cover them skip themselves.
+`infrahub_sync/service/`, and the tests that cover them skip themselves. The `service`
+extra also installs `infrahubctl`, which the integration checks use to load schemas.
 
-On Python 3.10 the Sync service is unavailable, so install the direct Prefect profile
-instead and exclude the service from type checking:
+On Python 3.10 the Sync service is unavailable. Install the direct Prefect profile
+instead. `invoke lint` then excludes the service from type checking:
 
 ```bash
 uv sync --python 3.10 --extra dev --extra prefect
@@ -66,6 +75,8 @@ uv run infrahub-sync --help
 uv run infrahub-sync configs --help
 ```
 
+Each command prints its usage and exits 0.
+
 ### Install the Git hooks
 
 `prek.toml` defines the commit hooks: Ruff formatting and lint for Python, `rumdl` for Markdown
@@ -75,10 +86,10 @@ and MDX, and checks for whitespace, YAML, TOML, large files, and private keys. I
 uv run --frozen --extra dev prek install --force
 ```
 
-Run the same command in an existing checkout. This project used pre-commit before, and
-`uv sync` removes that package, so the `.git/hooks/pre-commit` file it generated stops working
-and blocks every commit. `--force` replaces that file. It also overwrites any other script at
-that path, so copy your own hook elsewhere first if you keep one there.
+Run the same command in an older checkout that has hooks from the `pre-commit` tool. `uv sync`
+removes that tool, so its `.git/hooks/pre-commit` file then blocks every commit. `--force`
+replaces that file. It also replaces any other script at that path, so copy your own hook
+elsewhere first.
 
 ### Find your way around the tree
 
@@ -98,19 +109,24 @@ uv run invoke format
 uv run invoke lint
 ```
 
-`invoke lint` stops after the first gate that fails. Pylint does not pass on a clean
-checkout: its leg compares the run against a recorded baseline and fails only on a new
-diagnostic code or a count above the recorded maximum.
+`invoke lint` stops after the first check that fails. On a clean checkout both commands exit 0.
+Pylint reports existing diagnostics on a clean checkout. The Pylint check compares them with a
+recorded baseline and fails only on a new diagnostic code or a count above the recorded maximum.
+`ty` also prints warnings about unused suppression comments; they do not fail the check.
 
 See [Quality gates](develop/knowledge/quality-gates.md) for the complete lint and formatter
 workflow.
 
-Run `uv run invoke check-310` before pushing as well: it builds its environments under
-`.preview/check-310-venv`, leaves your active `.venv` alone, and reproduces the three CI legs your
-environment cannot reach — `ty` under the Python 3.10 excludes, and the unit tests on
-Python 3.10 both with the `prefect` extra and on a base install that has no service
-dependencies. If Python 3.10 is not installed, the task skips loudly and exits successfully,
-leaving all three legs unqualified. To install it, run `uv python install 3.10`. See
+Also run `uv run invoke check-310` before you push. It runs the three CI checks that a
+Python 3.11–3.13 environment does not cover:
+
+- `ty` with the Python 3.10 exclusions
+- the unit tests on Python 3.10 with the `prefect` extra
+- the unit tests on Python 3.10 with the base install, which has no service dependencies
+
+The task builds its environments under `.preview/check-310-venv` and does not change your
+`.venv`. If Python 3.10 is not installed, the task prints that it checked nothing and exits 0.
+Install it with `uv python install 3.10`, then run the task again. See
 [Testing tiers](develop/guidelines/testing-tiers.md).
 
 ### Validate the CLI
@@ -125,25 +141,34 @@ uv run infrahub-sync runs plan --help
 
 ### Running tests
 
-The offline gate is what a change has to keep green. It is a single command, and it deselects
-every marker that needs a running stack, a live service or a Docker daemon:
+Every change must pass the unit tier. It deselects every marker that needs a running stack,
+a live service, or a Docker daemon. It still needs the `docker compose` command:
 
 ```bash
 uv run invoke tests.tests-unit
 ```
 
+The run takes 10 to 20 minutes and ends with a pass count and no failures.
+
 See [Testing tiers](develop/guidelines/testing-tiers.md) for what each other tier needs, what
-it writes, and why a skipped check is not a pass. See
+it writes, and why a skipped test does not count as a pass. See
 [Testing](develop/guidelines/testing.md) for the repository-wide rules about individual tests.
 
-### Running the full stack locally
+### Run the Sync service locally
 
-To run the Sync HTTP API, its Prefect worker, and a disposable Infrahub against your checkout, see the [local development stack](./development-stack.mdx). That page also holds the service
-development loop: the API has no auto-reload, so a code change needs `preview.down` followed
-by `preview.up`.
+The repository has two local stacks. Both use development credentials and are disposable.
+[Local development stack](./development-stack.mdx) describes them in detail.
 
-The suite that exercises that stack is opt-in under the `preview` marker, and it skips
-rather than fails when the stack is not running:
+| Stack | Commands | Sync API | Use it to |
+| --- | --- | --- | --- |
+| Source-built containers | `uv run invoke start`, `build`, `destroy` | `http://127.0.0.1:8030` | Run the API and worker as containers built from your working tree |
+| Preview | `uv run invoke preview.up`, `preview.down` | `http://localhost:8010` | Run the preview smoke suite and the `from-netbox` check against a disposable Infrahub on port 8080 |
+
+Neither stack reloads code automatically. After a code change, run `uv run invoke build` for the
+source-built containers, or `preview.down` and then `preview.up` for the preview stack.
+
+The preview smoke suite uses the `preview` marker. Each test skips when the stack is not
+running:
 
 ```bash
 uv run invoke preview.up      # start the stack
@@ -153,19 +178,33 @@ uv run invoke preview.down --volumes
 
 ### CI tiers
 
-Continuous integration runs in two tiers on a pull request. The fast tier runs on every push: lint, the uv check, the unit tests, and an image build for `linux/amd64` with its release identity, deployment bundle, bill of materials, vulnerability scan and smoke test. It is what a review iteration waits for.
+Continuous integration runs in two tiers on a pull request.
 
-The full qualification tier adds the `linux/arm64` build and smoke, the warm-builder freshness check, the Compose lifecycle suite and the clean-host matrix. Add the `qualify` label to a pull request to run it, and leave the label on: every later push re-runs it while it is there. It also escalates by itself when the diff touches a path only those stages cover — the `Dockerfile`, `deploy/compose/`, `tests/compose/`, `tests/image/`, `tasks/image.py`, `tasks/compose.py`, `tasks/release.py`, the qualification kit, or the workflow files that declare the tiers — so a change to the lifecycle qualifies whether or not anyone remembers the label.
+The fast tier runs on every push: lint, the uv check, the unit tests, and an image build for
+`linux/amd64` with its release identity, deployment bundle, bill of materials, vulnerability
+scan, and smoke test.
 
-Nothing is skipped permanently. The `Full qualification` check always runs and fails until the full tier has covered the head, so a pull request cannot merge on the fast tier alone.
+The full qualification tier adds the `linux/arm64` build and smoke test, the warm-builder
+freshness check, the Compose lifecycle suite, and the clean-host matrix. To run it, add the
+`qualify` label to the pull request. Every later push runs it again while the label is present.
+The full tier also runs without the label when the diff changes a path that only those stages
+check: the `Dockerfile`, `deploy/compose/`, `tests/compose/`, `tests/image/`, `tasks/image.py`,
+`tasks/compose.py`, `tasks/release.py`, the qualification kit, or the workflow files that
+declare the tiers.
 
-A merge also runs the full tier by itself. A push to `feature/v3-develop` — which is what merging a pull request produces — is not a pull-request event, so it qualifies in full without a label. That covers the merged tree, which no pull-request run builds as itself: what a pull request tests is its head merged with the base at that moment, and the commit that lands can differ from it.
+The `Full qualification` check always runs. It fails until the full tier has passed for the
+current head, so a pull request cannot merge on the fast tier alone.
+
+A push to `feature/v3-develop`, which a merge produces, also runs the full tier. This checks the
+merged tree. A pull-request run tests the head merged with the base at that time, and the commit
+that lands can differ from it.
 
 ## Code standards
 
 ### Python style
 
-- Python 3.10–3.13 compatible
+- Python 3.10–3.13 compatible, except `infrahub_sync/service/` and its tests, which require
+  Python 3.11–3.13
 - Type hints on new or changed code
 - Ruff-formatted and lint-clean
 - Clean under `ty`; do not add `[[tool.ty.overrides]]` blocks to mask an error
@@ -195,7 +234,7 @@ rather than to a moving branch.
 The V2 team keeps maintaining `main` exactly as it does today. Nothing imports those changes
 here: there is no automatic import, and the snapshot does not track `main`. A later V2
 documentation change reaches the snapshot only when someone decides it should and edits the
-affected file narrowly, by hand.
+affected file narrowly and manually.
 
 ### Rules for a documentation change
 
@@ -206,7 +245,7 @@ affected file narrowly, by hand.
    `docs/versioned_docs/version-2.x/**` and its versioned sidebar. Neither edit implies the
    other.
 3. **Preserve the snapshot's provenance.** Never bulk-refresh the V2 tree from `main`, and
-   never rerun the freeze over it. Both would silently replace reviewed content, discard the
+   never rerun the freeze over it. Both would replace reviewed content without notice, discard the
    adaptations above, and lose the record of what was corrected and why.
 4. **Build and inspect both versions.** A change to either line, to a shared component, or to
    the site configuration is verified by building the site and reading the affected pages on
@@ -251,13 +290,15 @@ uv run invoke docs.generate
 
 ### Build documentation site
 
-First-time setup (requires Node.js):
+First-time setup. `docs/package.json` pins the pnpm version, and Corepack, which ships with
+Node.js, provides it. If `pnpm` is not on your `PATH`, run `corepack enable pnpm` first, or
+prefix each `pnpm` command with `corepack`:
 
 ```bash
 cd docs && pnpm install --frozen-lockfile
 ```
 
-Build the site:
+Build the site. `invoke docs.docusaurus` runs `pnpm run build` in `docs/`:
 
 ```bash
 uv run invoke docs.docusaurus
@@ -273,8 +314,8 @@ uv run invoke docs.format-rumdl   # run `rumdl fmt .`
 uv run invoke docs.rumdl          # run `rumdl check .`
 ```
 
-Prose style is checked with [Vale](https://vale.sh/), configured in `.vale.ini`. Run it on
-the files you changed:
+Prose style is checked with [Vale](https://vale.sh/), configured in `.vale.ini`. Vale is a
+separate program that `uv sync` does not install. Run it on the files you changed:
 
 ```bash
 vale docs/docs/contributing.mdx
@@ -282,7 +323,11 @@ vale docs/docs/contributing.mdx
 
 ## Changelog entries
 
-Release notes are written by contributors rather than generated from pull request titles, so every pull request into `main` must add a news fragment under `changelog/`. CI fails the pull request if it does not.
+Release notes are written by contributors rather than generated from pull request titles. Every pull request must add a news fragment under `changelog/`, including pull requests into `feature/v3-develop`.
+
+The `Changelog` workflow (`.github/workflows/changelog-check.yml`) checks this only for pull
+requests into `main`, and it is disabled at present: it runs only when dispatched manually.
+Reviewers check for the fragment.
 
 Create one with towncrier, naming it after the issue or pull request number:
 
@@ -294,9 +339,9 @@ The file must be a direct child of `changelog/` named `<id>.<type>.md`, where th
 
 Nested paths and unknown types are ignored by towncrier, so the check rejects them rather than let your entry disappear at release time.
 
-If a change genuinely needs no entry — a dependency bump or a typo fix — a maintainer can label the pull request `ci/skip-changelog`.
+If a change needs no entry, for example a dependency bump or a typo fix, a maintainer can label the pull request `ci/skip-changelog`.
 
-Do not edit `CHANGELOG.md` or the version in `pyproject.toml` by hand. Both are generated when a release is prepared; see [RELEASING.md](https://github.com/opsmill/infrahub-sync/blob/main/RELEASING.md).
+Do not edit `CHANGELOG.md` or the version in `pyproject.toml` manually. Both are generated when a release is prepared; see [RELEASING.md](https://github.com/opsmill/infrahub-sync/blob/main/RELEASING.md).
 
 ## Adding a new adapter
 
@@ -305,8 +350,9 @@ connector itself, the capability declaration that makes a package naming it admi
 conformance tests that guard that declaration, the example and its registry envelope, the
 documentation page, and the read-only `diff` validation to run before any write.
 
-It also records the current limit for an adapter that does not ship in this repository, which
-is worth reading before you start.
+The registered Sync service runs only the adapters that ship in this repository. A package
+that names any other adapter is refused at registration. The guide explains this limit in
+[The current boundary for adapters outside the distribution](develop/guides/adding-an-adapter.md#the-current-boundary-for-adapters-outside-the-distribution).
 
 ## Invoke tasks
 

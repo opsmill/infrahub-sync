@@ -1,8 +1,8 @@
 ---
-title: "Guides"
+title: "Developer guides"
 ---
 
-## Guides
+## Developer guides
 
 Step-by-step procedures for adapter development, local service development, and release
 qualification. For coding and testing rules, see [Guidelines](../guidelines/index.md); for

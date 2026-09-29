@@ -14,7 +14,7 @@ without the Sync API.
 | Registered service | An API-created product run, bound to a registered configuration version | Sync API run, plan and results resources, with links to Prefect executions |
 | Direct Prefect | A read-only plan for a configuration name resolved from the serving process's directory | Prefect flow-run logs and the summary line |
 
-For the supported deployment and the lifecycle of a registered run, start with
+For the Compose deployment and the lifecycle of a registered run, start with
 [Sync architecture](sync-architecture.md). The direct integration is a separate optional
 Python entrypoint, not the Compose operator workflow.
 

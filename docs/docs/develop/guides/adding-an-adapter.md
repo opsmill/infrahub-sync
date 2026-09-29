@@ -26,17 +26,23 @@ register-to-apply flow was **not** replayed against a live service for this revi
 The end-to-end procedure for connecting a new system to infrahub-sync as a source or a
 destination. This is the canonical procedure; `AGENTS.md` links here.
 
-### What this guide teaches, and what it does not
+### Before you start: the service runs only bundled adapters
 
-The supported V3 route is **an adapter that ships in this repository**. A package names its
-adapter by a short configuration name, and the service resolves that name against a closed
-registry of capability declarations. Adding an adapter therefore means adding two things
-together: the connector, and its entry in that registry.
+The registered Sync service runs only adapters that ship in this repository. A package names
+its adapter by a short configuration name, such as `netbox`, and the service looks that name
+up in a fixed set of capability declarations. A package that names any other adapter is
+refused at registration, and nothing is stored. Installing the adapter where the worker can
+import it does not change this.
 
-Writing a connector that lives outside the distribution is a different situation with a real
-limit at this revision. [The current boundary](#the-current-boundary-for-adapters-outside-the-distribution)
-below records exactly what refuses it and why. Read that section before you start if your
-adapter is not going to live in this repository.
+Adding an adapter therefore means adding two things together: the connector under
+`infrahub_sync/adapters/`, and its capability declaration. This guide teaches that route.
+
+The worked example in Step 1, `examples/custom_adapter/`, shows the shape of an adapter. Its
+`package.yml` is refused at registration like any other package that names an adapter outside
+the repository. Loading an adapter from a file path is development-only behavior; see
+[Local adapters](../../adapters/local-adapters.mdx).
+[The current boundary](#the-current-boundary-for-adapters-outside-the-distribution) below
+records the evidence for this limit.
 
 ### When to add an adapter
 
@@ -207,8 +213,8 @@ If you do implement it, the method must:
   in each `operation.relationships` entry; it returns one node id per identity, and
   cardinality is your concern, not its.
 - **Decline a `delete` rather than executing one** — raise `SkippedDeleteOperation`
-  (`infrahub_sync.plan.errors`) and touch nothing. Applying deletes is not supported and
-  remains outside the planned-write contract. In practice your method will not see one:
+  (`infrahub_sync.plan.errors`) and touch nothing. V3 apply records deletes and does not
+  execute them, so deletes are outside the planned-write contract. In practice your method will not see one:
   the engine recognizes a `delete` in its
   own apply loop, records its identifier and never dispatches it to the write surface. Raise
   it anyway — it is the defensive half of the contract, for any caller that is not the
@@ -462,7 +468,10 @@ created. This is a confirmed product limitation, recorded here so you do not dis
 writing a connector. It is not a configuration mistake you can work around.
 
 What the evidence shows, reproduced read-only and in-process against the shipped
-`examples/custom_adapter/package.yml` at revision `61b6a1b9dccae637b522084f563858dfcd5e31a9`:
+`examples/custom_adapter/package.yml` at revision `61b6a1b9dccae637b522084f563858dfcd5e31a9`.
+Points 1 to 3 were checked again at `d9ef147c569a42ec4471bba78ec270c343cdfa28`: the mapping
+still has the same nine keys, and `validate_package_credentials` still refuses the package
+with the same message.
 
 1. `BUILTIN_ADAPTER_CAPABILITIES` in
    [`infrahub_sync/configuration/capabilities.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/configuration/capabilities.py)

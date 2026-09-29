@@ -92,6 +92,9 @@ A failing rehearsal means the packet a tester would receive does not work, not
 that some other candidate artifact is wrong. Nothing here reads any input but
 the packet itself.
 
-Dispatching the workflow is the only way to run this end to end, and nobody
-has done that yet. What a pull request can show is that the workflow
-validates and that `tests/test_workflow_contracts.py` passes.
+Dispatching the workflow is the only way to run this end to end. Run
+[36281782969](https://github.com/opsmill/infrahub-sync/actions/runs/36281782969)
+built private candidate 3.0.0a5 from commit `914ac515` this way, and its
+candidate, clean-host, packet, and rehearsal jobs all passed. A pull request
+can show only that the workflow validates and that
+`tests/test_workflow_contracts.py` passes.

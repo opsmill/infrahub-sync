@@ -6,11 +6,15 @@ title: "Adapter anatomy"
 
 > Part of: Develop > Knowledge | Related: [Sync architecture](sync-architecture.md), [Schema mapping](schema-mapping.md), [Adding an adapter](../guides/adding-an-adapter.md)
 
-An adapter is a single module under `infrahub_sync/adapters/<name>.py` (or a custom module
-outside the package) that defines two classes: an **adapter class** that loads and writes
-objects, and a **model class** that the generated models inherit. `infrahub_sync/adapters/netbox.py`
-is the reference example; `examples/custom_adapter/custom_adapter_src/custom_adapter.py` is a
-minimal from-scratch one.
+An adapter is a single module under `infrahub_sync/adapters/<name>.py` that defines two
+classes: an **adapter class** that loads and writes objects, and a **model class** that the
+generated models inherit. `infrahub_sync/adapters/netbox.py` is the reference example;
+`examples/custom_adapter/custom_adapter_src/custom_adapter.py` is a minimal from-scratch one.
+
+The registered Sync service runs only the adapters in `infrahub_sync/adapters/`, because only
+they have a capability declaration. A module outside the package can be loaded during local
+development, but a package that names it is refused at registration; see
+[How the class is found](#how-the-class-is-found).
 
 ### The two classes
 
@@ -52,7 +56,7 @@ The mixin defines the surface Potenda calls. Each method is one of three kinds �
 | `apply_planned_operation(*, operation, peers)` | Optional | Executes one operation from a **saved plan** and returns the destination node id. The apply stage of `sync` or `apply` calls it. Without it, both commands refuse before writing — see [The planned-write surface](#the-planned-write-surface). |
 | `new_peer_resolver()` | Conditional | Required only alongside `apply_planned_operation` — the engine builds the per-apply peer resolver through it. The two together are the planned-write surface; an adapter with only one of them is refused like an adapter with neither. |
 
-A read-only-capable adapter that only ever does full extracts needs just `model_loader`.
+A read-only-capable adapter that only ever does full extracts needs only `model_loader`.
 Incremental support is additive — see [Incremental sync and cache](incremental-and-cache.md).
 
 ### The planned-write surface
@@ -133,15 +137,24 @@ resolved across models. See [Schema mapping](schema-mapping.md) for the field se
 
 ### How the class is found
 
-`config.yml` selects the adapter:
+A configuration selects the adapter in one of these ways:
 
 - `name: netbox` — a built-in under `infrahub_sync/adapters/`.
 - `adapter: ./path/to/file.py:MyAdapter` — a filesystem path and class name.
 - `adapter: my_pkg.adapters:MyAdapter` — a dotted import path.
 - an installed package exposing an `infrahub_sync.adapters` entry point.
 
-`plugin_loader.py` resolves these in order. Custom adapters do not need to live inside the
-package — point at them with `adapter` and, if needed, `adapters_path`.
+`plugin_loader.py` resolves these in order.
+
+A registered package is stricter. Registration looks up the source and destination `name` in
+`BUILTIN_ADAPTER_CAPABILITIES` (`infrahub_sync/configuration/capabilities.py`), which lists
+only the bundled adapters, and refuses any other name. It also refuses a filesystem `adapter`
+target, the `adapters_path` field, and any `adapter` key on the destination
+(`infrahub_sync/configuration/models.py`). A source `adapter` that names a dotted import path or
+an entry point passes that check, but the package is still refused unless its `name` is a
+bundled adapter. Filesystem paths and `adapters_path` apply only to local development loading;
+see [Local adapters](../../adapters/local-adapters.mdx) and
+[Adding an adapter](../guides/adding-an-adapter.md#the-current-boundary-for-adapters-outside-the-distribution).
 
 ### See also
 
