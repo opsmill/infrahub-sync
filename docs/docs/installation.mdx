@@ -24,9 +24,13 @@ not the full deployment tests that each release package passes.
 
 | | Run from source | Run a release package |
 | --- | --- | --- |
-| You need | Docker, Git, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13 | A Linux amd64 host with Docker Compose, and access to the private release list |
+| You need | Docker, Git, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13 | A Linux amd64 host with Docker Compose, access to the private release list, and an existing NetBox or Nautobot and Infrahub that the Sync worker can reach |
 | Start here | [Run from source](./development-stack.mdx#run-from-source) | [Get a release package](#get-the-private-candidate) below |
 | Where it ends | A first sync from a local NetBox into a local Infrahub | A saved preview from your own NetBox or Nautobot, then a reviewed apply |
+
+A release package brings no source and no destination. The local Infrahub of the
+[NetBox demo tutorial](./tutorials/netbox-demo-to-infrahub.mdx) uses port 8000, the same port
+as the release package's Sync API, so the two cannot run on the same host as documented.
 
 See [Supported platforms and limits](./operations/supported-platforms-and-limits.mdx)
 for what the release qualification covers and for the current product limits.

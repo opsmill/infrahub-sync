@@ -135,7 +135,10 @@ Nautobot uses the same shape with `nautobot`, `nautobot-token` and
 `NAUTOBOT_TOKEN`.
 
 - **Name a URL a container can reach.** The worker resolves it from inside the
-  Compose network, where `localhost` is the worker itself.
+  Compose network, where `localhost` is the worker itself. If NetBox, Nautobot, or
+  Infrahub runs in containers on the same host and publishes only on `127.0.0.1`, the
+  worker cannot reach it: publish it on an address containers can reach and use
+  `http://<host-IP>:<port>`.
 - **The declared `url` is the one used.** `NETBOX_ADDRESS`, `NETBOX_URL`,
   `NAUTOBOT_ADDRESS` and `NAUTOBOT_URL` exported in your shell are ignored: a
   registered run reads what its package declares.
@@ -369,12 +372,12 @@ Two things a package declares are resolved elsewhere:
 ./infrahub-sync-compose cli configs versions CONFIG_ID
 ./infrahub-sync-compose cli configs validate CONFIG_ID 1
 ./infrahub-sync-compose cli configs show CONFIG_ID --version 1
-./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'review initial sync'
+./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'review initial sync'
 ./infrahub-sync-compose cli runs plan RUN_ID --detail
-./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM --branch main --reason 'apply reviewed initial sync'
+./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM --branch BRANCH_NAME --reason 'apply reviewed initial sync'
 ./infrahub-sync-compose cli runs show RUN_ID
 ./infrahub-sync-compose cli runs results RUN_ID
-./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'verify unchanged source'
+./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'verify unchanged source'
 # Versioning is explicit, and never rewrites a registered version:
 ./infrahub-sync-compose cli --package ./edited-package.yml -- configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'
 ```
@@ -458,7 +461,7 @@ with SyncClient("http://127.0.0.1:8000", "<the generated principal token>") as c
 
 A managed write is admitted once and approved against the checksum of the plan
 you reviewed. Nothing is written at the destination until the apply names that
-exact checksum and confirms.
+exact checksum. The checksum is the confirmation; there is no interactive prompt.
 
 The operator sequence above is the authoritative command sequence for planning,
 reviewing, applying, and reading a run. The following API verification is
