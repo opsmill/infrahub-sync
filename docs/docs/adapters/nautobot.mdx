@@ -109,7 +109,7 @@ To download the example `config.yml`
 
 ### Configuration parameters
 
-To instruct `infrahub-sync` to use the Nautobot adapter, set `nautobot` in the direction 'name', you want to use for Peering Manager.
+To use the source-only Nautobot adapter, set `source.name` to `nautobot`.
 
 Below is a snippet from the example config.yml file:
 
@@ -120,8 +120,8 @@ Below is a snippet from the example config.yml file:
   ---
   name: from-nautobot
   source:
-  name: nautobot
-  settings:
+    name: nautobot
+    settings:
       url: "https://<NAUTOBOT-ENDPOINT>"
       token: "<TOKEN>"
       verify_ssl: true # Default value
@@ -147,7 +147,7 @@ Below is an example showing how to:
 - Map source data from Nautobot (`dcim.manufacturers`, and `dcim.platforms`)
 - Specify field mappings between Nautobot and Infrahub models
 
-As you can see in this example, we can map several paths to the same Infrahub Model.
+As you can see in this example, we map different Nautobot paths to different Infrahub models, and reference one mapped model (`OrganizationGeneric`) from another (`InfraPlatform`).
 
 ```yaml
   - name: OrganizationGeneric

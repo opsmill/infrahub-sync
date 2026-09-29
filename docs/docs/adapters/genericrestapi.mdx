@@ -15,7 +15,7 @@ The GenericRestAPI adapter is a flexible, configurable adapter that can connect 
 This adapter can be used in two ways:
 
 1. As a standalone adapter for systems that have a REST API
-2. As a base for building more specialized adapters (like LibreNMS, Observium, PeeringDB)
+2. As a base for developing a specialized adapter when configuration alone cannot cover the source API
 
 ## Key features
 
@@ -49,8 +49,11 @@ source:
     url: "https://api.example.com"
     api_endpoint: "/api/v1"
     auth_method: "token"
-    token: "YOUR_API_TOKEN"  # Better to use environment variables
 ```
+
+For direct adapter use, set `GENERICRESTAPI_TOKEN` in the worker environment. For a registered
+configuration package, declare a credential and set `source.settings.token` to its `$credential`
+reference; see [Configuration package](../configuration-package.mdx).
 
 ### Configuration parameters
 
@@ -58,7 +61,7 @@ source:
 |-----------|-------------|---------|----------|
 | `url` | Base URL of the API | None | Yes |
 | `api_endpoint` | API endpoint path | `/api/v0` | No |
-| `auth_method` | Authentication method (token, x-auth-token, api-key, key, basic) | `token` | No |
+| `auth_method` | Authentication method (token, x-auth-token, api-key, key, basic, none) | `token` | No |
 | token | API token for token-based auth | None | For token auth |
 | username | Username for basic auth | None | For basic auth |
 | password | Password for basic auth | None | For basic auth |

@@ -22,10 +22,37 @@ LibreNMS is an open-source network monitoring system that automatically discover
 
 :::info
 
-Currently, the LibreNMS adapter supports only **one-way synchronization** from LibreNMS to Infrahub.
-Syncing data back into LibreNMS is not yet supported.
+There is no dedicated LibreNMS adapter. LibreNMS is read through the
+[Generic REST API adapter](./genericrestapi.mdx), which supports only **one-way synchronization**
+from LibreNMS to Infrahub. Syncing data back into LibreNMS is not supported.
 
 :::
 
-:::warning Under Construction
-:::
+## Configuration
+
+<ReferenceLink title="Example mapping" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/librenms_to_infrahub" openInNewTab />
+
+<Tabs>
+  <TabItem value="Source example" default>
+
+  ```yaml
+  ---
+  name: from-librenms
+  source:
+    name: genericrestapi
+    settings:
+      url: "https://<LIBRENMS-ENDPOINT>"
+      api_endpoint: "api/v0"
+      auth_method: "x-auth-token"
+      token: "<TOKEN>"
+
+  destination:
+    name: infrahub
+    settings:
+      url: "http://localhost:8000"
+  ```
+
+  </TabItem>
+</Tabs>
+
+See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference.
