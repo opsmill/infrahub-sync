@@ -30,9 +30,12 @@ Direct non-service execution keeps the engine's own cache layout, where **cursor
 (per-adapter bookmarks of what was already read), **side snapshots** (a saved copy of the
 prior extraction used to detect changes), and the **schema sub-hash** (a digest of the
 mapped schema, used to invalidate a cursor when the mapping changes) live under the run's
-cache root. The incremental path and the adapter cursor contract are implemented there, but
-no current entry point selects them: every run requests a full extraction. Incremental
-("warm") extraction is therefore not reachable from either path today.
+cache root. The incremental path and the adapter cursor contract are implemented there.
+Every managed stage requests a full extraction (`full_extract=True`), so incremental
+extraction is not reachable through the managed path. A direct caller of `execute_run` may
+instead set `full_extract=False` and reuse a persistent cache root across runs; that call
+then extracts incrementally if a compatible predecessor state exists there, and falls back
+to a full extraction otherwise.
 
 ## What a saved plan records about deletes
 
