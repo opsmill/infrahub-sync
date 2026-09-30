@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import warnings
+from unittest.mock import patch
 
 import pytest
+from requests import Response
 
 from infrahub_sync import SyncAdapter
 from infrahub_sync.adapters.aci import AciAdapter
+from infrahub_sync.configuration import ConfigurationPackage
+from infrahub_sync.configuration.runtime import resolve_runtime_instance
 
 BASE_SETTINGS: dict[str, object] = {
     "url": "https://apic.example.test",
@@ -69,3 +73,97 @@ def test_verify_precedence(
 def test_empty_env_does_not_override_declared_false(monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression test: an empty `CISCO_APIC_VERIFY` must not silently enable TLS verification."""
     assert _create_client(monkeypatch, env_value="", declared_verify=False) is False
+
+
+@pytest.mark.parametrize("env_value", [None, "", "false", "true"])
+@pytest.mark.parametrize(
+    ("verification_settings", "expected"),
+    [
+        ({"verify": True}, True),
+        ({"verify": False}, False),
+        ({"verify": "false"}, False),
+        ({"verify": "0"}, False),
+        ({"verify": "no"}, False),
+        ({"verify": "FaLsE"}, False),
+        ({"verify": "true"}, True),
+        ({"verify": " false "}, True),
+        ({"verify": ""}, True),
+        ({"verify": 0}, False),
+        ({"verify": 1}, True),
+        ({"verify": None}, True),
+        ({}, True),
+    ],
+)
+def test_registered_verify_reaches_http_request(
+    monkeypatch: pytest.MonkeyPatch,
+    env_value: str | None,
+    verification_settings: dict[str, object],
+    expected: bool,  # noqa: FBT001 - expected verification flag.
+) -> None:
+    """Registered settings govern the real client and its final HTTP verification flag."""
+    if env_value is None:
+        monkeypatch.delenv("CISCO_APIC_VERIFY", raising=False)
+    else:
+        monkeypatch.setenv("CISCO_APIC_VERIFY", env_value)
+    monkeypatch.setenv("ACI_TEST_USERNAME", "registered-user")
+    monkeypatch.setenv("ACI_TEST_PASSWORD", "registered-password")
+    monkeypatch.setenv("CISCO_APIC_URL", "https://ambient.example.test")
+    monkeypatch.setenv("CISCO_APIC_USERNAME", "ambient-user")
+    monkeypatch.setenv("CISCO_APIC_PASSWORD", "ambient-password")
+    package = ConfigurationPackage.model_validate(
+        {
+            "format_version": 1,
+            "configuration": {
+                "name": "registered-aci",
+                "source": {
+                    "name": "aci",
+                    "settings": {
+                        "url": BASE_SETTINGS["url"],
+                        "username": {"$credential": "username"},
+                        "password": {"$credential": "password"},
+                        **verification_settings,
+                    },
+                },
+                "destination": {"name": "infrahub", "settings": {}},
+                "schema_mapping": [],
+            },
+            "credentials": {
+                "username": {"provider": "env", "identifier": "ACI_TEST_USERNAME"},
+                "password": {"provider": "env", "identifier": "ACI_TEST_PASSWORD"},
+            },
+        }
+    )
+    instance = resolve_runtime_instance(package, directory="/registered")
+    with warnings.catch_warnings():
+        client = object.__new__(AciAdapter)._create_aci_client(instance.source)
+    assert client.verify is expected
+    assert client.base_url == f"{BASE_SETTINGS['url']}/api/"
+    assert client.username == "registered-user"
+    assert client.password == "registered-password"  # noqa: S105 - synthetic test credential.
+    response = Response()
+    response.status_code = 200
+    try:
+        with patch.object(client.session, "request", return_value=response) as request:
+            assert client._handle_request(client.base_url + "class/fabricNode.json") is response
+        assert request.call_args.kwargs["verify"] is expected
+    finally:
+        client.session.close()
+
+
+@pytest.mark.parametrize(("env_value", "expected"), [(None, True), ("", True), ("false", False), ("true", True)])
+def test_direct_omitted_verify(
+    monkeypatch: pytest.MonkeyPatch,
+    env_value: str | None,
+    expected: bool,  # noqa: FBT001 - expected verification flag.
+) -> None:
+    """Direct use keeps the secure default and non-empty environment override."""
+    if env_value is None:
+        monkeypatch.delenv("CISCO_APIC_VERIFY", raising=False)
+    else:
+        monkeypatch.setenv("CISCO_APIC_VERIFY", env_value)
+    with warnings.catch_warnings():
+        client = object.__new__(AciAdapter)._create_aci_client(SyncAdapter(name="aci", settings=dict(BASE_SETTINGS)))
+    try:
+        assert client.verify is expected
+    finally:
+        client.session.close()

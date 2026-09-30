@@ -26,18 +26,24 @@ _ENV_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _REGISTERED_CONTEXT = "_infrahub_sync_registered_context"
 
 
-def select_runtime_credential(
+def select_runtime_setting(
     settings: Mapping[str, object], setting_name: str, environment_names: tuple[str, ...]
-) -> str | None:
-    """Select a credential without ambient reads for a registered runtime package."""
+) -> object:
+    """Select a declared setting without ambient reads for a registered runtime package."""
     if settings.get(_REGISTERED_CONTEXT) is True:
-        value = settings.get(setting_name)
-        return value if isinstance(value, str) else None
+        return settings.get(setting_name)
     for environment_name in environment_names:
         value = os.environ.get(environment_name)
         if value:
             return value
-    value = settings.get(setting_name)
+    return settings.get(setting_name)
+
+
+def select_runtime_credential(
+    settings: Mapping[str, object], setting_name: str, environment_names: tuple[str, ...]
+) -> str | None:
+    """Select a string credential using the shared runtime setting policy."""
+    value = select_runtime_setting(settings, setting_name, environment_names)
     return value if isinstance(value, str) else None
 
 

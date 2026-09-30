@@ -1,0 +1,1 @@
+Registered ACI packages now use their declared TLS verification setting, with verification enabled when it is omitted or null, instead of allowing `CISCO_APIC_VERIFY` in the worker environment to override it.
