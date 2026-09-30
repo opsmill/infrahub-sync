@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import logging
 import weakref
@@ -144,11 +145,15 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             network = entry.get("Network", "")
             mask = entry.get("Mask", "")
             if "/" in network:
-                entry["normalized_prefix"] = network
+                prefix = network
             elif mask:
-                entry["normalized_prefix"] = f"{network}/{mask}"
+                prefix = f"{network}/{mask}"
             else:
-                entry["normalized_prefix"] = network
+                prefix = network
+            # Use the network address so it matches the prefix computed for IP addresses.
+            with contextlib.suppress(ValueError):
+                prefix = str(ipaddress.ip_network(prefix, strict=False))
+            entry["normalized_prefix"] = prefix
             return entry
 
         def should_ignore(network) -> bool:
