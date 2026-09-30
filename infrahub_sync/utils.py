@@ -11,10 +11,8 @@ from diffsync.store.local import LocalStore
 from diffsync.store.redis import RedisStore
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
-from infrahub_sync.cache import compute_schema_subhash
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.cache.paths import run_dir as stored_run_dir
-from infrahub_sync.cache.sidecars import SchemaHashFile
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.generator import render_template
 from infrahub_sync.plan.errors import PlanVerificationError
@@ -285,10 +283,19 @@ def get_potenda_from_instance(  # pylint: disable=too-many-positional-arguments 
     # adapter's live schema (populated at __init__); falls back to
     # `sync_instance._cached_schema` for test seams.
     subhash = ""
-    schema = getattr(dst, "schema", None) or getattr(sync_instance, "_cached_schema", None)
-    if schema:
-        subhash = compute_schema_subhash(sync_instance, schema)
-        SchemaHashFile(path=rdir / "schema-sub-hash.txt", value=subhash).save()
+    try:
+        # pylint: disable-next=import-outside-toplevel  # deferred so a failed import degrades to no subhash
+        from infrahub_sync.cache import compute_schema_subhash
+
+        # pylint: disable-next=import-outside-toplevel  # same deferred import as above
+        from infrahub_sync.cache.sidecars import SchemaHashFile
+
+        schema = getattr(dst, "schema", None) or getattr(sync_instance, "_cached_schema", None)
+        if schema:
+            subhash = compute_schema_subhash(sync_instance, schema)
+            SchemaHashFile(path=rdir / "schema-sub-hash.txt", value=subhash).save()
+    except ImportError:
+        pass  # cache extras not available — degrade silently
 
     return Potenda(
         destination=dst,
