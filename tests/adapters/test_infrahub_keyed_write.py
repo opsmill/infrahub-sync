@@ -534,6 +534,7 @@ def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refuse
 
     assert "relationship 'site'" in str(excinfo.value)
     assert "name__value" in str(excinfo.value)
+    assert client.resolver_queries == [], "The refusal comes before any destination lookup."
     assert client.mutation_names == [], "A refused create attempts no destination mutation."
 
 
@@ -617,6 +618,7 @@ def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is
     with pytest.raises(UnaccountedIdentityComponentError, match="name__value"):
         adapter.apply_planned_operation(operation=operation, peers=peers)
 
+    assert client.resolver_queries == [], "The refusal comes before any destination lookup."
     assert client.mutation_names == []
 
 
