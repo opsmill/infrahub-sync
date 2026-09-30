@@ -113,6 +113,7 @@ def _plan() -> PlanResource:
         checksum=CHECKSUM,
         checksum_ok=True,
         verification_notes=("reviewed from the service artifact",),
+        destination_branch="review",
         summary=PlanSummaryResource(
             by_action={"create": 1, "delete": 1},
             by_kind={"Device": 1, "Site": 1},
@@ -286,6 +287,7 @@ def test_diff_uses_registered_tuple_waits_and_renders_service_plan(client: Magic
     client.get_plan.assert_called_once_with("service-run-1")
     assert "run_id: service-run-1" in result.output
     assert f"plan_checksum: {CHECKSUM}" in result.output
+    assert "destination_branch: review" in result.output
     assert "operations: 2" in result.output
     assert "delete operation(s)" in result.output
 
@@ -319,6 +321,21 @@ def test_sync_no_wait_returns_service_identity_without_polling(client: MagicMock
     client.wait_for_run.assert_not_called()
     assert "run_id: service-run-1" in result.output
     assert "idempotency_key: retry-sync" in result.output
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("sync", "--config-id", "edge-sync", "--version", "1", "--reason", "sync inventory"),
+        ("apply", "service-run-1", "--expected-checksum", CHECKSUM, "--reason", "apply plan"),
+    ],
+)
+def test_completed_writes_report_the_saved_destination_branch(client: MagicMock, command: tuple[str, ...]) -> None:
+    result = _invoke(client, *command)
+
+    assert result.exit_code == 0, result.output
+    assert "destination_branch: review" in result.output
+    client.get_plan.assert_called_once_with("service-run-1")
 
 
 def test_apply_sends_only_reviewed_checksum_and_shipped_fields(client: MagicMock) -> None:

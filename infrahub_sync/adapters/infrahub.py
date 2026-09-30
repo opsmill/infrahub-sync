@@ -698,15 +698,16 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             msg = "Both url and token must be specified!"
             raise ValueError(msg)
 
-        # The effective destination identity a plan of this adapter is bound to — the
-        # resolved URL and branch, never the token. The branch falls
-        # back to "main" because that is the SDK's `default_branch` when none is set, so
-        # the record names the branch actually written to.
-        self.destination_binding = DestinationBindingRecord(url=infrahub_url, branch=infrahub_branch or "main")
+        # One branch for the SDK default, explicit schema read, and saved-plan binding.
+        infrahub_branch = infrahub_branch or "main"
+        self.destination_binding = DestinationBindingRecord(url=infrahub_url, branch=infrahub_branch)
 
-        sdk_config: dict[str, Any] = {"timeout": 60, "api_token": infrahub_token}
-        if infrahub_branch:
-            sdk_config["default_branch"] = infrahub_branch
+        sdk_config: dict[str, Any] = {
+            "timeout": 60,
+            "api_token": infrahub_token,
+            "default_branch": infrahub_branch,
+            "default_branch_from_git": False,
+        }
         if verify_ssl is not None:
             sdk_config["tls_insecure"] = not verify_ssl
 

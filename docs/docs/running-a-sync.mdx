@@ -113,6 +113,8 @@ source or the destination.
 - If the package declares no branch, the run uses `--branch`. Without `--branch`, it uses
   `main`.
 
+The worker ignores `INFRAHUB_DEFAULT_BRANCH` and `INFRAHUB_DEFAULT_BRANCH_FROM_GIT` for this choice. After a completed run, the CLI prints `destination_branch`; `runs plan RUN_ID` shows the branch recorded in its saved plan.
+
 To inspect what is registered, use `configs list`, `configs show CONFIG_ID`, and
 `configs versions CONFIG_ID`.
 

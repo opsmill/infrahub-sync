@@ -512,6 +512,7 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
         ("checksum_ok", plan.checksum_ok),
         ("checksum_source", "Sync API saved plan"),
         ("operations", plan.summary.total),
+        ("destination_branch", plan.destination_branch),
         ("delete_operations_computed", plan.summary.delete_operations_computed),
     ]
     if plan.schema_fingerprint is not None:
@@ -607,7 +608,7 @@ def sync_cmd(
 ) -> None:
     """Create a confirmed synchronization run."""
     with _client_errors():
-        _client_value, completed = _admit_run(
+        client, completed = _admit_run(
             ctx,
             operation="sync",
             config_id=config_id,
@@ -621,6 +622,7 @@ def sync_cmd(
         )
         if wait:
             _echo_run(completed)
+            _echo_fields((("destination_branch", client.get_plan(completed.run.run_id).destination_branch),))
 
 
 @app.command("apply")
@@ -695,6 +697,7 @@ def apply_cmd(
             raise
         if wait:
             _echo_run(completed)
+            _echo_fields((("destination_branch", client.get_plan(completed.run.run_id).destination_branch),))
 
 
 @runs_app.command("show")
