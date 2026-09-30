@@ -24,6 +24,7 @@ are not set. Run locally with::
 from __future__ import annotations
 
 import os
+import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -104,6 +105,34 @@ def _graphql(address: str, token: str, query: str) -> dict[str, Any]:
     return body
 
 
+def _await_schema_kinds(address: str, token: str, kinds: tuple[str, ...], timeout: float = 90.0) -> None:
+    """Block until `main` serves every one of `kinds`.
+
+    `POST /api/schema/load` returns once the payload is accepted, not once the kinds it
+    declares are available to GraphQL. A create issued in that window fails with
+    `Cannot query field '<Kind>Create' on type 'Mutation'`, which reads as a broken adapter
+    rather than a slow schema load.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        response = requests.get(
+            f"{address}/api/schema?branch=main",
+            headers={"X-INFRAHUB-KEY": token},
+            timeout=30,
+        )
+        response.raise_for_status()
+        missing = set(kinds) - {node["kind"] for node in response.json().get("nodes", [])}
+        if not missing:
+            return
+        if time.monotonic() >= deadline:
+            msg = (
+                f"Infrahub did not serve {sorted(missing)} on 'main' within {timeout:.0f}s of a successful "
+                f"schema load, so the throwaway schema this test measures against is not in place."
+            )
+            raise AssertionError(msg)
+        time.sleep(1.0)
+
+
 @pytest.fixture
 def live_probe_node() -> Iterator[tuple[str, str, str]]:
     """Apply the throwaway schema, create one node, yield ids for the test, tear down."""
@@ -117,6 +146,7 @@ def live_probe_node() -> Iterator[tuple[str, str, str]]:
         timeout=60,
     )
     schema_response.raise_for_status()
+    _await_schema_kinds(address, token, ("TestAdapterProbe",))
 
     # Create one probe node with one attribute of each kind populated.
     inputs = ", ".join(f"{name}: {{value: {_graphql_literal(value)}}}" for name, value in _NODE_VALUES.items())
