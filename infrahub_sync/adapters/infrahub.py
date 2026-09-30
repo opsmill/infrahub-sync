@@ -289,6 +289,7 @@ def _operation_peer_identity(operation: PlannedOperation, field: str) -> Mapping
     A planned identity may carry a nested peer reference, while a hand-built operation
     may supply it only in its relationship reference. Check both so a relationship
     component is accepted only when its peer identity supplies the value to be written.
+    A cardinality-many reference supplies no key component, so it yields no identity here.
     """
     if field in operation.identity:
         nested = _nested_peer_identity(operation.identity[field])
@@ -402,9 +403,6 @@ class PeerResolver:
         # The canonical identity is unhashable, so the memo key carries its canonical JSON
         # encoding — the same normalization the operation identifier hashes (FR-028.3).
         self._memo: dict[tuple[str, bytes], str] = {}
-        # Kinds whose partial filter has been warned about, once per kind per apply: the
-        # resolver lives for exactly one apply, so the set does too.
-        self._partial_filter_reported: set[str] = set()
 
     @staticmethod
     def _key(kind: str, identity: Mapping[str, Any]) -> tuple[str, bytes]:
@@ -449,18 +447,19 @@ class PeerResolver:
         `identity[<attr>]` and recursing for deeper nesting (AD043). The **schema path** is
         split; the **data value** never is.
 
-        Two degraded cases, and neither is silent — a too-loose query can match **exactly
-        one** node and bind it wrongly, so `_query`'s zero- and multi-match refusals are not
-        a defense against degradation:
+        A component whose value the identity does not supply is skipped here, which would leave
+        a too-loose query that can match **exactly one** wrong node and bind it. Planned apply
+        never reaches that case: `apply_planned_operation` calls
+        `_refuse_partial_key_peer_filter` before `resolve`, and that raises
+        `UnaccountedIdentityComponentError` naming the missing components, so every peer
+        filter built for a planned write carries a complete peer key: the kind's full
+        human-friendly ID, or only the destination id when the plan records one (that id
+        bypasses the HFID check). The skip
+        stays only so a direct caller of this resolver still gets a filter. The `<rel>__ids`
+        fallback (resolve the reference component's own peer first, then filter
+        `<rel>__ids=[<id>]`) is not implemented by planned apply.
 
-        - a component whose value the identity does not supply is **skipped**, and the skip
-          is disclosed by a per-kind apply-time warning naming the dropped components. The
-          specified remedy for a kind whose HFID does not cover its plan identity is the
-          `<rel>__ids` fallback — resolve the reference component's own peer first,
-          recursively through this same resolver, then filter `<rel>__ids=[<id>]` — which
-          planned apply does not implement; FR-024 already warns at plan time about exactly
-          this condition, and this is its apply-time counterpart;
-        - a kind that declares no usable HFID component at all falls back to the identity's
+        A kind that declares no usable HFID component at all falls back to the identity's
           own direct scalars as `<attr>__value` filters, which is the only thing the apply
           holds for it. When even those yield nothing, the returned mapping is empty and
           `_query` refuses before querying: an unfiltered query lists every node of the
@@ -494,11 +493,9 @@ class PeerResolver:
         components = _hfid_components(node_schema)
 
         kwargs: dict[str, Any] = {}
-        dropped: list[str] = []
         for component in components:
             value = _identity_path_value(identity, _component_segments(component))
             if value is _UNRESOLVED or isinstance(value, (Mapping, list, tuple)):
-                dropped.append(component)
                 continue
             kwargs[_filter_kwarg_name(component)] = value
 
@@ -508,18 +505,6 @@ class PeerResolver:
                     continue
                 kwargs[_filter_kwarg_name(name)] = value
 
-        if kwargs and dropped and peer_kind not in self._partial_filter_reported:
-            self._partial_filter_reported.add(peer_kind)
-            logger.warning(
-                "Planned apply: resolving %s peers on a PARTIAL filter. The plan identity supplies no "
-                "value for human-friendly-ID component(s) %s, so they were dropped and the destination "
-                "is queried on %s — a strict subset of the kind's convergence key, which can match a "
-                "single wrong node and bind it. Re-plan so the identity supplies the dropped "
-                "component(s) (FR-024's plan-time warning names the same condition).",
-                peer_kind,
-                ", ".join(dropped),
-                sorted(kwargs),
-            )
         return kwargs
 
     def _query(self, *, peer_kind: str, identity: Mapping[str, Any], referring_operation_id: str) -> str:

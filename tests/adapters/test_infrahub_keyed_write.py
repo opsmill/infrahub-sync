@@ -516,10 +516,12 @@ def test_a_no_hfid_kind_update_is_allowed_where_its_create_is_refused() -> None:
 # names missing components before lookup. Direct values still need AD051's diagnosis.
 
 
-def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refused() -> None:
+@pytest.mark.parametrize("memo_seeded", [True, False], ids=["memo-hit", "memo-miss"])
+def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refused(*, memo_seeded: bool) -> None:
     """Name the missing peer field before lookup so a loose match cannot bind a wrong peer."""
     client, adapter, peers = keyed_adapter()
-    peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
+    if memo_seeded:
+        peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
     operation = make_operation(
         kind=DEVICE_KIND,
         identity={"name": "device-a", "site": {"peer_kind": SITE_KIND, "identity": {"code": "site-a"}}},
@@ -534,6 +536,7 @@ def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refuse
 
     assert "relationship 'site'" in str(excinfo.value)
     assert "name__value" in str(excinfo.value)
+    assert client.resolver_queries == [], "The refusal comes before any destination lookup."
     assert client.mutation_names == [], "A refused create attempts no destination mutation."
 
 
@@ -601,10 +604,12 @@ def test_an_update_whose_hfid_component_is_blank_still_reaches_the_recorded_id_w
     assert top_level_scalar_id(query) == DESTINATION_ID
 
 
-def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is_refused() -> None:
+@pytest.mark.parametrize("memo_seeded", [True, False], ids=["memo-hit", "memo-miss"])
+def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is_refused(*, memo_seeded: bool) -> None:
     """A recorded parent id cannot protect a relationship resolved through a loose peer filter."""
     client, adapter, peers = keyed_adapter()
-    peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
+    if memo_seeded:
+        peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
     operation = update_operation(
         kind=DEVICE_KIND,
         identity={"name": "device-a", "site": {"peer_kind": SITE_KIND, "identity": {"code": "site-a"}}},
@@ -617,6 +622,7 @@ def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is
     with pytest.raises(UnaccountedIdentityComponentError, match="name__value"):
         adapter.apply_planned_operation(operation=operation, peers=peers)
 
+    assert client.resolver_queries == [], "The refusal comes before any destination lookup."
     assert client.mutation_names == []
 
 
