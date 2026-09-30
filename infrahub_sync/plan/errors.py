@@ -327,12 +327,13 @@ class UnkeyedCreateRefusedError(PlanArtifactError):
 
 
 class DestinationIdentityCollisionError(PlanArtifactError):
-    """Several planned creates share a destination uniqueness rule.
+    """A create shares a destination key with a distinct source record or create.
 
     The sync distinguishes these source objects; the destination cannot. Applying them
     would converge them onto a single object and lose the surplus silently, at exit 0. Only
-    creates are counted: an update is keyed by its recorded destination id and cannot
-    converge onto another operation's object.
+    creates trigger refusal: an update is keyed by its recorded destination id.
+    Its source identity still participates in proving whether a create is lossy,
+    as does an unchanged record in the full loaded source population.
     """
 
     wrote = False

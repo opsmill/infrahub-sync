@@ -191,6 +191,20 @@ objects onto one destination object. A unique attribute inherited from the same 
 refuses matching creates of different kinds. Updates are excluded, since each is keyed by its
 recorded destination id. The saved-plan apply gate checks the same rules before its first write.
 
+Planning also compares each create's human-friendly ID against every loaded source record
+of that kind. This includes unchanged records restored from the previous run's cache and
+records represented by updates. A single create is refused if a distinct source identity
+projects onto the same destination match key, including paths through nested peer identities.
+The error names the kind, source identity fields, destination match key, and fields the
+destination cannot distinguish. Alternative uniqueness constraints do not replace the
+human-friendly ID used to match a create. An update-only plan continues to use recorded
+destination ids.
+
+A source record with no value for a match component cannot prove a collision; planning
+warns and skips that record in the population comparison. The separate checks for an
+under-keyed create still apply. Infrahub creates require the cached destination schema,
+and identity checks run even when no plan artifact directory was supplied.
+
 The write surface applies the same rule, from the same function, before `client.create` — so a create
 refused at plan time and the same create arriving in a hand-built artifact are refused for the same
 reason, and neither attempts a mutation.

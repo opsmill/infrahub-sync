@@ -586,6 +586,7 @@ class Potenda:
         behavioral engines that return nothing retain the row fallback.
         """
         if not self.run_dir:
+            self.write_plan_artifact([diff])
             return None
         from infrahub_sync.cache.parquet_io import write_plan
 
@@ -597,27 +598,28 @@ class Potenda:
     def write_plan_artifact(self, diffs: Sequence[Any]) -> PlanManifest | None:
         """Derive and write `<run_dir>/plan/` for `diffs`, before any destination write.
 
-        Composes the derivation (creates and updates from every diff handed in, then the
-        derived deletes, then the convergence-key warning) with the source-snapshot
-        binding and the configuration version, and hands the result to the artifact
-        writer. Returns the manifest that was written, or `None` when this run has no
-        cache identity to write into.
-
-        `diffs` is a sequence rather than a single diff because the tier path retains one
-        diff per tier and the artifact records the whole change set, once.
-
-        A derivation or write failure propagates: it fails the command on `diff` exactly
-        as on `sync` (FR-030, AD047).
+        Derive operations and check source identities even without artifact storage.
+        With a cache identity, bind the source snapshot and configuration version,
+        then write the artifact and return its manifest; otherwise return `None`.
+        A sequence supports the tier path's one diff per tier. Derivation and write
+        failures propagate before any destination write (FR-030, AD047).
         """
         written = self._write_plan_artifact(diffs)
         return None if written is None else written[0]
 
     def _write_plan_artifact(self, diffs: Sequence[Any]) -> tuple[PlanManifest, dict[str, int]] | None:
         """Write the artifact once and retain its authoritative in-memory action counts."""
-        if not self.run_dir or not self.run_id or self.config is None:
-            # No cache identity or no parsed configuration — the latter only happens in
-            # tests, which construct Potenda with `config=None`.
-            logger.debug("Plan artifact: skipped, this run has no run_dir/run_id/config")
+        if self.config is None:
+            if getattr(self.destination, "type", None) == "Infrahub":
+                msg = (
+                    "Infrahub planning requires a parsed configuration to check source identities. "
+                    "No destination write was attempted."
+                )
+                raise PlanVerificationError(
+                    msg,
+                    next_action="Supply the parsed configuration, then re-run `diff`.",
+                )
+            logger.debug("Plan artifact: skipped, this run has no config")
             return None
 
         from functools import partial
@@ -663,7 +665,13 @@ class Potenda:
         for operation in operations:
             action_counts[operation.action] += 1
 
-        warn_missing_convergence_key(destination=self.destination, operations=operations)
+        warn_missing_convergence_key(
+            destination=self.destination, operations=operations, source_adapter=self.source, config=self.config
+        )
+
+        if not self.run_dir or not self.run_id:
+            logger.debug("Plan artifact: skipped after identity checks, this run has no run_dir/run_id")
+            return None
 
         manifest = write_artifact(
             run_dir=self.run_dir,

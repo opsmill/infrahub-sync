@@ -68,7 +68,9 @@ from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.keying import (
     _component_field,
     refuse_destination_identity_collisions,
+    refuse_source_identity_collisions,
     refuse_unkeyed_create,
+    require_infrahub_create_schema,
 )
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
@@ -204,6 +206,7 @@ def _peer_pair(
     unique_id: Any,
     chain: tuple[tuple[str, Any], ...],
     peers: DestinationOnlyPeers | None,
+    allow_missing: bool = False,
 ) -> dict[str, Any]:
     """Return the nested `{"peer_kind", "identity"}` pair naming one peer (AD043).
 
@@ -273,10 +276,13 @@ def _peer_pair(
         owning_kind=peer_kind,
         chain=(*chain, (peer_kind, unique_id)),
         peers=peers,
+        allow_missing=allow_missing,
     )
     return {
         "peer_kind": peer_kind,
-        "identity": _identity_from_keys(keys=identifiers, kind=peer_kind, resolved=resolved),
+        "identity": _identity_from_keys(
+            keys=identifiers, kind=peer_kind, resolved=resolved, allow_missing=allow_missing
+        ),
     }
 
 
@@ -290,6 +296,7 @@ def _resolve_one_reference(
     candidates: tuple[str, ...],
     chain: tuple[tuple[str, Any], ...],
     peers: DestinationOnlyPeers | None,
+    allow_missing: bool = False,
 ) -> _ResolvedReference:
     """Resolve one reference-bearing field's value into a peer kind and peer identities.
 
@@ -314,6 +321,7 @@ def _resolve_one_reference(
             unique_id=unique_id,
             chain=chain,
             peers=peers,
+            allow_missing=allow_missing,
         )
         for unique_id in unique_ids
     ]
@@ -356,6 +364,7 @@ def _resolve_references(
     owning_kind: str,
     chain: tuple[tuple[str, Any], ...] = (),
     peers: DestinationOnlyPeers | None = None,
+    allow_missing: bool = False,
 ) -> dict[str, _ResolvedReference]:
     """Resolve every reference-bearing field of `values` that carries a value.
 
@@ -367,6 +376,9 @@ def _resolve_references(
     derived delete leaves it there deliberately: its peers are destination-only by
     construction and probed against the destination store, so the rule has nothing to add
     and enabling it would only widen what a delete admits (AD049).
+
+    `allow_missing` retains null components while examining the full source population.
+    Operation derivation keeps the default strict identity proof.
     """
     resolved: dict[str, _ResolvedReference] = {}
     for field in sorted(candidates):
@@ -384,6 +396,7 @@ def _resolve_references(
             candidates=candidates[field],
             chain=chain,
             peers=peers,
+            allow_missing=allow_missing,
         )
     return resolved
 
@@ -423,6 +436,7 @@ def _identity_from_keys(
     keys: Mapping[str, Any],
     kind: str,
     resolved: Mapping[str, _ResolvedReference],
+    allow_missing: bool = False,
 ) -> dict[str, Any]:
     """Build the canonical destination identity for one operation (FR-028.3, AD043, AD049).
 
@@ -446,7 +460,7 @@ def _identity_from_keys(
     for name, value in keys.items():
         reference = resolved.get(name)
         if reference is not None:
-            if not reference.pairs:
+            if not reference.pairs and not allow_missing:
                 msg = (
                     f"No destination identity can be formed for an operation on kind {kind!r}: its "
                     f"identity attribute {name!r} is a relationship naming an empty peer set."
@@ -454,7 +468,7 @@ def _identity_from_keys(
                 raise UnformableDestinationIdentityError(msg)
             identity[name] = reference.identity_value()
             continue
-        if value is None:
+        if value is None and not allow_missing:
             msg = (
                 f"No destination identity can be formed for an operation on kind {kind!r}: its "
                 f"identity attribute {name!r} resolved to no value."
@@ -857,38 +871,58 @@ def _warn_identity_finer_than_destination_key(
     )
 
 
-def warn_missing_convergence_key(*, destination: Any, operations: Sequence[PlannedOperation]) -> None:
+def _source_identities(
+    *, kind: str, source_adapter: Any, destination: Any, config: SyncConfig | None
+) -> list[dict[str, Any]]:
+    """Resolve identifiers of every loaded source record, including unchanged records."""
+    candidates = reference_candidates(config, kind)
+    peers = destination_only_peers(destination)
+    identities = []
+    for record in source_adapter.get_all(kind):
+        keys = record.get_identifiers()
+        resolved = _resolve_references(
+            values=keys,
+            candidates=candidates,
+            store=source_adapter.store,
+            config=config,
+            owning_kind=kind,
+            chain=((kind, record.get_unique_id()),),
+            peers=peers,
+            allow_missing=True,
+        )
+        # Missing values cannot prove a collision. Keep them for the warning rather
+        # than treating an unchanged source record as an under-keyed planned write.
+        identities.append(
+            canonical_identity(
+                {
+                    field: resolved[field].identity_value() if field in resolved else value
+                    for field, value in keys.items()
+                },
+                kind=kind,
+            )
+        )
+    return identities
+
+
+def warn_missing_convergence_key(
+    *,
+    destination: Any,
+    operations: Sequence[PlannedOperation],
+    source_adapter: Any = None,
+    config: SyncConfig | None = None,
+) -> None:
     """Prove every create keys itself, and warn about what only an update risks (FR-024, AD044).
 
-    A **create** is matched by the destination on the components its payload carries, so a
-    payload missing one does not match the existing object: the server reports success and
-    creates a second one, and nothing downstream can detect it. That cannot be a warning, so
-    every create is proven here, per operation, and refused where the proof fails —
-    `UnkeyedCreateRefusedError` for a create that cannot key itself, and
-    `DestinationIdentityCollisionError` where several creates project onto one destination
-    identity and would silently converge into one object.
+    Refuse an under-keyed create or one sharing its actual destination match key
+    with a distinct loaded source identity, including updates and unchanged records.
+    Updates themselves remain keyed by recorded destination id and only receive
+    warnings about incomplete keys or finer source identities.
 
-    An **update** is keyed by the destination id recorded for it at plan time, so none of
-    these conditions can make it write the wrong object. Every arm therefore stays a warning
-    for updates, which is what makes kinds with no human-friendly ID usable at all:
-
-    1. the kind declares no `human_friendly_id`, or the plan's identity does not supply every
-       one of its components;
-    2. no `uniqueness_constraints` entry is covered by the plan's identity attributes — a
-       different condition, because a kind with a complete human-friendly ID and no
-       uniqueness constraint still duplicates silently;
-    3. no key the destination declares covers the plan's identity — the opposite direction,
-       where source objects **merge** rather than duplicate; see
-       `_warn_identity_finer_than_destination_key`.
-
-    **Guarded on the destination exposing a schema at all (AD052)**, since `self.schema` is
-    defined on the Infrahub adapter and on no other while derivation runs for every
-    destination. Where no schema is exposed the guard is skipped, and skipping it is never an
-    error — the same posture the warnings have always had.
-
-    Warnings stay off the manifest, so they remain outside `plan_checksum` and SC-006's byte
-    comparison. A refusal fails the command instead (AD047), before any artifact is written.
+    Infrahub creates require cached schemas; other schemaless destinations retain
+    AD052's skip. Warnings stay off the manifest and outside its checksum.
+    A refusal fails planning before any destination write or saved artifact.
     """
+    require_infrahub_create_schema(destination=destination, operations=operations)
     schema = getattr(destination, "schema", None)
     if not schema:
         logger.debug("Plan: the destination exposes no schema, so the convergence-key warning is skipped (AD052)")
@@ -907,10 +941,16 @@ def warn_missing_convergence_key(*, destination: Any, operations: Sequence[Plann
         for operation in creates:
             refuse_unkeyed_create(operation, node=node, schemas=schema)
 
-        # The merge direction applies to every action: a create whose identity is finer than
-        # the destination's key converges onto an object it did not mean just as an update
-        # does, and a single such create is the case the collision refusal above deliberately
-        # leaves as a warning.
+        if creates:
+            identities = (
+                _source_identities(kind=kind, source_adapter=source_adapter, destination=destination, config=config)
+                if source_adapter is not None
+                else [operation.identity for operation in of_kind if operation.action != "delete"]
+            )
+            refuse_source_identity_collisions(kind=kind, node=node, creates=creates, identities=identities)
+
+        # A finer identity alone is not a collision: a lone source record can safely
+        # create, and updates still use their recorded destination ids.
         _warn_identity_finer_than_destination_key(kind=kind, node=node, supplied=by_kind[kind], operations=of_kind)
 
         # The two arms below are about a write that might **duplicate**, which a create can no

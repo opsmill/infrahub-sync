@@ -1,0 +1,1 @@
+Planning now refuses an Infrahub create that would merge distinct loaded source records, including unchanged records from an incremental run and records represented by updates, instead of allowing it with a warning.
