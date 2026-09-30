@@ -53,6 +53,22 @@ def test_generic_concrete_peers_survive_the_validated_schema_snapshot() -> None:
     assert normalized.generic_peers[generic.kind] == ("LocationFloor", "LocationRackUnit")
 
 
+def test_node_and_generic_entries_carry_the_key_sets_the_live_test_expects() -> None:
+    node = NodeSchemaAPI.model_validate(_NODE)
+    generic = GenericSchemaAPI(name="Hosting", namespace="Location", used_by=["LocationFloor", "LocationRackUnit"])
+    base_keys = {"human_friendly_id", "uniqueness_constraints", "attributes", "relationships"}
+
+    snapshot = capabilities_module._build_schema_snapshot({node.kind: node, generic.kind: generic})
+
+    assert set(snapshot[node.kind]) == base_keys
+    assert set(snapshot[generic.kind]) == base_keys | {"used_by"}
+    assert snapshot[generic.kind]["used_by"] == ["LocationFloor", "LocationRackUnit"]
+    for attribute in snapshot[node.kind]["attributes"].values():
+        assert set(attribute) == {"kind", "optional", "default_value", "unique", "read_only"}
+    for relationship in snapshot[node.kind]["relationships"].values():
+        assert set(relationship) == {"peer", "cardinality", "optional", "kind", "read_only"}
+
+
 def test_the_snapshot_carries_every_attribute_and_relationship_property(snapshot: dict[str, Any]) -> None:
     assert snapshot["InfraDevice"]["attributes"]["role"] == {
         "kind": "Dropdown",
