@@ -15,6 +15,7 @@ real schema problem and is surfaced to the operator.
 from __future__ import annotations
 
 import logging
+from itertools import pairwise
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -90,45 +91,6 @@ def _collect_optional_edges(
     return optional
 
 
-def _cyclic_components(deps: Mapping[str, set[str]]) -> list[set[str]]:
-    """Find strongly connected components with cycles in stable traversal order."""
-    next_index = 0
-    indices: dict[str, int] = {}
-    lowlinks: dict[str, int] = {}
-    stack: list[str] = []
-    on_stack: set[str] = set()
-    components: list[set[str]] = []
-
-    def visit(node: str) -> None:
-        nonlocal next_index
-        indices[node] = next_index
-        lowlinks[node] = next_index
-        next_index += 1
-        stack.append(node)
-        on_stack.add(node)
-        for peer in sorted(deps.get(node, ())):
-            if peer not in indices:
-                visit(peer)
-                lowlinks[node] = min(lowlinks[node], lowlinks[peer])
-            elif peer in on_stack:
-                lowlinks[node] = min(lowlinks[node], indices[peer])
-        if lowlinks[node] == indices[node]:
-            component: set[str] = set()
-            while stack:
-                peer = stack.pop()
-                on_stack.remove(peer)
-                component.add(peer)
-                if peer == node:
-                    break
-            if len(component) > 1 or node in deps.get(node, set()):
-                components.append(component)
-
-    for node in sorted(set(deps).union(*(set(peers) for peers in deps.values()))):
-        if node not in indices:
-            visit(node)
-    return components
-
-
 def compute_tiers(
     schema_mapping: list[SchemaMappingModel],
     generic_peers: Mapping[str, tuple[str, ...]] | None = None,
@@ -151,16 +113,13 @@ def compute_tiers(
         try:
             return topological_sort(deps), dropped
         except DependencyCycleExistsError:
-            # The SDK reports cycles by walking sets, so their edges depend on the
-            # process hash seed. Every edge within a cyclic strongly connected
-            # component belongs to a cycle. Drop its optional edges in one pass.
-            to_drop = {
-                (src, dst)
-                for component in _cyclic_components(deps)
-                for src in component
-                for dst in deps.get(src, set()).intersection(component)
-                if (src, dst) in optional
-            }
+            # Deferred to keep package imports independent of the SDK.
+            from infrahub_sdk.topological_sort import get_cycles  # pylint: disable=import-outside-toplevel
+
+            # Keep the SDK's one-pass cycle edge selection, but traverse sorted
+            # nodes and peers so optional edge removal is stable across runs.
+            cycles = get_cycles({kind: sorted(peers) for kind, peers in sorted(deps.items())})
+            to_drop = {(src, dst) for cycle in cycles for src, dst in pairwise(cycle) if (src, dst) in optional}
             if not to_drop:
                 raise
             for src, dst in sorted(to_drop):

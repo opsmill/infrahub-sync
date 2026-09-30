@@ -1,0 +1,1 @@
+Automatic tiers for configurations with cyclic optional references are now the same on every run for every adapter; optional edges are removed from cycles discovered in sorted kind and reference order.

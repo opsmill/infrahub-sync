@@ -194,5 +194,31 @@ def test_optional_peer_clique_has_stable_tiers(reference_kind: str) -> None:
 
     tiers, dropped = compute_tiers(mapping, peers)
 
-    assert tiers == [set(siblings), {"Device"}]
-    assert dropped == sorted((kind, peer) for kind in siblings for peer in siblings if kind != peer)
+    assert tiers == [{"PeerC", "PeerD"}, {"PeerA", "PeerB"}, {"Device"}]
+    assert dropped == [
+        ("PeerA", "PeerB"),
+        ("PeerB", "PeerA"),
+        ("PeerB", "PeerC"),
+        ("PeerC", "PeerA"),
+        ("PeerC", "PeerB"),
+        ("PeerC", "PeerD"),
+        ("PeerD", "PeerA"),
+        ("PeerD", "PeerB"),
+        ("PeerD", "PeerC"),
+    ]
+
+
+@pytest.mark.parametrize("reverse_mapping", [False, True])
+def test_cycle_breaking_keeps_optional_edges_outside_discovered_cycles(*, reverse_mapping: bool) -> None:
+    mapping = [
+        _sm("K0", [("f_K1", "K1"), ("f_K2", "K2")], identifiers=["name"]),
+        _sm("K1", [("f_K2", "K2")], identifiers=["f_K2"]),
+        _sm("K2", [("f_K0", "K0")], identifiers=["name"]),
+    ]
+    if reverse_mapping:
+        mapping.reverse()
+
+    tiers, dropped = compute_tiers(mapping)
+
+    assert tiers == [{"K2"}, {"K0", "K1"}]
+    assert dropped == [("K0", "K1"), ("K2", "K0")]
