@@ -54,11 +54,22 @@ _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
 # Characters a terminal acts on instead of printing: C0 and C1 controls (ESC, CR, and
 # newline among them), DEL, and the bidirectional overrides and isolates that reorder
-# the text after them. Each is rendered as a visible escape so a value from a source
-# or the server cannot move the cursor, erase a line, or show a forged one.
+# the text after them. Zero-width characters, direction marks, and the line and
+# paragraph separators are included too, since they hide or break up what a reviewer
+# reads. Each is rendered as a visible escape so a value from a source or the server
+# cannot move the cursor, erase a line, or show a forged one.
 _DISPLAY_ESCAPES = {
     code: f"\\x{code:02x}" if code <= 0xFF else f"\\u{code:04x}"
-    for code in (*range(0x20), *range(0x7F, 0xA0), *range(0x202A, 0x202F), *range(0x2066, 0x206A))
+    for code in (
+        *range(0x20),
+        *range(0x7F, 0xA0),
+        0x061C,
+        *range(0x200B, 0x2010),
+        *range(0x2028, 0x202F),
+        0x2060,
+        *range(0x2066, 0x206A),
+        0xFEFF,
+    )
 } | {ord("\t"): "\\t", ord("\n"): "\\n", ord("\r"): "\\r"}
 
 app = typer.Typer(help="Synchronize registered configurations through the Sync API.")

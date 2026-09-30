@@ -678,7 +678,11 @@ def test_runs_plan_unmatched_kind_is_typed_input_error(client: MagicMock) -> Non
 # Built from code points so this source file carries no bidirectional control itself.
 _RLO = chr(0x202E)
 _LRI = chr(0x2066)
-_TERMINAL_CONTROLS = ("\x1b", "\r", "\x9b", "\x7f", _RLO, _LRI)
+# Zero-width characters, direction marks, and the line and paragraph separators hide or
+# break up text without a visible glyph.
+_INVISIBLE_CODES = (0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x200E, 0x200F, 0x061C, 0x2028, 0x2029)
+_INVISIBLES = "".join(chr(code) for code in _INVISIBLE_CODES)
+_TERMINAL_CONTROLS = ("\x1b", "\r", "\x9b", "\x7f", _RLO, _LRI, *_INVISIBLES)
 
 
 def _assert_no_terminal_controls(rendered: str) -> None:
@@ -691,7 +695,7 @@ def _assert_no_terminal_controls(rendered: str) -> None:
 
 def test_runs_plan_detail_escapes_terminal_controls_in_source_values(client: MagicMock) -> None:
     """A source-derived value must not be able to rewrite the lines a reviewer approves."""
-    forged = f"edge\x1b[1A\x1b[2K\rop-forged create Device name=fake\n\x9b2K\x7f{_RLO}evil{_LRI}x"
+    forged = f"edge\x1b[1A\x1b[2K\rop-forged create Device name=fake\n\x9b2K\x7f{_RLO}evil{_LRI}x{_INVISIBLES}"
     plan = _plan()
     operation = plan.operations[0].model_copy(
         update={"kind": "Dev\x1bice", "identity": {"name": forged}, "destination_id": "dest\r1"}
@@ -710,10 +714,12 @@ def test_runs_plan_detail_escapes_terminal_controls_in_source_values(client: Mag
 
     assert result.exit_code == 0, result.output
     _assert_no_terminal_controls(result.output)
-    lines = result.output.splitlines()
+    # Split on "\n" only: `splitlines` would also break at an unescaped U+2028 or U+2029.
+    lines = result.output.split("\n")
     assert (
         "op-create create Dev\\x1bice name=edge\\x1b[1A\\x1b[2K\\rop-forged create Device name=fake"
         "\\n\\x9b2K\\x7f\\u202eevil\\u2066x"
+        "\\u200b\\u200c\\u200d\\u2060\\ufeff\\u200e\\u200f\\u061c\\u2028\\u2029"
     ) in lines
     assert "  destination id: dest\\r1" in lines
     assert "verification_note: note\\x1b[2Kforged" in lines
