@@ -2,7 +2,7 @@ from __future__ import annotations
 
 # pylint: disable=R0801
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args
 
 import pynetbox  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
 from diffsync import Adapter, DiffSyncModel
@@ -26,6 +26,40 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
+def _record_ids(records: list[dict]) -> set[str]:
+    """Return usable NetBox IDs without treating a missing ID as an excluded peer."""
+    return {str(record["id"]) for record in records if record.get("id") is not None}
+
+
+def _excluded_reference_ids(adapter: NetboxAdapter, reference: str) -> set[str]:
+    """Identify peers excluded by declared filters, including on incremental loads."""
+    excluded = getattr(adapter, "_filtered_peer_ids", {})
+    complete = getattr(adapter, "_complete_filtered_peers", set())
+    config = getattr(adapter, "config", None)
+    if reference in complete or config is None or getattr(adapter, "target", "source") != "source":
+        return excluded.get(reference, set())
+
+    raw_ids: set[str] = set()
+    retained_ids: set[str] = set()
+    for element in config.schema_mapping:
+        if element.name != reference or not element.mapping or not element.filters:
+            continue
+        model: type[NetboxModel] = getattr(adapter, reference)
+        raw = [dict(node) for node in adapter._resolve_endpoint(element.mapping).all()]
+        raw_ids.update(_record_ids(raw))
+        retained_ids.update(_record_ids(model.filter_records(records=raw, schema_mapping=element)))
+    excluded[reference] = raw_ids - retained_ids
+    complete.add(reference)
+    adapter._filtered_peer_ids = excluded
+    adapter._complete_filtered_peers = complete
+    return excluded[reference]
+
+
+def _reference_is_optional(model: type[NetboxModel], field_name: str) -> bool:
+    """Read the destination relationship's nullability from its model field."""
+    return type(None) in get_args(model.model_fields[field_name].annotation)
+
+
 class NetboxAdapter(DiffSyncMixin, Adapter):
     type = "Netbox"
 
@@ -35,6 +69,8 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         self.target = target
         self.client = self._create_netbox_client(adapter)
         self.config = config
+        self._filtered_peer_ids: dict[str, set[str]] = {}
+        self._complete_filtered_peers: set[str] = set()
 
     def _create_netbox_client(self, adapter: SyncAdapter) -> pynetbox.api:
         settings = adapter.settings or {}
@@ -146,6 +182,8 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         This method retrieves data from Netbox, applies filters and transformations
         as specified in the schema mapping, and loads the processed data into the adapter.
         """
+        raw_ids: set[str] = set()
+        retained_ids: set[str] = set()
         for element in self.config.schema_mapping:
             if element.name != model_name:
                 continue
@@ -165,6 +203,9 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
 
             if self.target == "source":
                 filtered = model.filter_records(records=raw_records, schema_mapping=element)
+                if element.filters:
+                    raw_ids.update(_record_ids(raw_records))
+                    retained_ids.update(_record_ids(filtered))
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered), total, resource_name)
             else:
                 filtered = raw_records
@@ -177,6 +218,9 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
             ):
                 item = model(**data)
                 self.add(item)
+        if self.target == "source":
+            self._filtered_peer_ids[model_name] = raw_ids - retained_ids
+            self._complete_filtered_peers.add(model_name)
 
     def netbox_obj_to_diffsync(
         self, obj: dict[str, Any], mapping: SchemaMappingModel, model: type[NetboxModel]
@@ -207,6 +251,11 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                             node_id = node.get("id", None)
                             matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                             if len(matching_nodes) == 0:
+                                if str(node_id) in _excluded_reference_ids(self, field.reference):
+                                    if _reference_is_optional(model, field.name):
+                                        continue
+                                    msg = f"Configured filter excluded all peers for required relationship {field.name}: {node_id}"
+                                    raise ValueError(msg)
                                 msg = f"Unable to locate the node {field.name} {node_id}"
                                 raise IndexError(msg)
                             node = matching_nodes[0]
@@ -215,15 +264,25 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                             data[field.name] = node
                 else:
                     data[field.name] = []
+                    excluded_ids: list[str] = []
                     for node in get_value(obj, field.mapping) or []:
                         if not node:
                             continue
                         node_id = node.get("id", None)
                         matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                         if len(matching_nodes) == 0:
+                            if str(node_id) in _excluded_reference_ids(self, field.reference):
+                                excluded_ids.append(str(node_id))
+                                continue
                             msg = f"Unable to locate the node {field.reference} {node_id}"
                             raise IndexError(msg)
                         data[field.name].append(matching_nodes[0].get_unique_id())
+                    if excluded_ids and not data[field.name] and not _reference_is_optional(model, field.name):
+                        msg = (
+                            f"Configured filter excluded all peers for required relationship {field.name}: "
+                            f"{', '.join(excluded_ids)}"
+                        )
+                        raise ValueError(msg)
                     data[field.name] = sorted(data[field.name])
 
         return data

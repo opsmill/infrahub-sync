@@ -100,6 +100,8 @@ The mapping connects NetBox API paths to Infrahub kinds. This excerpt from the e
 
 The NetBox API paths are listed at `/api/schema/swagger-ui/` on your NetBox instance.
 
+When a mapped NetBox record is excluded by a declared `filters` rule, references to that record are removed from optional relationships. A relationship with several peers keeps the peers that passed the filter. If a required relationship has no remaining peer, the run stops with an error that identifies the filter exclusion. A reference to a record that does not exist in NetBox remains an error.
+
 <ReferenceLink title="NetBox API Swagger" url="https://demo.netbox.dev/api/schema/swagger-ui" openInNewTab />
 
 ## Related guides

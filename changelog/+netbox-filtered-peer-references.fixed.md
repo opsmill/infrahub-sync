@@ -1,0 +1,1 @@
+NetBox plans previously stopped when a relationship referenced a filtered peer; they now omit filtered peers from optional relationships and explain when filtering leaves a required relationship empty.
