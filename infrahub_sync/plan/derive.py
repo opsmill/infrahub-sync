@@ -168,6 +168,10 @@ def _probe_peer_kind(
     caller, not the probe, decides what it means: a peer absent from the loaded source store
     can still be recorded literally, and every other absent peer refuses there.
 
+    AD052: if the destination has no schema, this warning-only check is skipped because
+    no destination key can be established. Create-schema requirements are enforced
+    separately before any write.
+
     Raises:
         SourcePeerUnresolvedError: more than one candidate holds the peer (the **ambiguous**
             arm), so its kind cannot be established.
@@ -815,8 +819,12 @@ def _warn_identity_finer_than_destination_key(
     """Warn where the destination cannot tell the plan's identities apart.
 
     A finer source identity alone is allowed; proven create collisions are refused
-    separately. Report surplus fields and projected operation counts. Kinds without
-    a destination key receive the separate unkeyed-write warning.
+    separately. FR-024's two arms test opposite subset relations: a missing destination
+    key means a write can duplicate, while a finer source identity means distinct source
+    objects converge onto one destination object. Thirteen `LocationRack` objects named
+    `Comms closet`, one per site, previously became one without a signal. Report surplus
+    fields and projected operation counts. Kinds without a destination key receive the
+    separate unkeyed-write warning; the destination has nothing to distinguish there.
     """
     keys = _destination_keys(node)
     if not keys or any(supplied <= set(key) for key in keys):
@@ -850,11 +858,14 @@ def _warn_identity_finer_than_destination_key(
 
 
 def _source_identities(
-    *, kind: str, source_adapter: Any, destination: Any, config: SyncConfig | None
+    *,
+    kind: str,
+    source_adapter: Any,
+    config: SyncConfig | None,
+    peers: DestinationOnlyPeers | None,
 ) -> list[tuple[str, Mapping[str, Any]]]:
     """Resolve identifiers of every loaded source record, including unchanged records."""
     candidates = reference_candidates(config, kind)
-    peers = destination_only_peers(destination)
     identities = []
     for record in source_adapter.get_all(kind):
         keys = record.get_identifiers()
@@ -872,9 +883,17 @@ def _source_identities(
             )
         except SourcePeerUnresolvedError:
             # Changed records already pass strict operation derivation. An unchanged
-            # record with an unresolved peer cannot prove a population collision.
+            # record with an unresolved peer cannot prove a collision.
             logger.warning(
                 "Plan: source population of destination kind %s contains a record with an unresolved identity peer; "
+                "this record cannot be compared for convergence and is allowed to proceed",
+                kind,
+            )
+            continue
+        except UnformableDestinationIdentityError:
+            logger.warning(
+                "Plan: source population of destination kind %s contains a record with an unformable identity "
+                "(for example, an identity cycle or empty peer); "
                 "this record cannot be compared for convergence and is allowed to proceed",
                 kind,
             )
@@ -916,6 +935,7 @@ def warn_missing_convergence_key(
     by_kind = _identity_attributes_by_kind(operations)
     if hasattr(schema, "get"):
         refuse_destination_identity_collisions(schema=schema, operations=operations)
+    peers = destination_only_peers(destination)
     for kind in sorted(by_kind):
         node = schema.get(kind) if hasattr(schema, "get") else None
         if node is None:
@@ -928,7 +948,7 @@ def warn_missing_convergence_key(
 
         if creates and getattr(node, "human_friendly_id", None):
             identities = (
-                _source_identities(kind=kind, source_adapter=source_adapter, destination=destination, config=config)
+                _source_identities(kind=kind, source_adapter=source_adapter, config=config, peers=peers)
                 if source_adapter is not None
                 else [
                     (operation.operation_id, operation.identity)

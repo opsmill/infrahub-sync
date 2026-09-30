@@ -222,18 +222,9 @@ source population or repeat the create-versus-update comparison. Those compariso
 only during planning; a hand-built artifact does not receive them at apply time.
 
 The population comparison adds work proportional to the loaded records of each kind
-that has a create and a human-friendly ID. A reference measurement used Python 3.13.15,
-one create, and records sharing a site (and a device for the nested case). The table
-shows median elapsed time over three checks, excluding setup and diff derivation.
-Peak extra Python allocations were measured separately with `tracemalloc`; they exclude
-the already loaded store. The unit suite was running concurrently, so these measurements
-are a reference rather than a performance guarantee.
-
-| Source records | Rack → site | Interface → device → site | Peak extra memory: rack / interface |
-| --- | --- | --- | --- |
-| 1,000 | 0.090 s | 0.164 s | 1.0 / 1.4 MiB |
-| 10,000 | 0.874 s | 1.802 s | 10.8 / 15.1 MiB |
-| 50,000 | 5.519 s | 8.949 s | 55.7 / 77.0 MiB |
+that has a create and a human-friendly ID. It resolves each record's identity and stores
+its projected match key for comparison, so its time and temporary memory grow with the
+population being checked.
 
 Explicit `hfid` rendering is deliberately **not** reintroduced: `save(allow_upsert=True)` strips it on
 1.23.2 and the server matches on complete components anyway, so rendering it would assert a key the

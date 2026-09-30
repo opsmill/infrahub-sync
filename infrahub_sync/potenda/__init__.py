@@ -573,9 +573,9 @@ class Potenda:
     def write_plan(self, diff: Any) -> dict[str, int] | None:
         """Write both plan representations for a single-diff run.
 
-        Retain `plan.parquet` for operator queries alongside the saved artifact.
-        `apply_plan` reads only `<run_dir>/plan/` and refuses parquet-only runs.
-        This method runs before any destination write (FR-001).
+        `plan.parquet` remains available for operator queries (V23); `apply_plan` reads
+        only `<run_dir>/plan/` and refuses parquet-only runs. This method runs before any
+        destination write (FR-001), including on the one-diff path.
 
         Returns the saved artifact's in-memory per-action counts, or `None` when no
         saved artifact can be written. For `operation="plan"`, the shared execution
@@ -599,8 +599,9 @@ class Potenda:
         parsed configuration. Other destinations without storage skip derivation.
         With a cache identity, bind the source snapshot and configuration version,
         then write the artifact and return its manifest; otherwise return `None`.
-        A sequence supports the tier path's one diff per tier. Derivation and write
-        failures propagate before any destination write (FR-030, AD047).
+        A sequence supports the tier path's one diff per tier. Infrahub checks also run
+        when artifact storage is unavailable. Derivation and write failures propagate
+        before any destination write (FR-030, AD047).
         """
         written = self._write_plan_artifact(diffs)
         return None if written is None else written[0]
