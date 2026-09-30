@@ -165,6 +165,7 @@ def _review_document(run_id: str, saved: SavedPlan) -> PlanResource:
         summary=summary.model_dump(mode="json"),
         operations=tuple(operation.model_dump(mode="json") for operation in saved.operations()),
         schema_fingerprint=saved.manifest.registered_schema_fingerprint,
+        destination_branch=saved.manifest.destination_binding.branch if saved.manifest.destination_binding else None,
     )
 
 

@@ -512,6 +512,7 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
         ("checksum_ok", plan.checksum_ok),
         ("checksum_source", "Sync API saved plan"),
         ("operations", plan.summary.total),
+        ("destination_branch", plan.destination_branch),
         ("delete_operations_computed", plan.summary.delete_operations_computed),
     ]
     if plan.schema_fingerprint is not None:
@@ -525,6 +526,16 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
     if detail:
         for operation in operations:
             _operation_detail(operation)
+
+
+def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
+    """Report a saved branch without changing the completed write's outcome."""
+    try:
+        plan = client.get_plan(run_id)
+    except SyncClientError:
+        typer.echo("destination_branch: <unavailable> (saved plan could not be read)")
+        return
+    _echo_fields((("destination_branch", plan.destination_branch),))
 
 
 def _admit_run(
@@ -607,7 +618,7 @@ def sync_cmd(
 ) -> None:
     """Create a confirmed synchronization run."""
     with _client_errors():
-        _client_value, completed = _admit_run(
+        client, completed = _admit_run(
             ctx,
             operation="sync",
             config_id=config_id,
@@ -621,6 +632,7 @@ def sync_cmd(
         )
         if wait:
             _echo_run(completed)
+            _echo_completed_destination_branch(client, completed.run.run_id)
 
 
 @app.command("apply")
@@ -695,6 +707,7 @@ def apply_cmd(
             raise
         if wait:
             _echo_run(completed)
+            _echo_completed_destination_branch(client, completed.run.run_id)
 
 
 @runs_app.command("show")

@@ -194,7 +194,12 @@ def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tup
     if not isinstance(url, str) or not url:
         msg = "destination setting 'url' is required to read the destination schema"
         raise DestinationSchemaReadError(msg, reason="unconfigured")
-    sdk_config: dict[str, Any] = {"timeout": 60, "default_branch": branch}
+    sdk_config: dict[str, Any] = {
+        "address": url,
+        "timeout": 60,
+        "default_branch": branch,
+        "default_branch_from_git": False,
+    }
     token = settings.get("token")
     if isinstance(token, Mapping):
         reference_name = token.get("$credential")
