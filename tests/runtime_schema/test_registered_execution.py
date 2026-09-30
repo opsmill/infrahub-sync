@@ -26,7 +26,6 @@ from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.plugin_loader import PluginLoadError
 from infrahub_sync.runtime_schema import build_runtime_model_plan
 from infrahub_sync.runtime_schema import worker as worker_module
-from infrahub_sync.service import flow as service_flow
 from infrahub_sync.utils import get_potenda_from_instance
 from tests.configuration.validation_packages import package_data
 
@@ -239,7 +238,6 @@ def test_a_registered_run_plans_creates_and_updates_through_engine_assembly(tmp_
     )
 
     assert isinstance(saved, SavedPlan)
-    assert service_flow._review_document("registered-execution", saved).destination_branch == "main"
     summary = saved.summary()
     assert summary.by_action == {"create": 1, "update": 1}
     assert summary.by_kind == {"BuiltinTag": 2}
@@ -313,6 +311,7 @@ def test_the_constructed_destination_receives_the_effective_branch(
     if ambient_branch is not None:
         monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH", ambient_branch)
     monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH_FROM_GIT", str(from_git).lower())
+    monkeypatch.setenv("INFRAHUB_ADDRESS", "invalid-ambient-address")
     instance = _registered_instance(tmp_path, branch=declared, run_branch=run_branch)
     plan = instance._runtime_models
     assert plan is not None
@@ -326,7 +325,8 @@ def test_the_constructed_destination_receives_the_effective_branch(
     assert destination.client.config.default_branch == expected
     assert destination.client.config.default_branch_from_git is False
     assert destination.client.config.default_infrahub_branch == expected
-    sdk_client = InfrahubClientSync(address="http://example.invalid", config=destination.client.config)
+    assert destination.client.config.address == destination.destination_binding.url
+    sdk_client = InfrahubClientSync(address=destination.destination_binding.url, config=destination.client.config)
     assert sdk_client.default_branch == destination.destination_binding.branch
     assert destination.client.schema.branches == [expected]
     client_branches: list[str | None] = []

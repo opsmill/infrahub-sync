@@ -250,6 +250,7 @@ def test_schema_client_ignores_ambient_git_branch(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH", "ambient")
     monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH_FROM_GIT", "true")
+    monkeypatch.setenv("INFRAHUB_ADDRESS", "invalid-ambient-address")
     monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
     content = package_data()
     _, settings = capabilities_module._resolved_client_settings(package(content), "review")

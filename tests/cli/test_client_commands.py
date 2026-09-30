@@ -338,6 +338,40 @@ def test_completed_writes_report_the_saved_destination_branch(client: MagicMock,
     client.get_plan.assert_called_once_with("service-run-1")
 
 
+@pytest.mark.parametrize("operation", ["sync", "apply"])
+@pytest.mark.parametrize(
+    "error",
+    [APIError(503, "plan-unavailable"), TransportError("get_plan"), ProtocolError("get_plan", 200)],
+)
+def test_completed_writes_stay_successful_when_the_plan_cannot_be_read(
+    client: MagicMock, operation: Literal["sync", "apply"], error: Exception
+) -> None:
+    client.wait_for_run.return_value = _run(operation=operation, terminal=("completed", "succeeded"))
+    client.wait_for_run.side_effect = None
+    client.get_plan.side_effect = error
+    arguments = (
+        ("--config-id", "edge-sync", "--version", "1")
+        if operation == "sync"
+        else ("service-run-1", "--expected-checksum", CHECKSUM)
+    )
+
+    result = _invoke(client, operation, *arguments, "--reason", "apply inventory")
+
+    assert result.exit_code == 0, result.output
+    assert "execution_state: completed" in result.output
+    assert "destination_branch: <unavailable>" in result.output
+    client.get_plan.assert_called_once_with("service-run-1")
+
+
+def test_an_unregistered_plan_reports_no_destination_branch(client: MagicMock) -> None:
+    client.get_plan.return_value = _plan().model_copy(update={"destination_branch": None})
+
+    result = _invoke(client, "runs", "plan", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "destination_branch: <none>" in result.output
+
+
 def test_apply_sends_only_reviewed_checksum_and_shipped_fields(client: MagicMock) -> None:
     result = _invoke(
         client,

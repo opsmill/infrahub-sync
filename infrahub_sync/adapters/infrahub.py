@@ -703,6 +703,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         self.destination_binding = DestinationBindingRecord(url=infrahub_url, branch=infrahub_branch)
 
         sdk_config: dict[str, Any] = {
+            "address": infrahub_url,
             "timeout": 60,
             "api_token": infrahub_token,
             "default_branch": infrahub_branch,
