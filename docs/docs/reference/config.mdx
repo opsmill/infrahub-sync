@@ -56,6 +56,11 @@ resolve the cycle in your mapping or provide an explicit `order:`. Saved plans t
 reference an Infrahub generic must be created and reviewed again after upgrading,
 because the plan's schema fingerprint now includes its mapped concrete peers.
 
+For every adapter, a dependency required by an identity field stays required even
+when an optional field references the same peer. This applies to concrete references
+and expanded generic references. Cycle breaking preserves that dependency and
+refuses cycles made entirely of identity dependencies.
+
 Internally, infrahub-sync derives a write-order graph from the `reference:`
 entries in each `schema_mapping` field and groups kinds into **tiers**:
 

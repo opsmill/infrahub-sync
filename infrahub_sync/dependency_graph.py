@@ -5,7 +5,7 @@ The dep graph is derived from `SchemaMappingField.reference` entries on each
 (a kind that references itself, e.g. LocationGeneric.parent) are not write-order
 edges and are excluded.
 
-Edges where the source field is not in the model's `identifiers` are
+Edges reached only through fields outside the model's `identifiers` are
 "optional": the dependent peer is not part of uniqueness, so the write can be
 deferred and the cycle (if any) is broken automatically. Edges where the field
 is in `identifiers` are "identity-bearing" — a cycle through identity edges is a
@@ -76,19 +76,18 @@ def _collect_optional_edges(
     schema_mapping: list[SchemaMappingModel],
     generic_peers: Mapping[str, tuple[str, ...]] | None = None,
 ) -> set[tuple[str, str]]:
-    """Edges (src, dst) where the field carrying the reference is NOT part of
-    `identifiers` for src. Missing the peer doesn't break uniqueness, so we
-    can drop the edge to resolve a cycle."""
+    """Return edges reached only by non-identity fields, which can break cycles."""
     optional: set[tuple[str, str]] = set()
+    required: set[tuple[str, str]] = set()
     targets = _reference_targets(schema_mapping, generic_peers)
     for sm in schema_mapping:
         identity_set = set(sm.identifiers or [])
         for field in sm.fields or []:
             if not field.reference:
                 continue
-            if field.name not in identity_set:
-                optional.update((sm.name, peer) for peer in targets[field.reference] if peer != sm.name)
-    return optional
+            edges = required if field.name in identity_set else optional
+            edges.update((sm.name, peer) for peer in targets[field.reference] if peer != sm.name)
+    return optional - required
 
 
 def compute_tiers(

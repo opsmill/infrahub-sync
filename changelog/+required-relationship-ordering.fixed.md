@@ -1,0 +1,1 @@
+Automatic ordering now preserves dependencies required by identity fields even when optional fields reference the same peer, through either concrete or generic references, so cycle breaking cannot load dependent kinds together or silently accept an identity cycle.

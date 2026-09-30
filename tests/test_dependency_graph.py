@@ -173,6 +173,34 @@ def test_optional_generic_edge_breaks_cycle_deterministically() -> None:
     assert dropped == [("A", "B")]
 
 
+@pytest.mark.parametrize("identity_reference", ["B", "SharedGeneric"])
+def test_identity_dependency_overrides_optional_reference_when_breaking_cycle(identity_reference: str) -> None:
+    mapping = [
+        _sm("A", [("identity_peer", identity_reference), ("optional_peer", "B")], identifiers=["identity_peer"]),
+        _sm("B", [("a", "A")], identifiers=["name"]),
+        _sm("C", []),
+    ]
+
+    tiers, dropped = compute_tiers(mapping, {"SharedGeneric": ("B", "C")})
+
+    assert tiers == [{"B", "C"}, {"A"}]
+    assert dropped == [("B", "A")]
+
+
+@pytest.mark.parametrize("identity_reference", ["B", "SharedGeneric"])
+def test_optional_reference_cannot_hide_identity_cycle(identity_reference: str) -> None:
+    from infrahub_sdk.topological_sort import DependencyCycleExistsError
+
+    mapping = [
+        _sm("A", [("identity_peer", identity_reference), ("optional_peer", "B")], identifiers=["identity_peer"]),
+        _sm("B", [("a", "A")], identifiers=["a"]),
+        _sm("C", []),
+    ]
+
+    with pytest.raises(DependencyCycleExistsError):
+        compute_tiers(mapping, {"SharedGeneric": ("B", "C")})
+
+
 @pytest.mark.parametrize("reference_kind", ["concrete", "generic"])
 def test_optional_peer_clique_has_stable_tiers(reference_kind: str) -> None:
     siblings = ("PeerA", "PeerB", "PeerC", "PeerD")
