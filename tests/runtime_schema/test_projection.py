@@ -15,6 +15,7 @@ from infrahub_sync.runtime_schema import (
     NormalizedAttribute,
     NormalizedKind,
     NormalizedRelationship,
+    canonical_consumed_schema_projection,
     compute_consumed_schema_fingerprint,
     normalize_destination_schema,
 )
@@ -272,6 +273,36 @@ def test_unmapped_peer_key_writability_changes_the_fingerprint() -> None:
 )
 def test_compatible_change_retains_the_fingerprint(snapshot: dict[str, Any]) -> None:
     assert _fingerprint(snapshot) == _fingerprint(_SNAPSHOT)
+
+
+def test_generic_projection_records_only_mapped_peers() -> None:
+    configuration = _CONFIGURATION.model_copy(deep=True)
+    configuration.schema_mapping.append(
+        SchemaMappingModel(name="LocationSite", fields=[SchemaMappingField(name="name")])
+    )
+    configuration.schema_mapping[0].fields.append(SchemaMappingField(name="tags", reference="SharedGeneric"))
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    snapshot["InfraDevice"]["relationships"]["tags"]["peer"] = "SharedGeneric"
+    snapshot["SharedGeneric"] = {
+        "used_by": ["LocationSite", "UnmappedKind"],
+        "human_friendly_id": [],
+        "uniqueness_constraints": [],
+        "attributes": {},
+        "relationships": {},
+    }
+
+    projection = canonical_consumed_schema_projection(
+        configuration=configuration, snapshot=normalize_destination_schema(snapshot)
+    )
+    assert projection[0]["generic_references"] == {"SharedGeneric": ["LocationSite"]}
+
+    expanded = copy.deepcopy(snapshot)
+    expanded["SharedGeneric"]["used_by"].append("AnotherUnmappedKind")
+    assert _fingerprint(snapshot, configuration) == _fingerprint(expanded, configuration)
+
+    changed = copy.deepcopy(snapshot)
+    changed["SharedGeneric"]["used_by"] = ["UnmappedKind"]
+    assert _fingerprint(snapshot, configuration) != _fingerprint(changed, configuration)
 
 
 def test_the_mutation_table_covers_the_declared_projection_property_domain() -> None:

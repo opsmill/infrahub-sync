@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from infrahub_sync import SchemaMappingField, SchemaMappingModel
 from infrahub_sync.dependency_graph import UnresolvedGenericReferenceError, build_dependency_graph, compute_tiers
 
@@ -133,11 +135,32 @@ def test_generic_reference_waits_for_mapped_peers_at_different_depths() -> None:
 
 
 def test_unresolved_generic_reference_is_a_configuration_error() -> None:
-    import pytest
-
     mapping = [_sm("DcimDevice", [("location", "LocationHosting")])]
     with pytest.raises(UnresolvedGenericReferenceError, match=r"LocationHosting.*none of its concrete peer kinds"):
         compute_tiers(mapping, {"LocationHosting": ("LocationFloor", "LocationRackUnit")})
+
+
+def test_mapped_generic_remains_a_dependency_even_without_concrete_peers() -> None:
+    mapping = [_sm("LocationHosting", []), _sm("DcimDevice", [("location", "LocationHosting")])]
+
+    assert build_dependency_graph(mapping, {"LocationHosting": ("UnmappedKind",)})["DcimDevice"] == {"LocationHosting"}
+    assert compute_tiers(mapping, {"LocationHosting": ("UnmappedKind",)})[0] == [
+        {"LocationHosting"},
+        {"DcimDevice"},
+    ]
+
+
+def test_mapped_generic_remains_a_dependency_alongside_mapped_concrete_peers() -> None:
+    mapping = [
+        _sm("LocationHosting", []),
+        _sm("LocationFloor", []),
+        _sm("DcimDevice", [("location", "LocationHosting")]),
+    ]
+
+    assert build_dependency_graph(mapping, {"LocationHosting": ("LocationFloor",)})["DcimDevice"] == {
+        "LocationHosting",
+        "LocationFloor",
+    }
 
 
 def test_optional_generic_edge_breaks_cycle_deterministically() -> None:

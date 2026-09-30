@@ -42,14 +42,16 @@ def _reference_targets(
             if generic_peers is None or reference not in generic_peers:
                 targets[reference] = (reference,)
                 continue
-            peers = tuple(sorted(mapped.intersection(generic_peers[reference]) - {reference}))
+            peers = mapped.intersection(generic_peers[reference])
+            if reference in mapped:
+                peers.add(reference)
             if not peers:
                 msg = (
                     f"schema_mapping kind {model.name!r} field {field.name!r} references generic "
                     f"{reference!r}, but none of its concrete peer kinds are mapped"
                 )
                 raise UnresolvedGenericReferenceError(msg)
-            targets[reference] = peers
+            targets[reference] = tuple(sorted(peers))
     return targets
 
 

@@ -42,9 +42,14 @@ override the computed order for an adapter quirk.
 
 For an Infrahub destination, a `reference:` to a generic kind waits for every
 mapped concrete kind in that generic's live schema `used_by` list. The generic
-itself is not added as work when it has no mapping. If none of its concrete
-peer kinds are mapped, the run reports a configuration error before loading
-records. Map the concrete peer kinds or provide an explicit `order:` list.
+itself is not added as work when it has no mapping. If neither the generic nor
+any of its concrete peer kinds is mapped, the run reports a configuration error
+before loading records. Map the generic or concrete peer kinds, or provide an
+explicit `order:` list.
+Expansion can expose an identity-reference cycle that previously went unnoticed;
+resolve the cycle in your mapping or provide an explicit `order:`. Saved plans that
+reference an Infrahub generic must be created and reviewed again after upgrading,
+because the plan's schema fingerprint now includes its mapped concrete peers.
 
 Internally, infrahub-sync derives a write-order graph from the `reference:`
 entries in each `schema_mapping` field and groups kinds into **tiers**:

@@ -127,8 +127,9 @@ def _kind_projection(
             if member.name not in mapped and _is_mandatory_without_default(member)
         ],
     }
+    mapped_kinds = {mapping.name for mapping in configuration.schema_mapping}
     generics = {
-        field.reference: sorted(snapshot.generic_peers[field.reference])
+        field.reference: sorted(mapped_kinds.intersection(snapshot.generic_peers[field.reference]))
         for mapping in configuration.schema_mapping
         if mapping.name == node.kind
         for field in mapping.fields
