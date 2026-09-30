@@ -1,0 +1,67 @@
+deploy/compose/OPERATING.md
+  s_a439d81ec4a713::t_bfaad694123eb6 231-233
+  s_a439d81ec4a713::t_73f6d1eacc33eb 206-219
+  s_a439d81ec4a713::t_0353029a858892 76-77
+docs/docs/develop/knowledge/orchestration-prefect.md
+  s_a439d81ec4a713::t_d8e99207bbd804 27-39
+deploy/compose/compose.yaml
+  s_a439d81ec4a713::t_1ac24ab0c2ef43 165-168
+  s_a439d81ec4a713::t_90b54ac96d518e 43-46
+tests/compose/test_bundle_contract.py
+  s_a439d81ec4a713::t_a0bf94ac2f0691 221-272
+  s_a439d81ec4a713::t_7a8439537dd39f 88-96
+tests/compose/clean_host/checks/kit.py
+  s_a439d81ec4a713::t_87ca0eaa8b5f66 21
+  s_a439d81ec4a713::t_a619cda8ef83e7 85-95
+deploy/compose/infrahub-sync-compose
+  s_a439d81ec4a713::t_abe86b889c8b60 65
+  s_a439d81ec4a713::t_21810be64151bf 656-659
+  s_a439d81ec4a713::t_bde3ae589a42f4 46
+  s_a439d81ec4a713::t_af6c29367265be 609-620,625
+docs/docs/compose-deployment.mdx
+  s_a439d81ec4a713::t_fb8522757931e6 334-336
+  s_a439d81ec4a713::t_97e3f92396e896 69-70
+  s_a439d81ec4a713::t_2af1469d8ddf5b 212-232,236-242
+  s_a439d81ec4a713::t_ed0e19acd29f33 233-235
+tests/compose/test_preflight.py
+  s_a439d81ec4a713::t_45837e1b7d5300 300-355
+  s_58e1da85eaff4d::t_5f80e833e57269 356-357,1132
+tests/compose/clean_host/checks/reported_failures.py
+  s_58e1da85eaff4d::t_9526d4c8698ed5 40,141,181
+tests/compose/clean_host/checks/worker_identity.py
+  s_58e1da85eaff4d::t_b80ff4c6252fdb 26,36
+tests/compose/clean_host/clean-host.sh
+  s_58e1da85eaff4d::t_48f8a8fdf85cd3 1053,1528
+tests/compose/conftest.py
+  s_58e1da85eaff4d::t_f57d8d3ddac5f6 182,465-468
+tests/compose/lifecycle.py
+  s_58e1da85eaff4d::t_428a33e7e321e2 407,543,561-564,574-575,578
+tests/compose/test_bootstrap_idempotence.py
+  s_58e1da85eaff4d::t_0a2a540a9d33a2 51-52,54-55
+tests/compose/test_clean_host_driver.py
+  s_58e1da85eaff4d::t_409ba2975ca948 649,655
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "3d353ceaa9263579e99e447d49dc27234d08677e",
+  "prompts": {},
+  "sessions": {
+    "s_58e1da85eaff4d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "daa9a10e-b246-4c40-b3ed-7eb0827d2f3d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a439d81ec4a713": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a2f4b8c-0cd5-4268-962e-1107e1222216",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
