@@ -18,6 +18,8 @@ from infrahub_sync.cache.sidecars import CursorsFile
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from diffsync import Adapter, DiffSyncModel
+
 logger = logging.getLogger(__name__)
 
 
@@ -135,6 +137,18 @@ def persist_cursors(
         prefix = "safe-v1:" if state.safe else ""
         bucket[model_name] = f"{prefix}{state.tier.name}:{state.value or ''}"
     sidecar.save()
+
+
+def required_resource_models(*, adapter: Adapter, side: str) -> dict[str, type[DiffSyncModel]]:
+    """Resolve every mapped model before extraction; missing kinds must not look empty."""
+    models: dict[str, type[DiffSyncModel]] = {}
+    for resource in adapter.top_level:
+        model_cls = getattr(adapter, resource, None)
+        if model_cls is None:
+            msg = f"Cannot load side {side}: required model {resource!r} is missing"
+            raise ValueError(msg)
+        models[resource] = model_cls
+    return models
 
 
 def snapshot_carries_local_id(*, run_dir: Path, side: str, resource: str) -> bool:

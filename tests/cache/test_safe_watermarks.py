@@ -58,7 +58,8 @@ class _TimestampSource(Adapter):
         self.calls.append(("bound", model_name))
         # The synthetic source guarantees this bound precedes all changes that
         # can commit after the queries start, including its precision bucket.
-        return CursorState(CursorTier.TIMESTAMP, SAFE_BOUND.isoformat(), safe=True) if self.safe else None
+        bound = SAFE_BOUND if self.exclusive else CHANGE_TIME
+        return CursorState(CursorTier.TIMESTAMP, bound.isoformat(), safe=True) if self.safe else None
 
     def model_loader(self, model_name: str, model: type[DiffSyncModel]) -> None:
         self.calls.append(("full", model_name))
@@ -126,7 +127,8 @@ def test_in_flight_change_is_read_next_run(
     saved = load_cursors(first.run_dir / "cursors.json", side=side)
     if safe:
         assert set(saved) == set(rows)
-        assert all(cursor.safe and cursor.value == SAFE_BOUND.isoformat() for cursor in saved.values())
+        expected_bound = SAFE_BOUND if exclusive else CHANGE_TIME
+        assert all(cursor.safe and cursor.value == expected_bound.isoformat() for cursor in saved.values())
     else:
         assert saved == {}
     assert first_source.calls[: len(rows)] == [("bound", resource) for resource in rows]
@@ -226,3 +228,205 @@ def test_overlap_updates_are_in_memory(tmp_path: Path, monkeypatch: pytest.Monke
     assert not device.description
     assert device.local_id == (delta_id or "cached-id")
     assert len(source.get_all("Device")) == 1
+
+
+def _plan_engine(root: Path, run: str, source: _TimestampSource, destination: _TimestampSource) -> Potenda:
+    """Build a real mapped engine that can write and read a saved plan."""
+    from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncInstance
+
+    config = SyncInstance(
+        name="safe-watermarks",
+        directory=str(root),
+        source=SyncAdapter(name="netbox"),
+        destination=SyncAdapter(name="infrahub"),
+        order=list(source.rows),
+        schema_mapping=[
+            SchemaMappingModel(
+                name=kind,
+                mapping=kind,
+                identifiers=["name"],
+                fields=[SchemaMappingField(name=field, mapping=field) for field in ("name", "description")],
+            )
+            for kind in source.rows
+        ],
+    )
+    engine = Potenda(
+        source=source,
+        destination=destination,
+        config=config,
+        top_level=list(source.rows),
+        show_progress=False,
+        concurrent_load=False,
+        run_dir=root / run,
+        run_id=run,
+        cache_root=root,
+        schema_subhash="matching-schema",
+    )
+    assert engine.run_dir is not None
+    engine.run_dir.mkdir()
+    return engine
+
+
+def _retain_run(engine: Potenda) -> None:
+    """Retain the successful run metadata and explicit direct-caller cursors."""
+    assert engine.run_dir is not None
+    engine.persist_cursors_for_run(side="A")
+    engine.persist_cursors_for_run(side="B")
+    (engine.run_dir / "run.json").write_text(json.dumps({"status": "dry-run"}))
+    (engine.run_dir / "schema-sub-hash.txt").write_text("matching-schema")
+
+
+@pytest.mark.parametrize("safe_destination", [False, True])
+def test_complete_fallback_destination_records_delete_proposals(tmp_path: Path, *, safe_destination: bool) -> None:
+    """Only a complete full fallback computes deletes, as recorded in the saved plan."""
+    from infrahub_sync.plan.reader import load_plan_artifact
+
+    source_rows = {"Device": [{"name": "device", "description": "unchanged"}]}
+    destination_rows = {"Device": [*source_rows["Device"], {"name": "orphan", "description": "destination-only"}]}
+    first = _plan_engine(
+        tmp_path,
+        "run-1",
+        _TimestampSource(source_rows, safe=True, exclusive=False, mutate=False),
+        _TimestampSource(destination_rows, safe=safe_destination, exclusive=False, mutate=False),
+    )
+    first.load_both_sides()
+    first.write_plan(first.diff())
+    assert first.run_dir is not None
+    full_plan = load_plan_artifact(first.run_dir)
+    assert full_plan.manifest.delete_operations_computed is True
+    assert len(full_plan.operations) == 1
+    _retain_run(first)
+    second = _plan_engine(
+        tmp_path,
+        "run-2",
+        _TimestampSource(source_rows, safe=True, exclusive=False, mutate=False),
+        _TimestampSource(destination_rows, safe=safe_destination, exclusive=False, mutate=False),
+    )
+    second.load_both_sides()
+    second.write_plan(second.diff())
+    assert second.run_dir is not None
+    plan = load_plan_artifact(second.run_dir)
+    assert second._side_full_extract == {"A": False, "B": not safe_destination}
+    assert plan.manifest.delete_operations_computed is not safe_destination
+    deletes = [operation for operation in plan.operations if operation.action == "delete"]
+    assert [operation.identity for operation in deletes] == ([] if safe_destination else [{"name": "orphan"}])
+    assert plan.manifest.operations_count == len(deletes)
+    assert isinstance(second.destination, _TimestampSource)
+    assert [call[0] for call in second.destination.calls] == ["bound", "delta" if safe_destination else "full"]
+
+    # Identical input encodes identically after complete fallback. A genuine
+    # incremental destination changes both the delete disclosure and checksum.
+    assert (plan.manifest.plan_checksum == full_plan.manifest.plan_checksum) is not safe_destination
+
+
+@pytest.mark.parametrize("snapshot_state", ["missing", "empty"])
+def test_source_snapshot_cache_miss_does_not_delete_existing_objects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, snapshot_state: str
+) -> None:
+    """An absent cache requires a full query; a valid empty cache can use a delta."""
+    from infrahub_sync.plan.reader import load_plan_artifact
+
+    rows = {"Device": [{"name": "device", "description": "unchanged"}], "Empty": []}
+    first_source_rows = rows if snapshot_state == "missing" else {"Device": [], "Empty": []}
+    first = _plan_engine(
+        tmp_path,
+        "run-1",
+        _TimestampSource(first_source_rows, safe=True, exclusive=False, mutate=False),
+        _TimestampSource(rows, safe=False, exclusive=False, mutate=False),
+    )
+    first.load_both_sides()
+    _retain_run(first)
+    assert first.run_dir is not None
+    assert load_cursors(first.run_dir / "cursors.json", side="A")["Device"].safe
+    if snapshot_state == "missing":
+        (first.run_dir / "A" / "Device.parquet").unlink()
+
+    source = _TimestampSource(rows, safe=True, exclusive=False, mutate=False)
+    # The existing Device has not changed since the saved cursor. A missing
+    # baseline plus an empty delta must not reconstruct an empty source store.
+    if snapshot_state == "missing":
+        monkeypatch.setattr(source, "list_changed_since", lambda _resource, _cursor: [])
+    second = _plan_engine(
+        tmp_path,
+        "run-2",
+        source,
+        _TimestampSource(rows, safe=False, exclusive=False, mutate=False),
+    )
+    second.load_both_sides()
+    second.write_plan(second.diff())
+    assert second.run_dir is not None
+    plan = load_plan_artifact(second.run_dir)
+    assert plan.manifest.delete_operations_computed is True
+    assert plan.operations == []
+    assert len(source.get_all("Device")) == 1
+    assert (("full", "Device") in source.calls) is (snapshot_state == "missing")
+    # Empty is still incremental; a single full resource does not make A full.
+    assert second._side_full_extract == {"A": False, "B": True}
+
+
+@pytest.mark.parametrize("side", ["A", "B"])
+def test_missing_required_model_refuses_before_resource_queries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, side: str
+) -> None:
+    """A missing source model cannot become an apparently absent source kind."""
+    rows = {"Device": [{"name": "device", "description": "unchanged"}], "Empty": []}
+    first = _plan_engine(
+        tmp_path,
+        "run-1",
+        _TimestampSource(rows, safe=False, exclusive=False, mutate=False),
+        _TimestampSource(rows, safe=False, exclusive=False, mutate=False),
+    )
+    first.load_both_sides()
+    _retain_run(first)
+    second = _plan_engine(
+        tmp_path,
+        "run-2",
+        _TimestampSource(rows, safe=False, exclusive=False, mutate=False),
+        _TimestampSource(rows, safe=False, exclusive=False, mutate=False),
+    )
+    adapter = second.source if side == "A" else second.destination
+    assert isinstance(adapter, _TimestampSource)
+    monkeypatch.setattr(adapter, "Empty", None)
+    with pytest.raises(ValueError, match="required model 'Empty' is missing"):
+        second.load_both_sides()
+    assert all(call[0] == "bound" for call in adapter.calls)
+    assert second._side_full_extract[side] is False
+    second.persist_cursors_for_run(side=side)
+    assert second.run_dir is not None
+    assert not (second.run_dir / "cursors.json").exists()
+    assert not (second.run_dir / "plan").exists()
+
+
+@pytest.mark.parametrize("side", ["A", "B"])
+def test_failed_resource_fallback_is_not_marked_full(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, side: str
+) -> None:
+    """One successful resource cannot certify a failed multi-resource extraction."""
+    rows = {"Device": [], "Empty": []}
+    first = _plan_engine(
+        tmp_path,
+        "run-1",
+        _TimestampSource(rows, safe=False, exclusive=False, mutate=False),
+        _TimestampSource(rows, safe=False, exclusive=False, mutate=False),
+    )
+    first.load_both_sides()
+    _retain_run(first)
+    source = _TimestampSource(rows, safe=True, exclusive=False, mutate=False)
+    second = _engine(tmp_path, "run-2", source, side)
+    completed: list[str] = []
+
+    def fail_later_resource(model_name: str, model: type[DiffSyncModel]) -> None:  # noqa: ARG001
+        if model_name == "Empty":
+            msg = "later resource failed"
+            raise RuntimeError(msg)
+        completed.append(model_name)
+
+    monkeypatch.setattr(source, "model_loader", fail_later_resource)
+    load = second.source_load if side == "A" else second.destination_load
+    with pytest.raises(ValueError, match="later resource failed"):
+        load()
+    assert completed == ["Device"]
+    assert second._side_full_extract[side] is False
+    second.persist_cursors_for_run(side=side)
+    assert second.run_dir is not None
+    assert not (second.run_dir / "cursors.json").exists()

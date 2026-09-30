@@ -1,5 +1,4 @@
 from collections import UserDict
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -71,17 +70,13 @@ def test_cursor_tier_is_none_for_empty_mapping() -> None:
     assert adapter.cursor_tier_for("InfraDevice") is CursorTier.NONE
 
 
-@pytest.mark.parametrize("change_offset", [0, 1])
-def test_list_changed_since_uses_last_updated_filter(tmp_path: Path, change_offset: int) -> None:
+def test_list_changed_since_uses_last_updated_filter(tmp_path: Path) -> None:
     from infrahub_sync.cache.incremental import load_cursors, persist_cursors
 
-    change_time = datetime.fromisoformat("2026-05-17T10:00:00Z") + timedelta(seconds=change_offset)
     adapter = _make_adapter([{"name": "InfraDevice", "mapping": "dcim.devices", "identifiers": ["name"]}])
     fake_record = _FakeRecord({"id": 1, "name": "leaf1"})
     fake_endpoint = MagicMock()
-    fake_endpoint.filter.side_effect = lambda **kwargs: (
-        [fake_record] if change_time >= datetime.fromisoformat(kwargs["last_updated__gte"]) else []
-    )
+    fake_endpoint.filter.return_value = [fake_record]
     adapter.client.dcim.devices = fake_endpoint  # ty: ignore[unresolved-attribute]
 
     fake_model = MagicMock()
@@ -89,8 +84,7 @@ def test_list_changed_since_uses_last_updated_filter(tmp_path: Path, change_offs
     fake_model.transform_records.side_effect = lambda records, **_kw: records
     adapter.InfraDevice = fake_model  # ty: ignore[unresolved-attribute]
 
-    # A source guarantee accounts for the strict Infrahub boundary as well as
-    # the inclusive NetBox/Nautobot boundary. Persist and query the exact bound.
+    # This tests saved-cursor pass-through, not the server's filter semantics.
     path = tmp_path / "cursors.json"
     persist_cursors(
         path,

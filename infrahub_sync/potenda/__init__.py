@@ -413,6 +413,7 @@ class Potenda:
         from infrahub_sync.cache.incremental import (
             hydrate_from_parquet,
             load_cursors,
+            required_resource_models,
             should_use_incremental,
             snapshot_carries_local_id,
         )
@@ -420,6 +421,7 @@ class Potenda:
         # Capture every resource before the first query, including empty resources.
         # Clear earlier candidates so a failed repeated load cannot advance a cursor.
         self._side_cursors.pop(side, None)
+        self._side_full_extract[side] = False
         next_cursors = {} if self.force_full_extract else capture_safe_cursors(adapter, adapter.top_level)
 
         prev_run = self._previous_run()
@@ -430,37 +432,39 @@ class Potenda:
             force_full=self.force_full_extract,
         )
 
-        self._did_full_extract = self._did_full_extract or (not use_inc)
-        # A resource-level safety fallback can make the entire side full even
-        # when the prior-run gate passed. Finalize this answer after resource loads.
-        self._side_full_extract[side] = not use_inc
-
         if not use_inc or prev_run is None:
             adapter.load()
+            self._side_full_extract[side] = True
+            self._did_full_extract = True
             self._side_cursors[side] = next_cursors
             return
 
+        # Validate all models before querying; a skipped source kind could cause false deletes.
+        models = required_resource_models(adapter=adapter, side=side)
+
         def _add(model_name: str, payload: dict, _adapter: Adapter = adapter) -> None:
-            model_cls = getattr(_adapter, model_name)
-            _adapter.add(model_cls(**payload))
+            _adapter.add(models[model_name](**payload))
 
         cursors = load_cursors(prev_run / "cursors.json", side=side)
-        used_incremental = False
+        full_resources: set[str] = set()
         for resource in adapter.top_level:
             tier_supported = adapter.cursor_tier_for(resource)  # ty: ignore[unresolved-attribute]
             cursor = cursors.get(resource)
-            model_cls = getattr(adapter, resource, None)
-            if model_cls is None:
-                continue
-            if cursor is None or not cursor.safe or cursor.tier is not tier_supported or resource not in next_cursors:
-                logger.info("Incremental: no safe cursor bound for %s; extracting this resource in full", resource)
+            model_cls = models[resource]
+            cached = (prev_run / side / f"{resource}.parquet").is_file()
+            if (
+                not cached
+                or cursor is None
+                or not cursor.safe
+                or cursor.tier is not tier_supported
+                or resource not in next_cursors
+            ):
+                logger.info("Incremental: no safe cursor or snapshot for %s; loading in full", resource)
                 adapter.model_loader(model_name=resource, model=model_cls)  # ty: ignore[unresolved-attribute]
+                full_resources.add(resource)
                 continue
 
-            # A side-B snapshot written before plan format 3 has no `local_id` column, so
-            # hydrating from it would rebuild destination models with no destination id and
-            # every derived update would be refused. Treat it as a cache miss for this
-            # resource and extract it fully instead, saying why.
+            # Pre-format-3 destination snapshots lack the local_id required to key updates.
             if side == "B" and not snapshot_carries_local_id(run_dir=prev_run, side=side, resource=resource):
                 logger.info(
                     "Incremental: the previous run's destination snapshot for %s carries no local_id column, "
@@ -468,6 +472,7 @@ class Potenda:
                     resource,
                 )
                 adapter.model_loader(model_name=resource, model=model_cls)  # ty: ignore[unresolved-attribute]
+                full_resources.add(resource)
                 continue
 
             hydrate_from_parquet(
@@ -483,11 +488,10 @@ class Potenda:
                 stored, _ = adapter.update_or_add_model_instance(item)
                 if "local_id" in row and hasattr(stored, "local_id"):
                     # Runtime models declare this field outside DiffSyncModel.
-                    setattr(stored, "local_id", item.local_id)  # noqa: B010
-            used_incremental = True
-
-        self._side_full_extract[side] = not used_incremental
-        self._did_full_extract = self._did_full_extract or (not used_incremental)
+                    setattr(stored, "local_id", item.model_dump()["local_id"])  # noqa: B010
+        # Only successful full resource loads establish a complete side.
+        self._side_full_extract[side] = full_resources == set(adapter.top_level)
+        self._did_full_extract = self._did_full_extract or self._side_full_extract[side]
         self._side_cursors[side] = next_cursors
 
     def source_load(self):

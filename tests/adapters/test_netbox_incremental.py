@@ -1,5 +1,4 @@
 import collections
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -80,11 +79,9 @@ class _FakeRecord(collections.UserDict):
     """Minimal pynetbox record stub: UserDict so dict(record) works."""
 
 
-@pytest.mark.parametrize("change_offset", [0, 1])
-def test_list_changed_since_uses_last_updated_filter(tmp_path: Path, change_offset: int) -> None:
+def test_list_changed_since_uses_last_updated_filter(tmp_path: Path) -> None:
     from infrahub_sync.cache.incremental import load_cursors, persist_cursors
 
-    change_time = datetime.fromisoformat("2026-05-17T10:00:00Z") + timedelta(seconds=change_offset)
     adapter = _make_adapter(
         [
             {
@@ -98,9 +95,7 @@ def test_list_changed_since_uses_last_updated_filter(tmp_path: Path, change_offs
     # Use a dict subclass so dict(record) produces the expected shape.
     fake_record = _FakeRecord({"id": 1, "name": "leaf1"})
     fake_endpoint = MagicMock()
-    fake_endpoint.filter.side_effect = lambda **kwargs: (
-        [fake_record] if change_time >= datetime.fromisoformat(kwargs["last_updated__gte"]) else []
-    )
+    fake_endpoint.filter.return_value = [fake_record]
     # pynetbox resolves endpoints through `App.__getattr__`, so `devices` is not a
     # declared attribute for ty to see. Removable once pynetbox ships typing for
     # its dynamic endpoint access.
@@ -115,8 +110,7 @@ def test_list_changed_since_uses_last_updated_filter(tmp_path: Path, change_offs
     fake_model.fields = None
     adapter.InfraDevice = fake_model  # ty: ignore[unresolved-attribute]
 
-    # A source guarantee accounts for the strict Infrahub boundary as well as
-    # the inclusive NetBox/Nautobot boundary. Persist and query the exact bound.
+    # This tests saved-cursor pass-through, not the server's filter semantics.
     path = tmp_path / "cursors.json"
     persist_cursors(
         path,

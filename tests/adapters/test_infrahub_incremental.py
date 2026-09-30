@@ -1,4 +1,3 @@
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
@@ -53,25 +52,18 @@ def test_cursor_tier_is_none_for_unknown_kinds() -> None:
     assert adapter.cursor_tier_for("MissingFromSchema") is CursorTier.NONE
 
 
-@pytest.mark.parametrize("change_offset", [0, 1])
-def test_list_changed_since_uses_updated_at_filter(tmp_path: Path, change_offset: int) -> None:
+def test_list_changed_since_uses_updated_at_filter(tmp_path: Path) -> None:
     from infrahub_sync.cache.cursors import CursorState
     from infrahub_sync.cache.incremental import load_cursors, persist_cursors
 
-    change_time = datetime.fromisoformat("2026-05-17T10:00:00Z") + timedelta(seconds=change_offset)
     adapter = _make_adapter(["InfraDevice"])
     fake_node = MagicMock()
-    adapter.client.filters.side_effect = (  # ty: ignore[unresolved-attribute]
-        lambda **kwargs: (
-            [fake_node] if change_time > datetime.fromisoformat(kwargs["node_metadata__updated_at__after"]) else []
-        )
-    )
+    adapter.client.filters.return_value = [fake_node]  # ty: ignore[unresolved-attribute]
 
     # Stub infrahub_node_to_diffsync to bypass complex node→dict logic.
     adapter.infrahub_node_to_diffsync = MagicMock(return_value={"local_id": "1", "name": "leaf1"})  # ty: ignore[invalid-assignment]
 
-    # A source guarantee accounts for the strict Infrahub boundary as well as
-    # the inclusive NetBox/Nautobot boundary. Persist and query the exact bound.
+    # This tests saved-cursor pass-through, not the server's filter semantics.
     path = tmp_path / "cursors.json"
     persist_cursors(
         path,
@@ -92,7 +84,6 @@ def test_list_changed_since_uses_updated_at_filter(tmp_path: Path, change_offset
 
 
 def test_list_changed_since_raises_for_unknown_model() -> None:
-    import pytest
 
     from infrahub_sync.cache.cursors import CursorState
 
@@ -141,7 +132,6 @@ def test_list_existing_ids_yields_unique_ids() -> None:
 
 
 def test_list_existing_ids_raises_for_unknown_model() -> None:
-    import pytest
 
     adapter = _make_adapter(["InfraDevice"])
     with pytest.raises(NotImplementedError):

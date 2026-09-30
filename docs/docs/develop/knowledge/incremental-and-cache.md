@@ -104,7 +104,20 @@ The bundled NetBox, Nautobot and Infrahub adapters currently provide neither a s
 watermark nor a bounded overlap. Potenda therefore extracts those resources in full,
 even if a direct caller requests incremental extraction. It also extracts in full if the
 saved cursor is unqualified, the tier changed, or the current source cannot guarantee a
-safe next bound. Forced full extraction does not request the hook.
+safe next bound, or the prior resource snapshot is missing. An empty snapshot is a
+valid baseline and can still use a qualified cursor. A missing mapped model refuses the
+load before any resource query; it cannot stand in for an empty source kind.
+
+When every destination resource falls back to a full load, the saved plan now computes
+delete proposals for destination-only objects and records `delete_operations_computed=true`.
+Previously a direct incremental request recorded `false` even after complete fallback.
+If any destination resource uses a delta, delete proposals remain uncomputed. Apply
+continues to skip all delete operations and records them as skipped; it does not delete
+these objects.
+
+Forced full extraction does not request the safe-cursor hook or capture new cursors.
+The next direct run therefore loads those resources in full again before it can establish
+safe cursors for later incremental runs.
 
 After a successful load, an explicit `persist_cursors_for_run()` call saves the captured
 bound for each resource, including empty snapshots. The `safe-v1:` prefix in `cursors.json`
