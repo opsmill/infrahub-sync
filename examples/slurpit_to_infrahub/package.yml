@@ -20,8 +20,8 @@ configuration:
   # its own environment. No credential value is ever written here, posted to
   # the Sync API, or recorded in a registered version. Export the values
   # before starting the worker:
-  #   export SLURPIT_API_KEY="..."
-  #   export INFRAHUB_API_TOKEN="..."
+  #   export INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY="..."
+  #   export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="..."
 
   # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
   # Uncomment and edit only if you need to override the computed order:
@@ -215,7 +215,7 @@ configuration:
 credentials:
   slurpit-api-key:
     provider: env
-    identifier: SLURPIT_API_KEY
+    identifier: INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN

@@ -44,7 +44,9 @@ def _live_package_data() -> dict[str, Any]:
                 "settings": {"url": INFRAHUB_ADDRESS, "token": {"$credential": "infrahub-token"}},
             },
         },
-        "credentials": {"infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"}},
+        "credentials": {
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
+        },
     }
 
 

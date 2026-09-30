@@ -11,6 +11,7 @@ import textwrap
 import typing
 from collections.abc import Callable, ItemsView, Iterator, Mapping
 from datetime import datetime, timezone
+from pathlib import Path
 from types import UnionType
 from typing import Any, ClassVar, Literal, cast
 
@@ -75,8 +76,8 @@ def _package(**updates: object) -> ConfigurationPackage:
         },
         "package_metadata": {"adapter_api_version": 1},
         "credentials": {
-            "netbox-token": {"provider": "env", "identifier": "NETBOX_TOKEN"},
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"},
+            "netbox-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"},
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
         },
     }
     data.update(updates)
@@ -103,7 +104,7 @@ def _package_with_nested_declared_content() -> ConfigurationPackage:
             "fields": [{"name": "metadata", "static": {"labels": ["edge"]}}],
         }
     ]
-    data["credentials"]["redis-password"] = {"provider": "env", "identifier": "REDIS_PASSWORD"}
+    data["credentials"]["redis-password"] = {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_REDIS_PASSWORD"}
     return ConfigurationPackage.model_validate(data)
 
 
@@ -630,7 +631,7 @@ def test_default_empty_credentials_cannot_mutate_after_validation() -> None:
     package = ConfigurationPackage.model_validate(data)
 
     with pytest.raises(TypeError):
-        cast("Any", package.credentials)["later"] = {"provider": "env", "identifier": "LATER"}
+        cast("Any", package.credentials)["later"] = {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_LATER"}
 
 
 @pytest.mark.parametrize(
@@ -769,7 +770,7 @@ def test_package_rejects_recursive_declarations() -> None:
     "unsafe_credentials",
     [
         {"nt": "hunter2-inline-secret"},
-        {"nt": {"provider": "env", "identifier": "X", "value": "hunter2-extra-secret"}},
+        {"nt": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_X", "value": "hunter2-extra-secret"}},
     ],
 )
 def test_safe_parse_boundary_does_not_echo_rejected_credential_values(
@@ -902,7 +903,7 @@ def test_safe_parse_rejects_credential_name_string_subclasses_without_callbacks(
     hostile_name = _ExecutableStr("hostile-credential-name-canary")
     data = _package().model_dump(mode="json")
     data["credentials"] = {
-        hostile_name: {"provider": "env", "identifier": "CREDENTIAL_IDENTIFIER_CANARY"},
+        hostile_name: {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_CREDENTIAL_IDENTIFIER_CANARY"},
     }
 
     with pytest.raises(ConfigurationPackageParseError) as caught:
@@ -2034,10 +2035,25 @@ def test_package_validation_checks_environment_identifier_without_reading_value(
         validate_package_credentials(package)
 
 
-def test_environment_provider_returns_exact_runtime_value() -> None:
-    provider = EnvironmentCredentialProvider({"TOKEN_NAME": "runtime-secret"})
+@pytest.mark.parametrize(
+    "identifier",
+    ["NETBOX_TOKEN", "AWS_SECRET_ACCESS_KEY", "INFRAHUB_SYNC_S3_SECRET_KEY", "infrahub_sync_credential_TOKEN"],
+)
+def test_package_validation_refuses_identifier_outside_credential_prefix(identifier: str) -> None:
+    data = _package().model_dump(mode="json")
+    data["credentials"]["netbox-token"]["identifier"] = identifier
+    package = ConfigurationPackage.model_validate(data)
 
-    assert provider.resolve("TOKEN_NAME") == "runtime-secret"
+    with pytest.raises(CredentialConfigurationError, match="INFRAHUB_SYNC_CREDENTIAL_") as caught:
+        validate_package_credentials(package)
+    # The finding names the rule, never the identifier: a pasted value is the usual mistake.
+    assert identifier not in str(caught.value)
+
+
+def test_environment_provider_returns_exact_runtime_value() -> None:
+    provider = EnvironmentCredentialProvider({"INFRAHUB_SYNC_CREDENTIAL_TOKEN_NAME": "runtime-secret"})
+
+    assert provider.resolve("INFRAHUB_SYNC_CREDENTIAL_TOKEN_NAME") == "runtime-secret"
 
 
 @pytest.mark.parametrize("identifier", ["", "9INVALID", "HAS-DASH"])
@@ -2046,17 +2062,53 @@ def test_environment_provider_refuses_invalid_identifier(identifier: str) -> Non
         EnvironmentCredentialProvider({identifier: "secret"}).resolve(identifier)
 
 
-@pytest.mark.parametrize("environment", [{}, {"NETBOX_TOKEN": ""}])
+@pytest.mark.parametrize(
+    "identifier",
+    ["AWS_SECRET_ACCESS_KEY", "INFRAHUB_SYNC_DATABASE_URL", "INFRAHUB_SYNC_CREDENTIAL_", "infrahub_sync_credential_X"],
+)
+def test_environment_provider_refuses_identifier_outside_credential_prefix(identifier: str) -> None:
+    provider = EnvironmentCredentialProvider({identifier: "worker-infrastructure-secret"})
+
+    with pytest.raises(CredentialConfigurationError, match="INFRAHUB_SYNC_CREDENTIAL_") as caught:
+        provider.resolve(identifier)
+    assert "worker-infrastructure-secret" not in str(caught.value)
+
+
+def test_every_credential_namespace_value_is_collected_for_redaction() -> None:
+    # A namespace name need not look like a secret on its own (`..._USERNAME`); the prefix
+    # itself has to be what makes the runner's value-based redaction collect it.
+    from infrahub_sync.execution import collect_secret_values
+
+    name = f"{configuration_credentials.ENV_CREDENTIAL_PREFIX}APIC_USERNAME"
+    value = "credential-namespace-canary-0001"
+
+    assert value in collect_secret_values(environ={name: value})
+
+
+def test_no_service_setting_uses_the_credential_namespace() -> None:
+    # The namespace is only a boundary while nothing the service itself reads lives in it.
+    root = Path(__file__).resolve().parents[2]
+    prefix = configuration_credentials.ENV_CREDENTIAL_PREFIX
+    owner = root / "infrahub_sync" / "configuration" / "credentials.py"
+    readers = [path for path in (root / "infrahub_sync").rglob("*.py") if path != owner]
+    readers.append(root / "deploy" / "compose" / "defaults.conf")
+
+    assert [str(path.relative_to(root)) for path in readers if prefix in path.read_text(encoding="utf-8")] == []
+
+
+@pytest.mark.parametrize("environment", [{}, {"INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": ""}])
 def test_environment_provider_refuses_missing_or_empty_value(environment: dict[str, str]) -> None:
     with pytest.raises(CredentialConfigurationError, match="missing or empty"):
-        EnvironmentCredentialProvider(environment).resolve("NETBOX_TOKEN")
+        EnvironmentCredentialProvider(environment).resolve("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN")
 
 
 def test_reference_resolution_does_not_mutate_declared_package() -> None:
     package = _package()
     before = package.model_dump(mode="json")
 
-    value = resolve_reference(package, "netbox-token", environment={"NETBOX_TOKEN": "runtime-secret"})
+    value = resolve_reference(
+        package, "netbox-token", environment={"INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": "runtime-secret"}
+    )
 
     assert value == "runtime-secret"
     assert package.model_dump(mode="json") == before
@@ -2069,7 +2121,7 @@ def test_unknown_provider_is_refused_without_reading_environment() -> None:
     package = ConfigurationPackage.model_validate(data)
 
     with pytest.raises(CredentialConfigurationError, match="provider 'vault' is not installed"):
-        resolve_reference(package, "netbox-token", environment={"NETBOX_TOKEN": "secret"})
+        resolve_reference(package, "netbox-token", environment={"INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": "secret"})
 
 
 def test_all_bundled_adapter_modules_have_static_declarations() -> None:
@@ -2157,7 +2209,10 @@ def test_all_bundled_supported_setting_shapes_validate(capability: AdapterConfig
         "name": capability.adapter_name,
         "settings": settings_by_adapter[capability.adapter_name],
     }
-    data["credentials"]["adapter-credential"] = {"provider": "env", "identifier": "ADAPTER_CREDENTIAL"}
+    data["credentials"]["adapter-credential"] = {
+        "provider": "env",
+        "identifier": "INFRAHUB_SYNC_CREDENTIAL_ADAPTER_CREDENTIAL",
+    }
 
     validate_package_credentials(ConfigurationPackage.model_validate(data))
 

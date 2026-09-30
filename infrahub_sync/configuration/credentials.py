@@ -23,6 +23,11 @@ if TYPE_CHECKING:
     from .models import ConfigurationPackage, CredentialReference
 
 _ENV_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# A worker's environment also holds its own infrastructure settings -- storage, database and
+# Prefect credentials among them. A declared package may name only variables in this namespace,
+# which no service setting uses, so a registered reference cannot select one of those.
+ENV_CREDENTIAL_PREFIX = "INFRAHUB_SYNC_CREDENTIAL_"
+_ENV_CREDENTIAL_IDENTIFIER = re.compile(rf"^{ENV_CREDENTIAL_PREFIX}[A-Za-z0-9_]+$")
 _REGISTERED_CONTEXT = "_infrahub_sync_registered_context"
 
 
@@ -129,7 +134,7 @@ class CredentialProvider(Protocol):
 
 
 class EnvironmentCredentialProvider:
-    """Resolve credentials from exact environment-variable identifiers."""
+    """Resolve credentials from exact environment-variable identifiers in the credential namespace."""
 
     def __init__(self, environment: Mapping[str, str] | None = None) -> None:
         self._environment = os.environ if environment is None else environment
@@ -138,6 +143,9 @@ class EnvironmentCredentialProvider:
         """Return a non-empty environment value without including it in errors."""
         if _ENV_IDENTIFIER.fullmatch(identifier) is None:
             msg = f"environment credential identifier {identifier!r} is invalid"
+            raise CredentialConfigurationError(msg)
+        if _ENV_CREDENTIAL_IDENTIFIER.fullmatch(identifier) is None:
+            msg = f"environment credential identifier {identifier!r} must start with {ENV_CREDENTIAL_PREFIX!r}"
             raise CredentialConfigurationError(msg)
         value = self._environment.get(identifier)
         if value is None or not value:

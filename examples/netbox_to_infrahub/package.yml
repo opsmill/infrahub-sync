@@ -53,8 +53,8 @@ configuration:
   # from this registered package. Keep this configuration body synchronized
   # with config.yml. Environment variables supply only the two credentials.
   # Export them before starting the worker:
-  #   export NETBOX_TOKEN="nbt_..."
-  #   export INFRAHUB_API_TOKEN="..."
+  #   export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="nbt_..."
+  #   export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="..."
   # The CLI separately uses INFRAHUB_SYNC_API_URL and INFRAHUB_SYNC_API_TOKEN to
   # authenticate to the Sync API.
 
@@ -728,7 +728,7 @@ configuration:
 credentials:
   netbox-token:
     provider: env
-    identifier: NETBOX_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN

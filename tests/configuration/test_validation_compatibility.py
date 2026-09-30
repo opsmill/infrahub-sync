@@ -316,7 +316,7 @@ def test_a_legacy_defect_keeps_its_shipped_message_when_warnings_are_also_declar
 def _two_defective_declarations(first_name: str, second_name: str) -> dict[str, Any]:
     data = package_data()
     declarations = {
-        "zeta": {"provider": "vault", "identifier": "ZETA_TOKEN"},
+        "zeta": {"provider": "vault", "identifier": "INFRAHUB_SYNC_CREDENTIAL_ZETA_TOKEN"},
         "alpha": {"provider": "env", "identifier": "ALPHA-TOKEN"},
     }
     data["credentials"] = {

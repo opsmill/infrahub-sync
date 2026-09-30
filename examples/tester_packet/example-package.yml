@@ -1,7 +1,8 @@
 ---
 # Replace the URL placeholders and load a matching destination schema before registration.
 # Supply token values through the named environment variables, never in this file.
-# Set NETBOX_TOKEN and INFRAHUB_API_TOKEN in the generated operator.env file.
+# Set INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN and INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
+# in the generated operator.env file.
 format_version: 1
 configuration:
   name: netbox-evaluation
@@ -36,5 +37,5 @@ configuration:
           mapping: site
           reference: TestingSite
 credentials:
-  netbox-token: {provider: env, identifier: NETBOX_TOKEN}
-  infrahub-token: {provider: env, identifier: INFRAHUB_API_TOKEN}
+  netbox-token: {provider: env, identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN}
+  infrahub-token: {provider: env, identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN}

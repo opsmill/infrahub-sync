@@ -28,8 +28,15 @@ The package declares what that name means without carrying its value:
 credentials:
   netbox-token:
     provider: env
-    identifier: NETBOX_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
 ```
+
+An `env` identifier must start with `ENV_CREDENTIAL_PREFIX` (`INFRAHUB_SYNC_CREDENTIAL_`),
+checked twice: validation reports any other name as `malformed-credential-reference`, and
+`EnvironmentCredentialProvider` refuses it at resolution. The worker's environment also
+holds its own storage, database, and Prefect settings, and no service setting uses the
+prefix, so a registered package cannot select one of them. Every name in the namespace
+contains `CREDENTIAL`, so the runner's value-based redaction collects its values.
 
 A `$credential` node is only accepted where a credential is actually resolved: the
 credential setting paths of the adapter filling that role, and those of the declared

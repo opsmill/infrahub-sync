@@ -68,13 +68,13 @@ ROUTED_SERVICES = {"sync-worker"}
 # and only the worker runs one, so the worker is the only service that may be
 # given either. Naming them here rather than deriving them from the file keeps
 # this a statement of the contract instead of a restatement of the YAML.
-SOURCE_TOKEN_SETTINGS = ("NETBOX_TOKEN", "NAUTOBOT_TOKEN")
+SOURCE_TOKEN_SETTINGS = ("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN")
 SOURCE_TOKEN_RECEIVERS = {"sync-worker"}
 
 # The destination credential, and the two services that resolve one. The API
 # resolves it for the destination schema reads it serves; the worker resolves it
 # for a run. Nothing else has a destination to reach.
-DESTINATION_CREDENTIAL = "INFRAHUB_API_TOKEN"
+DESTINATION_CREDENTIAL = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
 DESTINATION_CREDENTIAL_RECEIVERS = {"sync-api", "sync-worker"}
 
 # The opt-in client, and the profile that is the only way to resolve it.

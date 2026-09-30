@@ -555,8 +555,8 @@ def _configuration_declaration(**settings_overrides: object) -> dict[str, Any]:
         },
         "package_metadata": {"adapter_api_version": 1},
         "credentials": {
-            "netbox-token": {"provider": "env", "identifier": "NETBOX_TOKEN"},
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"},
+            "netbox-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"},
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
         },
     }
 

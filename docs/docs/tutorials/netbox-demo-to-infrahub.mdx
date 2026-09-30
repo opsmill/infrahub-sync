@@ -165,7 +165,7 @@ Create a token in the public NetBox demo instance so Infrahub Sync can read data
 Export the token locally:
 
 ```bash
-export NETBOX_TOKEN="nbt_..."
+export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="nbt_..."
 ```
 
 Export the complete `nbt_...` token value. Do not include an authorization prefix such as `Bearer`, and do not copy only the short **Key** field.
@@ -197,7 +197,8 @@ exported above is used only by `infrahubctl`, the `invoke load-schema` task, and
 project-template commands that run outside Infrahub Sync. If either target is not at the
 address already in the file, edit those two URLs in
 `sync-projects/netbox-demo/package.yml` before you register it. Only the two credentials
-(`NETBOX_TOKEN` and `INFRAHUB_API_TOKEN`) come from the worker's environment, resolved
+(`INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`) come from the worker's
+environment, resolved
 through the `credentials` block at the bottom of the file.
 
 This tutorial registers the package, uses `diff` to create a service plan, reviews that
@@ -289,14 +290,15 @@ export AWS_SECRET_ACCESS_KEY="sync-local-secret"
 export INFRAHUB_SYNC_SERVICE_WORK_POOL="sync-process-pool"
 export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/sync-projects"
 export INFRAHUB_SYNC_SERVICE_BEARER_TOKENS='{"tutorial-admin":{"token":"tutorial-sync-api-token","administrator":true}}'
-export NETBOX_TOKEN="nbt_..."
+export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="nbt_..."
 export INFRAHUB_ADDRESS="http://localhost:8000"
-export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
+export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 ```
 
 Use the complete NetBox token created earlier. The worker, not the CLI, reads the NetBox
 and Infrahub adapter credentials. The package declares them as references — `$credential`
-entries under `credentials` naming `NETBOX_TOKEN` and `INFRAHUB_API_TOKEN` — so the worker
+entries under `credentials` naming `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and
+`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` — so the worker
 resolves the values from these variables. No NetBox or Infrahub adapter credential value is
 written into the package or sent to the Sync API.
 
@@ -325,7 +327,7 @@ curl --fail "${INFRAHUB_SYNC_API_URL}/version"
 ```
 
 The API token authenticates the CLI to the Sync API. It is separate from
-`INFRAHUB_API_TOKEN`, which the worker uses to access the destination Infrahub instance.
+`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, which the worker uses to access the destination Infrahub instance.
 
 ## Register the configuration package
 
@@ -476,13 +478,14 @@ ERROR | infrahub_sync.cli | Failed to initialize the Sync Instance: Error initia
 
 The service worker cannot resolve a credential reference declared by the package. The
 package contains credential references and declarations, but secret
-credential values belong only in the worker environment. The package names `NETBOX_TOKEN`
-and `INFRAHUB_API_TOKEN`, and the worker reads their values. Export these variables before
+credential values belong only in the worker environment. The package names
+`INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, and the worker reads
+their values. Export these variables before
 starting the Prefect worker:
 
 ```bash
-export NETBOX_TOKEN="<your-netbox-token>"
-export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
+export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<your-netbox-token>"
+export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 ```
 
 This error names whichever adapter (NetBox or Infrahub) is missing its variables — the same message is raised for either one.

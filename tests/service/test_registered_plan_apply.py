@@ -43,8 +43,8 @@ def _registered_apply(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, manifest_binding: tuple[str, int, str] | Literal["exact"] | None
 ) -> tuple[str, tuple[str, int, str], str, list[str]]:
     """Prepare one bound run and a manifest, with a destination-call sentinel."""
-    monkeypatch.setenv("NETBOX_TOKEN", "registered-netbox-canary")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "registered-infrahub-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "registered-netbox-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "registered-infrahub-canary")
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     projection = local_product_projection(tmp_path / "product")
     registered = projection.create_configuration(package())
@@ -259,13 +259,13 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
     """AR10: applying a reviewed plan needs destination credentials only.
 
     The plan was computed where the source was reachable; this apply runs on a host that
-    holds `INFRAHUB_API_TOKEN` and no `NETBOX_TOKEN` at all. `execute_run` is the real
+    holds the destination credential and no source credential at all. `execute_run` is the real
     one, so the reviewed operation reaches the destination the apply seam constructed —
     and `import_adapter` refuses every side, which is what proves the source adapter is
     neither imported nor constructed on the way there.
     """
-    monkeypatch.setenv("NETBOX_TOKEN", "plan-host-netbox-canary")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", INFRAHUB_CANARY)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "plan-host-netbox-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", INFRAHUB_CANARY)
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
 
@@ -354,7 +354,7 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
         ),
     )
     # The apply host itself: the destination credential resolves, the source one does not exist.
-    monkeypatch.delenv("NETBOX_TOKEN")
+    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN")
 
     result = service_sync_run.fn(
         run_id, "apply", *binding, expected_checksum=manifest.plan_checksum, confirm_writes=True

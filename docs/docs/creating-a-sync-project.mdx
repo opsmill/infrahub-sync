@@ -60,10 +60,10 @@ configuration:
 credentials:
   nautobot-token:
     provider: env
-    identifier: NAUTOBOT_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
 The sections below explain each part. For the package format itself, see
@@ -85,7 +85,7 @@ A registered run can write only to Infrahub, so `destination.name` is `infrahub`
 
 The `credentials` block declares each `$credential` reference. `identifier` is the name of
 the environment variable that the Sync worker reads when a run starts. In this example, the
-worker needs `NAUTOBOT_TOKEN` and `INFRAHUB_API_TOKEN`. On a Compose deployment, set them in
+worker needs `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. On a Compose deployment, set them in
 `operator.env`, then run `./infrahub-sync-compose start`. See
 [Credentials](./configuration-package.mdx#credentials).
 

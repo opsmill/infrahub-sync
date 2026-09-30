@@ -88,10 +88,10 @@ configuration:
 credentials:
   ipfabric-token:
     provider: env
-    identifier: IPF_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_IPF_TOKEN
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
 When `base_url` or `auth` is not declared, the adapter reads `IPF_URL` or `IPF_TOKEN` from the worker environment instead.
