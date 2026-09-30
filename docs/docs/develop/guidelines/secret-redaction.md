@@ -135,8 +135,13 @@ have been collected before that refresh.
 
 `collect_secret_values` drops candidate values shorter than six characters. This avoids
 replacing every `1` in a diagnostic when a variable such as `SKIP_TOKEN=1` qualifies by
-name. The returned values are ordered longest first so overlapping secrets are replaced
-in that order.
+name.
+
+`redact` does not depend on the order it receives. It drops empty values and repeated values, then
+replaces the longest value first. A value that contains another is therefore masked whole.
+Merging secret lists, for example with `tuple(dict.fromkeys(...))`, does not need to
+preserve any order. A new function that replaces values one after another must pass its
+values through `redaction_order` for the same reason.
 
 **The cutoff is a collection limit, not a guarantee that short credentials are safe.**
 A password shorter than six characters is not collected on its own. A longer URL
@@ -147,6 +152,16 @@ visible elsewhere.
 decode transformed values. Do not assume that an encoded value, a value under an unmatched
 settings key or a value omitted by the collection limits will be masked. Omit sensitive detail from
 new messages and test the values the changed route can expose.
+
+A public artifact is the exception, because its bytes are serialized. A JSON serializer
+escapes a quote, a backslash or a control character, and can re-encode a non-ASCII
+letter. The raw value then never appears in the bytes. `publish_artifact` therefore
+decodes a JSON artifact and redacts the decoded strings, mapping keys and numbers. It
+re-serializes the document only when a value was replaced. Every public artifact then
+gets a byte pass over the raw value and its JSON string forms, which `json_string_forms`
+derives. The recorded digest and size are computed from the redacted bytes that are
+stored. Internal artifacts are never redacted; see
+[ADR 0011](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0011-internal-run-bundles-are-private-and-byte-stable.md).
 
 ### Never chain a validation library's raw detail
 

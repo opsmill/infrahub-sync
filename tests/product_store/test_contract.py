@@ -3,6 +3,7 @@
 # __all__ as a hand-maintained, independent list; pylint's similarity checker flags that overlap.
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
@@ -20,7 +21,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from infrahub_sync import product_store
 from infrahub_sync.configuration import ConfigurationPackage, CredentialConfigurationError
@@ -3114,6 +3115,91 @@ def test_redaction_precedes_every_relational_and_artifact_write(provider: Produc
     assert artifact is not None
     assert secret.encode() not in artifact
     assert b"***" in artifact
+
+
+# A value a JSON serializer cannot write verbatim: a quote, a backslash, a line break, a
+# control character and a non-ASCII letter each come out escaped, or re-encoded, in the bytes.
+_ESCAPED_SECRET = 'pa"ss\\wörd\n-\x01-canary-649'  # noqa: S105 - deliberate persistence-boundary canary.
+
+
+class _ReviewCanary(BaseModel):
+    operations: list[dict[str, str]]
+
+
+@pytest.mark.parametrize(
+    "serialize",
+    [
+        pytest.param(
+            lambda value: _ReviewCanary(operations=[{"note": f"auth {value}"}]).model_dump_json().encode(),
+            id="model-dump-json",
+        ),
+        pytest.param(lambda value: json.dumps({"operations": [{"note": f"auth {value}"}]}).encode(), id="json-ascii"),
+        pytest.param(
+            lambda value: json.dumps({"operations": [{"note": f"auth {value}"}]}, ensure_ascii=False).encode(),
+            id="json-unicode",
+        ),
+    ],
+)
+def test_a_public_json_artifact_is_redacted_whatever_escaping_its_serializer_used(
+    serialize: Callable[[str], bytes], provider: ProductProjection
+) -> None:
+    provider.create_run(_run())
+
+    reference = provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=serialize(_ESCAPED_SECRET),
+        secrets=(_ESCAPED_SECRET,),
+    )
+
+    artifact = provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    forms = {
+        _ESCAPED_SECRET,
+        json.dumps(_ESCAPED_SECRET)[1:-1],
+        json.dumps(_ESCAPED_SECRET, ensure_ascii=False)[1:-1],
+    }
+    assert [form for form in forms if form.encode() in artifact] == []
+    assert json.loads(artifact) == {"operations": [{"note": "auth ***"}]}
+    assert reference.digest == sha256(artifact).hexdigest()
+    assert reference.size == len(artifact)
+
+
+def test_a_public_text_artifact_is_redacted_in_its_raw_and_json_escaped_forms(provider: ProductProjection) -> None:
+    provider.create_run(_run())
+    escaped = json.dumps(_ESCAPED_SECRET)[1:-1]
+
+    provider.publish_artifact(
+        "run-001",
+        artifact_id="log",
+        kind="log",
+        media_type="text/plain",
+        data=f"raw {_ESCAPED_SECRET} quoted {escaped}".encode(),
+        secrets=(_ESCAPED_SECRET,),
+    )
+
+    assert provider.lookup_artifact("run-001", "log").value == b"raw *** quoted ***"
+
+
+def test_a_public_json_artifact_stays_valid_json_when_a_secret_is_a_number(provider: ProductProjection) -> None:
+    """Rewriting digits inside a number leaves bytes the plan reader cannot parse."""
+    secret = "86427531"  # noqa: S105 - deliberate persistence-boundary canary.
+    provider.create_run(_run())
+
+    provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=json.dumps({"vlan": 7, "asn": int(secret)}).encode(),
+        secrets=(secret,),
+    )
+
+    artifact = provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    assert json.loads(artifact) == {"vlan": 7, "asn": "***"}
 
 
 def test_concurrent_result_merges_retain_every_stage_on_both_profiles(provider: ProductProjection) -> None:

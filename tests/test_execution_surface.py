@@ -634,6 +634,26 @@ def test_overlapping_secret_values_leave_no_fragment_in_a_wrapped_failure(
     assert f"upstream rejected {REDACTED}" in message
 
 
+@pytest.mark.parametrize(
+    "secrets",
+    [
+        pytest.param((OVERLAP_PREFIX_CANARY, OVERLAP_FULL_CANARY), id="shorter-first"),
+        pytest.param((OVERLAP_FULL_CANARY, OVERLAP_PREFIX_CANARY), id="longer-first"),
+        pytest.param((OVERLAP_PREFIX_CANARY, "", OVERLAP_FULL_CANARY, OVERLAP_PREFIX_CANARY), id="empty-and-repeat"),
+    ],
+)
+def test_redact_masks_overlapping_secrets_in_any_supplied_order(secrets: tuple[str, ...]) -> None:
+    """A merged list need not arrive longest first; the primitive orders it itself."""
+    message = f"Bearer {OVERLAP_FULL_CANARY} then {OVERLAP_PREFIX_CANARY}"
+
+    assert redact(message, secrets) == f"Bearer {REDACTED} then {REDACTED}"
+
+
+def test_redact_ignores_an_empty_secret() -> None:
+    """Replacing the empty string would interleave the marker between every character."""
+    assert redact("within 60.0 seconds", ("",)) == "within 60.0 seconds"
+
+
 def test_redact_leaves_a_message_untouched_when_nothing_was_collected() -> None:
     assert redact("within 60.0 seconds", collect_secret_values(_instance(), environ={"SKIP_TOKEN": "1"})) == (
         "within 60.0 seconds"
