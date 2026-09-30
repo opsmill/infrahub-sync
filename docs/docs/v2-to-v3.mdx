@@ -6,10 +6,11 @@ V3 turns Infrahub Sync from a local command-line synchronizer into a deployed se
 command-line client still carries the familiar verbs, but the service owns registration, run
 admission, saved plans, and every write to a destination.
 
-This page compares the two lines and routes each action to its one current procedure. It is
-not a migration procedure. There is no in-place state migration between V2 and V3: a switch
-starts a fresh deployment, re-registers the configuration, and reviews a new plan before
-anything is written.
+There is no in-place state migration between V2 and V3. To switch, you start a fresh V3
+deployment, register your configuration again as a V3 package, and review a new plan before
+anything is written. [Before switching](#before-switching) lists these steps. The table
+below compares the two lines, and [Where each action lives now](#where-each-action-lives-now)
+links the current procedure for each task.
 
 The V2 documentation stays published as its own version. Reach it from the version menu in
 the top navigation; every page on this line describes V3 only.
@@ -18,7 +19,7 @@ the top navigation; every page on this line describes V3 only.
 
 | Area | V2 | V3 | Sources |
 | --- | --- | --- | --- |
-| Installation and runtime | The package was installed into a virtual environment, and that one process read the source, computed the difference, and wrote to the destination. | A Docker Compose deployment runs the Sync API, a worker, Prefect, PostgreSQL, and object storage. The command-line client talks to that API and executes no synchronization itself. | [V2](/v2/installation) · [V3](./compose-deployment.mdx#what-the-bundle-contains) |
+| Installation and runtime | The package was installed into a virtual environment, and that one process read the source, computed the difference, and wrote to the destination. | A service runs the Sync API, a worker, Prefect, PostgreSQL, and object storage, either from a release package's Docker Compose bundle or built from source. The command-line client talks to that API and executes no synchronization itself. | [V2](/v2/installation) · [V3](./installation.mdx#two-ways-to-run-v3) |
 | Configuration and credentials | A project directory holding a `config.yml`, whose token settings named environment variables the local process read. | One package file with a `format_version`, a `configuration` object, and a `credentials` block. Credential-bearing settings hold `$credential` references, and the worker resolves them from `operator.env` where it runs. | [V2](/v2/creating-a-sync-project) · [V3](./reference/config.mdx) |
 | Adapter code | A generation step emitted Python adapter and model code beside the configuration before a run. | No generation step. The worker loads installed adapter classes for the registered package version. | [V2](/v2/running-a-sync#generating-sync-adapters-and-models) · [V3](./reference/config.mdx) |
 | Registration and validation | There was no registry. Each command re-read the files on disk, addressed by project name and directory. | Registration returns an immutable configuration identity, version, and package checksum, and the registry is append-only. A registered version can be re-validated later against the adapter declarations installed at that moment, and mutations accept an idempotency key. | [V2](/v2/reference/cli) · [V3](./reference/sync-http-api.mdx#routes) |
@@ -61,7 +62,7 @@ does at the destination.
 
 | What you want to do | Current page |
 | --- | --- |
-| Install the client and reach a deployment | [Install Infrahub Sync](./installation.mdx) |
+| Choose how to run V3, and reach the Sync API | [Install Infrahub Sync](./installation.mdx) |
 | Start a deployment, or replace an older one | [Moving from an older version](./quickstart-compose.mdx#moving-from-an-older-version) |
 | Check what is qualified, and the product limits | [Supported platforms and limits](./operations/supported-platforms-and-limits.mdx) |
 | Write the configuration | [Create a sync project](./creating-a-sync-project.mdx) |
@@ -70,6 +71,6 @@ does at the destination.
 | Look up a command and its options | [Sync CLI](./reference/cli.mdx) |
 | Pick the adapter for a source system | [Choose an adapter](./adapters/choosing-an-adapter.mdx) |
 | Understand the custom-adapter boundary | [Local adapters](./adapters/local-adapters.mdx) |
-| Operate a running deployment | [Day 2 operations](./operations/day-2-operations.mdx) |
+| Operate a running deployment | [Operate a Compose deployment](./operations/day-2-operations.mdx) |
 | Set up a development environment | [Contributing](./contributing.mdx) |
 | Know what each test tier requires | [Testing tiers](./develop/guidelines/testing-tiers.md) |

@@ -2,11 +2,11 @@
 title: Use Infrahub Sync with an AI agent
 ---
 
-Ask an agent to draft a configuration package when you know which NetBox data
-and Infrahub schema you want to map. For an existing Compose deployment, you
-can also ask it to interpret sanitized status or failure output. The Sync
-skills contain task instructions and links to the matching human procedures.
-You review the draft and issue deployment, registration, and execution commands.
+Two agent skills help with Infrahub Sync. `infrahub-sync-configuration` drafts a
+configuration package from the NetBox data and Infrahub schema you name.
+`infrahub-sync-deployment` explains sanitized status or failure output from a
+release-package deployment. You review the result and run every deployment,
+registration, and execution command yourself.
 
 ## Choose a skill
 
@@ -30,17 +30,18 @@ contact the deployment. Ask for missing non-secret details.
 The agent writes the configuration draft to a local file. Neither skill grants
 access to credentials or permission to change a deployment.
 
-## Get the development skills
+## Get the skills
 
-Whether your [release download](./installation.mdx#get-the-private-candidate)
-already includes the skills inside its Compose bundle depends on your
-candidate; check its release notes.
+The skills are text instruction files. There are two ways to get them:
 
-If it does, follow `skills/README.md` inside the extracted bundle instead of
-the clone steps below; that copy already matches your installed deployment,
-and cloning source is unnecessary. If it does not, clone the pinned public
-revision below instead; copying these instructions does not upgrade an
-installed Sync deployment.
+- **From a release package.** A release package's Compose bundle can include
+  them in its `skills/` directory. Whether yours does depends on the candidate;
+  check its release page. If it does, follow `skills/README.md` in the extracted
+  bundle instead of the steps below. That copy matches your deployment. See
+  [Get a release package](./installation.mdx#get-the-private-candidate).
+- **From the source repository.** Otherwise, copy them from the pinned public
+  revision with the steps below. Copying the skills does not change or upgrade
+  a Sync deployment.
 
 The following setup uses Git and Codex. Codex discovers
 project skills in `.agents/skills`; see its

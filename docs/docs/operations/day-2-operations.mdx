@@ -1,63 +1,83 @@
 ---
-title: Day 2 operations
+title: Operate a Compose deployment
 ---
 
-Use this page to choose the right operational action after a Compose deployment
-is running. The [Compose deployment guide](../compose-deployment) remains the
-only command reference.
+Check the health of a running release-package deployment, stop or restart it, change
+its credentials, and recover from a write with an unknown outcome. Each section links
+the full procedure in the [Compose deployment guide](../compose-deployment).
 
 ## Check health and status
 
-Use the [status procedure](../compose-deployment#status) to check whether the
-deployment is `READY`, `DEGRADED`, or `STOPPED`. `READY` confirms the deployment
-and its worker, not the reachability or validity of a registered source or
-destination.
+Run `./infrahub-sync-compose status`. It reports one of three states:
 
-For service output and run failures, use the [log procedure](../compose-deployment#logs).
-The output is bounded and redacted; do not substitute a local development-stack
-troubleshooting procedure for this Compose deployment route.
+| State | Exit code | Meaning | Next action |
+| --- | --- | --- | --- |
+| `READY` | 0 | The dependencies and the Sync API answer, and a registered worker sends heartbeats. | None. `READY` does not check a registered source or destination. |
+| `DEGRADED` | 3 | Some of the deployment's containers exist, but not all of the `READY` conditions are true. A stopped or hung worker causes this state. | Read the logs, then run `restart`. |
+| `STOPPED` | 4 | No container of this deployment is running. | Run `start`. |
 
-## Choose stop, restart, or reset
+See the [status procedure](../compose-deployment#status) for the details of each state.
+
+`./infrahub-sync-compose logs` prints the last 200 lines of each service. Credentials are
+removed from run failures before they are printed. See the
+[log procedure](../compose-deployment#logs).
+
+## Stop, restart, or reset
 
 The [stop, restart, and reset procedure](../compose-deployment#stop-restart-and-reset)
-defines the effects and safeguards of each action:
+describes each action and its safeguards:
 
-- `stop` stops all services while preserving containers and volumes. Use `start`
-  to resume the deployment, including its dependencies.
-- `restart` replaces only the API and worker processes while preserving durable
-  records. The deployment's dependencies must already be running.
-- `reset` removes this instance's containers, network, and volumes. It is destructive.
+- `stop` stops all services and keeps their containers and volumes. Run `start` to
+  resume the deployment, including its dependencies.
+- `restart` replaces only the API and worker processes and keeps the durable records.
+  The dependencies must already be running.
+- `reset` deletes this deployment's containers, network, and volumes. You cannot undo it.
 
-Before planned maintenance, [coordinate submissions and check known runs](../compose-deployment#stop-restart-and-reset).
-After resuming,
+Before planned maintenance, ask everyone who submits runs to this deployment to stop
+submitting new runs. Then check each run you know of with
+`./infrahub-sync-compose cli runs show RUN_ID`, and wait until its `execution_state` is
+`completed`, `failed`, `cancelled`, `abandoned`, or `interrupted`. `status` can report
+`READY` while runs are still executing. If you cannot account for every submitted run,
+postpone the maintenance.
+
+After you resume the deployment,
 [verify a retained configuration version](../compose-deployment#verify-a-retained-configuration)
-to check product state as well as deployment health.
+to check that your registered packages are still available.
 
-Use reset only when you intend to discard the deployment state. To replace this
-alpha, follow the [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment):
-it has no in-place migration, backup, or restore procedure, and the replacement
-starts with a new identity and empty state.
+## Replace a deployment with a fresh one
 
-## Handle credentials safely
+Use `reset` only when you intend to delete the deployment's data. V3 releases are test
+versions, and they have no in-place migration, backup, or restore procedure. To replace
+a deployment, follow the
+[replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment):
+reset the old deployment, then run `init` and `start`. `init` generates a new instance
+identity, the ID that labels the deployment's containers and volumes. The new deployment
+starts with an empty registry, so register your packages again.
 
-Credentials belong in `operator.env`; packages contain references rather than
-credential values. Follow the [configuration prerequisites](../compose-deployment#configuration-prerequisites)
-when adding or changing a source or destination credential, then use `start` as
-the [operator sequence](../compose-deployment#the-operator-sequence) specifies
-to recreate services with their new environment. `restart` retains the
-environment the containers already had.
+## Change credentials
 
-There is no qualified credential-rotation procedure at this release head. In
-particular, the API principal has no automatic rotation: the existing
-[Use it](../compose-deployment#use-it) guidance states that nothing rotates it
-for the operator.
+Source and destination tokens belong in `operator.env`. Packages contain references to
+them, not their values. To add or change a token, edit its line in `operator.env` as the
+[configuration prerequisites](../compose-deployment#configuration-prerequisites) describe,
+then run `./infrahub-sync-compose start`. `start` recreates the services whose
+environment changed. `restart` keeps the environment the containers already had.
 
-Never `source` `operator.env` or put a credential on a command line. Keep values
-out of logs, shell history, and configuration packages.
+This release has no tested procedure for rotating credentials. The Sync API token that
+the included CLI uses is generated by `init`, and nothing rotates it; see
+[Use it](../compose-deployment#use-it).
 
-## Reconcile an uncertain write
+Never `source` `operator.env` or put a credential on a command line. Keep values out of
+logs, shell history, and configuration packages.
 
-Do not retry a write whose outcome is unknown. Use the [uncertain-write
-reconciliation procedure](../compose-deployment#when-the-outcome-of-a-write-is-uncertain):
-read the terminal run record, inspect the destination, then create a fresh plan
-that reflects the destination's current state. The earlier run is not reopened.
+## Recover from a write with an unknown outcome
+
+A write has an unknown outcome when the run ended without a record of what reached the
+destination. `./infrahub-sync-compose cli runs show RUN_ID` then reports
+`reconciliation_required: true`, or an apply ends with phase `apply-failed` and
+`summary.may_have_partially_written` set.
+
+Do not retry that write. Follow the
+[reconciliation procedure](../compose-deployment#when-the-outcome-of-a-write-is-uncertain):
+read the run record, which no longer changes once the run has ended, inspect the
+destination, and then create a fresh plan. The fresh plan reads the destination as it is
+now, so it holds only the changes that are still outstanding.

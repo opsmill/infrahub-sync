@@ -6,16 +6,17 @@ title: "Testing tiers"
 
 > Part of: Develop > Guidelines | Related: [Testing](testing.md), [Quality gates](../knowledge/quality-gates.md), [Qualifying an internal candidate](../guides/qualifying-an-internal-candidate.md)
 
-**Verified 2026-09-16 against source revision
-[`61b6a1b9dccae637b522084f563858dfcd5e31a9`](https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9).** The commands, markers
-and skip behavior below were read at that exact revision from
-[`tasks/tests.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tasks/tests.py),
-[`tasks/__init__.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tasks/__init__.py),
-[`tasks/preview.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tasks/preview.py),
-[`tasks/compose.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tasks/compose.py),
-the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/integration) and the
-`[tool.pytest.ini_options]` markers in [`pyproject.toml`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/pyproject.toml). Nothing here was
-established by a live replay.
+**Checked 2026-09-29 against source revision
+[`d9ef147c569a42ec4471bba78ec270c343cdfa28`](https://github.com/opsmill/infrahub-sync/tree/d9ef147c569a42ec4471bba78ec270c343cdfa28).** The commands, markers,
+settings and skip behavior below were read at that revision from
+[`tasks/tests.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/tests.py),
+[`tasks/__init__.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/__init__.py),
+[`tasks/preview.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/preview.py),
+[`tasks/compose.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/compose.py),
+the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-sync/tree/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration) and the
+`[tool.pytest.ini_options]` markers in [`pyproject.toml`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/pyproject.toml). The unit tier
+and `check-310` were run at that revision. The integration sequence below was not replayed
+live for this revision; the nightly workflow runs a similar sequence.
 
 Which test command to run, what each one needs before it can prove anything, and what it
 writes. [Testing](testing.md) covers what makes an individual test worth having; this page
@@ -72,7 +73,7 @@ preview and integration suites against whatever environment your shell happens t
 |---|---|---|---|
 | Unit | `uv run invoke tests.tests-unit` | The installed extras, plus the `docker compose` CLI on your PATH | Nothing outside `tmp_path` |
 | Integration | `uv run invoke tests.tests-integration` | Varies by family — see below; no single set of variables covers the tier | Varies by family: read-only, temporary local state, or a disposable live target — see below |
-| Preview smoke | `uv run invoke preview.smoke` | The development stack, started with `preview.up` | Seeds and writes to the disposable stack |
+| Preview smoke | `uv run invoke preview.smoke` | The preview stack, started with `preview.up` | Seeds and writes to the disposable stack |
 | Compose lifecycle | `uv run invoke compose.lifecycle` | An already built and loaded candidate image, and a Docker daemon | A real container stack it brings up and tears down |
 | Clean-host qualification | See the candidate guide | A checkout-free host holding only the artifact | A real deployment |
 
@@ -88,6 +89,9 @@ prerequisites and different live targets, each skipping on its own, so configuri
 leaves the others green and unproven. Route by family rather than assuming one setup covers the
 tier:
 
+The two tables below are the complete reference: the first names each family and what it
+needs, the second names each setting and where to get it.
+
 | Family | Needs | Where |
 |---|---|---|
 | Infrahub destination | `INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN` | destination schema read, keyed write, node conversion, replace-set shrink |
@@ -96,14 +100,28 @@ tier:
 | Remote run | `INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN`, `PREFECT_API_URL`, and a separately served deployment the test resolves | remote-run |
 | Durable store | `INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL`, `_S3_BUCKET` and `_S3_ENDPOINT_URL`, plus `boto3` and `psycopg` | service storage, isolated worker handoff |
 | Live stack | A running development stack, probed rather than configured | managed write-guard live |
-| Prefect idempotency | The `prefect` and `opsmill_prefect_extras` imports only | [`tests/integration/test_service_prefect_idempotency.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/integration/test_service_prefect_idempotency.py) |
-| Product store on PostgreSQL | A disposable PostgreSQL at `PRODUCT_STORE_TEST_POSTGRESQL_DSN`, plus `psycopg` | [`tests/product_store/test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_contract.py), [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_configuration_baseline.py), [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_write_admission.py), [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/service/test_apply_versus_verify_race.py) |
-| Redis store compatibility | A reachable `REDIS_URL` | [`tests/test_redis_store_compat.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/test_redis_store_compat.py) |
+| Prefect idempotency | The `prefect` and `opsmill_prefect_extras` imports only | [`tests/integration/test_service_prefect_idempotency.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration/test_service_prefect_idempotency.py) |
+| Product store on PostgreSQL | A disposable PostgreSQL at `PRODUCT_STORE_TEST_POSTGRESQL_DSN`, plus `psycopg` | [`tests/product_store/test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_contract.py), [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_configuration_baseline.py), [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_write_admission.py), [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/service/test_apply_versus_verify_race.py) |
+| Redis store compatibility | A reachable `REDIS_URL` | [`tests/test_redis_store_compat.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/test_redis_store_compat.py) |
 
-Four of those get their setup stated here rather than by reference. The two live-store families
-sit outside `tests/integration/` entirely, the Prefect module, though it is in that
-directory, carries no setup detail in its docstring, and the saved-plan family needs a
-provisioning step this page is the only place that names:
+| Setting | Points to | How to get it from the local stacks |
+|---|---|---|
+| `INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN` | A disposable Infrahub | The preview Infrahub: `http://localhost:8080`, and `INFRAHUB_INITIAL_ADMIN_TOKEN` from `development/preview.env` |
+| `NETBOX_URL`, `NETBOX_TOKEN` | A NetBox with the `seed` dataset | Printed by `uv run invoke netbox.seed` |
+| `PREFECT_API_URL` | A Prefect server that has the served `infrahub-sync` deployment | The preview Prefect: `http://localhost:4210/api`. Start the deployment separately, as the remote-run module docstring describes |
+| `APPLY_GUARD_TEST_POSTGRESQL_DSN` | A disposable PostgreSQL database | A separate database on the preview PostgreSQL (port 5439). These tests terminate backends on it |
+| `PRODUCT_STORE_TEST_POSTGRESQL_DSN` | A disposable PostgreSQL database | A second separate database on the preview PostgreSQL |
+| `INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL` | A disposable PostgreSQL database | A third separate database on the preview PostgreSQL |
+| `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_BUCKET`, `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_ENDPOINT_URL` | An S3-compatible bucket | The preview MinIO: bucket `infrahub-sync-preview` at `http://127.0.0.1:9010`. `preview.up` creates the bucket |
+| `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_PREFIX`, `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_REGION` | Optional; the key prefix and region | Defaults: `integration` for the storage test, `us-east-1` for the region |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Credentials for that bucket | `PREVIEW_MINIO_ACCESS_KEY` and `PREVIEW_MINIO_SECRET_KEY` from `development/preview.env` |
+| `REDIS_URL` | A disposable Redis | A separate container. Neither local stack includes Redis |
+
+Use a separate, empty database for each of the three PostgreSQL settings. Do not reuse the
+preview service's own `infrahub_sync` database: these tests lock, terminate, create, and drop
+objects in the database they receive.
+
+Four families need more detail than the tables give:
 
 - **Saved-plan apply** needs a NetBox reachable at `NETBOX_URL`, seeded with the fixed dataset
   the test module's own docstring describes (sites `site-a`/`site-b`/`site-c`, racks
@@ -124,8 +142,8 @@ provisioning step this page is the only place that names:
   [the `from-netbox` example check](#the-from-netbox-example-check). Each dataset replaces
   the whole NetBox database. Point
   `INFRAHUB_ADDRESS` and
-  `INFRAHUB_API_TOKEN` at a disposable Infrahub with the pinned schema library loaded (see the
-  NetBox tutorial) — the test writes to it and does not clean up, so reset it
+  `INFRAHUB_API_TOKEN` at a disposable Infrahub with the schema library loaded (see step 4 of
+  [Run the complete tier](#run-the-complete-tier)) — the test writes to it and does not clean up, so reset it
   (`invoke preview.down --volumes`, `preview.up`, reload the schema) between runs. Then:
 
   ```bash
@@ -138,12 +156,12 @@ provisioning step this page is the only place that names:
   `PREFECT_HOME` and `PREFECT_LOCAL_STORAGE_PATH` redirected under `tmp_path`. It writes only
   that temporary state and tears it down.
 - **Product store on PostgreSQL** is two different things under one DSN. Three modules —
-  [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_configuration_baseline.py),
-  [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_write_admission.py) and
-  [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/service/test_apply_versus_verify_race.py)
+  [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_configuration_baseline.py),
+  [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_write_admission.py) and
+  [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/service/test_apply_versus_verify_race.py)
   — parametrize their contracts over SQLite and PostgreSQL, and only the `postgresql`
   parameter carries the `integration` mark. Alongside them,
-  [`test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/product_store/test_contract.py) contributes one standalone
+  [`test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_contract.py) contributes one standalone
   marked test, `test_postgresql_run_store_initializes_against_a_real_server`, which is not
   parametrized: it is a schema-bootstrap check that only a real server can make.
 
@@ -165,17 +183,91 @@ provisioning step this page is the only place that names:
   REDIS_URL="redis://127.0.0.1:6379/0" uv run pytest -m integration tests/test_redis_store_compat.py
   ```
 
-Most of the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/integration)
-carry their own exact setup in a module docstring, including the disposable-target warnings —
-read it rather than copying variables between families. The guard DSN, the product-store DSN and
-the durable-store settings must all point at single-purpose throwaway databases.
+Most of the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-sync/tree/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration)
+also describe their setup in a module docstring, including the warnings about disposable
+targets.
+
+##### Run the complete tier
+
+This sequence uses the preview stack, a separate Redis container, and the local NetBox. Run it
+from the repository root. The values in angle brackets come from `development/preview.env` or
+from the `netbox.seed` output; do not commit them.
+
+1. Start the services and create the three test databases:
+
+   ```bash
+   uv run invoke preview.up
+   docker run --detach --rm --name sync-test-redis -p 127.0.0.1:6379:6379 redis:7-alpine
+   for database in apply_guard_test product_store_test storage_test; do
+     docker exec infrahub-sync-preview-sync-postgres-1 createdb -U postgres "$database"
+   done
+   ```
+
+2. Set the environment:
+
+   ```bash
+   export INFRAHUB_ADDRESS="http://localhost:8080"
+   export INFRAHUB_API_TOKEN="<INFRAHUB_INITIAL_ADMIN_TOKEN>"
+   export PREFECT_API_URL="http://localhost:4210/api"
+   export APPLY_GUARD_TEST_POSTGRESQL_DSN="postgresql://postgres:postgres@127.0.0.1:5439/apply_guard_test"
+   export PRODUCT_STORE_TEST_POSTGRESQL_DSN="postgresql://postgres:postgres@127.0.0.1:5439/product_store_test"
+   export INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5439/storage_test"
+   export INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_BUCKET="infrahub-sync-preview"
+   export INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_ENDPOINT_URL="http://127.0.0.1:9010"
+   export AWS_ACCESS_KEY_ID="<PREVIEW_MINIO_ACCESS_KEY>"
+   export AWS_SECRET_ACCESS_KEY="<PREVIEW_MINIO_SECRET_KEY>"
+   export REDIS_URL="redis://127.0.0.1:6379/0"
+   ```
+
+   For the remote-run test, also start the served deployment in a second terminal, as
+   [`test_remote_run_live.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration/test_remote_run_live.py)
+   describes. Without it, that test skips.
+
+3. Run the tier with the skip report. Leave `NETBOX_URL` and `NETBOX_TOKEN` unset here, because
+   the saved-plan family needs its own fresh Infrahub (step 4):
+
+   ```bash
+   uv run pytest -m integration -rs
+   ```
+
+   The default summary gives only a skip count. `-rs` adds one `SKIPPED` line for each skipped
+   test, and the line names the missing setting or unreachable service. Check those lines before
+   you report the tier as passed.
+
+4. Run the saved-plan family on a fresh Infrahub, with the schema snapshot loaded:
+
+   ```bash
+   uv run invoke preview.down --volumes
+   uv run invoke netbox.seed
+   uv run invoke preview.up
+   uv run infrahubctl schema load tests/data/nightly_schema --wait 120
+   export NETBOX_URL="<URL printed by netbox.seed>"
+   export NETBOX_TOKEN="<token printed by netbox.seed>"
+   uv run pytest -m integration -rs tests/integration/test_saved_plan_apply_integration.py
+   ```
+
+   `preview.down --volumes` also removes the three test databases, so run step 4 after step 3.
+
+5. Remove the services and their data:
+
+   ```bash
+   uv run invoke preview.down --volumes
+   uv run invoke netbox.down
+   docker stop sync-test-redis
+   ```
+
+   Stop the served deployment if you started one.
+
+The nightly workflow runs the same families through `.github/scripts/nightly_e2e.py`, which
+derives the settings from the preview configuration. It sets no `REDIS_URL`, so the Redis
+family skips there.
 
 What these tests do to their targets differs, and the difference matters when you choose what to
 point them at:
 
 - **Prefect idempotency** contacts nothing external. It writes only temporary local state under
   `tmp_path` and tears it down.
-- [`test_destination_schema_live_read.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/integration/test_destination_schema_live_read.py)
+- [`test_destination_schema_live_read.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration/test_destination_schema_live_read.py)
   reads a live Infrahub's schema and performs no mutation.
 - **Every other live-backed family** mutates, locks or writes the target it names — Infrahub
   branches and nodes, the guard and product-store databases, the durable store, Redis, or the
@@ -216,18 +308,30 @@ Run these commands from the repository root:
    ```
 
 3. Load the schema library into the preview Infrahub. The example maps onto the 16 schemas
-   of the `infrahub/traditional-infrastructure-sot` Marketplace collection. The token is
-   the preview's development admin token from `development/preview.env`.
+   of the `infrahub/traditional-infrastructure-sot` Marketplace collection.
+   `tests/data/nightly_schema/` contains a snapshot of that collection, and the nightly
+   workflow loads the same snapshot. The token is the preview's development admin token from
+   `development/preview.env`.
 
    ```bash
    export INFRAHUB_ADDRESS="http://localhost:8080"
    export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
-   uv run infrahubctl marketplace get infrahub/traditional-infrastructure-sot --collection --output-dir .netbox/schemas
-   uv run infrahubctl schema load .netbox/schemas --wait 60
+   uv run infrahubctl schema load tests/data/nightly_schema --wait 120
    ```
 
-   The Marketplace sometimes takes longer to answer than `marketplace get` waits. If the
-   command fails with `Marketplace request failed: ReadTimeout`, run it again.
+   To check the example against the current Marketplace version instead, download the
+   collection and load that copy:
+
+   ```bash
+   uv run infrahubctl marketplace get infrahub/traditional-infrastructure-sot --collection --output-dir .netbox/schemas
+   uv run infrahubctl schema load .netbox/schemas --wait 120
+   ```
+
+   `marketplace get` waits five seconds for each Marketplace response and has no timeout
+   option. When the Marketplace answers more slowly, the command fails with
+   `Marketplace request failed: ReadTimeout` and writes no files. Repeated attempts can fail
+   the same way. In that case, load the snapshot. If the Marketplace version differs from the
+   snapshot, record the difference in the pull request.
 
 4. Write the local package and register it. The shipped package names the public NetBox
    demo and an Infrahub on port 8000. `netbox.demo-package` writes
@@ -346,17 +450,17 @@ The suite runs in a single process by design. Its modules share one Infrahub bra
 Prefect deployment, and a collection hook orders them against each other; a distributed run
 would split that ordering across workers.
 
-**Five modules under [`tests/preview/`](https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/preview) are not part of that tier.** They
-carry no `preview` marker, so they already run in the ordinary unit gate — 62 tests in total —
+**Five modules under [`tests/preview/`](https://github.com/opsmill/infrahub-sync/tree/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/preview) are not part of that tier.** They
+carry no `preview` marker, so they already run in the ordinary unit gate — 70 tests in total —
 and they need no stack:
 
 | Module | What it covers | Tests |
 |---|---|---|
-| [`test_evidence.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/preview/test_evidence.py) | The two helpers the live qualification rows capture evidence with, plus a read of [Contributing](../../contributing.mdx) that holds the documented setup command to the pinned package manager | 9 |
-| [`test_preview_configuration.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/preview/test_preview_configuration.py) | Regression checks on the disposable preview environment, including the Compose resolution that needs the `docker compose` CLI | 17 |
-| [`test_preview_legacy_state.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/preview/test_preview_legacy_state.py) | That the preview refuses retired-vocabulary state and resets it destructively | 9 |
-| [`test_preview_worker_identity.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/preview/test_preview_worker_identity.py) | That the preview starts the supported service worker without static identity plumbing | 4 |
-| [`test_smoke_request_shapes.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tests/preview/test_smoke_request_shapes.py) | That the smoke suite's request bodies are the ones the shipped API accepts | 23 |
+| [`test_evidence.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/preview/test_evidence.py) | The two helpers the live qualification rows capture evidence with, plus a read of [Contributing](../../contributing.mdx) that holds the documented setup command to the pinned package manager | 9 |
+| [`test_preview_configuration.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/preview/test_preview_configuration.py) | Regression checks on the disposable preview environment, including the Compose resolution that needs the `docker compose` CLI | 25 |
+| [`test_preview_legacy_state.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/preview/test_preview_legacy_state.py) | That the preview refuses retired-vocabulary state and resets it destructively | 9 |
+| [`test_preview_worker_identity.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/preview/test_preview_worker_identity.py) | That the preview starts the supported service worker without static identity plumbing | 4 |
+| [`test_smoke_request_shapes.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/preview/test_smoke_request_shapes.py) | That the smoke suite's request bodies are the ones the shipped API accepts | 23 |
 
 Directory is not marker: do not assume a module under `tests/preview/` is opt-in. If you touch
 Contributing or the preview tasks, run the unmarked set directly as a fast pre-check:
@@ -407,8 +511,8 @@ This reproduces the three CI legs your active environment cannot reach:
 It builds its environments under `.preview/check-310-venv` and leaves your active `.venv`
 alone, and it stops at the first failing leg.
 
-**When Python 3.10 is not installed it skips loudly and exits zero, leaving all three legs
-unqualified.** The output names each leg it did not check. Install an interpreter with
+**When Python 3.10 is not installed, the task checks nothing and exits zero.** Its output
+says that it skipped and names each leg it did not check. Install an interpreter with
 `uv python install 3.10` and re-run before treating the task as evidence.
 
 ### Related

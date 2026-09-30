@@ -3,8 +3,15 @@ title: Preview NetBox data in an existing Infrahub
 ---
 
 Preview the sites and devices from your existing NetBox instance in an
-existing Infrahub. You will prepare two destination kinds, register a Sync
-configuration, and review a saved plan before importing inventory data. For a
+existing Infrahub. You will:
+
+- load two destination kinds, the Infrahub schema types that receive the data, into
+  an Infrahub branch. A branch holds changes apart from `main` until you merge them.
+- register a Sync configuration package.
+- review a saved plan: the list of creates, updates, and deletes that the Sync
+  service calculates and stores before it writes anything.
+
+This tutorial writes no inventory data. It ends with the saved plan. For a
 fresh local Infrahub and the public NetBox demo, follow the
 [local demo tutorial](netbox-demo-to-infrahub) instead.
 
@@ -169,21 +176,21 @@ to the `TestingSite` and `TestingDevice` kinds you loaded:
 
 ```yaml
 ---
-# Map NetBox sites and devices to TestingSite and TestingDevice in Infrahub.
-# Replace both URLs and provide the matching destination schema before registration.
+# Replace the URL placeholders and load a matching destination schema before registration.
+# Supply token values through the named environment variables, never in this file.
 # Set NETBOX_TOKEN and INFRAHUB_API_TOKEN in the generated operator.env file.
 format_version: 1
 configuration:
-  name: my-netbox-evaluation
+  name: netbox-evaluation
   source:
     name: netbox
     settings:
-      url: https://netbox.example.invalid
+      url: REPLACE_WITH_NETBOX_URL
       token: {$credential: netbox-token}
   destination:
     name: infrahub
     settings:
-      url: https://infrahub.example.invalid
+      url: REPLACE_WITH_INFRAHUB_URL
       token: {$credential: infrahub-token}
   schema_mapping:
     - name: TestingSite
@@ -212,8 +219,10 @@ credentials:
 
 Before registering `package.yml`:
 
-- Replace both URLs with addresses the **worker container** can reach.
-  `localhost` and `127.0.0.1` inside the worker refer to that container.
+- Replace `REPLACE_WITH_NETBOX_URL` and `REPLACE_WITH_INFRAHUB_URL` with addresses the
+  **worker container** can reach. `localhost` and `127.0.0.1` inside the worker refer to that
+  container. If NetBox or Infrahub runs in containers on the same host, publish it on an
+  address containers can reach, not only on `127.0.0.1`, and use `http://<host-IP>:<port>`.
   The destination must be the same Infrahub instance where you loaded the
   schema, even if the host uses a different address to reach it.
 - Keep the `{$credential: ...}` references in YAML; token values belong in
@@ -223,6 +232,22 @@ Before registering `package.yml`:
 The mapping includes sites and devices only. It does not import IP addressing
 or interfaces. Source devices need the mapped name, model, serial, and
 site relationship; review source data before expecting a complete preview.
+
+If your NetBox holds the official NetBox demo data, the plan is refused as written: 22 demo
+devices have no name, and three share the name `PP:MDF`. Add these filters to the
+`TestingDevice` entry, beside `identifiers`, then register the package again:
+
+```yaml
+      filters:
+        - field: name
+          operation: is_not_empty
+        - field: name
+          operation: "not contains"
+          value: "PP:"
+```
+
+The demo devices also have no serial numbers, so each device's `serial` is written as an
+empty value.
 
 ## Reload credentials and register the package
 
@@ -328,7 +353,7 @@ edits, run `start` again; after package edits, register and validate the new ver
 You now have a registered configuration and a saved preview to review. For
 later approved writes and deployment maintenance, see the
 [Compose operator sequence](../compose-deployment#the-operator-sequence) and
-[day 2 operations](../operations/day-2-operations.mdx).
+[Operate a Compose deployment](../operations/day-2-operations.mdx).
 
 The following notes concern larger mappings beyond this first preview.
 

@@ -4,12 +4,13 @@ title: "Qualifying an internal candidate"
 
 ## Qualifying an internal candidate
 
-This developer procedure tells a teammate how to obtain an unpublished pre-release
-Infrahub Sync candidate from a GitHub Actions run and qualify it on their own host.
-The artifacts it names are unpublished pre-release bytes; there is no registry, package
-index, or tagged release behind them yet.
+This procedure is for maintainers. It explains how to take an unpublished Infrahub Sync
+pre-release candidate from a GitHub Actions run and qualify it on your own host. The
+artifacts are unpublished pre-release files; no registry, package index, or tagged release
+contains them.
 
-Written for someone who did not build this.
+To install a candidate as a tester, follow [Install Infrahub Sync](../../installation.mdx)
+instead.
 
 ### What the host needs
 
@@ -40,9 +41,9 @@ mkdir -p "$WORK"
 cd "$WORK"
 ```
 
-Two things are being tested at once. One is the candidate. The other is this
-page: you are the first person to follow it, so record where it was wrong.
-[What to record](#what-to-record) is the last section.
+You test two things: the candidate, and this page. Note every place where this page is
+wrong or incomplete. [What to record](#what-to-record) lists everything to report, and
+[The digests](#reference-the-digests) explains the digests that the steps compare.
 
 ### 1. Choose a run, and separate the two commits it refers to
 
@@ -105,19 +106,17 @@ gh run view "$RUN" --repo "$REPO" --json conclusion,jobs \
   --jq '{conclusion, jobs: [.jobs[] | {name, conclusion}]}'
 ```
 
-The run must be `success` and **both** jobs must have succeeded. The `candidate`
-job builds and retains the bytes; the `clean-host` job is what qualified them on
-a host with no checkout. A run whose `clean-host` job failed, was skipped, or is
-still going has uploads but no qualification — retained artifacts alone are not
-a result.
+The run must be `success`, and all four jobs must have succeeded:
 
-The route also runs `packet` and `packet-rehearsal`. They build and rehearse the
-Linux amd64 tester packet — a separate artifact, described in [Building a
-private tester packet](building-a-tester-packet.md) — from what `candidate`
-retained. This procedure does not read the packet's bytes to qualify the
-candidate by hand, but step 2 still requires the packet artifact among the
-eight it checks: a failed `packet` job means this run is not an acceptable
-candidate, even though nothing after step 2 opens what it built.
+- `candidate` builds and retains the files.
+- `clean-host` qualifies them on a host with no checkout.
+- `packet` and `packet-rehearsal` build and rehearse the Linux amd64 tester packet, a
+  separate artifact described in [Building a private tester packet](building-a-tester-packet.md).
+
+A run whose `clean-host` job failed, was skipped, or is still running has uploads but no
+qualification. This procedure does not open the packet, but step 2 requires the packet
+artifact among the eight it checks. A failed `packet` job therefore means that the run is not
+an acceptable candidate.
 
 ### 2. Check what the service is holding, before downloading any of it
 
@@ -196,7 +195,7 @@ The other four — `infrahub-sync-candidate-distributions`,
 `infrahub-sync-candidate-packet` — are the wheel and source distribution, the
 bills of materials and scan reports, the gate's own driver, and the tester
 packet built from what you are about to qualify by hand. You do not need them
-to run the candidate, but they are part of the inventory you just checked.
+to run the candidate, but they are part of the inventory you checked in step 2.
 
 `infrahub-sync-candidate-image` keeps the build's directory layout, so the
 archive you want is `image/archives/image-linux-amd64.tar`.
@@ -217,15 +216,10 @@ test "$BUILT_FROM" = "$CANDIDATE_SHA" \
 
 If that fails, stop. You are holding bytes from another commit.
 
-#### Three digests, and they are not the same thing
+#### Then the service transport digests
 
-Confusing them is the easiest way to believe a check passed that did not.
-
-| Digest | Names | Read from | Checked with |
-| --- | --- | --- | --- |
-| Service transport digest | the artifact as the Actions service stores it | `$INVENTORY`, and `.artifacts[].digest` in the record | the comparison below |
-| Bundle file digest | the bundle archive's own bytes | `.bundle.sha256` in the record | `sha256sum` |
-| Image configuration digest | the loaded image's configuration | `.image.platforms["linux/amd64"].config` in the record | `docker image inspect` |
+Steps 4 and 5 compare three different digests. They are not interchangeable;
+[The digests](#reference-the-digests) explains each one.
 
 Compare the six the record stores against what the service holds. The record's
 digests may or may not carry a `sha256:` prefix depending on which side wrote
@@ -365,7 +359,7 @@ cd "$WORK/${BUNDLE_NAME%.tar.gz}"
 with generated passwords. There is no image to set: the archive shipped
 `image.bind`, and `init` copied the index reference from it into `.instance`.
 
-Confirm the record names the image you just loaded. `image.bind` holds no
+Confirm the record names the image you loaded in step 5. `image.bind` holds no
 credential, so it can be read out loud:
 
 ```bash
@@ -561,9 +555,8 @@ curl -sS --config "$WORK/api.curlrc" "$INFRAHUB_SYNC_API_URL/runs/$RUN_ID/artifa
 ```
 
 Each entry has an `artifact_id`, a `digest`, and a `size`. Fetch one and check
-what arrived against the digest the list gave you — this is a fourth, separate
-digest, over the deployment's own artifact, and has nothing to do with the three
-in step 4:
+what arrived against the digest the list gave you. This is the deployment artifact digest
+in [The digests](#reference-the-digests), separate from the three in step 4:
 
 ```bash
 ARTIFACT=<an artifact_id from the list>
@@ -651,8 +644,8 @@ Remove the curl configuration step 9 wrote, which holds the API token:
 rm -f "$WORK/api.curlrc"
 ```
 
-Reset the deployment when you are finished. This alpha promises no in-place
-state migration and no backup or restore, so a reset is also how it is replaced:
+Reset the deployment when you are finished. The 3.0.0 alpha candidates do not support
+in-place state migration, backup, or restore, so a reset is also how a deployment is replaced:
 `reset`, then `init` for a new identity, then `start`. That start is a cold
 bootstrap and prior run history, retained plans, and artifacts do not survive it.
 
@@ -666,14 +659,26 @@ When it lapses, the remedy is a new dispatch of `workflow-candidate.yml` at the
 The new run will almost certainly have a different workflow revision, and that
 is expected: `head_sha` moves, the candidate commit does not.
 
-Nothing else carries over. The new run produces new artifacts with new service
-IDs and new transport digests, so every identifier you recorded belongs to the
-old run. You accept the new bytes exactly as you accepted these, from step 1,
+The new run reuses nothing from the old run. It produces new artifacts with new
+service IDs and new transport digests, so every identifier you recorded belongs to
+the old run. You accept the new bytes exactly as you accepted these, from step 1,
 including the eight-group inventory and the granted 30 days.
+
+### Reference: the digests
+
+The steps compare four different digests. Each is computed over something different, so they are
+not the same thing, and using one where another is meant can make a failed check look like a pass.
+
+| Digest | Names | Read from | Checked with |
+| --- | --- | --- | --- |
+| Service transport digest | the artifact as the Actions service stores it | `$INVENTORY`, and `.artifacts[].digest` in the record | the comparison in step 4 |
+| Bundle file digest | the bundle archive's own bytes | `.bundle.sha256` in the record | `sha256sum`, step 4 |
+| Image configuration digest | the loaded image's configuration | `.image.platforms["linux/amd64"].config` in the record | `docker image inspect`, step 5 |
+| Deployment artifact digest | one artifact of a run, stored by the deployment | the run's artifact list from the Sync API | `sha256sum`, step 9 |
 
 ### What to record
 
-Report all of this, whether or not it went well.
+Report all of this, whether or not the qualification passed.
 
 **Provenance, both commits:**
 
@@ -706,12 +711,9 @@ Report all of this, whether or not it went well.
 - the run ID of the plan you read, its checksum, and the apply that bound it;
 - what you observed at the destination afterwards.
 
-**And the part that matters most:**
+**Problems with this page:**
 
 - every step where this page was wrong, incomplete, or assumed something you had
   to work out yourself;
 - anything you had to install, configure, or work around that it does not
   mention.
-
-This page has to work for someone who did not build the system, and you are the
-evidence for whether it does.

@@ -2,95 +2,52 @@
 title: Configuration package
 ---
 
-A configuration package is the file you write and the immutable record the Sync API keeps
-after you register it. This page covers the package envelope, what registration returns, how
-versions and validation work, and how a package refers to credentials. For the
-`configuration` object's own fields — `source`, `destination`, `order`, `schema_mapping`,
-`diffsync_flags` — see [Sync instance configuration](./reference/config.mdx) and
-[Schema mapping reference](./reference/schema-mapping.mdx); this page does not repeat them.
+A configuration package is the YAML or JSON file that describes one sync: its source, its
+destination, and how source records map to destination kinds. You register the package with
+the Sync API. Every later run uses the registered copy, not the file.
 
-## Package shape and file format
+For the fields inside `configuration`, see [Sync instance configuration](./reference/config.mdx)
+and the [Schema mapping reference](./reference/schema-mapping.mdx). To write a first package
+step by step, see [Create a sync project](./creating-a-sync-project.mdx).
 
-A package is a YAML or JSON file:
+## Package shape
+
+A package has three top-level keys:
+
+| Key | Required | Content |
+| --- | --- | --- |
+| `format_version` | No | The package format. Only `1` is accepted, and it is the default. |
+| `configuration` | Yes | The source, the destination, and the mappings. See [Sync instance configuration](./reference/config.mdx). |
+| `credentials` | No | The credential references that the configuration uses. See [Credentials](#credentials). |
+
+This outline shows only the structure. It is not a complete package; the `...` parts are
+placeholders:
 
 ```yaml
 format_version: 1
 configuration:
   name: from-netbox
-  source: { ... }
-  destination: { ... }
-  schema_mapping: [ ... ]
+  source: ...          # adapter name and settings
+  destination: ...     # adapter name and settings
+  schema_mapping: ...  # list of mappings
+credentials: ...       # credential references
 ```
 
-`configuration` is required and is the object described in
-[Sync instance configuration](./reference/config.mdx). `format_version` is optional and
-defaults to — and today only accepts — `1`. An optional top-level `credentials` block
-declares the credential references the configuration uses — see
-[Credentials](#credentials) below. `examples/netbox_to_infrahub/package.yml` is a complete
-package that validates cleanly and uses the `$credential` reference pattern this page
-documents; the other `examples/*/package.yml` files show adapter-specific shape, not all of
-them validated as written.
-
-## Register and version it
-
-`configs register` submits a new package as version 1 of a new configuration; `configs
-version` submits an edited package as the next version of an existing one. Both are
-mutations that require `--reason` and accept `--idempotency-key` (see
-[Idempotency keys](#idempotency-keys)). See
-[Run a sync — Register a configuration package](./running-a-sync.mdx#register-a-configuration-package)
-for the exact command forms, and [Sync CLI](./reference/cli.mdx) for every flag.
-
-Both commands print the resulting version's `config_id`, `registry_version`,
-`package_checksum`, `created_at`, and `declared_content`. `configs version` additionally
-prints `created`: `true` for a genuinely new version, `false` when the submitted content's
-checksum already matches an existing version of that configuration — in which case the
-fields printed are that existing version's, and nothing new is written. This is separate
-from an idempotency-key replay, which returns the exact original accepted response when the
-same key is retried for the same request; retrying the same key with a changed request is
-refused with `idempotency-conflict`.
-
-`config_id` and `registry_version` are what `diff`, `sync`, and `configs validate` address a
-specific registered version by; none of them take a file path. `configs show` takes only
-`config_id` — its `--version` is optional, and omitting it prints the configuration's
-summary rather than one version. `configs list`, `configs show`, and `configs versions`
-inspect what is registered; see [Run a sync](./running-a-sync.mdx) for their command forms.
-
-## Versions are immutable
-
-The registry is append-only: registering a version never rewrites an earlier one, and an
-invalid package is refused before anything is written. To change a registered configuration,
-submit a new version of the same package with `configs version`.
-
-## Validate a version
-
-`configs validate` re-checks an already-registered version against the adapter declarations
-installed *now*, so a version accepted at registration can report findings later if an
-adapter's declared setting surface changes. Each finding carries a stable machine-readable
-`code`, a severity of `error` or `warning`, a JSON Pointer `location` into the package, and a
-message. Output is paged with `--offset` and `--limit` (default limit 256); the response
-carries `total_findings` and `next_offset`. See [Sync CLI](./reference/cli.mdx) for the
-command form. The full set of finding codes and what each one means is documented once, in
-[Durable product records — Finding codes](./reference/durable-product-records.mdx#finding-codes);
-this page does not repeat that table.
-
-## Idempotency keys
-
-`configs register` and `configs version` are mutations, and each accepts
-`--idempotency-key`. Omit it and the CLI generates one and prints it before sending the
-request — keep that key. If the connection fails after the service has already accepted the
-mutation, retry with the same key rather than submitting a new one; the service returns the
-original accepted response instead of creating a second version.
+For complete packages, see
+[`examples/netbox_to_infrahub/package.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/netbox_to_infrahub/package.yml)
+and the package in [Create a sync project](./creating-a-sync-project.mdx).
 
 ## Credentials
 
-A credential-bearing setting in `configuration` never holds a literal value. It holds a
-reference:
+A credential-bearing setting, such as a token or a password, never contains the value. It
+contains a `$credential` reference to an entry in the top-level `credentials` block:
 
 ```yaml
-source:
-  settings:
-    token:
-      $credential: netbox-token
+configuration:
+  source:
+    settings:
+      token:
+        $credential: netbox-token
 
 credentials:
   netbox-token:
@@ -98,10 +55,104 @@ credentials:
     identifier: NETBOX_TOKEN
 ```
 
-`$credential` names an entry in the package's top-level `credentials` block. Each entry
-declares a `provider` — `env` is the only one installed today — and an `identifier`, the
-exact name of the environment variable the worker reads at run time. The package never
-contains the credential's value; that value is set where the worker runs, in `operator.env`
-on the Compose deployment. See
-[Reading from NetBox or Nautobot](./compose-deployment.mdx#reading-from-netbox-or-nautobot)
-for how to set it and when to restart the deployment after changing it.
+Each entry declares a `provider` and an `identifier`. `env` is the only provider in this
+release, and the identifier is the name of the environment variable that the Sync worker
+reads when a run starts. Set that variable where the worker runs. On a Compose deployment,
+set it in `operator.env` and run `./infrahub-sync-compose start`; see
+[Reading from NetBox or Nautobot](./compose-deployment.mdx#reading-from-netbox-or-nautobot).
+Registration refuses a package that contains a literal credential value.
+
+## Connection settings
+
+The worker connects to the URLs declared in the registered package. Environment variables
+such as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not replace them. Only the credential values
+come from the worker environment. To change a URL, a branch, or any other setting, edit the
+file and register it as a new version with `configs version`.
+
+Declare URLs that the worker can reach. On a Compose deployment, `localhost` in a package
+refers to the worker container.
+
+## Registration and versions
+
+Register a new package, or a new version of a registered one:
+
+```bash
+infrahub-sync configs register package.yml --reason "register NetBox import"
+infrahub-sync configs version <config-id> package.yml --reason "update the device mapping"
+```
+
+[Run a sync](./running-a-sync.mdx) shows the same commands for a Compose deployment.
+
+- `configs register` always creates a new configuration with a new `config_id`, at version 1.
+  Registering the same file again creates another configuration. It does not add a version.
+- `configs version` adds the next version to an existing configuration.
+- Registered versions are immutable. A new version never changes an earlier one.
+- Each run names one registered version by `config_id` and version number. No run command
+  takes a file path.
+
+Both commands print the version's `config_id`, `registry_version`, `package_checksum`,
+`created_at`, and `declared_content`. `configs version` also prints `created`. It is `false`
+when the submitted content matches an existing version of that configuration. In that case
+the command prints the existing version and stores nothing.
+
+### When registration fails
+
+Registration checks the package before it stores anything. If the check fails, the command
+reports `code: configs-validation` and stores nothing. The response does not name the
+defect, and `configs validate` cannot check a package that was not stored. Compare the file
+with [Sync instance configuration](./reference/config.mdx) and the adapter page. Check
+these causes first:
+
+- An adapter name that is not bundled. See [Choose an adapter](./adapters/choosing-an-adapter.mdx).
+- A setting that the adapter does not accept.
+- A literal credential value instead of a `$credential` reference.
+- A URL setting that is not an absolute URL.
+
+## Validate a version
+
+`configs validate` checks a registered version again, against the adapter declarations of
+the Sync release that runs now. A version that registered without findings can report
+findings after an upgrade.
+
+```bash
+infrahub-sync configs validate <config-id> <version>
+```
+
+The check reads only the declared content. It does not connect to the source or the
+destination, so it does not test URLs, tokens, or the destination schema.
+
+Each finding has a `code`, a `severity` of `error` or `warning`, a `location` in the package
+as a JSON Pointer, and a message. The codes are listed in
+[Finding codes](./reference/durable-product-records.mdx#finding-codes).
+
+The output is paged. The default page holds 256 findings. The output reports
+`total_findings` and `next_offset`; to read the next page, pass `--offset <next_offset>`.
+`--limit` sets the page size.
+
+## Retry keys
+
+`configs register` and `configs version` accept `--idempotency-key`. If you omit it, the CLI
+generates a key and prints it before it sends the request.
+
+If the connection fails, you cannot tell whether the service stored the version. Run the
+same command again with the printed key. If the service already accepted the first request,
+it returns the original response and stores nothing new. A retry with the same key but a
+different request is refused with `idempotency-conflict`.
+
+## Convert a config.yml file
+
+Several examples in the repository are `config.yml` files, not packages. Registration
+refuses them as they are. To convert one:
+
+1. Add `format_version: 1`, and indent the whole file under a `configuration:` key.
+2. Replace each literal credential value with a `$credential` reference, and declare the
+   reference in a top-level `credentials` block.
+3. Add a token credential to the Infrahub destination. Most `config.yml` examples omit it.
+4. Replace example URLs with addresses that the Sync worker can reach.
+5. Remove settings that the adapter does not accept in a registered package. The adapter
+   pages list the accepted settings.
+
+A `config.yml` file is used directly only by the
+[Prefect remote run](./reference/prefect-remote-run.mdx) and by Python callers that load a
+configuration directory. In that use, adapters read environment variables such as
+`NETBOX_URL` before the declared settings.

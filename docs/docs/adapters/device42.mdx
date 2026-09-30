@@ -2,13 +2,9 @@
 title: Device42 adapter
 ---
 
-import ReferenceLink from "../../src/components/Card";
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
+## Use this adapter
 
-## V3 route
-
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure.
+In a [configuration package](../configuration-package.mdx), name `genericrestapi` as the source and set its `url` to the Device42 API. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
 
 ## Overview
 
@@ -28,31 +24,41 @@ from Device42 to Infrahub. Writing data back into Device42 is not supported.
 
 ## Configuration
 
-<ReferenceLink title="Example mapping" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/device42_to_infrahub" openInNewTab />
+The repository contains a mapping example: [`examples/device42_to_infrahub/config.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/device42_to_infrahub/config.yml). It is a `config.yml` file, not a package, and registration refuses it as it is. To use it, convert it as described in [Convert a config.yml file](../configuration-package.mdx#convert-a-configyml-file).
 
-<Tabs>
-  <TabItem value="Source example" default>
+The package declares the Device42 connection in `source.settings`. Credentials are `$credential` references:
 
-  ```yaml
-  ---
+```yaml
+format_version: 1
+configuration:
   name: from-device42
   source:
     name: genericrestapi
     settings:
-      url: "https://<DEVICE42-ENDPOINT>"
-      auth_method: "basic"
-      username: "<USERNAME>"
-      password: "<PASSWORD>"
+      url: "https://device42.example.com"
       api_endpoint: "/api/1.0"
+      auth_method: "basic"
+      username:
+        $credential: device42-username
+      password:
+        $credential: device42-password
       response_key_pattern: "objects"
-
   destination:
     name: infrahub
     settings:
-      url: "http://localhost:8000"
-  ```
+      url: "https://infrahub.example.com"
+      token:
+        $credential: infrahub-token
+credentials:
+  device42-username:
+    provider: env
+    identifier: DEVICE42_USERNAME
+  device42-password:
+    provider: env
+    identifier: DEVICE42_PASSWORD
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_API_TOKEN
+```
 
-  </TabItem>
-</Tabs>
-
-See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference.
+See the [Generic REST API adapter](./genericrestapi.mdx) page for the full settings reference and for how the adapter reads each response.

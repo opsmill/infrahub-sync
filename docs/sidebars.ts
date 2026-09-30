@@ -8,6 +8,7 @@ const sidebars: SidebarsConfig = {
       label: 'Get started',
       items: [
         'installation',
+        'development-stack',
         'quickstart-compose',
         'creating-a-sync-project',
         'configuration-package',
@@ -108,7 +109,7 @@ const sidebars: SidebarsConfig = {
         },
         {
           type: 'category',
-          label: 'Guides',
+          label: 'Developer guides',
           link: {
             type: 'doc',
             id: 'develop/guides/index',
@@ -141,7 +142,7 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'Release Notes',
+      label: 'Release notes',
       collapsible: true,
       collapsed: true,
       link: {
@@ -165,7 +166,6 @@ const sidebars: SidebarsConfig = {
         },
       ],
     },
-    'development-stack',
     'container-image',
     'compose-deployment',
     'contributing',

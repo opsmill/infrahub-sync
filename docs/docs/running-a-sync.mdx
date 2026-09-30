@@ -2,166 +2,301 @@
 title: Run a sync
 ---
 
-The Infrahub Sync CLI is a synchronous client of the Sync API. The service owns
-configuration registration, run admission, durable plans, and worker execution. The CLI
-does not load adapters or execute a sync locally.
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
-## Connect to the Sync API
+The Infrahub Sync CLI is a client of the Sync API. The Sync service stores your
+configuration packages and plans. Its worker connects to the source and the destination.
+The CLI does not load adapters and does not run a sync locally.
 
-Set the service URL and bearer token in the environment. You can override the URL with
-the root `--api-url` option. The token has no command-line option, so it does not enter
-shell history or process arguments.
+A reviewed sync has five steps:
+
+1. Register the configuration package.
+2. Validate the registered version.
+3. Create a plan.
+4. Review the plan.
+5. Apply the reviewed plan.
+
+## Connect the CLI to the Sync API
+
+The commands on this page are the same for both ways to run V3. Only the command prefix
+differs:
+
+<Tabs groupId="sync-client">
+  <TabItem value="compose" label="Run a release package" default>
+
+  Run each command as `./infrahub-sync-compose cli <command>` from the extracted Compose
+  deployment directory. The wrapper supplies the Sync API URL and token.
+
+  A command that reads a file from your machine needs `--package <file>` and `--` before the
+  CLI command. The wrapper copies that one file into the container as `/input/package.yaml`
+  for the duration of the command. See
+  [Registering a package](./compose-deployment.mdx#registering-a-package).
+
+  </TabItem>
+  <TabItem value="source" label="Run from source">
+
+  Run each command as `uv run infrahub-sync <command>` from the repository checkout. Set the
+  Sync API URL and bearer token first. For the local development stack, these are:
+
+  ```bash
+  export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8030
+  export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
+  ```
+
+  The token has no command-line option, so it does not appear in shell history or in
+  process arguments. `--api-url` overrides the URL for one command.
+
+  </TabItem>
+</Tabs>
+
+Before its first authenticated request, the CLI checks that the service is compatible. It
+refuses an incompatible service before it sends the token.
+
+In the commands below, replace `CONFIG_ID`, `RUN_ID`, and `CHECKSUM` with the values that
+the previous command printed, and `BRANCH` with the destination branch.
+
+## Register the package
+
+<Tabs groupId="sync-client">
+  <TabItem value="compose" label="Run a release package" default>
+
+  ```bash
+  ./infrahub-sync-compose cli --package ./package.yml -- \
+    configs register /input/package.yaml --reason "register inventory import"
+  ```
+
+  </TabItem>
+  <TabItem value="source" label="Run from source">
+
+  ```bash
+  uv run infrahub-sync configs register package.yml --reason "register inventory import"
+  ```
+
+  </TabItem>
+</Tabs>
+
+The output includes the `config_id` and the `registry_version`, which is `1` for a new
+registration. Every later command names the package by these two values. The file itself is
+not read again. For what registration checks and returns, see
+[Configuration package](./configuration-package.mdx#registration-and-versions).
+
+## Validate the registered version
+
+<Tabs groupId="sync-client">
+  <TabItem value="compose" label="Run a release package" default>
+
+  ```bash
+  ./infrahub-sync-compose cli configs validate CONFIG_ID 1
+  ./infrahub-sync-compose cli configs show CONFIG_ID --version 1
+  ```
+
+  </TabItem>
+  <TabItem value="source" label="Run from source">
+
+  ```bash
+  uv run infrahub-sync configs validate CONFIG_ID 1
+  uv run infrahub-sync configs show CONFIG_ID --version 1
+  ```
+
+  </TabItem>
+</Tabs>
+
+`configs validate` reports findings in the declared content. It does not connect to the
+source or the destination.
+
+`configs show --version` prints the registered content. Check
+`configuration.destination.settings.branch`:
+
+- If the package declares a branch, every run writes to that branch, and `--branch` has no
+  effect.
+- If the package declares no branch, the run uses `--branch`. Without `--branch`, it uses
+  `main`.
+
+To inspect what is registered, use `configs list`, `configs show CONFIG_ID`, and
+`configs versions CONFIG_ID`.
+
+## Create a plan
+
+<Tabs groupId="sync-client">
+  <TabItem value="compose" label="Run a release package" default>
+
+  ```bash
+  ./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 \
+    --branch BRANCH --reason "review inventory import"
+  ```
+
+  </TabItem>
+  <TabItem value="source" label="Run from source">
+
+  ```bash
+  uv run infrahub-sync diff --config-id CONFIG_ID --version 1 \
+    --branch BRANCH --reason "review inventory import"
+  ```
+
+  </TabItem>
+</Tabs>
+
+`diff` asks the service to create a plan. The worker reads the source and the destination
+and saves the plan. It writes nothing to the destination. By default, `diff` waits for the
+plan, then prints the `run_id`, the `plan_checksum`, and the operation counts by action and
+by kind.
+
+## Review the plan
+
+<Tabs groupId="sync-client">
+  <TabItem value="compose" label="Run a release package" default>
+
+  ```bash
+  ./infrahub-sync-compose cli runs plan RUN_ID --detail
+  ./infrahub-sync-compose cli runs plan RUN_ID --detail --kind <destination-kind>
+  ```
+
+  </TabItem>
+  <TabItem value="source" label="Run from source">
+
+  ```bash
+  uv run infrahub-sync runs plan RUN_ID --detail
+  uv run infrahub-sync runs plan RUN_ID --detail --kind <destination-kind>
+  ```
+
+  </TabItem>
+</Tabs>
+
+`runs plan` prints the summary and the checksum. `--detail` also prints every operation, and
+`--kind` limits the list to one destination kind. A kind that matches no operation is an
+input error.
+
+The plan can contain delete operations for destination objects that the source does not
+contain. Apply never executes a delete. The detailed output marks each delete as
+`(not executed)`, and the summary states how many deletes apply will skip. When the
+destination side was not read in full, the plan contains no deletes and the review says so.
+See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
+
+## Apply the reviewed plan
+
+Pass the checksum that the review printed, and the same `--branch` that you gave `diff`:
+
+<Tabs groupId="sync-client">
+  <TabItem value="compose" label="Run a release package" default>
+
+  ```bash
+  ./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM \
+    --branch BRANCH --reason "apply reviewed inventory import"
+  ./infrahub-sync-compose cli runs show RUN_ID
+  ```
+
+  </TabItem>
+  <TabItem value="source" label="Run from source">
+
+  ```bash
+  uv run infrahub-sync apply RUN_ID --expected-checksum CHECKSUM \
+    --branch BRANCH --reason "apply reviewed inventory import"
+  uv run infrahub-sync runs show RUN_ID
+  ```
+
+  </TabItem>
+</Tabs>
+
+The service compares the checksum with the saved plan and refuses a mismatch before it
+writes. The CLI never reads or builds a local plan. When `runs show` reports
+`phase: applied` and `execution_state: completed`, the apply is finished.
+
+Before the first write, apply checks every planned field against the current destination
+schema. It repeats the check for each operation before that operation's write. If a field is
+no longer writable, or a planned value would be dropped, apply refuses the write and names
+the kind and the field. Create and review a new plan in that case. Operations applied before
+a refusal stay applied.
+
+## Change a registered package
+
+A registered version never changes. To change a package, edit the file and register it as a
+new version of the same configuration:
+
+<Tabs groupId="sync-client">
+  <TabItem value="compose" label="Run a release package" default>
+
+  ```bash
+  ./infrahub-sync-compose cli --package ./package.yml -- \
+    configs version CONFIG_ID /input/package.yaml --reason "update inventory mapping"
+  ```
+
+  </TabItem>
+  <TabItem value="source" label="Run from source">
+
+  ```bash
+  uv run infrahub-sync configs version CONFIG_ID package.yml --reason "update inventory mapping"
+  ```
+
+  </TabItem>
+</Tabs>
+
+Then validate the new version and create a plan with `--version` set to the new version
+number. Do not use `configs register` for an edited package: it creates a separate
+configuration with a new `config_id`.
+
+## Run a sync without a review step
+
+`sync` creates a plan and applies it in the same run, with no pause for review:
+
+Run from source:
 
 ```bash
-export INFRAHUB_SYNC_API_URL=https://sync.example.com
-export INFRAHUB_SYNC_API_TOKEN=<token>
-```
-
-Before its first protected request, the client checks the service's public compatibility
-resource. An incompatible service is refused before the bearer token is sent.
-
-On a Compose deployment, run each command below as `./infrahub-sync-compose cli <command>`
-from the bundle directory instead. The wrapper supplies the URL and token, so skip the
-exports above. A command that reads a host file (`configs register`, `configs version`)
-needs `--package <host-file>` before `--`, which stages that one file into the container
-at `/input/package.yaml`; a command with no file argument (`configs list`, `configs show`,
-`runs plan`, `diff`, `sync`, `apply`) takes no `--package`. Register a package from a host
-file with:
-
-```bash
-./infrahub-sync-compose cli --package ./package.yml -- \
-  configs register /input/package.yaml --reason "register my configuration"
-```
-
-Create a new version of a registered configuration the same way:
-
-```bash
-./infrahub-sync-compose cli --package ./package.yml -- \
-  configs version <config-id> /input/package.yaml --reason "update inventory mapping"
-```
-
-See [The operator sequence](./compose-deployment.mdx#the-operator-sequence) for the full
-Compose command set, including plan review and checksum-bound apply.
-
-## Register a configuration package
-
-Registration reads one JSON or YAML package and sends its object to the service. The file
-is preparation input only; later runs use the immutable `(config_id, registry_version)`
-returned by the registry.
-
-```bash
-infrahub-sync configs register path/to/package.yml \
-  --reason "register inventory import"
-
-infrahub-sync configs version <config-id> path/to/package.yml \
-  --reason "update inventory mapping"
-```
-
-Each mutation accepts `--idempotency-key`. If you omit it, the CLI generates and prints a
-key before sending the request. Keep that key: if the connection fails after the service
-accepted the mutation, retry with the same key instead of creating another mutation.
-
-Inspect and validate registered content with:
-
-```bash
-infrahub-sync configs list
-infrahub-sync configs show <config-id>
-infrahub-sync configs versions <config-id>
-infrahub-sync configs show <config-id> --version <version>
-infrahub-sync configs validate <config-id> <version>
-```
-
-Validation preserves the service's finding order and prints its `offset`, `limit`,
-`total_findings`, and `next_offset` fields. Use `--offset` and `--limit` to request another
-finding page.
-
-## Create and review a plan
-
-`diff` is the familiar command name for creating a service `plan` run. It sends only the
-registered configuration tuple, optional destination branch, reason, confirmation state,
-and idempotency key.
-
-```bash
-infrahub-sync diff \
-  --config-id <config-id> \
-  --version <version> \
-  --reason "review scheduled changes"
-```
-
-The default `--wait` follows the accepted product run for at most 30 minutes, polling every
-2 seconds. Override those positive finite durations with `--wait-timeout` and
-`--poll-interval`. When the plan succeeds, `diff` prints the saved plan summary and its
-service-issued checksum.
-
-Use `--no-wait` to return immediately after admission. The output includes the service
-run ID and idempotency key. Review that run later through the same saved resource:
-
-```bash
-infrahub-sync runs plan <run-id>
-infrahub-sync runs plan <run-id> --detail
-infrahub-sync runs plan <run-id> --detail --kind <destination-kind>
-```
-
-The review prints `checksum_source: Sync API saved plan`. Detailed output includes every
-operation selected by the optional kind filter. Delete operations carry a
-`(not executed)` marker, and the summary states how many recorded deletes apply will skip.
-A kind that matches no operation is an input error instead of an empty successful review.
-
-## Apply a reviewed plan
-
-Copy the checksum from `runs plan` and bind the apply to it:
-
-```bash
-infrahub-sync apply <run-id> \
-  --expected-checksum <checksum> \
-  --reason "apply reviewed plan"
-```
-
-The service validates the expected checksum. The CLI never reads, reconstructs, or hashes
-a local plan. `--branch`, `--idempotency-key`, `--wait/--no-wait`, `--wait-timeout`, and
-`--poll-interval` have the same meanings as on run admission.
-
-## Run a confirmed sync
-
-`sync` creates a confirmed composed synchronization through the shipped run route:
-
-```bash
-infrahub-sync sync \
-  --config-id <config-id> \
-  --version <version> \
+uv run infrahub-sync sync --config-id CONFIG_ID --version 1 --branch BRANCH \
   --reason "scheduled synchronization"
 ```
 
-It uses the same idempotency and bounded-wait behavior as `diff`. The service and worker
-own extraction, guardrails, ordering, and destination calls.
+Run a release package:
 
-`sync` builds a new plan and applies it in the same run, with no stop for review. The plan
-is saved before the first write, so you can read it afterwards with `runs plan`. To approve
-the exact operations before any write happens, use `diff`, review with `runs plan --detail`,
-then `apply` with the checksum from that review — `sync` does not apply a plan you already
-reviewed; it calculates and writes a new one.
+```bash
+./infrahub-sync-compose cli sync --config-id CONFIG_ID --version 1 --branch BRANCH \
+  --reason "scheduled synchronization"
+```
 
-## Wait outcomes
+The worker saves the plan before the first write, so you can read it afterwards with
+`runs plan`. `sync` does not apply a plan that you reviewed earlier; it creates a new one. To
+approve the exact operations before they are written, use `diff`, `runs plan`, and `apply`.
 
-- A successful selected execution returns the latest product record.
-- A failed, cancelled, abandoned, or ambiguous selected execution exits nonzero and keeps
-  the service run ID and terminal fields.
-- A failed waited apply also reports recorded failure evidence as
-  `apply failed: <ErrorClass>` when the result is available. `PlanSchemaChangedError`
-  adds a hint to create and review a new plan before applying again. A saved plan with an
-  incomplete manifest adds a hint to re-run `diff` and review the new plan. A readable
-  plan with an unsupported format version instead offers a rebuild with this version or
-  an apply with the version that wrote it.
-- Apply checks every reviewed direct Infrahub payload field against the current destination
-  schema and the generated mutation input before the first write. It repeats these checks
-  for each operation before sending its write. If a field is no longer writable or a
-  reviewed value would be omitted, apply names the kind and field, refuses the write, and
-  asks you to create and review a new plan. Reviewed null attributes are written explicitly.
-  Operations completed before a later refusal stay recorded as applied.
-- A timeout exits nonzero with the run ID and last product phase, outcome, and execution
-  state. It does not cancel the remote run.
-- Ctrl-C stops local polling, prints the last observed product record, exits 130, and does
-  not send a cancellation request.
+## Reference
 
-The wait follows the execution accepted by that mutation. It does not infer completion
-from Prefect logs or from an earlier execution on the same product run.
+### Waiting for a run
+
+`diff`, `sync`, and `apply` wait for the run by default. They poll the service every
+2 seconds for at most 30 minutes. `--poll-interval` and `--wait-timeout` change these
+values, in seconds. A large apply needs a longer wait. For example, one apply of the NetBox
+demo package, with about 1,700 operations, took 11 minutes.
+
+`--no-wait` returns after the service accepts the request. The output includes the run ID
+and the retry key. Check the run later with `runs show RUN_ID` or `runs plan RUN_ID`.
+
+### Wait outcomes
+
+- A run that succeeds prints its latest record.
+- A run that fails, is cancelled, or ends in an unknown state exits with a nonzero status
+  and prints the run ID and its final fields.
+- A failed apply also prints `apply failed: <ErrorClass>` when the service recorded the
+  error. For `PlanSchemaChangedError`, the destination schema changed after the plan was
+  saved: create and review a new plan. A plan saved by a different release can need a new
+  plan too, and the message says so.
+- When the wait times out, the CLI exits with a nonzero status and prints the run ID and its
+  last phase, outcome, and execution state. The run continues on the service.
+- Ctrl-C stops the wait, prints the last record, and exits with status 130. It does not
+  cancel the run.
+
+### Retry keys
+
+`configs register`, `configs version`, `diff`, `sync`, and `apply` accept
+`--idempotency-key`. If you omit it, the CLI generates a key and prints it. If the connection
+fails before you see a response, run the same command again with that key. The service then
+returns the original response instead of starting a second operation. See
+[Retry keys](./configuration-package.mdx#retry-keys).
+
+### Output fields
+
+- `configs validate` prints `offset`, `limit`, `total_findings`, and `next_offset`. Use
+  `--offset` and `--limit` to read another page of findings.
+- `runs show RUN_ID` prints the run's phase, outcome, execution state, and Prefect
+  correlation.
+- `runs results RUN_ID` prints the results that the service recorded for the run, as JSON.
+
+For every command and option, see the [Sync CLI reference](./reference/cli.mdx).

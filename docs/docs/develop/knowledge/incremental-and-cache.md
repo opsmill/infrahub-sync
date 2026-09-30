@@ -9,7 +9,7 @@ title: "Incremental sync and cache"
 A full sync extracts every object from both sides on every run. For large systems that is
 slow and wasteful, so infrahub-sync can run *incrementally*: extract only what changed since
 the last run, and reuse a cached diff plan. Incremental support is opt-in per adapter and
-per model — an adapter that does nothing still works, it just always does a full extract.
+per model — an adapter that does nothing still works, and always does a full extract.
 
 ### Cursor tiers
 
@@ -57,13 +57,15 @@ incremental-extraction work that will supply the counter durably.
 
 ### The diff plan and the cache
 
-Potenda can separate computing a diff from applying it:
+Potenda separates computing a diff from applying it:
 
-- `write_plan(diff)` serializes the diff to a Parquet **plan** on disk.
-- `apply_plan()` reads that plan back and syncs without re-extracting either side.
+- `write_plan(diff)` writes two files. `plan.parquet` is a row format kept for operators to
+  query. The [saved plan artifact](plan-artifact.md) under `<run_dir>/plan/` is what apply uses.
+- `apply_plan()` applies the saved plan artifact without extracting either side. It never reads
+  `plan.parquet`, and it refuses a run directory that contains only that file.
 
-This lets you review a plan before applying it, or compute on one host and apply on another.
-Cached side snapshots (also Parquet) and cursor state live alongside the plan.
+This separation is what lets you review a saved plan before you apply it. Cached side
+snapshots (also Parquet) and cursor state are stored in the same run directory.
 
 The cache root defaults to `<cwd>/.infrahub-sync-cache/<sync_name>/`, with each run under its
 own `<run_id>/`. Set `INFRAHUB_SYNC_CACHE_DIR` to relocate it (for example to a shared volume);

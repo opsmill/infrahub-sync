@@ -6,9 +6,11 @@ import ReferenceLink from "../../src/components/Card";
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-## V3 route
+## Use this adapter
 
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure.
+In a [configuration package](../configuration-package.mdx), name `nautobot` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
+
+The [Nautobot tutorial](../tutorials/nautobot-to-existing-infrahub.mdx) contains a complete package.
 
 <!-- vale off -->
 ## What is Nautobot?
@@ -18,19 +20,13 @@ Nautobot is an open-source network source of truth and automation platform, offe
 
 ## Requirements
 
-This Adapter uses [Nautobot SDK](https://pypi.org/project/pynautobot).
-You will need to install it beforehand.
+This adapter uses the [Nautobot SDK](https://pypi.org/project/pynautobot), `pynautobot`. The Sync image and the `service` extra install it.
 
 ## Sync directions supported
 
 - Nautobot → Infrahub
 
-:::info
-
-Currently, the Nautobot adapter supports only **one-way synchronization** from Nautobot to Infrahub.
-Syncing data back into Nautobot is not yet supported.
-
-:::
+Nautobot is a source only. Infrahub Sync does not write to Nautobot.
 
 ## Schema
 
@@ -50,26 +46,20 @@ To reflect the breaking changes introduced in Nautobot v2, there is not one but 
 
 ### Installing the example schema
 
-To install the example schema into Infrahub, follow these steps:
+Download the schema that matches your Nautobot version, then load it into the destination Infrahub as described in [Load an example schema into Infrahub](./choosing-an-adapter.mdx#load-an-example-schema-into-infrahub):
 
 <Tabs>
   <TabItem value="Nautobot v1">
 
   ```bash
-  mkdir nautobot-sync
-  cd nautobot-sync
   curl -o schema.yml https://raw.githubusercontent.com/opsmill/infrahub/refs/heads/stable/models/examples/nautobot/nautobot-v1.yml
-  infrahubctl schema load schema.yml
   ```
 
   </TabItem>
   <TabItem value="Nautobot v2">
 
   ```bash
-  mkdir nautobot-sync
-  cd nautobot-sync
   curl -o schema.yml https://raw.githubusercontent.com/opsmill/infrahub/refs/heads/stable/models/examples/nautobot/nautobot-v2.yml
-  infrahubctl schema load schema.yml
   ```
 
   </TabItem>
@@ -77,59 +67,45 @@ To install the example schema into Infrahub, follow these steps:
 
 ## Configuration
 
-`infrahub-sync` allows defining what gets synchronized from a source to a destination. The shipped `config.yml` files are legacy mapping inputs that match the example schemas; wrap one in a V3 configuration-package envelope before registration.
+The [Nautobot tutorial](../tutorials/nautobot-to-existing-infrahub.mdx) contains a complete package for a small schema. The repository also contains two larger mapping examples that match the example schemas above:
 
-<Tabs>
-  <TabItem value="Nautobot v1">
-  <ReferenceLink title="config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/nautobot-v1_to_infrahub/config.yml" openInNewTab />
-  </TabItem>
-  <TabItem value="Nautobot v2">
-  <ReferenceLink title="config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/nautobot-v2_to_infrahub/config.yml" openInNewTab />
-  </TabItem>
-</Tabs>
+- [`examples/nautobot-v1_to_infrahub/config.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/nautobot-v1_to_infrahub/config.yml) for Nautobot 1.x
+- [`examples/nautobot-v2_to_infrahub/config.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/nautobot-v2_to_infrahub/config.yml) for Nautobot 2.x
 
-To download the example `config.yml`
-
-<Tabs>
-  <TabItem value="Nautobot v1">
-
-  ```bash
-  curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/nautobot-v1_to_infrahub/config.yml > config.yml
-  ```
-
-  </TabItem>
-  <TabItem value="Nautobot v2">
-
-  ```bash
-  curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/nautobot-v2_to_infrahub/config.yml > config.yml
-  ```
-
-  </TabItem>
-</Tabs>
+These files are `config.yml` files, not packages. Registration refuses them as they are. To use one, convert it as described in [Convert a config.yml file](../configuration-package.mdx#convert-a-configyml-file).
 
 ### Configuration parameters
 
-To use the source-only Nautobot adapter, set `source.name` to `nautobot`.
+Set `source.name` to `nautobot`. In a registered package, the token is a `$credential` reference:
 
-Below is a snippet from the example config.yml file:
-
-<Tabs>
-  <TabItem value="Source example" default>
-
-  ```yaml
-  ---
+```yaml
+format_version: 1
+configuration:
   name: from-nautobot
   source:
     name: nautobot
     settings:
-      url: "https://<NAUTOBOT-ENDPOINT>"
-      token: "<TOKEN>"
+      url: "https://nautobot.example.com"
+      token:
+        $credential: nautobot-token
       verify_ssl: true # Default value
       depth: 1 # Optional. Omit to send no depth parameter.
-  ```
+  destination:
+    name: infrahub
+    settings:
+      url: "https://infrahub.example.com"
+      token:
+        $credential: infrahub-token
+credentials:
+  nautobot-token:
+    provider: env
+    identifier: NAUTOBOT_TOKEN
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_API_TOKEN
+```
 
-  </TabItem>
-</Tabs>
+The worker uses the declared `url`. `NAUTOBOT_ADDRESS` and `NAUTOBOT_URL` in the worker environment do not replace it. The worker reads the token from the environment variable that the credential names. For direct adapter use without a registered package, `NAUTOBOT_ADDRESS`, `NAUTOBOT_URL`, and `NAUTOBOT_TOKEN` take precedence over the declared settings.
 
 `depth` is passed straight through to Nautobot as a query parameter on every list
 request the adapter makes. It is an integer between 0 and 10; any other value is
@@ -176,7 +152,7 @@ As you can see in this example, we map different Nautobot paths to different Inf
         reference: OrganizationGeneric
 ```
 
-The models available on Nautobot can be find in the `/api/schema/swagger-ui` of your instance.
+The Nautobot API paths are listed at `/api/docs/` on your Nautobot instance.
 
 <ReferenceLink title="Nautobot API Docs" url="https://demo.nautobot.com/api/docs" openInNewTab />
 

@@ -56,17 +56,19 @@ OPERATOR_SEQUENCE = (
     "./infrahub-sync-compose cli configs show CONFIG_ID",
     "./infrahub-sync-compose cli configs versions CONFIG_ID",
     "./infrahub-sync-compose cli configs validate CONFIG_ID 1",
-    ("./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch main --reason 'review initial sync'"),
+    (
+        "./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'review initial sync'"
+    ),
     "./infrahub-sync-compose cli runs plan RUN_ID --detail",
     (
         "./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM "
-        "--branch main --reason 'apply reviewed initial sync'"
+        "--branch BRANCH_NAME --reason 'apply reviewed initial sync'"
     ),
     "./infrahub-sync-compose cli runs show RUN_ID",
     "./infrahub-sync-compose cli runs results RUN_ID",
     (
         "./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 "
-        "--branch main --reason 'verify unchanged source'"
+        "--branch BRANCH_NAME --reason 'verify unchanged source'"
     ),
     (
         "./infrahub-sync-compose cli --package ./edited-package.yml -- "

@@ -2,14 +2,208 @@
 title: Local development stack
 ---
 
-The repository ships a complete local stack for working on Infrahub Sync: a disposable
-Infrahub instance, PostgreSQL and MinIO for the service's own records and artifacts, a
-dedicated Prefect server, and the Sync HTTP API and its Prefect worker running from your
-checkout.
+The repository includes two local stacks. Both run from your checkout, and every
+credential they use is a published local default. Never point any value on this page at
+a shared or internet-facing instance.
 
-Everything the stack creates is disposable, and every credential it uses is a published
-local default. Never point any value on this page at a shared or internet-facing
-instance.
+| Stack | Start it with | What runs | Sync API | Use it to |
+| --- | --- | --- | --- | --- |
+| [Run from source](#run-from-source) | `uv run invoke start` | The whole Sync service in containers, from an image built from your checkout | `http://127.0.0.1:8030` | Try V3, test a fix, run a first sync, or run V3 on a Mac |
+| [Preview stack](#the-preview-stack) | `uv run invoke preview.up` | Infrahub, Prefect, PostgreSQL, and MinIO in containers; the Sync API and worker as processes on your host | `http://127.0.0.1:8010` | Change `infrahub_sync/service/` and run the smoke suite |
+
+Both stacks need Docker, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13.
+Install the development environment once:
+
+```bash
+uv sync --extra dev --extra prefect --extra service
+```
+
+All three extras are required. With `--extra dev` alone, `invoke start` works, but
+`invoke preview.up` fails with `No module named 'prefect'`, and `infrahubctl` is not
+installed: it comes with the `service` extra.
+
+## Run from source
+
+Run from source builds the Sync service image from your checkout, for your host's own
+architecture, and starts the Sync API, the worker, Prefect, PostgreSQL, and object
+storage. It runs on any platform Docker supports, including Apple Silicon. A source
+build has passed the pull request checks, but not the full deployment tests that each
+release package passes; see [Install Infrahub Sync](./installation.mdx#two-ways-to-run-v3).
+
+### Get the source
+
+You need Docker, Git, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13. Clone the V3
+branch and install the development environment once:
+
+```bash
+git clone --branch feature/v3-develop https://github.com/opsmill/infrahub-sync.git
+cd infrahub-sync
+uv sync --extra dev --extra prefect --extra service
+```
+
+Run every command below from the `infrahub-sync` directory. If you already have a checkout,
+run `git switch feature/v3-develop` and `git pull` instead of cloning.
+
+### Start the service
+
+```bash
+uv run invoke build
+uv run invoke start
+```
+
+`start` builds the image only when no `infrahub-sync:dev` image exists. If you already
+built one from an older checkout, `start` reuses it without a warning, so run `build`
+first whenever you test a new revision.
+
+| Service | Address |
+| --- | --- |
+| Sync API | `http://127.0.0.1:8030`, bearer token `infrahub-sync-dev-token` |
+| Prefect UI | `http://127.0.0.1:4230` |
+| PostgreSQL | `127.0.0.1:5440` |
+
+Check the service:
+
+```bash
+curl -sf http://127.0.0.1:8030/version
+curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8030/status
+```
+
+The `status` response reports `"service": "ready"` when the worker is running. The
+service starts with an empty configuration registry and connects to no source or
+destination until you register a package.
+
+After a code change, run `uv run invoke build && uv run invoke start`. The data volumes
+are kept. `uv run invoke destroy` stops the stack and deletes its data volumes; the image
+is kept.
+
+### Run a first sync
+
+This path imports the official NetBox demo data from a local NetBox into a local
+Infrahub branch. It takes about 30 minutes, most of it the apply. Run every command
+from the repository root.
+
+1. Start a local Infrahub. `preview.up` also starts a second Prefect, PostgreSQL,
+   object store, and Sync API on port 8010. This path uses only its Infrahub, on
+   `http://localhost:8080`.
+
+    ```bash
+    uv run invoke preview.up
+    ```
+
+   On a first start, `preview.up` can stop with `container ... is unhealthy` because the
+   Infrahub containers take longer to start than it waits. Run it again until it
+   completes, or until `http://localhost:8080` answers.
+
+2. Set the Infrahub address and token. The token is the `INFRAHUB_INITIAL_ADMIN_TOKEN`
+   value in `development/preview.env`:
+
+    ```bash
+    export INFRAHUB_ADDRESS=http://localhost:8080
+    export INFRAHUB_API_TOKEN=06438eb2-8019-4776-878c-0941b1f1d1ec
+    ```
+
+3. Load the destination schema, the `infrahub/traditional-infrastructure-sot`
+   collection from the Infrahub Marketplace:
+
+    ```bash
+    uv run infrahubctl marketplace get infrahub/traditional-infrastructure-sot \
+      --collection --output-dir .netbox/schemas
+    uv run infrahubctl schema load .netbox/schemas --wait 120
+    ```
+
+   `marketplace get` can fail with `Marketplace request failed: ReadTimeout`. If it
+   does, load the copy of the same 16 files that the nightly tests use instead:
+
+    ```bash
+    uv run infrahubctl schema load tests/data/nightly_schema --wait 120
+    ```
+
+4. Start the local NetBox with the official demo data. The first start takes several
+   minutes. NetBox is published on `127.0.0.1:8082`, and the command prints the
+   `nbt_...` API token:
+
+    ```bash
+    uv run invoke netbox.seed --dataset demo
+    ```
+
+5. Give the worker both tokens, then start the service again. `start` recreates the
+   API and worker with the new environment:
+
+    ```bash
+    export NETBOX_TOKEN=nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000
+    uv run invoke start
+    ```
+
+   The worker joins NetBox's Docker network, and `start` prints
+   `it reads NetBox at http://netbox:8080`. The NetBox tasks and `start` connect the
+   worker again each time either one is recreated.
+
+6. Write a copy of the example package for this stack, and register it:
+
+    ```bash
+    uv run invoke netbox.demo-package --dev-stack
+    export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8030
+    export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
+    uv run infrahub-sync configs register .netbox/from-netbox.local.yml \
+      --reason "register local NetBox import"
+    ```
+
+   The copy, `.netbox/from-netbox.local.yml`, is `examples/netbox_to_infrahub/package.yml`
+   with two URLs changed: the source is `http://netbox:8080`, and the destination is
+   `http://host.docker.internal:8080`. Inside the worker container, `localhost` is the
+   container itself. The worker uses the URLs in the registered package; environment
+   variables such as `INFRAHUB_ADDRESS` do not change them.
+
+   Record the `config_id` from the output. If you change the package later, register
+   the change with `configs version <config-id> <package>`. Registering changed content
+   with `configs register` creates a new configuration ID at version 1.
+
+7. Create a destination branch and plan the import:
+
+    ```bash
+    uv run infrahubctl branch create netbox-import
+    uv run infrahub-sync diff --config-id <config-id> --version 1 \
+      --branch netbox-import --reason "plan local NetBox import"
+    ```
+
+   The plan takes about two minutes. The CLI prints the `run_id`, the `plan_checksum`,
+   and the operation counts by kind. On 2026-09-29 the plan held 1,688 operations:
+   1,687 creates across 20 kinds, and one recorded delete of Infrahub's built-in
+   `default` IP namespace. Apply never executes a delete.
+
+8. Review the plan, then apply it by its checksum:
+
+    ```bash
+    uv run infrahub-sync runs plan <run-id>
+    uv run infrahub-sync apply <run-id> --expected-checksum <checksum> \
+      --branch netbox-import --reason "apply local NetBox import"
+    ```
+
+   The apply writes only the reviewed operations to the `netbox-import` branch. It took
+   11 to 14 minutes in the runs on 2026-09-29; the CLI waits up to 30 minutes by default.
+
+9. Run the same `diff` again. After a successful apply, the new plan holds only the
+   recorded delete of the `default` namespace. Open `http://localhost:8080`, log in
+   with `admin` and `infrahub`, and select the `netbox-import` branch to browse the
+   imported objects.
+
+To stop everything and delete its data:
+
+```bash
+uv run invoke destroy
+uv run invoke preview.down --volumes
+uv run invoke netbox.down
+```
+
+To register your own package instead of the example, continue with
+[Create a sync project](./creating-a-sync-project.mdx) and [Run a sync](./running-a-sync.mdx).
+Use the addresses the worker container can reach, as in step 6.
+
+## The preview stack
+
+The preview stack runs Infrahub, PostgreSQL and MinIO for the service's own records and
+artifacts, and a dedicated Prefect server in containers. The Sync HTTP API and its Prefect
+worker run on your host, from your checkout. Use it to work on the service code itself.
 
 **Verified 2026-09-16 against source revision
 [`61b6a1b9dccae637b522084f563858dfcd5e31a9`](https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9).** The commands, ports,
@@ -18,18 +212,7 @@ paths and restart behavior below were derived by reading, at that exact revision
 [`development/preview.env`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/development/preview.env). They were not established by a live
 replay of the stack.
 
-## Install
-
-The stack needs Docker, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13.
-
-```bash
-uv sync --extra dev --extra prefect --extra service
-```
-
-All three extras are required. Without `prefect` and `service` the Sync API and its
-worker cannot start, and the type checker cannot resolve their imports.
-
-## Commands
+### Commands
 
 | Command | What it does |
 | --- | --- |
@@ -103,26 +286,19 @@ uv run invoke preview.logs -n prefect-worker --lines 500
 `stopped`, then the three addresses. The two host processes are `sync-api` and
 `prefect-worker`; their logs and process identifiers live under `.preview/`.
 
-### Edit: there is no auto-reload
+### Edit and restart
 
-**A code change does not reach the running stack by itself.** Two things combine to make that
-true, and neither is a defect:
-
-- The Sync API is started under `uvicorn` without `--reload`, so it does not watch your files.
-- The task that starts a process checks first and returns early when that process is already
-  running, printing `already running`. So re-running `preview.up` after an edit leaves the old
-  process in place.
-
-To run changed service code, stop and start:
+A code change does not reach the running preview stack by itself. The Sync API runs
+under `uvicorn` without `--reload`, and `preview.up` leaves a process that is already
+running in place (it prints `already running`). To run changed service code, stop and
+start the stack:
 
 ```bash
 uv run invoke preview.down
 uv run invoke preview.up
 ```
 
-`preview.down` without `--volumes` stops the two host processes and the containers and
-**keeps every data volume**. Your Infrahub instance, the service records and the artifacts all
-survive, so the cycle above costs a restart and not a re-seed.
+This keeps the data volumes, so you do not need to seed again.
 
 ### Stop and restart, and the one destructive reset
 
@@ -145,7 +321,7 @@ uv run invoke preview.smoke
 Seeds, then runs the smoke suite against the running stack. It writes: see
 [Starting the stack writes nothing](#starting-the-stack-writes-nothing) above for exactly what.
 Every test in the suite skips when the stack is unreachable, so read the collection summary
-before treating a green run as evidence. [Testing tiers](develop/guidelines/testing-tiers.md)
+before you treat a passing run as evidence. [Testing tiers](develop/guidelines/testing-tiers.md)
 covers what each suite proves.
 
 ### Change a port or a token
@@ -163,7 +339,7 @@ uv run invoke preview.down --volumes
 
 Removes everything the stack created. The `.preview/` directory keeps its logs.
 
-## Addresses
+## Preview stack addresses
 
 | Service | Address | Runs as |
 | --- | --- | --- |
@@ -212,7 +388,7 @@ without `VERSION` or an env file. With that override, an empty
 `INFRAHUB_DOCKER_IMAGE_DIGEST` leaves the image unpinned. A digest-only override
 keeps the shipped Infrahub tag and replaces its digest.
 
-## The stack refuses to start on retired state
+## The preview stack refuses to start on retired state
 
 `preview.up` starts the containers and waits for Infrahub and Prefect to answer, then
 reads Prefect and the host process list before it starts the worker, the deployment, and

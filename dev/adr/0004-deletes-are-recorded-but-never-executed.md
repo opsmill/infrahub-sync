@@ -7,6 +7,10 @@
 (AD004, AD049, AD055)
 
 > V3 now writes only through saved-plan apply. See [ADR 0014](0014-v3-writes-through-saved-plan-apply.md).
+>
+> Since this decision, `SKIP_UNMATCHED_DST` is no longer a fallback: `resolve_effective_diffsync_flags`
+> in `infrahub_sync/__init__.py` always adds it, whatever flags a configuration sets. V3 records deletes
+> and never executes them; explicit deletion is designed separately.
 
 ## Context
 

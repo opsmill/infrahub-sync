@@ -11,8 +11,10 @@ title: "The saved plan artifact"
 A run records what it intends to change as a **plan artifact** under its cache run directory. The
 artifact is what `infrahub-sync runs plan` renders for review and what an apply executes, and it
 exists so that the set of changes an operator reads is the set that gets written. The format is owned
-by `infrahub_sync/plan/` and is versioned: `format_version` is `2`, and `1` is reserved for the
-pre-existing `plan.parquet` row format, which is still written and never read by this path.
+by `infrahub_sync/plan/` and is versioned: `format_version` is `3`. A format `2` plan can still be
+read and reviewed, but `apply` refuses it, because its updates record no destination id. `1` is
+reserved for the pre-existing `plan.parquet` row format, which is still written for querying and
+never read by this path.
 
 For *why* the format is shaped this way, see [ADR 0001](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0001-saved-plan-artifact-format.md).
 
@@ -159,14 +161,14 @@ The data model rejects a stored identifier that does not match its own triple.
 
 | Key | Meaning |
 |---|---|
-| `format_version` | `2` |
+| `format_version` | `3` for every plan written now; `2` is accepted for review only |
 | `run_id` | The run the plan was produced under; excluded from the checksum, checked by equality |
 | `created_at` | ISO-8601 UTC; excluded from the checksum |
 | `config_version` | Opaque, non-empty printable ASCII; compared for equality, never parsed |
 | `source_snapshot` | `{path, digest, row_count}` per bound snapshot, ordered by `path` |
 | `operations_count` | Keeps an empty plan distinguishable from a torn one |
 | `delete_operations_computed` | `false` when the destination side was loaded incrementally |
-| `destination_binding` | `{url, branch}` — the destination the plan was computed against, resolved (env over settings) and URL-normalized, **never the token**. Compared for equality at apply time. Additive: absent on plans written before it existed, and the check is skipped for them |
+| `destination_binding` | `{url, branch}` — the destination the plan was computed against, URL-normalized, **never the token**. A registered package takes the URL from its declared settings only; a local configuration directory lets `INFRAHUB_ADDRESS` or `INFRAHUB_URL` override it. Compared for equality at apply time. Additive: absent on plans written before it existed, and the check is skipped for them |
 | `plan_checksum` | Lowercase sha256 hex over the manifest body plus the operations bytes |
 | *(any other key)* | Tolerated on read, preserved, and included in the bytes the checksum covers |
 

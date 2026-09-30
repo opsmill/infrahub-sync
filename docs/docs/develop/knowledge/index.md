@@ -10,7 +10,7 @@ configuration package registered in PostgreSQL, as opposed to a legacy run resol
 local configuration directory; see [Sync architecture](sync-architecture.md) for the
 lifecycle. Start there, or with the repository tour for a module to edit. For development
 rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
-[Guides](../guides/index.md).
+[Developer guides](../guides/index.md).
 
 ### Orientation
 
@@ -28,7 +28,7 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 - [Schema mapping](schema-mapping.md) — how `config.yml` maps source resources to
   destination models: fields, identifiers, references, filters, and transforms.
 - [Incremental sync and cache](incremental-and-cache.md) — cursors (per-adapter bookmarks of
-  what was already read), the write-order tiers derived from `schema_mapping`, plans, and
+  what was already read), the cursor tiers an adapter declares for each model, plans, and
   row-count guardrails (a comparison that would refuse a per-resource count drop
   against a previous baseline; no product path calls it today), and what an adapter
   implements to participate.
@@ -67,6 +67,6 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 ### Related
 
 - [Guidelines](../guidelines/index.md) — rules that apply to this code.
-- [Guides](../guides/index.md) — adding and testing an adapter.
+- [Developer guides](../guides/index.md) — step-by-step procedures for adapters, the development environment, and release candidates.
 - [Decision records](../adr-index.mdx) — why the architecture is shaped the way it is.
 - [Constitution](../constitution.md) — project principles these documents serve.

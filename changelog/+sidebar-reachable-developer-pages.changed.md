@@ -1,1 +1,1 @@
-Add the 22 developer and reference pages that were published but not reachable from the sidebar.
+Add the 22 existing developer and reference pages to the documentation sidebar, and label the developer guides "Developer guides".

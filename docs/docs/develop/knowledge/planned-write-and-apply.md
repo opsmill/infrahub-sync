@@ -408,15 +408,19 @@ destination refusal is the more expensive mistake — the run records what was w
 
 ### Deletes are recorded, never executed
 
-Deletes are derived by set difference and recorded as first-class operations, then never executed —
-executing them is not supported. An apply over a delete-bearing plan completes
+Deletes are derived by set difference and recorded as first-class operations. V3 apply does not
+execute them. An apply over a delete-bearing plan completes
 **`applied`**, with `summary["skipped_delete_count"]`, `summary["skipped_delete_operations"]` in stored
 order, and one warning naming the count. `applied_operations ∪ skipped_delete_operations` equals the
 plan's full identifier set on any completed apply, which is what keeps the applied set knowable against
 the reviewed set as a recorded value rather than an inference.
 
-Because the engine's fallback flag set hides destination-only objects from the comparison, a
-delete-bearing plan is the **ordinary** case, not an exception. See
+No `diffsync_flags` value changes this. `resolve_effective_diffsync_flags` in
+`infrahub_sync/__init__.py` always adds `SKIP_UNMATCHED_DST`, so the comparison never turns a
+destination-only object into a delete. The plan derives deletes separately, in `derive_deletes`
+(`infrahub_sync/plan/derive.py`), and only when the destination side was extracted in full; the
+manifest records that choice as `delete_operations_computed`. Every current entry point extracts
+in full, so a delete-bearing plan is the **ordinary** case, not an exception. See
 [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md).
 
 ### A note on logging

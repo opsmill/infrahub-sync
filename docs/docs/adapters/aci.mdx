@@ -4,9 +4,13 @@ title: Cisco ACI adapter
 
 import ReferenceLink from "../../src/components/Card";
 
-## V3 route
+## Use this adapter
 
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure. The ACI mapping example is `examples/aci_to_infrahub/package.yml`.
+In a [configuration package](../configuration-package.mdx), name `aci` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
+
+On a Compose deployment, from source or from a release package, the worker receives only the Infrahub, NetBox, and Nautobot tokens, so this adapter's credentials cannot reach it in this release. See [Credentials on a Compose deployment](./choosing-an-adapter.mdx#credentials-on-a-compose-deployment).
+
+The example package is [`examples/aci_to_infrahub/package.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/aci_to_infrahub/package.yml).
 
 <!-- vale off -->
 ## What is Cisco ACI?
@@ -18,41 +22,58 @@ Prepare a [configuration package](../configuration-package.mdx) and register it.
 
 Cisco ACI → Infrahub
 
-:::note
-Currently, the Cisco ACI adapter supports only **one-way synchronization** from ACI to Infrahub. Syncing data back into ACI is not yet supported.
-:::
+Cisco ACI is a source only. Infrahub Sync does not write to ACI.
 
 ## Configuration
 
-The adapter reads connection settings from the synchronization configuration and can be overridden by environment variables. Credentials should be provided via a secret manager or environment variables in production.
-
-### Configuration parameters
+Set `source.name` to `aci`. In a registered package, `username` and `password` are `$credential` references:
 
 ```yaml
----
-name: from-cisco-aci
-source:
-  name: aci
-  settings:
-    url: "https://<APIC_CONTROLLER>"
-    username: "<USER>"
-    password: "<PASSWORD>"
-    api_endpoint: "api"   # optional, default: api
-    verify: true          # boolean or string ("false","0") accepted
+format_version: 1
+configuration:
+  name: from-cisco-aci
+  source:
+    name: aci
+    settings:
+      url: "https://apic.example.com"
+      username:
+        $credential: apic-username
+      password:
+        $credential: apic-password
+      api_endpoint: "api"   # Optional, default: api
+      verify: true          # Optional; a boolean, or a string such as "false" or "0"
+  destination:
+    name: infrahub
+    settings:
+      url: "https://infrahub.example.com"
+      token:
+        $credential: infrahub-token
+credentials:
+  apic-username:
+    provider: env
+    identifier: CISCO_APIC_USERNAME
+  apic-password:
+    provider: env
+    identifier: CISCO_APIC_PASSWORD
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_API_TOKEN
 ```
 
 ### Environment variables
 
-- CISCO_APIC_URL: overrides settings.url
-- CISCO_APIC_USERNAME: overrides settings.username
-- CISCO_APIC_PASSWORD: overrides settings.password
-- CISCO_APIC_VERIFY: overrides settings.verify; accepts true/false/0/1 (strings are normalized)
+A registered package uses its declared `url` and its resolved `username` and `password`. One exception: when `CISCO_APIC_VERIFY` is set in the worker environment, it replaces the declared `verify` setting, also for a registered package.
+
+For direct adapter use without a registered package, these variables take precedence over the declared settings:
+
+- `CISCO_APIC_URL` replaces `settings.url`.
+- `CISCO_APIC_USERNAME` replaces `settings.username`.
+- `CISCO_APIC_PASSWORD` replaces `settings.password`.
+- `CISCO_APIC_VERIFY` replaces `settings.verify`. The values `0`, `false`, and `no` turn verification off.
 
 Notes:
 
-- Credentials must come from environment variables or a secret manager in production. Never commit secrets.
-- The adapter normalizes verify to a boolean (strings like false, 0, no are treated as False).
-- The adapter records login timestamps in UTC to avoid timezone related issues and ensure correct token refresh behavior.
+- The adapter records login timestamps in UTC so that token refresh works across time zones.
 
 ### Schema mapping examples
 

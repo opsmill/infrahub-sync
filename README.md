@@ -4,97 +4,166 @@
 
 # Infrahub Sync
 
-[![PyPI version](https://img.shields.io/pypi/v/infrahub-sync.svg)](https://pypi.org/project/infrahub-sync/)
-[![Python versions](https://img.shields.io/pypi/pyversions/infrahub-sync.svg)](https://pypi.org/project/infrahub-sync/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE.txt)
 
-Infrahub Sync is the data synchronization layer for Infrahub. It connects your existing infrastructure tools — NetBox, Nautobot, IP Fabric, Slurp'it, ServiceNow-style systems, and others — to Infrahub with pre-configured adapters and a short YAML config, so you can unify infrastructure data without writing integration code.
+Infrahub Sync synchronizes infrastructure data between Infrahub and other systems, such
+as NetBox, Nautobot, IP Fabric, and Slurp'it. You describe the source, the destination,
+and the field mapping in one YAML configuration package. The Sync service plans the
+changes, you review the plan, and the service applies it.
 
-Built on the [`diffsync`](https://github.com/networktocode/diffsync) framework, distributed on [PyPI](https://pypi.org/project/infrahub-sync/) under Apache 2.0, maintained by [OpsMill](https://opsmill.com) as part of the [Infrahub](https://github.com/opsmill/infrahub) ecosystem.
+This branch, `feature/v3-develop`, is V3, which is in testing. V3 runs as a service: a
+Sync API, a worker, Prefect, PostgreSQL, and object storage. The `infrahub-sync`
+command-line client sends requests to that service.
+
+- **V3 documentation:** [feature-v3-develop.infrahub-sync.pages.dev](https://feature-v3-develop.infrahub-sync.pages.dev/),
+  built from this branch.
+- **OpsMill staff testing a V3 candidate:** start at the internal
+  [V3 start page](https://github.com/opsmill/infrahub-sync-process#readme).
+- **V2** is the version on [PyPI](https://pypi.org/project/infrahub-sync/) and on the
+  `main` branch. Its documentation is at [docs.infrahub.app/sync](https://docs.infrahub.app/sync).
+  `pip install infrahub-sync` installs V2, not V3.
+
+Infrahub Sync is open source under Apache 2.0 and maintained by [OpsMill](https://opsmill.com)
+as part of the [Infrahub](https://github.com/opsmill/infrahub) ecosystem.
 
 ---
 
 ## What You Can Do With It
 
-- **Migrate from an existing source of truth, gradually.** Move data from NetBox, Nautobot, or another existing system into Infrahub one model at a time. The legacy system keeps running while your team migrates the automation pipelines, scripts, and dashboards that read from it to Infrahub.
-- **Keep two systems continuously in sync.** Synchronize from IPAM, ITSM, monitoring, network discovery, or in-house databases on a recurring schedule managed by your existing automation tooling. Only deltas apply on each run.
-- **Publish inventory to downstream systems.** Once Infrahub holds the authoritative inventory, push it to monitoring, observability, or CMDB tools that need a current view of your infrastructure.
-- **Build inventory from deployed equipment.** Use a network discovery adapter (IP Fabric, Slurp'it) to populate Infrahub from what is actually deployed in the network, rather than curating inventory by hand.
-- **Translate between different data models.** Map fields declaratively in YAML — identifiers, references, static values, transforms, and custom Jinja filters — instead of writing custom transformation code.
-- **Preview changes before applying them.** Run `infrahub-sync diff` to see exactly what a sync would change in the destination before any data moves.
+- **Migrate from an existing source of truth, one model at a time.** Move data from
+  NetBox, Nautobot, or another system into Infrahub while the existing system keeps
+  running.
+- **Keep Infrahub in sync with another system.** Run the same configuration again. Each
+  run plans the differences between the source and Infrahub, and apply writes only those
+  differences.
+- **Build inventory from discovered equipment.** Read devices and addressing from a
+  network discovery tool (IP Fabric, Slurp'it) into Infrahub.
+- **Translate between data models.** Map fields in YAML with identifiers, references,
+  static values, filters, and Jinja transforms.
+- **Review changes before they are written.** `infrahub-sync diff` saves a plan, and
+  `infrahub-sync apply` writes exactly the plan you reviewed, bound to its checksum.
 
 ---
 
-## Prerequisites
+## Two Ways to Run V3
 
-- A running [Infrahub](https://github.com/opsmill/infrahub) instance
-- A running Sync API and worker
-- Python 3.10–3.13
-- Credentials and network access for the source and destination systems
+- **Run from source** — to try the latest changes or use a Mac. Build and start the
+  service from a checkout of `feature/v3-develop`, on any platform Docker supports,
+  including Apple Silicon.
+- **Run a release package** — to test a fixed version. A candidate is a prebuilt image
+  and Docker Compose bundle for one fixed version, tested together on Linux amd64
+  before it is published.
+
+Both run the same Sync service. A source build has passed the pull request checks, but
+not the full deployment tests that each release package passes.
+
+To run a release package, follow
+[Install Infrahub Sync](https://feature-v3-develop.infrahub-sync.pages.dev/installation).
+To run from source, continue below.
 
 ---
 
-## Quick Start
+<a id="run-it-locally-with-docker"></a>
+
+## Run From Source
+
+You need Docker, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13. The root
+`compose.yaml` builds the image from your checkout, for your host's own architecture, and
+runs the Sync API, the worker, PostgreSQL, object storage, and Prefect:
 
 ```bash
-# Install Infrahub Sync from PyPI into a virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-pip install infrahub-sync
-
-# Verify the install
-infrahub-sync --help
+uv sync --extra dev --extra prefect --extra service   # once
+uv run invoke build
+uv run invoke start
 ```
 
-→ For step-by-step setup, see [Install Infrahub Sync](https://docs.infrahub.app/sync/installation), [Create a sync project](https://docs.infrahub.app/sync/creating-a-sync-project), and [Run a sync](https://docs.infrahub.app/sync/running-a-sync).
+`start` builds the image only when no `infrahub-sync:dev` image exists. Run `build` first
+whenever you test a new revision; otherwise `start` reuses an image built from an older
+checkout. After a code change, run `uv run invoke build && uv run invoke start`.
+
+| | |
+|---|---|
+| **Sync API** | `http://127.0.0.1:8030` — bearer token `infrahub-sync-dev-token` |
+| **Prefect UI** | `http://127.0.0.1:4230` |
+| **PostgreSQL** | `127.0.0.1:5440` |
+
+```bash
+curl -sf http://127.0.0.1:8030/version
+curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8030/status
+```
+
+The stack starts with no source and no destination. To continue to a first sync from a
+local NetBox into a local Infrahub, follow
+[Run from source](https://feature-v3-develop.infrahub-sync.pages.dev/development-stack#run-from-source)
+in the documentation. In short:
+
+- `uv run invoke preview.up` starts a local Infrahub on `http://localhost:8080`. The worker
+  reaches it at `http://host.docker.internal:8080`; inside the worker, `localhost` is the
+  container itself.
+- `uv run invoke netbox.seed --dataset demo` starts a local NetBox with the official demo
+  data. The worker joins NetBox's network and reaches it at `http://netbox:8080`.
+- Set `INFRAHUB_API_TOKEN` and `NETBOX_TOKEN`, then run `uv run invoke start` again, so
+  the worker has both tokens.
+
+When you are finished, run `uv run invoke destroy` to stop the stack and delete its data.
+
+This build keeps its own BuildKit cache, separate from the one `invoke image.build` uses,
+so the first build each way starts with an empty cache.
 
 ---
 
 ## Example: NetBox → Infrahub
 
 The repository includes a NetBox configuration package at
-`examples/netbox_to_infrahub/package.yml`. Register it once, then address the immutable
-configuration version returned by the service:
+`examples/netbox_to_infrahub/package.yml`. This example registers it with a deployed Sync
+service; edit the package's URLs for your NetBox and Infrahub first. For the local NetBox and
+Infrahub above, run `uv run invoke netbox.demo-package --dev-stack` instead, then follow
+[Run a first sync](https://feature-v3-develop.infrahub-sync.pages.dev/development-stack#run-a-first-sync).
+Register the package once, then address the immutable configuration version returned by the
+service:
 
 ```bash
 export INFRAHUB_SYNC_API_URL=https://sync.example.com
 export INFRAHUB_SYNC_API_TOKEN=<token>
 
-infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
+uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
   --reason "register NetBox import"
-infrahub-sync diff --config-id <config-id> --version <version> \
-  --reason "review NetBox import"
-infrahub-sync runs plan <run-id> --detail
+uv run infrahub-sync diff --config-id <config-id> --version <version> \
+  --branch netbox-import --reason "review NetBox import"
+uv run infrahub-sync runs plan <run-id> --detail
+uv run infrahub-sync apply <run-id> --expected-checksum <checksum> \
+  --branch netbox-import --reason "apply reviewed NetBox import"
 ```
 
-Before applying the plan, read the
-[example prerequisites and current limitations](examples/netbox_to_infrahub/README.md).
-The public demo data and destination schema can change independently of this repository,
-and the complete example is not an unconditional write-success fixture.
+The worker uses the source and destination URLs in the registered package. Environment
+variables such as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not change them; only the tokens
+come from the worker's environment. Read the
+[example prerequisites](examples/netbox_to_infrahub/README.md) before you register it.
 
-For setup and a complete walkthrough, see the
-[NetBox-to-Infrahub tutorial](https://docs.infrahub.app/sync/tutorials/netbox-demo-to-infrahub).
+For a complete walkthrough, see the
+[NetBox-to-Infrahub tutorial](https://feature-v3-develop.infrahub-sync.pages.dev/tutorials/netbox-demo-to-infrahub).
 
 ---
 
-## Day 2 Operations
+## Operations
 
-**Scheduling.** The CLI submits runs to the Sync API. The service owns admission, durable
-run records, and worker execution, so a caller can disconnect after using `--no-wait` and
-inspect the same run later.
+**Scheduling.** There is no built-in schedule. Start each run with the CLI or the Sync API,
+for example from cron or a CI job. The service keeps a durable record of each run, so a
+caller can use `--no-wait`, disconnect, and read the same run later.
 
-**Observability.** Sync runs emit lifecycle and adapter logs through Python logging. Public
-Python API lifecycle records include structured attributes such as the run identifier,
-operation, stage, and outcome. Forward these records to the logging system used by your
-scheduler or runtime.
+**Observability.** Sync runs write lifecycle and adapter logs through Python logging.
+Public Python API lifecycle records include structured attributes such as the run
+identifier, operation, stage, and outcome. Forward these records to the logging system
+your scheduler or runtime uses.
 
-**Failure handling.** After a failed write, inspect the run record and destination, then
-calculate a fresh plan. A failed operation can have written part of its change, unless the
-run records that it wrote nothing. See
-[Run a sync](https://docs.infrahub.app/sync/running-a-sync) for the recovery and
-convergence boundaries. The three `diffsync_flags` (`SKIP_UNMATCHED_DST`,
-`SKIP_UNMATCHED_SRC`, `SKIP_MODIFIED`) and per-mapping filters control what each project
-may change.
+**Failure handling.** After a failed write, inspect the run record and the destination,
+then create a fresh plan. A failed operation can have written part of its change, unless
+the run records that it wrote nothing. See
+[Run a sync](https://feature-v3-develop.infrahub-sync.pages.dev/running-a-sync) for
+recovery.
+
+**Deletes.** A plan records the destination objects that have no match in the source.
+Apply never executes those deletes.
 
 ---
 
@@ -109,25 +178,38 @@ may change.
 | Nautobot | Nautobot → Infrahub |
 | IP Fabric | IP Fabric → Infrahub |
 | Cisco ACI | Cisco ACI → Infrahub |
-| Peering Manager | Peering Manager → Infrahub · Infrahub → Peering Manager |
+| Peering Manager | Peering Manager → Infrahub |
 | Prometheus | Prometheus → Infrahub |
 | Slurp'it | Slurp'it → Infrahub |
 | Generic REST API | external system → Infrahub |
 
+The IP Fabric and Slurp'it adapters need a worker image that installs their SDKs. The
+default Sync image does not include them; see each adapter's page in the documentation.
+
 ### Choosing your adapter
 
-- If your source is in the table above, use that adapter directly.
-- If your source has a REST API but no dedicated adapter (ServiceNow, Infoblox, internal IPAM, etc.), start with the Generic REST API adapter — most teams do not need anything more.
-- If your source has a non-standard API or you need custom logic, write a local custom adapter using the template at `examples/custom_adapter/`.
+- If your source is in the table above, use that adapter.
+- If your source has a REST API but no dedicated adapter (ServiceNow, Infoblox, internal
+  IPAM, and others), start with the Generic REST API adapter. The `examples/` directory
+  includes Generic REST API configurations for LibreNMS, Observium, Device42, and PeeringDB.
+- A registered package must name an adapter bundled with Infrahub Sync. Running a custom
+  adapter from a registered package is not qualified in this release; see the
+  [local adapters guide](https://feature-v3-develop.infrahub-sync.pages.dev/adapters/local-adapters)
+  and the template at `examples/custom_adapter/`.
 
-### Under the hood
+### Components
 
-- **Sync engine.** Built on `diffsync` with three sync flags (`SKIP_UNMATCHED_DST` default, `SKIP_UNMATCHED_SRC`, `SKIP_MODIFIED`) and optional Redis-backed store for stateful sync.
-- **Declarative YAML configuration.** Per-field mapping with 14 filter operations (including `regex` and `is_ip_within`), per-field transforms, custom Jinja filters, and ordered cross-reference resolution.
+- **Sync service.** The Sync API registers configuration packages, admits runs, and keeps
+  run records, saved plans, and artifacts. The worker reads the source and destination and
+  writes the reviewed plan.
+- **Declarative YAML configuration.** Per-field mapping with 14 filter operations
+  (including `regex` and `is_ip_within`), per-field transforms, custom Jinja filters, and
+  cross-reference resolution. When `order` is omitted, the write order comes from the
+  mapping's references.
 - **Typer-based CLI.** Register and inspect configuration packages, create plan or sync
-  runs, review service-owned plans, and apply a reviewed checksum through the Sync API.
-- **Custom adapters and certificates.** Load custom adapters from filesystem paths, Python module paths, or installed entry points (`INFRAHUB_SYNC_ADAPTER_PATHS`); custom CA certificate support for internal PKI.
-- **Example library.** Sample YAML configurations under `examples/` cover every pre-configured adapter plus additional targets (Device42, PeeringDB) and a custom adapter template. Review each example's adapter, schema, credential, and destination prerequisites before running it.
+  runs, review saved plans, and apply a reviewed checksum through the Sync API.
+- **Custom CA certificates.** Trust an internal CA for the CLI's connection to the Sync API. A
+  Compose worker cannot trust a custom CA yet; see the custom certificates guide.
 
 ### Execution surfaces
 
@@ -135,61 +217,15 @@ may change.
 |---|---|---|
 | CLI | Configuration registration, plan review, run admission, and reviewed-plan apply | Base installation and Sync API access |
 | Python client | Typed access to every shipped Sync API resource | Base installation and Sync API access |
-| Direct Prefect deployment | Starting and observing one plan or confirmed sync through Prefect's API | `prefect` extra and a Prefect server |
+| Direct Prefect deployment | Starting and observing one read-only plan through Prefect's API | `prefect` extra and a Prefect server |
 | Sync HTTP API | Authenticated remote runs, durable records and artifacts, reviewed apply, idempotency, and cancellation | `service` extra, Prefect, a work pool, a worker, and shared durable storage |
 
-See the [Python API](https://docs.infrahub.app/sync/reference/python-api),
-[Prefect remote run](https://docs.infrahub.app/sync/reference/prefect-remote-run), and
-[Sync HTTP API](https://docs.infrahub.app/sync/reference/sync-http-api) references
-for their contracts and setup. For a bounded checkout-based live review, follow the
-[`custom-example` plan and apply guide](examples/custom_adapter/README.md). Its source
-fixture is deterministic; the review still uses a live, writable Infrahub destination.
-
----
-
-## Run It Locally With Docker
-
-A single Compose file at the repository root builds the image from your working tree and
-runs the whole stack — API, worker, PostgreSQL, object store, and Prefect:
-
-```bash
-uv sync --extra dev    # once: installs invoke and the other development tools
-uv run invoke start
-```
-
-That is enough from a clean checkout: Compose builds the image when it is absent. After a
-code change, rebuild and restart:
-
-```bash
-uv run invoke build && uv run invoke start
-```
-
-| | |
-|---|---|
-| **Sync API** | `http://127.0.0.1:8030` — bearer token `infrahub-sync-dev-token` |
-| **Prefect UI** | `http://127.0.0.1:4230` |
-| **PostgreSQL** | `127.0.0.1:5440` |
-
-```bash
-curl -sf http://127.0.0.1:8030/version
-curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8030/status
-uv run invoke destroy                    # stop and reset
-```
-
-This stack reaches no destination on its own. To sync against a local Infrahub, start one
-with `uv run invoke preview.up` and set `INFRAHUB_API_TOKEN` before `invoke start`; the
-worker already resolves `host.docker.internal`. Inside the worker, `localhost` is the
-container itself, so set the registered package's destination URL to
-`http://host.docker.internal:8080` (the preview Infrahub's host port) before you register it.
-
-`invoke preview.up` remains the stack for running the service from source on your host
-next to a bundled Infrahub; this stack runs the image your working tree builds.
-
-Two things worth knowing. This is **not** the supported deployment — that is the Compose
-bundle described in the [deployment guide](https://docs.infrahub.app/sync/compose-deployment),
-which runs one digest-pinned image it was qualified against. And this build keeps its own
-BuildKit cache, separate from the one `invoke image.build` uses, so the first build each
-way is cold.
+See the [Python API](https://feature-v3-develop.infrahub-sync.pages.dev/reference/python-api),
+[Prefect remote run](https://feature-v3-develop.infrahub-sync.pages.dev/reference/prefect-remote-run), and
+[Sync HTTP API](https://feature-v3-develop.infrahub-sync.pages.dev/reference/sync-http-api) references
+for their contracts and setup. For a live plan and apply from a checkout, follow
+[Run a first sync](https://feature-v3-develop.infrahub-sync.pages.dev/development-stack#run-a-first-sync),
+which imports the NetBox demo data into a local Infrahub.
 
 ---
 
@@ -197,13 +233,12 @@ way is cold.
 
 | | |
 |---|---|
-| **Install and run** | [Install Infrahub Sync](https://docs.infrahub.app/sync/installation) · [Create a sync project](https://docs.infrahub.app/sync/creating-a-sync-project) · [Run a sync](https://docs.infrahub.app/sync/running-a-sync) |
-| **Full documentation** | [Infrahub Sync docs](https://docs.infrahub.app/sync) |
-| **All adapters** | [Adapter reference](https://docs.infrahub.app/sync#adapters) |
-| **Configuration reference** | [Sync instance configuration](https://docs.infrahub.app/sync/reference/config) · [CLI reference](https://docs.infrahub.app/sync/reference/cli) |
-| **Custom CA certificates** | [Custom certificates guide](https://docs.infrahub.app/sync/custom-certificates) |
-| **Local custom adapters** | [Local adapters guide](https://docs.infrahub.app/sync/adapters/local-adapters) |
-| **Contribute** | [Contributing guide](https://docs.infrahub.app/sync/contributing) — development environment, tests, code standards · [Local development stack](https://docs.infrahub.app/sync/development-stack) — the full stack on your machine |
+| **Install and run** | [Install Infrahub Sync](https://feature-v3-develop.infrahub-sync.pages.dev/installation) · [Create a sync project](https://feature-v3-develop.infrahub-sync.pages.dev/creating-a-sync-project) · [Run a sync](https://feature-v3-develop.infrahub-sync.pages.dev/running-a-sync) |
+| **Full documentation** | [Infrahub Sync V3 docs](https://feature-v3-develop.infrahub-sync.pages.dev/) |
+| **All adapters** | [Choose an adapter](https://feature-v3-develop.infrahub-sync.pages.dev/adapters/choosing-an-adapter) |
+| **Configuration reference** | [Sync instance configuration](https://feature-v3-develop.infrahub-sync.pages.dev/reference/config) · [CLI reference](https://feature-v3-develop.infrahub-sync.pages.dev/reference/cli) |
+| **Custom CA certificates** | [Custom certificates guide](https://feature-v3-develop.infrahub-sync.pages.dev/custom-certificates) |
+| **Contribute** | [Contributing guide](https://feature-v3-develop.infrahub-sync.pages.dev/contributing) — development environment, tests, code standards · [Local development stack](https://feature-v3-develop.infrahub-sync.pages.dev/development-stack) — both local stacks |
 
 ---
 
@@ -211,7 +246,7 @@ way is cold.
 
 - **Report a bug or request a feature** — [GitHub Issues](https://github.com/opsmill/infrahub-sync/issues)
 - **Discuss with the community** — [discord.gg/opsmill](https://discord.gg/opsmill)
-- **Contribute code or docs** — see the [Contributing guide](https://docs.infrahub.app/sync/contributing)
+- **Contribute code or docs** — see the [Contributing guide](https://feature-v3-develop.infrahub-sync.pages.dev/contributing)
 
 ---
 
