@@ -189,11 +189,42 @@ inherited one), or a uniqueness constraint are refused as `DestinationIdentityCo
 The error names the colliding rule. Applying those creates could converge distinct source
 objects onto one destination object. A unique attribute inherited from the same generic also
 refuses matching creates of different kinds. Updates are excluded, since each is keyed by its
-recorded destination id. The saved-plan apply gate checks the same rules before its first write.
+recorded destination id. The saved-plan apply gate checks these create-versus-create rules
+before its first write.
 
-The write surface applies the same rule, from the same function, before `client.create` — so a create
-refused at plan time and the same create arriving in a hand-built artifact are refused for the same
-reason, and neither attempts a mutation.
+Planning also compares each create's human-friendly ID against every loaded source record
+of that kind. This includes unchanged records restored from the previous run's cache and
+records represented by updates. A single create is refused if a distinct source identity
+projects onto the same destination match key, including paths through nested peer identities.
+The error names the kind, source identity fields, destination match key, and fields the
+destination cannot distinguish. Alternative uniqueness constraints do not replace the
+human-friendly ID used to match a create. An update-only plan continues to use recorded
+destination ids.
+
+The refusal identifies the other record by its source-store identifier when its identity
+contains only names. For identities with other fields it reports an opaque source identity
+fingerprint instead, withholding their values. These are source record identifiers,
+not create operation ids for unchanged records or updates.
+
+A source record with no value for a match component cannot prove a collision; planning
+warns and skips that record in the population comparison. An unchanged record whose
+identity peer cannot be resolved in the source store also warns and is skipped.
+Planned operations still require resolved peers. The separate checks for an
+under-keyed create still apply. Infrahub creates require the cached destination schema,
+and identity checks run even when no plan artifact directory was supplied. Direct Python
+callers planning for Infrahub must supply the parsed configuration; otherwise planning
+raises `PlanVerificationError`. Other destinations skip artifact derivation when no
+artifact directory or run id is supplied. The product run factory supplies all three.
+
+The write surface repeats the under-keyed-create checks before `client.create`.
+Apply also repeats the create-versus-create collision checks, but it does not load the
+source population or repeat the create-versus-update comparison. Those comparisons run
+only during planning; a hand-built artifact does not receive them at apply time.
+
+The population comparison adds work proportional to the loaded records of each kind
+that has a create and a human-friendly ID. It resolves each record's identity and stores
+its projected match key for comparison, so its time and temporary memory grow with the
+population being checked.
 
 Explicit `hfid` rendering is deliberately **not** reintroduced: `save(allow_upsert=True)` strips it on
 1.23.2 and the server matches on complete components anyway, so rendering it would assert a key the
