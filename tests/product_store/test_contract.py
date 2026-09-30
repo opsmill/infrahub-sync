@@ -3224,7 +3224,10 @@ def test_finish_run_rejects_non_utf8_bytes_before_updating_the_record(provider: 
 
 
 @pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
-def test_secret_canary_is_absent_from_raw_provider_contents(profile: str, tmp_path: Path) -> None:
+def test_secret_canary_is_absent_from_raw_provider_contents(
+    profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(globals(), "_APPEND_ORDINAL", count(1))
     secret = "raw-provider-canary-649"  # noqa: S105 - deliberate persistence-boundary canary.
     fake_s3 = _FakeS3()
     if profile == "local":
