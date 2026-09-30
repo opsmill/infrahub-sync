@@ -108,9 +108,8 @@ safe next bound, or the prior resource snapshot is missing. An empty snapshot is
 valid baseline and can still use a qualified cursor. A missing mapped model refuses the
 load before any resource query; it cannot stand in for an empty source kind.
 
-When every destination resource falls back to a full load, the saved plan now computes
+When every destination resource falls back to a full load, the saved plan computes
 delete proposals for destination-only objects and records `delete_operations_computed=true`.
-Previously a direct incremental request recorded `false` even after complete fallback.
 If any destination resource uses a delta, delete proposals remain uncomputed. Apply
 continues to skip all delete operations and records them as skipped; it does not delete
 these objects.
@@ -123,7 +122,8 @@ After a successful load, an explicit `persist_cursors_for_run()` call saves the 
 bound for each resource, including empty snapshots. The `safe-v1:` prefix in `cursors.json`
 marks bounds established under this contract; older cursors require full extraction.
 Parquet `_extract_ts` values remain diagnostic host timestamps and never become query
-bounds. Capture failure or load failure cannot advance the candidate cursor.
+bounds. Capture failure, load failure or an interrupted snapshot write clears the candidate
+cursor, so explicit persistence after an unsuccessful load cannot advance it.
 
 Safe bounds can re-read records already in the cached snapshot. Potenda uses DiffSync's
 in-memory `update_or_add_model_instance` for these rows: later yielded attributes replace

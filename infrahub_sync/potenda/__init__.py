@@ -487,32 +487,33 @@ class Potenda:
                 item = model_cls(**row)
                 stored, _ = adapter.update_or_add_model_instance(item)
                 if "local_id" in row and hasattr(stored, "local_id"):
-                    # Runtime models declare this field outside DiffSyncModel.
-                    setattr(stored, "local_id", item.model_dump()["local_id"])  # noqa: B010
+                    # TODO: type mapped models with their declared local_id field.
+                    setattr(stored, "local_id", item.local_id)  # noqa: B010  # ty: ignore[unresolved-attribute]
         # Only successful full resource loads establish a complete side.
         self._side_full_extract[side] = full_resources == set(adapter.top_level)
         self._did_full_extract = self._did_full_extract or self._side_full_extract[side]
         self._side_cursors[side] = next_cursors
 
-    def source_load(self):
+    def _load_side(self, *, side: str, adapter: Adapter) -> None:
+        """Keep cursors publishable only when loading and snapshotting both succeed."""
+        completed = False
         try:
-            logger.info("Load: Importing data from %s", self.source)
-            self.load_one_side(side="A", adapter=self.source)
-            self._write_side_snapshot("A", self.source)
+            logger.info("Load: Importing data from %s", adapter)
+            self.load_one_side(side=side, adapter=adapter)
+            self._write_side_snapshot(side, adapter)
+            completed = True
         except Exception as exc:
-            self._side_cursors.pop("A", None)
-            msg = f"An error occurred while loading {self.source}: {exc!s}"
+            msg = f"An error occurred while loading {adapter}: {exc!s}"
             raise ValueError(msg) from exc
+        finally:
+            if not completed:
+                self._side_cursors.pop(side, None)
+
+    def source_load(self):
+        self._load_side(side="A", adapter=self.source)
 
     def destination_load(self):
-        try:
-            logger.info("Load: Importing data from %s", self.destination)
-            self.load_one_side(side="B", adapter=self.destination)
-            self._write_side_snapshot("B", self.destination)
-        except Exception as exc:
-            self._side_cursors.pop("B", None)
-            msg = f"An error occurred while loading {self.destination}: {exc!s}"
-            raise ValueError(msg) from exc
+        self._load_side(side="B", adapter=self.destination)
 
     def load_both_sides(self) -> None:
         """Load source and destination.

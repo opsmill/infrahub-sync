@@ -166,6 +166,71 @@ def test_failed_load_does_not_persist_a_candidate(tmp_path: Path, monkeypatch: p
     assert not (pot.run_dir / "cursors.json").exists()
 
 
+@pytest.mark.parametrize("side", ["A", "B"])
+@pytest.mark.parametrize("stage", ["load", "snapshot"])
+@pytest.mark.parametrize("interrupt_type", [KeyboardInterrupt, SystemExit])
+def test_interrupted_reload_cannot_advance_cursor_against_retained_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    side: str,
+    stage: str,
+    interrupt_type: type[BaseException],
+) -> None:
+    """Reusing a successful run after interruption must retain its safe bound."""
+    rows = {"Device": [{"name": "device", "description": "old", "local_id": "original-id"}]}
+    source = _TimestampSource(rows, safe=True, exclusive=False, mutate=False)
+    first = _engine(tmp_path, "run-1", source, side)
+    load = first.source_load if side == "A" else first.destination_load
+    load()
+    first.persist_cursors_for_run(side=side)
+    assert first.run_dir is not None
+    cursor_path = first.run_dir / "cursors.json"
+    saved_cursors = cursor_path.read_bytes()
+    snapshot_path = first.run_dir / side / "Device.parquet"
+    saved_snapshot = snapshot_path.read_bytes()
+    (first.run_dir / "schema-sub-hash.txt").write_text("matching-schema")
+    (first.run_dir / "run.json").write_text(json.dumps({"status": "dry-run"}))
+
+    rows["Device"][0]["description"] = "new"
+    interrupt = interrupt_type("reload interrupted")
+
+    def reload() -> None:
+        row = rows["Device"][0]
+        source.update_or_add_model_instance(
+            _Device(name=row["name"], description=row["description"], local_id=row["local_id"])
+        )
+        if stage == "load":
+            raise interrupt
+
+    def interrupt_snapshot(**_kwargs: object) -> None:
+        raise interrupt
+
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            source,
+            "safe_cursor_before_load",
+            lambda _resource: CursorState(
+                CursorTier.TIMESTAMP, (CHANGE_TIME + timedelta(seconds=10)).isoformat(), safe=True
+            ),
+        )
+        patch.setattr(source, "load", reload)
+        patch.setattr("infrahub_sync.cache.parquet_io.write_resource_side", interrupt_snapshot)
+        with pytest.raises(interrupt_type) as caught:
+            load()
+        assert caught.value is interrupt
+
+    first.persist_cursors_for_run(side=side)
+    assert cursor_path.read_bytes() == saved_cursors
+    assert snapshot_path.read_bytes() == saved_snapshot
+
+    next_source = _TimestampSource(rows, safe=True, exclusive=False, mutate=False)
+    second = _engine(tmp_path, "run-2", next_source, side)
+    load_next = second.source_load if side == "A" else second.destination_load
+    load_next()
+    assert any(call[0] == "delta" for call in next_source.calls)
+    assert next_source.get("Device", "device").description == "new"  # ty: ignore[unresolved-attribute]
+
+
 def test_forced_full_extract_does_not_request_a_safe_cursor(tmp_path: Path) -> None:
     source = _TimestampSource({"Device": []}, safe=True, exclusive=False, mutate=False)
     pot = _engine(tmp_path, "run-1", source, "A")
