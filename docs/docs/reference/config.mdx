@@ -35,10 +35,31 @@ Describes the overall synchronization configuration.
 you from the `reference:` entries in `schema_mapping`, so a kind is normally
 written after the kinds it references. A self-reference (a kind referencing
 itself) adds no ordering edge, and a reference outside the kind's
-`identifiers` is optional: if keeping it would create a cycle, infrahub-sync
-drops that edge to break the cycle and logs the drop at WARNING level, so the
-kind may be written before that one referenced kind. Keep `order:` only to
-override the computed order for an adapter quirk.
+`identifiers` is optional. When cycles prevent ordering, infrahub-sync discovers
+cycles by visiting kinds in `schema_mapping` order and sorting only each kind's
+references, then drops all optional edges in those discovered cycles in one pass.
+It repeats this until
+ordering succeeds or only identity-reference cycles remain, which cause an error.
+Each dropped edge is logged at WARNING level, and its kind may be written before
+the referenced kind. For every adapter, this stabilizes tiers for cyclic
+configurations that previously varied between runs. Keep `order:` only to override
+the computed order for an adapter quirk.
+
+For an Infrahub destination, a `reference:` to a generic kind waits for every
+mapped concrete kind in that generic's live schema `used_by` list. The generic
+itself is not added as work when it has no mapping. If neither the generic nor
+any of its concrete peer kinds is mapped, the run reports a configuration error
+before loading records. Map the generic or concrete peer kinds, or provide an
+explicit `order:` list.
+Expansion can expose an identity-reference cycle that previously went unnoticed;
+resolve the cycle in your mapping or provide an explicit `order:`. Saved plans that
+reference an Infrahub generic must be created and reviewed again after upgrading,
+because the plan's schema fingerprint now includes its mapped concrete peers.
+
+For every adapter, a dependency required by an identity field stays required even
+when an optional field references the same peer. This applies to concrete references
+and expanded generic references. Cycle breaking preserves that dependency and
+refuses cycles made entirely of identity dependencies.
 
 Internally, infrahub-sync derives a write-order graph from the `reference:`
 entries in each `schema_mapping` field and groups kinds into **tiers**:
