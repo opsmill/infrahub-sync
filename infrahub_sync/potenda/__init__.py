@@ -607,7 +607,11 @@ class Potenda:
         return None if written is None else written[0]
 
     def _write_plan_artifact(self, diffs: Sequence[Any]) -> tuple[PlanManifest, dict[str, int]] | None:
-        """Write the artifact once and retain its authoritative in-memory action counts."""
+        """Run Infrahub checks without storage; skip other destinations without a cache identity.
+
+        The ordinary product path arrives with `run_dir`, `run_id`, and parsed `config`.
+        Direct callers still cannot bypass the Infrahub safety checks by omitting storage.
+        """
         if (not self.run_dir or not self.run_id) and getattr(self.destination, "type", None) != "Infrahub":
             logger.debug("Plan artifact: skipped, this run has no run_dir/run_id")
             return None
