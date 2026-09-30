@@ -34,6 +34,7 @@ from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.errors import PlanSchemaChangedError
+from infrahub_sync.plan.models import DestinationBindingRecord
 from infrahub_sync.plan.ownership import WriteDispatchTracker
 from infrahub_sync.plan.review import read_saved_plan
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
@@ -159,6 +160,7 @@ def _harness(
     *,
     recorded_snapshot: dict[str, Any] | None = None,
     schema_fingerprint: str | None = None,
+    destination_branch: str | None = None,
 ) -> _Harness:
     """Register one configuration, retain one plan against it, and disarm execution."""
     monkeypatch.setenv("NETBOX_TOKEN", NETBOX_CANARY)
@@ -208,6 +210,11 @@ def _harness(
         operations=[],
         configuration_binding=binding,
         schema_fingerprint=recorded,
+        destination_binding=(
+            DestinationBindingRecord(url="https://destination.invalid", branch=destination_branch)
+            if destination_branch is not None
+            else None
+        ),
     )
     spy = _SnapshotSpy()
     monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", spy)
@@ -648,13 +655,14 @@ def test_a_published_registered_plan_carries_its_schema_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A reviewer reading the published document sees the semantics the plan is bound to."""
-    harness = _harness(tmp_path, monkeypatch)
+    harness = _harness(tmp_path, monkeypatch, destination_branch="review")
 
     published = _published_plan(harness)
 
     assert published.schema_fingerprint == _fingerprint(harness.instance, _SNAPSHOT)
     assert published.checksum == harness.checksum
     assert published.checksum_ok
+    assert published.destination_branch == "review"
 
 
 def test_a_published_unregistered_plan_carries_no_schema_binding(
@@ -676,6 +684,8 @@ def test_a_published_unregistered_plan_carries_no_schema_binding(
 
     assert document.schema_fingerprint is None
     assert json.loads(document.model_dump_json())["schema_fingerprint"] is None
+    assert document.destination_branch is None
+    assert json.loads(document.model_dump_json())["destination_branch"] is None
 
 
 # ======================================================================================

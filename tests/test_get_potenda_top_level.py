@@ -37,3 +37,14 @@ def test_potenda_top_level_comes_from_compute_order(netbox_instance: SyncInstanc
     expected = netbox_instance.compute_order()
     assert ptd.top_level == expected
     assert "BuiltinTag" in ptd.top_level
+
+
+def test_potenda_builds_without_subhash_when_cache_import_fails(netbox_instance: SyncInstance) -> None:
+    """A failed cache import degrades to an empty schema sub-hash instead of failing the run."""
+    with (
+        patch("infrahub_sync.utils.import_adapter") as fake_import,
+        patch.dict("sys.modules", {"infrahub_sync.cache.sidecars": None}),
+    ):
+        fake_import.return_value = MagicMock()
+        ptd = get_potenda_from_instance(sync_instance=netbox_instance, base_directory=Path(netbox_instance.directory))
+    assert not ptd._schema_subhash

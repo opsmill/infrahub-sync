@@ -15,7 +15,11 @@ The rules themselves, and the measurements behind them, are recorded in
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Collection, Mapping
+from hashlib import sha256
+from itertools import starmap
+from operator import itemgetter
 from typing import TYPE_CHECKING, Any
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
@@ -30,6 +34,100 @@ if TYPE_CHECKING:
 # attribute, `site__name__value` for one that crosses a relationship. The only thing split on
 # it here is a schema path; a DiffSync unique id is never split.
 COMPONENT_PATH_SEPARATOR = "__"
+logger = logging.getLogger(__name__)
+
+
+def require_infrahub_create_schema(*, destination: Any, operations: Sequence[PlannedOperation]) -> None:
+    """Refuse Infrahub creates when the cached schema cannot prove their match keys."""
+    if getattr(destination, "type", None) != "Infrahub":
+        return
+    schema = getattr(destination, "schema", None) or {}
+    missing = sorted({op.kind for op in operations if op.action == "create" and schema.get(op.kind) is None})
+    if not missing:
+        return
+    msg = (
+        f"Infrahub creates of kind(s) {', '.join(missing)} cannot be checked because their destination schema "
+        "is unavailable. The whole plan was refused before any destination write."
+    )
+    raise UnkeyedCreateRefusedError(msg, next_action="Load the destination schema, then re-run `diff`.")
+
+
+def _identity_paths(identity: Mapping[str, Any], prefix: str = "") -> set[str]:
+    """Name identity leaves, including fields inside nested peer identities."""
+    paths: set[str] = set()
+    for field, value in identity.items():
+        path = f"{prefix}{field}"
+        if isinstance(value, Mapping) and isinstance(value.get("identity"), Mapping):
+            paths.update(_identity_paths(value["identity"], f"{path}__"))
+        else:
+            paths.add(f"{path}__value")
+    return paths
+
+
+def refuse_source_identity_collisions(
+    *,
+    kind: str,
+    node: Any,
+    creates: Sequence[PlannedOperation],
+    identities: Sequence[tuple[str, Mapping[str, Any]]],
+    declared_identity: Collection[str],
+) -> None:
+    """Refuse a create matching a distinct loaded source identity, even without a diff.
+
+    Only the human-friendly ID matches a converging create. Uniqueness constraints
+    may reject a write but do not provide an alternative upsert match key.
+    """
+    components = tuple(getattr(node, "human_friendly_id", None) or ())
+    if not components or not creates:
+        return
+    population: dict[bytes, dict[bytes, tuple[str, Mapping[str, Any]]]] = {}
+    missing: set[str] = set()
+    for identifier, identity in identities:
+        values = [component_value(identity, component) for component in components]
+        absent = {component for component, value in zip(components, values, strict=True) if not _usable(value)}
+        if absent:
+            missing.update(absent)
+            continue
+        projection = canonical_json_bytes(values, kind=kind)
+        population.setdefault(projection, {})[canonical_json_bytes(identity, kind=kind)] = (identifier, identity)
+    if missing:
+        logger.warning(
+            "Plan: source population for destination kind %s supplies no value for match component(s) %s; "
+            "those records cannot be compared for convergence and are allowed to proceed",
+            kind,
+            ", ".join(sorted(missing)),
+        )
+    for operation in creates:
+        values = [_create_component_value(operation, component) for component in components]
+        if not all(_usable(value) for value in values):
+            continue
+        group = population.get(canonical_json_bytes(values, kind=kind), {})
+        own = canonical_json_bytes(operation.identity, kind=kind)
+        others = [record for encoded, record in group.items() if encoded != own]
+        if not others:
+            continue
+        paths = _identity_paths(operation.identity)
+        for _, identity in others:
+            paths.update(_identity_paths(identity))
+        indistinguishable = ", ".join(sorted(paths - set(components))) or "distinct source identities"
+        ids = ", ".join(starmap(_source_record_identifier, sorted(others, key=itemgetter(0))[:2]))
+        msg = (
+            f"Create {operation.operation_id!r} of destination kind {kind!r} shares its actual destination "
+            f"match key (human-friendly ID: {', '.join(components)}) with a distinct loaded source record. "
+            f"Declared source identity (mapping identifiers): {', '.join(sorted(declared_identity))}. "
+            f"The destination cannot distinguish: {indistinguishable}. Other loaded source record identifiers: {ids}. "
+            f"{_collision_values(components, operation)}. Applying the create could replace that record's data. "
+            "The whole plan was refused before any destination write."
+        )
+        raise DestinationIdentityCollisionError(msg)
+
+
+def _source_record_identifier(identifier: str, identity: Mapping[str, Any]) -> str:
+    """Show store ids containing only names; otherwise show an opaque identity fingerprint."""
+    if all(path.split(COMPONENT_PATH_SEPARATOR)[-2] == "name" for path in _identity_paths(identity)):
+        return repr(identifier)
+    fingerprint = sha256(canonical_json_bytes(identity)).hexdigest()[:16]
+    return f"source identity fingerprint {fingerprint} (non-name values withheld)"
 
 
 def _component_field(component: str) -> str:

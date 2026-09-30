@@ -494,8 +494,16 @@ def test_bridge_sanitizes_every_non_printable_character_in_every_diagnostic_fiel
     child.log(injected_level, "message with canary %s", canary)
 
     stderr = capsys.readouterr().err
+    expected_logger_name = f"{SOURCE_LOGGER_NAME}.{'po?tenda' if field == 'logger_name' else 'potenda'}"
+    expected_level_name = "INJECTED?LEVEL" if field == "level_name" else "INJECTEDLEVEL"
+    expected_exception_type = "Bad?Exception" if field == "exception_type" else "RuntimeError"
     assert stderr.count("could not be forwarded") == 1
-    assert stderr.strip("\n").count("\n") == 0
+    # `splitlines()` splits on every separator probed here, not just `\n`.
+    assert len(stderr.splitlines()) == 1
+    assert stderr == (
+        f"infrahub_sync: a log record from {expected_logger_name} at {expected_level_name} "
+        f"could not be forwarded ({expected_exception_type})\n"
+    )
     assert canary not in stderr
 
 

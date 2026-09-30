@@ -244,6 +244,22 @@ def test_the_schema_read_consumes_the_resolved_branch(monkeypatch: pytest.Monkey
     assert accessor.calls == ["staging"]
 
 
+def test_schema_client_ignores_ambient_git_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The schema accessor's SDK default agrees with its explicit schema argument."""
+    from infrahub_sdk import Config
+
+    monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH", "ambient")
+    monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH_FROM_GIT", "true")
+    monkeypatch.setenv("INFRAHUB_ADDRESS", "invalid-ambient-address")
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+    content = package_data()
+    _, settings = capabilities_module._resolved_client_settings(package(content), "review")
+
+    config = Config(**settings)
+    assert config.default_branch_from_git is False
+    assert config.default_infrahub_branch == "review"
+
+
 # --- AR3: the four error fixtures against an injected snapshot ------------------------
 
 

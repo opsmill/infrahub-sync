@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from infrahub_sdk import InfrahubClientSync
 from infrahub_sdk.exceptions import NodeNotFoundError
 
 from infrahub_sync.configuration import ConfigurationPackage, parse_configuration_package
@@ -184,7 +185,14 @@ def _providers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[dict
     monkeypatch.setitem(sys.modules, "pynetbox", driver)
     _forget_netbox_adapter()
     monkeypatch.setattr("infrahub_sync.adapters.infrahub.InfrahubClientSync", _infrahub_client)
-    monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", lambda _package, _branch: SNAPSHOT)
+    schema_branches: list[str] = []
+
+    def _read_schema(_package: ConfigurationPackage, branch: str) -> dict[str, Any]:
+        schema_branches.append(branch)
+        return SNAPSHOT
+
+    clients["schema_branches"] = schema_branches
+    monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", _read_schema)
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     monkeypatch.setenv("NETBOX_TOKEN", "netbox-execution-canary")
     monkeypatch.setenv("INFRAHUB_API_TOKEN", "infrahub-execution-canary")
@@ -339,12 +347,30 @@ def test_no_generated_python_is_written_or_read_by_a_registered_run(tmp_path: Pa
 
 
 @pytest.mark.parametrize(
-    ("declared", "run_branch", "expected"),
-    [("staging", "review", "staging"), (None, "review", "review"), (None, None, "main")],
+    "case",
+    [
+        ("staging", None, None, False, "staging"),
+        (None, "review", None, False, "review"),
+        ("staging", "review", None, False, "staging"),
+        (None, None, None, False, "main"),
+        (None, None, "ambient", False, "main"),
+        (None, None, None, True, "main"),
+        (None, None, "ambient", True, "main"),
+        ("staging", None, None, True, "staging"),
+    ],
 )
 def test_the_constructed_destination_receives_the_effective_branch(
-    tmp_path: Path, declared: str | None, run_branch: str | None, expected: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    providers: dict[str, Any],
+    case: tuple[str | None, str | None, str | None, bool, str],
 ) -> None:
+    declared, run_branch, ambient_branch, from_git, expected = case
+    monkeypatch.delenv("INFRAHUB_DEFAULT_BRANCH", raising=False)
+    if ambient_branch is not None:
+        monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH", ambient_branch)
+    monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH_FROM_GIT", str(from_git).lower())
+    monkeypatch.setenv("INFRAHUB_ADDRESS", "invalid-ambient-address")
     instance = _registered_instance(tmp_path, branch=declared, run_branch=run_branch)
     plan = instance._runtime_models
     assert plan is not None
@@ -353,9 +379,27 @@ def test_the_constructed_destination_receives_the_effective_branch(
 
     destination = cast("Any", engine.destination)
     assert plan.branch == expected
+    assert providers["schema_branches"] == [expected]
     assert destination.destination_binding.branch == expected
     assert destination.client.config.default_branch == expected
+    assert destination.client.config.default_branch_from_git is False
+    assert destination.client.config.default_infrahub_branch == expected
+    assert destination.client.config.address == destination.destination_binding.url
+    sdk_client = InfrahubClientSync(address=destination.destination_binding.url, config=destination.client.config)
+    assert sdk_client.default_branch == destination.destination_binding.branch
     assert destination.client.schema.branches == [expected]
+    client_branches: list[str | None] = []
+
+    def _capture_client_branch(*, branch: str | None, **_kwargs: object) -> None:
+        client_branches.append(branch)
+        raise LookupError
+
+    monkeypatch.setattr(sdk_client.schema, "get", _capture_client_branch)
+    with pytest.raises(LookupError):
+        sdk_client.get(kind="CoreAccount", name__value="source")
+    with pytest.raises(LookupError):
+        sdk_client.create(kind="CoreAccount", data={"name": "source"})
+    assert client_branches == [expected, expected]
 
 
 # --- R2: the declared class is the class the engine runs ---------------------------------

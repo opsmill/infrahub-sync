@@ -100,6 +100,10 @@ The mapping connects NetBox API paths to Infrahub kinds. This excerpt from the e
 
 The NetBox API paths are listed at `/api/schema/swagger-ui/` on your NetBox instance.
 
+When a mapped NetBox record is excluded by a declared `filters` rule, the source omits references to it from optional relationships and logs a warning with the owning kind, record ID, field, peer kind, and excluded peer IDs. A relationship with several peers keeps the peers that passed the filter. Its plan can remove destination links to excluded peers. A full plan can also list a delete for a filtered record that exists at the destination, but apply skips every planned delete, so that record stays. For a relationship with one peer, an omitted reference becomes an absent value in the plan; an existing destination link can remain unchanged. Review these effects before applying the plan.
+
+If a required relationship has no remaining peer, the run stops with an error that identifies the owning record, field, peer kind, and filter exclusion. A reference to a record that does not exist in NetBox remains an error. When an owner is loaded before its filtered peer kind, the first excluded-peer lookup reads the entire peer endpoint to distinguish filtering from absence; the later peer load can read it again. Direct incremental adapter calls also make this full read on their first lookup.
+
 <ReferenceLink title="NetBox API Swagger" url="https://demo.netbox.dev/api/schema/swagger-ui" openInNewTab />
 
 ## Related guides

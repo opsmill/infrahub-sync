@@ -5,26 +5,23 @@ import operator
 import re
 from typing import TYPE_CHECKING, Any, ClassVar, Union
 
-from infrahub_sync.cache.cursors import CursorTier
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
-
-    from infrahub_sync.cache.cursors import CursorState
-    from infrahub_sync.runtime_schema import RuntimeModelPlan
-
 import pydantic
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from diffsync.store import BaseStore
 from diffsync.enum import DiffSyncFlags
 from jinja2 import StrictUndefined
 from jinja2.nativetypes import NativeEnvironment
 from netutils.ip import is_ip_within as netutils_is_ip_within
 
 from infrahub_sync.adapters.utils import get_value
+from infrahub_sync.cache.cursors import CursorTier
+from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Mapping
+
+    from diffsync.store import BaseStore
+
+    from infrahub_sync.cache.cursors import CursorState
+    from infrahub_sync.runtime_schema import RuntimeModelPlan
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +91,9 @@ class SyncConfig(pydantic.BaseModel):
             if isinstance(item, str):
                 try:
                     new_flags.append(DiffSyncFlags[item])
-                except KeyError:
+                except KeyError as exc:
                     msg = f"Invalid DiffSyncFlags value: {item}"
-                    raise ValueError(msg)
+                    raise ValueError(msg) from exc
             else:
                 new_flags.append(item)
         return new_flags
@@ -123,9 +120,6 @@ class SyncConfig(pydantic.BaseModel):
         """
         if self.order:
             return list(self.order), None
-        # Imported here to avoid a circular import at module load.
-        from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
-
         tiers, dropped = compute_tiers(self.schema_mapping, generic_peers)
         for idx, tier in enumerate(tiers):
             logger.info("tier %d (%d): %s", idx, len(tier), sorted(tier))
@@ -237,17 +231,17 @@ class DiffSyncMixin:
             else:
                 self.model_loader(model_name=item, model=getattr(self, item))
 
-    def model_loader(self, model_name: str, model):
+    def model_loader(self, model_name: str, model):  # pylint: disable=unused-argument  # abstract hook
         raise NotImplementedError
 
-    def cursor_tier_for(self, model_name: str) -> CursorTier:  # noqa: ARG002
+    def cursor_tier_for(self, model_name: str) -> CursorTier:  # noqa: ARG002  # pylint: disable=unused-argument
         """Strongest cursor tier the adapter supports for this model.
 
         Default = NONE (always full extract). Override per adapter.
         """
         return CursorTier.NONE
 
-    def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterable[dict]:
+    def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterable[dict]:  # pylint: disable=unused-argument  # abstract hook
         """Yield raw upstream records changed since `cursor`.
 
         Adapters that override `cursor_tier_for` to a non-NONE tier MUST
@@ -260,7 +254,7 @@ class DiffSyncMixin:
         )
         raise NotImplementedError(msg)
 
-    def list_existing_ids(self, model_name: str) -> Iterable[str]:
+    def list_existing_ids(self, model_name: str) -> Iterable[str]:  # pylint: disable=unused-argument  # abstract hook
         """Yield current `unique_id` strings for `model_name` in the source
         of truth. Used for delete detection between incremental runs.
         """

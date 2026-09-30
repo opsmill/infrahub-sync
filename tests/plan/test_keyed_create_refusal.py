@@ -333,8 +333,8 @@ def test_relationship_uniqueness_constraint_uses_the_peer_identity() -> None:
         warn_missing_convergence_key(destination=SimpleNamespace(schema=schemas), operations=[first, second])
 
 
-def test_a_create_and_an_update_sharing_a_projection_are_not_a_collision() -> None:
-    """Mixed actions: the update is keyed by id, so the two cannot converge onto one object."""
+def test_a_create_sharing_an_updates_projection_is_refused() -> None:
+    """The update is safe by id, but the create could replace its source record's data."""
     update = planned(
         kind=SITE_KIND,
         identity={"name": "site-a", "description": "second"},
@@ -342,7 +342,8 @@ def test_a_create_and_an_update_sharing_a_projection_are_not_a_collision() -> No
         action="update",
     )
 
-    check(site_create("site-a", "first"), update)
+    with pytest.raises(DestinationIdentityCollisionError, match="distinct loaded source record"):
+        check(site_create("site-a", "first"), update)
 
 
 def test_two_updates_sharing_a_projection_are_not_a_collision() -> None:

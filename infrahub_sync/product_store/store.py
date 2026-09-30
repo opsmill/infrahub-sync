@@ -1,5 +1,7 @@
 """Durable relational and immutable artifact providers for product records."""
 
+# pylint: disable=too-many-lines  # one module owns the provider contract and both backends
+
 from __future__ import annotations
 
 import json

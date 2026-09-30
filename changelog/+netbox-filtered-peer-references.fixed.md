@@ -1,0 +1,1 @@
+NetBox plans now warn about and omit references to records excluded by a configured filter, instead of stopping, when the relationship is optional. For a relationship with several peers, the plan can remove destination links to the excluded peers; an existing single-peer link stays unchanged. A full plan can list a delete for a filtered record, but apply skips planned deletes.

@@ -99,7 +99,8 @@ def compute_tiers(
     Raises `infrahub_sdk.topological_sort.DependencyCycleExistsError` when a
     cycle goes through identity-bearing edges only.
     """
-    from infrahub_sdk.topological_sort import (
+    # Deferred so importing the package does not load the SDK; plan review runs without it.
+    from infrahub_sdk.topological_sort import (  # pylint: disable=import-outside-toplevel
         DependencyCycleExistsError,
         topological_sort,
     )

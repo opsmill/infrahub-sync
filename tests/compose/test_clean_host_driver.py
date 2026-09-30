@@ -2205,9 +2205,12 @@ def test_the_targeted_node_is_matched_by_kind_and_refused_unless_there_is_exactl
     """
     source = code_of(CHECKS / "schema_change.py")
 
-    matcher = "f\"{node['namespace']}{node['name']}\" == SMOKE_KIND"
+    # Compared as syntax trees: how ast.unparse quotes an f-string differs between
+    # CPython releases, so a text match on the rendered source is not portable.
+    matcher = ast.dump(ast.parse("f\"{node['namespace']}{node['name']}\" == SMOKE_KIND", mode="eval").body)
+    comparisons = [ast.dump(node) for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Compare)]
 
-    assert matcher in source, "the node is not matched by the kind Infrahub composes"
+    assert matcher in comparisons, "the node is not matched by the kind Infrahub composes"
     assert "if len(declared) != 1:" in source, "a document declaring none or several is accepted"
 
 
