@@ -467,7 +467,7 @@ def test_prefix_and_address_use_the_same_network_address(
     instance.planning_results = lambda _name: [dict(row)]
     networks = instance.filter_networks()
     assert [network["normalized_prefix"] for network in networks] == [expected]
-    interfaces = asyncio.run(instance.filter_interfaces([{"IP": address}]))
+    interfaces = instance.run_async(instance.filter_interfaces([{"IP": address}]))
     assert interfaces[0]["prefix"] == expected
     assert interfaces[0]["prefix"] == networks[0]["normalized_prefix"]
     assert interfaces[0]["vrf"] == "default"
