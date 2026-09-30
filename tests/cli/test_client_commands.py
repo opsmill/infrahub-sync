@@ -673,6 +673,109 @@ def test_runs_plan_unmatched_kind_is_typed_input_error(client: MagicMock) -> Non
     assert "argument: kind" in result.output
 
 
+# A terminal acts on these rather than printing them: cursor movement, line erase,
+# carriage return, newline, and a right-to-left override that reorders what follows.
+# Built from code points so this source file carries no bidirectional control itself.
+_RLO = chr(0x202E)
+_LRI = chr(0x2066)
+_TERMINAL_CONTROLS = ("\x1b", "\r", "\x9b", "\x7f", _RLO, _LRI)
+
+
+def _assert_no_terminal_controls(rendered: str) -> None:
+    # An injected newline is caught by the exact-line assertions: a split value never
+    # matches the single escaped line they expect.
+    for line in rendered.split("\n"):
+        for character in _TERMINAL_CONTROLS:
+            assert character not in line, repr(line)
+
+
+def test_runs_plan_detail_escapes_terminal_controls_in_source_values(client: MagicMock) -> None:
+    """A source-derived value must not be able to rewrite the lines a reviewer approves."""
+    forged = f"edge\x1b[1A\x1b[2K\rop-forged create Device name=fake\n\x9b2K\x7f{_RLO}evil{_LRI}x"
+    plan = _plan()
+    operation = plan.operations[0].model_copy(
+        update={"kind": "Dev\x1bice", "identity": {"name": forged}, "destination_id": "dest\r1"}
+    )
+    summary = plan.summary.model_copy(update={"by_kind": {"Dev\x1bice": 1, "Site": 1}})
+    client.get_plan.return_value = plan.model_copy(
+        update={
+            "operations": (operation, plan.operations[1]),
+            "summary": summary,
+            "verification_notes": ("note\x1b[2Kforged",),
+            "destination_branch": "review\rmain",
+        }
+    )
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    _assert_no_terminal_controls(result.output)
+    lines = result.output.splitlines()
+    assert (
+        "op-create create Dev\\x1bice name=edge\\x1b[1A\\x1b[2K\\rop-forged create Device name=fake"
+        "\\n\\x9b2K\\x7f\\u202eevil\\u2066x"
+    ) in lines
+    assert "  destination id: dest\\r1" in lines
+    assert "verification_note: note\\x1b[2Kforged" in lines
+    assert "destination_branch: review\\rmain" in lines
+    assert "by_kind: Dev\\x1bice=1, Site=1" in lines
+
+
+def test_runs_plan_detail_keeps_ordinary_non_ascii_values_unchanged(client: MagicMock) -> None:
+    plan = _plan()
+    operation = plan.operations[0].model_copy(update={"identity": {"name": "Zürich-東京 Łódź"}})
+    client.get_plan.return_value = plan.model_copy(update={"operations": (operation, plan.operations[1])})
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "op-create create Device name=Zürich-東京 Łódź" in result.output.splitlines()
+
+
+def test_diff_summary_escapes_terminal_controls_in_the_saved_plan(client: MagicMock) -> None:
+    plan = _plan()
+    client.get_plan.return_value = plan.model_copy(update={"verification_notes": ("ok\x1b[1A\rforged",)})
+
+    result = _invoke(client, "diff", "--config-id", "edge-sync", "--version", "1", "--reason", "review")
+
+    assert result.exit_code == 0, result.output
+    _assert_no_terminal_controls(result.output)
+    assert "verification_note: ok\\x1b[1A\\rforged" in result.output.splitlines()
+
+
+def test_configuration_validation_escapes_terminal_controls_in_findings(client: MagicMock) -> None:
+    client.validate_config.return_value = client.validate_config.return_value.model_copy(
+        update={
+            "findings": (
+                ValidationFindingResource(
+                    code="first", severity="warning", location="/a", message=f"bad\x1b[2K{_RLO}eulav"
+                ),
+            )
+        }
+    )
+
+    validated = _invoke(client, "configs", "validate", "edge-sync", "1")
+
+    assert validated.exit_code == 0, validated.output
+    _assert_no_terminal_controls(validated.output)
+    assert "finding: code=first severity=warning location=/a message=bad\\x1b[2K\\u202eeulav" in (
+        validated.output.splitlines()
+    )
+
+
+def test_client_errors_escape_terminal_controls_in_server_text(client: MagicMock) -> None:
+    client.list_configs.side_effect = ConfigsAPIError(
+        403, "forbidden", "authorization", "denied\x1b[1A\rerror: none", mutation_id=f"m{_RLO}1"
+    )
+
+    result = _invoke(client, "configs", "list")
+
+    assert result.exit_code == 1
+    _assert_no_terminal_controls(result.output)
+    assert "reason: denied\\x1b[1A\\rerror: none" in result.output.splitlines()
+    assert "mutation_id: m\\u202e1" in result.output.splitlines()
+
+
 def test_typed_config_refusal_preserves_machine_fields(client: MagicMock) -> None:
     client.list_configs.side_effect = ConfigsAPIError(
         403,

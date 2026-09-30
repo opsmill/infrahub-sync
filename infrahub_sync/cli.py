@@ -52,6 +52,14 @@ VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": l
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
+# Characters a terminal acts on instead of printing: C0 and C1 controls (ESC, CR, and
+# newline among them), DEL, and the bidirectional overrides and isolates that reorder
+# the text after them. Each is rendered as a visible escape so a value from a source
+# or the server cannot move the cursor, erase a line, or show a forged one.
+_DISPLAY_ESCAPES = {
+    code: f"\\x{code:02x}" if code <= 0xFF else f"\\u{code:04x}"
+    for code in (*range(0x20), *range(0x7F, 0xA0), *range(0x202A, 0x202F), *range(0x2066, 0x206A))
+} | {ord("\t"): "\\t", ord("\n"): "\\n", ord("\r"): "\\r"}
 
 app = typer.Typer(help="Synchronize registered configurations through the Sync API.")
 configs_app = typer.Typer(help="Register and inspect configuration packages.")
@@ -121,6 +129,14 @@ def _client(ctx: typer.Context) -> SyncClient:
     return client
 
 
+def _display(value: object) -> str:
+    """Render a value for a terminal with its control characters made visible.
+
+    Only the display changes: the saved plan and every JSON rendering keep the real value.
+    """
+    return str(value).translate(_DISPLAY_ESCAPES)
+
+
 def _echo_fields(fields: tuple[tuple[str, object], ...], *, err: bool = False) -> None:
     for name, value in fields:
         if value is None:
@@ -131,7 +147,7 @@ def _echo_fields(fields: tuple[tuple[str, object], ...], *, err: bool = False) -
             rendered = str(value).lower()
         else:
             rendered = str(value)
-        typer.echo(f"{name}: {rendered}", err=err)
+        typer.echo(f"{name}: {_display(rendered)}", err=err)
 
 
 def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object], ...]]:
@@ -285,8 +301,10 @@ def _echo_validation(resource: ValidationReportResource) -> None:
     )
     for finding in resource.findings:
         typer.echo(
-            "finding: "
-            f"code={finding.code} severity={finding.severity} location={finding.location} message={finding.message}"
+            _display(
+                "finding: "
+                f"code={finding.code} severity={finding.severity} location={finding.location} message={finding.message}"
+            )
         )
 
 
@@ -464,7 +482,7 @@ def _operation_request(
 
 
 def _echo_counts(name: str, counts: Mapping[str, int]) -> None:
-    typer.echo(f"{name}: " + ", ".join(f"{key}={value}" for key, value in counts.items()))
+    typer.echo(_display(f"{name}: " + ", ".join(f"{key}={value}" for key, value in counts.items())))
 
 
 def _delete_disclosure(plan: PlanResource) -> None:
@@ -483,13 +501,16 @@ def _identity_text(identity: Mapping[str, Any]) -> str:
 
 def _operation_detail(operation: PlanOperationResource) -> None:
     marker = " (not executed)" if operation.action == "delete" else ""
+    # Identity values come from the source, so they are escaped before a reviewer reads them.
     typer.echo(
-        f"{operation.operation_id} {operation.action} {operation.kind} {_identity_text(operation.identity)}{marker}"
+        _display(
+            f"{operation.operation_id} {operation.action} {operation.kind} {_identity_text(operation.identity)}{marker}"
+        )
     )
     # Only an update carries one, and it is what the apply will key that write by, so a
     # reviewer sees which destination object the operation names before approving it.
     if operation.destination_id is not None:
-        typer.echo(f"  destination id: {operation.destination_id}")
+        typer.echo(f"  destination id: {_display(operation.destination_id)}")
     payload = operation.payload
     if payload is not None:
         typer.echo(f"  payload: {json.dumps(payload, sort_keys=True, separators=(',', ':'))}")
@@ -519,7 +540,7 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
         fields.append(("schema_fingerprint", plan.schema_fingerprint))
     _echo_fields(tuple(fields))
     for note in plan.verification_notes:
-        typer.echo(f"verification_note: {note}")
+        typer.echo(f"verification_note: {_display(note)}")
     _echo_counts("by_action", plan.summary.by_action)
     _echo_counts("by_kind", plan.summary.by_kind)
     _delete_disclosure(plan)
