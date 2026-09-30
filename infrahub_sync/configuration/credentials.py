@@ -13,7 +13,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .models import REDACTED, is_renderable_setting_path, safe_pointer_component
 
@@ -26,11 +26,45 @@ _ENV_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _REGISTERED_CONTEXT = "_infrahub_sync_registered_context"
 
 
+def is_registered_context(settings: Mapping[str, object]) -> bool:
+    """Whether adapter settings belong to a registered package's runtime instance.
+
+    Registered settings are the package's whole authority: an adapter reads no worker
+    environment variable for an address, a credential, TLS verification, or SDK settings
+    when this is true. Only direct adapter use keeps an environment fallback.
+    """
+    return settings.get(_REGISTERED_CONTEXT) is True
+
+
+def declared_settings(settings: Mapping[str, object]) -> dict[str, object]:
+    """Copy adapter settings without the internal registered-context marker.
+
+    Use this before settings reach a third-party constructor as keywords: the marker is
+    for this package's own checks, and an SDK with a fixed signature refuses it.
+    """
+    return {key: value for key, value in settings.items() if key != _REGISTERED_CONTEXT}
+
+
+def pin_infrahub_sdk_authority(sdk_config: dict[str, Any]) -> dict[str, Any]:
+    """Fill the Infrahub SDK ``Config`` fields it would otherwise read from ``INFRAHUB_*``.
+
+    ``infrahub_sdk.Config`` is a pydantic settings class: every field its caller leaves out
+    is read from the environment. For a registered package the address, the credentials,
+    and TLS verification come from the package alone, so each one the package does not
+    declare is passed explicitly as unset — no token, no username or password, and TLS
+    verified. Transport settings the package cannot declare stay with the worker.
+    """
+    pinned = dict(sdk_config)
+    for field, unset in (("api_token", None), ("username", None), ("password", None), ("tls_insecure", False)):
+        pinned.setdefault(field, unset)
+    return pinned
+
+
 def select_runtime_credential(
     settings: Mapping[str, object], setting_name: str, environment_names: tuple[str, ...]
 ) -> str | None:
     """Select a credential without ambient reads for a registered runtime package."""
-    if settings.get(_REGISTERED_CONTEXT) is True:
+    if is_registered_context(settings):
         value = settings.get(setting_name)
         return value if isinstance(value, str) else None
     for environment_name in environment_names:

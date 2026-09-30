@@ -62,7 +62,7 @@ credentials:
 
 ### Environment variables
 
-A registered package uses its declared `url` and its resolved `username` and `password`. One exception: when `CISCO_APIC_VERIFY` is set in the worker environment, it replaces the declared `verify` setting, also for a registered package.
+A registered package uses its declared `url`, its resolved `username` and `password`, and its declared `verify` setting. The worker environment does not replace any of them.
 
 For direct adapter use without a registered package, these variables take precedence over the declared settings:
 
@@ -165,7 +165,7 @@ This transform:
 ### Authentication and connectivity
 
 - If you see token refresh errors, ensure the APIC response includes refreshTimeoutSeconds; the adapter forces re-login when refresh data is unavailable.
-- For TLS verification problems, set CISCO_APIC_VERIFY to false in a secure environment (use with caution).
+- For TLS verification problems, set `verify: false` in the package in a secure environment (use with caution). For direct adapter use, `CISCO_APIC_VERIFY` set to `false` does the same.
 
 ### Device reference resolution
 

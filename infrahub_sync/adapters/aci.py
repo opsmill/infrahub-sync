@@ -22,7 +22,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
-from infrahub_sync.configuration.credentials import select_runtime_credential
+from infrahub_sync.configuration.credentials import is_registered_context, select_runtime_credential
 
 from .utils import get_value
 
@@ -209,10 +209,11 @@ class AciAdapter(DiffSyncMixin, Adapter):
         url = select_runtime_credential(settings, "url", ("CISCO_APIC_URL",))
         username = select_runtime_credential(settings, "username", ("CISCO_APIC_USERNAME",))
         password = select_runtime_credential(settings, "password", ("CISCO_APIC_PASSWORD",))
-        # Prefer explicit env var for verify; allow boolean or string values. An empty
-        # env value falls through to the declared setting. This is env-first, matching
-        # select_runtime_credential and this function's own url/username/password reads.
-        verify_raw = os.environ.get("CISCO_APIC_VERIFY")
+        # Direct use prefers an explicit env var for verify; allow boolean or string values.
+        # An empty env value falls through to the declared setting. This is env-first,
+        # matching select_runtime_credential and this function's own url/username/password
+        # reads. A registered package's declared setting is never overridden.
+        verify_raw = None if is_registered_context(settings) else os.environ.get("CISCO_APIC_VERIFY")
         if not verify_raw:
             verify_raw = settings.get("verify", True)
             if verify_raw is None:

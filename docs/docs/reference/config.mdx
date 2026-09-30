@@ -111,9 +111,9 @@ A registered run uses the settings declared in the package:
 - To change a URL or another setting, edit the package and register a new version with
   `configs version`. Then run the new version.
 
-Two adapters also read the worker environment in a registered run. Cisco ACI reads
-`CISCO_APIC_VERIFY` when it is set, and IP Fabric reads `IPF_URL` and `IPF_TOKEN` when
-`base_url` or `auth` is not declared.
+Adapter environment variables such as `CISCO_APIC_VERIFY`, `IPF_URL`, or `IPF_TOKEN` do
+not change a registered run. A setting the package does not declare, including an adapter
+declared with `settings: null`, stays unset, and TLS verification stays on.
 
 Direct adapter use without a registered package is different. The
 [Prefect remote run](./prefect-remote-run.mdx) and Python callers that load a `config.yml`
