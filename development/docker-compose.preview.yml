@@ -4,7 +4,8 @@
 # digest pins; do not replace it from upstream without restoring those pins.
 #
 # This file remaps host ports so the preview never collides with another local
-# Infrahub stack, drops host port publications the preview does not need, and
+# Infrahub stack, publishes every one it keeps on loopback only, drops host port
+# publications the preview does not need, and
 # adds a dedicated Prefect server for Infrahub Sync's service execution path —
 # separate from Infrahub's internal task-manager, and pinned to the same Prefect
 # version as the `service` extra (prefect==3.8.1).
@@ -20,7 +21,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "${PREVIEW_STORAGE_POSTGRES_PORT:-5439}:5432"
+      - "127.0.0.1:${PREVIEW_STORAGE_POSTGRES_PORT:-5439}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d infrahub_sync"]
       interval: 5s
@@ -35,7 +36,7 @@ services:
       MINIO_ROOT_USER: "${PREVIEW_MINIO_ACCESS_KEY:-minioadmin}"
       MINIO_ROOT_PASSWORD: "${PREVIEW_MINIO_SECRET_KEY:-minioadmin}"
     ports:
-      - "${PREVIEW_MINIO_PORT:-9010}:9000"
+      - "127.0.0.1:${PREVIEW_MINIO_PORT:-9010}:9000"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--output-document=/dev/null", "http://localhost:9000/minio/health/live"]  # yamllint disable-line rule:line-length
       interval: 5s
@@ -54,8 +55,11 @@ services:
       && mc mb --ignore-existing preview/${PREVIEW_S3_BUCKET:-infrahub-sync-preview}"
 
   infrahub-server:
+    # Loopback unless PREVIEW_INFRAHUB_BIND_ADDRESS names another address. A Sync
+    # worker in a container on Linux reaches this port through the Docker bridge
+    # gateway, never through loopback, so that is the one reason to change it.
     ports: !override
-      - "${PREVIEW_INFRAHUB_PORT:-8080}:8000"
+      - "${PREVIEW_INFRAHUB_BIND_ADDRESS:-127.0.0.1}:${PREVIEW_INFRAHUB_PORT:-8080}:8000"
 
   message-queue:
     ports: !reset []
@@ -72,7 +76,7 @@ services:
     environment:
       PREFECT_SERVER_UI_API_URL: "http://localhost:${PREVIEW_PREFECT_PORT:-4210}/api"
     ports:
-      - "${PREVIEW_PREFECT_PORT:-4210}:4200"
+      - "127.0.0.1:${PREVIEW_PREFECT_PORT:-4210}:4200"
     healthcheck:
       test:
         - CMD

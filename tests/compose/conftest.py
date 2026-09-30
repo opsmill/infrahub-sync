@@ -386,6 +386,10 @@ def _infrahub_environment() -> dict[str, str]:
         **values,
         "COMPOSE_PROJECT_NAME": FIXTURE_PROJECT,
         "PREVIEW_INFRAHUB_PORT": FIXTURE_INFRAHUB_PORT,
+        # The development stack publishes on loopback, which the bundle's worker
+        # cannot reach: on Linux its host route is the Docker bridge gateway. This
+        # session-scoped fixture is removed afterwards, so it is widened here alone.
+        "PREVIEW_INFRAHUB_BIND_ADDRESS": "0.0.0.0",  # noqa: S104 - test fixture, see above.
     }
 
 

@@ -853,7 +853,9 @@ destination_compose() {
         echo "clean-host: $ROW: the destination fixture was reached before this run named a project for it" >&2
         return 1
     fi
-    docker compose --project-name "$FIXTURE_PROJECT" \
+    # The kit's development files publish on loopback. The proxy reaches this
+    # fixture at the runner's routable address, so the fixture alone is widened.
+    PREVIEW_INFRAHUB_BIND_ADDRESS=0.0.0.0 docker compose --project-name "$FIXTURE_PROJECT" \
         --env-file "$DESTINATION/preview.env" \
         --file "$DESTINATION/docker-compose.infrahub.yml" \
         --file "$DESTINATION/docker-compose.preview.yml" "$@"
