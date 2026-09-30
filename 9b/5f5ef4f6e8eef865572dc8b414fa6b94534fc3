@@ -1,0 +1,44 @@
+tests/service/test_service_worker.py
+  s_a439d81ec4a713::t_4db8270aab38b2 136-137
+  s_a439d81ec4a713::t_64c9e1f3999166 28
+  s_a439d81ec4a713::t_e2ee8d6e39c29e 138
+  s_a439d81ec4a713::t_4da1302d7af55a 40-41
+  s_a439d81ec4a713::t_f865ad1e222004 77-90
+tests/service/test_service_worker_identity_recovery.py
+  s_a439d81ec4a713::t_db01b5faeb04d0 76-78
+  s_a439d81ec4a713::t_a6db76e480aae3 668-669
+tests/service/test_service_worker_admission.py
+  s_a439d81ec4a713::t_d76bb69e42ecc2 346,349-350,356-357
+  s_a439d81ec4a713::t_119cc6bb1996bd 314,316-318,320,334-335
+  s_a439d81ec4a713::t_33db28106933fd 30
+  s_a439d81ec4a713::t_14247ce4402e81 146
+  s_a439d81ec4a713::t_e48157a44fc145 61
+  s_a439d81ec4a713::t_7fd3340947849b 166-168
+  s_a439d81ec4a713::t_f581dcb92146f6 72
+  s_a439d81ec4a713::t_f5c5f85cb606b3 1-29,31-60,62-71,73-145,147-165,169-313,315,319,321-333,336-345,347-348,351-355,358-386
+infrahub_sync/service/worker.py
+  s_a439d81ec4a713::t_6b03345906a4b7 22,26
+  s_a439d81ec4a713::t_193c277767ea09 53-56
+  s_a439d81ec4a713::t_e1a209ff824add 40-42
+  s_a439d81ec4a713::t_7516edbf439703 116,118-136
+  s_a439d81ec4a713::t_0d8e361c8bb461 382-383
+  s_a439d81ec4a713::t_e48eb9ed38ab0f 84-99
+  s_a439d81ec4a713::t_fb708522411c0f 100-115,117,137-141,143,146,157-162,171
+  s_a439d81ec4a713::t_22749eaee628f5 27,172-174,384-386
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9b5f5ef4f6e8eef865572dc8b414fa6b94534fc3",
+  "prompts": {},
+  "sessions": {
+    "s_a439d81ec4a713": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a2f4b8c-0cd5-4268-962e-1107e1222216",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
