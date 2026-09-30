@@ -1231,35 +1231,25 @@ def test_a_reference_only_identity_is_refused_before_querying_not_silently_bound
     assert "identifiers" in next_action, f"The next action must point at the identity that derived no filter: {message}"
 
 
-def test_a_partial_filter_warns_once_per_kind_naming_the_dropped_components(
+def test_a_direct_resolve_on_a_partial_identity_filters_on_the_components_it_has(
     captured_logs: pytest.LogCaptureFixture,
 ) -> None:
-    """Silently skipped HFID components are disclosed at apply time, per kind."""
+    """The resolver alone still builds a filter from the components supplied; it no longer warns.
+
+    Planned apply refuses a partial peer key before lookup (`_refuse_partial_key_peer_filter`),
+    so this covers only the direct-resolver path.
+    """
     client = RecordingClient()
-    client.filter_results = [
-        [make_node(client, DEVICE_KIND, "device-id-1")],
-        [make_node(client, DEVICE_KIND, "device-id-2")],
-    ]
-    adapter = make_adapter(client)
-    resolver = PeerResolver(adapter)
+    client.filter_results = [[make_node(client, DEVICE_KIND, "device-id-1")]]
+    resolver = PeerResolver(make_adapter(client))
 
-    first = resolver.resolve(peer_kind=DEVICE_KIND, identity={"name": "device-a"}, referring_operation_id="op_0002")
-    second = resolver.resolve(peer_kind=DEVICE_KIND, identity={"name": "device-b"}, referring_operation_id="op_0003")
+    resolved = resolver.resolve(peer_kind=DEVICE_KIND, identity={"name": "device-a"}, referring_operation_id="op_0002")
 
-    assert (first, second) == ("device-id-1", "device-id-2"), "Partial filters warn; they do not refuse."
-    assert len(client.resolver_queries) == 2, "Both resolutions must still query the destination."
-    assert all("name__value" in query and "site__name__value" not in query for query in client.resolver_queries)
-
-    warnings = [record for record in captured_logs.records if "PARTIAL filter" in record.getMessage()]
-    assert len(warnings) == 1, f"One warning per kind per apply, got {[record.getMessage() for record in warnings]}."
-    record = warnings[0]
-    assert record.levelno >= logging.WARNING, (
-        f"The report is pinned to WARNING because --quiet floors the logger there; it was emitted at "
-        f"{record.levelname}."
-    )
-    message = record.getMessage()
-    assert DEVICE_KIND in message, "The warning must name the destination kind."
-    assert "site__name__value" in message, "The warning must name the dropped component."
+    assert resolved == "device-id-1"
+    assert len(client.resolver_queries) == 1
+    assert "name__value" in client.resolver_queries[0]
+    assert "site__name__value" not in client.resolver_queries[0]
+    assert not [record for record in captured_logs.records if "PARTIAL filter" in record.getMessage()]
 
 
 # ---------------------------------------------------------------------------------------

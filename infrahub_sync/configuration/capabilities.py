@@ -312,6 +312,8 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
     component paths and, per member, every property that can change a constructed
     runtime model or a planned write. Nothing else from the response crosses.
     """
+    from infrahub_sdk.schema.main import GenericSchemaAPI  # pylint: disable=import-outside-toplevel
+
     if not isinstance(schema, Mapping):
         raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
     snapshot: dict[str, Any] = {}
@@ -331,6 +333,8 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
                 getattr(node, "relationships", None), claimed=claimed, shape=_relationship_shape
             ),
         }
+        if isinstance(node, GenericSchemaAPI):
+            snapshot[kind]["used_by"] = _string_path(node.used_by)
     _require_usable_snapshot(snapshot)
     return snapshot
 

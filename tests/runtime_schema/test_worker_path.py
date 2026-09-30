@@ -202,6 +202,40 @@ def test_registered_composition_attaches_the_plan_to_the_runtime_instance(spy: _
     assert spy.branches == ["main"]
 
 
+def test_registered_composition_carries_generic_peers_into_ordering(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    snapshot["BuiltinLabel"] = {
+        "used_by": ["BuiltinTag", "UnmappedKind"],
+        "human_friendly_id": [],
+        "uniqueness_constraints": [],
+        "attributes": {},
+        "relationships": {},
+    }
+    snapshot["LocationSite"]["relationships"]["tags"]["peer"] = "BuiltinLabel"
+    spy = _SnapshotSpy(snapshot)
+    monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", spy)
+    content = _package_content()
+    content["configuration"]["schema_mapping"][1]["fields"][1]["reference"] = "BuiltinLabel"
+    package = parse_configuration_package(content)
+    binding = ("cfg-generic-order", 1, package.checksum())
+
+    _, instance, _ = service_flow._worker_execution_context(
+        "run-generic-order",
+        binding,
+        config_directory=str(tmp_path),
+        projection=cast("ProductProjection", _StubProjection(package, binding)),
+        run_branch=None,
+        stage="plan",
+    )
+
+    assert instance._runtime_models is not None
+    assert instance._runtime_models.generic_peers == {"BuiltinLabel": ("BuiltinTag", "UnmappedKind")}
+    assert instance.compute_order_and_tiers(instance._runtime_models.generic_peers)[0] == ["BuiltinTag", "LocationSite"]
+    assert spy.branches == ["main"]
+
+
 def test_a_legacy_unregistered_run_builds_no_runtime_models(spy: _SnapshotSpy, tmp_path: Path) -> None:
     package = _package()
     (tmp_path / "from-netbox").mkdir()
@@ -229,7 +263,18 @@ def test_a_legacy_unregistered_run_builds_no_runtime_models(spy: _SnapshotSpy, t
 def test_a_registered_stage_reaches_execution_with_its_models_bound(
     spy: _SnapshotSpy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    package = _package()
+    spy.snapshot = copy.deepcopy(_SNAPSHOT)
+    spy.snapshot["BuiltinLabel"] = {
+        "used_by": ["BuiltinTag", "UnmappedKind"],
+        "human_friendly_id": [],
+        "uniqueness_constraints": [],
+        "attributes": {},
+        "relationships": {},
+    }
+    spy.snapshot["LocationSite"]["relationships"]["tags"]["peer"] = "BuiltinLabel"
+    content = _package_content()
+    content["configuration"]["schema_mapping"][1]["fields"][1]["reference"] = "BuiltinLabel"
+    package = parse_configuration_package(content)
     binding = ("cfg-runtime-models", 1, package.checksum())
     projection = _StubProjection(package, binding)
     seen: list[SyncInstance] = []
@@ -273,6 +318,8 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
     # Plan, verify and apply legs share the one instance the single schema read built.
     assert len({id(instance) for instance in seen}) == 1
     assert seen[0]._runtime_models is not None
+    assert seen[0]._runtime_models.generic_peers == {"BuiltinLabel": ("BuiltinTag", "UnmappedKind")}
+    assert seen[0].compute_order_and_tiers(seen[0]._runtime_models.generic_peers)[0] == ["BuiltinTag", "LocationSite"]
     assert spy.branches == ["main"]
 
 

@@ -13,7 +13,7 @@ is admitted, not qualified.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -76,6 +76,7 @@ class RuntimeModelPlan:
     schema_fingerprint: str
     destination: RuntimeSideModels
     source: RuntimeSideModels | None
+    generic_peers: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 def read_destination_schema_snapshot(package: ConfigurationPackage, branch: str) -> Mapping[str, Any]:
@@ -192,6 +193,7 @@ def build_runtime_model_plan(
         schema_fingerprint=schema_fingerprint,
         destination=side(instance.destination),
         source=side(instance.source) if scope == "both" else None,
+        generic_peers=snapshot.generic_peers,
     )
 
 
