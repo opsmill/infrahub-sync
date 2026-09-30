@@ -168,10 +168,6 @@ def _probe_peer_kind(
     caller, not the probe, decides what it means: a peer absent from the loaded source store
     can still be recorded literally, and every other absent peer refuses there.
 
-    AD052: if the destination has no schema, this warning-only check is skipped because
-    no destination key can be established. Create-schema requirements are enforced
-    separately before any write.
-
     Raises:
         SourcePeerUnresolvedError: more than one candidate holds the peer (the **ambiguous**
             arm), so its kind cannot be established.
