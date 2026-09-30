@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 from infrahub_sync.plugin_loader import PluginLoader
 
@@ -19,7 +21,10 @@ def test_later_failing_adapter_path_keeps_earlier_resolved_class(tmp_path: Path)
     (broken / "external_probe.py").write_text("import module_that_does_not_exist_anywhere\n")
 
     loader = PluginLoader(adapter_paths=[str(working), str(broken)])
-    cls = loader._resolve_from_filesystem("external_probe", "WorkingAdapter", ())
+    # Both probe modules, including the one whose import fails part-way, stay out of the
+    # interpreter's module table once the test ends.
+    with patch.dict(sys.modules):
+        cls = loader._resolve_from_filesystem("external_probe", "WorkingAdapter", ())
 
     assert cls is not None
     assert cls.__name__ == "WorkingAdapter"
