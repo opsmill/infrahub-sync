@@ -40,6 +40,12 @@ drops that edge to break the cycle and logs the drop at WARNING level, so the
 kind may be written before that one referenced kind. Keep `order:` only to
 override the computed order for an adapter quirk.
 
+For an Infrahub destination, a `reference:` to a generic kind waits for every
+mapped concrete kind in that generic's live schema `used_by` list. The generic
+itself is not added as work when it has no mapping. If none of its concrete
+peer kinds are mapped, the run reports a configuration error before loading
+records. Map the concrete peer kinds or provide an explicit `order:` list.
+
 Internally, infrahub-sync derives a write-order graph from the `reference:`
 entries in each `schema_mapping` field and groups kinds into **tiers**:
 

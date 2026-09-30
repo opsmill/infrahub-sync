@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 from diffsync import Adapter
+from infrahub_sdk.schema.main import GenericSchemaAPI
 
 from infrahub_sync import (
     SchemaMappingField,
@@ -42,6 +43,7 @@ from infrahub_sync import (
     SchemaMappingTransform,
     SyncAdapter,
     SyncConfig,
+    utils,
 )
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, InfrahubModel
 
@@ -95,6 +97,45 @@ class InfraTag(InfrahubModel):
     _attributes = ()
 
     name: str
+
+
+class LocationBuilding(InfrahubModel):
+    """Building loaded before its floor."""
+
+    _modelname = "LocationBuilding"
+    _identifiers = ("name",)
+    _attributes = ()
+    name: str
+
+
+class LocationFloor(InfrahubModel):
+    """Floor that hosts a device and a rack unit."""
+
+    _modelname = "LocationFloor"
+    _identifiers = ("name",)
+    _attributes = ("parent",)
+    name: str
+    parent: str | None = None
+
+
+class LocationRackUnit(InfrahubModel):
+    """Rack unit at a deeper dependency tier."""
+
+    _modelname = "LocationRackUnit"
+    _identifiers = ("name",)
+    _attributes = ("parent",)
+    name: str
+    parent: str | None = None
+
+
+class DcimDevice(InfrahubModel):
+    """Device referencing either concrete kind through one generic."""
+
+    _modelname = "DcimDevice"
+    _identifiers = ("name",)
+    _attributes = ("location",)
+    name: str
+    location: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +458,72 @@ def _include_for(client: StrictClient, kind: str) -> list[str] | None:
     calls = [call for call in client.all_calls if call["kind"] == kind]
     assert len(calls) == 1, f"expected one all() call for {kind}, got {len(calls)}"
     return calls[0]["include"]
+
+
+def test_auto_order_loads_both_generic_peer_kinds_before_devices() -> None:
+    """The adapter resolves both generic peers from the store in computed tier order."""
+    models = (LocationBuilding, LocationFloor, LocationRackUnit, DcimDevice)
+    config = SyncConfig(
+        name="generic-peers",
+        source=SyncAdapter(name="infrahub"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[
+            SchemaMappingModel(
+                name=model._modelname,
+                identifiers=["name"],
+                fields=[
+                    SchemaMappingField(name="name", mapping="name"),
+                    *(
+                        [SchemaMappingField(name="parent", reference="LocationBuilding")]
+                        if model is LocationFloor
+                        else [SchemaMappingField(name="parent", reference="LocationFloor")]
+                        if model is LocationRackUnit
+                        else [SchemaMappingField(name="location", reference="LocationHosting")]
+                        if model is DcimDevice
+                        else []
+                    ),
+                ],
+            )
+            for model in models
+        ],
+    )
+    client = StrictClient(
+        rows={
+            "LocationBuilding": [_Row("building-id", {"name": "building-a"})],
+            "LocationFloor": [_Row("floor-id", {"name": "floor-a"}, {"parent": "building-id"})],
+            "LocationRackUnit": [_Row("rack-id", {"name": "rack-a"}, {"parent": "floor-id"})],
+            "DcimDevice": [
+                _Row("device-floor-id", {"name": "device-floor"}, {"location": "floor-id"}),
+                _Row("device-rack-id", {"name": "device-rack"}, {"location": "rack-id"}),
+            ],
+        },
+        rel_schemas={
+            "LocationFloor": [FakeRelSchema(name="parent", peer="LocationBuilding")],
+            "LocationRackUnit": [FakeRelSchema(name="parent", peer="LocationFloor")],
+            "DcimDevice": [FakeRelSchema(name="location", peer="LocationHosting")],
+        },
+    )
+    client.schemas["LocationHosting"] = GenericSchemaAPI(  # ty: ignore[invalid-assignment]
+        name="Hosting", namespace="Location", used_by=["LocationFloor", "LocationRackUnit"]
+    )
+    adapter = _Harness(config=config, client=client)
+    for model in models:
+        setattr(adapter, model._modelname, model)
+
+    order, tiers = config.compute_order_and_tiers(utils._generic_peers_for_order(adapter, None))
+    assert order == ["LocationBuilding", "LocationFloor", "LocationRackUnit", "DcimDevice"]
+    assert tiers == [
+        {"LocationBuilding"},
+        {"LocationFloor"},
+        {"LocationRackUnit"},
+        {"DcimDevice"},
+    ]
+    for kind in order:
+        model = next(model for model in models if model._modelname == kind)
+        adapter.model_loader(model_name=kind, model=model)
+
+    assert _loaded(adapter, DcimDevice, "device-floor").location == "floor-a"
+    assert _loaded(adapter, DcimDevice, "device-rack").location == "rack-a"
 
 
 # ---------------------------------------------------------------------------

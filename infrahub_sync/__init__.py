@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Union
 from infrahub_sync.cache.cursors import CursorTier
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from infrahub_sync.cache.cursors import CursorState
     from infrahub_sync.runtime_schema import RuntimeModelPlan
@@ -110,7 +110,9 @@ class SyncConfig(pydantic.BaseModel):
         order, _tiers = self.compute_order_and_tiers()
         return order
 
-    def compute_order_and_tiers(self) -> tuple[list[str], list[set[str]] | None]:
+    def compute_order_and_tiers(
+        self, generic_peers: Mapping[str, tuple[str, ...]] | None = None
+    ) -> tuple[list[str], list[set[str]] | None]:
         """Return `(flat_order, tiers)` from a single topological pass.
 
         `tiers` is `None` when an explicit `order` is configured. Callers that
@@ -124,7 +126,7 @@ class SyncConfig(pydantic.BaseModel):
         # Imported here to avoid a circular import at module load.
         from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
 
-        tiers, dropped = compute_tiers(self.schema_mapping)
+        tiers, dropped = compute_tiers(self.schema_mapping, generic_peers)
         for idx, tier in enumerate(tiers):
             logger.info("tier %d (%d): %s", idx, len(tier), sorted(tier))
         if dropped:

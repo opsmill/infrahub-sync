@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from infrahub_sdk.schema.main import AttributeKind, NodeSchemaAPI
+from infrahub_sdk.schema.main import AttributeKind, GenericSchemaAPI, NodeSchemaAPI
 
 from infrahub_sync.configuration import capabilities as capabilities_module
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
@@ -43,6 +43,14 @@ def _snapshot() -> dict[str, Any]:
 def test_the_snapshot_carries_the_kind_identity_paths(snapshot: dict[str, Any]) -> None:
     assert snapshot["InfraDevice"]["human_friendly_id"] == ["name__value"]
     assert snapshot["InfraDevice"]["uniqueness_constraints"] == [["name__value"]]
+
+
+def test_generic_concrete_peers_survive_the_validated_schema_snapshot() -> None:
+    generic = GenericSchemaAPI(name="Hosting", namespace="Location", used_by=["LocationFloor", "LocationRackUnit"])
+    raw = capabilities_module._build_schema_snapshot({generic.kind: generic})
+    normalized = normalize_destination_schema(raw)
+
+    assert normalized.generic_peers[generic.kind] == ("LocationFloor", "LocationRackUnit")
 
 
 def test_the_snapshot_carries_every_attribute_and_relationship_property(snapshot: dict[str, Any]) -> None:

@@ -17,39 +17,73 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from infrahub_sync import SchemaMappingModel
 
 logger = logging.getLogger(__name__)
 
 
-def build_dependency_graph(schema_mapping: list[SchemaMappingModel]) -> dict[str, set[str]]:
-    """Return the dep graph keyed by kind name. Self-edges are excluded."""
+class UnresolvedGenericReferenceError(ValueError):
+    """A mapped reference names a generic with no mapped concrete peer."""
+
+
+def _reference_targets(
+    schema_mapping: list[SchemaMappingModel], generic_peers: Mapping[str, tuple[str, ...]] | None
+) -> dict[str, tuple[str, ...]]:
+    """Expand known generics to mapped concrete kinds, refusing empty expansions."""
+    mapped = {model.name for model in schema_mapping}
+    targets: dict[str, tuple[str, ...]] = {}
+    for model in schema_mapping:
+        for field in model.fields or []:
+            reference = field.reference
+            if not reference or reference in targets:
+                continue
+            if generic_peers is None or reference not in generic_peers:
+                targets[reference] = (reference,)
+                continue
+            peers = tuple(sorted(mapped.intersection(generic_peers[reference]) - {reference}))
+            if not peers:
+                msg = (
+                    f"schema_mapping kind {model.name!r} field {field.name!r} references generic "
+                    f"{reference!r}, but none of its concrete peer kinds are mapped"
+                )
+                raise UnresolvedGenericReferenceError(msg)
+            targets[reference] = peers
+    return targets
+
+
+def build_dependency_graph(
+    schema_mapping: list[SchemaMappingModel], generic_peers: Mapping[str, tuple[str, ...]] | None = None
+) -> dict[str, set[str]]:
+    """Return dependencies keyed by mapped kind, excluding self-edges."""
+    targets = _reference_targets(schema_mapping, generic_peers)
     deps: dict[str, set[str]] = {}
     for sm in schema_mapping:
         bucket = deps.setdefault(sm.name, set())
         for field in sm.fields or []:
             if not field.reference:
                 continue
-            if field.reference == sm.name:
-                continue
-            bucket.add(field.reference)
+            bucket.update(peer for peer in targets[field.reference] if peer != sm.name)
     return deps
 
 
 def _collect_optional_edges(
     schema_mapping: list[SchemaMappingModel],
+    generic_peers: Mapping[str, tuple[str, ...]] | None = None,
 ) -> set[tuple[str, str]]:
     """Edges (src, dst) where the field carrying the reference is NOT part of
     `identifiers` for src. Missing the peer doesn't break uniqueness, so we
     can drop the edge to resolve a cycle."""
     optional: set[tuple[str, str]] = set()
+    targets = _reference_targets(schema_mapping, generic_peers)
     for sm in schema_mapping:
         identity_set = set(sm.identifiers or [])
         for field in sm.fields or []:
-            if not field.reference or field.reference == sm.name:
+            if not field.reference:
                 continue
             if field.name not in identity_set:
-                optional.add((sm.name, field.reference))
+                optional.update((sm.name, peer) for peer in targets[field.reference] if peer != sm.name)
     return optional
 
 
@@ -63,6 +97,7 @@ def _consecutive_pairs(nodes: list[str]) -> list[tuple[str, str]]:
 
 def compute_tiers(
     schema_mapping: list[SchemaMappingModel],
+    generic_peers: Mapping[str, tuple[str, ...]] | None = None,
 ) -> tuple[list[set[str]], list[tuple[str, str]]]:
     """Return (tiers, dropped_optional_edges).
 
@@ -74,8 +109,8 @@ def compute_tiers(
         topological_sort,
     )
 
-    deps = build_dependency_graph(schema_mapping)
-    optional = _collect_optional_edges(schema_mapping)
+    deps = build_dependency_graph(schema_mapping, generic_peers)
+    optional = _collect_optional_edges(schema_mapping, generic_peers)
     dropped: list[tuple[str, str]] = []
 
     for _ in range(_MAX_CYCLE_BREAK_ATTEMPTS):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel
-from infrahub_sync.dependency_graph import build_dependency_graph
+from infrahub_sync.dependency_graph import UnresolvedGenericReferenceError, build_dependency_graph, compute_tiers
 
 
 def _sm(name: str, fields: list[tuple[str, str | None]], identifiers: list[str] | None = None) -> SchemaMappingModel:
@@ -109,3 +109,42 @@ def test_compute_tiers_for_netbox_example_config() -> None:
     flat = set(flatten_tiers(tiers))
     for name in {m.name for m in cfg.schema_mapping}:
         assert name in flat, f"{name} missing from computed tiers"
+
+
+def test_generic_reference_waits_for_mapped_peers_at_different_depths() -> None:
+    mapping = [
+        _sm("LocationBuilding", []),
+        _sm("LocationFloor", [("parent", "LocationBuilding")]),
+        _sm("LocationRackUnit", [("parent", "LocationFloor")]),
+        _sm("DcimDevice", [("location", "LocationHosting")]),
+    ]
+    peers = {"LocationHosting": ("LocationFloor", "LocationRackUnit", "UnmappedKind")}
+
+    assert build_dependency_graph(mapping, peers)["DcimDevice"] == {"LocationFloor", "LocationRackUnit"}
+    tiers, dropped = compute_tiers(mapping, peers)
+    assert tiers == [
+        {"LocationBuilding"},
+        {"LocationFloor"},
+        {"LocationRackUnit"},
+        {"DcimDevice"},
+    ]
+    assert dropped == []
+    assert "LocationHosting" not in set().union(*tiers)
+
+
+def test_unresolved_generic_reference_is_a_configuration_error() -> None:
+    import pytest
+
+    mapping = [_sm("DcimDevice", [("location", "LocationHosting")])]
+    with pytest.raises(UnresolvedGenericReferenceError, match=r"LocationHosting.*none of its concrete peer kinds"):
+        compute_tiers(mapping, {"LocationHosting": ("LocationFloor", "LocationRackUnit")})
+
+
+def test_optional_generic_edge_breaks_cycle_deterministically() -> None:
+    mapping = [
+        _sm("A", [("peer", "SharedGeneric")], identifiers=["name"]),
+        _sm("B", [("a", "A")], identifiers=["a"]),
+    ]
+    tiers, dropped = compute_tiers(mapping, {"SharedGeneric": ("B",)})
+    assert tiers == [{"A"}, {"B"}]
+    assert dropped == [("A", "B")]
