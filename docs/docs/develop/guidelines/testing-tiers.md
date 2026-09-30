@@ -175,6 +175,29 @@ Four families need more detail than the tables give:
     uv run --with 'psycopg[binary]' pytest -m integration tests/product_store tests/service
   ```
 
+  Pull-request CI runs the `product-store-postgresql` job in `workflow-tests.yml`, which
+  starts a `postgres:18-alpine` service container and runs only `tests/product_store`.
+  The job uses `invoke tests.tests-product-store-postgresql`, which fails when the DSN is
+  unset, when any test skips (a missing `psycopg` or an unreachable server skips rather
+  than fails under plain `pytest -m integration`), or when no test is selected. To run the
+  same check locally:
+
+  ```bash
+  docker run -d --name product-store-pg -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=probe \
+    -p 127.0.0.1:55439:5432 postgres:18-alpine
+  until docker exec product-store-pg pg_isready -U postgres -d probe; do sleep 2; done
+  export PRODUCT_STORE_TEST_POSTGRESQL_DSN="host=127.0.0.1 port=55439 user=postgres password=probe dbname=probe"
+  uv run invoke tests.tests-product-store-postgresql
+  ```
+
+  To confirm the check refuses to pass without a server, unset the variable or point it at
+  a closed port (`port=1`); the task exits non-zero in both cases. Clean up with
+  `docker rm -f -v product-store-pg`.
+
+  In `tests/product_store/test_contract.py`, the `postgresql-emulated` profile and the
+  `..._on_sqlite_and_emulated_postgresql` tests run against SQLite through a
+  `%s`-translating adapter. They check the store's PostgreSQL code paths, not a PostgreSQL
+  server; only the `integration`-marked cases above use a real one.
 - **Redis store compatibility** runs one functional round trip against a live server. Set
   `REDIS_URL`; the test pings it first and skips when it is unset or unreachable. It writes
   adapter state under its own store identifiers.

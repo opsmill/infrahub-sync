@@ -93,7 +93,10 @@ _POSTGRESQL_EMULATION_CONSTRAINTS_TABLE = "_fake_postgresql_constraints"
 
 
 class _CursorAdapter:
-    """DB-API cursor over a literal SQLite file for the ``%s``-placeholder "production" profile.
+    """DB-API cursor over a literal SQLite file for the ``%s``-placeholder "postgresql-emulated" profile.
+
+    This profile runs on SQLite, not a PostgreSQL server; real-server coverage lives in the
+    ``integration``-marked cases that use ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``.
 
     Genuine CRUD statements pass straight through with ``%s`` translated to ``?``, so every
     contract test below still exercises a real database engine. SQLite has neither
@@ -686,7 +689,7 @@ def test_sqlite_unique_constraint_codes_are_duplicates(error_code: int) -> None:
     assert product_store_store._is_unique_violation(error)
 
 
-@pytest.fixture(params=("local", "production"))
+@pytest.fixture(params=("local", "postgresql-emulated"))
 def provider(request, tmp_path: Path) -> ProductProjection:
     if request.param == "local":
         return ProductProjection(
@@ -712,7 +715,7 @@ def test_zero_link_run_round_trip(provider: ProductProjection) -> None:
     assert result.value.prefect_executions == ()
 
 
-def test_mutation_reservation_atomically_creates_one_run_and_replays_on_both_profiles(
+def test_mutation_reservation_atomically_creates_one_run_and_replays_on_sqlite_and_emulated_postgresql(
     provider: ProductProjection,
 ) -> None:
     receipt = _receipt()
@@ -853,7 +856,9 @@ def test_sqlite_concurrent_mutation_reservation_creates_exactly_one_product_run(
     assert projection.lookup_run(winning_run_id).available
 
 
-def test_write_capable_mutation_admission_is_atomic_on_both_profiles(provider: ProductProjection) -> None:
+def test_write_capable_mutation_admission_is_atomic_on_sqlite_and_emulated_postgresql(
+    provider: ProductProjection,
+) -> None:
     """One admission wins; the loser keeps a receipt carrying its own stored refusal."""
     provider.create_run(_run())
 
@@ -2593,7 +2598,7 @@ def test_reviewed_apply_extends_plan_record_without_a_second_run_id(provider: Pr
     assert [reference.artifact_id for reference in result.artifact_refs] == ["apply-result", "plan"]
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_interrupted_publication_can_resume_and_finish_the_run(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
     if profile == "local":
@@ -2630,7 +2635,7 @@ def test_interrupted_publication_can_resume_and_finish_the_run(profile: str, tmp
     assert failed.outcome == "failed"
     assert failed.finished_at is not None
     assert projection.lookup_artifact("run-001", "plan").reason == "artifact-publication-incomplete"
-    if profile == "production":
+    if profile == "postgresql-emulated":
         assert not [key for (_, key) in fake_s3.objects if key.endswith("manifest.json")]
     else:
         assert not list((tmp_path / "objects").rglob("manifest.json"))
@@ -2657,7 +2662,7 @@ def test_interrupted_publication_can_resume_and_finish_the_run(profile: str, tmp
     assert completed.artifact_refs == (reference,)
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_manifest_complete_but_relational_mark_failed_resumes_without_republication(
     profile: str, tmp_path: Path
 ) -> None:
@@ -2709,7 +2714,7 @@ def test_manifest_complete_but_relational_mark_failed_resumes_without_republicat
         assert len([key for (_, key) in fake_s3.objects if key.endswith("manifest.json")]) == 1
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_published_row_with_missing_manifest_accepts_only_an_exact_repair(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
     if profile == "local":
@@ -2887,7 +2892,7 @@ def test_s3_cleanup_is_best_effort_after_successful_manifest_commit() -> None:
     assert store.lookup(reference).value == b"{}"
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 @pytest.mark.parametrize(
     "retry",
     [
@@ -2935,7 +2940,7 @@ def test_mismatched_pending_publication_retry_is_rejected_without_overwrite(
     assert resumed.lookup_artifact("run-001", "plan").value == b"{}"
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_duplicate_artifact_identity_is_rejected_before_a_second_provider_write(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
     if profile == "local":
@@ -2965,7 +2970,7 @@ def test_duplicate_artifact_identity_is_rejected_before_a_second_provider_write(
         assert len([key for (_, key) in fake_s3.objects if key.endswith("manifest.json")]) == 1
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_missing_object_is_unavailable_without_hiding_run(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
     if profile == "local":
@@ -3116,7 +3121,9 @@ def test_redaction_precedes_every_relational_and_artifact_write(provider: Produc
     assert b"***" in artifact
 
 
-def test_concurrent_result_merges_retain_every_stage_on_both_profiles(provider: ProductProjection) -> None:
+def test_concurrent_result_merges_retain_every_stage_on_sqlite_and_emulated_postgresql(
+    provider: ProductProjection,
+) -> None:
     provider.create_run(_run())
     ready = Barrier(2)
 
@@ -3216,7 +3223,7 @@ def test_finish_run_rejects_non_utf8_bytes_before_updating_the_record(provider: 
     assert unchanged.outcome is None
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_secret_canary_is_absent_from_raw_provider_contents(profile: str, tmp_path: Path) -> None:
     secret = "raw-provider-canary-649"  # noqa: S105 - deliberate persistence-boundary canary.
     fake_s3 = _FakeS3()
@@ -3256,7 +3263,7 @@ def test_secret_canary_is_absent_from_raw_provider_contents(profile: str, tmp_pa
     assert secret.encode() not in persisted
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_pending_publication_persists_no_secret_canary(profile: str, tmp_path: Path) -> None:
     secret = "pending-provider-canary-649"  # noqa: S105 - deliberate persistence-boundary canary.
     fake_s3 = _FakeS3()
@@ -3350,7 +3357,7 @@ assert p.lookup_artifact('run-001', 'result').value == b'durable'
     assert not (second_cwd / ".infrahub-sync-cache").exists()
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_provider_profile_survives_reconstruction(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
 
@@ -3561,7 +3568,7 @@ def test_insert_configuration_version_row_rejects_a_checksum_content_mismatch(tm
         connection.close()
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_configuration_registry_survives_store_reconstruction(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
 
@@ -3584,7 +3591,7 @@ def test_configuration_registry_survives_store_reconstruction(profile: str, tmp_
     assert after_restart.lookup_configuration_version(first.config_id, 2) == product_store.LookupResult(value=second)
 
 
-def test_list_configurations_orders_by_created_at_then_config_id_on_both_profiles(
+def test_list_configurations_orders_by_created_at_then_config_id_on_sqlite_and_emulated_postgresql(
     provider: ProductProjection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The configurations listing carries one total ORDER BY: ``created_at``, then ``config_id``.
@@ -3751,7 +3758,7 @@ def test_registration_rejects_an_inline_credential_value_on_an_existing_configur
     assert provider.list_configuration_versions(first.config_id) == (first,)
 
 
-def test_concurrent_new_checksums_allocate_distinct_sequential_versions_on_both_profiles(
+def test_concurrent_new_checksums_allocate_distinct_sequential_versions_on_sqlite_and_emulated_postgresql(
     provider: ProductProjection,
 ) -> None:
     first = provider.create_configuration(_configuration_package())
@@ -3773,7 +3780,7 @@ def test_concurrent_new_checksums_allocate_distinct_sequential_versions_on_both_
     assert len(provider.list_configuration_versions(first.config_id)) == 3
 
 
-def test_concurrent_new_checksums_allocate_distinct_versions_at_eight_writers_on_both_profiles(
+def test_concurrent_new_checksums_allocate_distinct_versions_at_eight_writers_on_sqlite_and_emulated_postgresql(
     provider: ProductProjection,
 ) -> None:
     """The measured, supported concurrency degree for ``add_configuration_version``: 8
@@ -3809,8 +3816,8 @@ def test_configuration_version_allocation_exhaustion_raises_a_typed_error(tmp_pa
         store.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
-def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_both_profiles(
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
+def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_sqlite_and_emulated_postgresql(
     profile: str, tmp_path: Path
 ) -> None:
     """Every caller -- winner and losers alike -- must resolve in exactly one
@@ -4432,6 +4439,58 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
         _assert_real_postgresql_refuses_partial_configuration_binding(dsn)
     finally:
         schema.drop()
+
+
+@pytest.mark.integration
+def test_postgresql_migration_ignores_same_named_tables_in_a_sibling_schema() -> None:
+    """A sibling schema's migrated ``product_runs`` must not suppress the target's column migration.
+
+    Column introspection that omits ``table_schema`` sees the sibling's binding columns, decides
+    nothing is missing, and leaves the target's legacy ``product_runs`` without them.
+    """
+    endpoint = _reachable_postgresql_dsn()
+    if endpoint is None:
+        pytest.skip("psycopg is not installed, or PRODUCT_STORE_TEST_POSTGRESQL_DSN is unset/unreachable")
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
+
+    target = isolated_schema(endpoint)
+    sibling = isolated_schema(endpoint)
+    binding_columns = {"config_id", "registry_version", "package_checksum"}
+
+    def columns_of(schema_name: str, dsn: str) -> set[str]:
+        with psycopg.connect(dsn) as admin:
+            rows = admin.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'product_runs' AND table_schema = %s",
+                (schema_name,),
+            ).fetchall()
+        return {row[0] for row in rows}
+
+    try:
+        sibling.create()
+        target.create()
+        # The sibling is fully migrated, so it carries the binding columns.
+        PostgreSQLRunStore(lambda: PsycopgConnectionFactory(psycopg.connect)(sibling.dsn))
+        assert binding_columns <= columns_of(sibling.name, sibling.dsn)
+
+        # The target holds the legacy parent tables only: same table names, no binding columns.
+        registry_tables = ("configurations", "configuration_versions")
+        with psycopg.connect(target.dsn) as admin:
+            for statement in product_store_store._SCHEMA.split(";"):
+                if statement.strip() and not any(table in statement for table in registry_tables):
+                    admin.execute(statement)
+            admin.commit()
+        assert not binding_columns & columns_of(target.name, target.dsn)
+
+        PostgreSQLRunStore(lambda: PsycopgConnectionFactory(psycopg.connect)(target.dsn))
+
+        assert binding_columns <= columns_of(target.name, target.dsn)
+    finally:
+        target.drop()
+        sibling.drop()
 
 
 def _assert_real_postgresql_refuses_partial_configuration_binding(dsn: str) -> None:
