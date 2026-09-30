@@ -452,7 +452,9 @@ class PeerResolver:
         never reaches that case: `apply_planned_operation` calls
         `_refuse_partial_key_peer_filter` before `resolve`, and that raises
         `UnaccountedIdentityComponentError` naming the missing components, so every peer
-        filter built for a planned write carries the kind's full human-friendly ID. The skip
+        filter built for a planned write carries a complete peer key: the kind's full
+        human-friendly ID, or only the destination id when the plan records one (that id
+        bypasses the HFID check). The skip
         stays only so a direct caller of this resolver still gets a filter. The `<rel>__ids`
         fallback (resolve the reference component's own peer first, then filter
         `<rel>__ids=[<id>]`) is not implemented by planned apply.
