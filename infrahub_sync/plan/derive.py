@@ -781,12 +781,7 @@ def _identity_attributes_by_kind(operations: Sequence[PlannedOperation]) -> dict
 
 
 def _destination_keys(node: Any) -> list[tuple[str, ...]]:
-    """Every key the destination could converge a kind on, as mapping field names.
-
-    The kind's human-friendly ID and each of its uniqueness constraints, each reduced from
-    component paths to the mapping field names the plan's identity is keyed by. Sorted and
-    deduplicated so which key a warning names does not depend on schema iteration order.
-    """
+    """Sorted declared keys reduced to mapping field names for the advisory warning."""
     constraints = getattr(node, "uniqueness_constraints", None) or []
     human_friendly_id = getattr(node, "human_friendly_id", None)
     declared = [*constraints, *([human_friendly_id] if human_friendly_id else [])]
@@ -795,12 +790,9 @@ def _destination_keys(node: Any) -> list[tuple[str, ...]]:
 
 
 def _merged_identity_counts(operations: Sequence[PlannedOperation], *, key: tuple[str, ...]) -> tuple[int, int]:
-    """How many source objects collide, and onto how many destination identities.
+    """Count collided source operations and destination identities after projection onto `key`.
 
-    The plan's operations for one kind, grouped by their identity projected onto `key` — what
-    the destination will actually distinguish them by. Returns the number of operations that
-    land in a group of more than one, and the number of such groups. Deletes are excluded:
-    they are destination objects the source no longer has, not source objects being written.
+    Exclude deletes, which represent destination objects absent from the source.
     """
     groups: dict[bytes, int] = {}
     for operation in operations:
@@ -822,29 +814,15 @@ def _warn_identity_finer_than_destination_key(
 ) -> None:
     """Warn where the destination cannot tell the plan's identities apart.
 
-    FR-024's two arms both test whether the *destination's* key is covered by the plan's
-    identity — `HFID ⊄ identity`, an unkeyed write that duplicates. This is the other
-    direction, `identity ⊄ HFID`: the sync distinguishes source objects more finely than the
-    destination does, so distinct source objects converge onto **one** destination object and
-    the surplus is silently lost. On the qualified path thirteen `LocationRack` objects named
-    `Comms closet`, one per site, become one — exit 0, no signal.
-
-    FR-024's condition is *satisfied* in exactly this case, which is why it needs its own
-    arm. The warning names the kind, the identity attributes the destination cannot
-    distinguish, and how many of this plan's own source objects already share a destination
-    identity — a count of what would be lost rather than a caution about what might be.
-
-    Skipped where the kind declares no key at all: there is nothing to be finer than, and
-    FR-024's first arm already reports that write as unkeyed. Warning only; the resolution
-    (tighten the destination schema, loosen the mapping, or override per kind) is a
-    per-deployment decision and is not part of plan derivation.
+    A finer source identity alone is allowed; proven create collisions are refused
+    separately. Report surplus fields and projected operation counts. Kinds without
+    a destination key receive the separate unkeyed-write warning.
     """
     keys = _destination_keys(node)
     if not keys or any(supplied <= set(key) for key in keys):
         return
 
-    # The key the destination will really converge on: the one that accounts for most of the
-    # plan's identity. Ties break on the sorted order, so the choice is deterministic.
+    # Select the closest declared key, breaking ties deterministically.
     closest = min(keys, key=lambda key: (-len(supplied & set(key)), key))
     uncovered = sorted(supplied - set(closest))
     collided, destination_identities = _merged_identity_counts(operations, key=closest)
@@ -873,32 +851,45 @@ def _warn_identity_finer_than_destination_key(
 
 def _source_identities(
     *, kind: str, source_adapter: Any, destination: Any, config: SyncConfig | None
-) -> list[dict[str, Any]]:
+) -> list[tuple[str, Mapping[str, Any]]]:
     """Resolve identifiers of every loaded source record, including unchanged records."""
     candidates = reference_candidates(config, kind)
     peers = destination_only_peers(destination)
     identities = []
     for record in source_adapter.get_all(kind):
         keys = record.get_identifiers()
-        resolved = _resolve_references(
-            values=keys,
-            candidates=candidates,
-            store=source_adapter.store,
-            config=config,
-            owning_kind=kind,
-            chain=((kind, record.get_unique_id()),),
-            peers=peers,
-            allow_missing=True,
-        )
-        # Missing values cannot prove a collision. Keep them for the warning rather
-        # than treating an unchanged source record as an under-keyed planned write.
+        identifier = record.get_unique_id()
+        try:
+            resolved = _resolve_references(
+                values=keys,
+                candidates=candidates,
+                store=source_adapter.store,
+                config=config,
+                owning_kind=kind,
+                chain=((kind, identifier),),
+                peers=peers,
+                allow_missing=True,
+            )
+        except SourcePeerUnresolvedError:
+            # Changed records already pass strict operation derivation. An unchanged
+            # record with an unresolved peer cannot prove a population collision.
+            logger.warning(
+                "Plan: source population of destination kind %s contains a record with an unresolved identity peer; "
+                "this record cannot be compared for convergence and is allowed to proceed",
+                kind,
+            )
+            continue
+        # Missing values warn instead of treating an unchanged record as an unkeyed write.
         identities.append(
-            canonical_identity(
-                {
-                    field: resolved[field].identity_value() if field in resolved else value
-                    for field, value in keys.items()
-                },
-                kind=kind,
+            (
+                identifier,
+                canonical_identity(
+                    {
+                        field: resolved[field].identity_value() if field in resolved else value
+                        for field, value in keys.items()
+                    },
+                    kind=kind,
+                ),
             )
         )
     return identities
@@ -911,16 +902,10 @@ def warn_missing_convergence_key(
     source_adapter: Any = None,
     config: SyncConfig | None = None,
 ) -> None:
-    """Prove every create keys itself, and warn about what only an update risks (FR-024, AD044).
+    """Prove create keys and compare loaded source identities (FR-024, AD044).
 
-    Refuse an under-keyed create or one sharing its actual destination match key
-    with a distinct loaded source identity, including updates and unchanged records.
-    Updates themselves remain keyed by recorded destination id and only receive
-    warnings about incomplete keys or finer source identities.
-
-    Infrahub creates require cached schemas; other schemaless destinations retain
-    AD052's skip. Warnings stay off the manifest and outside its checksum.
-    A refusal fails planning before any destination write or saved artifact.
+    Infrahub creates require cached schemas. Refusals precede writes and artifacts.
+    Updates use recorded destination ids; their key warnings stay off the manifest.
     """
     require_infrahub_create_schema(destination=destination, operations=operations)
     schema = getattr(destination, "schema", None)
@@ -941,24 +926,35 @@ def warn_missing_convergence_key(
         for operation in creates:
             refuse_unkeyed_create(operation, node=node, schemas=schema)
 
-        if creates:
+        if creates and getattr(node, "human_friendly_id", None):
             identities = (
                 _source_identities(kind=kind, source_adapter=source_adapter, destination=destination, config=config)
                 if source_adapter is not None
-                else [operation.identity for operation in of_kind if operation.action != "delete"]
+                else [
+                    (operation.operation_id, operation.identity)
+                    for operation in of_kind
+                    if operation.action != "delete"
+                ]
             )
-            refuse_source_identity_collisions(kind=kind, node=node, creates=creates, identities=identities)
+            declared = (
+                {field for entry in config.schema_mapping if entry.name == kind for field in (entry.identifiers or [])}
+                if config is not None
+                else by_kind[kind]
+            )
+            refuse_source_identity_collisions(
+                kind=kind,
+                node=node,
+                creates=creates,
+                identities=identities,
+                declared_identity=declared or by_kind[kind],
+            )
 
         # A finer identity alone is not a collision: a lone source record can safely
         # create, and updates still use their recorded destination ids.
         _warn_identity_finer_than_destination_key(kind=kind, node=node, supplied=by_kind[kind], operations=of_kind)
 
-        # The two arms below are about a write that might **duplicate**, which a create can no
-        # longer do — it was proven above — so they narrow to the operations that are still
-        # only warned about. Updates specifically, not "everything that is not a create": a
-        # delete is recorded and never executed (ADR 0004), so letting one into this set
-        # would both narrow the intersection and produce a message about how updates are
-        # keyed for a kind this plan only deletes.
+        # Only updates receive the remaining key warnings. Creates were proven
+        # above, and deletes are recorded but never executed (ADR 0004).
         updates = [operation for operation in of_kind if operation.action == "update"]
         if not updates:
             continue

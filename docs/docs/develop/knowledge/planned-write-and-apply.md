@@ -189,7 +189,8 @@ inherited one), or a uniqueness constraint are refused as `DestinationIdentityCo
 The error names the colliding rule. Applying those creates could converge distinct source
 objects onto one destination object. A unique attribute inherited from the same generic also
 refuses matching creates of different kinds. Updates are excluded, since each is keyed by its
-recorded destination id. The saved-plan apply gate checks the same rules before its first write.
+recorded destination id. The saved-plan apply gate checks these create-versus-create rules
+before its first write.
 
 Planning also compares each create's human-friendly ID against every loaded source record
 of that kind. This includes unchanged records restored from the previous run's cache and
@@ -200,14 +201,39 @@ destination cannot distinguish. Alternative uniqueness constraints do not replac
 human-friendly ID used to match a create. An update-only plan continues to use recorded
 destination ids.
 
-A source record with no value for a match component cannot prove a collision; planning
-warns and skips that record in the population comparison. The separate checks for an
-under-keyed create still apply. Infrahub creates require the cached destination schema,
-and identity checks run even when no plan artifact directory was supplied.
+The refusal identifies the other record by its source-store identifier when its identity
+contains only names. For identities with other fields it reports an opaque source identity
+fingerprint instead, withholding their values. These are source record identifiers,
+not create operation ids for unchanged records or updates.
 
-The write surface applies the same rule, from the same function, before `client.create` — so a create
-refused at plan time and the same create arriving in a hand-built artifact are refused for the same
-reason, and neither attempts a mutation.
+A source record with no value for a match component cannot prove a collision; planning
+warns and skips that record in the population comparison. An unchanged record whose
+identity peer cannot be resolved in the source store also warns and is skipped.
+Planned operations still require resolved peers. The separate checks for an
+under-keyed create still apply. Infrahub creates require the cached destination schema,
+and identity checks run even when no plan artifact directory was supplied. Direct Python
+callers planning for Infrahub must supply the parsed configuration; otherwise planning
+raises `PlanVerificationError`. Other destinations skip artifact derivation when no
+artifact directory or run id is supplied. The product run factory supplies all three.
+
+The write surface repeats the under-keyed-create checks before `client.create`.
+Apply also repeats the create-versus-create collision checks, but it does not load the
+source population or repeat the create-versus-update comparison. Those comparisons run
+only during planning; a hand-built artifact does not receive them at apply time.
+
+The population comparison adds work proportional to the loaded records of each kind
+that has a create and a human-friendly ID. A reference measurement used Python 3.13.15,
+one create, and records sharing a site (and a device for the nested case). The table
+shows median elapsed time over three checks, excluding setup and diff derivation.
+Peak extra Python allocations were measured separately with `tracemalloc`; they exclude
+the already loaded store. The unit suite was running concurrently, so these measurements
+are a reference rather than a performance guarantee.
+
+| Source records | Rack → site | Interface → device → site | Peak extra memory: rack / interface |
+| --- | --- | --- | --- |
+| 1,000 | 0.090 s | 0.164 s | 1.0 / 1.4 MiB |
+| 10,000 | 0.874 s | 1.802 s | 10.8 / 15.1 MiB |
+| 50,000 | 5.519 s | 8.949 s | 55.7 / 77.0 MiB |
 
 Explicit `hfid` rendering is deliberately **not** reintroduced: `save(allow_upsert=True)` strips it on
 1.23.2 and the server matches on complete components anyway, so rendering it would assert a key the

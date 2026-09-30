@@ -573,12 +573,9 @@ class Potenda:
     def write_plan(self, diff: Any) -> dict[str, int] | None:
         """Write both plan representations for a single-diff run.
 
-        `plan.parquet` is written exactly as before (V23) — it is retained for operators
-        to query, and the new artifact never replaces it. It is **not** what `apply`
-        reads: `apply_plan` loads `<run_dir>/plan/` and refuses a run that holds only the
-        parquet. The saved plan artifact is written alongside it, because this method is the
-        one call site every path that produces a plan goes through — and on all of them it
-        runs before any destination write, which is what FR-001 requires.
+        Retain `plan.parquet` for operator queries alongside the saved artifact.
+        `apply_plan` reads only `<run_dir>/plan/` and refuses parquet-only runs.
+        This method runs before any destination write (FR-001).
 
         Returns the saved artifact's in-memory per-action counts, or `None` when no
         saved artifact can be written. For `operation="plan"`, the shared execution
@@ -598,7 +595,8 @@ class Potenda:
     def write_plan_artifact(self, diffs: Sequence[Any]) -> PlanManifest | None:
         """Derive and write `<run_dir>/plan/` for `diffs`, before any destination write.
 
-        Derive operations and check source identities even without artifact storage.
+        Infrahub identity checks run even without artifact storage and require a
+        parsed configuration. Other destinations without storage skip derivation.
         With a cache identity, bind the source snapshot and configuration version,
         then write the artifact and return its manifest; otherwise return `None`.
         A sequence supports the tier path's one diff per tier. Derivation and write
@@ -609,6 +607,9 @@ class Potenda:
 
     def _write_plan_artifact(self, diffs: Sequence[Any]) -> tuple[PlanManifest, dict[str, int]] | None:
         """Write the artifact once and retain its authoritative in-memory action counts."""
+        if (not self.run_dir or not self.run_id) and getattr(self.destination, "type", None) != "Infrahub":
+            logger.debug("Plan artifact: skipped, this run has no run_dir/run_id")
+            return None
         if self.config is None:
             if getattr(self.destination, "type", None) == "Infrahub":
                 msg = (

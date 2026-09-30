@@ -1,1 +1,1 @@
-Planning now refuses an Infrahub create that would merge distinct loaded source records, including unchanged records from an incremental run and records represented by updates, instead of allowing it with a warning.
+Planning now refuses an Infrahub create that would merge distinct loaded source records, including unchanged records from an incremental run and creates sharing an update's human-friendly ID, instead of allowing it with a warning, and refuses creates whose kind is missing from the cached destination schema instead of skipping their checks.

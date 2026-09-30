@@ -17,8 +17,10 @@ from infrahub_sync.plan.derive import operations_from_diff, warn_missing_converg
 from infrahub_sync.plan.errors import (
     DestinationIdentityCollisionError,
     PlanVerificationError,
+    SourcePeerUnresolvedError,
     UnkeyedCreateRefusedError,
 )
+from infrahub_sync.plan.keying import refuse_source_identity_collisions
 from infrahub_sync.potenda import Potenda
 
 if TYPE_CHECKING:
@@ -182,6 +184,12 @@ def test_full_source_population_refuses_lossy_creates(
     if existing != "none":
         assert "actual destination match key" in message
         assert "Declared source identity" in message
+        assert f"mapping identifiers): {'device, name' if nested else 'name, site'}." in message
+        assert (
+            f"Other loaded source record identifiers: '{'eth0__edge1__site-a' if nested else 'same__site-a'}'"
+            in message
+        )
+        assert "Source identity identifiers" not in message
         assert ("device__site__name__value" if nested else "site__name__value") in message
         assert error.value.wrote is False
     assert not (tmp_path / "plan" / "manifest.json").exists()
@@ -246,6 +254,97 @@ def test_missing_nested_peer_value_warns_and_proceeds(caplog: pytest.LogCaptureF
     assert potenda.write_plan(potenda.diff()) is None
     assert "supplies no value" in caplog.text
     assert "device__name__value" in caplog.text
+
+
+@pytest.mark.parametrize("cached", [False, True], ids=["loaded", "cache-restored"])
+def test_unchanged_missing_identity_peer_warns_and_writes_plan(
+    *, cached: bool, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unchanged interface with a destination-only device cannot prove a collision."""
+    source, destination, _ = populations(nested=True, existing="unchanged", distinct=True)
+    ghost = Interface(name="eth0", device="ghost__site-a", local_id="ghost-interface-id")
+    destination.add(Device(name="ghost", site="site-a"))
+    destination.add(ghost)
+    potenda = engine(source, destination)
+    if cached:
+        previous = tmp_path / "previous"
+        previous.mkdir()
+        (previous / "schema-sub-hash.txt").write_text("schema-hash")
+        (previous / "cursors.json").write_text(
+            json.dumps({"A": {"InterfacePhysical": "TIMESTAMP:2026-09-29T00:00:00Z"}})
+        )
+        write_resource_side(
+            run_dir=previous,
+            side="A",
+            resource="InterfacePhysical",
+            rows=[{"name": ghost.name, "device": ghost.device, "description": ghost.description}],
+            source_ids=[ghost.get_unique_id()],
+            extract_ts=datetime(2026, 9, 29, tzinfo=timezone.utc),
+        )
+        potenda._prev_run_resolved = True
+        potenda._prev_run_cached = previous
+        potenda._schema_subhash = "schema-hash"
+        potenda.load_one_side(side="A", adapter=source)
+        assert potenda._side_full_extract["A"] is False
+    else:
+        source.add(ghost)
+    potenda.run_dir = tmp_path / "current"
+    potenda.run_id = "missing-peer-run"
+    manifest = potenda.write_plan(potenda.diff())
+    assert manifest is not None
+    assert (potenda.run_dir / "plan" / "manifest.json").exists()
+    assert (potenda.run_dir / "plan" / "operations.jsonl").exists()
+    assert "unresolved identity peer" in caplog.text
+    assert "InterfacePhysical" in caplog.text
+    assert "allowed to proceed" in caplog.text
+    assert "Add the peer's kind" not in caplog.text
+    assert ghost.device not in caplog.text
+
+
+@pytest.mark.parametrize("action", ["create", "update"])
+def test_planned_missing_identity_peer_is_still_refused(action: str) -> None:
+    """Population tolerance must not weaken the proof for changed records."""
+    source, destination, _ = populations(nested=True, existing="unchanged", distinct=True)
+    ghost = Interface(name="eth0", device="ghost__site-a")
+    source.add(ghost)
+    if action == "update":
+        destination.add(ghost.model_copy(update={"description": "old", "local_id": "ghost-interface-id"}))
+    potenda = engine(source, destination)
+    with pytest.raises(SourcePeerUnresolvedError):
+        potenda.write_plan(potenda.diff())
+
+
+def test_non_infrahub_without_storage_skips_derivation() -> None:
+    """Other destinations preserve the direct Python skip when no artifact is requested."""
+    source, destination, _ = populations(nested=True, existing="unchanged", distinct=True)
+    destination.type = "Other"
+    source.add(Interface(name="eth0", device="missing-device"))
+    potenda = engine(source, destination)
+    assert potenda.write_plan(potenda.diff()) is None
+
+
+def test_collision_identifiers_with_non_name_values_are_withheld() -> None:
+    """Counterpart diagnostics must not expose non-name values through the store id."""
+    source, destination, kind = populations(nested=False, existing="unchanged")
+    operations = operations_from_diff(
+        engine(source, destination).diff(),
+        config=config(),
+        tier_of=lambda _: 0,
+        source_adapter=source,
+        destination_adapter=destination,
+    )
+    operation = operations[0].model_copy(update={"identity": {"name": "same", "credential": "ours"}})
+    sensitive = "synthetic-credential-marker"
+    with pytest.raises(DestinationIdentityCollisionError) as error:
+        refuse_source_identity_collisions(
+            kind=kind,
+            node=destination.schema[kind],  # ty: ignore[unresolved-attribute]
+            creates=[operation],
+            identities=[(f"same__{sensitive}", {"name": "same", "credential": sensitive})],
+            declared_identity={"name", "credential"},
+        )
+    assert sensitive not in str(error.value)
+    assert "source identity fingerprint" in str(error.value)
 
 
 def test_alternative_uniqueness_constraint_does_not_mask_actual_match_key() -> None:
