@@ -599,19 +599,14 @@ class Potenda:
         parsed configuration. Other destinations without storage skip derivation.
         With a cache identity, bind the source snapshot and configuration version,
         then write the artifact and return its manifest; otherwise return `None`.
-        A sequence supports the tier path's one diff per tier. Infrahub checks also run
-        when artifact storage is unavailable. Derivation and write failures propagate
-        before any destination write (FR-030, AD047).
+        A sequence supports the tier path's one diff per tier. Derivation and write
+        failures propagate before any destination write (FR-030, AD047).
         """
         written = self._write_plan_artifact(diffs)
         return None if written is None else written[0]
 
     def _write_plan_artifact(self, diffs: Sequence[Any]) -> tuple[PlanManifest, dict[str, int]] | None:
-        """Run Infrahub checks without storage; skip other destinations without a cache identity.
-
-        The ordinary product path arrives with `run_dir`, `run_id`, and parsed `config`.
-        Direct callers still cannot bypass the Infrahub safety checks by omitting storage.
-        """
+        """Check Infrahub identities even without storage, then write the artifact and its action counts."""
         if (not self.run_dir or not self.run_id) and getattr(self.destination, "type", None) != "Infrahub":
             logger.debug("Plan artifact: skipped, this run has no run_dir/run_id")
             return None

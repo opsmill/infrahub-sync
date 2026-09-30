@@ -895,18 +895,10 @@ def _source_identities(
             )
             continue
         # Missing values warn instead of treating an unchanged record as an unkeyed write.
-        identities.append(
-            (
-                identifier,
-                canonical_identity(
-                    {
-                        field: resolved[field].identity_value() if field in resolved else value
-                        for field, value in keys.items()
-                    },
-                    kind=kind,
-                ),
-            )
-        )
+        fields = {
+            field: resolved[field].identity_value() if field in resolved else value for field, value in keys.items()
+        }
+        identities.append((identifier, canonical_identity(fields, kind=kind)))
     return identities
 
 
@@ -946,11 +938,7 @@ def warn_missing_convergence_key(
             identities = (
                 _source_identities(kind=kind, source_adapter=source_adapter, config=config, peers=peers)
                 if source_adapter is not None
-                else [
-                    (operation.operation_id, operation.identity)
-                    for operation in of_kind
-                    if operation.action != "delete"
-                ]
+                else [(op.operation_id, op.identity) for op in of_kind if op.action != "delete"]
             )
             declared = (
                 {field for entry in config.schema_mapping if entry.name == kind for field in (entry.identifiers or [])}
