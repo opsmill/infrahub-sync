@@ -100,6 +100,7 @@ def test_persist_then_load_roundtrip(tmp_path: Path) -> None:
             "InfraDevice": CursorState(
                 tier=CursorTier.TIMESTAMP,
                 value="2026-05-18T11:00:00Z",
+                safe=True,
             )
         },
     )
@@ -119,6 +120,8 @@ def test_persist_then_load_roundtrip(tmp_path: Path) -> None:
 
     assert loaded_a["InfraDevice"].tier is CursorTier.TIMESTAMP
     assert loaded_a["InfraDevice"].value == "2026-05-18T11:00:00Z"
+    assert loaded_a["InfraDevice"].safe is True
+    assert loaded_b["InfraDevice"].safe is False
     assert loaded_b["InfraDevice"].tier is CursorTier.INFRAHUB_DIFF
     assert loaded_b["InfraDevice"].value == "2026-05-18T11:05:00Z"
 

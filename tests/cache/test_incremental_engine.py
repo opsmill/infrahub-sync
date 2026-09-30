@@ -37,6 +37,10 @@ class _StubAdapter(Adapter):
     def cursor_tier_for(self, _model_name: str) -> CursorTier:  # noqa: PLR6301
         return CursorTier.TIMESTAMP
 
+    def safe_cursor_before_load(self, _model_name: str) -> CursorState:  # noqa: PLR6301
+        """Provide the synthetic source's guaranteed pre-query bound."""
+        return CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00+00:00", safe=True)
+
     def list_changed_since(self, _model_name: str, cursor: CursorState) -> list[dict]:
         self.calls.append(("delta", cursor))
         return list(self.deltas)
@@ -81,7 +85,7 @@ def test_uses_incremental_when_prior_run_matches(tmp_path: Path) -> None:
     prev_run.mkdir(parents=True)
     (prev_run / "run.json").write_text(json.dumps({"status": "applied"}))
     (prev_run / "schema-sub-hash.txt").write_text("HASHFIXED")
-    (prev_run / "cursors.json").write_text(json.dumps({"A": {"InfraDevice": "TIMESTAMP:2026-05-17T10:00:00Z"}}))
+    (prev_run / "cursors.json").write_text(json.dumps({"A": {"InfraDevice": "safe-v1:TIMESTAMP:2026-05-17T10:00:00Z"}}))
     write_resource_side(
         run_dir=prev_run,
         side="A",
@@ -114,7 +118,7 @@ def test_side_full_extract_answers_per_side_on_a_mixed_run(tmp_path: Path) -> No
     prev_run.mkdir(parents=True)
     (prev_run / "run.json").write_text(json.dumps({"status": "applied"}))
     (prev_run / "schema-sub-hash.txt").write_text("HASHFIXED")
-    (prev_run / "cursors.json").write_text(json.dumps({"B": {"InfraDevice": "TIMESTAMP:2026-05-17T10:00:00Z"}}))
+    (prev_run / "cursors.json").write_text(json.dumps({"B": {"InfraDevice": "safe-v1:TIMESTAMP:2026-05-17T10:00:00Z"}}))
     write_resource_side(
         run_dir=prev_run,
         side="B",
@@ -146,7 +150,8 @@ def test_cursor_persisted_after_load(tmp_path: Path) -> None:
     pot._schema_subhash = "abc"
 
     # First run: full extract (no prior run), then snapshot is written +
-    # cursor persisted. We simulate the snapshot directly because the
+    # source-provided cursor persisted, independently of snapshot metadata.
+    # We simulate the snapshot directly because the
     # stub adapter doesn't actually populate the store.
     pot.load_one_side(side="A", adapter=src)
     write_resource_side(
@@ -164,4 +169,5 @@ def test_cursor_persisted_after_load(tmp_path: Path) -> None:
 
     loaded = load_cursors(cursors_path, side="A")
     assert loaded["InfraDevice"].tier is CursorTier.TIMESTAMP
-    assert loaded["InfraDevice"].value == "2026-05-18T11:00:00+00:00"
+    assert loaded["InfraDevice"].value == "2026-05-17T10:00:00+00:00"
+    assert loaded["InfraDevice"].safe is True

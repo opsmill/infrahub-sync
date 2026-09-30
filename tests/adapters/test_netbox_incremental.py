@@ -1,4 +1,6 @@
 import collections
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -78,7 +80,11 @@ class _FakeRecord(collections.UserDict):
     """Minimal pynetbox record stub: UserDict so dict(record) works."""
 
 
-def test_list_changed_since_uses_last_updated_filter() -> None:
+@pytest.mark.parametrize("change_offset", [0, 1])
+def test_list_changed_since_uses_last_updated_filter(tmp_path: Path, change_offset: int) -> None:
+    from infrahub_sync.cache.incremental import load_cursors, persist_cursors
+
+    change_time = datetime.fromisoformat("2026-05-17T10:00:00Z") + timedelta(seconds=change_offset)
     adapter = _make_adapter(
         [
             {
@@ -92,7 +98,9 @@ def test_list_changed_since_uses_last_updated_filter() -> None:
     # Use a dict subclass so dict(record) produces the expected shape.
     fake_record = _FakeRecord({"id": 1, "name": "leaf1"})
     fake_endpoint = MagicMock()
-    fake_endpoint.filter.return_value = [fake_record]
+    fake_endpoint.filter.side_effect = lambda **kwargs: (
+        [fake_record] if change_time >= datetime.fromisoformat(kwargs["last_updated__gte"]) else []
+    )
     # pynetbox resolves endpoints through `App.__getattr__`, so `devices` is not a
     # declared attribute for ty to see. Removable once pynetbox ships typing for
     # its dynamic endpoint access.
@@ -107,7 +115,16 @@ def test_list_changed_since_uses_last_updated_filter() -> None:
     fake_model.fields = None
     adapter.InfraDevice = fake_model  # ty: ignore[unresolved-attribute]
 
-    cursor = CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00Z")
+    # A source guarantee accounts for the strict Infrahub boundary as well as
+    # the inclusive NetBox/Nautobot boundary. Persist and query the exact bound.
+    path = tmp_path / "cursors.json"
+    persist_cursors(
+        path,
+        side="A",
+        cursors={"InfraDevice": CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00Z", safe=True)},
+    )
+    cursor = load_cursors(path, side="A")["InfraDevice"]
+    assert cursor.safe
     rows = list(adapter.list_changed_since("InfraDevice", cursor))
 
     fake_endpoint.filter.assert_called_once_with(last_updated__gte="2026-05-17T10:00:00Z")
@@ -175,3 +192,10 @@ def test_list_existing_ids_raises_for_unknown_model() -> None:
     )
     with pytest.raises(NotImplementedError):
         list(adapter.list_existing_ids("UnknownKind"))
+
+
+def test_timestamp_source_has_no_established_safe_bound() -> None:
+    from infrahub_sync.cache.cursors import capture_safe_cursor
+
+    adapter = _make_adapter([{"name": "InfraDevice", "mapping": "dcim.devices"}])
+    assert capture_safe_cursor(adapter, "InfraDevice", CursorTier.TIMESTAMP) is None

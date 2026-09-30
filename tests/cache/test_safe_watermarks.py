@@ -1,0 +1,228 @@
+"""Source-guaranteed watermarks and full extraction when no bound is safe."""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from types import SimpleNamespace
+from typing import ClassVar
+
+import pytest
+from diffsync import Adapter, DiffSyncModel
+
+from infrahub_sync.cache.cursors import CursorState, CursorTier
+from infrahub_sync.cache.incremental import load_cursors
+from infrahub_sync.cache.parquet_io import read_table
+from infrahub_sync.potenda import Potenda
+
+
+class _Device(DiffSyncModel):
+    _modelname: ClassVar[str] = "Device"
+    _identifiers: ClassVar[tuple[str, ...]] = ("name",)
+    _attributes: ClassVar[tuple[str, ...]] = ("description",)
+
+    name: str
+    description: str
+    local_id: str | None = None
+
+
+class _Empty(_Device):
+    _modelname: ClassVar[str] = "Empty"
+
+
+# The source rounds timestamps to seconds. Even a change after the first query
+# can therefore equal the truncated source clock at extraction start.
+SOURCE_START = datetime(2026, 1, 1, 0, 0, 1, 999999, tzinfo=timezone.utc)
+CHANGE_TIME = SOURCE_START.replace(microsecond=0)
+SAFE_BOUND = CHANGE_TIME - timedelta(seconds=1)
+
+
+class _TimestampSource(Adapter):
+    Device = _Device
+    Empty = _Empty
+    top_level: ClassVar[list[str]] = ["Device", "Empty"]
+
+    def __init__(self, rows: dict[str, list[dict]], *, safe: bool, exclusive: bool, mutate: bool) -> None:
+        super().__init__(name="timestamp-source")
+        self.rows = rows
+        self.safe = safe
+        self.exclusive = exclusive
+        self.mutate = mutate
+        self.calls: list[tuple[str, object]] = []
+
+    def cursor_tier_for(self, _model_name: str) -> CursorTier:  # noqa: PLR6301
+        return CursorTier.TIMESTAMP
+
+    def safe_cursor_before_load(self, model_name: str) -> CursorState | None:
+        self.calls.append(("bound", model_name))
+        # The synthetic source guarantees this bound precedes all changes that
+        # can commit after the queries start, including its precision bucket.
+        return CursorState(CursorTier.TIMESTAMP, SAFE_BOUND.isoformat(), safe=True) if self.safe else None
+
+    def model_loader(self, model_name: str, model: type[DiffSyncModel]) -> None:
+        self.calls.append(("full", model_name))
+        for row in self.rows[model_name]:
+            self.add(model(**row))
+        if self.mutate and model_name == self.top_level[-1]:
+            self.rows["Device"][0]["description"] = "new"
+            if "Empty" in self.top_level:
+                self.rows["Empty"] = [{"name": "appeared", "description": "new"}]
+
+    def load(self) -> None:
+        for model_name in self.top_level:
+            self.model_loader(model_name, getattr(self, model_name))
+
+    def list_changed_since(self, model_name: str, cursor: CursorState) -> list[dict]:
+        self.calls.append(("delta", cursor))
+        assert cursor.value is not None
+        bound = datetime.fromisoformat(cursor.value)
+        include = bound < CHANGE_TIME if self.exclusive else bound <= CHANGE_TIME
+        # Deliberate overlap and repeated rows must update cached objects in memory.
+        rows = [dict(row) for row in self.rows[model_name]] if include else []
+        return rows + rows
+
+
+def _engine(root: Path, run: str, source: _TimestampSource, side: str) -> Potenda:
+    other = _TimestampSource({"Device": [], "Empty": []}, safe=False, exclusive=False, mutate=False)
+    pot = Potenda(
+        source=source if side == "A" else other,
+        destination=source if side == "B" else other,
+        config=SimpleNamespace(diffsync_flags=[]),  # ty: ignore[invalid-argument-type]
+        top_level=["Device", "Empty"] if "Empty" in source.rows else ["Device"],
+        show_progress=False,
+        concurrent_load=False,
+        run_dir=root / run,
+        cache_root=root,
+        schema_subhash="matching-schema",
+    )
+    assert pot.run_dir is not None
+    pot.run_dir.mkdir()
+    return pot
+
+
+@pytest.mark.parametrize("side", ["A", "B"])
+@pytest.mark.parametrize("multiple_resources", [False, True])
+@pytest.mark.parametrize("exclusive", [False, True])
+@pytest.mark.parametrize("safe", [False, True])
+def test_in_flight_change_is_read_next_run(
+    tmp_path: Path, side: str, *, multiple_resources: bool, exclusive: bool, safe: bool
+) -> None:
+    """Mid-load changes survive precision loss, strict boundaries and clock skew."""
+    rows = {"Device": [{"name": "device", "description": "old", "local_id": "original-id"}]}
+    if multiple_resources:
+        rows["Empty"] = []
+    first_source = _TimestampSource(rows, safe=safe, exclusive=exclusive, mutate=True)
+    first = _engine(tmp_path, "run-1", first_source, side)
+    load_first = first.source_load if side == "A" else first.destination_load
+    load_first()
+    assert first_source.get("Device", "device").description == "old"  # ty: ignore[unresolved-attribute]
+    first.persist_cursors_for_run(side=side)
+    assert first.run_dir is not None
+    # The host's diagnostic timestamp is far ahead of the source. It must never
+    # become the query bound, even for an empty resource.
+    metadata_ts = read_table(str(first.run_dir / side / "Device.parquet")).column("_extract_ts")[0].as_py()
+    assert metadata_ts > CHANGE_TIME
+    saved = load_cursors(first.run_dir / "cursors.json", side=side)
+    if safe:
+        assert set(saved) == set(rows)
+        assert all(cursor.safe and cursor.value == SAFE_BOUND.isoformat() for cursor in saved.values())
+    else:
+        assert saved == {}
+    assert first_source.calls[: len(rows)] == [("bound", resource) for resource in rows]
+    (first.run_dir / "schema-sub-hash.txt").write_text("matching-schema")
+    (first.run_dir / "run.json").write_text(json.dumps({"status": "dry-run"}))
+
+    second_source = _TimestampSource(rows, safe=safe, exclusive=exclusive, mutate=False)
+    second = _engine(tmp_path, "run-2", second_source, side)
+    load_second = second.source_load if side == "A" else second.destination_load
+    load_second()
+    device = second_source.get("Device", "device")
+    assert device.description == "new"  # ty: ignore[unresolved-attribute]
+    assert len(second_source.get_all("Device")) == 1
+    if side == "B":
+        assert device.local_id == "original-id"  # ty: ignore[unresolved-attribute]
+    if multiple_resources:
+        assert second_source.get("Empty", "appeared").description == "new"  # ty: ignore[unresolved-attribute]
+    assert any(call[0] == "delta" for call in second_source.calls) is safe
+    assert second._side_full_extract[side] is not safe
+
+
+def test_failed_load_does_not_persist_a_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _TimestampSource({"Device": []}, safe=True, exclusive=False, mutate=False)
+    pot = _engine(tmp_path, "run-1", source, "A")
+
+    def fail() -> None:
+        msg = "load failed"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(source, "load", fail)
+    with pytest.raises(ValueError, match="load failed"):
+        pot.source_load()
+    pot.persist_cursors_for_run(side="A")
+    assert pot.run_dir is not None
+    assert not (pot.run_dir / "cursors.json").exists()
+
+
+def test_forced_full_extract_does_not_request_a_safe_cursor(tmp_path: Path) -> None:
+    source = _TimestampSource({"Device": []}, safe=True, exclusive=False, mutate=False)
+    pot = _engine(tmp_path, "run-1", source, "A")
+    pot.force_full_extract = True
+    pot.source_load()
+    assert source.calls == [("full", "Device")]
+    pot.persist_cursors_for_run(side="A")
+    assert pot.run_dir is not None
+    assert not (pot.run_dir / "cursors.json").exists()
+
+
+def test_legacy_watermark_is_not_used_even_with_a_safe_source(tmp_path: Path) -> None:
+    source = _TimestampSource(
+        {"Device": [{"name": "device", "description": "old"}]}, safe=True, exclusive=False, mutate=True
+    )
+    first = _engine(tmp_path, "run-1", source, "A")
+    first.source_load()
+    assert first.run_dir is not None
+    (first.run_dir / "run.json").write_text(json.dumps({"status": "dry-run"}))
+    (first.run_dir / "schema-sub-hash.txt").write_text("matching-schema")
+    # An old, host-derived bound can be later than changes the cache never saw.
+    (first.run_dir / "cursors.json").write_text(json.dumps({"A": {"Device": "TIMESTAMP:2099-01-01T00:00:00Z"}}))
+    second_source = _TimestampSource(source.rows, safe=True, exclusive=False, mutate=False)
+    second = _engine(tmp_path, "run-2", second_source, "A")
+    second.source_load()
+    assert second_source.get("Device", "device").description == "new"  # ty: ignore[unresolved-attribute]
+    assert not any(call[0] == "delta" for call in second_source.calls)
+
+
+@pytest.mark.parametrize("delta_id", [None, "replacement-id"])
+def test_overlap_updates_are_in_memory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delta_id: str | None) -> None:
+    """Last yielded attributes win; missing destination ids retain the cached id."""
+    rows = {"Device": [{"name": "device", "description": "cached", "local_id": "cached-id"}]}
+    first_source = _TimestampSource(rows, safe=True, exclusive=False, mutate=False)
+    first = _engine(tmp_path, "run-1", first_source, "B")
+    first.destination_load()
+    first.persist_cursors_for_run(side="B")
+    assert first.run_dir is not None
+    (first.run_dir / "run.json").write_text(json.dumps({"status": "dry-run"}))
+    (first.run_dir / "schema-sub-hash.txt").write_text("matching-schema")
+
+    source = _TimestampSource(rows, safe=True, exclusive=False, mutate=False)
+    second = _engine(tmp_path, "run-2", source, "B")
+    delta = {"name": "device", "description": ""}
+    if delta_id is not None:
+        delta["local_id"] = delta_id
+    monkeypatch.setattr(
+        source,
+        "list_changed_since",
+        lambda _resource, _cursor: [{"name": "device", "description": "earlier"}, delta, delta],
+    )
+
+    def refuse_write(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("extraction must not invoke a model write method")
+
+    monkeypatch.setattr(_Device, "update", refuse_write)
+    second.destination_load()
+    device = source.get("Device", "device")
+    assert isinstance(device, _Device)
+    assert not device.description
+    assert device.local_id == (delta_id or "cached-id")
+    assert len(source.get_all("Device")) == 1

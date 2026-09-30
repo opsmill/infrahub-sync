@@ -1,4 +1,6 @@
 from collections import UserDict
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
@@ -69,11 +71,17 @@ def test_cursor_tier_is_none_for_empty_mapping() -> None:
     assert adapter.cursor_tier_for("InfraDevice") is CursorTier.NONE
 
 
-def test_list_changed_since_uses_last_updated_filter() -> None:
+@pytest.mark.parametrize("change_offset", [0, 1])
+def test_list_changed_since_uses_last_updated_filter(tmp_path: Path, change_offset: int) -> None:
+    from infrahub_sync.cache.incremental import load_cursors, persist_cursors
+
+    change_time = datetime.fromisoformat("2026-05-17T10:00:00Z") + timedelta(seconds=change_offset)
     adapter = _make_adapter([{"name": "InfraDevice", "mapping": "dcim.devices", "identifiers": ["name"]}])
     fake_record = _FakeRecord({"id": 1, "name": "leaf1"})
     fake_endpoint = MagicMock()
-    fake_endpoint.filter.return_value = [fake_record]
+    fake_endpoint.filter.side_effect = lambda **kwargs: (
+        [fake_record] if change_time >= datetime.fromisoformat(kwargs["last_updated__gte"]) else []
+    )
     adapter.client.dcim.devices = fake_endpoint  # ty: ignore[unresolved-attribute]
 
     fake_model = MagicMock()
@@ -81,7 +89,16 @@ def test_list_changed_since_uses_last_updated_filter() -> None:
     fake_model.transform_records.side_effect = lambda records, **_kw: records
     adapter.InfraDevice = fake_model  # ty: ignore[unresolved-attribute]
 
-    cursor = CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00Z")
+    # A source guarantee accounts for the strict Infrahub boundary as well as
+    # the inclusive NetBox/Nautobot boundary. Persist and query the exact bound.
+    path = tmp_path / "cursors.json"
+    persist_cursors(
+        path,
+        side="A",
+        cursors={"InfraDevice": CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00Z", safe=True)},
+    )
+    cursor = load_cursors(path, side="A")["InfraDevice"]
+    assert cursor.safe
     rows = list(adapter.list_changed_since("InfraDevice", cursor))
 
     fake_endpoint.filter.assert_called_once_with(last_updated__gte="2026-05-17T10:00:00Z")
@@ -418,3 +435,10 @@ def test_depth_decides_the_payload_the_endpoint_returns() -> None:
 
     assert adapter.get(model, "ams01-edge-01").model_dump()["model"] == "mx-100"
     assert api.http_session_reads == 0
+
+
+def test_timestamp_source_has_no_established_safe_bound() -> None:
+    from infrahub_sync.cache.cursors import capture_safe_cursor
+
+    adapter = _make_adapter([{"name": "InfraDevice", "mapping": "dcim.devices"}])
+    assert capture_safe_cursor(adapter, "InfraDevice", CursorTier.TIMESTAMP) is None

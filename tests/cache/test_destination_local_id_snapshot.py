@@ -70,6 +70,10 @@ class _StubAdapter(Adapter):
     def cursor_tier_for(self, _model_name: str) -> CursorTier:  # noqa: PLR6301
         return CursorTier.TIMESTAMP
 
+    def safe_cursor_before_load(self, _model_name: str) -> CursorState:  # noqa: PLR6301
+        """Provide the synthetic source's guaranteed pre-query bound."""
+        return CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00+00:00", safe=True)
+
     def list_changed_since(self, _model_name: str, cursor: CursorState) -> list[dict]:
         self.calls.append(("delta", cursor))
         return list(self.deltas)
@@ -137,7 +141,7 @@ def write_prior_run(
         )
     (prev_run / "run.json").write_text(json.dumps({"status": "applied"}))
     (prev_run / "schema-sub-hash.txt").write_text("HASHFIXED")
-    cursors = {side: {"InfraDevice": "TIMESTAMP:2026-05-17T10:00:00Z"} for side in sides}
+    cursors = {side: {"InfraDevice": "safe-v1:TIMESTAMP:2026-05-17T10:00:00Z"} for side in sides}
     (prev_run / "cursors.json").write_text(json.dumps(cursors))
     return prev_run
 

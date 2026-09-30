@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from infrahub_sync.cache.cursors import CursorState, CursorTier
+from infrahub_sync.cache.cursors import CursorState, CursorTier, capture_safe_cursor
 
 
 def test_cursor_tier_ordering() -> None:
@@ -28,3 +28,31 @@ def test_cursor_state_none_default() -> None:
 def test_cursor_state_value_required_for_non_none() -> None:
     with pytest.raises(ValueError):
         CursorState(tier=CursorTier.TIMESTAMP, value=None)
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        CursorState(CursorTier.TIMESTAMP, "unqualified"),
+        CursorState(CursorTier.PAGE_TOKEN, "wrong-tier", safe=True),
+        "not-a-cursor",
+    ],
+)
+def test_safe_cursor_hook_rejects_unqualified_values(cursor: object) -> None:
+    from types import SimpleNamespace
+
+    source = SimpleNamespace(safe_cursor_before_load=lambda _resource: cursor)
+    with pytest.raises(ValueError, match="must return a safe cursor"):
+        capture_safe_cursor(source, "Device", CursorTier.TIMESTAMP)
+
+
+def test_no_source_guarantee_means_no_safe_cursor() -> None:
+    from types import SimpleNamespace
+
+    assert capture_safe_cursor(object(), "Device", CursorTier.TIMESTAMP) is None
+    assert (
+        capture_safe_cursor(
+            SimpleNamespace(safe_cursor_before_load=lambda _resource: None), "Device", CursorTier.TIMESTAMP
+        )
+        is None
+    )

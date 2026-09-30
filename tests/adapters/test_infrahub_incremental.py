@@ -1,5 +1,9 @@
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
+
+import pytest
 
 from infrahub_sync.cache.cursors import CursorTier
 
@@ -49,24 +53,40 @@ def test_cursor_tier_is_none_for_unknown_kinds() -> None:
     assert adapter.cursor_tier_for("MissingFromSchema") is CursorTier.NONE
 
 
-def test_list_changed_since_uses_updated_at_filter() -> None:
+@pytest.mark.parametrize("change_offset", [0, 1])
+def test_list_changed_since_uses_updated_at_filter(tmp_path: Path, change_offset: int) -> None:
     from infrahub_sync.cache.cursors import CursorState
+    from infrahub_sync.cache.incremental import load_cursors, persist_cursors
 
+    change_time = datetime.fromisoformat("2026-05-17T10:00:00Z") + timedelta(seconds=change_offset)
     adapter = _make_adapter(["InfraDevice"])
     fake_node = MagicMock()
-    adapter.client.filters.return_value = [fake_node]  # ty: ignore[unresolved-attribute]
+    adapter.client.filters.side_effect = (  # ty: ignore[unresolved-attribute]
+        lambda **kwargs: (
+            [fake_node] if change_time > datetime.fromisoformat(kwargs["node_metadata__updated_at__after"]) else []
+        )
+    )
 
     # Stub infrahub_node_to_diffsync to bypass complex node→dict logic.
     adapter.infrahub_node_to_diffsync = MagicMock(return_value={"local_id": "1", "name": "leaf1"})  # ty: ignore[invalid-assignment]
 
-    cursor = CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00Z")
+    # A source guarantee accounts for the strict Infrahub boundary as well as
+    # the inclusive NetBox/Nautobot boundary. Persist and query the exact bound.
+    path = tmp_path / "cursors.json"
+    persist_cursors(
+        path,
+        side="A",
+        cursors={"InfraDevice": CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T09:59:59Z", safe=True)},
+    )
+    cursor = load_cursors(path, side="A")["InfraDevice"]
+    assert cursor.safe
     rows = list(adapter.list_changed_since("InfraDevice", cursor))
 
     adapter.client.filters.assert_called_once_with(  # ty: ignore[unresolved-attribute]
         kind="InfraDevice",
         populate_store=True,
         prefetch_relationships=True,
-        node_metadata__updated_at__after="2026-05-17T10:00:00Z",
+        node_metadata__updated_at__after="2026-05-17T09:59:59Z",
     )
     assert rows == [{"local_id": "1", "name": "leaf1"}]
 
@@ -151,3 +171,10 @@ def test_model_loader_requests_identifiers_and_mapped_attributes() -> None:
         include=["device", "name", "description"],
         populate_store=True,
     )
+
+
+def test_timestamp_source_has_no_established_safe_bound() -> None:
+    from infrahub_sync.cache.cursors import capture_safe_cursor
+
+    adapter = _make_adapter(["InfraDevice"])
+    assert capture_safe_cursor(adapter, "InfraDevice", CursorTier.TIMESTAMP) is None

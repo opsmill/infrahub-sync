@@ -108,9 +108,10 @@ def load_cursors(path: Path, *, side: str) -> dict[str, CursorState]:
     raw = CursorsFile.load_or_default(path).cursors.get(side, {})
     out: dict[str, CursorState] = {}
     for model_name, packed in raw.items():
-        tier_name, _, value = packed.partition(":")
+        safe = packed.startswith("safe-v1:")
+        tier_name, _, value = packed.removeprefix("safe-v1:").partition(":")
         tier = CursorTier[tier_name]
-        out[model_name] = CursorState(tier=tier, value=value or None)
+        out[model_name] = CursorState(tier=tier, value=value or None, safe=safe)
     return out
 
 
@@ -131,7 +132,8 @@ def persist_cursors(
     sidecar = CursorsFile.load_or_default(path)
     bucket = sidecar.cursors.setdefault(side, {})
     for model_name, state in cursors.items():
-        bucket[model_name] = f"{state.tier.name}:{state.value or ''}"
+        prefix = "safe-v1:" if state.safe else ""
+        bucket[model_name] = f"{prefix}{state.tier.name}:{state.value or ''}"
     sidecar.save()
 
 
