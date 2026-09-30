@@ -61,7 +61,12 @@ def test_the_live_accessor_returns_a_judgeable_snapshot() -> None:
 
     assert snapshot
     for entry in snapshot.values():
-        assert set(entry) == {"human_friendly_id", "uniqueness_constraints", "attributes", "relationships"}
+        base_keys = {"human_friendly_id", "uniqueness_constraints", "attributes", "relationships"}
+        # Only generic entries carry `used_by`: the concrete kinds that implement the generic.
+        assert set(entry) in (base_keys, base_keys | {"used_by"})
+        if "used_by" in entry:
+            assert isinstance(entry["used_by"], list)
+            assert all(isinstance(kind, str) for kind in entry["used_by"])
         assert all(isinstance(component, str) for component in entry["human_friendly_id"])
         for constraint in entry["uniqueness_constraints"]:
             assert all(isinstance(component, str) for component in constraint)
