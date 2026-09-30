@@ -1,0 +1,44 @@
+docs/docs/develop/guidelines/secret-redaction.md
+  s_a439d81ec4a713::t_dcf2d252729f49 138-144
+  s_a439d81ec4a713::t_c16ac2a184200f 156-165
+tests/product_store/test_contract.py
+  s_a439d81ec4a713::t_e2e3a77dc07b04 3120-3204
+  s_a439d81ec4a713::t_6c4ff3b91438fe 6
+  s_a439d81ec4a713::t_bdd952e7660d5e 24
+infrahub_sync/product_store/configs.py
+  s_a439d81ec4a713::t_c34d757e33b6ba 364-366,380-381
+  s_a439d81ec4a713::t_6754960dd14174 395,397,400
+  s_a439d81ec4a713::t_7640a30a9aabeb 54
+  s_a439d81ec4a713::t_9beb12d38e1b52 351-359
+tests/service/test_apply_guard.py
+  s_a439d81ec4a713::t_2d8a82c433e21b 672-687
+tests/test_execution_surface.py
+  s_a439d81ec4a713::t_dda11e4f06b847 637-656
+infrahub_sync/execution.py
+  s_a439d81ec4a713::t_6a0a0f332f80ab 453
+  s_a439d81ec4a713::t_723d463d1f595e 466-483,485-493
+  s_a439d81ec4a713::t_71fb3a62d02253 29
+infrahub_sync/product_store/store.py
+  s_a439d81ec4a713::t_ab4803df3e7863 2946
+  s_a439d81ec4a713::t_a9b54b2c41c1d4 3530-3563,3565-3566
+  s_a439d81ec4a713::t_c38e8606c7ec1f 25
+  s_a439d81ec4a713::t_88d3dce81edd7e 3489-3494,3497-3500,3508,3511
+changelog/+redaction-escaped-forms.security.md
+  s_a439d81ec4a713::t_f1ab40bb732140 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "626219248492dd96dfc6ef22e6558d5263184a1c",
+  "prompts": {},
+  "sessions": {
+    "s_a439d81ec4a713": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a2f4b8c-0cd5-4268-962e-1107e1222216",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
