@@ -210,6 +210,7 @@ def test_optional_peer_clique_has_stable_tiers(reference_kind: str) -> None:
 
 @pytest.mark.parametrize("reverse_mapping", [False, True])
 def test_cycle_breaking_keeps_optional_edges_outside_discovered_cycles(*, reverse_mapping: bool) -> None:
+    """Preserve the base's seed-independent results for both mapping orders."""
     mapping = [
         _sm("K0", [("f_K1", "K1"), ("f_K2", "K2")], identifiers=["name"]),
         _sm("K1", [("f_K2", "K2")], identifiers=["f_K2"]),
@@ -220,5 +221,9 @@ def test_cycle_breaking_keeps_optional_edges_outside_discovered_cycles(*, revers
 
     tiers, dropped = compute_tiers(mapping)
 
-    assert tiers == [{"K2"}, {"K0", "K1"}]
-    assert dropped == [("K0", "K1"), ("K2", "K0")]
+    if reverse_mapping:
+        assert tiers == [{"K0", "K2"}, {"K1"}]
+        assert dropped == [("K0", "K1"), ("K0", "K2"), ("K2", "K0")]
+    else:
+        assert tiers == [{"K2"}, {"K0", "K1"}]
+        assert dropped == [("K0", "K1"), ("K2", "K0")]

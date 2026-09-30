@@ -36,13 +36,14 @@ you from the `reference:` entries in `schema_mapping`, so a kind is normally
 written after the kinds it references. A self-reference (a kind referencing
 itself) adds no ordering edge, and a reference outside the kind's
 `identifiers` is optional. When cycles prevent ordering, infrahub-sync discovers
-cycles by visiting kind names and their references in sorted order, then drops
-all optional edges in those discovered cycles in one pass. It repeats this until
+cycles by visiting kinds in `schema_mapping` order and sorting only each kind's
+references, then drops all optional edges in those discovered cycles in one pass.
+It repeats this until
 ordering succeeds or only identity-reference cycles remain, which cause an error.
 Each dropped edge is logged at WARNING level, and its kind may be written before
-the referenced kind. For every adapter, tiers for cyclic configurations are now
-the same on every run. Keep `order:` only to override the computed order for an
-adapter quirk.
+the referenced kind. For every adapter, this stabilizes tiers for cyclic
+configurations that previously varied between runs. Keep `order:` only to override
+the computed order for an adapter quirk.
 
 For an Infrahub destination, a `reference:` to a generic kind waits for every
 mapped concrete kind in that generic's live schema `used_by` list. The generic

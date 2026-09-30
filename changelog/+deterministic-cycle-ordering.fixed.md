@@ -1,1 +1,1 @@
-Automatic tiers for configurations with cyclic optional references are now the same on every run for every adapter; optional edges are removed from cycles discovered in sorted kind and reference order.
+Automatic tiers for cyclic configurations that varied between runs are now stable for every adapter, with cycle discovery keeping kinds in schema_mapping order and sorting only their references.

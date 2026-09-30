@@ -116,9 +116,9 @@ def compute_tiers(
             # Deferred to keep package imports independent of the SDK.
             from infrahub_sdk.topological_sort import get_cycles  # pylint: disable=import-outside-toplevel
 
-            # Keep the SDK's one-pass cycle edge selection, but traverse sorted
-            # nodes and peers so optional edge removal is stable across runs.
-            cycles = get_cycles({kind: sorted(peers) for kind, peers in sorted(deps.items())})
+            # Keep the SDK's one-pass cycle edge selection and mapping-order
+            # starting kinds; sort only peers to make traversal stable across runs.
+            cycles = get_cycles({kind: sorted(peers) for kind, peers in deps.items()})
             to_drop = {(src, dst) for cycle in cycles for src, dst in pairwise(cycle) if (src, dst) in optional}
             if not to_drop:
                 raise
