@@ -1,8 +1,9 @@
 """Compute write-order tiers for a SyncConfig from its schema_mapping.
 
-The dep graph is derived purely from `SchemaMappingField.reference` entries on
-each `SchemaMappingModel`. Self-references (a kind that references itself, e.g.
-LocationGeneric.parent) are not write-order edges and are excluded.
+The dep graph is derived from `SchemaMappingField.reference` entries on each
+`SchemaMappingModel`, expanding known generics to mapped peer kinds. Self-references
+(a kind that references itself, e.g. LocationGeneric.parent) are not write-order
+edges and are excluded.
 
 Edges where the source field is not in the model's `identifiers` are
 "optional": the dependent peer is not part of uniqueness, so the write can be
@@ -89,12 +90,43 @@ def _collect_optional_edges(
     return optional
 
 
-_MAX_CYCLE_BREAK_ATTEMPTS = 50
+def _cyclic_components(deps: Mapping[str, set[str]]) -> list[set[str]]:
+    """Find strongly connected components with cycles in stable traversal order."""
+    next_index = 0
+    indices: dict[str, int] = {}
+    lowlinks: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    components: list[set[str]] = []
 
+    def visit(node: str) -> None:
+        nonlocal next_index
+        indices[node] = next_index
+        lowlinks[node] = next_index
+        next_index += 1
+        stack.append(node)
+        on_stack.add(node)
+        for peer in sorted(deps.get(node, ())):
+            if peer not in indices:
+                visit(peer)
+                lowlinks[node] = min(lowlinks[node], lowlinks[peer])
+            elif peer in on_stack:
+                lowlinks[node] = min(lowlinks[node], indices[peer])
+        if lowlinks[node] == indices[node]:
+            component: set[str] = set()
+            while stack:
+                peer = stack.pop()
+                on_stack.remove(peer)
+                component.add(peer)
+                if peer == node:
+                    break
+            if len(component) > 1 or node in deps.get(node, set()):
+                components.append(component)
 
-def _consecutive_pairs(nodes: list[str]) -> list[tuple[str, str]]:
-    """Yield successive `(nodes[i], nodes[i+1])` edges along a reported cycle."""
-    return [(nodes[i], nodes[i + 1]) for i in range(len(nodes) - 1)]
+    for node in sorted(set(deps).union(*(set(peers) for peers in deps.values()))):
+        if node not in indices:
+            visit(node)
+    return components
 
 
 def compute_tiers(
@@ -115,28 +147,25 @@ def compute_tiers(
     optional = _collect_optional_edges(schema_mapping, generic_peers)
     dropped: list[tuple[str, str]] = []
 
-    for _ in range(_MAX_CYCLE_BREAK_ATTEMPTS):
+    while True:
         try:
             return topological_sort(deps), dropped
-        except DependencyCycleExistsError as exc:
-            # Drop every optional edge appearing in *any* reported cycle in one
-            # pass, then retry — typically resolves in a single extra sort
-            # instead of one-edge-per-iteration (O(n_cycles) sorts). The bounded
-            # loop remains only as a safety net should dropping these edges
-            # expose a fresh cycle. Sorted for deterministic `dropped` output.
+        except DependencyCycleExistsError:
+            # The SDK reports cycles by walking sets, so their edges depend on the
+            # process hash seed. Every edge within a cyclic strongly connected
+            # component belongs to a cycle. Drop its optional edges in one pass.
             to_drop = {
                 (src, dst)
-                for cycle in exc.cycles
-                for src, dst in _consecutive_pairs(list(cycle))
-                if (src, dst) in optional and dst in deps.get(src, set())
+                for component in _cyclic_components(deps)
+                for src in component
+                for dst in deps.get(src, set()).intersection(component)
+                if (src, dst) in optional
             }
             if not to_drop:
                 raise
             for src, dst in sorted(to_drop):
                 deps[src].discard(dst)
                 dropped.append((src, dst))
-    msg = "Exceeded cycle-break budget; aborting tier computation."
-    raise RuntimeError(msg)
 
 
 def flatten_tiers(tiers: list[set[str]]) -> list[str]:

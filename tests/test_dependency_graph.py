@@ -171,3 +171,28 @@ def test_optional_generic_edge_breaks_cycle_deterministically() -> None:
     tiers, dropped = compute_tiers(mapping, {"SharedGeneric": ("B",)})
     assert tiers == [{"A"}, {"B"}]
     assert dropped == [("A", "B")]
+
+
+@pytest.mark.parametrize("reference_kind", ["concrete", "generic"])
+def test_optional_peer_clique_has_stable_tiers(reference_kind: str) -> None:
+    siblings = ("PeerA", "PeerB", "PeerC", "PeerD")
+    if reference_kind == "generic":
+        mapping = [
+            *[_sm(kind, [("parent", "SharedGeneric")], identifiers=["name"]) for kind in siblings],
+            _sm("Device", [("location", "SharedGeneric")], identifiers=["name"]),
+        ]
+        peers = {"SharedGeneric": siblings}
+    else:
+        mapping = [
+            *[
+                _sm(kind, [(f"peer_{peer}", peer) for peer in siblings if peer != kind], identifiers=["name"])
+                for kind in siblings
+            ],
+            _sm("Device", [(f"location_{peer}", peer) for peer in siblings], identifiers=["name"]),
+        ]
+        peers = None
+
+    tiers, dropped = compute_tiers(mapping, peers)
+
+    assert tiers == [set(siblings), {"Device"}]
+    assert dropped == sorted((kind, peer) for kind in siblings for peer in siblings if kind != peer)
