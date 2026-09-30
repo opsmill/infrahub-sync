@@ -39,9 +39,7 @@ uv run invoke lint
 ```
 
 `invoke lint` runs rumdl → ruff → pylint → yamllint → ty, and stops after the first gate
-failure. The Pylint leg is the exception to direct exit-code handling: it captures Pylint's
-JSON report despite Pylint's inherited non-zero result, then fails only when a new
-diagnostic code appears or a count exceeds the recorded maximum. The baseline and the
+failure. The Pylint leg captures Pylint's JSON report and fails on any diagnostic. The Pylint gate and the
 archive exclusions that keep `rumdl fmt` away from incompatible historical artifacts are
 documented in [`develop/knowledge/quality-gates.md`](docs/docs/develop/knowledge/quality-gates.md).
 
@@ -123,9 +121,8 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 
 - Prefer explicit types on new or changed code; public functions and classes get concise docstrings.
 - Ruff: formatted and lint-clean. Honor `pyproject.toml`.
-- Pylint: fix actionable issues in touched code. It does not pass on a clean checkout; the
-  inherited baseline and how to compare against it are in
-  [`develop/knowledge/quality-gates.md`](docs/docs/develop/knowledge/quality-gates.md).
+- Pylint: passes on a clean checkout and is a failing CI step; fix every finding you introduce.
+  Details are in [`develop/knowledge/quality-gates.md`](docs/docs/develop/knowledge/quality-gates.md).
 - ty: included in `uv run invoke lint`; do not increase the error count.
 - Raise specific exceptions; avoid broad `except Exception:`.
 
@@ -260,7 +257,7 @@ Core rule unchanged: provide a read-only `diff` pathway and validate it before e
 - [Prefect orchestration](docs/docs/develop/knowledge/orchestration-prefect.md) — the optional
   orchestration integration and its import boundary.
 - [Quality gates](docs/docs/develop/knowledge/quality-gates.md) — what the lint and format aggregates
-  really do, and the inherited baseline.
+  really do, and the Pylint gate.
 - [Testing](docs/docs/develop/guidelines/testing.md) — repository-wide test rules.
 - [Secret redaction](docs/docs/develop/guidelines/secret-redaction.md) — required reading before adding any
   failure path that crosses a process boundary.

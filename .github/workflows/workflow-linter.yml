@@ -101,9 +101,10 @@ jobs:
         if: matrix.python-version != '3.10'
         run: "uv run ty check ."
 
-      # TODO: Need to cleanup code
-      # - name: "Pylint Tests"
-      #   run: "uv run pylint infrahub_sync/**/*.py"
+      # The invoke task runs Pylint with the service exclusion on Python 3.10 and
+      # fails on any diagnostic.
+      - name: "Linting: pylint"
+        run: "uv run invoke linter.lint-pylint"
 
   markdown-lint:
     if: needs.files-changed.outputs.documentation == 'true'

@@ -11,19 +11,8 @@ from .utils import ESCAPED_REPO_PATH
 NAMESPACE = "INFRAHUB-SYNC"
 CURRENT_DIRECTORY = Path(__file__).parent.resolve()
 MAIN_DIRECTORY = "."
-PYLINT_BASELINE_MAX_COUNTS = {
-    "C0302": 1,
-    "C0412": 1,
-    "C0413": 9,
-    "C0415": 5,
-    "R0912": 1,
-    "R0915": 1,
-    "R0917": 5,
-    "R1705": 1,
-    "R1720": 1,
-    "W0613": 4,
-    "W0707": 1,
-}
+# Pylint runs clean; a diagnostic code is allowed only by listing its maximum count here.
+PYLINT_BASELINE_MAX_COUNTS: dict[str, int] = {}
 
 
 def _ty_check_command(python_major: int, python_minor: int) -> str:
@@ -70,7 +59,7 @@ def format_all(context: Context) -> None:
 # ----------------------------------------------------------------------------
 @task
 def lint_pylint(context: Context) -> None:
-    """Run Pylint and fail when diagnostics exceed the inherited baseline."""
+    """Run Pylint and fail on any diagnostic the baseline does not allow."""
 
     print(f" - [{NAMESPACE}] Check code with pylint")
     exec_cmd = _pylint_command(sys.version_info.major, sys.version_info.minor)
@@ -96,13 +85,13 @@ def lint_pylint(context: Context) -> None:
             print(f" - [{NAMESPACE}] Pylint regression: {regression}")
         for location in _pylint_regression_locations(report):
             print(f" - [{NAMESPACE}]   {location}")
-        msg = "Pylint diagnostics exceed the inherited baseline"
+        msg = "Pylint reported diagnostics"
         raise RuntimeError(msg)
 
     messages = report.get("messages", [])
     statistics = report.get("statistics", {})
     score = statistics.get("score", "unknown") if isinstance(statistics, dict) else "unknown"
-    print(f" - [{NAMESPACE}] Pylint baseline passed ({len(messages)} diagnostics, score {score})")
+    print(f" - [{NAMESPACE}] Pylint passed ({len(messages)} diagnostics, score {score})")
 
 
 def _pylint_regressions(report: dict[str, Any]) -> list[str]:

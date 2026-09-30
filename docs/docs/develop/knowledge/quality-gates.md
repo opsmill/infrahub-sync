@@ -10,7 +10,7 @@ title: "Quality gates"
 
 What `invoke format` and `invoke lint` actually run, in what order, and what a passing result
 does and does not mean. Both aggregates are executable gates on a clean checkout; this page
-documents their ordering, inherited Pylint baseline, and archive-formatting boundary.
+documents their ordering, Pylint gate, and archive-formatting boundary.
 
 ### What the aggregates run
 
@@ -26,8 +26,7 @@ documents their ordering, inherited Pylint baseline, and archive-formatting boun
 
 **rumdl runs first, and the chain stops after the first gate failure.** Rumdl, Ruff,
 yamllint, and ty use their process exit directly. The Pylint leg captures its JSON report
-with `warn=True` because the inherited baseline makes raw Pylint exit non-zero; the wrapper
-then raises only for a new diagnostic code, an increased count, or an unreadable report.
+with `warn=True`; the wrapper then raises for any diagnostic, or for an unreadable report.
 If you need a specific leg's status, invoke that leg directly.
 
 `invoke format` calls `docs.format` (`rumdl fmt .`) and then `linter.format_all`
@@ -54,34 +53,18 @@ Use `rumdl check .` and fix violations by hand. When you only want the Python fo
 `invoke linter.format` runs the Python formatter only. The top-level `invoke lint` and
 `invoke format` commands add the documentation legs before those namespaced aggregates.
 
-### The inherited pylint baseline
+### The Pylint gate
 
-Raw `pylint infrahub_sync/` reports inherited findings. Measured directly on this repository
-at commit `697b2f4`, using Python 3.13.3, Pylint 4.0.5, and an environment synced with
-`--extra dev --extra prefect --extra service`:
-
-- exit code **28**, which is pylint's bitmask for warning (4) + refactor (8) + convention
-  (16) — not a count;
-- rating **9.94/10**;
-- **30** diagnostics across **11** message codes.
-
-| Code | Count |
-|---|---|
-| `C0415` import-outside-toplevel | 5 |
-| `C0413` wrong-import-position | 9 |
-| `R0917` too-many-positional-arguments | 5 |
-| `W0613` unused-argument | 4 |
-| `C0302`, `C0412`, `R0912`, `R0915`, `R1705`, `R1720`, `W0707` | 1 each |
-
-The Invoke task reads Pylint's JSON report and makes this inherited set an executable
-no-regression gate. A new diagnostic code or a count above the table's maximum fails;
-fewer findings pass, so an improvement never blocks the gate. On Python 3.10 the task
-excludes `infrahub_sync/service`, mirroring the ty exclusion: the service tree imports
+Raw `pylint infrahub_sync/` reports no diagnostics and exits 0, and required CI runs it as
+a failing step (`uv run invoke linter.lint-pylint`) on Python 3.10–3.13. The Invoke task
+reads Pylint's JSON report and fails on any diagnostic. `PYLINT_BASELINE_MAX_COUNTS` in
+`tasks/linter.py` is empty; add a code there only with a recorded reason. On Python 3.10 the
+task excludes `infrahub_sync/service`, mirroring the ty exclusion: the service tree imports
 optional dependencies that only install on Python 3.11+, and analysing it without them
-would add import-error diagnostics rather than remove findings.
+would add import-error diagnostics.
 
-This keeps `invoke lint` green on the recorded baseline without disabling any diagnostic in
-Pylint configuration or allowing the inherited counts to grow.
+Fix a finding in the code. Where a rule cannot apply, use a line-level
+`# pylint: disable=<symbol>` with a one-line reason, not a configuration-wide ignore.
 
 ### Measuring a no-regression claim
 
