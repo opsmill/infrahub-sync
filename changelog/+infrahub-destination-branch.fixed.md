@@ -1,1 +1,1 @@
-Infrahub destination runs now use the configured branch for schema reads and writes even when SDK environment settings or the local Git branch select another branch.
+Infrahub runs now read and write the resolved branch (the branch declared in the package, then the run's `--branch`, then `main`), for an Infrahub source as well as a destination. SDK environment settings and the local Git branch no longer select another branch.
