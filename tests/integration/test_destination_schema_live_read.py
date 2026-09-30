@@ -66,16 +66,18 @@ def test_the_live_accessor_returns_a_judgeable_snapshot() -> None:
         for constraint in entry["uniqueness_constraints"]:
             assert all(isinstance(component, str) for component in constraint)
         for attribute in entry["attributes"].values():
-            assert set(attribute) == {"kind", "optional", "default_value", "unique"}
+            assert set(attribute) == {"kind", "optional", "default_value", "unique", "read_only"}
             assert isinstance(attribute["kind"], str)
             assert isinstance(attribute["optional"], bool)
             assert isinstance(attribute["unique"], bool)
+            assert isinstance(attribute["read_only"], bool)
         for relationship in entry["relationships"].values():
-            assert set(relationship) == {"peer", "cardinality", "optional", "kind"}
+            assert set(relationship) == {"peer", "cardinality", "optional", "kind", "read_only"}
             assert isinstance(relationship["peer"], str)
             assert relationship["cardinality"] in CARDINALITIES
             assert isinstance(relationship["optional"], bool)
             assert isinstance(relationship["kind"], str)
+            assert isinstance(relationship["read_only"], bool)
 
 
 def test_the_live_snapshot_normalizes_into_the_closed_domain() -> None:
