@@ -646,12 +646,13 @@ def generated_credentials() -> set[str]:
 GENERATED_CREDENTIALS = {
     "product": "INFRAHUB_SYNC_PRODUCT_PASSWORD",
     "prefect": "INFRAHUB_SYNC_PREFECT_PASSWORD",
+    "prefect_auth": "INFRAHUB_SYNC_PREFECT_AUTH_STRING",
     "access": "INFRAHUB_SYNC_S3_ACCESS_KEY",
     "secret": "INFRAHUB_SYNC_S3_SECRET_KEY",
     "principal": "bearer_token",
     "ADMIN_SECRET": "admin_password",
 }
-SECRET_SETTINGS_IN_BUNDLE = ("product", "prefect", "access", "secret")
+SECRET_SETTINGS_IN_BUNDLE = ("product", "prefect", "prefect_auth", "access", "secret")
 
 
 def test_the_sweep_looks_for_every_credential_the_bundle_generates() -> None:

@@ -297,6 +297,64 @@ def test_init_keeps_the_identity_and_credentials_it_already_generated(bundle: Pa
     assert ((bundle / ".instance").read_text(), (bundle / "operator.env").read_text()) == before
 
 
+PREFECT_CREDENTIAL = "INFRAHUB_SYNC_PREFECT_AUTH_STRING"
+
+
+def operator_values(bundle: Path, name: str) -> list[str]:
+    """Every value the operator file assigns to one setting, in file order."""
+    lines = (bundle / "operator.env").read_text(encoding="utf-8").splitlines()
+    return [line.partition("=")[2] for line in lines if line.startswith(f"{name}=")]
+
+
+def test_init_generates_a_prefect_api_credential(bundle: Path, shim: Path) -> None:
+    """The Prefect server refuses to start unauthenticated, so a fresh file carries its credential."""
+    run(bundle, shim, "init")
+
+    values = operator_values(bundle, PREFECT_CREDENTIAL)
+
+    assert len(values) == 1, "the operator file does not assign the Prefect API credential exactly once"
+    assert len(values[0]) >= 32, "the generated Prefect API credential is shorter than the others"
+    assert values[0] != operator_values(bundle, "INFRAHUB_SYNC_PREFECT_PASSWORD")[0]
+
+
+def test_init_adds_the_prefect_credential_to_a_file_written_before_it_existed(bundle: Path, shim: Path) -> None:
+    """The upgrade path: re-running `init` supplies the one missing setting and changes nothing else."""
+    run(bundle, shim, "init")
+    operator = bundle / "operator.env"
+    earlier = "".join(
+        line
+        for line in operator.read_text(encoding="utf-8").splitlines(keepends=True)
+        if PREFECT_CREDENTIAL not in line
+    )
+    operator.write_text(earlier, encoding="utf-8")
+    operator.chmod(0o600)
+
+    result = run(bundle, shim, "init")
+
+    assert result.returncode == 0, result.stderr
+    after = operator.read_text(encoding="utf-8")
+    assert after.startswith(earlier), "an existing setting was rewritten"
+    assert len(operator_values(bundle, PREFECT_CREDENTIAL)) == 1
+    assert operator.stat().st_mode & 0o777 == 0o600
+    assert PREFECT_CREDENTIAL in result.stdout
+    assert operator_values(bundle, PREFECT_CREDENTIAL)[0] not in result.unredacted()
+
+
+def test_init_leaves_an_empty_prefect_credential_for_preflight_to_name(bundle: Path, shim: Path) -> None:
+    """A line the operator emptied is theirs; `init` adds no second assignment beside it."""
+    run(bundle, shim, "init")
+    operator = bundle / "operator.env"
+    emptied = "".join(
+        f"{PREFECT_CREDENTIAL}=\n" if line.startswith(f"{PREFECT_CREDENTIAL}=") else line
+        for line in operator.read_text(encoding="utf-8").splitlines(keepends=True)
+    )
+    operator.write_text(emptied, encoding="utf-8")
+
+    run(bundle, shim, "init")
+
+    assert operator.read_text(encoding="utf-8") == emptied
+
+
 def test_the_instance_state_file_holds_the_identity_and_the_image_and_nothing_else(bundle: Path, shim: Path) -> None:
     """It is non-secret, and closing its content is what keeps it one.
 
@@ -1071,6 +1129,7 @@ def test_preflight_needs_no_declared_configuration_at_all(initialized: Path, shi
     [
         "INFRAHUB_SYNC_PRODUCT_PASSWORD",
         "INFRAHUB_SYNC_PREFECT_PASSWORD",
+        "INFRAHUB_SYNC_PREFECT_AUTH_STRING",
         "INFRAHUB_SYNC_S3_ACCESS_KEY",
         "INFRAHUB_SYNC_S3_SECRET_KEY",
         "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",
