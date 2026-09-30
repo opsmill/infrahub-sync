@@ -1,1 +1,1 @@
-Strengthen the log-bridge diagnostic test so it fails when any line separator or unsanitized field reaches stderr.
+Strengthen the log-bridge diagnostic test so it fails when any of the probed line separators or unsanitized field reaches stderr.
