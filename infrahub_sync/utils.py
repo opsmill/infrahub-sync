@@ -11,7 +11,10 @@ from diffsync.store.local import LocalStore
 from diffsync.store.redis import RedisStore
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
+from infrahub_sync.cache import compute_schema_subhash
+from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.cache.paths import run_dir as stored_run_dir
+from infrahub_sync.cache.sidecars import SchemaHashFile
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.generator import render_template
 from infrahub_sync.plan.errors import PlanVerificationError
@@ -197,7 +200,7 @@ def _adapter_classes(
     raise ImportError(msg)
 
 
-def get_potenda_from_instance(
+def get_potenda_from_instance(  # pylint: disable=too-many-positional-arguments  # public API; callers may pass positionally
     sync_instance: SyncInstance,
     branch: str | None = None,
     show_progress: bool | None = None,
@@ -269,8 +272,6 @@ def get_potenda_from_instance(
     # (tiers is None when an explicit `order` is configured).
     top_level, tiers = sync_instance.compute_order_and_tiers()
 
-    from infrahub_sync.cache.paths import generate_run_id
-
     rid = run_id or generate_run_id()
     rdir = stored_run_dir(sync_instance.name, rid, base_directory=base_directory)
     rdir.mkdir(parents=True, exist_ok=True)
@@ -284,16 +285,10 @@ def get_potenda_from_instance(
     # adapter's live schema (populated at __init__); falls back to
     # `sync_instance._cached_schema` for test seams.
     subhash = ""
-    try:
-        from infrahub_sync.cache import compute_schema_subhash
-        from infrahub_sync.cache.sidecars import SchemaHashFile
-
-        schema = getattr(dst, "schema", None) or getattr(sync_instance, "_cached_schema", None)
-        if schema:
-            subhash = compute_schema_subhash(sync_instance, schema)
-            SchemaHashFile(path=rdir / "schema-sub-hash.txt", value=subhash).save()
-    except ImportError:
-        pass  # cache extras not available — degrade silently
+    schema = getattr(dst, "schema", None) or getattr(sync_instance, "_cached_schema", None)
+    if schema:
+        subhash = compute_schema_subhash(sync_instance, schema)
+        SchemaHashFile(path=rdir / "schema-sub-hash.txt", value=subhash).save()
 
     return Potenda(
         destination=dst,

@@ -246,7 +246,7 @@ def _operational_failure_summary(exc: Exception) -> str:
 
 
 class Potenda:
-    def __init__(
+    def __init__(  # pylint: disable=too-many-positional-arguments  # public constructor; callers may pass positionally
         self,
         source: Adapter,
         destination: Adapter,
@@ -705,7 +705,7 @@ class Potenda:
             raise ValueError(msg)
         return validate_config_version(supplied)
 
-    def apply_plan(
+    def apply_plan(  # pylint: disable=too-many-statements  # one sequential gate-then-write flow; splitting would hide the order
         self,
         *,
         ownership: WriteOwnership,

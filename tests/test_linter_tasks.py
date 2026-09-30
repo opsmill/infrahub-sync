@@ -81,7 +81,8 @@ def test_pylint_command_checks_service_on_supported_python() -> None:
     assert linter._pylint_command(3, 13) == "pylint --output-format=json2 infrahub_sync/"
 
 
-def test_pylint_regression_locations_reports_only_regressed_codes() -> None:
+def test_pylint_regression_locations_reports_only_regressed_codes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(linter.PYLINT_BASELINE_MAX_COUNTS, "C0302", 1)
     report = {
         "messages": [
             {
@@ -99,28 +100,26 @@ def test_pylint_regression_locations_reports_only_regressed_codes() -> None:
     ]
 
 
-def test_pylint_baseline_accepts_current_or_lower_counts() -> None:
-    messages = [
-        {"messageId": message_id}
-        for message_id, maximum in linter.PYLINT_BASELINE_MAX_COUNTS.items()
-        for _ in range(maximum)
-    ]
-
-    assert linter._pylint_regressions({"messages": messages}) == []
-    assert linter._pylint_regressions({"messages": messages[:-1]}) == []
+def test_pylint_baseline_allows_no_diagnostics() -> None:
+    assert linter.PYLINT_BASELINE_MAX_COUNTS == {}
+    assert linter._pylint_regressions({"messages": []}) == []
 
 
-def test_pylint_baseline_rejects_new_codes_and_increased_counts() -> None:
-    messages = [
-        {"messageId": "C0302"},
-        {"messageId": "C0302"},
-        {"messageId": "E0401"},
-    ]
+def test_pylint_baseline_rejects_any_diagnostic() -> None:
+    messages = [{"messageId": "C0302"}, {"messageId": "C0302"}, {"messageId": "E0401"}]
 
     assert linter._pylint_regressions({"messages": messages}) == [
-        "C0302 increased from at most 1 to 2",
+        "new diagnostic code C0302 (2)",
         "new diagnostic code E0401 (1)",
     ]
+
+
+def test_pylint_baseline_allows_only_listed_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(linter.PYLINT_BASELINE_MAX_COUNTS, "C0302", 1)
+    messages = [{"messageId": "C0302"}, {"messageId": "C0302"}]
+
+    assert linter._pylint_regressions({"messages": messages[:1]}) == []
+    assert linter._pylint_regressions({"messages": messages}) == ["C0302 increased from at most 1 to 2"]
 
 
 def test_pylint_baseline_rejects_malformed_reports() -> None:

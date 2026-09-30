@@ -566,6 +566,7 @@ def _admit_run(
 @app.command("diff")
 def diff_cmd(
     ctx: typer.Context,
+    *,
     config_id: str = typer.Option(..., "--config-id", help="Registered configuration identity."),
     version: int = typer.Option(..., "--version", help="Registered configuration version."),
     reason: str = typer.Option(..., "--reason", help="Audit reason for the plan."),
@@ -596,6 +597,7 @@ def diff_cmd(
 @app.command("sync")
 def sync_cmd(
     ctx: typer.Context,
+    *,
     config_id: str = typer.Option(..., "--config-id", help="Registered configuration identity."),
     version: int = typer.Option(..., "--version", help="Registered configuration version."),
     reason: str = typer.Option(..., "--reason", help="Audit reason for the synchronization."),
@@ -626,6 +628,7 @@ def sync_cmd(
 @app.command("apply")
 def apply_cmd(
     ctx: typer.Context,
+    *,
     run_id: str = typer.Argument(..., help="Service-issued run ID whose plan was reviewed."),
     expected_checksum: str = typer.Option(..., "--expected-checksum", help="Checksum printed by `runs plan`."),
     reason: str = typer.Option(..., "--reason", help="Audit reason for the apply."),
