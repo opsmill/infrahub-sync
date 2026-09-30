@@ -45,6 +45,10 @@ def _excluded_reference_ids(adapter: NetboxAdapter, reference: str) -> set[str]:
         if element.name != reference or not element.mapping or not element.filters:
             continue
         model: type[NetboxModel] = getattr(adapter, reference)
+        # An owner can load before its peer kind. The first lookup then reads the
+        # entire peer endpoint to distinguish filtered IDs from absent IDs; a
+        # later model load can read that endpoint again. Direct incremental
+        # callers pay the same full-read cost on their first lookup.
         raw = [dict(node) for node in adapter._resolve_endpoint(element.mapping).all()]
         raw_ids.update(_record_ids(raw))
         retained_ids.update(_record_ids(model.filter_records(records=raw, schema_mapping=element)))
@@ -253,8 +257,21 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                             if len(matching_nodes) == 0:
                                 if str(node_id) in _excluded_reference_ids(self, field.reference):
                                     if _reference_is_optional(model, field.name):
+                                        logger.warning(
+                                            "NetBox filter excluded peer from %s record %s field %s "
+                                            "(peer kind %s, IDs: %s)",
+                                            mapping.name,
+                                            obj_id,
+                                            field.name,
+                                            field.reference,
+                                            node_id,
+                                        )
                                         continue
-                                    msg = f"Configured filter excluded all peers for required relationship {field.name}: {node_id}"
+                                    msg = (
+                                        f"Configured filter excluded all peers for required relationship "
+                                        f"{mapping.name} record {obj_id} field {field.name} "
+                                        f"(peer kind {field.reference}): {node_id}"
+                                    )
                                     raise ValueError(msg)
                                 msg = f"Unable to locate the node {field.name} {node_id}"
                                 raise IndexError(msg)
@@ -277,10 +294,20 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                             msg = f"Unable to locate the node {field.reference} {node_id}"
                             raise IndexError(msg)
                         data[field.name].append(matching_nodes[0].get_unique_id())
+                    if excluded_ids:
+                        logger.warning(
+                            "NetBox filter excluded peers from %s record %s field %s (peer kind %s, IDs: %s)",
+                            mapping.name,
+                            obj_id,
+                            field.name,
+                            field.reference,
+                            ", ".join(excluded_ids),
+                        )
                     if excluded_ids and not data[field.name] and not _reference_is_optional(model, field.name):
                         msg = (
-                            f"Configured filter excluded all peers for required relationship {field.name}: "
-                            f"{', '.join(excluded_ids)}"
+                            f"Configured filter excluded all peers for required relationship "
+                            f"{mapping.name} record {obj_id} field {field.name} "
+                            f"(peer kind {field.reference}): {', '.join(excluded_ids)}"
                         )
                         raise ValueError(msg)
                     data[field.name] = sorted(data[field.name])

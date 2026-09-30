@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 pytest.importorskip("pynetbox")
 
 from infrahub_sync.adapters.netbox import NetboxAdapter, NetboxModel
-from infrahub_sync.plan.derive import operations_from_diff
+from infrahub_sync.plan.derive import derive_deletes, operations_from_diff
 
 
 class BuiltinTag(NetboxModel):
@@ -109,7 +109,7 @@ def _adapter(monkeypatch: pytest.MonkeyPatch, model: type[NetboxModel], rows: li
             ),
         ],
     )
-    _TestAdapter.Example = model
+    monkeypatch.setattr(_TestAdapter, "Example", model)
     adapter = _TestAdapter(target="source", adapter=SyncAdapter(name="netbox"), config=config)
     adapter.client.extras.tags.all.return_value = [_Record(row) for row in PEERS]
     adapter.client.dcim.examples.all.return_value = [_Record(row) for row in rows]
@@ -151,6 +151,7 @@ def test_retained_peer_resolves(
 )
 def test_optional_relationship_drops_excluded_peer(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
     model: type[NetboxModel],
     value: dict[str, int] | list[dict[str, int]],
     expected: str | list[str] | None,
@@ -161,6 +162,7 @@ def test_optional_relationship_drops_excluded_peer(
     adapter.model_loader("Example", model)
 
     assert adapter.get_all("Example")[0].model_dump()["peer"] == expected
+    assert "Example record 1 field peer (peer kind BuiltinTag, IDs: 20)" in caplog.text
 
 
 @pytest.mark.parametrize("model", [RequiredOne, RequiredMany])
@@ -174,16 +176,22 @@ def test_required_relationship_with_only_excluded_peers_fails(
     with pytest.raises(ValueError) as err:
         adapter.model_loader("Example", model)
 
-    assert str(err.value) == "Configured filter excluded all peers for required relationship peer: 20"
+    assert str(err.value) == (
+        "Configured filter excluded all peers for required relationship "
+        "Example record 1 field peer (peer kind BuiltinTag): 20"
+    )
 
 
-def test_required_many_keeps_a_valid_peer_when_another_is_excluded(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_required_many_keeps_a_valid_peer_when_another_is_excluded(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     """One excluded peer does not invalidate a required list with a valid peer."""
     adapter = _adapter(monkeypatch, RequiredMany, [{"id": 1, "name": "owner", "peer": [{"id": 10}, {"id": 20}]}])
 
     adapter.model_loader("Example", RequiredMany)
 
     assert adapter.get_all("Example")[0].model_dump()["peer"] == ["retained"]
+    assert "Example record 1 field peer (peer kind BuiltinTag, IDs: 20)" in caplog.text
 
 
 @pytest.mark.parametrize("model", [OptionalOne, RequiredOne, OptionalMany, RequiredMany])
@@ -232,3 +240,57 @@ def test_filtered_optional_relationship_can_be_planned(monkeypatch: pytest.Monke
     ]
     assert operations[1].relationships is not None
     assert operations[1].relationships[0].peers == [{"name": "retained"}]
+
+
+@pytest.mark.parametrize(
+    ("model", "source_peer", "destination_peer", "expected_peers"),
+    [
+        (OptionalOne, {"id": 20}, "excluded", None),
+        (OptionalMany, [{"id": 10}, {"id": 20}], ["retained", "excluded"], [{"name": "retained"}]),
+    ],
+)
+def test_filtered_peer_plan_effect_on_existing_destination(
+    monkeypatch: pytest.MonkeyPatch,
+    model: type[NetboxModel],
+    source_peer: dict[str, int] | list[dict[str, int]],
+    destination_peer: str | list[str],
+    expected_peers: list[dict[str, str]] | None,
+) -> None:
+    """The plan leaves a single link intact but replaces a many-peer set."""
+    source = _adapter(monkeypatch, model, [{"id": 1, "name": "owner", "peer": source_peer}])
+    source.model_loader("Example", model)
+    destination = _TestAdapter(target="destination", adapter=SyncAdapter(name="netbox"), config=source.config)
+    destination.add(BuiltinTag.model_validate({"local_id": "10", "name": "retained"}))
+    destination.add(BuiltinTag.model_validate({"local_id": "20", "name": "excluded"}))
+    destination.add(model.model_validate({"local_id": "1", "name": "owner", "peer": destination_peer}))
+
+    operations = operations_from_diff(
+        destination.diff_from(source),
+        config=source.config,
+        tier_of=lambda _kind: 0,
+        source_adapter=source,
+        destination_adapter=destination,
+    )
+
+    owner_updates = [
+        operation for operation in operations if operation.kind == "Example" and operation.action == "update"
+    ]
+    assert len(owner_updates) == 1
+    deletes = derive_deletes(
+        kinds=["BuiltinTag", "Example"],
+        source_adapter=source,
+        destination_adapter=destination,
+        config=source.config,
+        tier_of=lambda _kind: 0,
+        destination_full_extract=True,
+    )
+    assert [(operation.action, operation.kind, operation.identity) for operation in deletes] == [
+        ("delete", "BuiltinTag", {"name": "excluded"})
+    ]
+    update = owner_updates[0]
+    if expected_peers is None:
+        assert update.relationships is None
+        assert update.payload == {"name": "owner"}
+    else:
+        assert update.relationships is not None
+        assert update.relationships[0].peers == expected_peers

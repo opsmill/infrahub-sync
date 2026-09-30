@@ -1,1 +1,1 @@
-NetBox plans previously stopped when a relationship referenced a filtered peer; they now omit filtered peers from optional relationships and explain when filtering leaves a required relationship empty.
+NetBox plans now warn and omit filter-excluded references instead of stopping for optional relationships, which can remove destination links for relationships with several peers and delete filtered destination records while leaving an existing single-peer link unchanged.
