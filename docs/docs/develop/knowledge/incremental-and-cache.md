@@ -110,7 +110,7 @@ load before any resource query; it cannot stand in for an empty source kind.
 
 When every destination resource falls back to a full load, the saved plan computes
 delete proposals for destination-only objects and records `delete_operations_computed=true`.
-If any destination resource uses a delta, delete proposals remain uncomputed. Apply
+If any destination resource uses a delta, delete proposals are not computed. Apply
 continues to skip all delete operations and records them as skipped; it does not delete
 these objects.
 
