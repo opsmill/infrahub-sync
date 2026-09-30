@@ -431,14 +431,17 @@ class PluginLoader:
             The resolved class, or None if not found.
         """
 
-        def load(file_path: Path) -> type[Any] | None:
+        def load(file_path: Path, current: type[Any] | None) -> type[Any] | None:
+            # A failed import keeps `current`; an imported module replaces it, even with None.
             module = self._import_from_file(str(file_path))
-            return self._find_class_in_module(module, class_name, path, default_class_candidates) if module else None
+            if not module:
+                return current
+            return self._find_class_in_module(module, class_name, path, default_class_candidates)
 
-        def load_directory(directory: Path) -> type[Any] | None:
-            if directory.is_dir() and (directory / "__init__.py").exists():
-                return load(directory / "__init__.py")
-            return None
+        def load_directory(directory: Path, current: type[Any] | None) -> type[Any] | None:
+            if not current and directory.is_dir() and (directory / "__init__.py").exists():
+                return load(directory / "__init__.py", current)
+            return current
 
         # Handle relative paths (starting with ./)
         cls = None
@@ -447,10 +450,10 @@ class PluginLoader:
             abs_path = Path(path).resolve()
             # If it's a Python file
             if abs_path.exists() and (abs_path.suffix == ".py" or abs_path.with_suffix(".py").exists()):
-                cls = load(abs_path if abs_path.suffix == ".py" else abs_path.with_suffix(".py"))
+                cls = load(abs_path if abs_path.suffix == ".py" else abs_path.with_suffix(".py"), cls)
 
             # If it's a directory with __init__.py
-            cls = cls or load_directory(abs_path)
+            cls = load_directory(abs_path, cls)
 
         # Look in adapter_paths first
         for base_path in self.adapter_paths:
@@ -459,20 +462,20 @@ class PluginLoader:
 
             # Check if it's a Python file
             if full_path.with_suffix(".py").exists():
-                cls = load(full_path.with_suffix(".py"))
+                cls = load(full_path.with_suffix(".py"), cls)
 
             # Check if it's a directory with __init__.py
-            cls = cls or load_directory(full_path)
+            cls = load_directory(full_path, cls)
 
         # Try direct path (absolute or relative to current directory)
         path_obj = Path(path)
 
         # If it's a Python file
         if not cls and path_obj.exists() and path_obj.suffix == ".py":
-            cls = load(path_obj)
+            cls = load(path_obj, cls)
 
         # If it's a directory with __init__.py
-        cls = cls or load_directory(path_obj)
+        cls = load_directory(path_obj, cls)
 
         return cls
 
