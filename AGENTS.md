@@ -149,6 +149,11 @@ Use `+` as the id for a change with no issue number (`+short-slug.housekeeping.m
 
 Label a pull request `ci/skip-changelog` when it genuinely needs no entry — a dependency bump or a typo fix. Dependabot applies that label itself.
 
+Every normal pull request must also carry exactly one release-intent label:
+`changes/major`, `changes/minor`, or `changes/patch`. These labels alone
+determine the automatic version bump. Generated `chore(release):` pull requests
+are exempt because they apply, rather than introduce, that release intent.
+
 **Versions and `CHANGELOG.md` are never edited by hand.** Merging to `main` does not prepare a release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md).
 
 ## Invoke Tasks (reference)
@@ -169,7 +174,7 @@ Label a pull request `ci/skip-changelog` when it genuinely needs no entry — a 
 ## Git and PR Process
 
 - Do not force-push on shared branches. Do not amend to hide pre-commit fixes; use a follow-up commit.
-- Apply PR labels: `bugs`, `breaking`, `enhancements`, `features` (default `enhancements`).
+- Apply exactly one `changes/*` release-intent label as described above.
 - Run the required workflow (format → lint → CLI sanity) before a PR.
 - Agents must identify themselves (e.g. `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>` or `🤖 Generated with Copilot`).
 - Commit subject: imperative "what changed." Rationale goes in the PR body.
