@@ -22,7 +22,7 @@ from pydantic import TypeAdapter
 
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
-from infrahub_sync.execution import REDACTED, json_string_forms, redact
+from infrahub_sync.execution import REDACTED, json_string_forms, redact, redact_ordered, redaction_order
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store.bundle import (
     FINAL_CHECKPOINT_ARTIFACT_ID,
@@ -3492,23 +3492,28 @@ def _redact_value(value: Any, secrets: Sequence[str], *, numbers: bool = False) 
     With `numbers`, a number whose JSON text carries a secret is replaced by that text
     redacted. Only a published document asks for it: a stored record keeps its typed fields.
     """
+    return _redact_ordered_value(value, redaction_order(secrets), numbers=numbers)
+
+
+def _redact_ordered_value(value: Any, ordered: Sequence[str], *, numbers: bool) -> Any:
+    """Apply `_redact_value` with values already in `redaction_order`, ordered once per document."""
     if isinstance(value, str):
-        return redact(value, secrets)
+        return redact_ordered(value, ordered)
     if numbers and isinstance(value, (int, float)) and not isinstance(value, bool):
         text = json.dumps(value)
-        cleaned = redact(text, secrets)
+        cleaned = redact_ordered(text, ordered)
         return value if cleaned == text else cleaned
     if isinstance(value, Mapping):
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
-            sanitized_key = redact(str(key), secrets)
+            sanitized_key = redact_ordered(str(key), ordered)
             if sanitized_key in sanitized:
                 msg = f"Redaction would collapse multiple mapping keys into {sanitized_key!r}"
                 raise ValueError(msg)
-            sanitized[sanitized_key] = _redact_value(item, secrets, numbers=numbers)
+            sanitized[sanitized_key] = _redact_ordered_value(item, ordered, numbers=numbers)
         return sanitized
     if isinstance(value, (list, tuple)):
-        return [_redact_value(item, secrets, numbers=numbers) for item in value]
+        return [_redact_ordered_value(item, ordered, numbers=numbers) for item in value]
     return value
 
 

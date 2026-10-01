@@ -491,7 +491,16 @@ def json_string_forms(secrets: Iterable[str]) -> tuple[str, ...]:
 
 def redact(message: str, secrets: Iterable[str]) -> str:
     """Replace every occurrence of a collected secret value with ``***``, longest first."""
-    for secret in redaction_order(secrets):
+    return redact_ordered(message, redaction_order(secrets))
+
+
+def redact_ordered(message: str, ordered: Sequence[str]) -> str:
+    """Replace each value of an already ordered `redaction_order` result with ``***``.
+
+    For a caller that redacts many strings with one secret list: ordering once, instead
+    of on every string, keeps redaction of a large document linear in its size.
+    """
+    for secret in ordered:
         message = message.replace(secret, REDACTED)
     return message
 
