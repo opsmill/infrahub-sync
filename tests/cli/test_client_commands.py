@@ -853,7 +853,7 @@ def test_closed_client_errors_map_to_cli_exits(
 
 @pytest.mark.parametrize("operation", ["register", "diff"])
 def test_store_refusal_explains_how_to_keep_data_in_memory(tmp_path: Path, client: MagicMock, operation: str) -> None:
-    """Store refusal explains how to keep data in memory."""
+    """A 422 unsupported-sync-store response prints guidance to remove the store block."""
     if operation == "register":
         package_path = tmp_path / "package.json"
         package_path.write_text("{}", encoding="utf-8")

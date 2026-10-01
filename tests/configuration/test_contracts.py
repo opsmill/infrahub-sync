@@ -1969,7 +1969,7 @@ def test_store_inline_credential_is_refused_without_echoing_value() -> None:
 
 @pytest.mark.parametrize("setting", ["sentinel_password", "tls_key_password"])
 def test_redis_store_rejects_undeclared_credential_settings(setting: str) -> None:
-    """Redis store rejects undeclared credential settings."""
+    """Redis stores with undeclared credential settings fail with the fixed refusal and leak no secret."""
     canary = "undeclared-store-secret"
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {

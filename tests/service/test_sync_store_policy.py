@@ -82,7 +82,7 @@ def test_worker_refuses_a_previously_registered_store_before_external_reads(
 def test_http_refusal_returns_the_store_message(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
 ) -> None:
-    """Refuse stores before external reads and expose the fixed diagnostic."""
+    """The HTTP route answers a previously registered store with the fixed refusal message."""
     projection = local_product_projection(tmp_path)
     content = package_data()
     content["configuration"]["store"] = {"type": "redis"}
@@ -146,7 +146,7 @@ def test_http_refusal_returns_the_store_message(
 def test_validation_reports_the_store_finding_for_a_previously_registered_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Refuse stores before external reads and expose the fixed diagnostic."""
+    """Validating a previously registered version reports the store finding."""
     projection = local_product_projection(tmp_path)
     content = package_data()
     content["configuration"]["store"] = {"type": "redis"}

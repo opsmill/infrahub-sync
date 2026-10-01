@@ -18,6 +18,8 @@ the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-syn
 and `check-310` were run at that revision. The integration sequence below was not replayed
 live for this revision; the nightly workflow runs a similar sequence.
 
+The Redis rows and steps were removed afterward, because V3 refuses configured sync stores; that part of the guide describes the later test classification, not this revision.
+
 Which test command to run, what each one needs before it can prove anything, and what it
 writes. [Testing](testing.md) covers what makes an individual test worth having; this page
 covers which suite it belongs in and which gate runs it.
@@ -119,7 +121,7 @@ Use a separate, empty database for each of the three PostgreSQL settings. Do not
 preview service's own `infrahub_sync` database: these tests lock, terminate, create, and drop
 objects in the database they receive.
 
-Four families need more detail than the tables give:
+Three families need more detail than the tables give:
 
 - **Saved-plan apply** needs a NetBox reachable at `NETBOX_URL`, seeded with the fixed dataset
   the test module's own docstring describes (sites `site-a`/`site-b`/`site-c`, racks
