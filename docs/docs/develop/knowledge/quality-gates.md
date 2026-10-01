@@ -120,8 +120,8 @@ A pull request into `feature/v3-develop` merges only when the one required statu
 `Full qualification`, passes. That check is the `qualification-required` job in
 `.github/workflows/trigger-pr-develop.yml`. It waits for the `linter`, `tests`, and
 `uv-checker` calls beside the full qualification tier and fails unless each ended in
-`success` or `skipped`. A skipped call is accepted because a path filter may find nothing
-for it to check. A failure or a cancellation in any job of those calls blocks the merge:
+`success` or `skipped`. A skipped call is accepted because its result is not a failure.
+A failure or a cancellation in any job of those calls blocks the merge:
 yamllint, Ruff, ty, Pylint, rumdl, actionlint, the Docusaurus build, Vale, the unit tests,
 and the lock-file check. The rule lives in the workflow rather than in repository settings.
 

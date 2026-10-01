@@ -2297,7 +2297,7 @@ def test_the_sdk_update_pull_request_targets_the_matrix_branch() -> None:
 
 @pytest.mark.parametrize("check", ["linter", "tests", "uv-checker"])
 def test_the_required_check_waits_for_and_refuses_a_failed_fast_check(check: str) -> None:
-    """Only `Full qualification` is required, so a check it ignores is advisory.
+    """The required check waits for each fast workflow and reads its result.
 
     The fast checks keep running beside the tier, so they are not ancestors of
     the image gate; the required job is the one place that waits for them, and

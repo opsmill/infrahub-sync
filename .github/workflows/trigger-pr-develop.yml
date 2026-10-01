@@ -144,9 +144,8 @@ jobs:
             echo "the full qualification tier ended in ${IMAGE}" >&2
             exit 1
           fi
-          # The same rule for the three fast checks: a call that ended `skipped`
-          # (a path filter may skip its jobs) is accepted. A failure or a
-          # cancellation blocks.
+          # The same rule for the three fast checks: a call that ended
+          # `skipped` is accepted. A failure or a cancellation blocks.
           for check in "linter:${LINTER}" "tests:${TESTS}" "uv-checker:${UV_CHECKER}"; do
             if [ "${check#*:}" != "success" ] && [ "${check#*:}" != "skipped" ]; then
               echo "the ${check%%:*} check ended in ${check#*:}" >&2
