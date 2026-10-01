@@ -1,0 +1,25 @@
+dev/specs/007-harbor-image-publishing/research.md
+  s_e781df4f83e385::t_9aff0d4d6bd8f2 275-276,280-282
+dev/specs/007-harbor-image-publishing/plan.md
+  s_e781df4f83e385::t_d273915e37d5bc 175-178
+dev/specs/007-harbor-image-publishing/pr-notes.md
+  s_e781df4f83e385::t_9c9dadb88f7d11 64-68,75
+dev/specs/007-harbor-image-publishing/opsmill-implement-report.md
+  s_e781df4f83e385::t_409dc071bbbbf9 97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "1906fe07081cd90a2a4ed18a513c163077e79671",
+  "prompts": {},
+  "sessions": {
+    "s_e781df4f83e385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e7508e3-b2e9-494a-a98a-ccc3d06e2a0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
