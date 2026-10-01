@@ -28,6 +28,8 @@ Four rules in here are load-bearing and each is enforced where it is stated:
   forbids. The one exception is a peer **absent from the loaded store**: where the
   destination's own key for a sole candidate kind is a single field the mapping identifies
   it by, `destination_only_peer` records that field's value literally instead of refusing.
+  A generic's full concrete peer set must also permit only that kind, before filtering to
+  mapped kinds.
   Nothing is inferred there — the kind and the identity both come from the destination
   schema, and apply resolves the pair against the destination before writing. A peer the
   store does hold still takes the probed path, whatever its value.
@@ -73,7 +75,7 @@ from infrahub_sync.plan.keying import (
     require_infrahub_create_schema,
 )
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
-from infrahub_sync.plan.reference_candidates import reference_candidates
+from infrahub_sync.plan.reference_candidates import literal_peer_kind_is_unambiguous, reference_candidates
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -208,7 +210,7 @@ def _peer_pair(
         field=field,
     )
     if probed is None:
-        if len(candidates) == 1:
+        if len(candidates) == 1 and literal_peer_kind_is_unambiguous(config, owning_kind, field, candidates[0]):
             literal = destination_only_identity(
                 config=config,
                 peer_kind=candidates[0],

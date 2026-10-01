@@ -10,6 +10,33 @@ if TYPE_CHECKING:
     from infrahub_sync import SyncConfig
 
 
+def _generic_peers(config: SyncConfig) -> Mapping[str, tuple[str, ...]]:
+    runtime_models = getattr(config, "_runtime_models", None)
+    return (
+        runtime_models.generic_peers
+        if runtime_models is not None
+        else getattr(config, "_direct_generic_peers", None) or {}
+    )
+
+
+def literal_peer_kind_is_unambiguous(config: SyncConfig | None, kind: str, field: str, peer_kind: str) -> bool:
+    """Require a generic's complete concrete set to prove a missing peer's kind.
+
+    Filtering to mapped kinds bounds store probes, but cannot prove that an absent peer
+    belongs to the remaining kind. Explicit concrete references retain their literal rule.
+    """
+    if config is None:
+        return True
+    generic_peers = _generic_peers(config)
+    return all(
+        set(generic_peers[mapped_field.reference]) == {peer_kind}
+        for entry in config.schema_mapping
+        if entry.name == kind
+        for mapped_field in entry.fields
+        if mapped_field.name == field and mapped_field.reference in generic_peers
+    )
+
+
 def reference_candidates(config: SyncConfig | None, kind: str) -> dict[str, tuple[str, ...]]:
     """Candidate peer kinds per reference-bearing field of `kind`, sorted (AD050).
 
@@ -20,17 +47,13 @@ def reference_candidates(config: SyncConfig | None, kind: str) -> dict[str, tupl
 
     A `reference` that names a generic is expanded to the concrete kinds the destination
     schema lists for it and the configuration maps, the same set automatic ordering uses,
-    because no record is stored under the generic's own name. The schema is the validated
+    because concrete-only mappings store no record under the generic's own name. A mapped
+    generic remains a candidate too. The schema is the validated
     snapshot, or on a direct run the destination adapter's live schema.
     """
     if config is None:
         return {}
-    runtime_models = getattr(config, "_runtime_models", None)
-    generic_peers: Mapping[str, tuple[str, ...]] = (
-        runtime_models.generic_peers
-        if runtime_models is not None
-        else getattr(config, "_direct_generic_peers", None) or {}
-    )
+    generic_peers = _generic_peers(config)
     mapped = {entry.name for entry in config.schema_mapping}
     by_field: dict[str, set[str]] = {}
     for entry in config.schema_mapping:

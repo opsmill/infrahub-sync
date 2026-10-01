@@ -1,1 +1,1 @@
-The plan now looks up a `reference:` that names a generic under each of its mapped concrete kinds, so `diff` no longer fails with `SourcePeerUnresolvedError` for a relationship to a generic.
+The plan now looks up a `reference:` that names a generic under its mapped concrete kinds, so `diff` can plan relationships with one peer or several peers of one concrete kind while refusing missing peers whose kind the full generic schema leaves ambiguous.
