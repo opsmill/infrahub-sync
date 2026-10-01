@@ -22,6 +22,16 @@ yaml_all: &yaml_all
 development_files: &development_files
   - "tasks/**"
 
+# Inputs to tests/test_release_label_contract.py, so a change to the label
+# gate or the configuration it asserts still runs the unit tests.
+release_label_files: &release_label_files
+  - "scripts/**"
+  - ".github/version-drafter.yml"
+  - ".github/labels.yml"
+  - ".github/dependabot.yml"
+  - ".github/workflows/release-label-check.yml"
+  - ".github/workflows/update-infrahub-sdk.yml"
+
 github_workflows: &github_workflows
   - ".github/workflows/*.yml"
 
@@ -33,6 +43,7 @@ sync_all:
   - *sync_files
   - *test_files
   - *development_files
+  - *release_label_files
   - *uv_files
 
 documentation_all:
