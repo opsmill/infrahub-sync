@@ -1,0 +1,37 @@
+tests/compose/conftest.py
+  s_e781df4f83e385::t_41403b646ef464 41,69,90,102
+tests/image/test_version_policy.py
+  s_e781df4f83e385::t_cf4238b0378a1d 123-142
+tests/image/test_image_ref_fixture.py
+  s_e781df4f83e385::t_36e0c65e316194 1-14,16-23,25-30
+  s_e781df4f83e385::t_fa3742d594674a 15,24,31
+tests/compose/lifecycle.py
+  s_e781df4f83e385::t_a6ec7b9bbf6ee0 21
+tests/image/conftest.py
+  s_e781df4f83e385::t_fa3742d594674a 105-109,113
+  s_e781df4f83e385::t_36e0c65e316194 91-95,98-101
+dev/specs/007-harbor-image-publishing/contracts/release-pin-tasks.md
+  s_e781df4f83e385::t_bbaa7a0bb07b67 6-10,13-14,38-40
+tasks/release.py
+  s_e781df4f83e385::t_e6daab59375dd9 8-9,33-40,68-73,75,77,79,82-91,96
+tests/test_release_pin.py
+  s_e781df4f83e385::t_6f3faebc2fd9c4 190
+  s_e781df4f83e385::t_94f27426da7c6f 6-7,19-21,48-56,167-172,174-189,191-193
+  s_e781df4f83e385::t_4025fbb9e79eb8 173
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "41396564c9b78dc7151f8e11c19f8e1b959ac024",
+  "prompts": {},
+  "sessions": {
+    "s_e781df4f83e385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e7508e3-b2e9-494a-a98a-ccc3d06e2a0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
