@@ -1563,6 +1563,96 @@ def test_the_peer_kind_is_the_kind_that_actually_holds_the_peer() -> None:
     assert devices["d1"].operation_id != devices["d2"].operation_id
 
 
+def generic_location_config() -> SyncInstance:
+    """`DcimDevice.location` references the generic `LocationAny`, which the schema says rack and site share."""
+    config = duplicate_location_config("LocationAny")
+    config._runtime_models = SimpleNamespace(  # ty: ignore[invalid-assignment]
+        generic_peers={"LocationAny": ("LocationRack", "LocationSite")}, schema_fingerprint=None
+    )
+    return config
+
+
+def test_a_generic_reference_is_probed_under_each_mapped_concrete_kind() -> None:
+    """The generic names no stored kind, so its mapped concrete peers are the candidates."""
+    config = generic_location_config()
+    assert reference_candidates(config, "DcimDevice") == {"location": LOCATION_CANDIDATES}
+
+    source = location_side("source", racks=["r1"], sites=["hq"], devices=[("d1", "r1"), ("d2", "hq")])
+    operations = derive_over(config, source)
+
+    devices = {operation.identity["name"]: operation for operation in operations if operation.kind == "DcimDevice"}
+    assert references_by_field(devices["d1"])["location"].peer_kind == "LocationRack"
+    assert references_by_field(devices["d2"])["location"].peer_kind == "LocationSite"
+    assert devices["d1"].identity["location"] == {"peer_kind": "LocationRack", "identity": {"name": "r1"}}
+    assert devices["d2"].identity["location"] == {"peer_kind": "LocationSite", "identity": {"name": "hq"}}
+
+
+def test_a_mapped_generic_stays_a_candidate_beside_its_mapped_concrete_kinds() -> None:
+    """A generic the configuration itself maps can hold records, so it is probed too."""
+    config = build_config(
+        order=DUPLICATE_ORDER,
+        schema_mapping=[
+            mapping_entry("LocationSite", identifiers=["name"], fields={"name": None}),
+            mapping_entry("LocationAny", identifiers=["name"], fields={"name": None}),
+            mapping_entry(
+                "DcimDevice", identifiers=["name", "location"], fields={"name": None, "location": "LocationAny"}
+            ),
+        ],
+    )
+    config._runtime_models = SimpleNamespace(  # ty: ignore[invalid-assignment]
+        generic_peers={"LocationAny": ("LocationRack", "LocationSite")}, schema_fingerprint=None
+    )
+    assert reference_candidates(config, "DcimDevice") == {"location": ("LocationAny", "LocationSite")}
+
+
+def test_a_generic_with_no_mapped_concrete_kind_stays_the_only_candidate() -> None:
+    """An empty expansion keeps the generic, so the peer fails as unresolved instead of vanishing."""
+    config = duplicate_location_config("LocationAny")
+    config._runtime_models = SimpleNamespace(  # ty: ignore[invalid-assignment]
+        generic_peers={"LocationAny": ("LocationHub",)}, schema_fingerprint=None
+    )
+    assert reference_candidates(config, "DcimDevice") == {"location": ("LocationAny",)}
+
+
+def test_a_direct_run_expands_a_generic_reference_from_the_destination_live_schema() -> None:
+    """With no runtime snapshot, derivation reads the live schema ordering reads."""
+    from infrahub_sdk.schema.main import GenericSchemaAPI
+
+    config = duplicate_location_config("LocationAny")
+    assert config._runtime_models is None
+    destination = _FakeAdapter("destination")
+    destination.schema = {
+        "LocationAny": GenericSchemaAPI(name="Any", namespace="Location", used_by=["LocationRack", "LocationSite"])
+    }
+    source = location_side("source", racks=["r1"], sites=["hq"], devices=[("d1", "r1"), ("d2", "hq")])
+    build_potenda(config=config, source=source, destination=destination, run_id="20260726T2000-77777777")
+
+    assert reference_candidates(config, "DcimDevice") == {"location": LOCATION_CANDIDATES}
+    operations = derive_over(config, source)
+    devices = {operation.identity["name"]: operation for operation in operations if operation.kind == "DcimDevice"}
+    assert devices["d1"].identity["location"] == {"peer_kind": "LocationRack", "identity": {"name": "r1"}}
+    assert devices["d2"].identity["location"] == {"peer_kind": "LocationSite", "identity": {"name": "hq"}}
+
+
+def test_an_unresolved_generic_peer_names_the_concrete_candidate_kinds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = generic_location_config()
+    source = location_side("source", racks=["r1"], sites=["hq"], devices=[("d1", "ghost")])
+
+    error = failing_plan_run(
+        monkeypatch,
+        config=config,
+        source=source,
+        destination=_FakeAdapter("destination"),
+        run_id="20260726T2000-66666666",
+        error=SourcePeerUnresolvedError,
+    )
+
+    assert "Candidate peer kinds tried: LocationRack, LocationSite" in str(error)
+    assert "LocationAny" not in str(error)
+
+
 def test_a_peer_under_no_candidate_kind_fails_the_command_and_leaves_no_artifact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

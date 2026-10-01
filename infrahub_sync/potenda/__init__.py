@@ -6,10 +6,7 @@ import sys
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
-# The destination SDK's error base, imported for the apply path's exception boundary below and
-# for nothing else. It is the one module-level import here that is not cheap, and it is
-# unavoidable: the boundary has to *name* the library whose rejections are operational, and
-# every path that reaches `apply_plan` constructs an SDK-backed destination anyway.
+# The one costly module-level import: apply's exception boundary must name the SDK's errors.
 from infrahub_sdk.exceptions import (
     AuthenticationError,
     GraphQLError,
@@ -22,11 +19,7 @@ from tqdm import tqdm
 
 from infrahub_sync import resolve_effective_diffsync_flags
 
-# Imported at module level, unlike this module's other `infrahub_sync` imports: these four
-# pull nothing beyond pydantic and the standard library — the write-surface protocol pulls
-# nothing at all at runtime — while the artifact reader and the verifier reach
-# `cache/parquet_io` and therefore `pyarrow`, which this module defers on purpose so
-# importing the engine stays cheap.
+# These plan imports are cheap; imports that reach pyarrow stay deferred below.
 from infrahub_sync.plan.config_version import resolve_config_version, validate_config_version
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
@@ -284,6 +277,12 @@ class Potenda:
         # records the semantics it was actually computed against rather than a second read.
         runtime_models = getattr(config, "_runtime_models", None)
         self.schema_fingerprint: str | None = None if runtime_models is None else runtime_models.schema_fingerprint
+        if config is not None and runtime_models is None:
+            # A direct run has no validated snapshot; plan derivation reads the same live
+            # schema ordering does, so a generic reference expands consistently.
+            from infrahub_sync.generic_peers import generic_peers_for_destination
+
+            config._direct_generic_peers = generic_peers_for_destination(destination, None) or None
         self._did_full_extract: bool = False
         # Per-side extraction mode, recorded alongside the OR-accumulated
         # `_did_full_extract` rather than in place of it. FR-015 derives deletes only
