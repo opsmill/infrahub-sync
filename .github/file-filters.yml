@@ -134,3 +134,22 @@ qualify_all:
   - ".github/workflows/workflow-image.yml"
   - ".github/workflows/trigger-pr-develop.yml"
   - ".github/file-filters.yml"
+
+# What the new image gate (`ci-docker-image.yml`) rebuilds for: the build
+# context the Dockerfile copies, the dependency set it installs, the root
+# Compose file the smoke test starts, and the smoke suite itself. The last three
+# entries are the gate's own declarations, so re-aiming it faces the gate it
+# aims. Replaces `image_files`, `compose_files`, `image_all` and `qualify_all`
+# once the old image workflows are removed.
+image_inputs:
+  - "Dockerfile"
+  - ".dockerignore"
+  - "pyproject.toml"
+  - "uv.lock"
+  - "infrahub_sync/**"
+  - "opsmill_prefect_extras/**"
+  - "docker-compose.yml"
+  - "tests/image/**"
+  - ".github/workflows/ci-docker-image.yml"
+  - ".github/workflows/trigger-pr-develop.yml"
+  - ".github/file-filters.yml"

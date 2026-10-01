@@ -35,8 +35,8 @@ that US5 deletes first.
 
 **Purpose**: Record a baseline and prepare the shared path filter.
 
-- [ ] T001 Record the baseline size of the image machinery with `wc -l .github/workflows/workflow-image.yml .github/workflows/workflow-candidate.yml tasks/image.py tasks/release.py tasks/compose.py` (expect 3195 lines in total). Append the figures to a "Baseline" section at the end of `specs/007-harbor-image-publishing/research.md`. SC-004 is measured against this number.
-- [ ] T002 Add an `image_inputs` filter to `.github/file-filters.yml`. It matches `Dockerfile`, `.dockerignore`, `pyproject.toml`, `uv.lock`, `infrahub_sync/**`, `opsmill_prefect_extras/**`, `docker-compose.yml`, `tests/image/**`, `.github/workflows/ci-docker-image.yml`, `.github/workflows/trigger-pr-develop.yml` and `.github/file-filters.yml`. Leave the existing `image_files`, `compose_files`, `image_all` and `qualify_all` filters in place for now (T031 removes them).
+- [X] T001 Record the baseline size of the image machinery with `wc -l .github/workflows/workflow-image.yml .github/workflows/workflow-candidate.yml tasks/image.py tasks/release.py tasks/compose.py` (expect 3195 lines in total). Append the figures to a "Baseline" section at the end of `specs/007-harbor-image-publishing/research.md`. SC-004 is measured against this number.
+- [X] T002 Add an `image_inputs` filter to `.github/file-filters.yml`. It matches `Dockerfile`, `.dockerignore`, `pyproject.toml`, `uv.lock`, `infrahub_sync/**`, `opsmill_prefect_extras/**`, `docker-compose.yml`, `tests/image/**`, `.github/workflows/ci-docker-image.yml`, `.github/workflows/trigger-pr-develop.yml` and `.github/file-filters.yml`. Leave the existing `image_files`, `compose_files`, `image_all` and `qualify_all` filters in place for now (T031 removes them).
 
 ---
 

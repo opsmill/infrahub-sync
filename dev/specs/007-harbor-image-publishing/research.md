@@ -310,3 +310,22 @@ changes. The planned order:
    Compose suite.
 4. Remove the old workflows, tasks, tests, `deploy/compose/` and tester packet.
 5. Update the docs, agent material and changelog.
+
+## Baseline
+
+Recorded for T001 on 2026-10-01 at commit `53e50ec7`, before any change in this
+feature. SC-004 is measured against this total. The command:
+
+```bash
+wc -l .github/workflows/workflow-image.yml .github/workflows/workflow-candidate.yml \
+  tasks/image.py tasks/release.py tasks/compose.py
+```
+
+| File | Lines |
+|---|---|
+| `.github/workflows/workflow-image.yml` | 516 |
+| `.github/workflows/workflow-candidate.yml` | 680 |
+| `tasks/image.py` | 860 |
+| `tasks/release.py` | 1012 |
+| `tasks/compose.py` | 127 |
+| **Total** | **3195** |
