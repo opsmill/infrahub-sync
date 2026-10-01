@@ -1,0 +1,365 @@
+.specify/extensions/review/CHANGELOG.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-31
+.agents/commands/speckit.git.remote.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-48
+.agents/skills/speckit-review-comments/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-88
+.agents/skills/speckit-opsmill-implement/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-132
+.agents/skills/speckit-review-errors/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-146
+.specify/extensions/review/README.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-185
+.specify/extensions/git/commands/speckit.git.initialize.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-49
+.specify/presets/taskstoissues-jira/README.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-57
+.specify/extensions/review/LICENSE
+  s_e781df4f83e385::t_7b33427109d5c8 1-21
+.specify/extensions/agent-context/extension.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-34
+.specify/extensions/review/tests/bats/test_helper.bash
+  s_e781df4f83e385::t_7b33427109d5c8 1-90
+.specify/extensions/opsmill/presets/taskstoissues-jira/templates/jira.example.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-38
+.specify/extensions/git/git-config.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-62
+.agents/commands/speckit.git.feature.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-71
+.agents/skills/speckit-opsmill-prep/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-156
+CLAUDE.md
+  s_e781df4f83e385::t_e9b4e3a1eaf4ec 6-7
+  s_e781df4f83e385::t_8ff50197c01f36 5,8-10
+.agents/commands/speckit.opsmill.prep.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-154
+.specify/extensions/git/extension.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-140
+.specify/extensions/.registry
+  s_e781df4f83e385::t_7b33427109d5c8 1-202
+.agents/skills/speckit-specify/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-348
+.specify/extensions/opsmill/commands/implement.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-126
+.agents/skills/speckit-critique-run/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-241
+.specify/templates/checklist-template.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-40
+dev/specs/007-harbor-image-publishing/checklists/requirements.md
+  s_e781df4f83e385::t_66ef669b6947a8 1-45
+.agents/skills/speckit-git-remote/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-50
+.agents/commands/speckit.review.simplify.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-65
+.agents/commands/speckit.review.errors.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-147
+.agents/skills/speckit-opsmill-summary/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-143
+.specify/extensions/review/commands/errors.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-143
+.specify/extensions/review/commands/comments.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-85
+.agents/skills/speckit-constitution/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-159
+.agents/skills/speckit-checklist/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-376
+.agents/skills/speckit-analyze/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-262
+.agents/skills/speckit-clarify/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-288
+.specify/extensions/git/commands/speckit.git.feature.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-68
+.specify/extensions/git/commands/speckit.git.commit.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-48
+.agents/commands/speckit.git.validate.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-52
+.specify/extensions/review/config-template.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-17
+.specify/templates/constitution-template.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-50
+.agents/skills/speckit-plan/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-173
+.specify/scripts/bash/create-new-feature.sh
+  s_e781df4f83e385::t_7b33427109d5c8 1-299
+.specify/extensions/review/commands/tests.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-82
+dev/specs/007-harbor-image-publishing/research.md
+  s_e781df4f83e385::t_3c06123652862b 169
+  s_e781df4f83e385::t_c646300f7dff5c 1-111,113-168,170-312
+  s_e781df4f83e385::t_1047afb08aef52 112
+.agents/skills/speckit-taskstoissues/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-112
+.specify/extensions/git/scripts/bash/git-common.sh
+  s_e781df4f83e385::t_7b33427109d5c8 1-54
+dev/specs/007-harbor-image-publishing/contracts/release-pin-tasks.md
+  s_e781df4f83e385::t_2e143b73eb7ff7 1-35
+.specify/presets/taskstoissues-jira/preset.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-28
+.specify/extensions.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-194
+.agents/skills/speckit-implement/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-226
+.specify/extensions/agent-context/agent-context-config.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-5
+.specify/extensions/critique/LICENSE
+  s_e781df4f83e385::t_7b33427109d5c8 1-21
+.specify/extensions/git/scripts/bash/create-new-feature-branch.sh
+  s_e781df4f83e385::t_7b33427109d5c8 1-464
+.specify/extensions/agent-context/scripts/powershell/update-agent-context.ps1
+  s_e781df4f83e385::t_7b33427109d5c8 1-417
+.specify/extensions/opsmill/extension.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-55
+.specify/extensions/critique/README.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-44
+.specify/init-options.json
+  s_e781df4f83e385::t_7b33427109d5c8 1-9
+.specify/extensions/git/scripts/powershell/git-common.ps1
+  s_e781df4f83e385::t_7b33427109d5c8 1-51
+.specify/templates/spec-template.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-131
+dev/specs/007-harbor-image-publishing/quickstart.md
+  s_e781df4f83e385::t_0b3e44036e953b 1-26,28-120,122-124
+  s_e781df4f83e385::t_1047afb08aef52 27
+  s_e781df4f83e385::t_6c7dfb5f6a0938 121
+.specify/extensions/git/config-template.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-62
+.specify/extensions/opsmill/presets/CHANGELOG.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-46
+.agents/skills/speckit-converge/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-279
+.agents/commands/speckit.review.code.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-60
+.agents/commands/speckit.opsmill.extract.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-344
+.specify/extensions/review/.gitmodules
+  s_e781df4f83e385::t_7b33427109d5c8 1-9
+.agents/skills/speckit-git-commit/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-53
+.agents/commands/speckit.opsmill.auto.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-76
+.specify/presets/taskstoissues-jira/templates/jira.example.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-38
+.specify/extensions/agent-context/scripts/bash/update-agent-context.sh
+  s_e781df4f83e385::t_7b33427109d5c8 1-337
+.specify/extensions/opsmill/CHANGELOG.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-74
+.specify/extensions/review/extension.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-81
+.specify/extensions/git/commands/speckit.git.remote.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-45
+dev/specs/007-harbor-image-publishing/tasks.md
+  s_e781df4f83e385::t_e73773bb583000 1-427
+.agents/commands/speckit.opsmill.summary.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-144
+.agents/commands/speckit.git.initialize.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-52
+.specify/extensions/review/.github/workflows/ci.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-243
+.specify/scripts/bash/common.sh
+  s_e781df4f83e385::t_7b33427109d5c8 1-619
+.specify/extensions/review/commands/types.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-123
+dev/specs/007-harbor-image-publishing/data-model.md
+  s_e781df4f83e385::t_ea6ab101316169 1-71
+.specify/extensions/agent-context/README.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-66
+.specify/extensions/git/scripts/powershell/create-new-feature-branch.ps1
+  s_e781df4f83e385::t_7b33427109d5c8 1-416
+.specify/integrations/claude.manifest.json
+  s_e781df4f83e385::t_7b33427109d5c8 1-17
+.agents/skills/speckit-tasks/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-217
+.specify/extensions/git/scripts/powershell/initialize-repo.ps1
+  s_e781df4f83e385::t_7b33427109d5c8 1-69
+dev/specs/007-harbor-image-publishing/contracts/docker-compose-env.md
+  s_e781df4f83e385::t_729f8a6be91911 1-48
+pyproject.toml
+  s_e781df4f83e385::t_e64784bf8f2188 447
+.specify/extensions/opsmill/commands/extract.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-340
+dev/specs/007-harbor-image-publishing/contracts/ci-docker-image.md
+  s_e781df4f83e385::t_1047afb08aef52 32
+  s_e781df4f83e385::t_f02cb2452c9798 1-31,33-52
+.agents/skills/speckit-agent-context-update/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-32
+.specify/extensions/critique/.gitignore
+  s_e781df4f83e385::t_7b33427109d5c8 1-4
+.agents/commands/speckit.opsmill.implement.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-130
+.specify/scripts/bash/setup-tasks.sh
+  s_e781df4f83e385::t_7b33427109d5c8 1-91
+.agents/commands/speckit.review.comments.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-89
+.agents/commands/speckit.review.run.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-178
+dev/specs/007-harbor-image-publishing/plan.md
+  s_e781df4f83e385::t_aa5abc4a86f4cb 1,3,5,9-28,32-79,83-87,90-101,108-119,122,125-150,153-163,166-191,195
+  s_e781df4f83e385::t_cd35303cce27c8 88-89
+  s_e781df4f83e385::t_a191e4f3a1de1e 2,4,6-8,29-31,80-82,102-107,120-121,123-124,151-152,164-165,192-194
+.specify/extensions/review/tests/bats/detect-changed-files.bats
+  s_e781df4f83e385::t_7b33427109d5c8 1-650
+.agents/skills/speckit-opsmill-extract/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-346
+.specify/extensions/opsmill/commands/summary.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-139
+.specify/extensions/review/.gitignore
+  s_e781df4f83e385::t_7b33427109d5c8 1-46
+.agents/skills/speckit-review-simplify/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-64
+.specify/presets/taskstoissues-jira/commands/speckit.taskstoissues.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-190
+.gitignore
+  s_e781df4f83e385::t_a54a10bed5a9e0 21-24
+.specify/extensions/git/scripts/bash/auto-commit.sh
+  s_e781df4f83e385::t_7b33427109d5c8 1-140
+.specify/extensions/opsmill/presets/taskstoissues-jira/commands/speckit.taskstoissues.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-190
+.specify/extensions/review/scripts/powershell/detect-changed-files.ps1
+  s_e781df4f83e385::t_7b33427109d5c8 1-228
+.specify/extensions/git/README.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-100
+.specify/integration.json
+  s_e781df4f83e385::t_7b33427109d5c8 1-15
+.specify/extensions/review/commands/simplify.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-61
+.agents/skills/speckit-checkpoint-commit/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-96
+.specify/extensions/git/scripts/powershell/auto-commit.ps1
+  s_e781df4f83e385::t_7b33427109d5c8 1-169
+.specify/extensions/review/commands/code.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-56
+.agents/commands/speckit.opsmill.retrospect.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-179
+.agents/commands/speckit.git.commit.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-51
+.agents/commands/speckit.review.tests.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-86
+.specify/extensions/review/commands/run.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-174
+.specify/extensions/critique/commands/critique-template.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-135
+.specify/extensions/git/commands/speckit.git.validate.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-49
+.specify/extensions/review/tests/pester/detect-changed-files.Tests.ps1
+  s_e781df4f83e385::t_7b33427109d5c8 1-740
+.agents/skills/speckit-opsmill-retrospect/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-181
+.agents/commands/speckit.critique.run.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-242
+.agents/skills/speckit-git-validate/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-54
+.agents/skills/speckit-opsmill-auto/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-78
+.specify/extensions/critique/commands/run.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-238
+.specify/extensions/critique/CHANGELOG.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-27
+.specify/extensions/agent-context/commands/speckit.agent-context.update.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-27
+.specify/extensions/opsmill/commands/auto.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-71
+.specify/integrations/speckit.manifest.json
+  s_e781df4f83e385::t_7b33427109d5c8 1-17
+.specify/extensions/opsmill/commands/retrospect.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-175
+.specify/extensions/git/scripts/bash/initialize-repo.sh
+  s_e781df4f83e385::t_7b33427109d5c8 1-54
+dev/specs/007-harbor-image-publishing/spec.md
+  s_e781df4f83e385::t_b432db4aa7ddcb 125-136,140-145
+  s_e781df4f83e385::t_56e38574388e20 31
+  s_e781df4f83e385::t_4d542ce4a7042b 30
+  s_e781df4f83e385::t_bf81cac27dbc48 115,118
+  s_e781df4f83e385::t_af391d87b07af9 234-237,240-249
+  s_e781df4f83e385::t_316ebf3c861f5e 324-326
+  s_e781df4f83e385::t_6f8434f724a109 111-114
+  s_e781df4f83e385::t_459aa3107858ac 314-315
+  s_e781df4f83e385::t_2f4785f5d54291 53,56-60
+  s_e781df4f83e385::t_b6449fa4a7a23b 279-282
+  s_e781df4f83e385::t_b1c0344d8b0435 1-24,36-46,50-52,54-55,62,64-110,116-117,119-124,137-139,146-177,180-207,212-214,224-233,258-266,271-278,283-287,293-294,299-309,316-323,329-337
+  s_e781df4f83e385::t_54bd8477c29b82 33
+  s_e781df4f83e385::t_622a8d7156b2cb 208-211
+  s_e781df4f83e385::t_cec982526a0303 310-313
+  s_e781df4f83e385::t_560f3ba19a58de 47-49
+  s_e781df4f83e385::t_f66ed645fbaebe 61,63
+  s_e781df4f83e385::t_d78d2b72f8a2fa 178-179
+  s_e781df4f83e385::t_d238329bfbefb5 25-29,35
+  s_e781df4f83e385::t_3a717170ee3f01 32
+  s_e781df4f83e385::t_f282e71a7fc723 215-218
+  s_e781df4f83e385::t_a9ff33f198d887 288-292
+  s_e781df4f83e385::t_e94904fd4f4fb1 327-328
+  s_e781df4f83e385::t_8b30c2feae74b3 267-270
+  s_e781df4f83e385::t_6809cab6bba4ad 219-223
+  s_e781df4f83e385::t_0af9f272c14998 34
+  s_e781df4f83e385::t_7c2d5a9d856056 238-239,250-257
+  s_e781df4f83e385::t_21ed5d0c40c960 295-298
+.specify/extensions/opsmill/LICENSE
+  s_e781df4f83e385::t_7b33427109d5c8 1-201
+.specify/scripts/bash/check-prerequisites.sh
+  s_e781df4f83e385::t_7b33427109d5c8 1-189
+.specify/extensions/opsmill/commands/prep.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-150
+.specify/scripts/bash/detect-changed-files.sh
+  s_e781df4f83e385::t_7b33427109d5c8 1-8
+.agents/commands/speckit.agent-context.update.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-30
+.specify/presets/.registry
+  s_e781df4f83e385::t_7b33427109d5c8 1-30
+.agents/skills/speckit-git-feature/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-73
+.specify/extensions/opsmill/README.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-149
+.specify/templates/plan-template.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-113
+.agents/skills/speckit-git-initialize/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-54
+.agents/skills/speckit-review-code/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-59
+.specify/workflows/workflow-registry.json
+  s_e781df4f83e385::t_7b33427109d5c8 1-13
+.agents/skills/speckit-review-types/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-126
+.agents/skills/speckit-review-tests/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-85
+.specify/extensions/opsmill/presets/taskstoissues-jira/README.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-57
+.specify/extensions/critique/extension.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-32
+.specify/workflows/speckit/workflow.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-63
+.agents/commands/speckit.taskstoissues.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-192
+.specify/extensions/review/scripts/bash/detect-changed-files.sh
+  s_e781df4f83e385::t_7b33427109d5c8 1-243
+.specify/extensions/opsmill/presets/taskstoissues-jira/preset.yml
+  s_e781df4f83e385::t_7b33427109d5c8 1-28
+.specify/scripts/bash/setup-plan.sh
+  s_e781df4f83e385::t_7b33427109d5c8 1-84
+.agents/commands/speckit.review.types.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-127
+.yamllint.yml
+  s_e781df4f83e385::t_e64784bf8f2188 12-15
+.agents/skills/speckit-review-run/SKILL.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-177
+.specify/templates/tasks-template.md
+  s_e781df4f83e385::t_7b33427109d5c8 1-252
+.specify/memory/constitution.md
+  s_e781df4f83e385::t_c9406237c61564 1
+specs
+  s_e781df4f83e385::t_62d83d8f0a5b82 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "53e50ec77c58dd4e482265c373c6347ed90057a5",
+  "prompts": {},
+  "sessions": {
+    "s_e781df4f83e385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e7508e3-b2e9-494a-a98a-ccc3d06e2a0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
