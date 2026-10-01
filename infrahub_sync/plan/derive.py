@@ -119,16 +119,31 @@ def reference_candidates(config: SyncConfig | None, kind: str) -> dict[str, tupl
     `reference` across **every** `schema_mapping` entry whose `name` is `kind` —
     `{LocationRack, LocationSite}` for `DcimDevice.location` on the qualified path. Sorted
     so the probe order, and therefore the wording of a failure, is deterministic.
+
+    A `reference` that names a generic is expanded to the concrete kinds the validated
+    destination schema lists for it and the configuration maps, the same set automatic
+    ordering uses, because no record is stored under the generic's own name.
     """
     if config is None:
         return {}
+    runtime_models = getattr(config, "_runtime_models", None)
+    generic_peers: Mapping[str, tuple[str, ...]] = runtime_models.generic_peers if runtime_models is not None else {}
+    mapped = {entry.name for entry in config.schema_mapping}
     by_field: dict[str, set[str]] = {}
     for entry in config.schema_mapping:
         if entry.name != kind:
             continue
         for field in entry.fields:
             if field.reference:
-                by_field.setdefault(field.name, set()).add(field.reference)
+                kinds = by_field.setdefault(field.name, set())
+                if field.reference in generic_peers:
+                    expanded = mapped.intersection(generic_peers[field.reference])
+                    if field.reference in mapped:
+                        expanded.add(field.reference)
+                    # An empty expansion keeps the generic, so the peer still fails as unresolved.
+                    kinds.update(expanded or {field.reference})
+                else:
+                    kinds.add(field.reference)
     return {name: tuple(sorted(kinds)) for name, kinds in by_field.items()}
 
 
