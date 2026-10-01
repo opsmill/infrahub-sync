@@ -22,6 +22,11 @@ from prefect.exceptions import MissingContextError, ObjectNotFound
 
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
+from infrahub_sync.configuration.storage import (
+    UNSUPPORTED_STORE_MESSAGE,
+    UNSUPPORTED_STORE_REASON,
+    UnsupportedSyncStoreError,
+)
 from infrahub_sync.execution import (
     ACTION_KEYS,
     RunResult,
@@ -721,6 +726,8 @@ def _failure_evidence(
         # this process's own taxonomy carries one identifier.
         "cause_type": None if exc.__cause__ is None else type(exc.__cause__).__name__,
     }
+    if isinstance(exc, UnsupportedSyncStoreError):
+        evidence.update(reason=UNSUPPORTED_STORE_REASON, message=UNSUPPORTED_STORE_MESSAGE)
     if stage == "apply" and isinstance(exc, RegisteredPlanVerificationError) and exc.recovery_action is not None:
         evidence["recovery_action"] = exc.recovery_action
     written = effective_apply_record(exc, record)

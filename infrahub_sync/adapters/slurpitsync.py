@@ -19,6 +19,7 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.adapters.utils import build_mapping, get_value
+from infrahub_sync.configuration.credentials import declared_settings
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -83,7 +84,8 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
 
     def _create_slurpit_client(self, adapter: SyncAdapter) -> slurpit.api:
         """Create and check the configured Slurp'it client."""
-        settings = dict(adapter.settings or {})
+        # `slurpit.api` has a fixed signature, so the registered-context marker stays behind.
+        settings = declared_settings(adapter.settings or {})
         verify = settings.pop("verify_ssl", True)
         client = slurpit.api(verify=verify, **settings)
         self.client = client

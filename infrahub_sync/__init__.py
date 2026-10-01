@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, Union
 
 import pydantic
 from diffsync.enum import DiffSyncFlags
-from jinja2 import StrictUndefined
-from jinja2.nativetypes import NativeEnvironment
+from jinja2 import StrictUndefined, Undefined
+from jinja2.exceptions import SecurityError
+from jinja2.nativetypes import NativeCodeGenerator, NativeTemplate, native_concat
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 from netutils.ip import is_ip_within as netutils_is_ip_within
 
 from infrahub_sync.adapters.utils import get_value
@@ -24,6 +26,52 @@ if TYPE_CHECKING:
     from infrahub_sync.runtime_schema import RuntimeModelPlan
 
 logger = logging.getLogger(__name__)
+
+
+class SandboxedNativeEnvironment(ImmutableSandboxedEnvironment):
+    """Jinja2 sandbox that returns native Python types, for schema_mapping transforms.
+
+    Transform expressions come from registered configuration packages and render inside the
+    Sync worker, so they must not reach private attributes, unsafe callables or mutating
+    methods. The immutable sandbox refuses those with ``SecurityError``; the native code
+    generator and concat keep the result's type (``list``, ``dict``, ``bool``, ``int``).
+    """
+
+    code_generator_class = NativeCodeGenerator
+    concat = staticmethod(native_concat)
+
+
+class SandboxedNativeTemplate(NativeTemplate):
+    """Template bound to ``SandboxedNativeEnvironment``; its render concatenates natively."""
+
+    environment_class = SandboxedNativeEnvironment
+
+
+SandboxedNativeEnvironment.template_class = SandboxedNativeTemplate
+
+
+def _raise_if_undefined(value: Any) -> None:
+    """Raise the error an Undefined carries when a rendered value is, or contains, one."""
+    if isinstance(value, Undefined):
+        # Jinja's own trigger for the error an Undefined was built with (UndefinedError or SecurityError).
+        value._fail_with_undefined_error()  # pylint: disable=protected-access
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            _raise_if_undefined(key)
+            _raise_if_undefined(nested)
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        for nested in value:
+            _raise_if_undefined(nested)
+
+
+def new_transform_environment() -> SandboxedNativeEnvironment:
+    """Build the environment every schema_mapping transform expression renders in."""
+    return SandboxedNativeEnvironment(
+        undefined=StrictUndefined,  # fail fast on missing keys
+        autoescape=False,
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
 
 
 class SchemaMappingFilter(pydantic.BaseModel):
@@ -324,16 +372,12 @@ class DiffSyncModelMixin:
     def apply_transform(cls, item: dict[str, Any], transform_expr: str, field: str) -> None:
         """Apply a transformation expression using Jinja2 to a specified field in the item.
 
-        Uses Jinja's NativeEnvironment so expressions return native Python types
-        (list/dict/bool/int/str) instead of always strings.
+        Renders in ``SandboxedNativeEnvironment`` so expressions return native Python types
+        (list/dict/bool/int/str) instead of always strings, and cannot reach private
+        attributes, unsafe callables or mutating methods.
         """
         try:
-            native_env = NativeEnvironment(
-                undefined=StrictUndefined,  # fail fast on missing keys
-                autoescape=False,
-                trim_blocks=True,
-                lstrip_blocks=True,
-            )
+            native_env = new_transform_environment()
 
             # Allow subclasses to add custom filters
             add_custom_filters: Callable[..., None] | None = getattr(cls, "_add_custom_filters", None)
@@ -346,11 +390,18 @@ class DiffSyncModelMixin:
             # Render with the item as context → returns a native Python value
             transformed_value = template.render(**item)
 
+            # Native rendering returns a lone expression's value without str(), so a missing
+            # key or a refused attribute comes back as an Undefined instead of raising.
+            _raise_if_undefined(transformed_value)
+
             # Always assign the result, even if it's an empty list/dict/False/0.
             # Only skip if the result is literally None (meaning "don't set").
             if transformed_value is not None:
                 item[field] = transformed_value
 
+        except SecurityError as exc:
+            msg = f"Failed to transform '{field}' with '{transform_expr}': not allowed in the transform sandbox: {exc}"
+            raise ValueError(msg) from exc
         except Exception as exc:
             msg = f"Failed to transform '{field}' with '{transform_expr}': {exc}"
             raise ValueError(msg) from exc

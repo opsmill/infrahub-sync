@@ -260,6 +260,28 @@ def test_schema_client_ignores_ambient_git_branch(monkeypatch: pytest.MonkeyPatc
     assert config.default_infrahub_branch == "review"
 
 
+def test_schema_client_never_takes_authority_from_the_worker_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A package declaring no token or TLS setting gets neither from ``INFRAHUB_*`` variables."""
+    from infrahub_sdk import Config
+
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", "ambient-token")
+    monkeypatch.setenv("INFRAHUB_USERNAME", "ambient-user")
+    monkeypatch.setenv("INFRAHUB_PASSWORD", "ambient-password")
+    monkeypatch.setenv("INFRAHUB_TLS_INSECURE", "true")
+    monkeypatch.setenv("INFRAHUB_ADDRESS", "https://ambient-infrahub.example")
+    content = package_data()
+    del content["configuration"]["destination"]["settings"]["token"]
+    del content["credentials"]["infrahub-token"]
+    url, settings = capabilities_module._resolved_client_settings(package(content), "main")
+
+    config = Config(**settings)
+    assert config.address == url
+    assert config.api_token is None
+    assert config.username is None
+    assert config.password is None
+    assert config.tls_insecure is False
+
+
 # --- AR3: the four error fixtures against an injected snapshot ------------------------
 
 
