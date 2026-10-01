@@ -123,14 +123,43 @@ jobs:
           echo "Release body:"
           cat /tmp/release-body.md
 
+      - name: Install uv
+        if: steps.decide.outputs.publish == 'true'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+
+      # Alpha, beta, release-candidate and dev versions are published as GitHub
+      # pre-releases. trigger-release.yml reads that flag back from the release
+      # event, and workflow-publish.yml keeps such a release off the image's
+      # `latest` tag. PEP 440 decides, not a pattern match on the string.
+      - name: Decide whether this version is a pre-release
+        id: prerelease
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv run --no-project --with packaging python -c '
+          import os
+          from packaging.version import Version
+          v = Version(os.environ["VERSION"])
+          print("prerelease=" + str(v.is_prerelease or v.is_devrelease).lower())
+          ' | tee -a "$GITHUB_OUTPUT"
+
       - name: Create the tag and the GitHub Release
         if: steps.decide.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
           VERSION: ${{ steps.decide.outputs.version }}
+          PRERELEASE: ${{ steps.prerelease.outputs.prerelease }}
         run: |
           set -euo pipefail
+          if [ "${PRERELEASE}" = "true" ]; then
+            FLAGS=(--prerelease --latest=false)
+          else
+            FLAGS=(--latest)
+          fi
           gh release create "${VERSION}" \
             --target "${GITHUB_SHA}" \
             --title "${VERSION}" \
-            --notes-file /tmp/release-body.md
+            --notes-file /tmp/release-body.md \
+            "${FLAGS[@]}"

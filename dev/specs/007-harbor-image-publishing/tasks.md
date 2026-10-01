@@ -101,19 +101,19 @@ signed and has its SBOMs attached.
 arm64 and run `infrahub-sync --help`. Verify the signature and both attestations,
 and check where `latest` points for a pre-release and for a stable release.
 
-- [ ] T009 [P] [US1] Add contract tests in `tests/test_workflow_contracts.py` covering the release path:
+- [x] T009 [P] [US1] Add contract tests in `tests/test_workflow_contracts.py` covering the release path:
   - **`release-publish.yml`** computes `is_prerelease` with `packaging.version.Version` (`is_prerelease or is_devrelease`). It passes `--prerelease --latest=false` to `gh release create` when that is true, and `--latest` otherwise.
   - **`trigger-release.yml`** passes `prerelease: ${{ github.event.release.prerelease }}` to `workflow-publish.yml`.
   - **`workflow-publish.yml`**:
     - guards `uv publish` with `if: inputs.publish`;
     - has a `docker_meta` job whose metadata tags are `type=raw,value=${{ inputs.version }}`, with `latest` enabled only when not a pre-release and the tag equals `releases/latest`;
     - has a `publish_docker_image` job that calls `./.github/workflows/ci-docker-image.yml` with `publish: ${{ inputs.publish }}` and `secrets: inherit`.
-- [ ] T010 [US1] In `.github/workflows/release-publish.yml`, add a step before "Create the tag and the GitHub Release":
+- [x] T010 [US1] In `.github/workflows/release-publish.yml`, add a step before "Create the tag and the GitHub Release":
   - It runs `uv run --no-project --with packaging python -c` and prints `prerelease=true|false` from `Version(v).is_prerelease or Version(v).is_devrelease`, where `v` is the version already read from `pyproject.toml`.
   - Pass `--prerelease --latest=false` to `gh release create` when that output is true, and `--latest` otherwise.
   - Keep the bare-version tag (no `v`) and the existing guards.
-- [ ] T011 [US1] In `.github/workflows/trigger-release.yml`, pass `prerelease: ${{ github.event.release.prerelease }}` and `secrets: inherit` to `workflow-publish.yml`. Keep `publish: true` and `version: ${{ github.ref_name }}`.
-- [ ] T012 [US1] Rewrite `.github/workflows/workflow-publish.yml`:
+- [x] T011 [US1] In `.github/workflows/trigger-release.yml`, pass `prerelease: ${{ github.event.release.prerelease }}` and `secrets: inherit` to `workflow-publish.yml`. Keep `publish: true` and `version: ${{ github.ref_name }}`.
+- [x] T012 [US1] Rewrite `.github/workflows/workflow-publish.yml`:
   - **Inputs**: add a `prerelease` boolean input (default false) to both `workflow_call` and `workflow_dispatch`, and make `uv publish` conditional on `inputs.publish` (bug fix: today it ignores that input).
   - **`docker_meta` job**: adapt infrahub-mcp's (needs the PyPI job). It sets `ref=${{ github.sha }}`, and works out `latest=true` only when `inputs.prerelease` is false and `gh api repos/${{ github.repository }}/releases/latest --jq .tag_name` equals `inputs.version`. It then runs `docker/metadata-action` with:
     - `images: ${{ vars.HARBOR_HOST }}/${{ github.repository }}`;
@@ -121,7 +121,7 @@ and check where `latest` points for a pre-release and for a stable release.
     - `flavor: latest=<computed>`;
     - labels `org.opencontainers.image.source`, `org.opencontainers.image.version` and `org.opencontainers.image.revision=${{ github.sha }}`.
   - **`publish_docker_image` job**: calls `ci-docker-image.yml` with `publish`, `version`, `ref`, `tags` and `labels` from `docker_meta`, and `secrets: inherit`.
-- [ ] T013 [US1] Write the image page `docs/docs/container-image.mdx` from scratch for the registry flow:
+- [x] T013 [US1] Write the image page `docs/docs/container-image.mdx` from scratch for the registry flow:
   - where the image lives (`registry.opsmill.io/opsmill/infrahub-sync`);
   - the tag rules (version on every release, `latest` on stable releases only);
   - supported platforms;
@@ -131,7 +131,7 @@ and check where `latest` points for a pre-release and for a stable release.
   - how to build locally with `docker build -t infrahub-sync:local .`.
 
   Remove every `invoke image.*`, OCI-layout, archive and canary section.
-- [ ] T014 [P] [US1] In `docs/docs/installation.mdx`, replace the `private-candidate-*.tar.gz` release-package section (around lines 18–90) with a short "Run the container image" section that links to `container-image.mdx` and `compose-deployment.mdx`.
+- [x] T014 [P] [US1] In `docs/docs/installation.mdx`, replace the `private-candidate-*.tar.gz` release-package section (around lines 18–90) with a short "Run the container image" section that links to `container-image.mdx` and `compose-deployment.mdx`.
 
 **Checkpoint**: The release path is wired from end to end. It can be checked with a
 `workflow_dispatch` of `workflow-publish.yml` using `publish: true`,

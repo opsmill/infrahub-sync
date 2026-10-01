@@ -14,9 +14,11 @@ strings, is left to GitHub.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess  # noqa: S404 — running the guard's own script is how its refusal is measured
+import sys
 import tempfile
 from collections.abc import Callable
 from fnmatch import fnmatch
@@ -2510,3 +2512,277 @@ def test_the_tag_guard_admits_a_tagged_publish_and_any_build_only_run(publish: s
     code, output = _tag_guard_exit(publish, tags)
 
     assert code == 0, output
+
+
+# --------------------------------------------------------------------------
+# release path
+# --------------------------------------------------------------------------
+# A release pull request merged to `main` tags the release and marks a pre-release
+# as one (release-publish.yml). Publishing that release runs trigger-release.yml,
+# which hands the flag to workflow-publish.yml, which ships PyPI and then the image.
+# `latest` only moves for a stable release that GitHub also calls its latest.
+RELEASE_PUBLISH_WORKFLOW = WORKFLOWS / "release-publish.yml"
+TRIGGER_RELEASE_WORKFLOW = WORKFLOWS / "trigger-release.yml"
+METADATA_ACTION = "docker/metadata-action"
+PRERELEASE_COMMAND = "uv run --no-project --with packaging python -c"
+PRERELEASE_PROGRAM = re.compile(re.escape(PRERELEASE_COMMAND) + r"\s+'(?P<program>[^']*)'")
+CREATE_RELEASE_STEP = "Create the tag and the GitHub Release"
+# A stub that records how it was called, standing in for `gh` so the scripts run offline.
+ARGV_STUB = '#!/bin/sh\nprintf "%s\\n" "$@" > "$STUB_ARGV"\nprintf "%s\\n" "${STUB_STDOUT:-}"\n'
+
+
+def release_publish_steps() -> list[dict]:
+    """Return the steps of the job that tags and publishes a release, in order."""
+    return job_of(RELEASE_PUBLISH_WORKFLOW, "publish")["steps"]
+
+
+def _step_running(steps: list[dict], what: str, matches: Callable[[dict], bool]) -> tuple[int, dict]:
+    """Return the single step that does something, with its position, located by what it does."""
+    found = [(index, step) for index, step in enumerate(steps) if matches(step)]
+    assert len(found) == 1, f"{len(found)} steps {what}"
+    return found[0]
+
+
+def prerelease_step() -> tuple[int, dict]:
+    return _step_running(
+        release_publish_steps(), "decide the pre-release flag", lambda step: PRERELEASE_COMMAND in str(step.get("run"))
+    )
+
+
+def create_release_step() -> tuple[int, dict]:
+    return _step_running(
+        release_publish_steps(), "create the release", lambda step: "gh release create" in str(step.get("run"))
+    )
+
+
+def _run_with_stub(script: str, env: dict[str, str], stdout: str = "") -> tuple[list[str], dict[str, str]]:
+    """Run a step script under bash with `gh` stubbed; return the stub's argv and the step's outputs."""
+    bash = shutil.which("bash")
+    assert bash, "a POSIX shell is needed to run the step the way the runner does"
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        stub = root / "bin" / "gh"
+        stub.parent.mkdir()
+        stub.write_text(ARGV_STUB, encoding="utf-8")
+        stub.chmod(0o755)
+        output = root / "github-output"
+        output.touch()
+        result = subprocess.run(  # noqa: S603
+            [bash, "-c", script],
+            env={
+                **env,
+                "PATH": f"{stub.parent}:{os.environ['PATH']}",
+                "STUB_ARGV": str(root / "argv"),
+                "STUB_STDOUT": stdout,
+                "GITHUB_OUTPUT": str(output),
+                "GITHUB_REPOSITORY": "opsmill/infrahub-sync",
+                "GITHUB_SHA": "0" * 40,
+            },
+            cwd=scratch,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GUARD_TIMEOUT_SECONDS,
+        )
+        argv_file = root / "argv"
+        argv = argv_file.read_text(encoding="utf-8").splitlines() if argv_file.exists() else []
+        outputs = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines() if "=" in line)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return argv, outputs
+
+
+def test_the_prerelease_flag_is_decided_before_the_release_is_created() -> None:
+    decide, step = prerelease_step()
+    create, created = create_release_step()
+
+    assert decide < create
+    assert created["name"] == CREATE_RELEASE_STEP
+    assert step["if"] == created["if"] == "steps.decide.outputs.publish == 'true'"
+    assert step["env"]["VERSION"] == "${{ steps.decide.outputs.version }}"
+    assert created["env"]["PRERELEASE"] == f"${{{{ steps.{step['id']}.outputs.prerelease }}}}"
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [
+        ("3.0.0", "false"),
+        ("2.0.1", "false"),
+        ("3.0.0.post1", "false"),
+        ("3.0.0a1", "true"),
+        ("3.0.0b2", "true"),
+        ("3.0.0rc1", "true"),
+        ("3.0.0.dev4", "true"),
+    ],
+)
+def test_the_prerelease_flag_follows_packaging_version(version: str, expected: str) -> None:
+    """Alpha, beta, release-candidate and dev versions are pre-releases; nothing else is."""
+    _index, step = prerelease_step()
+    match = PRERELEASE_PROGRAM.search(str(step["run"]))
+    assert match, "the pre-release program is not a single-quoted `python -c` argument"
+    program = match["program"]
+    assert "packaging.version" in program
+    assert "is_prerelease" in program
+    assert "is_devrelease" in program
+
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", program],
+        env={"VERSION": version, "PATH": os.environ["PATH"]},
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=GUARD_TIMEOUT_SECONDS,
+    )
+
+    assert result.stdout.strip() == f"prerelease={expected}"
+
+
+@pytest.mark.parametrize(
+    ("prerelease", "flags"),
+    [("true", ["--prerelease", "--latest=false"]), ("false", ["--latest"])],
+)
+def test_the_release_is_created_under_the_bare_version_with_its_prerelease_flags(
+    prerelease: str, flags: list[str]
+) -> None:
+    _index, step = create_release_step()
+
+    argv, _outputs = _run_with_stub(str(step["run"]), {"VERSION": "3.0.0", "PRERELEASE": prerelease})
+
+    assert argv[:3] == ["release", "create", "3.0.0"], "the tag is the bare version, with no `v`"
+    assert [arg for arg in argv if arg.startswith("--latest") or arg == "--prerelease"] == flags
+
+
+def test_the_release_trigger_passes_the_prerelease_flag_through() -> None:
+    job = job_of(TRIGGER_RELEASE_WORKFLOW, "publish")
+
+    assert called_workflow(job) == PUBLISH_WORKFLOW
+    assert job["secrets"] == "inherit"
+    assert job["with"] == {
+        "publish": True,
+        "version": "${{ github.ref_name }}",
+        "prerelease": "${{ github.event.release.prerelease }}",
+    }
+
+
+@pytest.mark.parametrize("trigger", ["workflow_call", "workflow_dispatch"])
+def test_the_publish_workflow_takes_a_prerelease_input(trigger: str) -> None:
+    declared = triggers_of(PUBLISH_WORKFLOW)[trigger]["inputs"]["prerelease"]
+
+    assert {key: declared.get(key) for key in ("type", "required", "default")} == {
+        "type": "boolean",
+        "required": False,
+        "default": False,
+    }
+
+
+def test_the_package_upload_honours_the_publish_input() -> None:
+    uploads_ = [
+        step
+        for step in job_of(PUBLISH_WORKFLOW, "publish_to_pypi")["steps"]
+        if any(command in str(step.get("run", "")) for command in PACKAGE_UPLOAD)
+    ]
+
+    assert len(uploads_) == 1
+    assert str(uploads_[0].get("if", "")).strip("${} ") == PUBLISH_GUARD
+
+
+def docker_meta_step(what: str, matches: Callable[[dict], bool]) -> dict:
+    return _step_running(job_of(PUBLISH_WORKFLOW, "docker_meta")["steps"], what, matches)[1]
+
+
+def test_the_image_metadata_waits_for_the_package_and_pins_the_release_commit() -> None:
+    """`ref` and the revision label are one SHA, which the image smoke test checks."""
+    job = job_of(PUBLISH_WORKFLOW, "docker_meta")
+    ref = docker_meta_step("set the ref", lambda step: step.get("id") == "ref")
+
+    assert _needs(job) == ("publish_to_pypi",)
+    assert ref["run"].strip() == 'echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"'
+    assert job["outputs"] == {
+        "tags": "${{ steps.meta.outputs.tags }}",
+        "labels": "${{ steps.meta.outputs.labels }}",
+        "ref": "${{ steps.ref.outputs.ref }}",
+    }
+
+
+def test_the_image_is_tagged_with_its_version_and_latest_only_by_decision() -> None:
+    meta = docker_meta_step("compute the metadata", lambda step: _uses(step, METADATA_ACTION))
+    latest = docker_meta_step("decide latest", lambda step: "releases/latest" in str(step.get("run", "")))
+    declared = meta["with"]
+
+    assert meta["id"] == "meta"
+    assert declared["images"].strip() == "${{ vars.HARBOR_HOST }}/${{ github.repository }}"
+    assert declared["tags"].strip() == "type=raw,value=${{ inputs.version }}"
+    assert declared["flavor"].strip() == f"latest=${{{{ steps.{latest['id']}.outputs.latest }}}}"
+    assert {line.strip() for line in declared["labels"].splitlines() if line.strip()} == {
+        "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}",
+        "org.opencontainers.image.version=${{ inputs.version }}",
+        "org.opencontainers.image.revision=${{ github.sha }}",
+    }
+    assert latest["env"]["VERSION"] == "${{ inputs.version }}"
+    assert latest["env"]["PRERELEASE"] == "${{ inputs.prerelease }}"
+
+
+@pytest.mark.parametrize(
+    ("prerelease", "github_latest", "expected"),
+    [
+        ("false", "3.0.0", "true"),
+        ("false", "3.1.0", "false"),
+        ("false", "", "false"),
+        ("true", "3.0.0", "false"),
+    ],
+    ids=["stable-and-latest", "stable-backport", "no-release-yet", "prerelease"],
+)
+def test_latest_moves_only_for_a_stable_release_github_calls_latest(
+    prerelease: str, github_latest: str, expected: str
+) -> None:
+    step = docker_meta_step("decide latest", lambda step: "releases/latest" in str(step.get("run", "")))
+
+    argv, outputs = _run_with_stub(
+        str(step["run"]), {"VERSION": "3.0.0", "PRERELEASE": prerelease}, stdout=github_latest
+    )
+
+    assert outputs["latest"] == expected
+    if prerelease == "false":
+        assert argv[:2] == ["api", "repos/opsmill/infrahub-sync/releases/latest"]
+        assert "tag_name" in " ".join(argv[2:])
+
+
+def test_the_metadata_action_is_pinned_to_a_full_commit_sha_with_its_version() -> None:
+    lines = [line for line in PUBLISH_WORKFLOW.read_text(encoding="utf-8").splitlines() if METADATA_ACTION in line]
+
+    assert lines
+    assert all(PINNED_USES.match(line) for line in lines), lines
+
+
+def test_the_release_publishes_the_image_through_the_reusable_workflow() -> None:
+    job = job_of(PUBLISH_WORKFLOW, "publish_docker_image")
+
+    assert called_workflow(job) == DOCKER_IMAGE_WORKFLOW
+    assert _needs(job) == ("docker_meta",)
+    assert job["secrets"] == "inherit"
+    assert job["with"] == {
+        "publish": "${{ inputs.publish }}",
+        "version": "${{ inputs.version }}",
+        "ref": "${{ needs.docker_meta.outputs.ref }}",
+        "tags": "${{ needs.docker_meta.outputs.tags }}",
+        "labels": "${{ needs.docker_meta.outputs.labels }}",
+    }
+
+
+@pytest.mark.parametrize(
+    ("caller", "job", "called"),
+    [
+        (PUBLISH_WORKFLOW, "publish_docker_image", DOCKER_IMAGE_WORKFLOW),
+        (TRIGGER_RELEASE_WORKFLOW, "publish", PUBLISH_WORKFLOW),
+    ],
+    ids=["publish->image", "trigger->publish"],
+)
+def test_each_release_call_grants_what_the_called_workflow_requests(caller: Path, job: str, called: Path) -> None:
+    """The generic case above only reads `trigger-*` callers; the release chain has one that is not."""
+    granted = job_permissions(caller, job) or permissions(caller)
+
+    assert granted, f"{caller.name} job {job} grants nothing explicitly, so signing gets no id-token"
+    for asking in jobs(called):
+        for scope, level in (job_permissions(called, asking) or permissions(called)).items():
+            assert ACCESS[level] <= ACCESS[granted.get(scope, "none")], (
+                f"{called.name} job {asking} requests {scope}: {level}, which {caller.name} job {job} does not grant"
+            )

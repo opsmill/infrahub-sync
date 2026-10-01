@@ -2,7 +2,9 @@
 # yamllint disable rule:truthy
 name: "New Release"
 
-# Trigger the workflow however you prefer
+# Runs when release-publish.yml publishes a GitHub Release. Ships the package to
+# PyPI and the container image to the OpsMill registry. The release's own
+# pre-release flag decides whether the image's `latest` tag may move.
 on:
   release:
     types:
@@ -10,8 +12,15 @@ on:
 
 jobs:
   publish:
+    # A called workflow can only keep or narrow this token: signing the image
+    # needs `id-token` and pushing it needs `packages`.
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
     uses: ./.github/workflows/workflow-publish.yml
     secrets: inherit
     with:
       publish: true
       version: ${{ github.ref_name }}
+      prerelease: ${{ github.event.release.prerelease }}
