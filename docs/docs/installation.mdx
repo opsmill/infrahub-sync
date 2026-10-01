@@ -23,12 +23,12 @@ Both run the same Sync service.
 | | Run from source | Run the container image |
 | --- | --- | --- |
 | You need | Docker, Git, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13 | Docker with Docker Compose, and an existing NetBox or Nautobot and Infrahub that the Sync worker can reach |
-| Start here | [Run from source](./development-stack.mdx#run-from-source) | [Run the container image](#get-the-private-candidate) below |
+| Start here | [Run from source](./development-stack.mdx#run-from-source) | [Run the container image](#run-the-container-image) below |
 
 See [Supported platforms and limits](./operations/supported-platforms-and-limits.mdx)
 for the current product limits.
 
-## Run the container image {#get-the-private-candidate}
+## Run the container image {#run-the-container-image}
 
 The image lives at `registry.opsmill.io/opsmill/infrahub-sync`, tagged with each
 release's version. Until the 3.0.0 release, the registry is open to invited testers

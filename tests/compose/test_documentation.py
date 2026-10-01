@@ -10,7 +10,9 @@ service, and the Python client example.
 from __future__ import annotations
 
 import ast
+import re
 import shlex
+from pathlib import Path
 from typing import Any, get_type_hints
 
 import pytest
@@ -22,8 +24,21 @@ from tests.compose.conftest import REPO_ROOT
 
 DOCUMENT_ID = "compose-deployment"
 PAGE = REPO_ROOT / "docs" / "docs" / f"{DOCUMENT_ID}.mdx"
+QUICKSTART = REPO_ROOT / "docs" / "docs" / "quickstart-compose.mdx"
+TROUBLESHOOTING = REPO_ROOT / "docs" / "docs" / "operations" / "compose-troubleshooting.mdx"
 SIDEBAR = REPO_ROOT / "docs" / "sidebars.ts"
 API_REFERENCE = REPO_ROOT / "docs" / "docs" / "reference" / "sync-http-api.mdx"
+COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
+
+# Every command of the removed `infrahub-sync-compose` wrapper. An operator who used
+# one has to find its `docker compose` replacement on the page.
+WRAPPER_COMMANDS = ("init", "preflight", "start", "status", "logs", "stop", "restart", "reset", "cli")
+# How every CLI call of the operator sequence is run against the deployment.
+CLI_PREFIX = "docker compose run --rm --no-deps -T"
+# The opt-in suite, as the page tells a contributor to run it.
+COMPOSE_SUITE_COMMAND = (
+    "INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose"
+)
 
 # The CLI calls of the reviewed-run procedure, as an operator passes them to
 # `docker compose run --rm cli ...`. Each has to be a call the shipped CLI has.
@@ -205,3 +220,164 @@ def test_every_documented_client_chain_resolves_against_the_real_client(chain: t
 def test_the_page_takes_at_least_one_chain_from_the_client() -> None:
     """Guards the parametrised check above against silently covering nothing."""
     assert client_chains("\n\n".join(python_blocks(page()))) != []
+
+
+# ---------------------------------------------------------------------------
+# The single-file deployment the page documents is the one the repository ships
+# ---------------------------------------------------------------------------
+
+
+def section(text: str, heading: str) -> str:
+    """Return the body of one `## heading` section, up to the next `## ` heading."""
+    start = text.index(f"\n## {heading}")
+    end = text.find("\n## ", start + 1)
+    return text[start : end if end != -1 else len(text)]
+
+
+def shell_lines(text: str) -> list[str]:
+    """Return every line of the page's ```bash and ```sh blocks, stripped."""
+    lines: list[str] = []
+    collecting = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped in {"```bash", "```sh"}:
+            collecting = True
+        elif stripped == "```":
+            collecting = False
+        elif collecting:
+            lines.append(stripped)
+    return lines
+
+
+def compose_variables() -> set[str]:
+    """Return every variable `docker-compose.yml` interpolates."""
+    return set(re.findall(r"\$\{([A-Z][A-Z0-9_]*)", COMPOSE_FILE.read_text(encoding="utf-8")))
+
+
+def required_compose_variables() -> set[str]:
+    """Return every variable `docker-compose.yml` guards with `:?`, so refuses to default."""
+    return set(re.findall(r"\$\{([A-Z][A-Z0-9_]*):\?", COMPOSE_FILE.read_text(encoding="utf-8")))
+
+
+def test_the_compose_file_has_required_credentials_to_document() -> None:
+    """Guards the credential checks below against a pattern that matches nothing."""
+    assert len(required_compose_variables()) == 6, required_compose_variables()
+
+
+@pytest.mark.parametrize("command", WRAPPER_COMMANDS)
+def test_the_page_maps_every_removed_wrapper_command(command: str) -> None:
+    """Each wrapper command an earlier alpha documented has a `docker compose` row."""
+    rows = [line for line in section(page(), "Wrapper equivalents").splitlines() if line.startswith("| ")]
+
+    row = next((row for row in rows if row.startswith(f"| `{command}` |")), None)
+
+    assert row is not None, command
+    assert "docker compose" in row or "`.env`" in row, row
+
+
+def test_the_reset_equivalent_warns_that_it_deletes_the_data() -> None:
+    """`down --volumes` asks for no confirmation, so the row itself has to say what it destroys."""
+    row = next(line for line in section(page(), "Wrapper equivalents").splitlines() if line.startswith("| `reset` |"))
+
+    assert "down --volumes" in row, row
+    assert "deletes" in row, row
+
+
+def test_the_page_runs_the_whole_operator_sequence_in_order_through_the_cli_service() -> None:
+    """The reviewed-run procedure is the `CLI_CALLS` sequence, each run through `cli`.
+
+    A step written for the removed wrapper, or out of order, is a procedure an operator
+    cannot copy.
+    """
+    calls = [
+        line.split(" cli ", 1)[1]
+        for line in shell_lines(section(page(), "Prepare a configuration"))
+        if line.startswith(CLI_PREFIX) and " cli " in line
+    ]
+
+    remaining = iter(calls)
+    missing = [call for call in CLI_CALLS if not any(found == call for found in remaining)]
+    assert missing == [], missing
+
+
+def test_every_documented_cli_invocation_uses_the_cli_service() -> None:
+    """No shell line on the page still calls the removed wrapper."""
+    assert [line for line in shell_lines(page()) if "infrahub-sync-compose" in line] == []
+
+
+@pytest.mark.parametrize("variable", sorted(required_compose_variables()))
+def test_the_example_env_sets_every_required_credential(variable: str) -> None:
+    """A copied example missing one credential stops Compose before anything starts."""
+    example = section(page(), "The `.env` file")
+
+    assert f"\n{variable}=" in example, variable
+
+
+@pytest.mark.parametrize("variable", sorted(compose_variables()))
+def test_the_page_documents_every_variable_the_compose_file_reads(variable: str) -> None:
+    """A setting the file reads but the page never names is one an operator cannot find."""
+    assert f"`{variable}`" in page() or f"\n{variable}=" in page(), variable
+
+
+def test_the_page_shows_the_refusal_for_a_missing_credential() -> None:
+    """The refusal names the variable, which is how an operator knows which one to add."""
+    assert "is required" in section(page(), "The `.env` file")
+
+
+def test_the_page_names_the_two_files_a_deployment_is_made_of() -> None:
+    """The deployment is one Compose file and the `.env` an operator writes beside it."""
+    assert "`docker-compose.yml`" in page()
+    assert "`.env`" in page()
+
+
+def test_the_page_gives_the_opt_in_suite_command() -> None:
+    """The suite needs the image selected through the same two settings an operator uses."""
+    assert COMPOSE_SUITE_COMMAND in page()
+
+
+def test_the_page_states_the_minimum_compose_version_the_file_needs() -> None:
+    """The version the page names is the one the file header names."""
+    assert "Compose 2.24 or later" in COMPOSE_FILE.read_text(encoding="utf-8")
+    assert "Compose 2.24 or later" in page()
+    assert "2.17.3" not in page()
+
+
+def test_the_page_selects_the_image_through_the_two_compose_settings() -> None:
+    """The image is chosen by `VERSION` and `INFRAHUB_SYNC_DOCKER_IMAGE`, never by a binding file."""
+    image_section = section(page(), "Choose an image")
+
+    assert "image.bind" not in page()
+    assert "`VERSION`" in image_section or "VERSION=" in image_section
+    assert "INFRAHUB_SYNC_DOCKER_IMAGE" in image_section
+
+
+@pytest.mark.parametrize("state", ["ready", "busy", "no-live-worker"])
+def test_the_status_table_documents_every_worker_state(state: str) -> None:
+    """`/status` is the only readiness signal now that the wrapper's states are gone."""
+    rows = [line for line in section(page(), "Status").splitlines() if line.startswith("| ")]
+
+    assert any(row.startswith(f"| `{state}` |") for row in rows), state
+
+
+def test_the_quickstart_fetches_the_file_from_the_release_tag() -> None:
+    """A clean host needs the file and nothing else: no archive to extract, no image to load."""
+    quickstart = QUICKSTART.read_text(encoding="utf-8")
+
+    assert "https://raw.githubusercontent.com/opsmill/infrahub-sync/<version>/docker-compose.yml" in quickstart
+    assert "tar -xzf" not in quickstart
+    assert "docker load" not in quickstart
+
+
+@pytest.mark.parametrize("document", [PAGE, QUICKSTART], ids=lambda path: path.name)
+def test_the_page_links_the_registry_login_instructions(document: Path) -> None:
+    """Until 3.0.0 the registry is private, so a pull needs the login the install page gives."""
+    assert "./installation.mdx#run-the-container-image" in document.read_text(encoding="utf-8")
+
+
+def test_the_troubleshooting_page_covers_an_operator_file_without_the_cli_token() -> None:
+    """An `operator.env` from an earlier alpha has no `INFRAHUB_SYNC_API_TOKEN` line at all."""
+    troubleshooting = TROUBLESHOOTING.read_text(encoding="utf-8")
+
+    assert "`operator.env`" in troubleshooting
+    assert "INFRAHUB_SYNC_API_TOKEN" in troubleshooting
+    assert "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" in troubleshooting

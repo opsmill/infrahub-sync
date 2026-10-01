@@ -197,19 +197,21 @@ records the upstream commit and the local additions.
 | `__init__.py` | The `format`, `lint`, `tests-*` aggregates and `check-310` |
 | `linter.py`, `docs.py` | The individual lint and documentation legs |
 | `tests.py` | `tests.tests-unit` and `tests.tests-integration` |
-| `preview.py` | The local development stack |
-| `image.py`, `compose.py`, `release.py` | Image build and smoke, Compose lifecycle, release gates |
+| `dev.py` | The local development stack: `build`, `start`, `destroy` |
+| `preview.py` | The disposable preview environment |
+| `release.py` | Keeping the image pin in `docker-compose.yml` in step with the package version |
 
 [Quality gates](quality-gates.md) explains what the aggregates really run, and
 [Testing tiers](../guidelines/testing-tiers.md) which test task to reach for.
 
-### The development stack and the deployment bundle
+### The development stack and the deployment file
 
 - [`development/`][src-development] holds the local stack: the compose files, the shipped `preview.env` defaults
   and `preview.local.env`, which Git ignores. Runtime state lives under `.preview/`.
   [Local development stack](../../development-stack.mdx) is the procedure.
-- [`deploy/compose/`][src-deploy-compose] is the shipped deployment bundle — `compose.yaml`, the
-  `infrahub-sync-compose` entry point, `configuration/`, `bootstrap/` and `OPERATING.md`.
+- The root `docker-compose.yml` is the operator deployment. It pulls the released image from
+  `registry.opsmill.io/opsmill/infrahub-sync` and carries its own database bootstrap script;
+  the development stack in `development/docker-compose.dev.yml` builds from the checkout instead.
   [Compose deployment](../../compose-deployment.mdx) is the operator page.
 - [`examples/`][src-examples] holds fifteen directories, and they are not uniform. Four —
   `aci_to_infrahub`, `custom_adapter`, `netbox_to_infrahub` and
@@ -243,7 +245,6 @@ code is right and the page you are reading should be corrected.
 - [Quality gates](quality-gates.md) — what `invoke lint` and `invoke format` run.
 - [Decision records](../adr-index.mdx) — why the architecture is shaped this way.
 
-[src-deploy-compose]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/deploy/compose
 [src-dev-adr]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/dev/adr
 [src-dev-specs-archive]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/dev/specs/archive
 [src-development]: https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9/development

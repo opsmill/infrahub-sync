@@ -23,14 +23,15 @@ The commands on this page are the same for both ways to run V3. Only the command
 differs:
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
-  Run each command as `./infrahub-sync-compose cli <command>` from the extracted Compose
-  deployment directory. The wrapper supplies the Sync API URL and token.
+  Run each command as `docker compose run --rm --no-deps -T cli <command>` from the
+  directory that holds `docker-compose.yml` and `.env`. The `cli` service supplies the Sync
+  API URL and token.
 
-  A command that reads a file from your machine needs `--package <file>` and `--` before the
-  CLI command. The wrapper copies that one file into the container as `/input/package.yaml`
-  for the duration of the command. See
+  A command that reads a file from your machine needs that file mounted read-only at
+  `/input/package.yaml`, with `-v "$PWD/package.yml:/input/package.yaml:ro"` before `cli`.
+  The image runs as UID 10001, so the file must be readable by other users. See
   [Registering a package](./compose-deployment.mdx#registering-a-package).
 
   </TabItem>
@@ -59,11 +60,11 @@ the previous command printed, and `BRANCH` with the destination branch.
 ## Register the package
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  ./infrahub-sync-compose cli --package ./package.yml -- \
-    configs register /input/package.yaml --reason "register inventory import"
+  docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
+    cli configs register /input/package.yaml --reason "register inventory import"
   ```
 
   </TabItem>
@@ -84,11 +85,11 @@ not read again. For what registration checks and returns, see
 ## Validate the registered version
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  ./infrahub-sync-compose cli configs validate CONFIG_ID 1
-  ./infrahub-sync-compose cli configs show CONFIG_ID --version 1
+  docker compose run --rm --no-deps -T cli configs validate CONFIG_ID 1
+  docker compose run --rm --no-deps -T cli configs show CONFIG_ID --version 1
   ```
 
   </TabItem>
@@ -121,10 +122,10 @@ To inspect what is registered, use `configs list`, `configs show CONFIG_ID`, and
 ## Create a plan
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  ./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 \
+  docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --version 1 \
     --branch BRANCH --reason "review inventory import"
   ```
 
@@ -147,11 +148,11 @@ by kind.
 ## Review the plan
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  ./infrahub-sync-compose cli runs plan RUN_ID --detail
-  ./infrahub-sync-compose cli runs plan RUN_ID --detail --kind <destination-kind>
+  docker compose run --rm --no-deps -T cli runs plan RUN_ID --detail
+  docker compose run --rm --no-deps -T cli runs plan RUN_ID --detail --kind <destination-kind>
   ```
 
   </TabItem>
@@ -180,12 +181,12 @@ See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 Pass the checksum that the review printed, and the same `--branch` that you gave `diff`:
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  ./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM \
+  docker compose run --rm --no-deps -T cli apply RUN_ID --expected-checksum CHECKSUM \
     --branch BRANCH --reason "apply reviewed inventory import"
-  ./infrahub-sync-compose cli runs show RUN_ID
+  docker compose run --rm --no-deps -T cli runs show RUN_ID
   ```
 
   </TabItem>
@@ -216,11 +217,11 @@ A registered version never changes. To change a package, edit the file and regis
 new version of the same configuration:
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  ./infrahub-sync-compose cli --package ./package.yml -- \
-    configs version CONFIG_ID /input/package.yaml --reason "update inventory mapping"
+  docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
+    cli configs version CONFIG_ID /input/package.yaml --reason "update inventory mapping"
   ```
 
   </TabItem>
@@ -248,10 +249,10 @@ uv run infrahub-sync sync --config-id CONFIG_ID --version 1 --branch BRANCH \
   --reason "scheduled synchronization"
 ```
 
-Run a release package:
+Run the container image:
 
 ```bash
-./infrahub-sync-compose cli sync --config-id CONFIG_ID --version 1 --branch BRANCH \
+docker compose run --rm --no-deps -T cli sync --config-id CONFIG_ID --version 1 --branch BRANCH \
   --reason "scheduled synchronization"
 ```
 

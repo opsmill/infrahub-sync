@@ -27,8 +27,8 @@ installed: it comes with the `service` extra.
 Run from source builds the Sync service image from your checkout, for your host's own
 architecture, and starts the Sync API, the worker, Prefect, PostgreSQL, and object
 storage. It runs on any platform Docker supports, including Apple Silicon. A source
-build has passed the pull request checks, but not the full deployment tests that each
-release package passes; see [Install Infrahub Sync](./installation.mdx#two-ways-to-run-v3).
+build has passed the pull request checks, but not the release checks that each
+published image passes; see [Install Infrahub Sync](./installation.mdx#two-ways-to-run-v3).
 
 ### Get the source
 
@@ -51,7 +51,10 @@ uv run invoke build
 uv run invoke start
 ```
 
-`start` builds the image only when no `infrahub-sync:dev` image exists. If you already
+Both tasks drive the development stack in `development/docker-compose.dev.yml`, which
+builds the image from your checkout, rather than the root `docker-compose.yml`, which
+pulls a released image. `start` builds the image only when no `infrahub-sync:dev` image
+exists. If you already
 built one from an older checkout, `start` reuses it without a warning, so run `build`
 first whenever you test a new revision.
 

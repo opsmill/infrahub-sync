@@ -2,30 +2,15 @@
 title: Compose operator troubleshooting
 ---
 
-Diagnose a release-package deployment on one Docker Compose host. For the local stacks
-that run from source, see [Local development stack](../development-stack.mdx). For the
-NetBox demo tutorial, see its [Troubleshooting](../tutorials/netbox-demo-to-infrahub#troubleshooting)
+Diagnose a Compose deployment on one Docker host. For the local stacks that run from
+source, see [Local development stack](../development-stack.mdx). For the NetBox demo
+tutorial, see its [Troubleshooting](../tutorials/netbox-demo-to-infrahub#troubleshooting)
 section.
 
 ## Start with the deployment state
 
-Run the [status procedure](../compose-deployment#status) first.
-
-When the `infrahub-sync-compose` command refuses to run, it exits with code 1 and
-prints a message that starts with a refusal name, for example:
-
-```text
-infrahub-sync: foreign-resource: these existing resources are not labelled for
-instance 3a5dbb1bc6d569b7: container/9c2f1ea41b7d
-```
-
-The refusal name identifies the check that failed, such as `no-instance`,
-`port-occupied`, or `image-unresolvable`. The rest of the message says what to
-correct. A refusal from the checks a command runs before it starts services, such as
-`preflight`, changes nothing. A refusal after services start does not undo them: for example,
-`start` can create and start the containers and then refuse with `not-ready` when no worker
-reports ready in time. Those services keep running; check them with `status`, then run
-`start` again after you fix the cause, or stop them with `stop`.
+Run the [status procedure](../compose-deployment#status) first: `docker compose ps`,
+then the worker state from `/status`.
 
 Use the [log procedure](../compose-deployment#logs) to read service output. Credentials
 are removed from run failures before they are printed.
@@ -34,19 +19,41 @@ If a configuration validation reports a finding, use its stable code to find the
 meaning in the [finding-code reference](../reference/durable-product-records#finding-codes).
 The message wording can change; the code stays the same.
 
-## Choose a recovery action
+## Failures before the start
+
+| Symptom | Cause and action |
+| --- | --- |
+| Compose fails to parse `configs.db-bootstrap-script.content` | Compose is older than 2.24. Upgrade it; check with `docker compose version --short`. |
+| `<NAME> is required` | A required credential is missing from `.env`. Compose prints this before any container starts, from `docker compose config --quiet` or `up`. Add the named variable. |
+| A pull error naming `registry.opsmill.io/opsmill/infrahub-sync:<version>` | The image cannot be pulled. Check `docker login registry.opsmill.io`, which is needed until 3.0.0, then `VERSION` and `INFRAHUB_SYNC_DOCKER_IMAGE`. See [Choose an image](../compose-deployment#choose-an-image). |
+| `up` fails on a port publication | Another process holds the port. Set `INFRAHUB_SYNC_API_PORT` or `INFRAHUB_SYNC_PREFECT_PORT` in `.env`. |
+| The services run an unexpected image | A `VERSION` or `INFRAHUB_SYNC_DOCKER_IMAGE` exported in your shell overrides `.env`. Unset it, then run `docker compose up -d --wait`. |
+
+## Failures after the start
 
 | Symptom | Action |
 | --- | --- |
-| `status` reports `STOPPED` | Run `./infrahub-sync-compose start`. |
-| `status` reports `DEGRADED` | Read the worker logs, then run `./infrahub-sync-compose restart`. It keeps the durable records. |
-| A token in `operator.env` changed | Run `./infrahub-sync-compose start`. `restart` keeps the old environment. |
-| `start` refuses with `image-unresolvable` | Load `image-linux-amd64.tar` from the same download again; see [The image record](../compose-deployment#the-image-record). |
-| You want to delete all data and begin again | Follow the [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment). `reset` cannot be undone. |
+| No container is running | Run `docker compose up -d --wait`. |
+| `worker.state` is `no-live-worker` | Read the worker logs, then run `docker compose restart sync-api sync-worker`. It keeps the durable records. A paused or hung worker still looks `running` to Docker; only the worker state shows it, after three missed heartbeats or 30 seconds. |
+| A changed `.env` value has no effect | A container reads its environment once, when it is created. Run `docker compose up -d --wait`, not `restart`. |
+| You want to delete all data and begin again | Follow the [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment). `docker compose down --volumes` cannot be undone. |
 
 The [stop, restart, and reset procedure](../compose-deployment#stop-restart-and-reset)
-describes each action. `reset` requires the instance identity that it displays. A reset
-followed by a fresh deployment is not an upgrade: the new deployment starts empty.
+describes each action. A reset followed by a fresh deployment is not an upgrade: the new
+deployment starts empty.
+
+## Command-line client failures
+
+`docker compose run --rm --no-deps -T cli ...` calls the Sync API with
+`INFRAHUB_SYNC_API_TOKEN`.
+
+- **Every call fails to authenticate.** `INFRAHUB_SYNC_API_TOKEN` is empty, or differs
+  from the principal's token in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. An `operator.env`
+  carried over from an earlier alpha may lack the `INFRAHUB_SYNC_API_TOKEN` line entirely.
+  Add it to `.env`, with the token already inside `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`.
+- **The CLI cannot read a mounted package.** The image runs as UID 10001, so the file
+  must be readable by other users. Run `chmod 0644` on it, and mount it read-only as in
+  [Registering a package](../compose-deployment#registering-a-package).
 
 ## Reconcile before retrying writes
 

@@ -58,7 +58,7 @@ credentials:
 Each entry declares a `provider` and an `identifier`. `env` is the only provider in this
 release, and the identifier is the name of the environment variable that the Sync worker
 reads when a run starts. Set that variable where the worker runs. On a Compose deployment,
-set it in `operator.env` and run `./infrahub-sync-compose start`; see
+set it in `.env` and run `docker compose up -d --wait`; see
 [Reading from NetBox or Nautobot](./compose-deployment.mdx#reading-from-netbox-or-nautobot).
 Registration refuses a package that contains a literal credential value.
 

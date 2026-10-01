@@ -310,7 +310,7 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
   - `tests/compose/test_documentation.py` (lines 104–113 and 359).
 - [X] T043 [US4] Delete `tests/compose/test_preflight.py` and `deploy/compose/` (the whole directory: the wrapper, `OPERATING.md`, `defaults.conf`, `bootstrap/`, `configuration/` and `skills/`). Before deleting `deploy/compose/skills/*/SKILL.md`, carry their durable operator guidance (configuration registration, deployment steps) into `docs/docs/compose-deployment.mdx` (T045).
 - [X] T044 [US4] Run the opt-in suite locally: `docker build -t infrahub-sync:compose-test .`, then `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose -x`. Fix any failure. In `.github/workflows/workflow-nightly-e2e.yml`, add (or adjust) a job that builds the image locally and runs the same command, so the suite keeps running nightly.
-- [ ] T045 [US4] Rewrite `docs/docs/compose-deployment.mdx` for the single-file flow:
+- [X] T045 [US4] Rewrite `docs/docs/compose-deployment.mdx` for the single-file flow:
   - **Prerequisites**: Docker Compose 2.24 or later; registry login until 3.0.0.
   - **Getting the file**: fetch `docker-compose.yml` from the release tag.
   - **The `.env` file**: a sanitized example listing every required and optional variable from the contract, with placeholder values only.
@@ -319,15 +319,15 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
   - **Wrapper equivalents**: a table mapping each removed wrapper command (`init`, `preflight`, `start`, `status`, `logs`, `stop`, `restart`, `reset`, `cli`) to its `docker compose` equivalent. `init` becomes "write `.env`", and `reset` becomes `down -v` with a data-loss warning.
 
   Rewrite `docs/docs/quickstart-compose.mdx` to the three-step flow.
-- [ ] T046 [P] [US4] Rewrite the operations pages to use `docker compose` commands instead of `./infrahub-sync-compose`, and drop the `image.bind` and `docker load` content:
+- [X] T046 [P] [US4] Rewrite the operations pages to use `docker compose` commands instead of `./infrahub-sync-compose`, and drop the `image.bind` and `docker load` content:
   - `docs/docs/operations/compose-troubleshooting.mdx`
   - `docs/docs/operations/day-2-operations.mdx`
   - `docs/docs/operations/supported-platforms-and-limits.mdx` (add arm64; Compose 2.24)
-- [ ] T047 [P] [US4] Rewrite the tutorials' deployment steps for the same flow:
+- [X] T047 [P] [US4] Rewrite the tutorials' deployment steps for the same flow:
   - `docs/docs/tutorials/netbox-to-existing-infrahub.mdx`
   - `docs/docs/tutorials/nautobot-to-existing-infrahub.mdx`
   - `docs/docs/tutorials/netbox-demo-to-infrahub.mdx`
-- [ ] T048 [P] [US4] Update the remaining references to the old files and paths:
+- [X] T048 [P] [US4] Update the remaining references to the old files and paths:
   - `docs/docs/development-stack.mdx`: the dev stack now lives at `development/docker-compose.dev.yml`, run with `uv run invoke start`;
   - `docs/docs/custom-certificates.mdx` (line 33);
   - `docs/docs/adapters/choosing-an-adapter.mdx` (line 42);

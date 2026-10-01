@@ -18,7 +18,7 @@ fresh local Infrahub and the public NetBox demo, follow the
 ## Before you start
 
 - Complete [Start a Compose deployment](../quickstart-compose.mdx) and confirm
-  `READY`.
+  that the worker reports `ready`.
 - Have NetBox and Infrahub running, with API tokens for each. The worker
   container must be able to reach both servers; the Docker host must also reach
   Infrahub to load its schema.
@@ -30,16 +30,15 @@ fresh local Infrahub and the public NetBox demo, follow the
   definition, choose another suitable branch or adapt the schema and mapping
   together before continuing.
 
-Run all commands from the extracted deployment directory on the Docker host.
-This is `linux-amd64/infrahub-sync-compose-<version>/` under the verified
-download.
+Run all commands on the Docker host, from the deployment directory that holds
+`docker-compose.yml` and `.env`.
 
 The two YAML files have different purposes:
 
 - `schema.yml` defines the types and fields in Infrahub. Load it with
   `infrahubctl`.
 - `package.yml` declares the Sync source, destination, mappings, and credential
-  references. Register it with `./infrahub-sync-compose cli`.
+  references. Register it with the deployment's `cli` service.
 
 ## Measured scenario
 
@@ -48,8 +47,7 @@ compatibility with other server versions.
 
 ## Set NetBox and Infrahub credentials
 
-Open `operator.env`, remove the leading `#`, and fill in the source and
-destination token entries:
+Open `.env` and add the source and destination tokens:
 
 ```dotenv
 NETBOX_TOKEN=<your NetBox token>
@@ -62,10 +60,10 @@ account settings; a login password does not work here. Use source credentials
 that can read the mapped objects and an Infrahub token that can load schema and
 read those destination kinds on your chosen branch.
 
-Do not change the generated Sync API credentials. The bundled CLI uses them to
-contact Sync; `INFRAHUB_API_TOKEN` authenticates to the destination Infrahub.
-Do not run `source operator.env`: that file also contains the deployment's
-internal credentials.
+Do not change the Sync API credentials you generated for the deployment. The
+bundled CLI uses them to contact Sync; `INFRAHUB_API_TOKEN` authenticates to the
+destination Infrahub. Do not run `source .env`: that file also contains the
+deployment's internal credentials.
 
 ## Prepare the destination schema
 
@@ -117,13 +115,13 @@ python3 -m venv .schema-tools
 The version command must complete successfully before you continue. Replace
 `https://infrahub.example.invalid` below with the address the **Docker host**
 uses to reach Infrahub. The commands in parentheses read only the
-destination token from `operator.env`. These environment settings apply only
+destination token from `.env`. These environment settings apply only
 inside the parentheses.
 
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' operator.env)"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' .env)"
   .schema-tools/bin/infrahubctl branch list
 )
 ```
@@ -136,7 +134,7 @@ environment block before loading the schema.
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' operator.env)"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' .env)"
   .schema-tools/bin/infrahubctl schema load schema.yml --branch BRANCH_NAME
 )
 ```
@@ -150,35 +148,17 @@ continuing. Registering a Sync package does not load this schema.
 
 For an agent-assisted draft, follow
 [Use Infrahub Sync with an AI agent](../use-with-an-ai-agent.mdx), then review
-the package here before registration. Whether that guide's skills come with
-your candidate depends on your release; check its release notes.
+the package here before registration.
 
-The [private candidate](../installation.mdx) includes a NetBox example at
-`linux-amd64/example-package.yml`. It is beside the extracted
-`infrahub-sync-compose-<version>/` directory:
-
-```text
-linux-amd64/
-├── example-package.yml
-└── infrahub-sync-compose-<version>/
-    ├── infrahub-sync-compose
-    └── operator.env
-```
-
-From inside `infrahub-sync-compose-<version>/`, copy it:
-
-```sh
-cp ../example-package.yml package.yml
-```
-
-The copied file contains the mapping below. It maps NetBox sites and devices
-to the `TestingSite` and `TestingDevice` kinds you loaded:
+Save the following as `package.yml` in the deployment directory. It maps
+NetBox sites and devices to the `TestingSite` and `TestingDevice` kinds you
+loaded:
 
 ```yaml
 ---
 # Replace the URL placeholders and load a matching destination schema before registration.
 # Supply token values through the named environment variables, never in this file.
-# Set NETBOX_TOKEN and INFRAHUB_API_TOKEN in the generated operator.env file.
+# Set NETBOX_TOKEN and INFRAHUB_API_TOKEN in the deployment's .env file.
 format_version: 1
 configuration:
   name: netbox-evaluation
@@ -226,7 +206,7 @@ Before registering `package.yml`:
   The destination must be the same Infrahub instance where you loaded the
   schema, even if the host uses a different address to reach it.
 - Keep the `{$credential: ...}` references in YAML; token values belong in
-  `operator.env`.
+  `.env`.
 - Keep the mapping's destination kinds and fields consistent with `schema.yml`.
 
 The mapping includes sites and devices only. It does not import IP addressing
@@ -254,22 +234,24 @@ empty value.
 Recreate services whose environment changed, then check readiness:
 
 ```sh
-./infrahub-sync-compose start
-./infrahub-sync-compose status
+docker compose up -d --wait
+curl -s http://127.0.0.1:8000/status
 ```
 
-Continue only when `status` reports `READY` and exits with status 0. `start` reloads the changed environment;
-`restart` retains the environment from when the containers were created.
+Continue only when the `/status` response shows `worker.state` as `ready`.
+`up -d --wait` recreates the services whose environment changed;
+`docker compose restart` keeps the environment from when the containers were created.
 
 Register your package with the included Sync CLI:
 
 ```sh
-./infrahub-sync-compose cli --package ./package.yml -- \
-  configs register /input/package.yaml --reason 'register NetBox first preview'
+chmod 0644 package.yml
+docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
+  cli configs register /input/package.yaml --reason 'register NetBox first preview'
 ```
 
-With `--package`, the wrapper copies the host file into a temporary read-only
-container mount at `/input/package.yaml`. The wrapper removes that copy after the command.
+The `-v` option mounts the host file read-only at `/input/package.yaml` for this
+one call. The image runs as UID 10001, so the file must be readable by other users.
 Sync stores the declared package, and the CLI prints `config_id` and
 `registry_version`. Record both; replace `CONFIG_ID` and `VERSION` below with
 those values.
@@ -277,7 +259,7 @@ those values.
 ## Validate the configuration
 
 ```sh
-./infrahub-sync-compose cli configs validate CONFIG_ID VERSION
+docker compose run --rm --no-deps -T cli configs validate CONFIG_ID VERSION
 ```
 
 Read `total_findings` and every `finding` line. If `next_offset` is not `<none>`,
@@ -292,8 +274,8 @@ performs the reads against both servers.
 If you edit `package.yml` after registration, register a new immutable version:
 
 ```sh
-./infrahub-sync-compose cli --package ./package.yml -- \
-  configs version CONFIG_ID /input/package.yaml --reason 'correct first-preview package'
+docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
+  cli configs version CONFIG_ID /input/package.yaml --reason 'correct first-preview package'
 ```
 
 Use the returned `registry_version` as `VERSION`, then validate it again.
@@ -303,7 +285,7 @@ Use the returned `registry_version` as `VERSION`, then validate it again.
 Use the same `BRANCH_NAME` where you loaded the schema:
 
 ```sh
-./infrahub-sync-compose cli diff --config-id CONFIG_ID --version VERSION \
+docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --version VERSION \
   --branch BRANCH_NAME --reason 'preview NetBox sites and devices'
 ```
 
@@ -312,7 +294,7 @@ then prints `run_id`, `plan_checksum`, `checksum_ok`, and operation counts.
 Record the run ID and inspect the complete plan:
 
 ```sh
-./infrahub-sync-compose cli runs plan RUN_ID --detail
+docker compose run --rm --no-deps -T cli runs plan RUN_ID --detail
 ```
 
 Expect `checksum_ok: true` and operations for `TestingSite` and `TestingDevice`.
@@ -330,8 +312,8 @@ If the run fails, the CLI's own error output includes `run_id`; use that value
 to inspect the run's record:
 
 ```sh
-./infrahub-sync-compose cli runs show RUN_ID
-./infrahub-sync-compose cli runs results RUN_ID
+docker compose run --rm --no-deps -T cli runs show RUN_ID
+docker compose run --rm --no-deps -T cli runs results RUN_ID
 ```
 
 `runs show` reports the run's status and Prefect execution ID (`flow_run_id`).
@@ -340,13 +322,13 @@ The saved evidence omits exception messages. For more detail, inspect the
 [worker logs](../compose-deployment#logs):
 
 ```sh
-./infrahub-sync-compose logs sync-worker
+docker compose logs --no-color --tail 200 sync-worker
 ```
 
 Find the `flow_run_id` from `runs show` in the logs to identify the Prefect
 flow-run name. Read the messages for that name. If they report a source connection
 failure, check the source URL and reachability from the worker container. Correct the cause before creating another preview. After credential
-edits, run `start` again; after package edits, register and validate the new version.
+edits, run `docker compose up -d --wait` again; after package edits, register and validate the new version.
 
 ## Continue
 

@@ -12,7 +12,6 @@ settings and skip behavior below were read at that revision from
 [`tasks/tests.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/tests.py),
 [`tasks/__init__.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/__init__.py),
 [`tasks/preview.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/preview.py),
-[`tasks/compose.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/compose.py),
 the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-sync/tree/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration) and the
 `[tool.pytest.ini_options]` markers in [`pyproject.toml`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/pyproject.toml). The unit tier
 and `check-310` were run at that revision. The integration sequence below was not replayed
@@ -74,7 +73,7 @@ preview and integration suites against whatever environment your shell happens t
 | Integration | `uv run invoke tests.tests-integration` | Varies by family — see below; no single set of variables covers the tier | Varies by family: read-only, temporary local state, or a disposable live target — see below |
 | Preview smoke | `uv run invoke preview.smoke` | The preview stack, started with `preview.up` | Seeds and writes to the disposable stack |
 | Image smoke | `uv run pytest -m docker tests/image/test_image_artifact.py` | A locally built image named in `INFRAHUB_SYNC_IMAGE_REF`, and a Docker daemon | Throwaway containers it starts and removes |
-| Compose (opt-in) | `uv run pytest -m compose tests/compose` | A Docker daemon | A real container stack it brings up and tears down |
+| Compose (opt-in) | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose` | A Docker daemon and a locally built `infrahub-sync:compose-test` image | A real container stack it brings up and tears down |
 
 #### Integration
 
@@ -490,10 +489,12 @@ green result as evidence.
 #### Compose (opt-in)
 
 ```bash
-uv run pytest -m compose tests/compose
+docker build -t infrahub-sync:compose-test .
+INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose
 ```
 
-The Compose suite brings up a real deployment through a Docker daemon and tears it down. No CI
+The Compose suite brings up the root `docker-compose.yml` through a Docker daemon, against the
+image you built, and tears it down. The nightly workflow runs the same command; no pull request
 job runs it. Run it by hand when a change touches the Compose deployment. It keeps the
 ordinary Docker and platform skips, so confirm what ran before claiming it passed.
 

@@ -3,23 +3,27 @@ title: Supported platforms and limits
 ---
 
 There are [two ways to run V3](../installation.mdx#two-ways-to-run-v3). Both run the
-same Sync service. A source build has passed the pull request checks, but not the full
-deployment tests that each release package passes.
+same Sync service. A source build has passed the pull request checks, but not the
+release checks that each published image passes.
 
-## Release package qualification
+## Release image platforms
 
-Each release package passes full qualification on one Linux amd64 host running Docker
-Compose 2.17.3 or later, following the checkout-free clean-host procedure.
+Each release publishes the Sync image for Linux `amd64` and Linux `arm64`, as one
+multi-platform tag. Docker pulls the platform that matches the host. Both platforms
+pass the same smoke test before the release pushes either one; see
+[Container image](../container-image.mdx#supported-platforms).
 
-The candidate build also builds an arm64 image and runs the image test suite against
-it in continuous integration (CI), under emulation on an amd64 runner. Those tests are
-not a qualification: a release package is qualified on Linux amd64 only.
+The [Compose deployment](../compose-deployment.mdx) needs Docker Compose 2.24 or
+later on that host, because its `docker-compose.yml` carries the database bootstrap
+script as a top-level `configs` entry with inline `content`. An older Compose cannot
+parse the file.
 
 ## Other platforms, including Apple Silicon
 
-To run V3 on another platform that Docker supports, such as a Mac with Apple Silicon,
-[run from source](../development-stack.mdx#run-from-source). The image is built from your
-checkout for your host's own architecture.
+Docker Desktop on macOS runs the Linux `arm64` image, but a desktop host is not a
+platform the release tests. To try the latest changes on any platform Docker supports,
+[run from source](../development-stack.mdx#run-from-source). The image is built from
+your checkout for your host's own architecture.
 
 ## Measured versions
 
@@ -35,6 +39,7 @@ measured, and they are not excluded.
 
 ## Product limits
 
+- The deployment runs on one host, with no clustering, no public ingress, and no TLS.
 - Deletes are recorded in plans but are not executed.
 - A sync cannot remove an optional single-object relationship from a destination
   object, for example the rack of a device. When the source value is empty, apply
@@ -45,5 +50,5 @@ measured, and they are not excluded.
 - There is no built-in schedule. Start each run with the CLI or the Sync API, for
   example from cron or a CI job.
 
-For the operating procedure of a release package, including replacement with a
-fresh deployment, use the [Compose deployment guide](../compose-deployment).
+For the operating procedure of a release, including replacement with a fresh
+deployment, use the [Compose deployment guide](../compose-deployment).

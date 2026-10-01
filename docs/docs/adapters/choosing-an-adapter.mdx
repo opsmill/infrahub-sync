@@ -39,7 +39,7 @@ For per-adapter details — connection parameters, supported models, known limit
 
 ## Credentials on a Compose deployment
 
-The Sync worker reads each credential from the environment variable that the package's `credentials` block names. On a Compose deployment, the worker receives only three of these variables: `INFRAHUB_API_TOKEN`, `NETBOX_TOKEN`, and `NAUTOBOT_TOKEN`. When you run from source, the development stack in `compose.yaml` passes the same three.
+The Sync worker reads each credential from the environment variable that the package's `credentials` block names. On a Compose deployment, the worker receives only three of these variables: `INFRAHUB_API_TOKEN`, `NETBOX_TOKEN`, and `NAUTOBOT_TOKEN`. When you run from source, the development stack in `development/docker-compose.dev.yml` passes the same three.
 
 A source whose credentials need other variables, such as Cisco ACI, IP Fabric, Slurp’it, Peering Manager, or a Generic REST API source with authentication, cannot receive them on that worker in this release. A source that needs no credential, such as a public API with `auth_method: none`, is not affected. IP Fabric and Slurp’it also need an SDK that the Sync image does not include; see their pages.
 
@@ -108,7 +108,7 @@ Several adapter pages link an example Infrahub schema that matches their example
    .schema-tools/bin/infrahubctl schema load schema.yml --branch main
    ```
 
-The [Nautobot tutorial](../tutorials/nautobot-to-existing-infrahub.mdx) shows the same steps for a Compose deployment. It reads the token from `operator.env` without exporting the other values in that file.
+The [Nautobot tutorial](../tutorials/nautobot-to-existing-infrahub.mdx) shows the same steps for a Compose deployment. It reads the token from the deployment's `.env` without exporting the other values in that file.
 
 ## Related
 
