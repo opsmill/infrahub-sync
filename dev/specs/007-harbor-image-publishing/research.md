@@ -272,15 +272,14 @@ Findings:
 
 - **Decision**: No code. Visibility is a Harbor project setting. The plan records two
   administrator actions:
-  1. Create the `opsmill/infrahub-sync` project as private, with a robot or pull
-     account for testers, before the first publish.
+  1. The first push creates the `opsmill/infrahub-sync` project. Check that it is
+     private, and add a robot or pull account for testers.
   2. Flip it to public at 3.0.0.
 
   The docs carry a `docker login registry.opsmill.io` step, marked "until 3.0.0".
-  The publishing workflow uses the org-level `HARBOR_HOST`, `HARBOR_USERNAME` and
-  `HARBOR_PASSWORD` that infrahub-mcp uses. Whether the org shares these with this
-  repository must be confirmed before the first publish, since it is a
-  repository-settings action.
+  The publishing workflow reads `vars.HARBOR_HOST`, `secrets.HARBOR_USERNAME` and
+  `secrets.HARBOR_PASSWORD`. Like infrahub-mcp, these are set at repository level
+  (done 2026-10-01).
 
 ## R11. Removal sizing (SC-004)
 

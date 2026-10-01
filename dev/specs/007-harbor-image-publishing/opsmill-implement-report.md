@@ -94,7 +94,7 @@ Five review passes ran: code, tests, errors, comments and simplify. Types was sk
 
 ## 7. Suggested next steps
 
-1. Registry admin: create the private Harbor project `opsmill/infrahub-sync` with tester pull credentials, and confirm that `HARBOR_HOST`, `HARBOR_USERNAME` and `HARBOR_PASSWORD` are shared with this repo (see `pr-notes.md`).
+1. Harbor settings are done: `HARBOR_HOST`, `HARBOR_USERNAME` and `HARBOR_PASSWORD` are set on the repository. The first push creates the `opsmill/infrahub-sync` project. Afterwards, check that it is private and issue tester pull credentials (see `pr-notes.md`).
 2. Review `pr-notes.md`, then open the PR into `feature/v3-develop` when you're ready. Opening the PR, pushing and labelling are left to you.
 3. After it merges, run quickstart §4 (a dispatch with a throwaway tag) to prove push, signing, SBOMs and that `latest` doesn't move.
 4. Decide on the deferred items: bootstrap password rotation, the lifecycle error message, and the simplify cuts.

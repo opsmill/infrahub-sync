@@ -61,18 +61,18 @@ docker compose run --rm --no-deps -T cli configs list
 
 These are outside the code change:
 
-1. **Before the first publish:** create the private Harbor project
-   `opsmill/infrahub-sync` on `registry.opsmill.io`, and issue tester pull
+1. **Done:** the repository secrets `HARBOR_USERNAME` and `HARBOR_PASSWORD` and the
+   repository variable `HARBOR_HOST` are set on `opsmill/infrahub-sync`, matching
+   infrahub-mcp.
+2. **After the first publish:** the first push creates the Harbor project
+   `opsmill/infrahub-sync`. Check that it is private, and issue tester pull
    credentials (FR-015).
-2. **Before the first publish:** confirm that the org variable `HARBOR_HOST` and
-   the org secrets `HARBOR_USERNAME` and `HARBOR_PASSWORD` are shared with this
-   repository.
 3. Branch protection needs no change: the job id and name of "Full qualification"
    are preserved.
 4. **At stable 3.0.0:** make the Harbor project public, and remove the "log in
    until 3.0.0" step from the docs.
 
-After items 1 and 2, validate with a `workflow-publish.yml` dispatch
+To validate, run a `workflow-publish.yml` dispatch
 (`prerelease: true`, a throwaway version). It checks the push, the signature, the
 SBOMs, and that `latest` does not move (quickstart §4 and §5).
 

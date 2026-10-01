@@ -172,10 +172,10 @@ release bundle).
 
 These are outside the code change, and owned by maintainers or the registry
 administrator:
-1. Create the private Harbor project `opsmill/infrahub-sync`, and issue tester pull
-   credentials (FR-015).
-2. Confirm that the org variable `HARBOR_HOST` and the secrets `HARBOR_USERNAME` and
-   `HARBOR_PASSWORD` are shared with this repository.
+1. The first push creates the Harbor project `opsmill/infrahub-sync`. Afterwards,
+   check that it is private and issue tester pull credentials (FR-015).
+2. Done 2026-10-01: the repository secrets `HARBOR_USERNAME` and `HARBOR_PASSWORD`
+   and the repository variable `HARBOR_HOST` are set, matching infrahub-mcp.
 3. Branch protection needs no change: the job id and name of "Full qualification"
    are preserved.
 4. At stable 3.0.0, make the Harbor project public, and remove the "log in until
