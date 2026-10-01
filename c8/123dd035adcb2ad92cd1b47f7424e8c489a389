@@ -1,0 +1,33 @@
+AGENTS.md
+  s_7b740b0a09bab8::t_5131c52e224369 152
+RELEASING.md
+  s_7b740b0a09bab8::t_5131c52e224369 75,142
+scripts/release_body.py
+  s_7b740b0a09bab8::t_65dc1dcff3a87d 1-67,69-75
+  s_7b740b0a09bab8::t_8401ca0a7d5771 68
+.gitignore
+  s_7b740b0a09bab8::t_ab086a7eb4ec25 31-34
+.github/workflows/release-publish.yml
+  s_7b740b0a09bab8::t_65dc1dcff3a87d 6-8,96,103-115
+  s_7b740b0a09bab8::t_b0ae36a33b87b3 116
+tests/test_release_body.py
+  s_7b740b0a09bab8::t_65dc1dcff3a87d 1-91
+changelog/+release-body-from-notes.fixed.md
+  s_7b740b0a09bab8::t_65dc1dcff3a87d 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "c8123dd035adcb2ad92cd1b47f7424e8c489a389",
+  "prompts": {},
+  "sessions": {
+    "s_7b740b0a09bab8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f3cf-b8e2-7472-8987-ae8cafa06948",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
