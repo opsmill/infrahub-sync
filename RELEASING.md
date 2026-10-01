@@ -72,7 +72,7 @@ Merging it triggers `release-publish.yml`, which:
 
 1. Reads the version back out of `pyproject.toml`
 2. Creates the bare tag (for example `2.0.2`, not `v2.0.2`)
-3. Publishes a GitHub Release whose body is the changelog section
+3. Publishes a GitHub Release whose body is the curated release-notes page, or the changelog section when no page exists
 
 Publishing that Release triggers `trigger-release.yml` and the PyPI upload.
 
@@ -139,7 +139,7 @@ gh workflow run workflow-publish.yml \
 
 ## Release notes
 
-Release notes are written by contributors, not generated from pull-request titles. Each pull request adds a news fragment under `changelog/`; towncrier assembles them into `CHANGELOG.md` when the release pull request is prepared, and `release-publish.yml` uses that section verbatim as the GitHub Release body.
+Release notes are written by contributors, not generated from pull-request titles. Each pull request adds a news fragment under `changelog/`; towncrier assembles them into `CHANGELOG.md` when the release pull request is prepared. When `docs/docs/release-notes/infrahub-sync/release-X_Y_Z.mdx` exists, `release-publish.yml` converts that curated page into the GitHub Release body; otherwise it uses the assembled changelog section.
 
 The seven fragment types come from `[tool.towncrier]` in `pyproject.toml`: `security`, `removed`, `deprecated`, `added`, `changed`, `fixed`, `housekeeping`. See the Changelog section of [AGENTS.md](AGENTS.md) for how to add one.
 

@@ -29,3 +29,6 @@ venv/
 *.pem
 *.key
 credentials.json
+
+# Local bug-analysis handoffs
+.bug-analysis-*.md
