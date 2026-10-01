@@ -71,6 +71,17 @@ def test_bump_label_is_declared(label: str) -> None:
     assert label in declared
 
 
+def test_dependabot_pull_requests_carry_patch_label() -> None:
+    config = yaml.safe_load((ROOT / ".github" / "dependabot.yml").read_text())
+    for update in config["updates"]:
+        assert "changes/patch" in update["labels"], update["package-ecosystem"]
+
+
+def test_sdk_update_pull_requests_carry_patch_label() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "update-infrahub-sdk.yml").read_text()
+    assert '--label "changes/patch"' in workflow
+
+
 @pytest.mark.parametrize("label", BUMP_LABELS)
 def test_single_bump_label_is_accepted(label: str) -> None:
     result = run_checker([label, "type/housekeeping"])

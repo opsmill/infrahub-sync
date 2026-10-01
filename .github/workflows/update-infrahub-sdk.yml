@@ -83,10 +83,13 @@ jobs:
           # A dependency bump carries no behaviour change of its own, so label
           # it out of the news-fragment gate in changelog-check.yml at
           # creation time — the author here is a bot token, not dependabot[bot],
-          # so the author exemption in that workflow does not cover it.
+          # so the author exemption in that workflow does not cover it. It
+          # also needs the one `changes/*` label release-label-check.yml
+          # requires; a dependency bump is a patch.
           gh pr create \
             --title "update infrahub-sdk to version ${INFRAHUB_SDK_VERSION} against ${MATRIX_BRANCH}" \
             --body "This PR updates infrahub-sdk to version ${INFRAHUB_SDK_VERSION}." \
             --base "${MATRIX_BRANCH}" \
             --head "${BRANCH_NAME}" \
-            --label "ci/skip-changelog"
+            --label "ci/skip-changelog" \
+            --label "changes/patch"
