@@ -58,9 +58,10 @@ multi-line `labels`:
 
 ```bash
 SHA=$(git rev-parse origin/main)
-jq -n --arg sha "$SHA" '{
+HARBOR_HOST=$(gh variable get HARBOR_HOST --repo opsmill/infrahub-sync)
+jq -n --arg sha "$SHA" --arg host "$HARBOR_HOST" '{
   ref: $sha,
-  tags: "registry.opsmill.io/opsmill/infrahub-sync:dispatch-test",
+  tags: "\($host)/opsmill/infrahub-sync:dispatch-test",
   labels: ([
     "org.opencontainers.image.source=https://github.com/opsmill/infrahub-sync",
     "org.opencontainers.image.version=dispatch-test",

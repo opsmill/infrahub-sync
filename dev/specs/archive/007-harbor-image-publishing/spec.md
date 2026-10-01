@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-01
 
-**Status**: Draft
+**Status**: Extracted
 
 **Input**: User description: "I want to remove the crappy work done on the "image packaing" with github and use our docker hub (harbor) similar to ../infrahub-mcp and ../infrahub"
 

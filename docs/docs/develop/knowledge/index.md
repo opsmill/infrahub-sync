@@ -61,6 +61,8 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 
 - [Quality gates](quality-gates.md) — what `invoke lint` and `invoke format` actually run,
   the inherited pylint baseline, and how to measure a no-regression claim.
+- [Image publishing](image-publishing.md) — how the container image is built, smoke-tested,
+  pushed to Harbor and signed, which workflow calls it, and when `latest` moves.
 - [Testing tiers](../guidelines/testing-tiers.md) — which test command covers which tier, what
   each one needs, and what a skip means.
 

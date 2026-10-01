@@ -3,8 +3,8 @@
 @AGENTS.md
 
 <!-- SPECKIT START -->
-Active plan: `specs/007-harbor-image-publishing/plan.md` (via the `specs` symlink to
-`dev/specs/`). Read it for technologies, project structure, and shell commands. Completed
-specs are archived under `dev/specs/archive/`; current developer guidance lives in
-`docs/docs/develop/` and the decision records in `dev/adr/`.
+No spec is currently active. Completed specs are archived under `dev/specs/archive/`; their
+durable output lives in `docs/docs/develop/knowledge/`, `docs/docs/develop/guidelines/`,
+`docs/docs/develop/guides/`, and `dev/adr/`. When a spec is active, read its `plan.md` for
+technologies, project structure, and shell commands.
 <!-- SPECKIT END -->

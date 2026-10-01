@@ -8,8 +8,8 @@ A release publishes its own image. Any other image, such as a pre-release build
 for testers or an image of a fix that has not shipped yet, comes from a manual
 dispatch of the image workflow, `.github/workflows/ci-docker-image.yml`. The
 dispatch builds one commit for the platforms you choose, smoke-tests every
-platform, and, when publishing, pushes the image to
-`registry.opsmill.io/opsmill/infrahub-sync` under the tags you list. It then
+platform, and, when publishing, pushes the image to the Harbor
+project under the tags you list. It then
 signs the image and attaches its bill of materials.
 
 ### When to dispatch
@@ -32,7 +32,7 @@ workflow.
 | Input | Value |
 |---|---|
 | `ref` | The commit to build. Use a full 40-character SHA. |
-| `tags` | Newline-separated full image references, such as `registry.opsmill.io/opsmill/infrahub-sync:dispatch-test`. |
+| `tags` | Newline-separated full image references on the `HARBOR_HOST` name, such as `<HARBOR_HOST>/opsmill/infrahub-sync:dispatch-test`. |
 | `labels` | Newline-separated OCI labels: `org.opencontainers.image.source`, `.version` and `.revision`. |
 | `publish` | `true` to push, sign and attest. `false` builds and smoke-tests only. |
 | `platforms` | Comma-separated, `linux/amd64,linux/arm64` by default. Name one platform to build only that one. |
@@ -46,16 +46,23 @@ revision label to the same full SHA as `ref`.
 the Actions tab takes one line per input. Dispatch with `gh workflow run` and a
 JSON body instead, so the newlines survive.
 
+Tag the image with the repository variable `HARBOR_HOST`, not
+`registry.opsmill.io`. The workflow logs in to the `HARBOR_HOST` name only, so
+a push addressed to `registry.opsmill.io` fails with `401 Unauthorized`. The
+pushed image is then pulled through `registry.opsmill.io`, which serves the same
+Harbor project.
+
 ### A worked example
 
-This publishes the head of `main` as
+This publishes the head of `main` as `dispatch-test`. Pull it afterwards as
 `registry.opsmill.io/opsmill/infrahub-sync:dispatch-test`:
 
 ```sh
 SHA=$(git rev-parse origin/main)
-jq -n --arg sha "$SHA" '{
+HARBOR_HOST=$(gh variable get HARBOR_HOST --repo opsmill/infrahub-sync)
+jq -n --arg sha "$SHA" --arg host "$HARBOR_HOST" '{
   ref: $sha,
-  tags: "registry.opsmill.io/opsmill/infrahub-sync:dispatch-test",
+  tags: "\($host)/opsmill/infrahub-sync:dispatch-test",
   labels: ([
     "org.opencontainers.image.source=https://github.com/opsmill/infrahub-sync",
     "org.opencontainers.image.version=dispatch-test",
@@ -114,5 +121,5 @@ It never adds `latest` or a version tag of its own. Only the release path
 decides `latest`: it adds that tag for a stable release that GitHub also
 reports as its latest release, and never for a pre-release. A dispatch moves
 `latest` only if you list
-`registry.opsmill.io/opsmill/infrahub-sync:latest` in `tags` yourself. Don't,
+`<HARBOR_HOST>/opsmill/infrahub-sync:latest` in `tags` yourself. Don't,
 unless you mean to replace the image every `latest` user pulls next.
