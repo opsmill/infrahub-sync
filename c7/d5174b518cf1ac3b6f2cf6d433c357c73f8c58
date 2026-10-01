@@ -1,0 +1,28 @@
+.github/workflows/release-label-check.yml
+  s_7e8bc0f59e77ac::t_710fcfabb34639 5-12,19-21
+  s_e781df4f83e385::t_62337d63dda7ed 22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "c7d5174b518cf1ac3b6f2cf6d433c357c73f8c58",
+  "prompts": {},
+  "sessions": {
+    "s_7e8bc0f59e77ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8f58ef6-d8cb-4c10-9bd9-5e5f499aa838",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_e781df4f83e385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e7508e3-b2e9-494a-a98a-ccc3d06e2a0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
