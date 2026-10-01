@@ -63,8 +63,9 @@ Making the extra installable changed two base dependency declarations:
   `diffsync[redis]` still resolves.
 
 If you are upgrading an existing installation: the Redis client is now a **direct**
-dependency of `infrahub-sync` with a wider allowed range than before. Redis itself is
-still only contacted when a sync configuration opts into the Redis store.
+dependency of `infrahub-sync` with a wider allowed range than before. V3 keeps sync
+data in memory and refuses configured sync stores, including Redis. The Redis client
+remains installed for the existing DiffSync import; it does not enable Redis sync storage.
 
 ## Serving the deployment
 

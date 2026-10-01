@@ -219,6 +219,8 @@ For cases where a field value needs to be transformed during the mapping — upp
       expression: "{{ name | upper }}"
 ```
 
+Transform expressions run in a Jinja2 sandbox. They can read the source object's fields, use Jinja filters, and call methods that return a new value, such as `split` or `replace`. They cannot call arbitrary Python methods or functions, change a value in place (for example with `append` or `update`), or access private attributes (names starting with `_`). An expression that tries fails the transform with an error naming the field. Registering a configuration package checks each expression's syntax, and a syntax error refuses the package.
+
 Adapters can also register custom Jinja filters via a `_add_custom_filters` class method on the adapter model. The ACI adapter, for example, includes an `aci_device_name` filter for resolving ACI node IDs to device names. See [Local adapters](../adapters/local-adapters.mdx) for the implementation pattern, and [Sync instance configuration](./config.mdx) for the full `transforms` syntax.
 
 ## Validating a mapping

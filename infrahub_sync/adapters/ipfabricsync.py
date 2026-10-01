@@ -15,6 +15,7 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.adapters.utils import build_mapping
+from infrahub_sync.configuration.credentials import declared_settings, is_registered_context
 
 logger = logging.getLogger(__name__)
 
@@ -43,27 +44,34 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
         self.config = config
 
     def _create_ipfabric_client(self, adapter: SyncAdapter) -> IPFClient:
-        settings = dict(adapter.settings or {})
+        registered = is_registered_context(adapter.settings or {})
+        settings = declared_settings(adapter.settings or {})
 
-        base_url = settings.get("base_url")
-        if not base_url:
-            base_url = os.environ.get("IPF_URL", None)
-            settings["base_url"] = base_url
-
-        auth = settings.get("auth")
-        if not auth:
-            auth = os.environ.get("IPF_TOKEN", None)
-            settings["auth"] = auth
-
-        if not base_url or not auth:
-            msg = "Both url and auth must be specified! Please specify in the config or using `IPF_URL` and `IPF_TOKEN` environment variables."
-            raise ValueError(msg)
+        if registered:
+            if not settings.get("base_url") or not settings.get("auth"):
+                msg = "Both base_url and auth must be declared in the registered package settings."
+                raise ValueError(msg)
+        else:
+            if not settings.get("base_url"):
+                settings["base_url"] = os.environ.get("IPF_URL", None)
+            if not settings.get("auth"):
+                settings["auth"] = os.environ.get("IPF_TOKEN", None)
+            if not settings["base_url"] or not settings["auth"]:
+                msg = "Both url and auth must be specified! Please specify in the config or using `IPF_URL` and `IPF_TOKEN` environment variables."
+                raise ValueError(msg)
 
         # Registered settings reach the optional client here. `IPFClient` takes `verify`,
         # not the `verify_ssl` name used by this adapter's registered settings, so rename it;
         # `IPFClient`'s own default for `verify` is `None`, so passing it unset is harmless.
         verify_ssl = settings.pop("verify_ssl", None)
-        return IPFClient(verify=verify_ssl, **settings)
+        sdk_defaults: dict[str, object] = {}
+        if registered:
+            # `IPFClient` reads `IPF_*` variables and a `.env` file for every field left
+            # unset, so a registered run sets the ones that decide trust and data: TLS is
+            # verified unless declared otherwise, and the snapshot is the SDK default.
+            verify_ssl = True if verify_ssl is None else verify_ssl
+            sdk_defaults = {"snapshot_id": "$last"}
+        return IPFClient(verify=verify_ssl, **sdk_defaults, **settings)
 
     def model_loader(self, model_name: str, model: type[IpfabricsyncModel]) -> None:
         """

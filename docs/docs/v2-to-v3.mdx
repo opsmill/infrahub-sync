@@ -42,6 +42,10 @@ not, but applying it never removes those objects.
 - **Register the configuration again.** A V2 `config.yml` is not a registered V3 version. Bring
   its content into the package envelope, supply the credential values on the deployment, and
   register the package.
+- **Delete any `store` block.** V3 keeps sync data in memory during a run and refuses
+  configurations that declare a sync store, including Redis. If you already registered
+  the package, register a new version without the block and run that version. Editing
+  the local file does not change an existing registered version.
 - **Review a new plan before you apply anything.** Treat the first V3 plan as the record of what
   the run would change, whatever a previous V2 run did.
 
