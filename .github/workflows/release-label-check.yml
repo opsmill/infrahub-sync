@@ -2,11 +2,23 @@
 # yamllint disable rule:truthy
 name: Release bump label
 
+# The `changes/*` label is the only input version-drafter reads to choose the
+# next version, so every pull request into `main` must carry exactly one.
+# `edited` is listed because the generated release pull request exemption
+# depends on the title.
+#
+# The checker runs from the pull request's merge ref, like this workflow file
+# itself: pinning the script to the base commit would not stop an author who
+# can also edit the workflow, so the protection is review of changes to both.
 on:
   pull_request:
     branches:
       - main
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions: {}
 
