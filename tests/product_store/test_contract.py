@@ -3167,6 +3167,26 @@ def test_a_public_json_artifact_is_redacted_whatever_escaping_its_serializer_use
     assert reference.size == len(artifact)
 
 
+def test_a_public_json_artifact_is_redacted_inside_json_text_held_by_a_field(provider: ProductProjection) -> None:
+    """A field that stores a serialized document holds the secret JSON-escaped once more."""
+    provider.create_run(_run())
+    nested = json.dumps({"pw": _ESCAPED_SECRET})
+
+    provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=json.dumps({"operations": [{"payload": {"config": nested}}]}).encode(),
+        secrets=(_ESCAPED_SECRET,),
+    )
+
+    artifact = provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    config = json.loads(artifact)["operations"][0]["payload"]["config"]
+    assert json.loads(config) == {"pw": "***"}
+
+
 def test_a_public_text_artifact_is_redacted_in_its_raw_and_json_escaped_forms(provider: ProductProjection) -> None:
     provider.create_run(_run())
     escaped = json.dumps(_ESCAPED_SECRET)[1:-1]

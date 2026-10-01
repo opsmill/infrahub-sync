@@ -3560,7 +3560,9 @@ def _redacted_json_bytes(data: bytes, secrets: Sequence[str]) -> bytes:
     except (ValueError, RecursionError):
         # Declared JSON that does not parse gets the byte pass alone.
         return data
-    sanitized = _redact_value(document, secrets, numbers=True)
+    # A decoded string can itself hold JSON text, such as a field that stores a serialized
+    # document, so it is matched against the JSON string forms as well as the raw value.
+    sanitized = _redact_ordered_value(document, json_string_forms(secrets), numbers=True)
     if sanitized == document:
         return data
     return json.dumps(sanitized, ensure_ascii=False, separators=(",", ":")).encode()
