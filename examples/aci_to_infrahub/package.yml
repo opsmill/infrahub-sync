@@ -132,10 +132,10 @@ configuration:
 credentials:
   apic-username:
     provider: env
-    identifier: CISCO_APIC_USERNAME
+    identifier: INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_USERNAME
   apic-password:
     provider: env
-    identifier: CISCO_APIC_PASSWORD
+    identifier: INFRAHUB_SYNC_CREDENTIAL_CISCO_APIC_PASSWORD
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN

@@ -54,6 +54,8 @@ def environment() -> dict[str, str]:
             "INFRAHUB_SYNC_API_TOKEN": json.loads(preview["PREVIEW_BEARER_TOKENS"])["tester@local"]["token"],
             "NETBOX_URL": netbox_url(netbox),
             "NETBOX_TOKEN": netbox_token(netbox),
+            # What the preview worker resolves for a registered package's `netbox-token`.
+            "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": netbox_token(netbox),
             "APPLY_GUARD_TEST_POSTGRESQL_DSN": store_url,
             "PRODUCT_STORE_TEST_POSTGRESQL_DSN": store_url,
             "INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL": store_url,

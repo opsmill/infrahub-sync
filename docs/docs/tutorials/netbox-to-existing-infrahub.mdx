@@ -52,8 +52,8 @@ Open `operator.env`, remove the leading `#`, and fill in the source and
 destination token entries:
 
 ```dotenv
-NETBOX_TOKEN=<your NetBox token>
-INFRAHUB_API_TOKEN=<your Infrahub token>
+INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=<your NetBox token>
+INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<your Infrahub token>
 ```
 
 For NetBox 4.6, use a v2 API token. It starts with `nbt_` and contains a dot;
@@ -63,7 +63,7 @@ that can read the mapped objects and an Infrahub token that can load schema and
 read those destination kinds on your chosen branch.
 
 Do not change the generated Sync API credentials. The bundled CLI uses them to
-contact Sync; `INFRAHUB_API_TOKEN` authenticates to the destination Infrahub.
+contact Sync; `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` authenticates to the destination Infrahub.
 Do not run `source operator.env`: that file also contains the deployment's
 internal credentials.
 
@@ -123,7 +123,7 @@ inside the parentheses.
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' operator.env)"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' operator.env)"
   .schema-tools/bin/infrahubctl branch list
 )
 ```
@@ -136,7 +136,7 @@ environment block before loading the schema.
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' operator.env)"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' operator.env)"
   .schema-tools/bin/infrahubctl schema load schema.yml --branch BRANCH_NAME
 )
 ```
@@ -178,7 +178,8 @@ to the `TestingSite` and `TestingDevice` kinds you loaded:
 ---
 # Replace the URL placeholders and load a matching destination schema before registration.
 # Supply token values through the named environment variables, never in this file.
-# Set NETBOX_TOKEN and INFRAHUB_API_TOKEN in the generated operator.env file.
+# Set INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN and INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
+# in the generated operator.env file.
 format_version: 1
 configuration:
   name: netbox-evaluation
@@ -213,8 +214,8 @@ configuration:
           mapping: site
           reference: TestingSite
 credentials:
-  netbox-token: {provider: env, identifier: NETBOX_TOKEN}
-  infrahub-token: {provider: env, identifier: INFRAHUB_API_TOKEN}
+  netbox-token: {provider: env, identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN}
+  infrahub-token: {provider: env, identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN}
 ```
 
 Before registering `package.yml`:

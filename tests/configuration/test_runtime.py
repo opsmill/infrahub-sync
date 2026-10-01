@@ -10,7 +10,7 @@ def test_runtime_instance_resolves_declared_credentials_without_ambient_lookup(m
     from infrahub_sync.configuration.runtime import resolve_runtime_instance
 
     registered = "registered-canary"
-    monkeypatch.setenv("TOKEN", registered)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_TOKEN", registered)
     monkeypatch.setenv("NETBOX_TOKEN", "ambient-canary")
     package = ConfigurationPackage.model_validate(
         {
@@ -30,7 +30,7 @@ def test_runtime_instance_resolves_declared_credentials_without_ambient_lookup(m
                 "diffsync_flags": [],
                 "incremental": None,
             },
-            "credentials": {"token": {"provider": "env", "identifier": "TOKEN"}},
+            "credentials": {"token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
         }
     )
 

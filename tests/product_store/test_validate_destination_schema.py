@@ -299,7 +299,7 @@ def _mock_live_schema_read(monkeypatch: pytest.MonkeyPatch, response: object) ->
     No table injection: the built-in ``infrahub`` declaration already carries the real
     accessor, so the whole normalization boundary runs under public ``validate()``.
     """
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
     def _fake_client(address: str, config: object) -> _ReturningClient:
         del address, config

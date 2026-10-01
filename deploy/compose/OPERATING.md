@@ -84,14 +84,17 @@ A configuration is not a startup input. The deployment starts with an empty
 registry and no destination, and you register a declared package through the
 Sync API once it is running. `configuration/qualification.yaml` in this bundle is
 an example of that package's shape, and nothing loads it on your behalf. A
-package holds credential *references*, never values.
+package holds credential *references*, never values, and an `env` reference
+resolves only an identifier that starts with `INFRAHUB_SYNC_CREDENTIAL_`: the
+worker's own storage, database, and Prefect settings share its environment, and
+no package can name them.
 
 The credentials a registered package references are yours to add to
-`operator.env` before the run that needs them, and `init` leaves each one
-commented:
+`operator.env` before the run that needs them. `init` writes each one
+commented out; remove the leading `#` and add your value:
 
 ```bash
-INFRAHUB_API_TOKEN=<your Infrahub token>
+INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<your Infrahub token>
 ```
 
 A container reads its environment once, at start. After changing any value in
@@ -106,7 +109,7 @@ the token, and `init` leaves both names commented in `operator.env`. Remove the
 leading `#` only from the one your package names:
 
 ```bash
-NETBOX_TOKEN=<your NetBox token>
+INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=<your NetBox token>
 ```
 
 ```yaml
@@ -120,11 +123,11 @@ configuration:
 credentials:
   netbox-token:
     provider: env
-    identifier: NETBOX_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
 ```
 
 Nautobot uses the same shape with `nautobot`, `nautobot-token` and
-`NAUTOBOT_TOKEN`.
+`INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`.
 
 Four things decide whether this works:
 

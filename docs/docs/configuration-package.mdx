@@ -52,12 +52,13 @@ configuration:
 credentials:
   netbox-token:
     provider: env
-    identifier: NETBOX_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
 ```
 
 Each entry declares a `provider` and an `identifier`. `env` is the only provider in this
 release, and the identifier is the name of the environment variable that the Sync worker
-reads when a run starts. Set that variable where the worker runs. On a Compose deployment,
+reads when a run starts. The identifier must start with `INFRAHUB_SYNC_CREDENTIAL_`;
+validation refuses any other identifier. Set that variable where the worker runs. On a Compose deployment,
 set it in `operator.env` and run `./infrahub-sync-compose start`; see
 [Reading from NetBox or Nautobot](./compose-deployment.mdx#reading-from-netbox-or-nautobot).
 Registration refuses a package that contains a literal credential value.

@@ -293,13 +293,13 @@ Run these commands from the repository root:
    ```
 
 2. Start a fresh preview stack. The worker resolves the package's `netbox-token` credential
-   from its own environment, so set `NETBOX_TOKEN` to the token that step 1 printed before
-   `preview.up` starts the worker. `preview.up` sets `INFRAHUB_API_TOKEN` for the worker
-   itself.
+   from its own environment, so set `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` to the token that step 1
+   printed before `preview.up` starts the worker. `preview.up` sets
+   `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` for the worker itself.
 
    ```bash
    uv run invoke preview.down --volumes
-   NETBOX_TOKEN="<token printed by netbox.seed>" uv run invoke preview.up
+   INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<token printed by netbox.seed>" uv run invoke preview.up
    ```
 
 3. Load the schema library into the preview Infrahub. The example maps onto the 16 schemas

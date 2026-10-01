@@ -36,7 +36,7 @@ def _package_data() -> dict[str, Any]:
             "incremental": None,
         },
         "package_metadata": {"adapter_api_version": 1},
-        "credentials": {"valid-name": {"provider": "env", "identifier": "TOKEN"}},
+        "credentials": {"valid-name": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
     }
 
 
@@ -180,7 +180,7 @@ def test_public_parse_reports_invalid_credential_name_with_bad_children() -> Non
 
 def test_direct_model_caller_context_cannot_disable_credential_key_validation() -> None:
     data = _package_data()
-    data["credentials"] = {"bad/name": {"provider": "env", "identifier": "TOKEN"}}
+    data["credentials"] = {"bad/name": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}}
 
     with pytest.raises(ValidationError):
         ConfigurationPackage.model_validate(
@@ -210,7 +210,7 @@ def test_direct_model_reports_credential_key_and_child_errors_together() -> None
 @pytest.mark.parametrize("names", [("z/name", "a~name"), ("a~name", "z/name")], ids=["forward", "reverse"])
 def test_public_parse_orders_independent_credential_name_failures(names: tuple[str, str]) -> None:
     data = _package_data()
-    data["credentials"] = {name: {"provider": "env", "identifier": "TOKEN"} for name in names}
+    data["credentials"] = {name: {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"} for name in names}
 
     assert _parse_failure(data) == _PREFIX + (
         "/credentials/a~0name: invalid credential reference name; "
@@ -1090,7 +1090,7 @@ def test_public_parse_bounds_total_findings_after_custom_field_expansion(
 def test_public_parse_bounds_native_credential_key_findings(name_count: int) -> None:
     data = _package_data()
     names = tuple(f"bad/name-{index:03}" for index in range(name_count))
-    data["credentials"] = {name: {"provider": "env", "identifier": "TOKEN"} for name in names}
+    data["credentials"] = {name: {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"} for name in names}
 
     message = _parse_failure(data)
 
@@ -1109,7 +1109,7 @@ def test_public_parse_checks_natural_error_count_before_materializing_records(
 ) -> None:
     data = _package_data()
     names = tuple(f"bad/name-{index:03}" for index in range(257))
-    data["credentials"] = {name: {"provider": "env", "identifier": "TOKEN"} for name in names}
+    data["credentials"] = {name: {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"} for name in names}
     real_errors = ValidationError.errors
     errors_calls = 0
 

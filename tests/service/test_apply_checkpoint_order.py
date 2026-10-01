@@ -152,8 +152,8 @@ class _Row:
 @pytest.fixture
 def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Harness:
     """A registered apply whose only plan copy is the published plan checkpoint."""
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "apply-destination-canary")
-    monkeypatch.setenv("NETBOX_TOKEN", "apply-source-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "apply-destination-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "apply-source-canary")
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     run_id = "run-apply-from-checkpoint"
     inner = local_product_projection(tmp_path / "product")

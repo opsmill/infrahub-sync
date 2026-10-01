@@ -251,7 +251,7 @@ def test_schema_client_ignores_ambient_git_branch(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH", "ambient")
     monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH_FROM_GIT", "true")
     monkeypatch.setenv("INFRAHUB_ADDRESS", "invalid-ambient-address")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
     content = package_data()
     _, settings = capabilities_module._resolved_client_settings(package(content), "review")
 
@@ -623,7 +623,7 @@ def _mock_schema_read_failure(monkeypatch: pytest.MonkeyPatch, exception: Except
     _inject(monkeypatch, _live_read_table())
     # The declared token reference must resolve, or the credentials arm reports before
     # the mocked client is ever constructed.
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
     def _fake_client(address: str, config: object) -> _FakeClient:
         del address, config
@@ -713,7 +713,7 @@ def test_an_unusable_declared_client_configuration_lands_as_a_typed_finding(
     monkeypatch: pytest.MonkeyPatch, exception: Exception
 ) -> None:
     _inject(monkeypatch, _live_read_table())
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
     def _refusing_config(**kwargs: object) -> object:
         del kwargs
@@ -728,7 +728,7 @@ def test_an_unresolvable_declared_token_lands_as_a_typed_finding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _inject(monkeypatch, _live_read_table())
-    monkeypatch.delenv("INFRAHUB_API_TOKEN", raising=False)
+    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", raising=False)
 
     _read_failure_and_write_findings("credentials")
 
@@ -737,7 +737,7 @@ def test_a_missing_declared_url_lands_as_a_typed_finding(monkeypatch: pytest.Mon
     _inject(monkeypatch, _live_read_table())
     data = package_data()
     del data["configuration"]["destination"]["settings"]["url"]
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
     result = collect_destination_schema_findings(package(data))
 
@@ -768,7 +768,7 @@ class _ReturningClient:
 
 def _mock_schema_read_response(monkeypatch: pytest.MonkeyPatch, response: object) -> None:
     _inject(monkeypatch, _live_read_table())
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
     def _fake_client(address: str, config: object) -> _ReturningClient:
         del address, config

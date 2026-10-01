@@ -1028,7 +1028,7 @@ configure_deployment() {
     # and this confirms that is the candidate this host loaded rather than
     # writing a fourth channel that could disagree with it.
     require_bundle_names_the_loaded_candidate
-    set_setting INFRAHUB_API_TOKEN "$DESTINATION_TOKEN"
+    set_setting INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN "$DESTINATION_TOKEN"
     point_configuration_at_destination "$PROXY_URL"
     # The checks reach the deployment through the product's own client, which is
     # the surface an operator has. Negative destination-state assertions are read

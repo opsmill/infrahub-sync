@@ -240,6 +240,21 @@ def test_two_defects_in_one_declaration_still_yield_two_findings() -> None:
     ]
 
 
+def test_an_environment_identifier_outside_the_credential_prefix_is_one_finding() -> None:
+    # A well-formed variable name is not enough: the worker's own infrastructure settings live
+    # in the same environment, so only the credential namespace is resolvable.
+    data = package_data()
+    data["credentials"]["worker-secret"] = {"provider": "env", "identifier": "AWS_SECRET_ACCESS_KEY"}
+
+    findings = collect_findings(package(data))
+
+    assert [(finding.code, finding.location) for finding in findings] == [
+        ("malformed-credential-reference", "/credentials/worker-secret"),
+    ]
+    assert "'INFRAHUB_SYNC_CREDENTIAL_' followed by a name" in findings[0].message
+    assert "AWS_SECRET_ACCESS_KEY" not in findings[0].message
+
+
 def test_a_reference_outside_the_declared_paths_is_still_reported_by_the_walk() -> None:
     data = package_data()
     data["configuration"]["schema_mapping"] = [
@@ -728,7 +743,7 @@ def _over_cap_package_data(*, reversed_declaration: bool) -> dict[str, Any]:
     if reversed_declaration:
         names.reverse()
     for name in names:
-        data["credentials"][name] = {"provider": "vault", "identifier": "DECLARED_TOKEN"}
+        data["credentials"][name] = {"provider": "vault", "identifier": "INFRAHUB_SYNC_CREDENTIAL_DECLARED_TOKEN"}
     return data
 
 
@@ -870,7 +885,7 @@ def _totality_package_data() -> dict[str, Any]:
     # A missing adapter makes its role unevaluable, so it goes on one role and every other
     # family is spread across the other role, the store, and the credential declarations.
     data = package_data()
-    data["credentials"]["bad-provider"] = {"provider": "vault", "identifier": "DECLARED_TOKEN"}
+    data["credentials"]["bad-provider"] = {"provider": "vault", "identifier": "INFRAHUB_SYNC_CREDENTIAL_DECLARED_TOKEN"}
     data["credentials"]["bad-identifier"] = {"provider": "env", "identifier": "NOT-VALID"}
     data["configuration"]["source"] = {
         "name": "genericrestapi",

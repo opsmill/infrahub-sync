@@ -393,7 +393,7 @@ token:
 credentials:
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
 Nothing loads that file. Step 8 registers it explicitly, and a registered version
@@ -459,7 +459,7 @@ reads a credential out of a file or puts one on a command line.
 ```
 
 That answers with nothing: the registry is empty. Give the deployment the
-Infrahub credential the package references: uncomment `INFRAHUB_API_TOKEN` in
+Infrahub credential the package references: uncomment `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` in
 `operator.env` and set it to your token with an editor, so no value reaches a
 terminal or a scrollback buffer. Then start again, so the services that resolve
 it are recreated — `restart` would replace the processes inside containers

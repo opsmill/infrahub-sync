@@ -411,7 +411,7 @@ def operator_environment(
         "INFRAHUB_SYNC_S3_ACCESS_KEY": "compose-suite-access-key",
         "INFRAHUB_SYNC_S3_SECRET_KEY": canaries["object_store"],
         "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": principals,
-        "INFRAHUB_API_TOKEN": destination_token,
+        "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": destination_token,
     }
     path = directory / "operator.env"
     path.write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
@@ -510,7 +510,9 @@ def smoke_package(destination_url: str) -> dict[str, Any]:
                 }
             ],
         },
-        "credentials": {"infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"}},
+        "credentials": {
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
+        },
     }
 
 

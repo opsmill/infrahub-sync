@@ -22,8 +22,10 @@ from pydantic import ValidationError
 
 from .capabilities import BUILTIN_ADAPTER_CAPABILITIES
 from .credentials import (
+    _ENV_CREDENTIAL_IDENTIFIER,
     _ENV_IDENTIFIER,
     _TRUNCATION_MARKER,
+    ENV_CREDENTIAL_PREFIX,
     CredentialConfigurationError,
     _bounded_location,
     _render_setting_name_list,
@@ -278,6 +280,22 @@ def _accumulate_reference_declarations(
                     message=(
                         f"credential reference {_rendered_component(name, secrets)!r} has an invalid "
                         "environment identifier"
+                    ),
+                )
+            )
+        elif reference.provider == "env" and _ENV_CREDENTIAL_IDENTIFIER.fullmatch(reference.identifier) is None:
+            # The namespace is the env provider's rule. The identifier is left out of the
+            # message like the one above: a value pasted in place of a name is the ordinary
+            # way this goes wrong.
+            accumulated.append(
+                _accumulated(
+                    code=_CODE_MALFORMED_CREDENTIAL_REFERENCE,
+                    location=location,
+                    unbounded_location=unbounded,
+                    message=(
+                        f"credential reference {_rendered_component(name, secrets)!r} names an "
+                        f"environment identifier outside the credential namespace; it must start "
+                        f"with {ENV_CREDENTIAL_PREFIX!r} followed by a name"
                     ),
                 )
             )

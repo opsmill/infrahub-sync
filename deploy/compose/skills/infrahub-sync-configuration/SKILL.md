@@ -58,8 +58,10 @@ unless the adapter requires a deliberate manual `order`.
 
 Credential-bearing settings must contain a `$credential` reference. Declare
 each reference under top-level `credentials` with `provider: env` and an
-environment-variable `identifier`; never put a literal secret in the package,
-output, test fixture, or command.
+environment-variable `identifier` that starts with `INFRAHUB_SYNC_CREDENTIAL_`,
+such as `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`; any other identifier is refused
+at validation. Never put a literal secret in the package, output, test fixture,
+or command.
 
 Check the draft against the installed adapter's declared setting surface when
 that source is available inside the authorized local scope, plus the referenced
