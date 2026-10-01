@@ -23,7 +23,7 @@ from __future__ import annotations
 import os
 
 import httpx
-from kit import refuse
+from kit import prefect_headers, refuse
 
 POOL = os.environ["INFRAHUB_SYNC_WORK_POOL"]
 API = os.environ["PREFECT_API_URL"].rstrip("/")
@@ -33,7 +33,7 @@ API = os.environ["PREFECT_API_URL"].rstrip("/")
 # waits for a name it has not seen rather than for the set to change size.
 ONLINE = "ONLINE"
 
-answer = httpx.post(f"{API}/work_pools/{POOL}/workers/filter", json={}, timeout=30)
+answer = httpx.post(f"{API}/work_pools/{POOL}/workers/filter", json={}, headers=prefect_headers(), timeout=30)
 if answer.status_code != 200:
     refuse(f"the deployment's Prefect server did not answer for work pool {POOL}")
 

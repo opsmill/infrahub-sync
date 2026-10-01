@@ -19,8 +19,11 @@ import httpx
 from prefect.client.schemas.objects import Worker, WorkerStatus
 from prefect.exceptions import ObjectNotFound
 from prefect.logging.loggers import PrefectLogAdapter
+from prefect.utilities.processutils import command_to_string, get_sys_executable
 from prefect.workers.process import ProcessJobConfiguration, ProcessWorker, ProcessWorkerResult
 from pydantic import PrivateAttr
+
+from .orchestration import SERVICE_DEFINITION
 
 if TYPE_CHECKING:
     import logging
@@ -34,6 +37,9 @@ if TYPE_CHECKING:
 _IDENTITY_ERROR = "service worker identity is unavailable"
 _WORKER_NAME_PREFIX = "infrahub-sync-service"
 _WORKER_PAGE_SIZE = 200
+_NOT_ADMITTED = "flow run was not admitted as the service deployment"
+# What Prefect 3.8.1's process job configuration resolves an unset command to.
+_SERVICE_CHILD_COMMAND = command_to_string([get_sys_executable(), "-m", "prefect.engine"])
 _SUBMISSION_IDENTITY: ContextVar[tuple[bool, int | None]] = ContextVar(
     "service_worker_submission_identity",
     default=(False, None),
@@ -42,6 +48,10 @@ _SUBMISSION_IDENTITY: ContextVar[tuple[bool, int | None]] = ContextVar(
 
 class ServiceWorkerIdentityError(RuntimeError):
     """Refuse polling when the worker's exact server identity is unavailable."""
+
+
+class ServiceFlowRunRefusedError(RuntimeError):
+    """Refuse a flow run that is not the service deployment exactly as the service applied it."""
 
 
 def service_worker_name() -> str:
@@ -71,10 +81,69 @@ def _without_worker_id(
     return PrefectLogAdapter(logger.logger, extra=extra)
 
 
+def _names_the_service(flow_run: FlowRun, deployment: DeploymentResponse, flow: APIFlow) -> bool:
+    """Whether these records are the service flow's own deployment, and this run belongs to it."""
+    same_records = (
+        flow_run.deployment_id is not None
+        and deployment.id == flow_run.deployment_id
+        and deployment.flow_id == flow_run.flow_id
+        and flow.id == flow_run.flow_id
+    )
+    return (
+        same_records
+        and flow.name == SERVICE_DEFINITION.flow_name
+        and deployment.name == SERVICE_DEFINITION.deployment_name
+    )
+
+
+def _admission_refusal(
+    configuration: ProcessJobConfiguration,
+    flow_run: FlowRun,
+    deployment: DeploymentResponse | None,
+    flow: APIFlow | None,
+    work_pool: WorkPool | None,
+) -> str | None:
+    """Name the first way this flow run differs from the service's own deployment, if any.
+
+    Everything that decides what a process child executes is data on the Prefect
+    server: the deployment's entrypoint and pull steps, the pool's job template, and
+    job variables on the deployment or the flow run. Anyone who can write to that
+    server can change any of it, so none of it is trusted by default. A run is
+    admitted only when every fact is what `deploy` and `bootstrap` themselves
+    write. The reasons are fixed text: they are recorded on the flow run, and the
+    values they describe are server data that may carry anything.
+    """
+    if deployment is None or flow is None or not _names_the_service(flow_run, deployment, flow):
+        return "flow run is not a run of the service deployment"
+    checks = (
+        (
+            deployment.entrypoint == SERVICE_DEFINITION.entrypoint,
+            "service deployment entrypoint is not the service flow",
+        ),
+        (not deployment.pull_steps, "service deployment declares pull steps"),
+        (
+            not deployment.job_variables and not flow_run.job_variables,
+            "job variables are not accepted for service flow runs",
+        ),
+        (
+            work_pool is not None and work_pool.base_job_template == ProcessWorker.get_default_base_job_template(),
+            "work pool job template is not the process default",
+        ),
+        # Implied by the two checks above; stated because these two fields are
+        # exactly what a child's command line and import root are made of.
+        (
+            configuration.command == _SERVICE_CHILD_COMMAND and configuration.working_dir is None,
+            "resolved child command is not the service default",
+        ),
+    )
+    return next((reason for held, reason in checks if not held), None)
+
+
 class ServiceProcessJobConfiguration(ProcessJobConfiguration):
-    """Carry the worker identity generation used to prepare this child."""
+    """Carry the worker identity generation and admission used to prepare this child."""
 
     _identity_generation: int | None = PrivateAttr(default=None)
+    _admitted: bool = PrivateAttr(default=False)
 
     def prepare_for_flow_run(  # pylint: disable=too-many-positional-arguments
         self,
@@ -85,6 +154,12 @@ class ServiceProcessJobConfiguration(ProcessJobConfiguration):
         worker_name: str | None = None,
         worker_id: UUID | None = None,
     ) -> None:
+        """Prepare the child, refusing it unless it is the service deployment as applied.
+
+        Raising here reaches Prefect's submission handler before the run is labelled
+        or proposed Submitting, and that handler records the refusal as a Crashed
+        state. Nothing has started by then.
+        """
         super().prepare_for_flow_run(
             flow_run,
             deployment,
@@ -93,6 +168,10 @@ class ServiceProcessJobConfiguration(ProcessJobConfiguration):
             worker_name,
             worker_id,
         )
+        refusal = _admission_refusal(self, flow_run, deployment, flow, work_pool)
+        if refusal is not None:
+            raise ServiceFlowRunRefusedError(refusal)
+        self._admitted = True
         bound, generation = _SUBMISSION_IDENTITY.get()
         self._identity_generation = generation if bound else None
 
@@ -300,7 +379,11 @@ class ServiceProcessWorker(ProcessWorker):
         configuration: ProcessJobConfiguration,
         task_status: TaskStatus[int] | None = None,
     ) -> ProcessWorkerResult:
-        """Start a child once its prepared identity is confirmed still current."""
+        """Start a child once it is admitted and its prepared identity is still current."""
+        # Admission is decided while the configuration is prepared; this refuses any
+        # configuration that reached `run` without going through that step.
+        if not isinstance(configuration, ServiceProcessJobConfiguration) or not configuration._admitted:
+            raise ServiceFlowRunRefusedError(_NOT_ADMITTED)
         # Waiting is the deferral. A refresh owns `_identity_lock` for its whole
         # window, so acquiring it holds this submission until the refresh has
         # finished and then revalidates against whatever it left. Refusing here

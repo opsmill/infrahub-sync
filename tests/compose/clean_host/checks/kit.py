@@ -18,6 +18,7 @@ some of them are credentials.
 
 from __future__ import annotations
 
+import base64
 import os
 import pathlib
 import sys
@@ -79,6 +80,17 @@ def destination() -> httpx.Client:
         headers={"X-INFRAHUB-KEY": os.environ["INFRAHUB_DESTINATION_TOKEN"]},
         timeout=30,
     )
+
+
+def prefect_headers() -> dict[str, str]:
+    """The basic-authentication header the deployment's Prefect server requires.
+
+    Prefect compares the decoded header with its configured credential as one
+    string, so the value is encoded whole rather than split into a user and a
+    password.
+    """
+    credential = os.environ["PREFECT_API_AUTH_STRING"].encode("utf-8")
+    return {"Authorization": "Basic " + base64.b64encode(credential).decode("ascii")}
 
 
 def sdk() -> InfrahubClientSync:

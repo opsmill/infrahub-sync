@@ -155,6 +155,17 @@ from the repository root.
    container itself. The worker uses the URLs in the registered package; environment
    variables such as `INFRAHUB_ADDRESS` do not change them.
 
+   The preview Infrahub publishes on `127.0.0.1` only. Docker Desktop routes
+   `host.docker.internal` to your machine's loopback, so nothing changes there. On
+   Linux, `host.docker.internal` is the Docker bridge gateway, which a loopback port
+   does not answer on. Publish Infrahub on that gateway instead: put
+   `PREVIEW_INFRAHUB_BIND_ADDRESS=<gateway>` in `development/preview.local.env`, where
+   `<gateway>` is what
+   `docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'`
+   prints (usually `172.17.0.1`), and run `uv run invoke preview.up` again. Infrahub
+   then answers on that address only, so the tasks and the host processes use
+   `http://<gateway>:8080`, and you open the UI there instead of `localhost`.
+
    Record the `config_id` from the output. If you change the package later, register
    the change with `configs version <config-id> <package>`. Registering changed content
    with `configs register` creates a new configuration ID at version 1.
@@ -349,6 +360,12 @@ Removes everything the stack created. The `.preview/` directory keeps its logs.
 | Sync HTTP API | `http://127.0.0.1:8010` | Host process |
 | PostgreSQL | `127.0.0.1:5439` | Container |
 | MinIO | `http://127.0.0.1:9010` | Container |
+
+Every container port is published on `127.0.0.1` only, so nothing in the stack, with
+its published development credentials, is reachable from another machine. Only
+Infrahub's address can change, through `PREVIEW_INFRAHUB_BIND_ADDRESS`, for a worker
+container on Linux; see step 6 of [Run a first sync](#run-a-first-sync). Do not set it to
+`0.0.0.0` on a machine others can reach.
 
 The defaults avoid ports 8000 and 4200, so an Infrahub development stack or a Prefect
 server you already run keeps working alongside. To change any of them, put the override

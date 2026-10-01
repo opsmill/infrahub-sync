@@ -25,6 +25,7 @@ from prefect.workers.process import ProcessWorker
 
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
+from infrahub_sync.service.orchestration import SERVICE_DEFINITION
 from infrahub_sync.service.worker import ServiceProcessWorker, ServiceWorkerIdentityError, service_worker_name
 from tests.service.execution_fixtures import append_execution
 
@@ -36,6 +37,8 @@ POOL_ID = UUID("e0679e8a-9460-4ca7-8bf1-70bf967eed2d")
 FLOW_ID = UUID("ed4778cb-f2cf-4b1f-a87b-68be37659e93")
 FIRST_WORKER_ID = UUID("8c1da53d-0e6b-4d3d-a0f1-97b6a9ccebf0")
 SECOND_WORKER_ID = UUID("d08f703b-ce73-4269-a7aa-1bfb00f8cc63")
+SERVICE_FLOW_ID = UUID("5a0f2b3c-4d5e-4f60-8a71-b2c3d4e5f607")
+SERVICE_DEPLOYMENT_ID = UUID("7b1c2d3e-4f50-4a61-9b72-c3d4e5f60718")
 
 
 @pytest.fixture(autouse=True)
@@ -71,7 +74,20 @@ class _WorkerClient:
         return self.records[start:stop]
 
     async def read_flow(self, flow_id: UUID) -> SimpleNamespace:  # noqa: PLR6301 - Prefect client protocol.
-        return SimpleNamespace(id=flow_id, name="service-flow", labels={})
+        return SimpleNamespace(id=flow_id, name=SERVICE_DEFINITION.flow_name, labels={})
+
+    async def read_deployment(self, deployment_id: UUID) -> SimpleNamespace:  # noqa: PLR6301 - Prefect client protocol.
+        # The service deployment as `deploy` applies it, so these runs pass admission
+        # and what each test exercises is the identity path alone.
+        return SimpleNamespace(
+            id=deployment_id,
+            name=SERVICE_DEFINITION.deployment_name,
+            flow_id=SERVICE_FLOW_ID,
+            entrypoint=SERVICE_DEFINITION.entrypoint,
+            pull_steps=[],
+            job_variables={},
+            updated=None,
+        )
 
 
 class _FlowWorkerRegistryClient:
@@ -117,8 +133,9 @@ def _flow_run() -> SimpleNamespace:
     return SimpleNamespace(
         id=FLOW_ID,
         name="service-run",
-        flow_id=SECOND_WORKER_ID,
-        deployment_id=None,
+        flow_id=SERVICE_FLOW_ID,
+        deployment_id=SERVICE_DEPLOYMENT_ID,
+        parent_task_run_id=None,
         job_variables={},
     )
 

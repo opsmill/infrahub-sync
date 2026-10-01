@@ -129,14 +129,15 @@ MIN_SECRET_LENGTH = 6
 # credential-shaped when it CONTAINS one of the substrings, ENDS WITH one of the
 # suffixes, or equals one of the exact names. Substring matching is what catches
 # the bare `TOKEN`/`PASSWORD` names the genericrestapi adapter reads by default
-# (adapters/genericrestapi.py:72,90) and `AWS_SECRET_ACCESS_KEY`; the two
-# suffixes carry the names — `*_KEY`, `*_AUTH` — whose bare substrings would
-# match unrelated variables (`KEYCHAIN`, `SSH_AUTH_SOCK`). Adapter credentials
+# (adapters/genericrestapi.py:72,90) and `AWS_SECRET_ACCESS_KEY`; the
+# suffixes carry the names — `*_KEY`, `*_AUTH`, and Prefect's
+# `*_AUTH_STRING` — whose bare substrings would match unrelated variables
+# (`KEYCHAIN`, `SSH_AUTH_SOCK`). Adapter credentials
 # such as NETBOX_TOKEN reach the runner through the environment, outside the
 # resolved configuration's settings.
 SECRET_ENV_NAMES = ("INFRAHUB_API_TOKEN", "KEY", "AUTH")
 SECRET_ENV_NAME_SUBSTRINGS = ("TOKEN", "PASSWORD", "PASSWD", "SECRET", "CREDENTIAL", "APIKEY")
-SECRET_ENV_NAME_SUFFIXES = ("_KEY", "_AUTH")
+SECRET_ENV_NAME_SUFFIXES = ("_KEY", "_AUTH", "_AUTH_STRING")
 
 # Settings half. Every `settings` mapping of the resolved configuration — source,
 # destination, AND store — is walked RECURSIVELY, and a key is credential-shaped

@@ -24,6 +24,22 @@ Python entrypoint, not the Compose operator workflow.
 the `service` extra. The API submits work to `infrahub-sync-service/run`; a process worker
 executes the installed `infrahub_sync.service.flow.service_sync_run` function.
 
+The worker, `infrahub_sync/service/worker.py`, runs nothing else. Everything that decides
+what a process child executes is data on the Prefect server, so `ServiceProcessJobConfiguration`
+admits a flow run only when it belongs to the `SERVICE_DEFINITION` deployment exactly as
+`deploy` and `bootstrap` write it: the service flow and deployment names, the installed
+module entrypoint, no pull steps, no job variables on the deployment or the flow run, the
+process pool's default job template, and the default child command with no working
+directory. A refusal raises `ServiceFlowRunRefusedError` while the configuration is
+prepared, which Prefect records as a `Crashed` state before any process starts; its
+reason is fixed text and echoes no server value. The admitted child then loads the
+deployment from the server again, so the check bounds what a run can execute only while
+no one else can write to the deployment; that is what the API authentication below
+provides. Anything the service applies to its own
+deployment later, such as job variables, has to be admitted here in the same change. The
+Compose bundle also turns on Prefect's API basic authentication, so reaching the Prefect
+API is not enough to create a deployment in the pool.
+
 The service uses the vendored OpsMill Prefect Extras package for deployment catalogue
 validation, deployment convergence and submission idempotency. The API retains product
 records; Prefect records live execution state and logs. See
