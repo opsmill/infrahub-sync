@@ -26,7 +26,6 @@ from uuid import uuid4
 
 import pytest
 
-from tasks.compose import ZERO_SKIP_OPTION
 from tests.compose.redaction import SECRETS, Captured, capture
 
 if TYPE_CHECKING:
@@ -40,6 +39,10 @@ BUNDLED_CONFIGURATION = BUNDLE / "configuration" / "qualification.yaml"
 
 INSTANCE_LABEL = "io.infrahub-sync.instance"
 BUNDLE_LABEL = "io.infrahub-sync.bundle"
+
+# Turns a skipped Compose test into a failure, so a run that skipped everything
+# cannot pass as green.
+ZERO_SKIP_OPTION = "--compose-zero-skip"
 
 # The member a release generates into the archive, naming the image the bundle
 # was qualified against. The repository tracks no such file — it is derived from
