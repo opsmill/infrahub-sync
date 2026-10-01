@@ -1,0 +1,23 @@
+.github/file-filters.yml
+  s_e781df4f83e385::t_ca610e2f48449c 137-155
+dev/specs/007-harbor-image-publishing/research.md
+  s_e781df4f83e385::t_ca610e2f48449c 313-331
+dev/specs/007-harbor-image-publishing/tasks.md
+  s_e781df4f83e385::t_ca610e2f48449c 38-39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5070ffde18864f976a2b7c8754f80b9ce876863f",
+  "prompts": {},
+  "sessions": {
+    "s_e781df4f83e385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e7508e3-b2e9-494a-a98a-ccc3d06e2a0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
