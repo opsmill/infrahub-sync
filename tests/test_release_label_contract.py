@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess  # noqa: S404
 import sys
 from pathlib import Path
@@ -80,6 +81,18 @@ def test_dependabot_pull_requests_carry_patch_label() -> None:
 def test_sdk_update_pull_requests_carry_patch_label() -> None:
     workflow = (ROOT / ".github" / "workflows" / "update-infrahub-sdk.yml").read_text()
     assert '--label "changes/patch"' in workflow
+
+
+def test_exemption_mirrors_release_pull_request_naming() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "trigger-push-stable.yml").read_text()
+    assert 'BRANCH="release/${VERSION}"' in workflow
+    assert '--title "chore(release): ${VERSION}"' in workflow
+
+    version_check = re.search(r"grep -Eq '\^(?P<pattern>[^']+)\$'; then", workflow)
+    assert version_check is not None
+    checker = CHECKER_PATH.read_text()
+    expected = "release/" + version_check.group("pattern").replace("(", "(?:")
+    assert f'RELEASE_BRANCH_PATTERN = re.compile(r"{expected}")' in checker
 
 
 def test_workflow_never_checks_out_pull_request_code() -> None:
