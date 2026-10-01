@@ -17,11 +17,16 @@ the same name, so callers read the same in both repositories.
 
 ## Secrets and variables
 
-Callers pass `secrets: inherit`.
+Callers that publish pass `secrets: inherit`. The pull-request caller passes no
+secrets, so fork pull requests run the same build.
 
 - `vars.HARBOR_HOST`, `secrets.HARBOR_USERNAME`, `secrets.HARBOR_PASSWORD`: read only
   by steps guarded by `publish`, and never echoed.
-- Keyless signing uses `id-token: write`.
+- Permissions are scoped per job: `build` and `merge` get `contents: read`, and
+  `sign` and `sbom` add `id-token: write` for keyless signing. No job asks for
+  `packages`, because Harbor uses its own credentials. GitHub checks every called
+  job against the caller's grant, skipped ones included, so even a build-only
+  caller grants `id-token: write`.
 
 ## Jobs and guarantees
 

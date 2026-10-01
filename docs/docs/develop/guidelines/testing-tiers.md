@@ -4,7 +4,7 @@ title: "Testing tiers"
 
 ## Testing tiers
 
-> Part of: Develop > Guidelines | Related: [Testing](testing.md), [Quality gates](../knowledge/quality-gates.md), [Qualifying an internal candidate](../guides/qualifying-an-internal-candidate.md)
+> Part of: Develop > Guidelines | Related: [Testing](testing.md), [Quality gates](../knowledge/quality-gates.md), [Contributing](../../contributing.mdx#ci-checks)
 
 **Checked 2026-09-29 against source revision
 [`d9ef147c569a42ec4471bba78ec270c343cdfa28`](https://github.com/opsmill/infrahub-sync/tree/d9ef147c569a42ec4471bba78ec270c343cdfa28).** The commands, markers,
@@ -74,8 +74,8 @@ preview and integration suites against whatever environment your shell happens t
 | Unit | `uv run invoke tests.tests-unit` | The installed extras, plus the `docker compose` CLI on your PATH | Nothing outside `tmp_path` |
 | Integration | `uv run invoke tests.tests-integration` | Varies by family — see below; no single set of variables covers the tier | Varies by family: read-only, temporary local state, or a disposable live target — see below |
 | Preview smoke | `uv run invoke preview.smoke` | The preview stack, started with `preview.up` | Seeds and writes to the disposable stack |
-| Compose lifecycle | `uv run invoke compose.lifecycle` | An already built and loaded candidate image, and a Docker daemon | A real container stack it brings up and tears down |
-| Clean-host qualification | See the candidate guide | A checkout-free host holding only the artifact | A real deployment |
+| Image smoke | `uv run pytest -m docker tests/image/test_image_artifact.py` | A locally built image named in `INFRAHUB_SYNC_IMAGE_REF`, and a Docker daemon | Throwaway containers it starts and removes |
+| Compose (opt-in) | `uv run pytest -m compose tests/compose` | A Docker daemon | A real container stack it brings up and tears down |
 
 #### Integration
 
@@ -472,28 +472,31 @@ uv run pytest -q -m "not preview" tests/preview
 [Local development stack](../../development-stack.mdx) is the full procedure for the stack
 itself.
 
-#### Compose lifecycle
+#### Image smoke
 
 ```bash
-uv run invoke compose.lifecycle
+docker build -t infrahub-sync:smoke .
+INFRAHUB_SYNC_IMAGE_REF=infrahub-sync:smoke uv run pytest -m docker tests/image/test_image_artifact.py
 ```
 
-This one does **not** build anything. It consumes the candidate image the image gate already
-built and loaded, addressed by the configuration digest that build recorded, and refuses to
-run when the daemon does not hold it — building here would qualify a different artifact.
+This is what the image check runs on a pull request, once per platform, on a native
+`linux/amd64` and a native `linux/arm64` runner. It checks that the CLI answers `--help`, that
+the API answers `GET /version`, and that the image carries its OCI labels. The revision label
+case compares the label to the commit checked out, so a local build without labels fails that
+case. Pass the same `--label` values CI passes to reproduce it in full.
 
-It enforces its own zero-skip policy internally: the task passes `--compose-zero-skip` and
-runs single-process, so under it a skipped `compose`-marked case is a failed one. Running
-`pytest tests/compose -m compose` directly keeps the ordinary Docker and platform skips
-instead, which is useful while developing a case and useless as a qualification claim.
+The tests skip when `INFRAHUB_SYNC_IMAGE_REF` is unset, so confirm they ran before treating a
+green result as evidence.
 
-#### Clean-host qualification
+#### Compose (opt-in)
 
-The checkout-free driver and the full qualification route are already explained by
-[Qualifying an internal candidate](../guides/qualifying-an-internal-candidate.md). That
-procedure deliberately uses no interpreter, package manager or checkout on the host, because
-the claim being made is that a host holding the artifact alone can run it. Do not reproduce
-its steps here.
+```bash
+uv run pytest -m compose tests/compose
+```
+
+The Compose suite brings up a real deployment through a Docker daemon and tears it down. No CI
+job runs it. Run it by hand when a change touches the Compose deployment. It keeps the
+ordinary Docker and platform skips, so confirm what ran before claiming it passed.
 
 ### `check-310`
 

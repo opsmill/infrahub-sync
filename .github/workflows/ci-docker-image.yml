@@ -7,8 +7,8 @@ run-name: "Image ${{ inputs.ref }} (publish=${{ inputs.publish }})"
 # same name. Every platform is built, loaded and smoke-tested before anything is
 # pushed; `merge`, `sign` and `sbom` only run when publishing.
 #
-# When calling this workflow, ensure you use
-#   secrets: inherit
+# A caller that publishes passes `secrets: inherit`. A build-only caller, such as
+# the pull-request gate, passes no secrets.
 
 on:
   workflow_call:
@@ -74,10 +74,12 @@ on:
         description: Comma separated platform list to build the image for
         default: "linux/amd64,linux/arm64"
 
+# Scoped per job. GitHub checks every job of a called workflow against what the
+# caller grants, skipped ones included, so a pull request that only builds still
+# has to grant `id-token: write` for `sign` and `sbom`. Nothing else is asked for:
+# Harbor is reached with its own credentials, so no job needs `packages`.
 permissions:
   contents: read
-  id-token: write
-  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.ref }}
@@ -86,6 +88,8 @@ concurrency:
 jobs:
   build:
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: true
       matrix:
@@ -195,6 +199,8 @@ jobs:
     needs: build
     if: inputs.publish
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     outputs:
       digest: ${{ steps.inspect.outputs.digest }}
     steps:
@@ -253,6 +259,9 @@ jobs:
     needs: merge
     if: inputs.publish
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write  # keyless signing
     steps:
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
@@ -295,6 +304,9 @@ jobs:
     needs: merge
     if: inputs.publish
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write  # keyless attestation
     steps:
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2

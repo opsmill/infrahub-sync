@@ -176,28 +176,25 @@ uv run invoke preview.smoke   # seed, then run the preview smoke suite
 uv run invoke preview.down --volumes
 ```
 
-### CI tiers
+### CI checks
 
-Continuous integration runs in two tiers on a pull request.
+Every pull request runs lint, the uv check and the unit tests.
 
-The fast tier runs on every push: lint, the uv check, the unit tests, and an image build for
-`linux/amd64` with its release identity, deployment bundle, bill of materials, vulnerability
-scan, and smoke test.
+When a pull request changes an image input, CI also builds the container image for
+`linux/amd64` and `linux/arm64` on native runners and runs the image smoke test on each. The
+image inputs are the `Dockerfile`, `.dockerignore`, `pyproject.toml`, `uv.lock`, the package
+source, the root `docker-compose.yml`, `tests/image/`, and the workflow and filter files that
+declare this check. The build pushes nothing and uses no registry credentials, so a pull request
+from a fork runs the same check as one from an internal branch.
 
-The full qualification tier adds the `linux/arm64` build and smoke test, the warm-builder
-freshness check, the Compose lifecycle suite, and the clean-host matrix. To run it, add the
-`qualify` label to the pull request. Every later push runs it again while the label is present.
-The full tier also runs without the label when the diff changes a path that only those stages
-check: the `Dockerfile`, `deploy/compose/`, `tests/compose/`, `tests/image/`, `tasks/image.py`,
-`tasks/compose.py`, `tasks/release.py`, the qualification kit, or the workflow files that
-declare the tiers.
+The `Full qualification` check always runs and is the one branch protection requires. It passes
+when the image built and passed its smoke test on both platforms, or when the pull request
+changes no image input and the build was skipped. It fails when either build fails, including a
+change that breaks only `linux/arm64`.
 
-The `Full qualification` check always runs. It fails until the full tier has passed for the
-current head, so a pull request cannot merge on the fast tier alone.
-
-A push to `feature/v3-develop`, which a merge produces, also runs the full tier. This checks the
-merged tree. A pull-request run tests the head merged with the base at that time, and the commit
-that lands can differ from it.
+A push to `feature/v3-develop`, which a merge produces, runs the same checks against the merged
+tree. A pull-request run tests the head merged with the base at that time, and the commit that
+lands can differ from it.
 
 ## Code standards
 

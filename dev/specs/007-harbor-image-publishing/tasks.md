@@ -172,12 +172,12 @@ result.
 
 **Independent Test**: quickstart §3.
 
-- [ ] T018 [P] [US3] Rewrite the required-check contracts in `tests/test_workflow_contracts.py`:
+- [X] T018 [P] [US3] Rewrite the required-check contracts in `tests/test_workflow_contracts.py`:
   - Keep `REQUIRED_JOB = "qualification-required"` and assert its `name` is `Full qualification`.
   - Assert it `needs: ["image-changes", "image"]`, runs `if: always()`, and fails unless `needs.image.result` is `success` or `skipped`.
   - Assert the `image` job calls `./.github/workflows/ci-docker-image.yml` with `publish: false`, references no `secrets`, has no `actions: write`, and is gated on the `image_inputs` filter.
   - Delete the tier-guard tests that test the `qualify` label and the `qualification` decision job.
-- [ ] T019 [US3] Rewrite the `image` and `qualification-required` jobs in `.github/workflows/trigger-pr-develop.yml`:
+- [X] T019 [US3] Rewrite the `image` and `qualification-required` jobs in `.github/workflows/trigger-pr-develop.yml`:
   - **Delete** the `qualification` tier-decision job and the `labeled`/`unlabeled` triggers that only served the `qualify` label.
   - **Add** an `image-changes` job using `opsmill/paths-filter` (already used in this repo; reuse its pinned SHA) with `filters: .github/file-filters.yml`, which outputs `image_inputs`.
   - **`image` job**: `needs: image-changes`, `if: needs.image-changes.outputs.image_inputs == 'true'`, and `uses: ./.github/workflows/ci-docker-image.yml` with:
@@ -189,8 +189,8 @@ result.
     Its permissions are just `contents: read`.
   - **`qualification-required`** keeps its id and `name: "Full qualification"`, with `needs: ["image-changes", "image"]` and `if: always()`. It fails unless the `image-changes` result is `success` and the `image` result is `success` or `skipped`. Each failure message names the job that failed.
   - **Leave** `linter`, `uv-checker` and `tests` unchanged.
-- [ ] T020 [P] [US3] Update the "Full qualification" section of `docs/docs/contributing.mdx` (around lines 185–200). The check is now the image build and smoke test on both platforms, which runs when image inputs change and passes when they don't. The `qualify` label is gone.
-- [ ] T021 [P] [US3] Update `docs/docs/develop/guidelines/testing-tiers.md` to describe the remaining tiers: unit, `-m docker` smoke, and the opt-in `-m compose`. Remove the full-qualification-tier, clean-host and candidate tiers.
+- [X] T020 [P] [US3] Update the "Full qualification" section of `docs/docs/contributing.mdx` (around lines 185–200). The check is now the image build and smoke test on both platforms, which runs when image inputs change and passes when they don't. The `qualify` label is gone.
+- [X] T021 [P] [US3] Update `docs/docs/develop/guidelines/testing-tiers.md` to describe the remaining tiers: unit, `-m docker` smoke, and the opt-in `-m compose`. Remove the full-qualification-tier, clean-host and candidate tiers.
 
 **Checkpoint**: quickstart §3 passes on a test PR.
 
