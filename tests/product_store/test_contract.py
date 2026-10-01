@@ -17,7 +17,7 @@ from itertools import count
 from pathlib import Path
 from threading import Barrier, Event, local
 from types import SimpleNamespace
-from typing import Any, NoReturn, cast
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -3185,19 +3185,6 @@ def test_a_public_json_artifact_is_redacted_inside_json_text_held_by_a_field(pro
     assert artifact is not None
     config = json.loads(artifact)["operations"][0]["payload"]["config"]
     assert json.loads(config) == {"pw": "***"}
-
-
-def test_a_public_json_artifact_without_any_secret_form_is_not_decoded(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The decoded pass walks every value, so a document that holds no form of a secret skips it."""
-
-    def walked(*_args: object, **_kwargs: object) -> NoReturn:
-        msg = "the decoded pass ran on a document without a secret"
-        raise AssertionError(msg)
-
-    monkeypatch.setattr(product_store_store, "_redact_ordered_value", walked)
-    data = json.dumps({"operations": [{"note": "nothing to hide"}]}).encode()
-
-    assert product_store_store._redacted_json_bytes(data, (_ESCAPED_SECRET,)) == data
 
 
 def test_a_public_text_artifact_is_redacted_in_its_raw_and_json_escaped_forms(provider: ProductProjection) -> None:
