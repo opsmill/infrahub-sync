@@ -1,0 +1,26 @@
+RELEASING.md
+  s_7e8bc0f59e77ac::t_c9e7ba9126b145 37
+  s_7e8bc0f59e77ac::t_73499427d76b11 45
+  s_7e8bc0f59e77ac::t_c8c53319985e85 197
+dev/constitution.md
+  s_7e8bc0f59e77ac::t_01cdcdee070cf2 190
+  s_7e8bc0f59e77ac::t_308cd9b38351a8 3-9,212
+AGENTS.md
+  s_7e8bc0f59e77ac::t_8808ab7b4f0358 152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7c8856e5de229108c7bc45b157535fff066ea411",
+  "prompts": {},
+  "sessions": {
+    "s_7e8bc0f59e77ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e8f58ef6-d8cb-4c10-9bd9-5e5f499aa838",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
