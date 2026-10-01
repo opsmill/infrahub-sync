@@ -4472,12 +4472,27 @@ def test_postgresql_migration_ignores_same_named_tables_in_a_sibling_schema() ->
             ).fetchall()
         return {row[0] for row in rows}
 
+    def constraints_of(schema_name: str, dsn: str) -> set[str]:
+        with psycopg.connect(dsn) as admin:
+            rows = admin.execute(
+                "SELECT constraint_name FROM information_schema.table_constraints "
+                "WHERE table_name IN ('product_runs', 'mutation_receipts') AND table_schema = %s",
+                (schema_name,),
+            ).fetchall()
+        return {row[0] for row in rows}
+
+    guards = {
+        product_store_store._CONFIGURATION_BINDING_CONSTRAINT,
+        product_store_store._MUTATION_RECEIPT_RESOURCE_CONSTRAINT,
+    }
+
     try:
         sibling.create()
         target.create()
         # The sibling is fully migrated, so it carries the binding columns.
         PostgreSQLRunStore(lambda: PsycopgConnectionFactory(psycopg.connect)(sibling.dsn))
         assert binding_columns <= columns_of(sibling.name, sibling.dsn)
+        assert guards <= constraints_of(sibling.name, sibling.dsn)
 
         # The target holds the legacy parent tables only: same table names, no binding columns.
         registry_tables = ("configurations", "configuration_versions")
@@ -4487,13 +4502,18 @@ def test_postgresql_migration_ignores_same_named_tables_in_a_sibling_schema() ->
                     admin.execute(statement)
             admin.commit()
         assert not binding_columns & columns_of(target.name, target.dsn)
+        assert not guards & constraints_of(target.name, target.dsn)
 
         PostgreSQLRunStore(lambda: PsycopgConnectionFactory(psycopg.connect)(target.dsn))
 
         assert binding_columns <= columns_of(target.name, target.dsn)
+        # A same-named constraint in the sibling must not satisfy the existence checks.
+        assert guards <= constraints_of(target.name, target.dsn)
     finally:
-        target.drop()
-        sibling.drop()
+        try:
+            target.drop()
+        finally:
+            sibling.drop()
 
 
 def _assert_real_postgresql_refuses_partial_configuration_binding(dsn: str) -> None:
