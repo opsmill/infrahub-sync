@@ -50,7 +50,8 @@ from infrahub_sync.configuration.schema_validation import (
     DestinationSchemaOptions,
     collect_destination_schema_findings,
 )
-from infrahub_sync.configuration.validation import _location_digest
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
+from infrahub_sync.configuration.validation import _CODE_UNSUPPORTED_SYNC_STORE, _location_digest
 from infrahub_sync.execution import REDACTED, redact
 from infrahub_sync.product_store.store import (
     ConfigurationNotFoundError,
@@ -90,9 +91,13 @@ class ConfigsValidationError(ConfigsError):
 
     family: ClassVar[str] = "validation"
 
-    def __init__(self, message: str, *, findings: tuple[ValidationFinding, ...] = ()) -> None:
+    def __init__(
+        self, message: str, *, findings: tuple[ValidationFinding, ...] = (), reason: str | None = None
+    ) -> None:
+        """Keep the structured refusal independent of its display message."""
         super().__init__(message)
         self.findings = findings
+        self.reason = reason
 
 
 class ConfigsNotFoundError(ConfigsError):
@@ -687,7 +692,7 @@ def _require_json_native_package(package: object) -> None:
         raise ConfigsRequestError(msg) from None
 
 
-def _parse(package: Mapping[str, Any]) -> ConfigurationPackage:
+def _parse(package: Mapping[str, Any], *, refuse_store: bool = True) -> ConfigurationPackage:
     """Parse declared JSON-native content, requiring exactly that shape before anything else.
 
     Structural acceptance (:func:`_require_json_native_package`) runs first, so only a
@@ -696,6 +701,20 @@ def _parse(package: Mapping[str, Any]) -> ConfigurationPackage:
     merely non-native value is refused as the caller's own input without being invoked.
     """
     _require_json_native_package(package)
+    configuration = package.get("configuration")
+    if refuse_store and isinstance(configuration, dict) and configuration.get("store") is not None:
+        raise ConfigsValidationError(
+            UNSUPPORTED_STORE_MESSAGE,
+            reason=UNSUPPORTED_STORE_REASON,
+            findings=(
+                ValidationFinding(
+                    code=_CODE_UNSUPPORTED_SYNC_STORE,
+                    severity="error",
+                    location="/configuration/store",
+                    message=UNSUPPORTED_STORE_MESSAGE,
+                ),
+            ),
+        )
     try:
         return parse_configuration_package(dict(package))
     except ConfigurationPackageParseError as exc:
@@ -871,7 +890,7 @@ def validate(
     if stored is None:
         msg = f"configuration {config_id!r} has no registered version {registry_version} ({lookup.reason})"
         raise ConfigsNotFoundError(msg)
-    parsed = _parse(stored.declared_content)
+    parsed = _parse(stored.declared_content, refuse_store=False)
     findings = collect_findings(parsed, secrets)
     fingerprint: str | None = None
     if destination_schema is not None:

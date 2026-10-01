@@ -36,6 +36,7 @@ from infrahub_sync.client import (
     TransportError,
     ValidationReportResource,
 )
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -162,6 +163,7 @@ def _echo_fields(fields: tuple[tuple[str, object], ...], *, err: bool = False) -
 
 
 def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object], ...]]:
+    """Render bounded error fields and the fixed store-refusal guidance."""
     if isinstance(error, ClientInputError):
         result = "client-input", (("argument", error.argument),)
     elif isinstance(error, CompatibilityError):
@@ -220,6 +222,10 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
         result = "transport", (("operation", error.operation),)
     else:
         result = "sync-client", ()
+    if (isinstance(error, ConfigsAPIError) and error.reason == UNSUPPORTED_STORE_REASON) or (
+        isinstance(error, APIError) and error.code == UNSUPPORTED_STORE_REASON
+    ):
+        result = (result[0], (*result[1], ("message", UNSUPPORTED_STORE_MESSAGE)))
     return result
 
 

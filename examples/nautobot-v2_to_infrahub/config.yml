@@ -11,12 +11,6 @@ destination:
   settings:
     url: "http://localhost:8000"
 
-# store:
-#   type: redis
-#   settings:
-#     host: localhost
-#     port: 6379
-
 # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
 # Uncomment and edit only if you need to override the computed order:
 # order: [
