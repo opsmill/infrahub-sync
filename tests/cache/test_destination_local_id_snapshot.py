@@ -193,13 +193,14 @@ def test_a_warm_destination_load_rebuilds_models_carrying_their_local_id(tmp_pat
     assert ("full_load", None) not in destination.calls, "A usable snapshot must not force a full extract."
 
 
-def test_a_pre_change_snapshot_without_the_column_forces_a_full_destination_extract(
+def test_a_snapshot_missing_the_column_despite_a_safe_cursor_forces_a_full_destination_extract(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A destination snapshot with no `local_id` column cannot key updates, so it is a cache miss.
 
-    The fixture pairs a safe cursor with the missing column to isolate this branch; it is the
-    check that runs after the safe-cursor gate has accepted the resource.
+    A genuine pre-change run saved an unqualified cursor, which the safe-cursor gate already
+    rejects. This fixture is the other case: a snapshot that lost the column (damaged or
+    hand-edited) while its cursor is safe, so the gate accepts it and only this check applies.
     """
     potenda, _source, destination = make_potenda(tmp_path)
     potenda._schema_subhash = "HASHFIXED"

@@ -295,7 +295,9 @@ def test_partial_snapshot_write_keeps_the_old_cursor_usable(tmp_path: Path, monk
         writes.append(kwargs["resource"])
         real_write(**kwargs)
 
-    reloaded = _TimestampSource(rows, safe=True, exclusive=False, mutate=False)
+    # The interrupted reload reports a different bound than the saved one, so saving
+    # the reloaded source's cursor would change cursors.json.
+    reloaded = _TimestampSource(rows, safe=True, exclusive=True, mutate=False)
     first.source = reloaded
     with monkeypatch.context() as patch:
         patch.setattr(parquet_io, "write_resource_side", interrupt_second_write)
