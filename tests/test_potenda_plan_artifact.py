@@ -1587,6 +1587,26 @@ def test_a_generic_reference_is_probed_under_each_mapped_concrete_kind() -> None
     assert devices["d2"].identity["location"] == {"peer_kind": "LocationSite", "identity": {"name": "hq"}}
 
 
+def test_a_direct_run_expands_a_generic_reference_from_the_destination_live_schema() -> None:
+    """With no runtime snapshot, derivation reads the live schema ordering reads."""
+    from infrahub_sdk.schema.main import GenericSchemaAPI
+
+    config = duplicate_location_config("LocationAny")
+    assert config._runtime_models is None
+    destination = _FakeAdapter("destination")
+    destination.schema = {
+        "LocationAny": GenericSchemaAPI(name="Any", namespace="Location", used_by=["LocationRack", "LocationSite"])
+    }
+    source = location_side("source", racks=["r1"], sites=["hq"], devices=[("d1", "r1"), ("d2", "hq")])
+    build_potenda(config=config, source=source, destination=destination, run_id="20260726T2000-77777777")
+
+    assert reference_candidates(config, "DcimDevice") == {"location": LOCATION_CANDIDATES}
+    operations = derive_over(config, source)
+    devices = {operation.identity["name"]: operation for operation in operations if operation.kind == "DcimDevice"}
+    assert devices["d1"].identity["location"] == {"peer_kind": "LocationRack", "identity": {"name": "r1"}}
+    assert devices["d2"].identity["location"] == {"peer_kind": "LocationSite", "identity": {"name": "hq"}}
+
+
 def test_an_unresolved_generic_peer_names_the_concrete_candidate_kinds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -284,6 +284,12 @@ class Potenda:
         # records the semantics it was actually computed against rather than a second read.
         runtime_models = getattr(config, "_runtime_models", None)
         self.schema_fingerprint: str | None = None if runtime_models is None else runtime_models.schema_fingerprint
+        if config is not None and runtime_models is None:
+            # A direct run has no validated snapshot; plan derivation reads the same live
+            # schema ordering does, so a generic reference expands consistently.
+            from infrahub_sync.utils import _generic_peers_for_order
+
+            config._direct_generic_peers = _generic_peers_for_order(destination, None) or None
         self._did_full_extract: bool = False
         # Per-side extraction mode, recorded alongside the OR-accumulated
         # `_did_full_extract` rather than in place of it. FR-015 derives deletes only

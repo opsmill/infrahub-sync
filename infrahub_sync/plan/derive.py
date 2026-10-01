@@ -127,7 +127,11 @@ def reference_candidates(config: SyncConfig | None, kind: str) -> dict[str, tupl
     if config is None:
         return {}
     runtime_models = getattr(config, "_runtime_models", None)
-    generic_peers: Mapping[str, tuple[str, ...]] = runtime_models.generic_peers if runtime_models is not None else {}
+    generic_peers: Mapping[str, tuple[str, ...]] = (
+        runtime_models.generic_peers
+        if runtime_models is not None
+        else getattr(config, "_direct_generic_peers", None) or {}
+    )
     mapped = {entry.name for entry in config.schema_mapping}
     by_field: dict[str, set[str]] = {}
     for entry in config.schema_mapping:

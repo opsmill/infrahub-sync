@@ -139,6 +139,10 @@ class SyncInstance(SyncConfig):
     # tells engine assembly to use installed resolution and bind in-memory classes rather
     # than the legacy generated-wrapper path.
     _runtime_models: RuntimeModelPlan | None = pydantic.PrivateAttr(default=None)
+    # Generic-to-concrete peers read from the destination adapter's live schema on a direct
+    # run, which has no `_runtime_models`. Plan derivation uses it so it expands a generic
+    # reference the same way ordering does.
+    _direct_generic_peers: Mapping[str, tuple[str, ...]] | None = pydantic.PrivateAttr(default=None)
 
 
 def resolve_effective_diffsync_flags(
