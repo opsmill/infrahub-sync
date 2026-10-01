@@ -6,12 +6,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from typing import cast
 
 BUMP_LABELS = frozenset({"changes/major", "changes/minor", "changes/patch"})
 RELEASE_PR_PREFIX = "chore(release):"
 RELEASE_PR_AUTHOR = "opsmill-bot"
+# Mirrors the version check in trigger-push-stable.yml, which names the branch
+# `release/${VERSION}`.
+RELEASE_BRANCH_PATTERN = re.compile(r"release/(?P<version>[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z.-]+)?)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,12 +34,12 @@ def main() -> int:
     """Validate that a normal pull request has exactly one release label."""
     args = build_parser().parse_args()
 
-    release_version = args.head_ref.removeprefix("release/")
+    release_branch = RELEASE_BRANCH_PATTERN.fullmatch(args.head_ref)
     if (
-        args.author_login == RELEASE_PR_AUTHOR
+        release_branch is not None
+        and args.author_login == RELEASE_PR_AUTHOR
         and args.head_repository == args.repository
-        and args.head_ref.startswith("release/")
-        and args.title == f"{RELEASE_PR_PREFIX} {release_version}"
+        and args.title == f"{RELEASE_PR_PREFIX} {release_branch.group('version')}"
     ):
         sys.stdout.write("Skipping label check for generated release pull request.\n")
         return 0

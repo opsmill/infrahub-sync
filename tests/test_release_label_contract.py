@@ -101,8 +101,9 @@ def test_generated_release_pull_request_is_exempt() -> None:
         {"author_login": "contributor", "head_repository": "contributor/example"},
         {"head_repository": "contributor/example"},
         {"title": "fix: example"},
+        {"title": "chore(release): arbitrary", "head_ref": "release/arbitrary"},
     ],
-    ids=["untrusted-author", "forked-bot", "non-release-title"],
+    ids=["untrusted-author", "forked-bot", "non-release-title", "non-version-ref"],
 )
 def test_lookalike_release_pull_request_is_not_exempt(override: dict[str, str]) -> None:
     result = run_checker([], **{**RELEASE_PR, **override})
