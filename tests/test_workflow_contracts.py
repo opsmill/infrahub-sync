@@ -2310,3 +2310,35 @@ def test_the_required_check_waits_for_and_refuses_a_failed_fast_check(check: str
     assert check in _needs(job), f"{REQUIRED_JOB} does not wait for {check}"
     assert f"needs.{check}.result" in results, f"{REQUIRED_JOB} does not read the result of {check}"
     assert check in script, f"{REQUIRED_JOB} does not check {check}"
+
+
+@pytest.mark.parametrize("check", ["linter", "tests", "uv-checker"])
+@pytest.mark.parametrize(
+    ("result", "exit_code"),
+    [("success", 0), ("skipped", 0), ("failure", 1), ("cancelled", 1)],
+)
+def test_the_required_check_script_refuses_a_failed_fast_check(check: str, result: str, exit_code: int) -> None:
+    """Run the required job's script with one fast check ending in each result.
+
+    Reading the script cannot tell a refusal from a permission, so it is executed
+    with every other result at `success` and judged by its exit code.
+    """
+    job = job_of(DEVELOP_CALLER, REQUIRED_JOB)
+    step = next(step for step in job["steps"] if "UV_CHECKER" in (step.get("env") or {}))
+    env = {name: str(value) for name, value in step["env"].items()}
+    env.update({"DECISION": "success", "QUALIFY": "true", "IMAGE": "success"})
+    env.update({"LINTER": "success", "TESTS": "success", "UV_CHECKER": "success"})
+    env[check.upper().replace("-", "_")] = result
+    bash = shutil.which("bash")
+    assert bash, "a POSIX shell is needed to run the gate the way the runner does"
+
+    with tempfile.TemporaryDirectory() as scratch:
+        completed = subprocess.run(  # noqa: S603
+            [bash, "-c", str(step["run"])],
+            env=env,
+            cwd=scratch,
+            capture_output=True,
+            check=False,
+            timeout=GUARD_TIMEOUT_SECONDS,
+        )
+    assert completed.returncode == exit_code, completed.stderr.decode()
