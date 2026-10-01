@@ -58,7 +58,7 @@ def render(mdx: str, version: str, previous_tag: str | None = None) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description="Render curated release notes for a GitHub Release.")
     parser.add_argument("version", help="release version, e.g. 2.0.1")
     parser.add_argument("--previous-tag", help="tag to compare against, e.g. 2.0.0")
     args = parser.parse_args()
