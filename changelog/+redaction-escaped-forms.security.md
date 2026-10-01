@@ -1,0 +1,1 @@
+Published plan reviews and artifacts now mask a secret that contains quotes, backslashes, line breaks or non-ASCII characters, and service error messages and stored audit records now mask a secret that contains another secret in full.

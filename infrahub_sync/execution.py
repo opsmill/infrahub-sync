@@ -26,6 +26,7 @@ sanitize-and-wrap boundary that converts failures into
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -450,7 +451,7 @@ def collect_secret_values(
             settings_blocks.append(sync_instance.store.settings)
         for settings in settings_blocks:
             _collect_from_settings(settings or {}, values, secret_context=False, environ=env, seen=set())
-    return tuple(sorted(values, key=lambda value: (-len(value), value)))
+    return redaction_order(values)
 
 
 @contextmanager
@@ -463,9 +464,43 @@ def _bind_remote_secret_values(values: list[str]) -> Iterator[None]:
         _REMOTE_SECRET_VALUES.reset(token)
 
 
-def redact(message: str, secrets: Sequence[str]) -> str:
-    """Replace every occurrence of a collected secret value with ``***``."""
+def redaction_order(secrets: Iterable[str]) -> tuple[str, ...]:
+    """Return the distinct non-empty values in the order sequential replacement needs.
+
+    Longest first, so a value containing another is replaced before the shorter one can
+    leave its remainder behind. Every replacing primitive orders its own input through
+    this, so a caller may merge secret lists in any order.
+    """
+    return tuple(sorted({secret for secret in secrets if secret}, key=lambda secret: (-len(secret), secret)))
+
+
+def json_string_forms(secrets: Iterable[str]) -> tuple[str, ...]:
+    """Return each value together with the text a JSON string literal writes it as.
+
+    Both ``ensure_ascii`` variants, quotes stripped: a value holding a quote, a backslash,
+    a control character or a non-ASCII letter never appears verbatim inside a serialized
+    document, so matching the raw value alone finds nothing there.
+    """
+    forms: set[str] = set()
     for secret in secrets:
+        forms.update(
+            (secret, json.dumps(secret, ensure_ascii=True)[1:-1], json.dumps(secret, ensure_ascii=False)[1:-1])
+        )
+    return redaction_order(forms)
+
+
+def redact(message: str, secrets: Iterable[str]) -> str:
+    """Replace every occurrence of a collected secret value with ``***``, longest first."""
+    return redact_ordered(message, redaction_order(secrets))
+
+
+def redact_ordered(message: str, ordered: Sequence[str]) -> str:
+    """Replace each value of an already ordered `redaction_order` result with ``***``.
+
+    For a caller that redacts many strings with one secret list: ordering once, instead
+    of on every string, keeps redaction of a large document linear in its size.
+    """
+    for secret in ordered:
         message = message.replace(secret, REDACTED)
     return message
 
