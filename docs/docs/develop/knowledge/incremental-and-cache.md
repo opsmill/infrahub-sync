@@ -104,13 +104,16 @@ The bundled NetBox, Nautobot and Infrahub adapters currently provide neither a s
 watermark nor a bounded overlap. Potenda therefore extracts those resources in full,
 even if a direct caller requests incremental extraction. It also extracts in full if the
 saved cursor is unqualified, the tier changed, or the current source cannot guarantee a
-safe next bound, or the prior resource snapshot is missing. An empty snapshot is a
-valid baseline and can still use a qualified cursor. A missing mapped model refuses the
+safe next bound, or the prior resource snapshot is missing. An empty source snapshot is a
+valid baseline and can still use a qualified cursor. An empty destination snapshot
+carries no `local_id` column, so the destination extracts that resource in full. A missing mapped model refuses the
 load before any resource query; it cannot stand in for an empty source kind.
 
-When every destination resource falls back to a full load, the saved plan computes
-delete proposals for destination-only objects and records `delete_operations_computed=true`.
-If any destination resource uses a delta, delete proposals are not computed. Apply
+When every source resource and every destination resource falls back to a full load, the
+saved plan computes delete proposals for destination-only objects and records
+`delete_operations_computed=true`. If either side uses a delta for any resource, delete
+proposals are not computed: a source hydrated from a prior snapshot still holds objects
+deleted at the source, and a destination delta omits destination-only objects. Apply
 continues to skip all delete operations and records them as skipped; it does not delete
 these objects.
 

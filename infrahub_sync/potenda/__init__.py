@@ -671,8 +671,10 @@ class Potenda:
             )
 
         # FR-015: deletes are derived only where the destination side holds a complete
-        # picture, and the manifest records which of the two happened.
-        deletes_computed = self._side_full_extract.get("B", False)
+        # picture, and the manifest records which of the two happened. A source hydrated
+        # from a prior snapshot plus changed-since rows still holds objects deleted at the
+        # source, so the source must also be fully extracted before deletes count as computed.
+        deletes_computed = self._side_full_extract.get("A", False) and self._side_full_extract.get("B", False)
         operations.extend(
             derive_deletes(
                 kinds=list(self.top_level),

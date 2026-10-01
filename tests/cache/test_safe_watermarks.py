@@ -418,17 +418,23 @@ def _retain_run(engine: Potenda) -> None:
     (engine.run_dir / "schema-sub-hash.txt").write_text("matching-schema")
 
 
-@pytest.mark.parametrize("safe_destination", [False, True])
-def test_complete_fallback_destination_records_delete_proposals(tmp_path: Path, *, safe_destination: bool) -> None:
-    """Only a complete full fallback computes deletes, as recorded in the saved plan."""
+@pytest.mark.parametrize(
+    ("safe_source", "safe_destination"),
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+def test_complete_fallback_records_delete_proposals_only_when_both_sides_are_full(
+    tmp_path: Path, *, safe_source: bool, safe_destination: bool
+) -> None:
+    """Deletes count as computed only when source and destination both ran a full extract."""
     from infrahub_sync.plan.reader import load_plan_artifact
 
+    both_full = not safe_source and not safe_destination
     source_rows = {"Device": [{"name": "device", "description": "unchanged"}]}
     destination_rows = {"Device": [*source_rows["Device"], {"name": "orphan", "description": "destination-only"}]}
     first = _plan_engine(
         tmp_path,
         "run-1",
-        _TimestampSource(source_rows, safe=True, exclusive=False, mutate=False),
+        _TimestampSource(source_rows, safe=safe_source, exclusive=False, mutate=False),
         _TimestampSource(destination_rows, safe=safe_destination, exclusive=False, mutate=False),
     )
     first.load_both_sides()
@@ -441,24 +447,54 @@ def test_complete_fallback_destination_records_delete_proposals(tmp_path: Path, 
     second = _plan_engine(
         tmp_path,
         "run-2",
-        _TimestampSource(source_rows, safe=True, exclusive=False, mutate=False),
+        _TimestampSource(source_rows, safe=safe_source, exclusive=False, mutate=False),
         _TimestampSource(destination_rows, safe=safe_destination, exclusive=False, mutate=False),
     )
     second.load_both_sides()
     second.write_plan(second.diff())
     assert second.run_dir is not None
     plan = load_plan_artifact(second.run_dir)
-    assert second._side_full_extract == {"A": False, "B": not safe_destination}
-    assert plan.manifest.delete_operations_computed is not safe_destination
+    assert second._side_full_extract == {"A": not safe_source, "B": not safe_destination}
+    assert plan.manifest.delete_operations_computed is both_full
     deletes = [operation for operation in plan.operations if operation.action == "delete"]
-    assert [operation.identity for operation in deletes] == ([] if safe_destination else [{"name": "orphan"}])
+    assert [operation.identity for operation in deletes] == ([{"name": "orphan"}] if both_full else [])
     assert plan.manifest.operations_count == len(deletes)
     assert isinstance(second.destination, _TimestampSource)
-    assert [call[0] for call in second.destination.calls] == ["bound", "delta" if safe_destination else "full"]
+    assert [call[0] for call in second.destination.calls] == ["bound", "full" if not safe_destination else "delta"]
 
-    # Identical input encodes identically after complete fallback. A genuine
-    # incremental destination changes both the delete disclosure and checksum.
-    assert (plan.manifest.plan_checksum == full_plan.manifest.plan_checksum) is not safe_destination
+    # Identical input encodes identically after complete fallback. Any incremental side
+    # changes both the delete disclosure and the checksum.
+    assert (plan.manifest.plan_checksum == full_plan.manifest.plan_checksum) is both_full
+
+
+def test_incremental_source_does_not_claim_source_deletions_were_reconciled(tmp_path: Path) -> None:
+    """An object deleted at the source stays in the hydrated cache, so deletes are not computed."""
+    from infrahub_sync.plan.reader import load_plan_artifact
+
+    both = {"Device": [{"name": "device", "description": "unchanged"}, {"name": "gone", "description": "x"}]}
+    first = _plan_engine(
+        tmp_path,
+        "run-1",
+        _TimestampSource({k: list(v) for k, v in both.items()}, safe=True, exclusive=False, mutate=False),
+        _TimestampSource({k: list(v) for k, v in both.items()}, safe=False, exclusive=False, mutate=False),
+    )
+    first.load_both_sides()
+    _retain_run(first)
+
+    remaining = {"Device": [both["Device"][0]]}
+    second = _plan_engine(
+        tmp_path,
+        "run-2",
+        _TimestampSource(remaining, safe=True, exclusive=False, mutate=False),
+        _TimestampSource({k: list(v) for k, v in both.items()}, safe=False, exclusive=False, mutate=False),
+    )
+    second.load_both_sides()
+    second.write_plan(second.diff())
+    assert second.run_dir is not None
+    plan = load_plan_artifact(second.run_dir)
+    assert second._side_full_extract == {"A": False, "B": True}
+    assert {d.name for d in second.source.get_all("Device")} == {"device", "gone"}
+    assert plan.manifest.delete_operations_computed is False
 
 
 @pytest.mark.parametrize("snapshot_state", ["missing", "empty"])
@@ -498,11 +534,34 @@ def test_source_snapshot_cache_miss_does_not_delete_existing_objects(
     second.write_plan(second.diff())
     assert second.run_dir is not None
     plan = load_plan_artifact(second.run_dir)
-    assert plan.manifest.delete_operations_computed is True
+    assert plan.manifest.delete_operations_computed is False
     assert plan.operations == []
     assert len(source.get_all("Device")) == 1
     assert (("full", "Device") in source.calls) is (snapshot_state == "missing")
     # Empty is still incremental; a single full resource does not make A full.
+    assert second._side_full_extract == {"A": False, "B": True}
+
+
+def test_empty_snapshots_choose_delta_for_source_and_full_for_destination(tmp_path: Path) -> None:
+    """An empty source snapshot keeps its qualified cursor; an empty destination snapshot has no local_id."""
+    empty = {"Device": [], "Empty": []}
+    first = _plan_engine(
+        tmp_path,
+        "run-1",
+        _TimestampSource(empty, safe=True, exclusive=False, mutate=False),
+        _TimestampSource(empty, safe=True, exclusive=False, mutate=False),
+    )
+    first.load_both_sides()
+    _retain_run(first)
+    source = _TimestampSource(empty, safe=True, exclusive=False, mutate=False)
+    destination = _TimestampSource(empty, safe=True, exclusive=False, mutate=False)
+    second = _plan_engine(tmp_path, "run-2", source, destination)
+    second.load_both_sides()
+
+    assert all(call[0] != "full" for call in source.calls)
+    assert [call[0] for call in source.calls].count("delta") == 2
+    assert [call for call in destination.calls if call[0] == "full"] == [("full", "Device"), ("full", "Empty")]
+    assert all(call[0] != "delta" for call in destination.calls)
     assert second._side_full_extract == {"A": False, "B": True}
 
 
