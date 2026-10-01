@@ -66,10 +66,10 @@ that reports.
 | `inline-credential-value` | A credential-bearing setting holds a literal value instead of a `{"$credential": "<name>"}` reference. A package never contains a credential value. | the setting |
 | `malformed-credential-reference` | A credential declaration's environment identifier is not a valid variable name, or a `$credential` node carries keys beyond the reference itself. | the declaration or the node |
 | `missing-adapter` | No adapter is installed under the declared name — check the spelling and the case. That role's settings are not judged at all, because there is no declared surface to judge them against, so expect exactly one finding for the role. | `/configuration/<role>` |
-| `missing-store-capabilities` | The declared store `type` is unknown and carries settings. An unknown store type with no settings declares nothing unsafe and is accepted. | `/configuration/store` |
+| `unsupported-sync-store` | V3 keeps sync data in memory and refuses a declared `store` block. Remove the block. | `/configuration/store` |
 | `setting-contains-credential-material` | An endpoint setting carries user information, a query string, or a fragment. Credentials belong in a reference, not in a URL. | the setting |
 | `setting-not-a-string` | An endpoint setting is declared as something other than a string. | the setting |
-| `undeclared-setting` | The adapter or store does not declare that setting name. One finding per name, each at its own pointer. | the setting |
+| `undeclared-setting` | The adapter does not declare that setting name. One finding per name, each at its own pointer. | the setting |
 | `unknown-credential-provider` | A credential declaration names a provider that is not installed. `env` is the installed provider. | `/credentials/<name>` |
 | `unknown-credential-reference` | A `$credential` names a reference the package's own `credentials` block does not declare. | the referencing setting |
 

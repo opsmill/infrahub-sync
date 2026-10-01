@@ -23,7 +23,6 @@ from pydantic import ValidationError
 from .capabilities import BUILTIN_ADAPTER_CAPABILITIES
 from .credentials import (
     _ENV_IDENTIFIER,
-    _STORE_CAPABILITIES,
     _TRUNCATION_MARKER,
     CredentialConfigurationError,
     _bounded_location,
@@ -39,6 +38,7 @@ from .models import (
     safe_pointer_component,
     sort_findings,
 )
+from .storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from .warnings import accumulate_intentional_omissions, accumulate_unqualified_optional_features
 
 if TYPE_CHECKING:
@@ -66,7 +66,7 @@ _CODE_FINDING_LIMIT_REACHED = "finding-limit-reached"
 _CODE_INLINE_CREDENTIAL_VALUE = "inline-credential-value"
 _CODE_MALFORMED_CREDENTIAL_REFERENCE = "malformed-credential-reference"
 _CODE_MISSING_ADAPTER = "missing-adapter"
-_CODE_MISSING_STORE_CAPABILITIES = "missing-store-capabilities"
+_CODE_UNSUPPORTED_SYNC_STORE = UNSUPPORTED_STORE_REASON
 _CODE_SETTING_CONTAINS_CREDENTIAL_MATERIAL = "setting-contains-credential-material"
 _CODE_SETTING_NOT_A_STRING = "setting-not-a-string"
 _CODE_UNDECLARED_SETTING = "undeclared-setting"
@@ -587,49 +587,18 @@ def _accumulate_adapter(
     return accumulated
 
 
-def _accumulate_store(
-    package: ConfigurationPackage, owned_locations: list[str], secrets: Sequence[str]
-) -> list[_AccumulatedFinding]:
-    """Refuse inline values and undeclared names at the declared store surface."""
-    store = package.configuration.store
-    if store is None:
+def _accumulate_store(package: ConfigurationPackage, owned_locations: list[str]) -> list[_AccumulatedFinding]:
+    """Refuse a store block without inspecting or exposing its settings."""
+    if package.configuration.store is None:
         return []
-    settings = store.settings or {}
-    capabilities = _STORE_CAPABILITIES.get(store.type)
-    if capabilities is None:
-        if not settings:
-            # An undeclared store type carrying nothing declares nothing unsafe. Shipped
-            # behaviour, preserved deliberately.
-            return []
-        # Settings cannot be judged against a surface that does not exist. Whether one of them
-        # is credential-bearing is precisely what an undeclared store type makes unknowable,
-        # so the store reports exactly one finding, the same way a missing adapter does.
-        owned_locations.append("/configuration/store/settings")
-        return [
-            _accumulated(
-                code=_CODE_MISSING_STORE_CAPABILITIES,
-                location="/configuration/store",
-                message=(
-                    f"store type {_rendered_component(store.type, secrets)!r} has no configuration "
-                    "capability declaration"
-                ),
-            )
-        ]
-    prefix = "/configuration/store/settings"
-    accumulated = _accumulate_undeclared_settings(
-        settings=settings,
-        allowed_settings=capabilities.allowed_settings,
-        prefix=prefix,
-        render=lambda names: (
-            f"store type {_rendered_component(store.type, secrets)!r} contains unsupported declared settings: "
-            f"{_render_setting_name_list(names, secrets)}"
-        ),
-        owned_locations=owned_locations,
-        secrets=secrets,
-    )
-    paths = capabilities.credential_setting_paths
-    accumulated.extend(_accumulate_credential_paths(package, settings, paths, prefix, owned_locations, secrets=secrets))
-    return accumulated
+    owned_locations.append("/configuration/store")
+    return [
+        _accumulated(
+            code=_CODE_UNSUPPORTED_SYNC_STORE,
+            location="/configuration/store",
+            message=UNSUPPORTED_STORE_MESSAGE,
+        )
+    ]
 
 
 def _is_within(location: str, prefixes: tuple[str, ...]) -> bool:
@@ -702,7 +671,7 @@ def _accumulate(package: ConfigurationPackage, secrets: Sequence[str] = ()) -> t
     # the case where a check could not judge. The walk below reports nowhere within them.
     owned_locations: list[str] = []
     accumulated.extend(_from_check(_CHECK_CREDENTIALS, _accumulate_reference_declarations(package, secrets)))
-    accumulated.extend(_from_check(_CHECK_STORE, _accumulate_store(package, owned_locations, secrets)))
+    accumulated.extend(_from_check(_CHECK_STORE, _accumulate_store(package, owned_locations)))
     source = package.configuration.source
     destination = package.configuration.destination
     source_capabilities = BUILTIN_ADAPTER_CAPABILITIES.get(source.name)

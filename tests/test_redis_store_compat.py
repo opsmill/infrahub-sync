@@ -8,18 +8,16 @@ compatibility with whatever redis client resolves is what matters for every
 user — not whether any shipped configuration enables the store (none does;
 `utils.get_potenda_from_instance` defaults to `LocalStore`).
 
-These assertions are server-free on purpose. The one functional round-trip is
-opt-in (`-m integration`) and needs a reachable server via `REDIS_URL`.
+These assertions require no server. V3 refuses configured sync stores; the
+unconditional import still needs to work under the declared redis dependency.
 """
 
 from __future__ import annotations
 
-import os
 import socket
 
 import pytest
 import redis
-from diffsync import Adapter, DiffSyncModel
 from diffsync.exceptions import ObjectStoreException
 from diffsync.store.redis import RedisStore
 
@@ -65,62 +63,3 @@ def test_redis_store_rejects_url_and_host_together() -> None:
     """The store's own guard, reachable without a server."""
     with pytest.raises(ValueError, match="can't be specified together"):
         RedisStore(url="redis://127.0.0.1:6379", host="127.0.0.1")
-
-
-# --------------------------------------------------------------------------- #
-# Opt-in functional round-trip
-# --------------------------------------------------------------------------- #
-
-
-class _Device(DiffSyncModel):
-    _modelname = "device"
-    _identifiers = ("name",)
-    _attributes = ("role",)
-
-    name: str
-    role: str
-
-
-class _DeviceAdapter(Adapter):
-    device = _Device
-    top_level = ("device",)
-
-
-def _reachable_redis_url() -> str | None:
-    """Return a reachable `REDIS_URL`, or None so the caller can skip."""
-    url = os.environ.get("REDIS_URL")
-    if not url:
-        return None
-    try:
-        redis.Redis.from_url(url).ping()
-    except redis.exceptions.RedisError:
-        return None
-    return url
-
-
-@pytest.mark.integration
-def test_redis_backed_adapters_round_trip_and_sync() -> None:
-    """Mirror the dependency gate's own verification against a live server."""
-    url = _reachable_redis_url()
-    if url is None:
-        pytest.skip("REDIS_URL is unset or points at an unreachable redis server")
-
-    source = _DeviceAdapter(internal_storage_engine=RedisStore(url=url, store_id="compat-source"))
-    destination = _DeviceAdapter(internal_storage_engine=RedisStore(url=url, store_id="compat-destination"))
-
-    device = _Device(name="core01", role="spine")
-    source.add(device)
-    fetched = source.get(_Device, "core01")
-    assert isinstance(fetched, _Device)
-    assert fetched.role == "spine"
-    assert len(source.get_all(_Device)) == 1
-
-    assert destination.diff_from(source).has_diffs()
-    destination.sync_from(source)
-    synced = destination.get(_Device, "core01")
-    assert isinstance(synced, _Device)
-    assert synced.role == "spine"
-    assert not destination.diff_from(source).has_diffs()
-
-    source.remove(device)
-    assert not source.get_all(_Device)
