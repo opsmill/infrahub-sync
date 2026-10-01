@@ -1,0 +1,33 @@
+AGENTS.md
+  s_e781df4f83e385::t_4ab3908a963e1f 187-188
+dev/specs/007-harbor-image-publishing/tasks.md
+  s_e781df4f83e385::t_aa2b7e28ee011f 343-345,350-351,360-361
+changelog/+harbor-image-publishing.changed.md
+  s_e781df4f83e385::t_d6762f3c18bb75 1
+dev/specs/007-harbor-image-publishing/pr-notes.md
+  s_e781df4f83e385::t_4652de04f6447f 1-97
+dev/specs/007-harbor-image-publishing/quickstart.md
+  s_e781df4f83e385::t_d0e5922c653e84 118,120-122,125-127
+  s_e781df4f83e385::t_ba6ebe59696fae 54-72
+  s_e781df4f83e385::t_68527dd31113a1 26-30,34-36
+  s_e781df4f83e385::t_885ec3b32a65e6 148-151,156-168
+  s_e781df4f83e385::t_9ad6edde862a10 37
+dev/specs/007-harbor-image-publishing/research.md
+  s_e781df4f83e385::t_f2f53e473fad9d 332-346
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "92b70b1e9467ee7a801175e42c847b1d044d3d9e",
+  "prompts": {},
+  "sessions": {
+    "s_e781df4f83e385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e7508e3-b2e9-494a-a98a-ccc3d06e2a0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
