@@ -1,0 +1,50 @@
+docs/docs/develop/adr-index.mdx
+  s_e781df4f83e385::t_644dd01e000176 23-24
+docs/docs/develop/knowledge/index.md
+  s_e781df4f83e385::t_644dd01e000176 64-65
+dev/adr/README.md
+  s_e781df4f83e385::t_644dd01e000176 46-51
+dev/adr/0016-the-compose-deployment-is-one-tag-pinned-file.md
+  s_e781df4f83e385::t_1c6cf213aeb992 1-59
+dev/specs/archive/007-harbor-image-publishing/EXTRACTED.md
+  s_e781df4f83e385::t_0fe9f113646fe3 1-41
+CLAUDE.md
+  s_e781df4f83e385::t_91c32121ed96ca 6-9
+docs/docs/develop/knowledge/image-publishing.md
+  s_e781df4f83e385::t_641268680389f9 1-41,43-54,56-67,71-79,88-89
+  s_e781df4f83e385::t_b7d1b3a58fb5da 42,55,70,80-87,90
+  s_e781df4f83e385::t_615fcb3c982bd4 68-69
+dev/adr/0015-images-publish-to-harbor-through-one-reusable-workflow.md
+  s_e781df4f83e385::t_615fcb3c982bd4 29-31
+  s_e781df4f83e385::t_a8984a35756271 1-28,32-69
+dev/specs/archive/007-harbor-image-publishing/spec.md
+  s_e781df4f83e385::t_0fe9f113646fe3 1-337
+docs/docs/develop/guidelines/index.md
+  s_e781df4f83e385::t_644dd01e000176 29-30
+docs/docs/develop/guidelines/ci-workflows.md
+  s_e781df4f83e385::t_f9763636cca7f0 1-58
+docs/sidebars.ts
+  s_e781df4f83e385::t_644dd01e000176 108,137
+docs/docs/develop/guides/publishing-an-image.md
+  s_e781df4f83e385::t_a45609e27f28b4 11-12,35,49-54,62-63,65
+  s_e781df4f83e385::t_b7d1b3a58fb5da 57
+  s_e781df4f83e385::t_69f52b5904e40f 124
+dev/specs/archive/007-harbor-image-publishing/quickstart.md
+  s_e781df4f83e385::t_fe603b3326022b 61-62,64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4d64b8a0e2eb4deba591b1f8037cfed2eba5652d",
+  "prompts": {},
+  "sessions": {
+    "s_e781df4f83e385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e7508e3-b2e9-494a-a98a-ccc3d06e2a0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
