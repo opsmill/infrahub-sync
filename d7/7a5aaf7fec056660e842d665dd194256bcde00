@@ -1,0 +1,45 @@
+.github/workflows/workflow-nightly-e2e.yml
+  s_e781df4f83e385::t_ecc5583a80fd41 250
+.github/workflows/release-publish.yml
+  s_e781df4f83e385::t_1a74dbf2403bb2 39-41,57-68,169-193,200,205,207-208
+.github/workflows/trigger-release.yml
+  s_e781df4f83e385::t_6854713a67093f 16-17
+.github/workflows/trigger-push-stable.yml
+  s_e781df4f83e385::t_1a74dbf2403bb2 113-127
+docs/docs/develop/guides/publishing-an-image.md
+  s_e781df4f83e385::t_5c466e23a746e0 74-76,78-79
+tests/test_workflow_contracts.py
+  s_e781df4f83e385::t_8187f70cd1c0e7 414-428,431,885,968-971,975-977,1037-1054,1058-1059,1068,1090-1126,1128-1144,1146-1158,1160-1174,1176-1185,1214,1222,1235-1239,1261-1272
+  s_e781df4f83e385::t_9bc86b928cd2c4 24,1290-1301,1303-1306,1323-1329,1339-1362,1367-1376,1382,1384,1391,1400-1407,1456-1463,1466,1470
+  s_e781df4f83e385::t_ecc5583a80fd41 738-740
+  s_e781df4f83e385::t_6819fd46a2ee9e 1476-1511,1513-1565,1567-1574,1670-1674,1676-1690
+  s_e781df4f83e385::t_4ff04eaa6c4c9e 1512,1566
+  s_e781df4f83e385::t_fa3742d594674a 1055-1057,1159,1175,1675
+  s_e781df4f83e385::t_ac4041b640e8ba 881-882
+  s_e781df4f83e385::t_b3bab4e4110027 722-723
+  s_e781df4f83e385::t_2c9d54be1ba02c 1145
+  s_e781df4f83e385::t_5422c9df636c18 1127,1273-1276,1302,1691-1692
+dev/specs/007-harbor-image-publishing/contracts/ci-docker-image.md
+  s_e781df4f83e385::t_969d7d9c417e74 24-25,47-50,57-59
+  s_e781df4f83e385::t_d39942b89fd8cf 60
+.github/workflows/ci-docker-image.yml
+  s_e781df4f83e385::t_b3bab4e4110027 7-9,85-87,90,106-108,112,114-118,122-125,133,202-206,251-252,257-260,274,282-285,288-291,316,375
+.github/workflows/workflow-publish.yml
+  s_e781df4f83e385::t_6854713a67093f 115-126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d77a5aaf7fec056660e842d665dd194256bcde00",
+  "prompts": {},
+  "sessions": {
+    "s_e781df4f83e385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e7508e3-b2e9-494a-a98a-ccc3d06e2a0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
