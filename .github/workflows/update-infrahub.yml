@@ -1,0 +1,99 @@
+---
+# yamllint disable rule:truthy rule:line-length
+name: "Update Infrahub Version"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Infrahub version to pin"
+        required: true
+
+  repository_dispatch:
+    types: [trigger-infrahub-update]
+
+permissions:
+  contents: read
+
+jobs:
+  update-dependencies:
+    strategy:
+      matrix:
+        branch-name:
+          - main
+
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    concurrency:
+      group: update-infrahub-${{ github.event_name == 'repository_dispatch' && github.event.client_payload.version || github.event.inputs.version }}-${{ matrix.branch-name }}
+      cancel-in-progress: false
+
+    env:
+      INFRAHUB_VERSION: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.version || github.event.inputs.version }}
+      BRANCH_NAME: ${{ matrix.branch-name }}-infrahub-${{ github.event_name == 'repository_dispatch' && github.event.client_payload.version || github.event.inputs.version }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ matrix.branch-name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      # The development and preview stacks pin Infrahub by tag and by index
+      # digest, and a few tests assert the pinned tag. The script reads the
+      # current pin from development/preview.env, resolves the new tag's digest
+      # (refusing an index without linux/amd64 and linux/arm64), and rewrites
+      # every pinned file, or none of them.
+      - name: Update Infrahub to version ${{ env.INFRAHUB_VERSION }}
+        run: python .github/scripts/update_infrahub.py "${INFRAHUB_VERSION}"
+
+      - name: Prepare the branch for the update
+        id: prepare-branch
+        run: |
+          echo "Checking if branch ${BRANCH_NAME} exists..."
+          BRANCH_EXISTS=$(git ls-remote --heads origin "${BRANCH_NAME}" | wc -l)
+          echo "BRANCH_EXISTS=$BRANCH_EXISTS" >> "$GITHUB_ENV"
+
+      # Keep this list in step with PINNED_FILES in .github/scripts/update_infrahub.py.
+      - name: Commit and push changes
+        uses: github-actions-x/commit@v2.9
+        with:
+          github-token: ${{ secrets.GH_UPDATE_PACKAGE_OTTO }}
+          push-branch: ${{ env.BRANCH_NAME }}
+          commit-message: "chore: update Infrahub to version ${{ env.INFRAHUB_VERSION }}"
+          files: |
+            development/docker-compose.infrahub.yml
+            development/preview.env
+            development/docker-compose.preview.yml
+            tests/compose/conftest.py
+            tests/compose/fixture-override.yaml
+            tests/compose/test_bundle_contract.py
+            tests/preview/test_preview_configuration.py
+          name: opsmill-bot
+          email: github-bot@opsmill.com
+          rebase: ${{ env.BRANCH_EXISTS == 1 }}
+
+      - name: Create a pull request
+        env:
+          GH_TOKEN: ${{ secrets.GH_UPDATE_PACKAGE_OTTO }}
+          MATRIX_BRANCH: ${{ matrix.branch-name }}
+        run: |
+          # Skip create if a PR already exists for this head branch (re-runs against the same version).
+          if [ -n "$(gh pr list --head "${BRANCH_NAME}" --state open --json number --jq '.[0].number')" ]; then
+            echo "PR for ${BRANCH_NAME} already open, skipping create"
+            exit 0
+          fi
+          # A version bump carries no behaviour change of its own, so it is
+          # labelled out of the news-fragment gate, as the SDK bump is.
+          gh pr create \
+            --title "update Infrahub to version ${INFRAHUB_VERSION} against ${MATRIX_BRANCH}" \
+            --body "This PR updates the pinned Infrahub release and its image digest to version ${INFRAHUB_VERSION}.
+
+          The destination Compose file is based on the upstream file for the pinned release. Before merging, compare it with https://infrahub.opsmill.io/${INFRAHUB_VERSION} and carry over any upstream change, keeping the local digest pins." \
+            --base "${MATRIX_BRANCH}" \
+            --head "${BRANCH_NAME}" \
+            --label "ci/skip-changelog"

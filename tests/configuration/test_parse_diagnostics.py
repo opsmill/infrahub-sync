@@ -1194,3 +1194,40 @@ def test_public_parse_accepts_exact_metadata_resource_boundaries(
     monkeypatch: pytest.MonkeyPatch, errors: list[dict[str, object]], expected: str
 ) -> None:
     assert _parse_with_errors(monkeypatch, errors) == _PREFIX + expected
+
+
+def _package_with_transform(expression: str) -> dict[str, Any]:
+    data = _package_data()
+    data["configuration"]["schema_mapping"] = [
+        {
+            "name": "DcimDevice",
+            "mapping": "dcim.devices",
+            "fields": [{"name": "name", "mapping": "name"}],
+            "transforms": [{"field": "name", "expression": expression}],
+        }
+    ]
+    return data
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param("{{ name | upper }}", id="builtin-filter"),
+        pytest.param("{{ node_id | aci_device_name }}", id="adapter-filter-bound-at-render"),
+    ],
+)
+def test_public_parse_accepts_a_parseable_transform_expression(expression: str) -> None:
+    package = parse_configuration_package(_package_with_transform(expression))
+
+    assert package.configuration.schema_mapping[0].transforms is not None
+    assert package.configuration.schema_mapping[0].transforms[0].expression == expression
+
+
+def test_public_parse_rejects_transform_expression_syntax_without_echoing_it() -> None:
+    message = _parse_failure(_package_with_transform("{{ " + _REJECTED_CANARY + " | }}"))
+
+    assert message == (
+        _PREFIX + "/configuration/schema_mapping/0/transforms/0/expression: "
+        "transform expression is not valid Jinja2 syntax"
+    )
+    assert _REJECTED_CANARY not in message

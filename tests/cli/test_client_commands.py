@@ -673,6 +673,115 @@ def test_runs_plan_unmatched_kind_is_typed_input_error(client: MagicMock) -> Non
     assert "argument: kind" in result.output
 
 
+# A terminal acts on these rather than printing them: cursor movement, line erase,
+# carriage return, newline, and a right-to-left override that reorders what follows.
+# Built from code points so this source file carries no bidirectional control itself.
+_RLO = chr(0x202E)
+_LRI = chr(0x2066)
+# Zero-width characters, direction marks, and the line and paragraph separators hide or
+# break up text without a visible glyph.
+_INVISIBLE_CODES = (0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x200E, 0x200F, 0x061C, 0x2028, 0x2029)
+_INVISIBLES = "".join(chr(code) for code in _INVISIBLE_CODES)
+_TERMINAL_CONTROLS = ("\x1b", "\r", "\t", "\x9b", "\x7f", _RLO, _LRI, *_INVISIBLES)
+
+
+def _assert_no_terminal_controls(rendered: str) -> None:
+    # An injected newline is caught by the exact-line assertions: a split value never
+    # matches the single escaped line they expect.
+    for line in rendered.split("\n"):
+        for character in _TERMINAL_CONTROLS:
+            assert character not in line, repr(line)
+
+
+def test_runs_plan_detail_escapes_terminal_controls_in_source_values(client: MagicMock) -> None:
+    """A source-derived value must not be able to rewrite the lines a reviewer approves."""
+    forged = f"edge\x1b[1A\x1b[2K\rop-forged create Device name=fake\t\n\x9b2K\x7f{_RLO}evil{_LRI}x{_INVISIBLES}"
+    plan = _plan()
+    operation = plan.operations[0].model_copy(
+        update={"kind": "Dev\x1bice", "identity": {"name": forged}, "destination_id": "dest\r1"}
+    )
+    summary = plan.summary.model_copy(update={"by_kind": {"Dev\x1bice": 1, "Site": 1}})
+    client.get_plan.return_value = plan.model_copy(
+        update={
+            "operations": (operation, plan.operations[1]),
+            "summary": summary,
+            "verification_notes": ("note\x1b[2Kforged",),
+            "destination_branch": "review\rmain",
+        }
+    )
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    _assert_no_terminal_controls(result.output)
+    # Split on "\n" only: `splitlines` would also break at an unescaped U+2028 or U+2029.
+    lines = result.output.split("\n")
+    assert (
+        "op-create create Dev\\x1bice name=edge\\x1b[1A\\x1b[2K\\rop-forged create Device name=fake"
+        "\\t\\n\\x9b2K\\x7f\\u202eevil\\u2066x"
+        "\\u200b\\u200c\\u200d\\u2060\\ufeff\\u200e\\u200f\\u061c\\u2028\\u2029"
+    ) in lines
+    assert "  destination id: dest\\r1" in lines
+    assert "verification_note: note\\x1b[2Kforged" in lines
+    assert "destination_branch: review\\rmain" in lines
+    assert "by_kind: Dev\\x1bice=1, Site=1" in lines
+
+
+def test_runs_plan_detail_keeps_ordinary_non_ascii_values_unchanged(client: MagicMock) -> None:
+    plan = _plan()
+    operation = plan.operations[0].model_copy(update={"identity": {"name": "Zürich-東京 Łódź"}})
+    client.get_plan.return_value = plan.model_copy(update={"operations": (operation, plan.operations[1])})
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "op-create create Device name=Zürich-東京 Łódź" in result.output.splitlines()
+
+
+def test_diff_summary_escapes_terminal_controls_in_the_saved_plan(client: MagicMock) -> None:
+    plan = _plan()
+    client.get_plan.return_value = plan.model_copy(update={"verification_notes": ("ok\x1b[1A\rforged",)})
+
+    result = _invoke(client, "diff", "--config-id", "edge-sync", "--version", "1", "--reason", "review")
+
+    assert result.exit_code == 0, result.output
+    _assert_no_terminal_controls(result.output)
+    assert "verification_note: ok\\x1b[1A\\rforged" in result.output.splitlines()
+
+
+def test_configuration_validation_escapes_terminal_controls_in_findings(client: MagicMock) -> None:
+    client.validate_config.return_value = client.validate_config.return_value.model_copy(
+        update={
+            "findings": (
+                ValidationFindingResource(
+                    code="first", severity="warning", location="/a", message=f"bad\x1b[2K{_RLO}eulav"
+                ),
+            )
+        }
+    )
+
+    validated = _invoke(client, "configs", "validate", "edge-sync", "1")
+
+    assert validated.exit_code == 0, validated.output
+    _assert_no_terminal_controls(validated.output)
+    assert "finding: code=first severity=warning location=/a message=bad\\x1b[2K\\u202eeulav" in (
+        validated.output.splitlines()
+    )
+
+
+def test_client_errors_escape_terminal_controls_in_server_text(client: MagicMock) -> None:
+    client.list_configs.side_effect = ConfigsAPIError(
+        403, "forbidden", "authorization", "denied\x1b[1A\rerror: none", mutation_id=f"m{_RLO}1"
+    )
+
+    result = _invoke(client, "configs", "list")
+
+    assert result.exit_code == 1
+    _assert_no_terminal_controls(result.output)
+    assert "reason: denied\\x1b[1A\\rerror: none" in result.output.splitlines()
+    assert "mutation_id: m\\u202e1" in result.output.splitlines()
+
+
 def test_typed_config_refusal_preserves_machine_fields(client: MagicMock) -> None:
     client.list_configs.side_effect = ConfigsAPIError(
         403,
@@ -849,3 +958,24 @@ def test_closed_client_errors_map_to_cli_exits(
 
     assert result.exit_code == exit_code
     assert f"error: {label}" in result.output
+
+
+@pytest.mark.parametrize("operation", ["register", "diff"])
+def test_store_refusal_explains_how_to_keep_data_in_memory(tmp_path: Path, client: MagicMock, operation: str) -> None:
+    """A 422 unsupported-sync-store response prints guidance to remove the store block."""
+    if operation == "register":
+        package_path = tmp_path / "package.json"
+        package_path.write_text("{}", encoding="utf-8")
+        client.register_config.side_effect = ConfigsAPIError(
+            422, "configs-validation", "validation", "unsupported-sync-store"
+        )
+        arguments = ("configs", "register", str(package_path), "--reason", "register inventory")
+    else:
+        client.plan.side_effect = APIError(422, "unsupported-sync-store")
+        arguments = ("diff", "--config-id", "edge-sync", "--version", "1", "--reason", "plan inventory")
+
+    result = _invoke(client, *arguments)
+
+    assert result.exit_code == 1
+    assert "Configured sync stores, including Redis, are not supported in V3." in result.output
+    assert "Remove the store block to keep sync data in memory." in result.output
