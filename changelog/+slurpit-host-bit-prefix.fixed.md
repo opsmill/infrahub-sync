@@ -1,0 +1,1 @@
+Slurp'it: an IP address is now loaded with its prefix relationship when Slurp'it reports the prefix with host bits, for example `10.0.0.5/24`. Before, the address was skipped because its prefix was looked up as `10.0.0.0/24`.
