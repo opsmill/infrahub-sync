@@ -1,0 +1,21 @@
+.github/workflows/trigger-push-stable.yml
+  s_7b740b0a09bab8::t_c4173fe63d8038 200,205-206
+RELEASING.md
+  s_7b740b0a09bab8::t_c4173fe63d8038 33-35,37-39,43-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "817eeff4e28d773b7c71cff37da5515e8a56ec2b",
+  "prompts": {},
+  "sessions": {
+    "s_7b740b0a09bab8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0f3cf-b8e2-7472-8987-ae8cafa06948",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
