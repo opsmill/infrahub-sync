@@ -162,7 +162,9 @@ from the repository root.
    `PREVIEW_INFRAHUB_BIND_ADDRESS=<gateway>` in `development/preview.local.env`, where
    `<gateway>` is what
    `docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'`
-   prints (usually `172.17.0.1`), and run `uv run invoke preview.up` again.
+   prints (usually `172.17.0.1`), and run `uv run invoke preview.up` again. Infrahub
+   then answers on that address only, so the tasks and the host processes use
+   `http://<gateway>:8080`, and you open the UI there instead of `localhost`.
 
    Record the `config_id` from the output. If you change the package later, register
    the change with `configs version <config-id> <package>`. Registering changed content

@@ -17,6 +17,8 @@ from typing import Any
 import pytest
 import yaml
 
+from tasks.preview import preview_urls
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEVELOPMENT = REPO_ROOT / "development"
 LOOPBACK = "127.0.0.1"
@@ -100,3 +102,25 @@ def test_every_publication_binds_to_loopback(label: str, host_ip: str, entry: ob
 def test_the_one_adjustable_address_ships_as_loopback() -> None:
     """Infrahub's address can change for a Linux worker container; its shipped value cannot be wider."""
     assert _environment(DEVELOPMENT / "preview.env")["PREVIEW_INFRAHUB_BIND_ADDRESS"] == LOOPBACK
+
+
+@pytest.mark.parametrize(
+    ("bind_address", "expected"),
+    [
+        ("127.0.0.1", "http://localhost:8080"),
+        ("0.0.0.0", "http://localhost:8080"),  # noqa: S104 - a wildcard publication, which loopback answers.
+        ("", "http://localhost:8080"),
+        ("172.17.0.1", "http://172.17.0.1:8080"),
+        ("fd00::1", "http://[fd00::1]:8080"),
+    ],
+)
+def test_the_preview_tasks_reach_infrahub_where_it_is_published(bind_address: str, expected: str) -> None:
+    """A bridge-gateway publication answers on that address only, so `localhost` is not used for it."""
+    values = {
+        "PREVIEW_INFRAHUB_BIND_ADDRESS": bind_address,
+        "PREVIEW_INFRAHUB_PORT": "8080",
+        "PREVIEW_PREFECT_PORT": "4300",
+        "PREVIEW_SYNC_API_PORT": "8100",
+    }
+
+    assert preview_urls(values)["infrahub"] == expected

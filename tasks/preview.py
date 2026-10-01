@@ -160,10 +160,20 @@ def load_preview_env() -> dict[str, str]:
     return values
 
 
+_WILDCARD_OR_LOOPBACK = frozenset({"", "127.0.0.1", "localhost", "0.0.0.0", "::", "::1"})  # noqa: S104
+
+
 def preview_urls(values: dict[str, str]) -> dict[str, str]:
-    """Derive the three service URLs from the loaded settings."""
+    """Derive the three service URLs from the loaded settings.
+
+    Infrahub is reached on the address it is published on. Loopback also answers a
+    wildcard publication, so only another address, such as the Docker bridge gateway
+    on Linux, replaces `localhost`.
+    """
+    bound = values.get("PREVIEW_INFRAHUB_BIND_ADDRESS", "").strip()
+    host = "localhost" if bound in _WILDCARD_OR_LOOPBACK else (f"[{bound}]" if ":" in bound else bound)
     return {
-        "infrahub": f"http://localhost:{values['PREVIEW_INFRAHUB_PORT']}",
+        "infrahub": f"http://{host}:{values['PREVIEW_INFRAHUB_PORT']}",
         "prefect": f"http://localhost:{values['PREVIEW_PREFECT_PORT']}",
         "sync_api": f"http://localhost:{values['PREVIEW_SYNC_API_PORT']}",
     }
