@@ -57,7 +57,13 @@ IP namespaces are on that list because Infrahub identifies a prefix by namespace
 
 **Nautobot 2.0 and later** have [native IPAM namespaces](https://docs.nautobot.com/projects/core/en/stable/user-guide/core-data-model/ipam/namespace/), added in 2.0.0. Map those directly and carry them into the prefix and address identities, as `examples/nautobot-v2_to_infrahub/` does with its `NautobotNamespace` entry mapped from `ipam.namespaces`. Do not derive the namespace from the VRF name there: the source already separates the objects, and keying on the VRF name instead would merge two namespaces whose VRFs happen to share one.
 
-Under the VRF-derived pattern the namespace is keyed by that name, so the separation holds only while the names are distinct. Two VRFs sharing a name resolve to a single namespace, and a VRF named `default` shares the built-in namespace with every object that has no VRF. Check your source for repeated VRF names before you depend on the split. A source with native namespaces is not affected, because its namespaces are carried rather than derived.
+### Namespace mapping limitations
+
+The shipped NetBox example requires distinct VRF names. Both `IpamNamespace` and `IpamVRF` load from `ipam.vrfs` and use `identifiers: ["name"]`. A repeated name raises `ObjectAlreadyExists` while loading `IpamNamespace`, stopping the source load before any prefixes or IP addresses are read. The VRFs do not merge into one namespace. Give the VRFs distinct names or change the mapping to preserve their separate identities before retrying.
+
+A VRF named `default` shares Infrahub's built-in namespace with objects that have no VRF. If two prefixes or IP addresses have the same value and resolve to the same namespace, they raise `ObjectAlreadyExists` when that model loads. This can happen within one VRF, between two objects without a VRF, or between an object without a VRF and one in a VRF named `default`. NetBox can hold repeated IP addresses intentionally, so check the source records before changing them. If both records must be kept, change the namespace mapping or destination schema to represent the distinction; changing the sync identifiers alone cannot change Infrahub's namespace-plus-value identity.
+
+These restrictions describe the VRF-derived NetBox example. For Nautobot 2.0 and later, carry the native namespaces as described above.
 
 ### Adopt namespaces in an Infrahub that already holds imported data
 

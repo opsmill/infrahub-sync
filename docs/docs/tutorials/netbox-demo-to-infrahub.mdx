@@ -249,7 +249,7 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
 
    NetBox has no IP namespace of its own, so the example creates one Infrahub IP namespace per NetBox VRF *name*. A prefix or IP address in a VRF goes to the namespace named after that VRF, and one with no VRF goes to Infrahub's built-in `default` namespace. That matters because Infrahub identifies a prefix by namespace plus prefix, and an IP address by namespace plus address: without the namespace, the same address in two different VRFs would become a single Infrahub object. The example still syncs the VRF itself, so you keep both the VRF relationship and a namespace that keeps overlapping addresses apart.
 
-   The name is what does the separating, so two cases still share a namespace. Two distinct NetBox VRFs that happen to carry the same name resolve to one Infrahub namespace, and a NetBox VRF actually named `default` shares the built-in namespace with everything that has no VRF. If networks you need to keep apart sit in VRFs whose names repeat, give those VRFs distinct names or adjust the mapping before you rely on the import.
+   Check the [VRF-derived namespace limitations](../migrating-from-netbox-or-nautobot.mdx#namespace-mapping-limitations) before relying on this mapping.
 
    If you already imported this data with an earlier version of the example, its prefixes and addresses stayed in Infrahub's `default` namespace. Running this updated example does not move or clean up those old objects. A prefix or address whose VRF still resolves to `default` — no VRF, or a VRF actually named `default` — matches its existing object there; only one that now resolves to a VRF-named namespace gets a new object alongside the old one.
 
@@ -308,14 +308,14 @@ This error names whichever adapter (NetBox or Infrahub) is missing its variables
 ValueError: An error occurred while loading Netbox: ('Object 172.16.0.2/24__default already present', IpamIPAddress "172.16.0.2/24__default")
 ```
 
-Two source objects resolved to the same identifier. The part after `__` is the IP namespace the object landed in, so two NetBox IP addresses share both an address and a namespace. That happens when they sit in the same VRF, when they sit in two different VRFs that carry the same name, when neither has a VRF and both went to `default`, or when one has no VRF and the other sits in a VRF actually named `default`.
+Two source objects resolved to the same identifier. The part after `__` is the IP namespace the object landed in, so two NetBox IP addresses share both an address and a namespace. See [VRF-derived namespace limitations](../migrating-from-netbox-or-nautobot.mdx#namespace-mapping-limitations) for the cases that cause this error and the earlier load failure caused by duplicate VRF names.
 
 That does not mean one of them is wrong. NetBox can hold the same address more than once on purpose — a shared VRRP or HSRP address, for example. It can also be an accidental duplicate. Open both rows in NetBox (**IPAM > IP Addresses**, search the address from the message) and compare their VRF, tenant, role, assigned object, and description before you change anything.
 
 What you find points to one of two fixes:
 
 - The source record is wrong. Correct or remove the entry that should not be there in NetBox.
-- Both records are correct, and the mapping is collapsing a distinction Infrahub needs to keep. Where two different VRFs share a name, giving them distinct names is enough to separate their namespaces. Anything else needs the namespace mapping or the destination schema to change so the two addresses resolve somewhere different — editing `identifiers` alone will not help, since Infrahub identifies the address by namespace plus address either way.
+- Both records are correct, and the mapping is collapsing a distinction Infrahub needs to keep. Follow the [namespace mapping guidance](../migrating-from-netbox-or-nautobot.mdx#namespace-mapping-limitations) to preserve both records.
 
 Re-run the command once NetBox or the mapping reflects what you intend. Deleting a row purely to clear the message can destroy real data.
 
