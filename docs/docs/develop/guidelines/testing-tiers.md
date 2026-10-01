@@ -184,8 +184,9 @@ Four families need more detail than the tables give:
 
   ```bash
   docker run -d --name product-store-pg -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=probe \
-    -p 127.0.0.1:55439:5432 postgres:18-alpine
-  until docker exec product-store-pg pg_isready -U postgres -d probe; do sleep 2; done
+    -p 127.0.0.1:55439:5432 postgres:18-alpine || exit 1
+  timeout 60 bash -c 'until docker exec product-store-pg pg_isready -U postgres -d probe; do sleep 2; done' \
+    || { echo "PostgreSQL did not become ready"; docker rm -f -v product-store-pg; exit 1; }
   export PRODUCT_STORE_TEST_POSTGRESQL_DSN="host=127.0.0.1 port=55439 user=postgres password=probe dbname=probe"
   uv run invoke tests.tests-product-store-postgresql
   ```

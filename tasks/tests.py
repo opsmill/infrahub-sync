@@ -1,5 +1,6 @@
 import os
 import re
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -51,7 +52,7 @@ def tests_product_store_postgresql(context: Context) -> None:
         report = Path(directory) / "junit.xml"
         with context.cd(MAIN_DIRECTORY):
             result = context.run(
-                f"pytest -m integration tests/product_store -p no:cacheprovider -q --no-cov -rs --junitxml={report}",
+                f"pytest -m integration tests/product_store -p no:cacheprovider -q --no-cov -rs --junitxml={shlex.quote(str(report))}",
                 warn=True,
                 pty=True,
             )

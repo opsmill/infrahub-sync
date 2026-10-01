@@ -4472,18 +4472,18 @@ def test_postgresql_migration_ignores_same_named_tables_in_a_sibling_schema() ->
             ).fetchall()
         return {row[0] for row in rows}
 
-    def constraints_of(schema_name: str, dsn: str) -> set[str]:
+    def constraints_of(schema_name: str, dsn: str) -> set[tuple[str, str]]:
         with psycopg.connect(dsn) as admin:
             rows = admin.execute(
-                "SELECT constraint_name FROM information_schema.table_constraints "
+                "SELECT table_name, constraint_name FROM information_schema.table_constraints "
                 "WHERE table_name IN ('product_runs', 'mutation_receipts') AND table_schema = %s",
                 (schema_name,),
             ).fetchall()
-        return {row[0] for row in rows}
+        return {(row[0], row[1]) for row in rows}
 
     guards = {
-        product_store_store._CONFIGURATION_BINDING_CONSTRAINT,
-        product_store_store._MUTATION_RECEIPT_RESOURCE_CONSTRAINT,
+        ("product_runs", product_store_store._CONFIGURATION_BINDING_CONSTRAINT),
+        ("mutation_receipts", product_store_store._MUTATION_RECEIPT_RESOURCE_CONSTRAINT),
     }
 
     try:
