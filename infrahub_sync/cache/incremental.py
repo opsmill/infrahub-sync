@@ -112,6 +112,10 @@ def load_cursors(path: Path, *, side: str) -> dict[str, CursorState]:
     for model_name, packed in raw.items():
         safe = packed.startswith("safe-v1:")
         tier_name, _, value = packed.removeprefix("safe-v1:").partition(":")
+        if tier_name not in CursorTier.__members__:
+            # An unknown tier or version prefix (for example from a newer release)
+            # is no cursor at all: the resource falls back to a full extraction.
+            continue
         tier = CursorTier[tier_name]
         out[model_name] = CursorState(tier=tier, value=value or None, safe=safe)
     return out

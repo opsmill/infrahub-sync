@@ -6,11 +6,12 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 from diffsync import Adapter, DiffSyncModel
 
+from infrahub_sync.cache import parquet_io
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.incremental import load_cursors
 from infrahub_sync.cache.parquet_io import read_table
@@ -123,6 +124,7 @@ def test_in_flight_change_is_read_next_run(
     first_source = _TimestampSource(rows, safe=safe, exclusive=exclusive, mutate=True)
     first = _engine(tmp_path, "run-1", first_source, side)
     load_first = first.source_load if side == "A" else first.destination_load
+    before_load = datetime.now(timezone.utc)
     load_first()
     assert first_source.get("Device", "device").description == "old"  # ty: ignore[unresolved-attribute]
     first.persist_cursors_for_run(side=side)
@@ -130,7 +132,7 @@ def test_in_flight_change_is_read_next_run(
     # The host's diagnostic timestamp is far ahead of the source. It must never
     # become the query bound, even for an empty resource.
     metadata_ts = read_table(str(first.run_dir / side / "Device.parquet")).column("_extract_ts")[0].as_py()
-    assert metadata_ts > CHANGE_TIME
+    assert metadata_ts >= before_load
     saved = load_cursors(first.run_dir / "cursors.json", side=side)
     if safe:
         assert set(saved) == set(rows)
@@ -252,6 +254,65 @@ def test_forced_full_extract_does_not_request_a_safe_cursor(tmp_path: Path) -> N
     pot.persist_cursors_for_run(side="A")
     assert pot.run_dir is not None
     assert not (pot.run_dir / "cursors.json").exists()
+
+    # The next direct run has no cursor to resume from, so it extracts in full.
+    (pot.run_dir / "schema-sub-hash.txt").write_text("matching-schema")
+    (pot.run_dir / "run.json").write_text(json.dumps({"status": "dry-run"}))
+    next_source = _TimestampSource({"Device": []}, safe=True, exclusive=False, mutate=False)
+    second = _engine(tmp_path, "run-2", next_source, "A")
+    second.source_load()
+    assert ("full", "Device") in next_source.calls
+    assert not any(call[0] == "delta" for call in next_source.calls)
+    assert second._side_full_extract["A"] is True
+
+
+def test_partial_snapshot_write_keeps_the_old_cursor_usable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Interrupt on the second resource's snapshot write, after the first was rewritten."""
+    rows = {
+        "Device": [{"name": "device", "description": "old", "local_id": "original-id"}],
+        "Empty": [],
+    }
+    source = _TimestampSource(rows, safe=True, exclusive=False, mutate=False)
+    first = _engine(tmp_path, "run-1", source, "A")
+    first.source_load()
+    first.persist_cursors_for_run(side="A")
+    assert first.run_dir is not None
+    cursor_path = first.run_dir / "cursors.json"
+    saved_cursors = cursor_path.read_bytes()
+    (first.run_dir / "schema-sub-hash.txt").write_text("matching-schema")
+    (first.run_dir / "run.json").write_text(json.dumps({"status": "dry-run"}))
+
+    rows["Device"][0]["description"] = "new"
+    rows["Empty"] = [{"name": "appeared", "description": "new"}]
+    interrupt = KeyboardInterrupt("snapshot interrupted")
+    real_write = parquet_io.write_resource_side
+    writes: list[str] = []
+
+    def interrupt_second_write(**kwargs: Any) -> None:  # noqa: ANN401
+        """Write the first resource, then interrupt on the second."""
+        if writes:
+            raise interrupt
+        writes.append(kwargs["resource"])
+        real_write(**kwargs)
+
+    reloaded = _TimestampSource(rows, safe=True, exclusive=False, mutate=False)
+    first.source = reloaded
+    with monkeypatch.context() as patch:
+        patch.setattr(parquet_io, "write_resource_side", interrupt_second_write)
+        with pytest.raises(KeyboardInterrupt) as caught:
+            first.source_load()
+        assert caught.value is interrupt
+    assert writes == ["Device"]
+
+    first.persist_cursors_for_run(side="A")
+    assert cursor_path.read_bytes() == saved_cursors
+
+    next_source = _TimestampSource(rows, safe=True, exclusive=False, mutate=False)
+    second = _engine(tmp_path, "run-2", next_source, "A")
+    second.source_load()
+    assert any(call[0] == "delta" for call in next_source.calls)
+    assert next_source.get("Device", "device").description == "new"  # ty: ignore[unresolved-attribute]
+    assert next_source.get("Empty", "appeared").description == "new"  # ty: ignore[unresolved-attribute]
 
 
 def test_legacy_watermark_is_not_used_even_with_a_safe_source(tmp_path: Path) -> None:
@@ -510,3 +571,11 @@ def test_failed_resource_fallback_is_not_marked_full(
     second.persist_cursors_for_run(side=side)
     assert second.run_dir is not None
     assert not (second.run_dir / "cursors.json").exists()
+
+
+@pytest.mark.parametrize("packed", ["safe-v2:TIMESTAMP:2026-01-01T00:00:00+00:00", "safe-v1:UNKNOWN:x"])
+def test_unknown_cursor_version_or_tier_is_no_cursor(tmp_path: Path, packed: str) -> None:
+    """Fail safe: an unrecognised cursor entry is dropped so the resource loads in full."""
+    path = tmp_path / "cursors.json"
+    path.write_text(json.dumps({"A": {"Device": packed}}))
+    assert load_cursors(path, side="A") == {}

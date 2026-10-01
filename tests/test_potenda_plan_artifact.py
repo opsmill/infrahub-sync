@@ -1298,13 +1298,12 @@ def _pinned_plan_run(  # noqa: PLR0913 — one parameter per axis a pinned plan 
 
 
 def test_two_plan_runs_over_identical_input_encode_identically(monkeypatch: pytest.MonkeyPatch) -> None:
-    """SC-006, with Trap 1 disarmed: pin the mode on both runs and both sides, assert the
-    pinning held, and only then compare bytes.
+    """SC-006: two plan runs over identical input encode identically.
 
-    `delete_operations_computed` sits inside `plan_checksum` and is **not** one of SC-006's
-    two masked fields, so a run that silently switched to an incremental destination extract
-    would differ for a reason that has nothing to do with encoding determinism. The pinning
-    assertion below is what keeps this test measuring what SC-006 is about.
+    No plan run here has a prior successful run, so both runs extract in full on both sides.
+    The assertion below pins that before the bytes are compared, because
+    `delete_operations_computed` sits inside `plan_checksum` and is not one of SC-006's two
+    masked fields.
     """
     config = build_config()
     source = qualified_source()
