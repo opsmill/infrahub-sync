@@ -280,7 +280,7 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
 - [X] T037 [US4] Run `uv run invoke release.validate-docker-compose --version "$(uv version --short)"` against the new root `docker-compose.yml`, and expect exit 0. Then run `docker compose -f docker-compose.yml config --quiet` with a throwaway `.env` that sets every required variable. Expect exit 0, and expect a clear error naming the variable when one is unset.
 - [X] T038 [US4] In `.github/workflows/trigger-push-stable.yml`, add a step "Pin the Compose image to the release" right after "Update lock file". It runs `uv run --no-sync invoke release.update-docker-compose --version "${VERSION}"`. Add `docker-compose.yml` to the release PR's `git add` list (around line 243).
 - [X] T039 [US4] In `.github/workflows/release-publish.yml`, add a step "Refuse a Compose file pinned to another version" before the tag step. It runs `uv run --no-sync invoke release.validate-docker-compose --version "${VERSION}"`, after the install step it needs. Make T034 pass.
-- [ ] T040 [US4] Move the root `compose.yaml` to `development/docker-compose.dev.yml` with `git mv`:
+- [X] T040 [US4] Move the root `compose.yaml` to `development/docker-compose.dev.yml` with `git mv`:
   - Change `x-sync-build.context` to `..`.
   - Keep `name: infrahub-sync-dev`.
   - Fix the header comment: it no longer describes `deploy/compose/` and now points at the root `docker-compose.yml`.

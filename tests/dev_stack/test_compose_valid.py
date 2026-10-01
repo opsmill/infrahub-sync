@@ -1,10 +1,10 @@
 """The local development stack's Compose file is valid on its own.
 
-`compose.yaml` at the repository root is the zero-ceremony local stack: it builds the
+`development/docker-compose.dev.yml` is the zero-ceremony local stack: it builds the
 image from the working tree and runs it. Nothing else checks it, because the Compose
-contract suite in `tests/compose` asserts the shipped bundle's properties -- digest-
-pinned images, tmpfs scratch roots, no shared mounts -- and this file deliberately has
-none of them.
+contract suite in `tests/compose` asserts the operator file's properties -- the
+registry image reference, required credentials, no host mounts -- and this file
+deliberately has none of them.
 
 What is checked here is the one property a developer depends on: the file resolves when
 none of its optional settings are set. Every value it needs is either inlined or carries
@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COMPOSE_FILE = REPO_ROOT / "compose.yaml"
+COMPOSE_FILE = REPO_ROOT / "development" / "docker-compose.dev.yml"
 
 # The settings the file reads from the environment, all optional. Removed from the
 # caller's own environment rather than merely left alone, so a developer who exports one

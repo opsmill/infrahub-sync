@@ -1,16 +1,18 @@
 ---
 # Run from source: the whole Sync service, built from this checkout.
 #
-#     uv run invoke start          # or: docker compose up --detach --wait
+#     uv run invoke start
+#     # or: docker compose -f development/docker-compose.dev.yml up --detach --wait
 #
-# A release package is the other way to run V3: deploy/compose/ runs one
-# digest-pinned image that passed full qualification, behind the
-# infrahub-sync-compose lifecycle wrapper. Nothing here is pinned or qualified,
-# every credential below is a constant in a tracked file, and the image is
-# whatever your working tree builds for your own architecture.
+# The operator deployment is the other way to run V3: the root
+# docker-compose.yml pulls the released image from the OpsMill registry and
+# takes its credentials from the operator's environment. Nothing here is
+# pinned or released, every credential below is a constant in a tracked file,
+# and the image is whatever your working tree builds for your own architecture.
 #
-# Compose auto-loads a `.env` beside this file. The repository ignores `*.env`,
-# so a stray root `.env` would feed this stack silently.
+# Compose auto-loads a `.env` from the project directory, which is this
+# `development/` directory. The repository ignores `*.env`, so a stray
+# `development/.env` would feed this stack silently.
 #
 # Destination: none. A deployment starts with an empty configuration registry
 # and reaches nothing until a package is registered. To sync against a local
@@ -26,7 +28,7 @@
 name: infrahub-sync-dev
 
 x-sync-build: &sync-build
-  context: .
+  context: ..
   dockerfile: Dockerfile
 
 x-sync-image: &sync-image "infrahub-sync:dev"
