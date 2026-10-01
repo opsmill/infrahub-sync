@@ -340,15 +340,15 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
 
 ## Phase 8: Polish and cross-cutting concerns
 
-- [ ] T049 [P] Remove the candidate, packet and wrapper prose in `AGENTS.md` and `.github/copilot-instructions.md` (around line 185). Describe the image as published to `registry.opsmill.io/opsmill/infrahub-sync` by `ci-docker-image.yml`. Keep the "Required Development Workflow" and "Approval checklist" blocks verbatim, as AGENTS.md requires.
-- [ ] T050 [P] Check the wording of `docs/docs/orchestration.mdx` and `docs/docs/develop/knowledge/orchestration-prefect.md` (one or two candidate or bundle mentions each), and replace any stale reference.
-- [ ] T051 [P] Add the news fragment `changelog/+harbor-image-publishing.changed.md` with `uv run --extra dev towncrier create -c "…" +harbor-image-publishing.changed.md`. It says:
+- [X] T049 [P] Remove the candidate, packet and wrapper prose in `AGENTS.md` and `.github/copilot-instructions.md` (around line 185). Describe the image as published to `registry.opsmill.io/opsmill/infrahub-sync` by `ci-docker-image.yml`. Keep the "Required Development Workflow" and "Approval checklist" blocks verbatim, as AGENTS.md requires.
+- [X] T050 [P] Check the wording of `docs/docs/orchestration.mdx` and `docs/docs/develop/knowledge/orchestration-prefect.md` (one or two candidate or bundle mentions each), and replace any stale reference.
+- [X] T051 [P] Add the news fragment `changelog/+harbor-image-publishing.changed.md` with `uv run --extra dev towncrier create -c "…" +harbor-image-publishing.changed.md`. It says:
   - the Sync image is now published to `registry.opsmill.io/opsmill/infrahub-sync` for linux/amd64 and linux/arm64, signed, with SBOMs attached;
   - the Compose deployment is the root `docker-compose.yml`;
   - the `infrahub-sync-compose` wrapper and release bundle are removed;
   - pulls need a registry login until 3.0.0.
-- [ ] T052 Run the SC-006 removal check in quickstart §8 and expect no matches. Then run `wc -l .github/workflows/ci-docker-image.yml tasks/release.py` and record the result next to the T001 baseline in `research.md`. The reduction must be at least 75% (SC-004).
-- [ ] T053 Run the constitution's quality gates:
+- [X] T052 Run the SC-006 removal check in quickstart §8 and expect no matches. Then run `wc -l .github/workflows/ci-docker-image.yml tasks/release.py` and record the result next to the T001 baseline in `research.md`. The reduction must be at least 75% (SC-004).
+- [X] T053 Run the constitution's quality gates:
   - `uv sync --extra dev --extra prefect --extra service`
   - `uv run invoke format`
   - `uv run invoke lint` (rumdl, ruff, pylint, yamllint, ty)
@@ -357,8 +357,8 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
   - `uv run invoke docs.generate`
 
   Fix every finding in touched files.
-- [ ] T054 Run the CLI sanity checks: `uv run infrahub-sync --help`, `uv run infrahub-sync configs --help` and `uv run infrahub-sync runs --help`. Then run the full local validation in quickstart §1, §2 and §7.
-- [ ] T055 Hand the maintainers the plan's external rollout actions in "Rollout and external actions": create the private Harbor project, confirm the `HARBOR_*` org settings are shared, and flip the project to public at 3.0.0. Put them in the PR description draft at `specs/007-harbor-image-publishing/pr-notes.md`. Do not open a PR.
+- [X] T054 Run the CLI sanity checks: `uv run infrahub-sync --help`, `uv run infrahub-sync configs --help` and `uv run infrahub-sync runs --help`. Then run the full local validation in quickstart §1, §2 and §7.
+- [X] T055 Hand the maintainers the plan's external rollout actions in "Rollout and external actions": create the private Harbor project, confirm the `HARBOR_*` org settings are shared, and flip the project to public at 3.0.0. Put them in the PR description draft at `specs/007-harbor-image-publishing/pr-notes.md`. Do not open a PR.
 
 ---
 

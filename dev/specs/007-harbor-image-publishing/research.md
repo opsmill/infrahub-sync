@@ -329,3 +329,18 @@ wc -l .github/workflows/workflow-image.yml .github/workflows/workflow-candidate.
 | `tasks/release.py` | 1012 |
 | `tasks/compose.py` | 127 |
 | **Total** | **3195** |
+
+### After (T052)
+
+Recorded on 2026-10-01 at commit `056c1379`, with the command
+`wc -l .github/workflows/ci-docker-image.yml tasks/release.py`:
+
+| File | Lines |
+|---|---|
+| `.github/workflows/ci-docker-image.yml` | 372 |
+| `tasks/release.py` | 118 |
+| **Total** | **490** |
+
+3195 lines became 490, a reduction of 2705 lines or 84.7%. SC-004 asks for at
+least 75%, so it holds. The total is above the 360-line estimate in R11: the
+workflow grew the smoke test, the signing and the SBOM steps.

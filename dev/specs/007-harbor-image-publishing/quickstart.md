@@ -23,9 +23,17 @@ Expected: everything passes, and the pin matches `pyproject.toml` (FR-017).
 ## 2. Smoke test against a local build (FR-016)
 
 ```bash
-docker build -t infrahub-sync:smoke .
+docker build -t infrahub-sync:smoke \
+  --label org.opencontainers.image.source=https://github.com/opsmill/infrahub-sync \
+  --label org.opencontainers.image.version="$(uv version --short)" \
+  --label org.opencontainers.image.revision="$(git rev-parse HEAD)" \
+  .
 INFRAHUB_SYNC_IMAGE_REF=infrahub-sync:smoke uv run pytest -m docker tests/image/test_image_artifact.py
 ```
+
+The three `--label` flags stand in for the labels `ci-docker-image.yml` passes. The
+smoke test requires the source, version and revision labels, and a plain
+`docker build` sets none of them.
 
 Expected: `--help` exits 0, `GET /version` answers within 60 seconds, and the OCI
 labels are present. To prove the gate bites, break the `CMD` in a scratch Dockerfile
@@ -43,10 +51,25 @@ and confirm the test fails.
 
 ## 4. Manual dispatch (User Story 2)
 
-Run **Actions → Build And Push Docker image → Run workflow** with:
-- `ref` = a commit SHA;
-- `tags` = `registry.opsmill.io/opsmill/infrahub-sync:dispatch-test`;
-- `publish` = true.
+Dispatch from the CLI, as in
+[Publishing an image](../../../docs/docs/develop/guides/publishing-an-image.md).
+The Actions **Run workflow** form takes one line per input, so it can't carry the
+multi-line `labels`:
+
+```bash
+SHA=$(git rev-parse origin/main)
+jq -n --arg sha "$SHA" '{
+  ref: $sha,
+  tags: "registry.opsmill.io/opsmill/infrahub-sync:dispatch-test",
+  labels: ([
+    "org.opencontainers.image.source=https://github.com/opsmill/infrahub-sync",
+    "org.opencontainers.image.version=dispatch-test",
+    "org.opencontainers.image.revision=\($sha)"
+  ] | join("\n")),
+  publish: "true",
+  version: "dispatch-test"
+}' | gh workflow run ci-docker-image.yml --repo opsmill/infrahub-sync --ref main --json
+```
 
 Then:
 
@@ -92,11 +115,16 @@ docker run --rm registry.opsmill.io/opsmill/infrahub-sync:<version> infrahub-syn
 On a clean host with no images:
 
 ```bash
+docker login registry.opsmill.io   # until 3.0.0
 curl -fsSLO https://raw.githubusercontent.com/opsmill/infrahub-sync/<version>/docker-compose.yml
-cp <docs example> .env   # fill the required credentials
+# Write .env with the generator in "An example .env" of docs/docs/compose-deployment.mdx
+docker compose version --short     # expect 2.24 or later
+docker compose config --quiet
 docker compose up -d --wait
 docker compose ps
-docker compose logs sync-api | grep -c -i -E 'password|secret' # expect 0
+curl -s http://127.0.0.1:8000/status   # read worker.state
+docker compose run --rm --no-deps -T cli configs list
+docker compose logs --no-color sync-api | grep -c -i -E 'password|secret' # expect 0
 ```
 
 Expected: every service is healthy, and the Sync services run `<version>`.
@@ -117,8 +145,24 @@ INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m c
 
 ```bash
 git grep -n -E 'workflow-candidate|tester.packet|image\.bind|image-linux-|infrahub-sync-compose|deploy/compose' \
-  -- ':!changelog' ':!CHANGELOG.md' ':!dev/specs' ':!docs/docs/release-notes' ':!docs/versioned_docs'
+  -- ':!changelog' ':!CHANGELOG.md' ':!dev/specs' ':!docs/docs/release-notes' ':!docs/versioned_docs' \
+     ':!docs/docs/compose-deployment.mdx' ':!docs/docs/quickstart-compose.mdx' \
+     ':!docs/docs/use-with-an-ai-agent.mdx' ':!tests/compose/test_documentation.py' \
+     ':!tests/compose/test_container_cli.py'
 test ! -e compose.yaml && test ! -d deploy/compose && test ! -e .github/workflows/workflow-candidate.yml
 ```
 
 Expected: no matches, and every `test` succeeds.
+
+The five extra exclusions name the old wrapper on purpose, so they are kept out of
+the check:
+- `compose-deployment.mdx` has the "Wrapper equivalents" table, and
+  `quickstart-compose.mdx` the "Moving from an older version" note. Both tell an
+  operator of an earlier alpha what replaces the wrapper.
+- `use-with-an-ai-agent.mdx` copies the agent skills from a pinned revision, which
+  still has `deploy/compose/skills/`. That path exists at that revision.
+- `tests/compose/test_documentation.py` asserts that the docs no longer use the
+  wrapper or the image binding file. The docstring in `test_container_cli.py` names
+  the wrapper command a test replaces.
+
+Run the grep without these exclusions to review them.
