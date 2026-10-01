@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from jinja2.exceptions import SecurityError
+from jinja2.sandbox import unsafe
 
 from infrahub_sync import DiffSyncModelMixin
 
@@ -122,3 +123,35 @@ def test_transform_failure_does_not_echo_record_values() -> None:
         )
 
     assert "hunter2-canary" not in str(excinfo.value)
+
+
+class _GuardedRecordValue:
+    """A record value whose methods Jinja2 marks as unsafe or as changing data."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    @unsafe
+    def reveal(self) -> str:
+        self.calls.append("reveal")
+        return "revealed"
+
+    def delete(self) -> str:
+        self.calls.append("delete")
+        return "deleted"
+
+    # Django-style marker that the Jinja2 sandbox checks before a call.
+    delete.__dict__["alters_data"] = True
+
+
+@pytest.mark.parametrize("expression", ["{{ value.reveal() }}", "{{ value.delete() }}"])
+def test_transform_refuses_unsafe_callables(expression: str) -> None:
+    value = _GuardedRecordValue()
+    item: dict[str, Any] = {"value": value}
+
+    with pytest.raises(ValueError, match="not allowed in the transform sandbox") as excinfo:
+        DiffSyncModelMixin.apply_transform(item=item, transform_expr=expression, field="result")
+
+    assert isinstance(excinfo.value.__cause__, SecurityError)
+    assert not value.calls
+    assert "result" not in item
