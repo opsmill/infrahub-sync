@@ -863,6 +863,25 @@ def test_missing_prior_run_records_full_extract_despite_incremental_gate(
         assert plan.summary().deletes_not_executed == 1
 
 
+def test_incomplete_source_extraction_skips_deletes_despite_complete_destination() -> None:
+    """A source side that is not fully extracted records deletes as not computed, with no delete proposed."""
+    config = build_config()
+    potenda = build_potenda(
+        config=config,
+        source=qualified_source(),
+        destination=destination_with_orphan(),
+        run_id="20260726T1200-cccccccc",
+    )
+    potenda.load_both_sides()
+    potenda._side_full_extract = {"A": False, "B": True}
+    potenda.write_plan(potenda.diff())
+
+    assert read_manifest(plan_run_dir(potenda))["delete_operations_computed"] is False
+    assert potenda.run_id is not None
+    plan = read_saved_plan(sync_name=config.name, run_id=potenda.run_id, config=config)
+    assert plan.summary().by_action.get("delete", 0) == 0
+
+
 def test_delete_only_saved_plan_drives_the_execution_result(monkeypatch: pytest.MonkeyPatch) -> None:
     """A destination-only object is a planned delete even when the legacy diff rows are empty."""
     config = build_config(order=["BuiltinTag"])

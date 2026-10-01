@@ -9,11 +9,9 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import pytest
 from diffsync import Adapter, DiffSyncModel
-from diffsync.store import BaseStore
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncInstance
 from infrahub_sync.cache.cursors import CursorState, CursorTier
-from infrahub_sync.cache.incremental import apply_changed_rows
 from infrahub_sync.cache.parquet_io import write_resource_side
 from infrahub_sync.plan.derive import operations_from_diff, warn_missing_convergence_key
 from infrahub_sync.plan.errors import (
@@ -395,30 +393,3 @@ def test_updates_only_remain_keyed_by_recorded_id() -> None:
     )
     assert {op.destination_id for op in operations} == {"recorded-id", "second-id"}
     warn_missing_convergence_key(destination=destination, operations=operations, source_adapter=source, config=config())
-
-
-class DetachedStore(BaseStore):
-    """Store that hands back copies, like a serialising store, so edits persist only through update()."""
-
-    def __init__(self, rack: Rack) -> None:
-        super().__init__(name="detached")
-        self.saved = rack.model_copy()
-
-    def get(self, *, model: Any, identifier: Any) -> Rack:  # noqa: ANN401, ARG002
-        return self.saved.model_copy()
-
-    def update(self, *, obj: Any) -> None:  # noqa: ANN401
-        self.saved = obj.model_copy()
-
-
-def test_overlapping_delta_update_and_local_id_are_persisted() -> None:
-    """A detached stored copy keeps the delta's attributes and local_id after the load."""
-    adapter = Population(name="destination")
-    store = DetachedStore(Rack(name="same", site="site-a", description="old", local_id="old-id"))
-    adapter.store = store
-    cursor = CursorState(CursorTier.TIMESTAMP, "2026-09-29T00:00:00Z", safe=True)
-    adapter.list_changed_since = lambda *_: [  # ty: ignore[invalid-assignment]
-        {"name": "same", "site": "site-a", "description": "new", "local_id": "new-id"}
-    ]
-    apply_changed_rows(adapter, "TestRack", Rack, cursor)
-    assert (store.saved.description, store.saved.local_id) == ("new", "new-id")

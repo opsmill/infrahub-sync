@@ -106,8 +106,9 @@ even if a direct caller requests incremental extraction. It also extracts in ful
 saved cursor is unqualified, the tier changed, or the current source cannot guarantee a
 safe next bound, or the prior resource snapshot is missing. An empty source snapshot is a
 valid baseline and can still use a qualified cursor. An empty destination snapshot
-carries no `local_id` column, so the destination extracts that resource in full. A missing mapped model refuses the
-load before any resource query; it cannot stand in for an empty source kind.
+carries no `local_id` column, so the destination extracts that resource in full. A
+missing mapped model refuses the load before any resource query; it cannot stand in
+for an empty source kind.
 
 When every source resource and every destination resource falls back to a full load, the
 saved plan computes delete proposals for destination-only objects and records
