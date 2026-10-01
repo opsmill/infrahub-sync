@@ -513,6 +513,12 @@ def _instance(
             id="store-settings-password",
         ),
         pytest.param(
+            {},
+            {"PREFECT_API_AUTH_STRING": f"admin:{URL_USERINFO_CANARY}"},
+            f"admin:{URL_USERINFO_CANARY}",
+            id="prefect-api-auth-string-env",
+        ),
+        pytest.param(
             {"source_settings": {"token_env_vars": ["MY_ADAPTER_PASSPHRASE"]}},
             {"MY_ADAPTER_PASSPHRASE": URL_USERINFO_CANARY},
             URL_USERINFO_CANARY,
