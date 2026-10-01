@@ -444,6 +444,7 @@ disable = [
     "MD047",  # single trailing newline
 ]
 exclude = [
+    ".specify/**",
     ".agents/**",
     ".claude/**",
     ".codex/**",
