@@ -1,15 +1,17 @@
-"""The pinned Infrahub fixture must not start anything the image prerequisite would skip.
+"""The pinned Infrahub fixture must not start anything the image prerequisite would refuse.
 
 `infrahub_fixture` starts and seeds a real Infrahub stack, and `sync_image` holds
-the skip that decides the Docker-backed cases do not run at all. Only a
-dependency edge orders them: a session fixture is created at its first use, so
-the order follows whichever case reaches it first, and a `sync_image` skip
-already cached for one case does not stop a later case that reaches
-`infrahub_fixture` on its own.
+the refusal that decides the Docker-backed cases do not run at all: with no
+`INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION` named, every case fails rather than
+passing as skipped. Only a dependency edge orders the two fixtures: a session
+fixture is created at its first use, so the order follows whichever case reaches
+it first, and a refusal already cached for one case must not let a later case
+reach `infrahub_fixture` on its own.
 
 The negative cases run real pytest sessions, because that scheduling is the
-property under test and because a skip is cached for the rest of the session it
-happens in — asserting it here would silence the suite that runs the deployment.
+property under test and because a fixture failure is cached for the rest of the
+session it happens in — asserting it here would fail the suite that runs the
+deployment.
 The positive case needs no session: it drives the two fixture bodies directly.
 """
 
@@ -25,15 +27,15 @@ import pytest
 
 from tasks import preview
 from tests.compose import conftest
-from tests.compose.conftest import FIXTURE_INFRAHUB_PORT, FIXTURE_PROJECT, IMAGE_REFERENCE_ENV
+from tests.compose.conftest import FIXTURE_INFRAHUB_PORT, FIXTURE_PROJECT, IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV
 from tests.compose.redaction import Captured
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The case whose own request order put the side effect ahead of the prerequisite.
 INCIDENT = "tests/compose/test_lifecycle.py::test_a_plan_apply_and_separate_sync_run_through_the_replacement_worker"
-# A case that reaches `sync_image` first, used to cache its skip before the one above.
-EARLIER_SKIP = "tests/compose/test_bootstrap_idempotence.py::test_the_first_bootstrap_created_the_two_databases_and_their_owner_roles"
+# A case that reaches `sync_image` first, used to cache its refusal before the one above.
+EARLIER_REFUSAL = "tests/compose/test_bootstrap_idempotence.py::test_the_first_bootstrap_created_the_two_databases_and_their_owner_roles"
 
 # Answers the daemon probe and records every call to the one subprocess boundary
 # the compose fixtures reach Docker, Compose and infrahubctl through. Nothing the
@@ -70,6 +72,9 @@ def pytest_collection_finish(session):
 def run_fixture_setup(tmp_path: Path, selection: list[str]) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """Set up the real fixtures for `selection` with no image named, recording any side effect.
 
+    The daemon probe answers through the stub, and `sync_image` refuses before it
+    asks Docker anything, so nothing reaches the recording boundary first.
+
     Two separate things keep this proof harmless, and they cover different halves.
     The stub replaces `capture` -- the one subprocess boundary the fixtures reach
     Docker, Compose and infrahubctl through -- so no fixture setup can start
@@ -78,7 +83,11 @@ def run_fixture_setup(tmp_path: Path, selection: list[str]) -> tuple[subprocess.
     """
     (tmp_path / "fixture_side_effect_stub.py").write_text(STUB, encoding="utf-8")
     marker = tmp_path / "side-effects.txt"
-    environment = {key: value for key, value in os.environ.items() if key not in {IMAGE_REFERENCE_ENV, "PYTHONPATH"}}
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV, "PYTHONPATH"}
+    }
     environment["PYTHONPATH"] = str(tmp_path)
     environment["FIXTURE_SIDE_EFFECT_MARKER"] = str(marker)
     result = subprocess.run(  # noqa: S603 -- fixed argv, this interpreter
@@ -87,7 +96,7 @@ def run_fixture_setup(tmp_path: Path, selection: list[str]) -> tuple[subprocess.
             "-m",
             "pytest",
             "-q",
-            "-rs",
+            "-rsE",
             "-o",
             "addopts=",
             "-p",
@@ -110,16 +119,16 @@ def run_fixture_setup(tmp_path: Path, selection: list[str]) -> tuple[subprocess.
     "selection",
     [
         pytest.param([INCIDENT], id="reached-first-in-a-session"),
-        pytest.param([EARLIER_SKIP, INCIDENT], id="reached-after-another-case-already-skipped"),
+        pytest.param([EARLIER_REFUSAL, INCIDENT], id="reached-after-another-case-already-refused"),
     ],
 )
 def test_no_image_means_the_infrahub_fixture_starts_nothing(tmp_path: Path, selection: list[str]) -> None:
-    """With no image named, every case skips on the prerequisite and nothing is started."""
+    """With no image named, every case fails on the prerequisite and nothing is started."""
     result, recorded = run_fixture_setup(tmp_path, selection)
-    assert not recorded, f"the fixture ran {len(recorded)} command(s) before the image skip: {recorded}"
-    assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-2000:]
-    assert f"{len(selection)} skipped" in result.stdout, result.stdout[-3000:]
-    assert f"{IMAGE_REFERENCE_ENV} is unset" in result.stdout, result.stdout[-3000:]
+    assert not recorded, f"the fixture ran {len(recorded)} command(s) before the image refusal: {recorded}"
+    assert result.returncode != 0, result.stdout[-3000:] + result.stderr[-2000:]
+    assert f"{len(selection)} error" in result.stdout, result.stdout[-3000:]
+    assert f"{IMAGE_REPOSITORY_ENV} and {IMAGE_VERSION_ENV} unset" in result.stdout, result.stdout[-3000:]
 
 
 def test_a_named_image_runs_the_fixture_through_start_seed_and_teardown(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -128,10 +137,8 @@ def test_a_named_image_runs_the_fixture_through_start_seed_and_teardown(monkeypa
     The two real fixture bodies are driven directly, so this says what the
     fixture does once the prerequisite passes without scheduling a session.
     """
-    image = "sha256:" + "4" * 64
-    monkeypatch.setenv(IMAGE_REFERENCE_ENV, image)
-    reference = inspect.unwrap(conftest.sync_image)(None)
-    assert reference == image
+    monkeypatch.setenv(IMAGE_REPOSITORY_ENV, "infrahub-sync")
+    monkeypatch.setenv(IMAGE_VERSION_ENV, "compose-test")
 
     calls: list[str] = []
 
@@ -142,6 +149,12 @@ def test_a_named_image_runs_the_fixture_through_start_seed_and_teardown(monkeypa
 
     monkeypatch.setattr(conftest, "capture", record)
     monkeypatch.setattr(preview, "ensure_smoke_branch", lambda env: calls.append(f"seed {sorted(env)}"))
+
+    reference = inspect.unwrap(conftest.sync_image)(None)
+    assert reference == "infrahub-sync:compose-test"
+    held = calls.pop(0)
+    assert held.startswith("docker image inspect"), held
+    assert held.endswith(reference), held
 
     fixture = inspect.unwrap(conftest.infrahub_fixture)(reference)
     provided = next(fixture)

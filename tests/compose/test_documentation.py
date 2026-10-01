@@ -1,21 +1,16 @@
-"""The deployment page reaches readers and states what an operator cannot guess.
+"""The deployment page reaches readers, and what it shows resolves against the product.
 
 None of these links is covered by the documentation build: Docusaurus only warns
 about a broken Markdown link, and a page listed nowhere still builds cleanly
-while nobody can find it. The rest is the operator contract — the commands, the
-three states, the refusal families, and the two immutable image forms — where a
-value the page and the bundle disagree about is a copy-and-paste failure.
+while nobody can find it. The rest is the part of the operator contract that a
+copy-and-paste would break: the CLI calls an operator makes through the `cli`
+service, and the Python client example.
 """
 
 from __future__ import annotations
 
 import ast
-import os
-import re
 import shlex
-import shutil
-import subprocess  # noqa: S404 -- fixed shell argv executes the documented recipe under test
-from pathlib import Path
 from typing import Any, get_type_hints
 
 import pytest
@@ -23,100 +18,29 @@ from pydantic import BaseModel
 from typer.testing import CliRunner
 
 from infrahub_sync.client import SyncClient
-from tests.compose.conftest import BUNDLE, REPO_ROOT
+from tests.compose.conftest import REPO_ROOT
 
 DOCUMENT_ID = "compose-deployment"
 PAGE = REPO_ROOT / "docs" / "docs" / f"{DOCUMENT_ID}.mdx"
-QUICKSTART = REPO_ROOT / "docs" / "docs" / "quickstart-compose.mdx"
 SIDEBAR = REPO_ROOT / "docs" / "sidebars.ts"
-ENTRY_POINT = BUNDLE / "infrahub-sync-compose"
 API_REFERENCE = REPO_ROOT / "docs" / "docs" / "reference" / "sync-http-api.mdx"
-SKILLS_GUIDE = BUNDLE / "skills" / "README.md"
-SKILL_NAMES = ("infrahub-sync-deployment", "infrahub-sync-configuration")
 
-# Every command the entry point answers to. A command nobody wrote down is one
-# the deployment appears not to have.
-ENTRY_POINT_COMMANDS = ("init", "preflight", "start", "status", "logs", "stop", "restart", "reset", "cli")
-PAGE_COMMANDS = ("start", "status", "logs", "stop", "restart", "reset", "cli")
-
-# The frozen operator sequence, in order and complete: the two lifecycle commands
-# that precede any CLI call, the literal second `start` after credentials are
-# added, and the unchanged-source diff after the apply. Order is the property --
-# an operator follows what is written, top to bottom -- so the documents are
-# scanned monotonically and the duplicate `start` has to be two occurrences.
-OPERATOR_SEQUENCE = (
-    "./infrahub-sync-compose init",
-    "./infrahub-sync-compose start",
-    "./infrahub-sync-compose cli configs list",
-    "./infrahub-sync-compose start",
-    (
-        "./infrahub-sync-compose cli --package ./package.yml -- "
-        "configs register /input/package.yaml --reason 'register my configuration'"
-    ),
-    "./infrahub-sync-compose cli configs show CONFIG_ID",
-    "./infrahub-sync-compose cli configs versions CONFIG_ID",
-    "./infrahub-sync-compose cli configs validate CONFIG_ID 1",
-    (
-        "./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'review initial sync'"
-    ),
-    "./infrahub-sync-compose cli runs plan RUN_ID --detail",
-    (
-        "./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM "
-        "--branch BRANCH_NAME --reason 'apply reviewed initial sync'"
-    ),
-    "./infrahub-sync-compose cli runs show RUN_ID",
-    "./infrahub-sync-compose cli runs results RUN_ID",
-    (
-        "./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 "
-        "--branch BRANCH_NAME --reason 'verify unchanged source'"
-    ),
-    (
-        "./infrahub-sync-compose cli --package ./edited-package.yml -- "
-        "configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'"
-    ),
+# The CLI calls of the reviewed-run procedure, as an operator passes them to
+# `docker compose run --rm cli ...`. Each has to be a call the shipped CLI has.
+CLI_CALLS = (
+    "configs list",
+    "configs register /input/package.yaml --reason 'register my configuration'",
+    "configs show CONFIG_ID",
+    "configs versions CONFIG_ID",
+    "configs validate CONFIG_ID 1",
+    "diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'review initial sync'",
+    "runs plan RUN_ID --detail",
+    "apply RUN_ID --expected-checksum CHECKSUM --branch BRANCH_NAME --reason 'apply reviewed initial sync'",
+    "runs show RUN_ID",
+    "runs results RUN_ID",
+    "diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'verify unchanged source'",
+    "configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'",
 )
-
-# The two operator documents this sequence has to appear in, in this order.
-OPERATOR_DOCUMENTS = ("deploy/compose/OPERATING.md",)
-
-# The three lifecycle states and the exit code each one carries, so a reader can
-# script against them.
-STATES = (("READY", "0"), ("DEGRADED", "3"), ("STOPPED", "4"))
-
-# What preflight refuses. Each is a decision an operator has to act on, and the
-# page is where they find out what the family name meant.
-REFUSAL_FAMILIES = (
-    "compose-too-old",
-    "credentials-missing",
-    "image-binding-missing",
-    "image-binding-invalid",
-    "image-binding-mismatch",
-    "image-not-immutable",
-    "image-platform-unqualified",
-    "port-occupied",
-    "port-unprovable",
-    "foreign-resource",
-)
-
-# The files the bundle ships or generates. An operator who does not know which
-# ones hold credentials cannot keep them out of a backup or a commit.
-BUNDLE_FILES = (
-    "compose.yaml",
-    "infrahub-sync-compose",
-    "defaults.conf",
-    "configuration/qualification.yaml",
-    "bootstrap/databases.sh",
-    "OPERATING.md",
-    "skills/README.md",
-    "skills/infrahub-sync-configuration/SKILL.md",
-    "skills/infrahub-sync-deployment/SKILL.md",
-    "image.bind",
-    "operator.env",
-    "secrets/postgres-admin-password",
-    ".instance",
-)
-
-DEVELOPER_TASKS = ("compose.contract", "compose.lifecycle", "compose.reclaim")
 
 
 def page() -> str:
@@ -154,234 +78,18 @@ def test_the_page_is_listed_in_the_docs_sidebar() -> None:
     assert f"'{DOCUMENT_ID}'" in sync_sidebar()
 
 
-@pytest.mark.parametrize("command", PAGE_COMMANDS)
-def test_the_page_documents_every_lifecycle_command(command: str) -> None:
-    """`--help` names them; this page is where their consequences are written down."""
-    assert f"infrahub-sync-compose {command}" in page()
-
-
-def shell_blocks(body: str) -> list[list[str]]:
-    """Return each fenced shell block of one document as its list of lines."""
-    blocks: list[list[str]] = []
-    current: list[str] | None = None
-    for line in body.splitlines():
-        if line.startswith("```"):
-            if current is None:
-                current = [] if line.startswith("```bash") else None
-            else:
-                blocks.append(current)
-                current = None
-        elif current is not None:
-            current.append(line)
-    return blocks
-
-
-def missing_step(block: list[str]) -> str | None:
-    """Return the first sequence step this block does not carry in order, or None.
-
-    Monotonic over the block's own lines, so a step consumes the line it matched:
-    the second `start` needs a second line, and a reordered pair fails at the
-    first of the two.
-    """
-    remaining = list(block)
-    for step in OPERATOR_SEQUENCE:
-        for index, line in enumerate(remaining):
-            if line.strip() == step:
-                remaining = remaining[index + 1 :]
-                break
-        else:
-            return step
-    return None
-
-
-@pytest.mark.parametrize("document", OPERATOR_DOCUMENTS)
-def test_both_operator_documents_carry_the_whole_sequence_in_order(document: str) -> None:
-    """The bundled copy and the site page teach one procedure, in one order.
-
-    One block has to carry the whole sequence, and it is scanned monotonically
-    against that block's own lines. A step deleted, a pair reordered, or the
-    second `start` collapsed into one occurrence fails here; membership anywhere
-    in the document would accept all three, because both documents name `start`
-    in several unrelated places.
-    """
-    blocks = shell_blocks((REPO_ROOT / document).read_text(encoding="utf-8"))
-    complete = [block for block in blocks if missing_step(block) is None]
-    nearest = min((missing_step(block) or "" for block in blocks), key=len, default="")
-
-    assert complete, f"{document} carries no block running the whole frozen sequence in order (missing {nearest!r})"
-
-
-@pytest.mark.parametrize("document", OPERATOR_DOCUMENTS)
-def test_no_step_of_the_sequence_asks_an_operator_for_an_image(document: str) -> None:
-    """The archive names the image, so there is no image setting to be sent to.
-
-    The commands of the sequence are frozen above; the lines between them are
-    what an operator is told to do besides running them, and a step directing
-    them at a setting that does not exist stops the procedure at its second
-    line. Scoped to the sequence block rather than the page, so the prose that
-    explains why `operator.env` holds no image is untouched.
-    """
-    blocks = shell_blocks((REPO_ROOT / document).read_text(encoding="utf-8"))
-    sequence = [block for block in blocks if missing_step(block) is None]
-    assert sequence, f"{document} carries no complete sequence block to check"
-
-    for block in sequence:
-        for line in block:
-            lowered = line.lower()
-            assert not ("image" in lowered and "operator.env" in lowered), f"{document}: {line}"
-
-
-def usage_entries() -> dict[str, str]:
-    """Each command's own paragraph of the entry point's printed usage text."""
-    body = ENTRY_POINT.read_text(encoding="utf-8")
-    body = body[body.index("Usage: infrahub-sync-compose") : body.index("\nUSAGE\n")]
-    entries: dict[str, str] = {}
-    current = ""
-    for line in body.splitlines():
-        head = re.match(r"^  (\w+)", line)
-        if head and head.group(1) in ENTRY_POINT_COMMANDS:
-            current = head.group(1)
-            entries[current] = ""
-        if current:
-            entries[current] += line + "\n"
-    return entries
-
-
-@pytest.mark.parametrize("command", ["preflight", "cli"])
-def test_every_command_that_can_replace_the_recorded_image_says_so(command: str) -> None:
-    """Both of these resolve the binding, and resolving it persists what resolved.
-
-    An operator reading `--help` decides from it which commands touch the bundle.
-    A command that writes to `.instance` while its own entry reads like a
-    read-only one is the case where that decision is wrong.
-    """
-    entry = usage_entries()[command]
-
-    assert "recorded image" in entry, entry
-
-
-@pytest.mark.parametrize("document", OPERATOR_DOCUMENTS)
-def test_both_operator_documents_cover_an_operator_file_older_than_the_cli_token(document: str) -> None:
-    """`init` leaves an existing `operator.env` alone, including one without the token.
-
-    A bundle carried forward from an earlier alpha has an `operator.env` that
-    predates `INFRAHUB_SYNC_API_TOKEN`, and nothing adds it: this alpha migrates
-    no state in place. Every `cli` call then fails to authenticate, and the
-    document is the only place that says which value to write and where it is.
-    """
-    body = (REPO_ROOT / document).read_text(encoding="utf-8")
-
-    paragraphs = [block for block in body.split("\n\n") if "INFRAHUB_SYNC_API_TOKEN" in block]
-    covered = [
-        block
-        for block in paragraphs
-        if ("older" in block or "earlier" in block) and "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" in block
-    ]
-
-    assert covered, f"{document} does not say what to do with an operator.env that has no token"
-
-
-@pytest.mark.parametrize("line", [line for line in OPERATOR_SEQUENCE if " cli " in line])
-def test_every_documented_cli_call_names_commands_the_cli_has(line: str) -> None:
+@pytest.mark.parametrize("call", CLI_CALLS)
+def test_every_documented_cli_call_names_commands_the_cli_has(call: str) -> None:
     """A documented call the CLI refuses is a procedure that stops at that step.
 
     Resolved against the real Typer application, so a renamed command or a
-    dropped option fails here rather than during an operator's first run. Only
-    the CLI lines are resolved this way: `init` and `start` are the wrapper's.
+    dropped option fails here rather than during an operator's first run.
     """
     from infrahub_sync.cli import app
 
-    arguments = shlex.split(line.split(" cli ", 1)[1])
-    if arguments[:1] == ["--package"]:
-        arguments = arguments[arguments.index("--") + 1 :]
-    result = CliRunner().invoke(app, [*arguments, "--help"], env={"NO_COLOR": "1", "COLUMNS": "200"})
+    result = CliRunner().invoke(app, [*shlex.split(call), "--help"], env={"NO_COLOR": "1", "COLUMNS": "200"})
 
-    assert result.exit_code == 0, f"{line}: {result.output}"
-
-
-def test_the_page_documents_no_command_the_entry_point_does_not_have() -> None:
-    """A documented command that refuses is worse than an undocumented one."""
-    usage = ENTRY_POINT.read_text(encoding="utf-8")
-    documented = {command for command in PAGE_COMMANDS if f"infrahub-sync-compose {command}" in page()}
-
-    for command in documented:
-        assert f"    {command})" in usage or f"    {command} " in usage, command
-
-
-@pytest.mark.parametrize(("state", "exit_code"), STATES)
-def test_the_page_documents_every_state_and_its_exit_code(state: str, exit_code: str) -> None:
-    """A smoke scripts against the exit code, so the mapping has to be written down."""
-    rows = [line for line in page().splitlines() if line.startswith(f"| `{state}` |")]
-
-    assert rows, f"{state} has no row on the page"
-    assert f"| {exit_code} |" in rows[0], rows[0]
-
-
-@pytest.mark.parametrize("family", REFUSAL_FAMILIES)
-def test_the_page_names_every_refusal_family_it_documents(family: str) -> None:
-    """The family is all a refusal prints, so it has to mean something to a reader."""
-    assert family in page()
-    assert family in ENTRY_POINT.read_text(encoding="utf-8"), f"{family} is not a family the bundle reports"
-
-
-@pytest.mark.parametrize("name", BUNDLE_FILES)
-def test_the_page_documents_every_file_the_bundle_ships_or_generates(name: str) -> None:
-    """Which files hold credentials is not something to leave a reader to infer."""
-    assert f"`{name}`" in page()
-
-
-@pytest.mark.parametrize("task_name", DEVELOPER_TASKS)
-def test_the_page_documents_every_bundle_task(task_name: str) -> None:
-    """`invoke --list` names them; the page says what each one needs first."""
-    assert f"invoke {task_name}" in page()
-
-
-def test_the_page_states_the_minimum_compose_version_the_bundle_enforces() -> None:
-    """A reader who installs the version below the floor is refused at preflight."""
-    minimum = next(
-        line.split("=", 1)[1].strip()
-        for line in ENTRY_POINT.read_text(encoding="utf-8").splitlines()
-        if line.startswith("MINIMUM_COMPOSE=")
-    )
-
-    assert minimum in page(), minimum
-
-
-def test_the_page_says_the_bundle_names_its_own_image_rather_than_the_operator() -> None:
-    """A reader who goes looking for a setting to fill in has to be told there is none.
-
-    The page names the record, and both of the immutable forms it holds. The
-    refusal families the record's checks produce are covered by the table
-    above, which is read from the entry point's own `refuse` calls.
-    """
-    text = page()
-
-    assert "image.bind" in text
-    assert "@sha256:" in text
-    assert "INFRAHUB_SYNC_IMAGE=sha256:" not in text, "the page still asks an operator to name an image"
-
-
-def test_the_page_tells_a_clean_host_how_to_get_the_bundle_and_check_it() -> None:
-    """The subject is an archive on a host that has no copy of this tree.
-
-    This replaced a disclaimer saying the page was not yet that claim. What makes
-    it one is not the absence of the disclaimer but the presence of the
-    procedure: the two files, the checksum, the digest, and the extraction.
-    """
-    text = QUICKSTART.read_text(encoding="utf-8")
-
-    for step in ("<release-archive>.tar.gz.sha256", "sha256sum -c", "tar -xzf"):
-        assert step in text, f"the page does not tell a host to {step}"
-    assert "cd deploy/compose" not in text, "the page still deploys from a directory in this tree"
-
-
-def test_private_candidates_link_to_installation_access_instructions() -> None:
-    """Direct private testers to release access before deployment commands."""
-    introduction = page().split("## Related operator pages", maxsplit=1)[0]
-
-    assert "Private candidates are available as release attachments." in introduction
-    assert "[Install Infrahub Sync](./installation.mdx)" in introduction
-    assert "release access" in introduction
+    assert result.exit_code == 0, f"{call}: {result.output}"
 
 
 def test_the_api_reference_marks_the_configuration_directory_as_legacy_only() -> None:
@@ -399,180 +107,6 @@ def test_the_api_reference_marks_the_configuration_directory_as_legacy_only() ->
 
     assert "Legacy" in row, row
     assert "no configuration mount" in row, row
-
-
-# ---------------------------------------------------------------------------
-# The documented skill installation recipe is atomic
-# ---------------------------------------------------------------------------
-
-
-def skill_install_script() -> str:
-    """Return the guide's one fenced shell recipe exactly as readers run it."""
-    scripts = re.findall(r"```sh\n(.*?)\n```", SKILLS_GUIDE.read_text(encoding="utf-8"), re.DOTALL)
-
-    assert len(scripts) == 1, "the skills guide must carry exactly one shell recipe"
-    return scripts[0] + "\n"
-
-
-def make_skill_sources(bundle: Path) -> None:
-    """Create two complete skill directories, including non-entry-point content."""
-    for name in SKILL_NAMES:
-        source = bundle / "skills" / name
-        (source / "notes").mkdir(parents=True)
-        (source / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
-        (source / "notes" / "auxiliary.txt").write_text(f"auxiliary for {name}\n", encoding="utf-8")
-
-
-def run_skill_install(
-    bundle: Path, destination: Path, *, environment: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
-    """Run the guide's recipe in a disposable extracted-bundle layout."""
-    variables = {**os.environ, "AGENT_SKILLS_DIR": str(destination), **(environment or {})}
-    return subprocess.run(
-        ["/bin/sh"],
-        input=skill_install_script(),
-        cwd=bundle,
-        env=variables,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-
-def write_command_wrapper(directory: Path, command: str, body: str) -> None:
-    """Put a controlled command first on PATH for one recipe execution."""
-    directory.mkdir(parents=True, exist_ok=True)
-    wrapper = directory / command
-    wrapper.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
-    wrapper.chmod(0o755)
-
-
-@pytest.mark.parametrize("occupied_name", SKILL_NAMES)
-def test_skill_install_preserves_an_occupied_destination_without_a_partial_install(
-    tmp_path: Path, occupied_name: str
-) -> None:
-    """Either occupied destination must stop the pair without changing either owner."""
-    bundle = tmp_path / "bundle"
-    destination = tmp_path / "agent-skills"
-    make_skill_sources(bundle)
-    destination.mkdir()
-    occupied = destination / occupied_name
-    occupied.mkdir()
-    sentinel = occupied / "sentinel"
-    sentinel.write_text("keep\n", encoding="utf-8")
-
-    result = run_skill_install(bundle, destination)
-
-    assert result.returncode != 0
-    assert sentinel.read_text(encoding="utf-8") == "keep\n"
-    assert set(occupied.iterdir()) == {sentinel}
-    for name in SKILL_NAMES:
-        if name != occupied_name:
-            assert not (destination / name).exists()
-
-
-def test_skill_install_loses_a_concurrent_claim_without_copying_into_or_removing_it(tmp_path: Path) -> None:
-    """A winner created at the claim boundary remains the sole owner of its path."""
-    bundle = tmp_path / "bundle"
-    destination = tmp_path / "agent-skills"
-    wrappers = tmp_path / "wrappers"
-    make_skill_sources(bundle)
-    destination.mkdir()
-    race_target = destination / SKILL_NAMES[0]
-    real_mkdir = shutil.which("mkdir")
-    real_cp = shutil.which("cp")
-    assert real_mkdir is not None
-    assert real_cp is not None
-    write_command_wrapper(
-        wrappers,
-        "mkdir",
-        'if [ "$1" = "$RACE_TARGET" ]; then\n'
-        '  "$REAL_MKDIR" "$1"\n'
-        '  printf "%s\\n" winner > "$1/sentinel"\n'
-        "fi\n"
-        'exec "$REAL_MKDIR" "$@"',
-    )
-    # The cp branch makes the same boundary visible to the old check-then-copy recipe.
-    write_command_wrapper(
-        wrappers,
-        "cp",
-        'if [ ! -e "$RACE_TARGET" ]; then\n'
-        '  "$REAL_MKDIR" "$RACE_TARGET"\n'
-        '  printf "%s\\n" winner > "$RACE_TARGET/sentinel"\n'
-        "fi\n"
-        'exec "$REAL_CP" "$@"',
-    )
-
-    result = run_skill_install(
-        bundle,
-        destination,
-        environment={
-            "PATH": f"{wrappers}{os.pathsep}{os.environ.get('PATH', '')}",
-            "RACE_TARGET": str(race_target),
-            "REAL_MKDIR": real_mkdir,
-            "REAL_CP": real_cp,
-        },
-    )
-
-    assert result.returncode != 0
-    sentinel = race_target / "sentinel"
-    assert sentinel.read_text(encoding="utf-8") == "winner\n"
-    assert set(race_target.iterdir()) == {sentinel}
-    assert not (destination / SKILL_NAMES[1]).exists()
-
-
-def test_skill_install_removes_its_claimed_paths_after_a_partial_copy(tmp_path: Path) -> None:
-    """A failed second copy rolls back both destinations claimed by this run."""
-    bundle = tmp_path / "bundle"
-    destination = tmp_path / "agent-skills"
-    wrappers = tmp_path / "wrappers"
-    make_skill_sources(bundle)
-    destination.mkdir()
-    real_cp = shutil.which("cp")
-    assert real_cp is not None
-    write_command_wrapper(
-        wrappers,
-        "cp",
-        'if [ "$#" -eq 4 ]; then\n'
-        '  "$REAL_CP" -R "$2" "$4"\n'
-        "  exit 17\n"
-        "fi\n"
-        'case "$2" in\n'
-        "  *infrahub-sync-configuration*)\n"
-        '    "$REAL_CP" "$@" || exit $?\n'
-        "    exit 17\n"
-        "    ;;\n"
-        "esac\n"
-        'exec "$REAL_CP" "$@"',
-    )
-
-    result = run_skill_install(
-        bundle,
-        destination,
-        environment={
-            "PATH": f"{wrappers}{os.pathsep}{os.environ.get('PATH', '')}",
-            "REAL_CP": real_cp,
-        },
-    )
-
-    assert result.returncode == 17
-    for name in SKILL_NAMES:
-        assert not (destination / name).exists()
-
-
-def test_skill_install_copies_both_complete_skill_directories(tmp_path: Path) -> None:
-    """A successful install includes auxiliary files instead of only SKILL.md."""
-    bundle = tmp_path / "bundle"
-    destination = tmp_path / "agent-skills"
-    make_skill_sources(bundle)
-    destination.mkdir()
-
-    result = run_skill_install(bundle, destination)
-
-    assert result.returncode == 0, result.stderr
-    for name in SKILL_NAMES:
-        assert (destination / name / "SKILL.md").read_text(encoding="utf-8") == f"# {name}\n"
-        assert (destination / name / "notes" / "auxiliary.txt").read_text(encoding="utf-8") == f"auxiliary for {name}\n"
 
 
 # ---------------------------------------------------------------------------

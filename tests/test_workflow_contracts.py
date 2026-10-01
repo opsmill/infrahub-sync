@@ -698,6 +698,32 @@ def test_nightly_suites_report_independently_and_clean_up() -> None:
     assert ".github/scripts/nightly_e2e.py" in filter_patterns("sync_all")
 
 
+def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
+    """The opt-in Compose suite keeps running: nightly, on the exact merged commit.
+
+    It builds the image locally and names it through the two settings the root
+    `docker-compose.yml` reads, so the run proves the operator file against this
+    commit's image without pulling anything.
+    """
+    steps = jobs(NIGHTLY_WORKFLOW)["compose-suite"]["steps"]
+    checkout = next(step for step in steps if str(step.get("uses", "")).startswith(CHECKOUT_ACTION))
+    assert checkout["with"] == {
+        "ref": f"${{{{ inputs.{SHA_INPUT} }}}}",
+        "fetch-depth": 0,
+        "persist-credentials": False,
+    }
+    guard = next(step for step in steps if step.get("id") == "sha_guard")["run"]
+    assert ANCESTRY_CHECK in guard
+    assert HEAD_READBACK in guard
+    runs = [str(step.get("run", "")) for step in steps]
+    build = next(index for index, run in enumerate(runs) if run == "docker build -t infrahub-sync:compose-test .")
+    suite = next(
+        index for index, run in enumerate(runs) if run == "uv run --no-sync pytest -m compose tests/compose -x"
+    )
+    assert build < suite
+    assert steps[suite]["env"] == {"INFRAHUB_SYNC_DOCKER_IMAGE": "infrahub-sync", "VERSION": "compose-test"}
+
+
 def develop_jobs() -> dict[str, dict]:
     """Return the job graph of the caller the two tiers exist for."""
     return jobs(DEVELOP_CALLER)

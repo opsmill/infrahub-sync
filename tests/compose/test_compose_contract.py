@@ -1,10 +1,14 @@
-"""Properties of the resolved Compose bundle, read from Compose's own model.
+"""Properties of the root `docker-compose.yml`, read from Compose's own model.
 
-Every assertion below reads `docker compose config` output, so it describes what
-Compose will run rather than what the file appears to say: interpolation,
-extension merging, and defaulting have already happened. A property that would
-survive an edit to the YAML but change what runs is not a property this suite
-can be fooled by.
+Almost every assertion below reads `docker compose config` output, so it
+describes what Compose will run rather than what the file appears to say:
+interpolation, extension merging, and defaulting have already happened. A
+property that would survive an edit to the YAML but change what runs is not a
+property this suite can be fooled by.
+
+The exceptions read the file's text on purpose: the image reference form and the
+`:?` guard on each credential are properties of how the file is written, which
+interpolation erases before a model exists.
 """
 
 from __future__ import annotations
@@ -16,14 +20,12 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from infrahub_sync.configuration.models import parse_configuration_package
-from infrahub_sync.product_store import configs
 from tests.compose.conftest import (
-    BUNDLE_LABEL,
-    BUNDLED_CONFIGURATION,
     COMPOSE_FILE,
-    DEFAULTS_FILE,
-    INSTANCE_LABEL,
+    CONTRACT_ENVIRONMENT,
+    DEFAULT_IMAGE_REPOSITORY,
+    IMAGE_REPOSITORY_ENV,
+    IMAGE_VERSION_ENV,
     SCRATCH_OPTIONS,
     SYNC_SCRATCH_ROOTS,
     SYNC_SERVICES,
@@ -41,6 +43,26 @@ if TYPE_CHECKING:
 # which is the OCI configuration digest a build recorded, or a published
 # repository pinned to a manifest digest. A tag matches neither.
 IMMUTABLE_REFERENCE = re.compile(r"^(?:sha256:[0-9a-f]{64}|[^\s]+@sha256:[0-9a-f]{64})$")
+# Every Sync service, the opt-in CLI included, and the one image reference form
+# they all use: the registry repository and the release version, each overridable.
+ALL_SYNC_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker", "cli")
+SYNC_IMAGE_FORM = re.compile(
+    r'^\s*image:\s*"\$\{INFRAHUB_SYNC_DOCKER_IMAGE:-registry\.opsmill\.io/opsmill/infrahub-sync\}'
+    r':\$\{VERSION:-(?P<version>[0-9][0-9A-Za-z.+-]*)\}"\s*$'
+)
+# The operator credentials: never defaulted, so each is guarded with `:?`.
+CREDENTIALS = (
+    "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD",
+    "INFRAHUB_SYNC_PRODUCT_PASSWORD",
+    "INFRAHUB_SYNC_PREFECT_PASSWORD",
+    "INFRAHUB_SYNC_S3_ACCESS_KEY",
+    "INFRAHUB_SYNC_S3_SECRET_KEY",
+    "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",
+)
+# The database bootstrap script: a top-level `configs` entry, mounted where the
+# job's entrypoint runs it.
+BOOTSTRAP_CONFIG = "db-bootstrap-script"
+BOOTSTRAP_TARGET = "/usr/local/bin/databases.sh"
 TAGGED_INDEX_REFERENCE = re.compile(r"^(?:[^\s/@]+/)*[^/\s@:]+:[^/\s@:]+@sha256:[0-9a-f]{64}$")
 MINIO_IMAGE = (
     "cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba"
@@ -78,7 +100,7 @@ DESTINATION_CREDENTIAL = "INFRAHUB_API_TOKEN"
 DESTINATION_CREDENTIAL_RECEIVERS = {"sync-api", "sync-worker"}
 
 # The opt-in client, and the profile that is the only way to resolve it.
-CLI_SERVICE = "sync-cli"
+CLI_SERVICE = "cli"
 # The API client credential, and the only service allowed to hold one. It
 # authenticates a caller *to* this deployment, so a worker or a job holding it
 # would be a service carrying a credential for the service that dispatches it.
@@ -102,7 +124,7 @@ def published(definition: Mapping[str, Any]) -> list[dict[str, Any]]:
 def test_the_api_and_the_worker_share_no_mount_source(model: dict[str, Any]) -> None:
     """A shared source is a channel run state could cross without the object store.
 
-    The bundle's whole isolation claim is that a submitter and the worker that
+    The deployment's whole isolation claim is that a submitter and the worker that
     serves it have no filesystem in common, so the intersection is the thing to
     assert — not that each one's list happens to look right today.
     """
@@ -148,7 +170,7 @@ def test_only_postgresql_and_the_object_store_keep_a_named_volume(model: dict[st
         if any(mount.get("type") == "volume" for mount in definition.get("volumes") or [])
     }
 
-    assert declared == PERSISTENT_VOLUMES, f"the bundle declares the volumes {sorted(declared)}"
+    assert declared == PERSISTENT_VOLUMES, f"the file declares the volumes {sorted(declared)}"
     assert holders == PERSISTENT_SERVICES, f"named volumes are held by {sorted(holders)}"
 
 
@@ -176,6 +198,95 @@ def test_the_worker_is_given_no_configuration_directory(model: dict[str, Any]) -
     definition = service(model, "sync-worker")
 
     assert "INFRAHUB_SYNC_CONFIG_DIRECTORY" not in definition["environment"]
+
+
+def test_no_service_mounts_a_host_path(cli_model: dict[str, Any]) -> None:
+    """One self-contained file: nothing it runs reads a path beside it on the host.
+
+    An equality over every service, the opt-in CLI included, so a bind mount
+    added to any of them fails here. A named volume or a tmpfs is not a host path.
+    """
+    binds = sorted(
+        f"{name}: {mount.get('source')}"
+        for name, definition in services(cli_model).items()
+        for mount in definition.get("volumes") or []
+        if mount.get("type") == "bind"
+    )
+
+    assert binds == [], f"these services mount a host path: {binds}"
+
+
+def test_the_bootstrap_script_comes_from_an_inline_config(model: dict[str, Any]) -> None:
+    """The database bootstrap is carried by the file itself, not by a script beside it."""
+    bootstrap = service(model, "db-bootstrap")
+    mounted = {(entry["source"], entry["target"]) for entry in bootstrap.get("configs") or []}
+    declared = (model.get("configs") or {}).get(BOOTSTRAP_CONFIG) or {}
+
+    assert mounted == {(BOOTSTRAP_CONFIG, BOOTSTRAP_TARGET)}, mounted
+    assert "content" in declared, f"{BOOTSTRAP_CONFIG} is not inline content: {sorted(declared)}"
+    assert "file" not in declared, f"{BOOTSTRAP_CONFIG} reads a file from the host"
+    assert bootstrap["entrypoint"] == ["/bin/sh", BOOTSTRAP_TARGET], bootstrap["entrypoint"]
+
+
+def test_the_bootstrap_script_binds_every_value_as_a_variable(model: dict[str, Any]) -> None:
+    """Compose renders the content once, so a value interpolated into it would be baked in.
+
+    Every shell `$` is escaped in the file, so the rendered script still reads
+    each setting from the container's environment at run time, and each one
+    crosses into SQL as a bound `psql` variable rather than as text.
+    """
+    content = model["configs"][BOOTSTRAP_CONFIG]["content"]
+
+    for setting in ("ROLE", "PASSWORD", "DATABASE"):
+        for owner in ("PRODUCT", "PREFECT"):
+            name = f"INFRAHUB_SYNC_{owner}_{setting}"
+            # `config` prints the content with its `$$` escapes kept; Compose
+            # renders each as one `$` when it creates the config.
+            reference = re.compile(r'"\$?\$\{' + name + r'\}"')
+            assert reference.search(content), f"the bootstrap script does not read {name} at run time"
+    assert CONTRACT_ENVIRONMENT["INFRAHUB_SYNC_PRODUCT_PASSWORD"] not in content, "a password was baked in"
+    assert content.count("\\gexec") == 4, "every role and database creation is a guarded statement"
+
+
+def test_the_file_declares_no_secret_file(cli_model: dict[str, Any]) -> None:
+    """Credentials arrive through the environment, never as a file beside the deployment."""
+    assert not cli_model.get("secrets"), f"the file declares secrets {sorted(cli_model.get('secrets') or {})}"
+    users = sorted(name for name, definition in services(cli_model).items() if definition.get("secrets"))
+    assert users == [], f"these services read a secret file: {users}"
+
+
+# ---------------------------------------------------------------------------
+# Required credentials
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", CREDENTIALS)
+def test_every_reference_to_a_credential_is_guarded_with_a_required_marker(name: str) -> None:
+    """Read from the text: each `${NAME...}` is `${NAME:?...}`, so no default can creep in.
+
+    A model cannot answer this, because interpolation has already replaced every
+    reference with its value by the time one exists.
+    """
+    # `$${NAME}` is an escaped, literal `$` for the shell inside the bootstrap
+    # script, read at run time from the container: not an interpolation.
+    pattern = r"(?<!\$)\$\{" + name + r"(?![A-Z0-9_])([^}]*)\}"
+    references = re.findall(pattern, COMPOSE_FILE.read_text(encoding="utf-8"))
+    unguarded = [reference for reference in references if not reference.startswith(":?")]
+
+    assert references, f"the file never references {name}"
+    assert unguarded == [], f"{name} is referenced without a :? guard: {unguarded}"
+
+
+@pytest.mark.parametrize("name", CREDENTIALS)
+def test_a_missing_credential_stops_compose_naming_it(compose_version: str, name: str) -> None:
+    """Compose refuses before any container exists, and the refusal says which one."""
+    del compose_version
+    without = {key: value for key, value in CONTRACT_ENVIRONMENT.items() if key != name}
+
+    refused = compose(["config", "--quiet"], environment=without)
+
+    assert refused.returncode != 0, f"Compose resolved the file without {name}"
+    assert f"{name} is required" in refused.unredacted(), "the refusal does not name the missing credential"
 
 
 # ---------------------------------------------------------------------------
@@ -236,19 +347,99 @@ def test_object_store_uses_the_pinned_minio_build_and_migrates_existing_data(mod
     assert object_store["depends_on"]["object-store-init"]["condition"] == "service_completed_successfully"
 
 
-def test_every_image_the_bundle_runs_is_named_by_digest(model: dict[str, Any]) -> None:
+def test_every_image_other_than_sync_is_named_by_digest(cli_model: dict[str, Any]) -> None:
     """A tag can be re-pointed; a digest names one artifact for good.
 
     One assertion over every service, so a service added later is covered by
-    having been added rather than by somebody remembering to extend a list.
+    having been added rather than by somebody remembering to extend a list. The
+    Sync image is the one deliberate exception: it is selected by release tag.
     """
     mutable = sorted(
         f"{name}: {definition['image']}"
-        for name, definition in services(model).items()
-        if not IMMUTABLE_REFERENCE.fullmatch(str(definition["image"]))
+        for name, definition in services(cli_model).items()
+        if name not in ALL_SYNC_SERVICES and not IMMUTABLE_REFERENCE.fullmatch(str(definition["image"]))
     )
 
     assert mutable == [], f"these services are not pinned to a digest: {mutable}"
+
+
+def sync_image_lines() -> dict[str, str]:
+    """The raw `image:` line of each Sync service, read from the file's text."""
+    found: dict[str, str] = {}
+    current = ""
+    for line in COMPOSE_FILE.read_text(encoding="utf-8").splitlines():
+        heading = re.fullmatch(r"  ([a-z][a-z0-9-]*):\s*", line)
+        if heading:
+            current = heading.group(1)
+        elif current in ALL_SYNC_SERVICES and line.lstrip().startswith("image:"):
+            found[current] = line
+    return found
+
+
+def pinned_versions() -> dict[str, str]:
+    """The default `VERSION` each Sync service's image line names, for lines of the right form."""
+    return {
+        name: match.group("version")
+        for name, line in sync_image_lines().items()
+        if (match := SYNC_IMAGE_FORM.match(line))
+    }
+
+
+def test_every_sync_service_names_the_registry_image_and_the_release_version() -> None:
+    """`${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-X}`, verbatim.
+
+    Read from the text, because the model only shows what the defaults resolved
+    to. Every Sync service carries the same reference, so one `VERSION` moves
+    all four together.
+    """
+    lines = sync_image_lines()
+    versions = pinned_versions()
+
+    assert set(lines) == set(ALL_SYNC_SERVICES), f"Sync services with an image line: {sorted(lines)}"
+    assert set(versions) == set(ALL_SYNC_SERVICES), (
+        f"services off the reference form: {sorted(set(lines) - set(versions))}"
+    )
+    assert len(set(versions.values())) == 1, f"the Sync services name different versions: {versions}"
+
+
+def test_the_sync_image_defaults_to_the_registry_at_the_pinned_version(cli_model: dict[str, Any]) -> None:
+    """With nothing set, every Sync service resolves to one registry image."""
+    (pinned,) = set(pinned_versions().values())
+    expected = f"{DEFAULT_IMAGE_REPOSITORY}:{pinned}"
+
+    resolved = {name: service(cli_model, name)["image"] for name in ALL_SYNC_SERVICES}
+
+    assert set(resolved.values()) == {expected}, resolved
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        pytest.param({IMAGE_VERSION_ENV: "9.9.9"}, f"{DEFAULT_IMAGE_REPOSITORY}:9.9.9", id="version"),
+        pytest.param(
+            {IMAGE_REPOSITORY_ENV: "infrahub-sync", IMAGE_VERSION_ENV: "compose-test"},
+            "infrahub-sync:compose-test",
+            id="repository-and-version",
+        ),
+    ],
+)
+def test_the_operator_selects_another_sync_image_with_two_settings(
+    compose_version: str, contract_environment: dict[str, str], overrides: dict[str, str], expected: str
+) -> None:
+    """`VERSION` and `INFRAHUB_SYNC_DOCKER_IMAGE` move every Sync service, and nothing else."""
+    del compose_version
+    result = compose(
+        ["--profile", "cli", "config", "--format", "json"], environment={**contract_environment, **overrides}
+    )
+    assert result.returncode == 0, result.stderr
+    resolved = services(json.loads(result.stdout))
+
+    assert {resolved[name]["image"] for name in ALL_SYNC_SERVICES} == {expected}
+    assert all(
+        IMMUTABLE_REFERENCE.fullmatch(str(definition["image"]))
+        for name, definition in resolved.items()
+        if name not in ALL_SYNC_SERVICES
+    )
 
 
 @pytest.mark.parametrize("files", [(DESTINATION_COMPOSE,), (DESTINATION_COMPOSE, PREVIEW_COMPOSE)])
@@ -396,118 +587,6 @@ def test_standalone_version_override_drops_the_shipped_digest(compose_version: s
     assert configured["sync-prefect"]["image"] == "prefecthq/prefect:custom"
 
 
-def test_a_tag_only_sync_image_still_resolves_to_the_tag_it_was_given(
-    contract_environment: dict[str, str],
-) -> None:
-    """Compose interpolates whatever it is handed, which is why the check above matters.
-
-    Compose has no opinion about mutability: a tag passes through it unchanged.
-    This records that fact, so the digest property is understood as one this
-    bundle's own gates hold rather than one Compose enforces.
-    """
-    tagged = resolve({**contract_environment, "INFRAHUB_SYNC_IMAGE": "infrahub-sync:latest"})
-
-    assert tagged["services"]["sync-api"]["image"] == "infrahub-sync:latest"
-
-
-def test_the_generated_layer_supplies_the_image_over_the_operators_own_file(
-    compose_version: str, contract_environment: dict[str, str], tmp_path: Path
-) -> None:
-    """Compose itself decides this, so it is Compose that is asked.
-
-    The entry point hands three env files in one order — shipped defaults, the
-    operator's own settings, then the generated instance state — and the image
-    the deployment runs has to come from the last of them. An operator naming
-    another one in their own file must lose, and the property is only worth
-    stating if the real parser is what settles it.
-    """
-    del compose_version
-    checked = "sha256:" + "c" * 64
-    defaults = tmp_path / "defaults.conf"
-    defaults.write_text(
-        DEFAULTS_FILE.read_text(encoding="utf-8")
-        + "".join(f"{name}={value}\n" for name, value in contract_environment.items()),
-        encoding="utf-8",
-    )
-    operator = tmp_path / "operator.env"
-    operator.write_text(f"INFRAHUB_SYNC_IMAGE=sha256:{'d' * 64}\n", encoding="utf-8")
-    generated = tmp_path / ".instance"
-    generated.write_text(f"INFRAHUB_SYNC_IMAGE={checked}\n", encoding="utf-8")
-
-    resolved = compose(
-        ["config", "--format", "json"],
-        env_files=(defaults, operator, generated),
-    )
-
-    assert resolved.returncode == 0, resolved.stderr
-    assert json.loads(resolved.stdout)["services"]["sync-api"]["image"] == checked
-
-
-# ---------------------------------------------------------------------------
-# Ownership
-# ---------------------------------------------------------------------------
-
-
-def test_every_owned_resource_carries_the_instance_label(model: dict[str, Any]) -> None:
-    """Teardown resolves targets by name and then verifies this label before it mutates.
-
-    A resource created without it can never be proved to belong to this instance,
-    so a later reset would have to either refuse it or take it on faith.
-    """
-    owned: dict[str, Mapping[str, Any]] = {
-        **{f"service {name}": definition for name, definition in services(model).items()},
-        **{f"volume {name}": definition for name, definition in (model.get("volumes") or {}).items()},
-        **{f"network {name}": definition for name, definition in (model.get("networks") or {}).items()},
-    }
-    unlabelled = sorted(
-        description
-        for description, definition in owned.items()
-        if (definition.get("labels") or {}).get(INSTANCE_LABEL) != "contract-0000000000000000"
-        or (definition.get("labels") or {}).get(BUNDLE_LABEL) != "compose"
-    )
-
-    assert unlabelled == [], f"these resources carry no instance label: {unlabelled}"
-
-
-def test_the_bundle_refuses_to_resolve_without_an_instance_identity(
-    contract_environment: dict[str, str],
-) -> None:
-    """The label is required, so an unlabelled stack cannot be started by accident."""
-    from tests.compose.conftest import compose
-
-    anonymous = {key: value for key, value in contract_environment.items() if key != "INFRAHUB_SYNC_INSTANCE"}
-    result = compose(["config"], environment={**anonymous, "INFRAHUB_SYNC_INSTANCE": ""})
-
-    assert result.returncode != 0
-    assert "instance identity" in result.stderr
-
-
-# ---------------------------------------------------------------------------
-# The example configuration
-# ---------------------------------------------------------------------------
-
-
-def test_the_example_configuration_is_a_registerable_package() -> None:
-    """Nothing loads it; an operator registers it, so it has to be one a register accepts."""
-    package = parse_configuration_package(configs.load_package_content(BUNDLED_CONFIGURATION))
-
-    assert package.configuration.name == "infrahub-sync-qualification"
-
-
-def test_the_bundled_configuration_declares_no_secret_value() -> None:
-    """Its credentials are references the worker resolves from its own environment.
-
-    Declared content is what the registry checksums and stores, so a literal
-    credential here would be a credential in PostgreSQL and in every API
-    response that echoes a version.
-    """
-    package = parse_configuration_package(configs.load_package_content(BUNDLED_CONFIGURATION))
-    declared = package.configuration.model_dump(mode="json", by_alias=True)
-
-    for side in ("source", "destination"):
-        assert declared[side]["settings"]["token"] == {"$credential": "infrahub-token"}
-
-
 # ---------------------------------------------------------------------------
 # No filesystem input at all
 # ---------------------------------------------------------------------------
@@ -529,18 +608,12 @@ def test_no_sync_service_takes_a_filesystem_input(model: dict[str, Any]) -> None
     assert readers == {}, f"Sync services taking a filesystem input: {sorted(readers)}"
 
 
-def test_the_bundle_interpolates_no_declared_configuration_setting(model: dict[str, Any]) -> None:
+def test_the_file_interpolates_no_declared_configuration_setting(model: dict[str, Any]) -> None:
     """The setting is gone from the shipped startup, not merely unused by it."""
     interpolated = set(re.findall(r"\$\{([A-Z][A-Z0-9_]*)", COMPOSE_FILE.read_text(encoding="utf-8")))
-    shipped = {
-        line.split("=", 1)[0]
-        for line in DEFAULTS_FILE.read_text(encoding="utf-8").splitlines()
-        if "=" in line and not line.lstrip().startswith("#")
-    }
     resolved = {name for definition in services(model).values() for name in (definition.get("environment") or {})}
 
     assert "INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION" not in interpolated
-    assert "INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION" not in shipped
     assert "INFRAHUB_SYNC_BOOTSTRAP_CONFIGURATION" not in resolved
 
 
@@ -591,7 +664,7 @@ def test_the_long_running_sync_services_wait_for_that_convergence(model: dict[st
 def test_the_host_route_is_test_only_and_reaches_exactly_the_destination_consumer(
     model: dict[str, Any], contract_environment: dict[str, str]
 ) -> None:
-    """The shipped bundle grants it to nobody; the override grants it to the worker alone.
+    """The shipped file grants it to nobody; the override grants it to the worker alone.
 
     Both halves are equalities over every service, so a route added to the
     shipped file fails, and adding a service to the override or dropping one
@@ -605,7 +678,7 @@ def test_the_host_route_is_test_only_and_reaches_exactly_the_destination_consume
             if HOST_ROUTE in (definition.get("extra_hosts") or [])
         }
 
-    assert routed(model) == set(), f"the shipped bundle routes {sorted(routed(model))} to the host"
+    assert routed(model) == set(), f"the shipped file routes {sorted(routed(model))} to the host"
     overridden = resolve(contract_environment, files=(COMPOSE_FILE, FIXTURE_OVERRIDE))
     assert routed(overridden) == ROUTED_SERVICES, f"the override routes {sorted(routed(overridden))}"
 
@@ -662,26 +735,17 @@ def test_the_cli_service_reaches_no_host_and_keeps_nothing(cli_model: dict[str, 
 
 
 def test_the_cli_service_runs_the_cli_in_the_image_the_deployment_runs(cli_model: dict[str, Any]) -> None:
-    """Same immutable reference, the CLI as its entrypoint, and the image's own user."""
+    """Same image reference, the CLI as its entrypoint, and the image's own user."""
     definition = service(cli_model, CLI_SERVICE)
     api = service(cli_model, "sync-api")
     expected = [f"{root}:{SCRATCH_OPTIONS}" for root in SYNC_SCRATCH_ROOTS]
 
     assert definition["image"] == api["image"]
-    assert IMMUTABLE_REFERENCE.fullmatch(str(definition["image"])), definition["image"]
     assert definition["entrypoint"] == ["infrahub-sync"]
     assert definition.get("read_only") is True
     assert definition.get("tmpfs") == expected
     # Nothing overrides the user, so the container runs as the image's non-root one.
     assert "user" not in definition, f"the CLI service overrides the image user with {definition.get('user')}"
-
-
-def test_the_cli_service_carries_the_instance_labels_like_every_other(cli_model: dict[str, Any]) -> None:
-    """A container this bundle created has to be one teardown can prove it owns."""
-    labels = service(cli_model, CLI_SERVICE)["labels"]
-
-    assert labels.get(INSTANCE_LABEL) == "contract-0000000000000000"
-    assert labels.get(BUNDLE_LABEL) == "compose"
 
 
 # ---------------------------------------------------------------------------

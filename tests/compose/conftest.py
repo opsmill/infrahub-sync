@@ -1,4 +1,4 @@
-"""Fixtures for the Compose bundle suites.
+"""Fixtures for the Compose deployment suites.
 
 Two suites live here and they need different things.
 
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess  # noqa: S404 -- for the failure types `capture` can raise
 import sys
 from functools import lru_cache
@@ -32,63 +33,36 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Iterator, Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BUNDLE = REPO_ROOT / "deploy" / "compose"
-COMPOSE_FILE = BUNDLE / "compose.yaml"
-DEFAULTS_FILE = BUNDLE / "defaults.conf"
-BUNDLED_CONFIGURATION = BUNDLE / "configuration" / "qualification.yaml"
-
-INSTANCE_LABEL = "io.infrahub-sync.instance"
-BUNDLE_LABEL = "io.infrahub-sync.bundle"
+# The operator deployment: one self-contained file at the repository root, the same
+# file a release tag carries and an operator fetches.
+COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 
 # Turns a skipped Compose test into a failure, so a run that skipped everything
 # cannot pass as green.
 ZERO_SKIP_OPTION = "--compose-zero-skip"
 
-# The member a release generates into the archive, naming the image the bundle
-# was qualified against. The repository tracks no such file — it is derived from
-# a candidate's digests — so a copy of `deploy/compose` is not what an operator
-# extracts until this is written beside it.
-#
-# The settings are restated here rather than imported from `tasks.release`, so a
-# change to the record's shape has to be made on both sides instead of one of
-# them reading the other and agreeing with itself.
-BINDING_FILE = "image.bind"
-BINDING_PLATFORM = "linux/amd64"
-BINDING_INDEX_NAME = "latest"
-BINDING_INDEX_DIGEST = "sha256:" + "1" * 64
-BINDING_CONFIG_DIGEST = "sha256:" + "2" * 64
-# The third identity: what a containerd image store calls the loaded archive.
-BINDING_MANIFEST_DIGEST = "sha256:" + "3" * 64
-BINDING_INDEX_REFERENCE = f"{BINDING_INDEX_NAME}@{BINDING_INDEX_DIGEST}"
+# The two settings that choose the Sync image, and the default repository the file
+# names. The suite reads the image under test from the first two, by those names,
+# so the command that runs it is the command an operator would use to pick a tag.
+IMAGE_REPOSITORY_ENV = "INFRAHUB_SYNC_DOCKER_IMAGE"
+IMAGE_VERSION_ENV = "VERSION"
+DEFAULT_IMAGE_REPOSITORY = "registry.opsmill.io/opsmill/infrahub-sync"
+
+# The project label Compose writes on everything it creates. It is what tells one
+# deployment's containers and volumes from another's.
+PROJECT_LABEL = "com.docker.compose.project"
 
 
-def write_binding(bundle: Path, **overrides: str | None) -> Path:
-    """Write the binding member into a bundle copy, and return where it went.
+@lru_cache(maxsize=1)
+def interpolated_settings() -> frozenset[str]:
+    """Every variable the Compose file interpolates.
 
-    An override of `None` drops that setting, which is how an incomplete record
-    is produced without each caller hand-writing the whole file.
+    Removed from the caller's environment before each Compose call, so a value a
+    developer exported cannot change what the suite resolves: the same reason the
+    removed wrapper unset them.
     """
-    values: dict[str, str | None] = {
-        "INFRAHUB_SYNC_IMAGE_PLATFORM": BINDING_PLATFORM,
-        "INFRAHUB_SYNC_IMAGE_INDEX": BINDING_INDEX_REFERENCE,
-        "INFRAHUB_SYNC_IMAGE_MANIFEST": BINDING_MANIFEST_DIGEST,
-        "INFRAHUB_SYNC_IMAGE_CONFIG": BINDING_CONFIG_DIGEST,
-    }
-    values.update(overrides)
-    record = bundle / BINDING_FILE
-    record.write_text(
-        "".join(f"{name}={value}\n" for name, value in values.items() if value is not None), encoding="utf-8"
-    )
-    return record
-
-
-def instance_setting(bundle: Path, name: str) -> str:
-    """Read one setting out of a bundle's generated instance state file."""
-    for line in (bundle / ".instance").read_text(encoding="utf-8").splitlines():
-        key, _, value = line.partition("=")
-        if key == name:
-            return value
-    return ""
+    text = COMPOSE_FILE.read_text(encoding="utf-8")
+    return frozenset(re.findall(r"\$\{([A-Z][A-Z0-9_]*)", text))
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -161,7 +135,7 @@ def _diagnostic_on_failure(request: pytest.FixtureRequest) -> Iterator[None]:
 
 
 # The Sync services, and the two roles whose isolation from each other is the
-# property the bundle exists to hold.
+# property the deployment exists to hold.
 SYNC_SERVICES = ("sync-api", "sync-worker")
 # The image's declared writable roots, restated here rather than imported from
 # the image suite so this suite states the contract it checks.
@@ -172,14 +146,11 @@ SYNC_SCRATCH_ROOTS = (
 )
 SCRATCH_OPTIONS = "uid=10001,gid=10001,mode=0700"
 
-# Non-secret stand-ins for every operator input the bundle requires. They only
+# Non-secret stand-ins for every operator input the file requires. They only
 # have to be well formed: the contract suite never starts a container, so no
 # value here reaches a process. A resolved model is what is under test.
 CONTRACT_ENVIRONMENT: dict[str, str] = {
-    "INFRAHUB_SYNC_INSTANCE": "contract-0000000000000000",
-    "INFRAHUB_SYNC_IMAGE": "sha256:" + "0" * 64,
-    "INFRAHUB_SYNC_DATABASE_URL": "postgresql://infrahub_sync:contract@postgres:5432/infrahub_sync",
-    "INFRAHUB_SYNC_PREFECT_DATABASE_URL": "postgresql+asyncpg://prefect:contract@postgres:5432/prefect",
+    "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD": "contract-administrator-password",
     "INFRAHUB_SYNC_PRODUCT_PASSWORD": "contract-product-password",
     "INFRAHUB_SYNC_PREFECT_PASSWORD": "contract-prefect-password",
     "INFRAHUB_SYNC_S3_ACCESS_KEY": "contract-access-key",
@@ -189,45 +160,52 @@ CONTRACT_ENVIRONMENT: dict[str, str] = {
 }
 
 
-def compose(  # noqa: PLR0913 -- the bundle, its overrides, and its inputs vary independently
+def compose(  # noqa: PLR0913 -- the file, its overrides, and its inputs vary independently
     argv: Sequence[str],
     *,
     environment: Mapping[str, str] | None = None,
     project: str | None = None,
     files: Sequence[Path] = (COMPOSE_FILE,),
-    env_files: Sequence[Path] = (DEFAULTS_FILE,),
+    env_files: Sequence[Path] = (),
     timeout: int = 600,
     inherit_environment: bool = True,
 ) -> Captured:
-    """Run one fixed-argv `docker compose` command against the bundle.
+    """Run one fixed-argv `docker compose` command against the operator file.
 
     Its output comes back through the redaction boundary, because Compose
-    interpolates every credential the bundle names and prints them back in
+    interpolates every credential the file names and prints them back in
     `config`, in an interpolation refusal, and in whatever a failing `up`
     quotes.
+
+    With no `env_files`, an empty one is named instead: otherwise Compose would
+    load a `.env` beside the file, and a developer's own would feed the suite.
     """
     command = ["docker", "compose"]
     if project is not None:
         command += ["--project-name", project]
-    for env_file in env_files:
+    for env_file in env_files or (Path(os.devnull),):
         command += ["--env-file", str(env_file)]
     for path in files:
         command += ["--file", str(path)]
-    base_environment = (
-        os.environ
-        if inherit_environment
-        else {name: os.environ[name] for name in ("PATH", "HOME", "DOCKER_CONFIG") if name in os.environ}
-    )
+    if inherit_environment:
+        excluded = interpolated_settings()
+        base_environment = {name: value for name, value in os.environ.items() if name not in excluded}
+    else:
+        base_environment = {name: os.environ[name] for name in ("PATH", "HOME", "DOCKER_CONFIG") if name in os.environ}
     return capture(
         [*command, *argv],
         timeout=timeout,
-        cwd=BUNDLE,
+        cwd=REPO_ROOT,
         env={**base_environment, **(environment or {})},
     )
 
 
 def start_command(services: Sequence[str], *, bound: int) -> list[str]:
     """The waited `up` this suite runs, with the readiness bound given to Compose.
+
+    `compose` prefixes it with `-f docker-compose.yml --env-file <the deployment's
+    .env>`, so a deployment starts the way an operator's does:
+    `docker compose -f … --env-file … up -d --wait`.
 
     `--wait-timeout` is the whole point. A subprocess timeout is a cushion for
     Compose's own exit, not a readiness rule: expiring first would kill Compose
@@ -238,10 +216,10 @@ def start_command(services: Sequence[str], *, bound: int) -> list[str]:
 
 
 def resolve(environment: Mapping[str, str], *, files: Sequence[Path] = (COMPOSE_FILE,)) -> dict[str, Any]:
-    """Return the model Compose resolves the bundle to, or fail naming its refusal."""
+    """Return the model Compose resolves the file to, or fail naming its refusal."""
     result = compose(["config", "--format", "json"], environment=environment, files=files)
     if result.returncode != 0:
-        pytest.fail(f"docker compose config refused the bundle: {result.stderr.strip()}")
+        pytest.fail(f"docker compose config refused the file: {result.stderr.strip()}")
     return json.loads(result.stdout)
 
 
@@ -259,7 +237,7 @@ def resolve_privately(environment: Mapping[str, str], *, files: Sequence[Path] =
     """
     result = compose(["config", "--format", "json"], environment=environment, files=files)
     if result.returncode != 0:
-        pytest.fail(f"docker compose config refused the bundle: {result.stderr.strip()}")
+        pytest.fail(f"docker compose config refused the file: {result.stderr.strip()}")
     return json.loads(result.unredacted())
 
 
@@ -283,46 +261,39 @@ def compose_version() -> str:
 
 
 @pytest.fixture(scope="session")
-def contract_environment(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
-    """Every operator input the bundle requires, with the one file input placed.
-
-    The administrator password is a file input, so Compose resolves the bundle
-    only once one exists. Placing a throwaway file under the test's own root is
-    what keeps this suite from depending on an operator's untracked secret.
-    """
-    secret = tmp_path_factory.mktemp("compose-contract") / "postgres-admin-password"
-    secret.write_text("contract-administrator-password\n", encoding="utf-8")
-    return {**CONTRACT_ENVIRONMENT, "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD_FILE": str(secret)}
+def contract_environment() -> dict[str, str]:
+    """Every operator input the file requires, and nothing else."""
+    return dict(CONTRACT_ENVIRONMENT)
 
 
 @pytest.fixture(scope="session")
 def model(compose_version: str, contract_environment: dict[str, str]) -> dict[str, Any]:
-    """The resolved bundle every contract test reads."""
+    """The resolved file every contract test reads."""
     del compose_version
     return resolve(contract_environment)
 
 
-# The one profile the bundle declares, and the service behind it.
+# The one profile the file declares, and the service behind it.
 CLI_PROFILE = "cli"
 
 
 @pytest.fixture(scope="session")
 def cli_model(compose_version: str, contract_environment: dict[str, str]) -> dict[str, Any]:
-    """The resolved bundle with the CLI profile named, which is the only way to get it."""
+    """The resolved file with the CLI profile named, which is the only way to get it."""
     del compose_version
     result = compose(
         ["--profile", CLI_PROFILE, "config", "--format", "json"],
         environment=contract_environment,
     )
     if result.returncode != 0:
-        pytest.fail(f"docker compose config refused the bundle: {result.stderr.strip()}")
+        pytest.fail(f"docker compose config refused the file: {result.stderr.strip()}")
     return json.loads(result.stdout)
 
 
 def service(model: Mapping[str, Any], name: str) -> dict[str, Any]:
     """Return one resolved service, failing rather than skipping when it is gone."""
     services = model["services"]
-    assert name in services, f"the bundle declares no {name} service; it declares {sorted(services)}"
+    assert name in services, f"the file declares no {name} service; it declares {sorted(services)}"
     return dict(services[name])
 
 
@@ -334,12 +305,12 @@ def mount_sources(definition: Mapping[str, Any]) -> set[str]:
 # ---------------------------------------------------------------------------
 # The Docker-backed suites
 # ---------------------------------------------------------------------------
-# These need a daemon, an already-built Sync image, and — for the mandatory
+# These need a daemon, an already-built Sync image named by
+# INFRAHUB_SYNC_DOCKER_IMAGE and VERSION, and — for the mandatory
 # managed rows — a real Infrahub. They are opt-in under the `compose` marker and
 # share one session-scoped stack, so they run single-process.
 
-IMAGE_REFERENCE_ENV = "INFRAHUB_SYNC_IMAGE"
-FIXTURE_PROJECT = "infrahub-sync-compose-fixture"
+FIXTURE_PROJECT = "infrahub-sync-suite-fixture"
 # Deliberately not the development stack's own port: a developer's preview keeps
 # working while this suite runs its own copy of the same pinned release.
 FIXTURE_INFRAHUB_PORT = "8081"
@@ -357,21 +328,44 @@ def docker_daemon() -> None:
     from tests.compose.lifecycle import daemon_available
 
     if not daemon_available():
-        pytest.skip("no Docker daemon; run this suite through `uv run invoke compose.lifecycle`")
+        pytest.skip("no Docker daemon; the compose-marked suite drives a real one")
+
+
+# How to name the image under test, quoted wherever the suite refuses to guess one.
+IMAGE_USAGE = (
+    "build one with `docker build -t infrahub-sync:compose-test .` and run "
+    f"`{IMAGE_REPOSITORY_ENV}=infrahub-sync {IMAGE_VERSION_ENV}=compose-test uv run pytest -m compose tests/compose`"
+)
+
+
+def image_under_test() -> str:
+    """Return `<repository>:<tag>` from the two settings the Compose file reads, or fail.
+
+    A failure, not a skip: a compose run with no image named has tested nothing,
+    and reporting that as skipped would let it pass as green.
+    """
+    repository = os.environ.get(IMAGE_REPOSITORY_ENV, "").strip()
+    version = os.environ.get(IMAGE_VERSION_ENV, "").strip()
+    missing = [name for name, value in ((IMAGE_REPOSITORY_ENV, repository), (IMAGE_VERSION_ENV, version)) if not value]
+    if missing:
+        pytest.fail(f"{' and '.join(missing)} unset: the compose suite needs the image under test; {IMAGE_USAGE}")
+    return f"{repository}:{version}"
 
 
 @pytest.fixture(scope="session")
 def sync_image(docker_daemon: None) -> str:
-    """The immutable reference of the already-built Sync image under test.
+    """The reference of the already-built Sync image under test.
 
-    Never built here. A suite that builds its own subject proves nothing about
-    the artifact the gate ships, so the reference arrives from the task that
-    built and loaded it.
+    Never built here, and never pulled: the deployment's default pull policy only
+    pulls an image the engine does not hold, so an image that is absent here would
+    be fetched from a registry and the suite would test something else. It is
+    refused instead, naming the reference.
     """
     del docker_daemon
-    reference = os.environ.get(IMAGE_REFERENCE_ENV, "").strip()
-    if not reference:
-        pytest.skip(f"{IMAGE_REFERENCE_ENV} is unset; run this suite through `uv run invoke compose.lifecycle`")
+    reference = image_under_test()
+    held = capture(["docker", "image", "inspect", "--format", "{{.Id}}", reference], timeout=60)
+    if held.returncode != 0:
+        pytest.fail(f"this Docker engine holds no image {reference}; {IMAGE_USAGE}")
     return reference
 
 
@@ -395,7 +389,7 @@ def _infrahub_environment() -> dict[str, str]:
 def infrahub_fixture(sync_image: str) -> Iterator[dict[str, str]]:
     """One pinned Infrahub 1.10.6, seeded with the smoke schema, device, and branch.
 
-    Test infrastructure, never a service of the release bundle: it is started
+    Test infrastructure, never a service of the operator deployment: it is started
     from the development stack's own pinned files, published on its own port, and
     removed with its volumes afterwards. Only `infrahub-server`, `task-worker`
     and their dependency closure are started; the development stack's own
@@ -408,7 +402,7 @@ def infrahub_fixture(sync_image: str) -> Iterator[dict[str, str]]:
     from tasks.preview import COMPOSE_FILES, ENV_FILE, SCHEMA_FILE, ensure_smoke_branch
 
     values = _infrahub_environment()
-    # The fixture's administrator token is the destination credential the bundle
+    # The fixture's administrator token is the destination credential the deployment
     # resolves, so it is a secret of this session like any generated canary.
     SECRETS.register(values["INFRAHUB_INITIAL_ADMIN_TOKEN"])
     address = f"http://127.0.0.1:{FIXTURE_INFRAHUB_PORT}"
@@ -481,8 +475,8 @@ def deployment(
     """One started, converged, endpoint-ready deployment shared by the whole module.
 
     The destination is the pinned fixture, reached through the host gateway the
-    test-only override adds. The bundle itself neither joins that stack's network
-    nor carries the route.
+    test-only override adds. The operator file itself neither joins that stack's
+    network nor carries the route.
     """
     from tests.compose.lifecycle import (
         FIXTURE_OVERRIDE,
@@ -496,7 +490,6 @@ def deployment(
     directory = tmp_path_factory.mktemp("compose-deployment")
     environment_file = operator_environment(
         directory,
-        instance=instance,
         image=sync_image,
         destination_token=infrahub_fixture["token"],
         canaries=canaries,
@@ -508,7 +501,7 @@ def deployment(
         # tail of the whole project is almost entirely PostgreSQL's own startup.
         detail = started.logs("sync-bootstrap", "sync-api", "sync-worker", tail=80)
         started.down(volumes=True)
-        pytest.fail(f"the bundle did not start: {result.stderr[-1500:]}\n{detail.output[-4000:]}")
+        pytest.fail(f"the deployment did not start: {result.stderr[-1500:]}\n{detail.output[-4000:]}")
     try:
         wait_for(
             "the deployment reporting a live worker",

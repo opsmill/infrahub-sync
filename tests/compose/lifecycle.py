@@ -1,4 +1,4 @@
-"""Drivers for the Docker-backed Compose bundle suites.
+"""Drivers for the Docker-backed Compose deployment suites.
 
 Everything here talks to a real daemon. The helpers exist so the tests read as
 statements about the deployment rather than as Compose invocations, and so one
@@ -8,7 +8,6 @@ session-scoped stack can be shared by every case that needs one.
 from __future__ import annotations
 
 import json
-import os
 import secrets
 import time
 import uuid
@@ -19,7 +18,7 @@ import httpx
 import pytest
 
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
-from tests.compose.conftest import BUNDLE, COMPOSE_FILE, DEFAULTS_FILE, INSTANCE_LABEL, compose, start_command
+from tests.compose.conftest import COMPOSE_FILE, PROJECT_LABEL, compose, start_command
 from tests.compose.redaction import SECRETS, Captured, capture
 
 if TYPE_CHECKING:
@@ -28,23 +27,12 @@ if TYPE_CHECKING:
 FIXTURE_OVERRIDE = Path(__file__).resolve().parent / "fixture-override.yaml"
 
 # Every published surface the suite drives is on loopback, and the two ports
-# below are deliberately not the bundle's own defaults: a developer's stack must
+# below are deliberately not the file's own defaults: a developer's stack must
 # be able to keep running while this suite has one of its own.
-API_PORT = 8021
-PREFECT_PORT = 4221
+API_PORT = 8061
+PREFECT_PORT = 4261
 
-# The manifest identity the harness writes into the binding it generates. This
-# suite runs against Docker's classic image store, where a loaded archive is the
-# configuration digest and nothing resolves the manifest one, so the record's
-# third identity is a syntactically valid digest no engine holds. That is what
-# the wrapper's index -> manifest -> configuration order needs to stay
-# observable here, and it is a harness placeholder rather than any claim about
-# what a containerd image store would call this candidate. Deriving the real one
-# is not available: `compose.reclaim` removes the exported archives before the
-# lifecycle matrix runs.
-HARNESS_MANIFEST = "sha256:" + "f" * 64
-
-# The bundle's own PostgreSQL image, reused as a probe so no fourth external
+# The deployment's own PostgreSQL image, reused as a probe so no fourth external
 # image has to be pinned for a two-command question.
 GATEWAY_PROBE_IMAGE = "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
 
@@ -88,7 +76,12 @@ def inspect(reference: str, kind: str = "container") -> dict[str, Any]:
 
 
 class Deployment:
-    """One labelled Compose deployment of the bundle, driven the way an operator would."""
+    """One Compose project of the operator file, driven the way an operator would.
+
+    Every command is `docker compose --project-name <project> --env-file <its
+    .env> -f docker-compose.yml [-f override] ...`: the file an operator fetches,
+    and the `.env` an operator writes beside it.
+    """
 
     def __init__(  # noqa: PLR0913 -- a deployment is named by every one of these independently
         self,
@@ -97,26 +90,20 @@ class Deployment:
         environment_file: Path,
         overrides: Sequence[Path] = (),
         compose_file: Path = COMPOSE_FILE,
-        environment_files: Sequence[Path] = (),
-        bundle: Path = BUNDLE,
         destination: str = "",
         api_port: int = API_PORT,
         prefect_port: int = PREFECT_PORT,
     ) -> None:
         self.instance = instance
         self.project = f"infrahub-sync-{instance}"
-        # Where the entry point that owns this deployment lives, and the address
-        # its declared configuration names. Both are the deployment's own facts,
-        # so a test that has one has the other.
-        self.bundle = bundle
+        # The address its declared configuration names.
         self.destination = destination
         # Each deployment publishes on its own loopback ports, so more than one
         # can be up at a time and no probe can reach the wrong one.
         self.api_port = api_port
         self.prefect_port = prefect_port
-        self._environment_file = environment_file
+        self.environment_file = environment_file
         self._files = (compose_file, *overrides)
-        self._environment_files = environment_files
 
     def compose(self, argv: Sequence[str], *, timeout: int = 900) -> Captured:
         """Run one Compose command against this deployment."""
@@ -124,9 +111,16 @@ class Deployment:
             argv,
             project=self.project,
             files=self._files,
-            env_files=self._environment_files or (DEFAULTS_FILE, self._environment_file),
+            env_files=(self.environment_file,),
             timeout=timeout,
         )
+
+    def setting(self, name: str) -> str:
+        """Read one setting out of this deployment's `.env`."""
+        for line in self.environment_file.read_text(encoding="utf-8").splitlines():
+            if line.startswith(f"{name}="):
+                return line.split("=", 1)[1]
+        return ""
 
     def up(self, *services: str) -> Captured:
         """Start the named services, or all of them, and wait for their health gates.
@@ -166,12 +160,36 @@ class Deployment:
         """
         return self.compose(["logs", "--no-color", "--tail", str(tail), *services])
 
-    def down(self, *, volumes: bool = False) -> None:
+    def down(self, *, volumes: bool = False) -> Captured:
         """Remove this deployment, and its data when asked."""
         argv = ["down", "--remove-orphans"]
         if volumes:
             argv.append("--volumes")
-        self.compose(argv)
+        return self.compose(argv)
+
+    def status(self) -> str:
+        """Return READY, DEGRADED or STOPPED, the way the removed `status` command decided it.
+
+        The same three questions, asked with plain Compose and Docker commands:
+        whether any container of the project runs (`docker compose ps`); whether
+        the three dependencies with real probes report healthy; and whether the
+        Sync API reports a live worker, asked over the deployment's own network.
+        Container state alone never makes a deployment READY.
+        """
+        running = self.compose(["ps", "--quiet"])
+        assert running.returncode == 0, running.stderr
+        if not running.stdout.split():
+            return "STOPPED"
+        for dependency in STATUS_DEPENDENCIES:
+            identifiers = self.compose(["ps", "--all", "--quiet", dependency]).stdout.split()
+            if not identifiers:
+                return "DEGRADED"
+            health = docker(["inspect", "--format", "{{.State.Health.Status}}", identifiers[0]])
+            if health.stdout.strip() != "healthy":
+                return "DEGRADED"
+        asked = self.compose(["run", "--rm", "--no-deps", "-T", "--quiet-pull", PROBE_SERVICE, "python", "-c", STATUS])
+        answer = [line.strip() for line in asked.stdout.splitlines() if line.strip()]
+        return "READY" if asked.returncode == 0 and answer and answer[-1] in {"ready", "busy"} else "DEGRADED"
 
     @property
     def api(self) -> str:
@@ -182,18 +200,12 @@ class Deployment:
         return f"http://127.0.0.1:{self.prefect_port}"
 
 
-# The bound one wrapper command is given. A `start` runs preflight, a waited
-# `up`, and then polls for a live worker, so it is the longest of them.
-ENTRY_POINT_TIMEOUT_SECONDS = 900
-
-
-def entry_point(bundle: Path, *arguments: str, timeout: int = ENTRY_POINT_TIMEOUT_SECONDS) -> Captured:
-    """Run one lifecycle command exactly as an operator would.
-
-    The entry point prints Compose's own output, so what comes back is retained
-    Compose output and goes through the same redaction boundary as the rest.
-    """
-    return capture([str(bundle / "infrahub-sync-compose"), *arguments], timeout=timeout, env=os.environ.copy())
+# The dependencies whose health is an answer from the service -- a PostgreSQL
+# readiness check and two HTTP endpoints -- rather than the fact a container is up.
+STATUS_DEPENDENCIES = ("postgres", "object-store", "prefect-server")
+# The worker state the Sync API reports, asked from inside the deployment so the
+# answer does not depend on how the host maps container ports onto loopback.
+STATUS = "import httpx; print(httpx.get('http://sync-api:8000/status', timeout=5).json()['worker']['state'])"
 
 
 def wait_for(description: str, probe: Callable[[], object], *, timeout: int = READY_TIMEOUT_SECONDS) -> object:
@@ -321,102 +333,51 @@ def write_diagnostic(deployment: Deployment, destination: Path, *, named: Mappin
 
 
 def owned_volumes(deployment: Deployment) -> dict[str, str]:
-    """Return the volumes labelled for this exact instance, and the label each carries."""
-    result = docker(["volume", "ls", "--quiet", "--filter", f"label={INSTANCE_LABEL}={deployment.instance}"])
+    """Return the volumes Compose labelled for this exact project, and the label each carries."""
+    result = docker(["volume", "ls", "--quiet", "--filter", f"label={PROJECT_LABEL}={deployment.project}"])
     assert result.returncode == 0, result.stderr
     found = {}
     for name in result.stdout.split():
         labels = inspect(name, kind="volume").get("Labels") or {}
-        found[name] = labels.get(INSTANCE_LABEL, "")
+        found[name] = labels.get(PROJECT_LABEL, "")
     return found
 
 
-def bundle_relative(path: Path) -> str:
-    """Render one path the way a Compose file inside the bundle would name it."""
-    return str(path.relative_to(BUNDLE))
-
-
-def write_candidate_binding(bundle: Path, image: str) -> bytes:
-    """Write into a bundle copy the binding a release would generate for this candidate.
-
-    Two rules meet here. The record is produced by the release's own helper from
-    the whole digest record the image gate wrote — its index name and index
-    digest included — because a record synthesised from the candidate reference
-    alone would be a shape this repository never ships, and the suite would be
-    asserting against its own invention.
-
-    And the environment stays what it is: `INFRAHUB_SYNC_IMAGE` names the test
-    input, and this refuses rather than quietly writing a record that names
-    something else. A helper that accepted the drift would turn the environment
-    into the operator image-selection channel the binding exists to remove.
-
-    The third identity a release derives from the exported archive is
-    `HARNESS_MANIFEST` here, for the reason stated where it is defined: this
-    suite is on the classic image store and the archive it would be derived from
-    has already been reclaimed by the time the matrix runs.
-    """
-    # Pending T041: tasks.image and the binding helpers in tasks.release were removed with
-    # the old image machinery; the Compose rework replaces this helper and its callers.
-    from tasks.image import read_digests, recorded_identity  # ty: ignore[unresolved-import]
-
-    from tasks.release import BINDING_CONFIG_KEY, BINDING_MEMBER, image_binding  # ty: ignore[unresolved-import]
-
-    record = read_digests()
-    binding = image_binding(record, recorded_identity(record), loaded_manifest=HARNESS_MANIFEST)
-    consumed = dict(line.split("=", 1) for line in binding.decode("utf-8").splitlines())
-    assert consumed[BINDING_CONFIG_KEY] == image, (
-        "the generated binding names a candidate other than the image under test"
-    )
-    (bundle / BINDING_MEMBER).write_bytes(binding)
-    return binding
-
-
-def instance_identity(bundle: Path) -> str:
-    """Return the identity a bundle's generated state file names."""
-    from tests.compose.conftest import instance_setting
-
-    return instance_setting(bundle, "INFRAHUB_SYNC_INSTANCE")
-
-
-def operator_environment(
+def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies independently
     directory: Path,
     *,
-    instance: str,
     image: str,
     destination_token: str,
     canaries: Mapping[str, str],
+    api_port: int = API_PORT,
+    prefect_port: int = PREFECT_PORT,
 ) -> Path:
-    """Write the operator-owned inputs one deployment runs on, and return the file.
+    """Write the `.env` one deployment runs on, and return it.
 
-    This is the shape `init` produces for a real operator: every credential in
-    one gitignored file, except the database administrator password, which the
-    official PostgreSQL image reads from a file of its own.
+    The shape the operator documentation asks for: every required credential, the
+    image under test as `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, and the
+    principal's token a second time as `INFRAHUB_SYNC_API_TOKEN`, which is what
+    the `cli` service presents to the API. The passwords are the session's
+    canaries, so their appearance anywhere an operator can see is a leak.
     """
-    administrator = directory / "postgres-admin-password"
-    administrator.write_text(canaries["administrator"] + "\n", encoding="utf-8")
-    administrator.chmod(0o600)
+    repository, _, version = image.rpartition(":")
     principals = json.dumps({"compose-suite": {"token": canaries["principal"], "administrator": True}})
     values = {
-        "INFRAHUB_SYNC_INSTANCE": instance,
-        "INFRAHUB_SYNC_IMAGE": image,
-        # The image is loaded, never pulled: this suite runs the candidate the
-        # image gate built at this exact head, which no registry holds.
-        "INFRAHUB_SYNC_IMAGE_PULL_POLICY": "never",
-        "INFRAHUB_SYNC_API_PORT": str(API_PORT),
-        "INFRAHUB_SYNC_PREFECT_PORT": str(PREFECT_PORT),
-        "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD_FILE": str(administrator),
+        "INFRAHUB_SYNC_DOCKER_IMAGE": repository,
+        "VERSION": version,
+        "INFRAHUB_SYNC_API_PORT": str(api_port),
+        "INFRAHUB_SYNC_PREFECT_PORT": str(prefect_port),
+        "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD": canaries["administrator"],
         "INFRAHUB_SYNC_PRODUCT_PASSWORD": canaries["product"],
         "INFRAHUB_SYNC_PREFECT_PASSWORD": canaries["prefect"],
-        "INFRAHUB_SYNC_DATABASE_URL": (f"postgresql://infrahub_sync:{canaries['product']}@postgres:5432/infrahub_sync"),
-        "INFRAHUB_SYNC_PREFECT_DATABASE_URL": (
-            f"postgresql+asyncpg://prefect:{canaries['prefect']}@postgres:5432/prefect"
-        ),
         "INFRAHUB_SYNC_S3_ACCESS_KEY": "compose-suite-access-key",
         "INFRAHUB_SYNC_S3_SECRET_KEY": canaries["object_store"],
         "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": principals,
+        "INFRAHUB_SYNC_API_TOKEN": canaries["principal"],
         "INFRAHUB_API_TOKEN": destination_token,
     }
-    path = directory / "operator.env"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / ".env"
     path.write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
     path.chmod(0o600)
     return path
@@ -448,7 +409,7 @@ def run_bootstrap(deployment: Deployment, service: str = PROBE_SERVICE) -> Captu
 def container_reachable_host() -> str:
     """Return an address a container reaches this host by, without a shipped route.
 
-    The bundle carries no host route on purpose: a real deployment's destination
+    The operator file carries no host route on purpose: a real deployment's destination
     is an external system it reaches by ordinary DNS. A test host is external in
     the same sense, but how a container names it differs — Docker Desktop
     resolves `host.docker.internal` on its own, and on Linux the address is the
@@ -470,14 +431,14 @@ def container_reachable_host() -> str:
     return ""
 
 
-# The fields the qualification package maps. Both sides are the bundled
+# The fields the smoke package maps. Both sides are the built-in
 # `infrahub` adapter, so the registered worker resolves them through the
 # installed loader with nothing generated and nothing on a filesystem.
 SMOKE_FIELDS = ("name", "type")
 
 
 def smoke_package(destination_url: str) -> dict[str, Any]:
-    """The declared package this suite registers, shaped like the bundled one.
+    """The declared package this suite registers.
 
     Infrahub to Infrahub against the fixture's own instance: `main` as the
     source, the disposable smoke branch as the destination. The token is a

@@ -185,3 +185,76 @@ jobs:
               exit 1
             fi
           done
+
+  compose-suite:
+    name: "Compose deployment suite against a locally built image"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - name: "Check out the requested commit"
+        id: checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The same exact-checkout and merged-ancestor guard as the job above.
+      - name: "Refuse an abbreviated, different, or unmerged commit"
+        id: sha_guard
+        env:
+          NIGHTLY_SHA: ${{ inputs.sha }}
+        run: |
+          set -eu
+          expected=${NIGHTLY_SHA:?the commit to test is required}
+          case $expected in
+            *[!0-9a-f]*)
+              echo "the requested commit $expected is not a hexadecimal object name" >&2
+              exit 1
+              ;;
+          esac
+          if [ ${#expected} -ne 40 ]; then
+            echo "the requested commit $expected is abbreviated; name the full 40-character commit" >&2
+            exit 1
+          fi
+          actual=$(git rev-parse HEAD)
+          if [ "$actual" != "$expected" ]; then
+            echo "the checkout landed on $actual, not the $expected it was told to test" >&2
+            exit 1
+          fi
+          git fetch --no-tags --quiet origin feature/v3-develop
+          if ! git merge-base --is-ancestor "$expected" FETCH_HEAD; then
+            echo "$expected is not merged into feature/v3-develop" >&2
+            exit 1
+          fi
+
+      - name: "Install uv"
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: latest
+          python-version: "3.13"
+
+      - name: "Install test dependencies"
+        run: uv sync --frozen --extra dev --extra prefect --extra service
+
+      # The suite runs the root docker-compose.yml against the image this commit
+      # builds, named the way an operator names a tag: INFRAHUB_SYNC_DOCKER_IMAGE
+      # and VERSION. It is never pulled: the engine already holds it.
+      - name: "Build the image under test"
+        run: docker build -t infrahub-sync:compose-test .
+
+      - name: "Run the Compose deployment suite"
+        env:
+          INFRAHUB_SYNC_DOCKER_IMAGE: infrahub-sync
+          VERSION: compose-test
+        run: uv run --no-sync pytest -m compose tests/compose -x
+
+      - name: "Upload the diagnostics of a failed Compose case"
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-compose-diagnostics
+          path: .diagnostics/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7

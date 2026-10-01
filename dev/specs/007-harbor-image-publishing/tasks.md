@@ -286,7 +286,7 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
   - Fix the header comment: it no longer describes `deploy/compose/` and now points at the root `docker-compose.yml`.
   - Update `tasks/dev.py` and `tasks/netbox.py` to pass `-f development/docker-compose.dev.yml` on every `docker compose` call, and to update their comments and messages (`tasks/dev.py` lines 20 and 31; `tasks/netbox.py` lines 18 and 109).
   - Update `tests/dev_stack/test_compose_valid.py` (the path at line 25, plus its docstring) and `tests/dev_stack/test_netbox_network.py` (docstring).
-- [ ] T041 [US4] Retarget the Compose lifecycle suite at the root `docker-compose.yml`:
+- [X] T041 [US4] Retarget the Compose lifecycle suite at the root `docker-compose.yml`:
   - **`tests/compose/conftest.py`**:
     - set `COMPOSE_FILE` to `REPO_ROOT / "docker-compose.yml"`;
     - delete `BUNDLE`, `DEFAULTS_FILE`, `INSTANCE_LABEL`, `BINDING_FILE` and `write_binding`;
@@ -295,7 +295,7 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
     - replace `start_command` with `docker compose -f … --env-file … up -d --wait`.
   - **`tests/compose/lifecycle.py`**: delete `write_candidate_binding` and the wrapper calls.
   - **`tests/compose/test_lifecycle.py`**: replace each `init`, `start`, `status`, `stop` and `reset` wrapper call (around lines 213, 548 and 720) with the equivalent `docker compose` command.
-- [ ] T042 [US4] Rename `tests/compose/test_bundle_contract.py` to `tests/compose/test_compose_contract.py`, and change its assertions:
+- [X] T042 [US4] Rename `tests/compose/test_bundle_contract.py` to `tests/compose/test_compose_contract.py`, and change its assertions:
   - every Sync service uses the `${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-X}` form;
   - every credential uses `:?`;
   - no service mounts a host path;
@@ -309,7 +309,7 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
   - `tests/compose/test_source_credentials.py`;
   - `tests/compose/test_documentation.py` (lines 104–113 and 359).
 - [ ] T043 [US4] Delete `tests/compose/test_preflight.py` and `deploy/compose/` (the whole directory: the wrapper, `OPERATING.md`, `defaults.conf`, `bootstrap/`, `configuration/` and `skills/`). Before deleting `deploy/compose/skills/*/SKILL.md`, carry their durable operator guidance (configuration registration, deployment steps) into `docs/docs/compose-deployment.mdx` (T045).
-- [ ] T044 [US4] Run the opt-in suite locally: `docker build -t infrahub-sync:compose-test .`, then `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose -x`. Fix any failure. In `.github/workflows/workflow-nightly-e2e.yml`, add (or adjust) a job that builds the image locally and runs the same command, so the suite keeps running nightly.
+- [X] T044 [US4] Run the opt-in suite locally: `docker build -t infrahub-sync:compose-test .`, then `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose -x`. Fix any failure. In `.github/workflows/workflow-nightly-e2e.yml`, add (or adjust) a job that builds the image locally and runs the same command, so the suite keeps running nightly.
 - [ ] T045 [US4] Rewrite `docs/docs/compose-deployment.mdx` for the single-file flow:
   - **Prerequisites**: Docker Compose 2.24 or later; registry login until 3.0.0.
   - **Getting the file**: fetch `docker-compose.yml` from the release tag.
