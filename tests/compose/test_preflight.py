@@ -350,8 +350,9 @@ def test_init_leaves_an_empty_prefect_credential_for_preflight_to_name(bundle: P
     )
     operator.write_text(emptied, encoding="utf-8")
 
-    run(bundle, shim, "init")
+    result = run(bundle, shim, "init")
 
+    assert result.returncode == 0, result.stderr
     assert operator.read_text(encoding="utf-8") == emptied
 
 

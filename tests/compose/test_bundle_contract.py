@@ -224,32 +224,38 @@ def test_prefect_telemetry_is_off(model: dict[str, Any]) -> None:
 
 
 def test_the_prefect_server_requires_the_generated_credential(
-    model: dict[str, Any], contract_environment: dict[str, str]
+    compose_version: str, contract_environment: dict[str, str]
 ) -> None:
     """A caller that can create a deployment in the pool decides what the worker runs.
 
     So the server is never started without authentication: the credential is the
-    operator's generated setting, and nothing else can stand in for it.
+    operator's generated setting, and nothing else can stand in for it. Read from
+    raw output and compared privately, because the credential is redacted by name.
     """
-    environment = service(model, "prefect-server")["environment"]
+    del compose_version
+    environment = service(resolve_privately(contract_environment), "prefect-server")["environment"]
 
-    assert environment.get(PREFECT_SERVER_CREDENTIAL) == contract_environment[PREFECT_CREDENTIAL_SETTING]
+    requires_it = environment.get(PREFECT_SERVER_CREDENTIAL) == contract_environment[PREFECT_CREDENTIAL_SETTING]
+    assert requires_it, f"prefect-server does not require {PREFECT_CREDENTIAL_SETTING}"
 
 
 def test_every_prefect_client_presents_that_credential_and_nothing_else_holds_it(
-    model: dict[str, Any], contract_environment: dict[str, str]
+    compose_version: str, contract_environment: dict[str, str]
 ) -> None:
     """The three Sync processes that call Prefect carry it; the CLI and the jobs do not."""
+    del compose_version
+    resolved = resolve_privately(contract_environment)
     holders = {
         name
-        for name, definition in services(model).items()
+        for name, definition in services(resolved).items()
         if PREFECT_CLIENT_CREDENTIAL in (definition.get("environment") or {})
     }
 
     assert holders == PREFECT_CREDENTIAL_RECEIVERS, f"{PREFECT_CLIENT_CREDENTIAL} is given to {sorted(holders)}"
     for name in sorted(holders):
-        presented = service(model, name)["environment"][PREFECT_CLIENT_CREDENTIAL]
-        assert presented == contract_environment[PREFECT_CREDENTIAL_SETTING], f"{name} presents another credential"
+        presented = service(resolved, name)["environment"][PREFECT_CLIENT_CREDENTIAL]
+        same = presented == contract_environment[PREFECT_CREDENTIAL_SETTING]
+        assert same, f"{name} presents another credential"
 
 
 def test_the_cli_service_is_not_given_the_prefect_credential(cli_model: dict[str, Any]) -> None:
@@ -260,9 +266,10 @@ def test_the_cli_service_is_not_given_the_prefect_credential(cli_model: dict[str
 
 
 def test_the_bundle_refuses_to_resolve_without_the_prefect_credential(
-    contract_environment: dict[str, str],
+    compose_version: str, contract_environment: dict[str, str]
 ) -> None:
     """An empty credential would start an unauthenticated server, so it is not a default."""
+    del compose_version
     without = {key: value for key, value in contract_environment.items() if key != PREFECT_CREDENTIAL_SETTING}
     result = compose(["config"], environment={**without, PREFECT_CREDENTIAL_SETTING: ""})
 
