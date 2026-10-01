@@ -169,6 +169,11 @@ by kind.
 `--kind` limits the list to one destination kind. A kind that matches no operation is an
 input error.
 
+The review prints control characters and invisible characters in source values as visible
+escapes, such as `\x1b` or `\u202e`, so a value cannot hide or rewrite a line. Only the
+printed review changes: the saved plan and JSON output keep the real values. A value that
+contains the literal text `\x1b` looks the same as an escaped character.
+
 The plan can contain delete operations for destination objects that the source does not
 contain. Apply never executes a delete. The detailed output marks each delete as
 `(not executed)`, and the summary states how many deletes apply will skip. When the
