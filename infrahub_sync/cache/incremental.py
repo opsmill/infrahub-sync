@@ -208,3 +208,18 @@ def hydrate_from_parquet(
         if ts is not None and (max_ts is None or ts > max_ts):
             max_ts = ts
     return rows_loaded, max_ts
+
+
+def apply_changed_rows(adapter: Adapter, resource: str, model_cls: type[DiffSyncModel], cursor: CursorState) -> None:
+    """Apply changed rows to the hydrated store without writing to the system.
+
+    Overlap can return cached identifiers repeatedly. The stored object is persisted
+    after each change because a store may hand back a detached copy.
+    """
+    for row in adapter.list_changed_since(resource, cursor):  # ty: ignore[unresolved-attribute]
+        item = model_cls(**row)
+        stored, _ = adapter.update_or_add_model_instance(item)
+        if "local_id" in row and hasattr(stored, "local_id"):
+            # TODO: type mapped models with their declared local_id field.
+            setattr(stored, "local_id", item.local_id)  # noqa: B010  # ty: ignore[unresolved-attribute]
+        adapter.update(stored)

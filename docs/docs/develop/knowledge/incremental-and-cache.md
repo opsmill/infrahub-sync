@@ -132,7 +132,8 @@ Safe bounds can re-read records already in the cached snapshot. Potenda uses Dif
 in-memory `update_or_add_model_instance` for these rows: later yielded attributes replace
 earlier values for the same identifier, without invoking destination writes. Destination
 `local_id` values supplied by the delta are retained; an omitted value preserves the cached
-id. This prevents the same-identifier warm update failure for deliberate overlap reads.
+id. Each updated object is stored again, so the update is kept by stores that return copies of
+their objects. This prevents the same-identifier warm update failure for deliberate overlap reads.
 
 ### The row-count baseline
 

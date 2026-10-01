@@ -408,6 +408,7 @@ class Potenda:
         """
         from infrahub_sync.cache.cursors import capture_safe_cursors
         from infrahub_sync.cache.incremental import (
+            apply_changed_rows,
             hydrate_from_parquet,
             load_cursors,
             required_resource_models,
@@ -479,14 +480,7 @@ class Potenda:
                 resource=resource,
                 add_row=_add,
             )
-            for row in adapter.list_changed_since(resource, cursor):  # ty: ignore[unresolved-attribute]
-                # Overlap can return cached identifiers repeatedly. DiffSync updates
-                # attributes in memory without invoking a destination write method.
-                item = model_cls(**row)
-                stored, _ = adapter.update_or_add_model_instance(item)
-                if "local_id" in row and hasattr(stored, "local_id"):
-                    # TODO: type mapped models with their declared local_id field.
-                    setattr(stored, "local_id", item.local_id)  # noqa: B010  # ty: ignore[unresolved-attribute]
+            apply_changed_rows(adapter, resource, model_cls, cursor)
         # Only successful full resource loads establish a complete side.
         self._side_full_extract[side] = full_resources == set(adapter.top_level)
         self._did_full_extract = self._did_full_extract or self._side_full_extract[side]
