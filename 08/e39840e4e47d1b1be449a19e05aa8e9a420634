@@ -1,0 +1,44 @@
+.github/file-filters.yml
+  s_e781df4f83e385::t_3ff7ab8b170deb 60
+  s_e781df4f83e385::t_1404f3699b2371 64
+docs/docs/develop/guidelines/testing-tiers.md
+  s_e781df4f83e385::t_1404f3699b2371 48,51
+tests/test_workflow_contracts.py
+  s_e781df4f83e385::t_19caab15800ea4 30
+  s_e781df4f83e385::t_dd81b839eab460 114-115,124-125
+  s_e781df4f83e385::t_e65a47ea949427 113
+pyproject.toml
+  s_e781df4f83e385::t_1404f3699b2371 241-242
+README.md
+  s_e781df4f83e385::t_f5f4d7dc0592a1 110
+docs/docs/contributing.mdx
+  s_e781df4f83e385::t_f5f4d7dc0592a1 7-8
+dev/specs/007-harbor-image-publishing/tasks.md
+  s_e781df4f83e385::t_bf2df652c849f2 208-211,222-223,227-231
+tests/compose/lifecycle.py
+  s_e781df4f83e385::t_7feaa5efcd71b6 359-360
+  s_e781df4f83e385::t_9c7efba0a002e3 358,361
+  s_e781df4f83e385::t_4b3ccfd22407de 362
+AGENTS.md
+  s_e781df4f83e385::t_f5f4d7dc0592a1 185
+docs/docs/operations/supported-platforms-and-limits.mdx
+  s_e781df4f83e385::t_f5f4d7dc0592a1 12
+tasks/tests.py
+  s_e781df4f83e385::t_1404f3699b2371 17-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "08e39840e4e47d1b1be449a19e05aa8e9a420634",
+  "prompts": {},
+  "sessions": {
+    "s_e781df4f83e385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e7508e3-b2e9-494a-a98a-ccc3d06e2a0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
