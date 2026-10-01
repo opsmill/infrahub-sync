@@ -154,6 +154,17 @@ jobs:
       - name: Update lock file
         run: uv lock
 
+      # The root docker-compose.yml names the release's image by version, so the
+      # release pull request carries that pin. The dev extra is what installs
+      # `invoke`; release-publish.yml refuses to tag a file pinned to anything else.
+      - name: Pin the Compose image to the release
+        env:
+          VERSION: ${{ steps.normalize.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev
+          uv run --no-sync invoke release.update-docker-compose --version "${VERSION}"
+
       - name: Assemble the changelog
         id: changelog
         env:
@@ -240,7 +251,7 @@ jobs:
           git config user.email "github-bot@opsmill.com"
           git switch -c "${BRANCH}"
 
-          git add pyproject.toml uv.lock CHANGELOG.md changelog/
+          git add pyproject.toml uv.lock docker-compose.yml CHANGELOG.md changelog/
           git commit -m "chore(release): ${VERSION}"
 
           # Dispatching again for the same version refreshes the same
@@ -297,6 +308,7 @@ jobs:
           PyPI upload.
 
           - Version bumped to \`${VERSION}\` in \`pyproject.toml\`, with \`uv.lock\` refreshed
+          - \`docker-compose.yml\` pins every Sync image to \`${VERSION}\`
           - \`CHANGELOG.md\` assembled from the news fragments, which this commit consumes
 
           Review the assembled changelog before merging — it is what users will read.

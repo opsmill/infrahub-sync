@@ -245,7 +245,7 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
 
 ### Tests for User Story 4
 
-- [ ] T033 [P] [US4] Write `tests/test_release_pin.py`, with parametrized unit tests per [contracts/release-pin-tasks.md](contracts/release-pin-tasks.md). Each test runs on a `tmp_path` copy of a small compose fixture string and checks one of:
+- [X] T033 [P] [US4] Write `tests/test_release_pin.py`, with parametrized unit tests per [contracts/release-pin-tasks.md](contracts/release-pin-tasks.md). Each test runs on a `tmp_path` copy of a small compose fixture string and checks one of:
   - the version is rewritten on every Sync image line;
   - a second run is idempotent (no diff);
   - a pre-release version is accepted (`3.0.0a6`);
@@ -254,14 +254,14 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
   - validate passes on a match;
   - validate fails on a mismatch and lists the offending lines;
   - a third-party image line (`postgres:16-alpine@sha256:…`) is untouched.
-- [ ] T034 [P] [US4] Add a test to `tests/test_workflow_contracts.py`:
+- [X] T034 [P] [US4] Add a test to `tests/test_workflow_contracts.py`:
   - `trigger-push-stable.yml` runs `invoke release.update-docker-compose --version "${VERSION}"` after the "Update lock file" step;
   - its release-PR `git add` includes `docker-compose.yml`;
   - `release-publish.yml` runs `invoke release.validate-docker-compose` before `gh release create`.
 
 ### Implementation for User Story 4
 
-- [ ] T035 [US4] Implement `tasks/release.py` per [contracts/release-pin-tasks.md](contracts/release-pin-tasks.md), modelled on `../infrahub/tasks/release.py`:
+- [X] T035 [US4] Implement `tasks/release.py` per [contracts/release-pin-tasks.md](contracts/release-pin-tasks.md), modelled on `../infrahub/tasks/release.py`:
   - **Tasks**: two typed tasks, `update_docker_compose(context, version)` and `validate_docker_compose(context, version)`, exposed as `release.update-docker-compose` and `release.validate-docker-compose`.
   - **Regex**: match the `${VERSION:-<old>}` default only on lines containing `registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-`, and rewrite with plain text replacement so comments are preserved.
   - **Validation**: check the version with `packaging.version.Version`.
@@ -269,7 +269,7 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
   - **Collections**: register a `release` collection in `tasks/__init__.py`.
 
   Make T033 pass.
-- [ ] T036 [US4] Create the root `docker-compose.yml` from `deploy/compose/compose.yaml`, following [contracts/docker-compose-env.md](contracts/docker-compose-env.md):
+- [X] T036 [US4] Create the root `docker-compose.yml` from `deploy/compose/compose.yaml`, following [contracts/docker-compose-env.md](contracts/docker-compose-env.md):
   - **Sync images**: every Sync service (`sync-bootstrap`, `sync-api`, `sync-worker`, `cli`) uses `"${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-<current pyproject version>}"`. Remove `pull_policy` and the instance labels (`INFRAHUB_SYNC_INSTANCE`).
   - **Bootstrap script**: inline `deploy/compose/bootstrap/databases.sh` as a top-level `configs: db-bootstrap-script: content: |` block, mounted at `/usr/local/bin/databases.sh` in `db-bootstrap`. Keep its `psql -v` bound-variable quoting.
   - **Admin password**: replace the `postgres-admin-password` secret file with `POSTGRES_PASSWORD: "${INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD:?...}"`. Give `db-bootstrap` `PGPASSWORD` from the same variable.
@@ -277,9 +277,9 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
   - **Connection strings**: compose `INFRAHUB_SYNC_DATABASE_URL` and `INFRAHUB_SYNC_PREFECT_DATABASE_URL` from the role, database and password variables, as overridable defaults.
   - **Required variables**: keep `:?message` on every credential, each naming the variable.
   - **Header**: add a short comment block with the three-step operator flow (fetch the file, write `.env`, `docker compose up -d`) and the Compose ≥ 2.24 minimum.
-- [ ] T037 [US4] Run `uv run invoke release.validate-docker-compose --version "$(uv version --short)"` against the new root `docker-compose.yml`, and expect exit 0. Then run `docker compose -f docker-compose.yml config --quiet` with a throwaway `.env` that sets every required variable. Expect exit 0, and expect a clear error naming the variable when one is unset.
-- [ ] T038 [US4] In `.github/workflows/trigger-push-stable.yml`, add a step "Pin the Compose image to the release" right after "Update lock file". It runs `uv run --no-sync invoke release.update-docker-compose --version "${VERSION}"`. Add `docker-compose.yml` to the release PR's `git add` list (around line 243).
-- [ ] T039 [US4] In `.github/workflows/release-publish.yml`, add a step "Refuse a Compose file pinned to another version" before the tag step. It runs `uv run --no-sync invoke release.validate-docker-compose --version "${VERSION}"`, after the install step it needs. Make T034 pass.
+- [X] T037 [US4] Run `uv run invoke release.validate-docker-compose --version "$(uv version --short)"` against the new root `docker-compose.yml`, and expect exit 0. Then run `docker compose -f docker-compose.yml config --quiet` with a throwaway `.env` that sets every required variable. Expect exit 0, and expect a clear error naming the variable when one is unset.
+- [X] T038 [US4] In `.github/workflows/trigger-push-stable.yml`, add a step "Pin the Compose image to the release" right after "Update lock file". It runs `uv run --no-sync invoke release.update-docker-compose --version "${VERSION}"`. Add `docker-compose.yml` to the release PR's `git add` list (around line 243).
+- [X] T039 [US4] In `.github/workflows/release-publish.yml`, add a step "Refuse a Compose file pinned to another version" before the tag step. It runs `uv run --no-sync invoke release.validate-docker-compose --version "${VERSION}"`, after the install step it needs. Make T034 pass.
 - [ ] T040 [US4] Move the root `compose.yaml` to `development/docker-compose.dev.yml` with `git mv`:
   - Change `x-sync-build.context` to `..`.
   - Keep `name: infrahub-sync-dev`.

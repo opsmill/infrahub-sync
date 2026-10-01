@@ -2,7 +2,7 @@
 
 from invoke import Collection, Context, task
 
-from . import dev, docs, linter, netbox, preview, tests
+from . import dev, docs, linter, netbox, preview, release, tests
 from .utils import ESCAPED_REPO_PATH, REPO_BASE
 
 NAMESPACE = "INFRAHUB-SYNC"
@@ -33,6 +33,7 @@ ns.add_collection(Collection.from_module(docs))
 ns.add_collection(Collection.from_module(tests))
 ns.add_collection(Collection.from_module(preview))
 ns.add_collection(Collection.from_module(netbox))
+ns.add_collection(Collection.from_module(release))
 
 
 @task(name="lint")

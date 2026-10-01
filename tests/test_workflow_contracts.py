@@ -1361,6 +1361,62 @@ def test_each_release_call_grants_what_the_called_workflow_requests(caller: Path
             )
 
 
+# The root `docker-compose.yml` names the release's image by version. The release
+# pull request pins it (trigger-push-stable.yml), and the tag is refused for a file
+# pinned to any other version (release-publish.yml).
+PREPARE_RELEASE_WORKFLOW = WORKFLOWS / TWO_LINE_AUTOMATION
+PIN_COMPOSE_COMMAND = 'uv run --no-sync invoke release.update-docker-compose --version "${VERSION}"'
+VALIDATE_COMPOSE_COMMAND = 'uv run --no-sync invoke release.validate-docker-compose --version "${VERSION}"'
+RELEASE_PR_GIT_ADD = re.compile(r"^\s*git add (?P<paths>.+)$", re.MULTILINE)
+
+
+def prepare_release_steps() -> list[dict]:
+    """Return the steps of the job that prepares the release pull request, in order."""
+    return job_of(PREPARE_RELEASE_WORKFLOW, "prepare_release")["steps"]
+
+
+def _syncs_dev_tools_before(steps: list[dict], index: int) -> bool:
+    """Report whether the step at `index`, or one before it, installs the dev extra that carries `invoke`."""
+    return any(
+        "uv sync" in str(step.get("run")) and "--extra dev" in str(step.get("run")) for step in steps[: index + 1]
+    )
+
+
+def test_the_release_pull_request_pins_the_compose_image_after_the_lock() -> None:
+    steps = prepare_release_steps()
+    names = [step.get("name") for step in steps]
+    pin, step = _step_running(steps, "pin the Compose image", lambda s: PIN_COMPOSE_COMMAND in str(s.get("run")))
+
+    assert step["name"] == "Pin the Compose image to the release"
+    assert names[pin - 1] == "Update lock file", "the pin runs right after the lock is refreshed"
+    assert step["env"]["VERSION"] == "${{ steps.normalize.outputs.version }}"
+    assert _syncs_dev_tools_before(steps, pin), "`uv run --no-sync invoke` needs the dev extra installed first"
+
+
+def test_the_release_pull_request_commits_the_pinned_compose_file() -> None:
+    _index, step = _step_running(
+        prepare_release_steps(), "open the release pull request", lambda s: "git commit" in str(s.get("run"))
+    )
+    added = RELEASE_PR_GIT_ADD.findall(str(step["run"]))
+
+    assert len(added) == 1
+    assert "docker-compose.yml" in added[0].split()
+
+
+def test_the_tag_is_refused_for_a_compose_file_pinned_to_another_version() -> None:
+    steps = release_publish_steps()
+    check, step = _step_running(
+        steps, "validate the Compose pin", lambda s: VALIDATE_COMPOSE_COMMAND in str(s.get("run"))
+    )
+    create, _created = create_release_step()
+
+    assert step["name"] == "Refuse a Compose file pinned to another version"
+    assert check < create
+    assert step["if"] == "steps.decide.outputs.publish == 'true'"
+    assert step["env"]["VERSION"] == "${{ steps.decide.outputs.version }}"
+    assert _syncs_dev_tools_before(steps, check), "`uv run --no-sync invoke` needs the dev extra installed first"
+
+
 # --------------------------------------------------------------------------
 # pull-request gate
 # --------------------------------------------------------------------------

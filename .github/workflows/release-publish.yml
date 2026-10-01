@@ -145,6 +145,18 @@ jobs:
           print("prerelease=" + str(v.is_prerelease or v.is_devrelease).lower())
           ' | tee -a "$GITHUB_OUTPUT"
 
+      # The root docker-compose.yml names the release's image by version. A tag
+      # whose Compose file pins any other version would point operators at an
+      # image this release does not publish. The dev extra is what installs `invoke`.
+      - name: Refuse a Compose file pinned to another version
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev
+          uv run --no-sync invoke release.validate-docker-compose --version "${VERSION}"
+
       - name: Create the tag and the GitHub Release
         if: steps.decide.outputs.publish == 'true'
         env:
