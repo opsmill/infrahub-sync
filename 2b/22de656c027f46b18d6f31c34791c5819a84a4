@@ -1,0 +1,23 @@
+Dockerfile
+  s_e781df4f83e385::t_0b59f4318dc0f4 14-17,23-25
+changelog/+image-cve-dependency-bumps.security.md
+  s_e781df4f83e385::t_c03afbae26646a 1
+uv.lock
+  s_e781df4f83e385::t_f2483c171f209c 2,31,71,73,92,163,395,533,682-683,730-731,804,827,866,1036,1042,1044,1106-1109,1118,1141,1143,1145,1160,1888,1890,1892,2014-2015,2136,2152,2161,2207,2213,2215,2225-2271,2485,2492,2494,2505,2512,2515,2865,2880,3023,3373,3434,3458-3459,3595,3687,3696-3765,3779,3781,3783,3808,3920-3921
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2b22de656c027f46b18d6f31c34791c5819a84a4",
+  "prompts": {},
+  "sessions": {
+    "s_e781df4f83e385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e7508e3-b2e9-494a-a98a-ccc3d06e2a0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
