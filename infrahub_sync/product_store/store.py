@@ -3555,14 +3555,18 @@ def _is_json_media_type(media_type: str) -> bool:
 
 
 def _redacted_json_bytes(data: bytes, secrets: Sequence[str]) -> bytes:
+    # A decoded string can itself hold JSON text, such as a field that stores a serialized
+    # document, so it is matched against the JSON string forms as well as the raw value.
+    forms = json_string_forms(secrets)
+    if not forms:
+        # With no secret there is nothing to replace, so the document is not decoded.
+        return data
     try:
         document = json.loads(data)
     except (ValueError, RecursionError):
         # Declared JSON that does not parse gets the byte pass alone.
         return data
-    # A decoded string can itself hold JSON text, such as a field that stores a serialized
-    # document, so it is matched against the JSON string forms as well as the raw value.
-    sanitized = _redact_ordered_value(document, json_string_forms(secrets), numbers=True)
+    sanitized = _redact_ordered_value(document, forms, numbers=True)
     if sanitized == document:
         return data
     return json.dumps(sanitized, ensure_ascii=False, separators=(",", ":")).encode()

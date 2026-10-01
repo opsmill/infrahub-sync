@@ -3243,6 +3243,41 @@ def test_a_public_json_artifact_masks_a_number_written_without_the_exponent_sign
     assert json.loads(artifact) == {"operations": [{"payload": {"x": "***"}}]}
 
 
+def test_a_public_json_artifact_whose_keys_collapse_under_redaction_is_refused(provider: ProductProjection) -> None:
+    """Two keys that redact to the same text would publish a document with a duplicate key."""
+    secret = "collapse-canary-5521"  # noqa: S105 - deliberate persistence-boundary canary.
+    provider.create_run(_run())
+
+    with pytest.raises(ValueError, match="collapse multiple mapping keys"):
+        provider.publish_artifact(
+            "run-001",
+            artifact_id="plan-review",
+            kind="saved-plan-review",
+            media_type="application/json",
+            data=json.dumps({secret: "one", "***": "two"}).encode(),
+            secrets=(secret,),
+        )
+
+    assert provider.lookup_artifact("run-001", "plan-review").value is None
+
+
+def test_a_public_json_artifact_without_secrets_is_published_byte_for_byte(provider: ProductProjection) -> None:
+    """With nothing to redact, the bytes are stored as given, spacing included."""
+    data = b'{ "operations" : [ { "note" : "nothing to hide" } ] }'
+    provider.create_run(_run())
+
+    provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=data,
+        secrets=(),
+    )
+
+    assert provider.lookup_artifact("run-001", "plan-review").value == data
+
+
 def test_concurrent_result_merges_retain_every_stage_on_both_profiles(provider: ProductProjection) -> None:
     provider.create_run(_run())
     ready = Barrier(2)
