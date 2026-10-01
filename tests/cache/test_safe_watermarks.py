@@ -493,7 +493,7 @@ def test_incremental_source_does_not_claim_source_deletions_were_reconciled(tmp_
     assert second.run_dir is not None
     plan = load_plan_artifact(second.run_dir)
     assert second._side_full_extract == {"A": False, "B": True}
-    assert {d.name for d in second.source.get_all("Device")} == {"device", "gone"}
+    assert {d.get_unique_id() for d in second.source.get_all("Device")} == {"device", "gone"}
     assert plan.manifest.delete_operations_computed is False
 
 
