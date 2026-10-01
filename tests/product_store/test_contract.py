@@ -3222,6 +3222,27 @@ def test_a_public_json_artifact_stays_valid_json_when_a_secret_is_a_number(provi
     assert json.loads(artifact) == {"vlan": 7, "asn": "***", "serial": "1***"}
 
 
+def test_a_public_json_artifact_masks_a_number_written_without_the_exponent_sign(
+    provider: ProductProjection,
+) -> None:
+    """Pydantic writes 1e100 where json.dumps writes 1e+100; the decoded pass still sees the secret."""
+    secret = "1e+100"  # noqa: S105 - deliberate persistence-boundary canary.
+    provider.create_run(_run())
+
+    provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=b'{"operations":[{"payload":{"x":1e100}}]}',
+        secrets=(secret,),
+    )
+
+    artifact = provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    assert json.loads(artifact) == {"operations": [{"payload": {"x": "***"}}]}
+
+
 def test_concurrent_result_merges_retain_every_stage_on_both_profiles(provider: ProductProjection) -> None:
     provider.create_run(_run())
     ready = Barrier(2)
