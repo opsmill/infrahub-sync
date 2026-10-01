@@ -1,0 +1,31 @@
+dev/specs/007-harbor-image-publishing/tasks.md
+  s_e781df4f83e385::t_04b74eb1c32516 50,54,63-64,79-80
+.github/workflows/ci-docker-image.yml
+  s_e781df4f83e385::t_7a61564a35f4c1 121,128,132,144,158,166,186,201,208,211,257,260,299,302,305,353
+  s_e781df4f83e385::t_85fdd573f98d14 1-120,122-127,129-131,133-143,145-157,159-165,167-185,187-200,202-207,209-210,212-256,258-259,261-298,300-301,303-304,306-352,354-359
+tests/test_workflow_contracts.py
+  s_e781df4f83e385::t_40a5090d6f156b 2345-2347
+  s_e781df4f83e385::t_0d65d0076fb9a9 2453-2458
+  s_e781df4f83e385::t_ac0e615db9418c 2296-2344,2348-2452,2459-2512
+tests/image/conftest.py
+  s_e781df4f83e385::t_40a5090d6f156b 240
+  s_e781df4f83e385::t_450a93dba9cde7 1,3-7,93,99-100,146-148,152,154-159,238,267-269,279
+tests/image/test_image_artifact.py
+  s_e781df4f83e385::t_40a5090d6f156b 18,39-43,123,125-137,178-186,190,194
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a12a1dbea7834a15d293c3ee5bbe437230edc4cd",
+  "prompts": {},
+  "sessions": {
+    "s_e781df4f83e385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e7508e3-b2e9-494a-a98a-ccc3d06e2a0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
