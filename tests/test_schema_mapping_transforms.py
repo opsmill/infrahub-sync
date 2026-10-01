@@ -78,6 +78,8 @@ def test_transform_keeps_model_custom_filters() -> None:
         "{{ lipsum.__globals__ }}",
         "{{ [name.__class__] }}",
         "{{ {'key': name.__class__} }}",
+        # The attr-filter escape fixed in Jinja2 3.1.6 (GHSA-cpwx-vrp4-4pq7).
+        "{{ ('{0.__init__.__globals__}' | attr('format'))(cycler) }}",
     ],
 )
 def test_transform_refuses_unsafe_attribute_access(expression: str, monkeypatch: pytest.MonkeyPatch) -> None:
