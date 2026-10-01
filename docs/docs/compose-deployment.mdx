@@ -81,10 +81,11 @@ by registering one through the Sync API. `configuration/qualification.yaml` in
 the bundle is an example of that package's shape and is never loaded for you.
 
 The credentials a registered package references belong in `operator.env` before
-the run that needs them, and `init` leaves each one commented:
+the run that needs them. `init` writes each one commented out; remove the leading `#`
+and add your value:
 
 ```bash
-INFRAHUB_API_TOKEN=<your Infrahub token>
+INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<your Infrahub token>
 ```
 
 Credentials in a package are references, never values:
@@ -95,8 +96,22 @@ token:
 credentials:
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
+
+An `env` identifier must start with `INFRAHUB_SYNC_CREDENTIAL_`; validation refuses any
+other identifier, so a package cannot name the deployment's own storage, database, or
+Prefect settings.
+
+If you upgrade from an earlier alpha, move to the prefixed names:
+
+1. In `operator.env`, rename `INFRAHUB_API_TOKEN`, `NETBOX_TOKEN`, and `NAUTOBOT_TOKEN` to
+   `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`,
+   and `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`.
+2. Change the `identifier` of each `env` credential in your packages to the new name.
+3. Register a new version of each package with `configs version`. A version registered
+   before the upgrade keeps its old identifiers, and its runs fail in the worker.
+4. Run `./infrahub-sync-compose start`, so the services receive the renamed variables.
 
 :::note
 A container reads its environment once, at start. After changing a value in
@@ -113,8 +128,8 @@ may declare either as its source. `init` leaves both token names commented in
 names.
 
 ```bash
-NETBOX_TOKEN=<your NetBox token>
-# NAUTOBOT_TOKEN=<your Nautobot token>
+INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=<your NetBox token>
+# INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN=<your Nautobot token>
 ```
 
 ```yaml
@@ -128,11 +143,11 @@ configuration:
 credentials:
   netbox-token:
     provider: env
-    identifier: NETBOX_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
 ```
 
 Nautobot uses the same shape with `nautobot`, `nautobot-token` and
-`NAUTOBOT_TOKEN`.
+`INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`.
 
 - **Name a URL a container can reach.** The worker resolves it from inside the
   Compose network, where `localhost` is the worker itself. If NetBox, Nautobot, or
@@ -293,7 +308,7 @@ with the URL in `destination.settings.url`; do not source `operator.env`.
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' operator.env)"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' operator.env)"
   .schema-tools/bin/infrahubctl schema load schema.yml --branch BRANCH_NAME
 )
 ```
@@ -304,7 +319,7 @@ same scoped environment:
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' operator.env)"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' operator.env)"
   .schema-tools/bin/infrahubctl branch list
   # Only if you want to create a new branch:
   .schema-tools/bin/infrahubctl branch create BRANCH_NAME

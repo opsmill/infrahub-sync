@@ -183,7 +183,7 @@ CONTRACT_ENVIRONMENT: dict[str, str] = {
     "INFRAHUB_SYNC_S3_ACCESS_KEY": "contract-access-key",
     "INFRAHUB_SYNC_S3_SECRET_KEY": "contract-secret-key",
     "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": '{"contract": {"token": "contract-token-0123456789"}}',
-    "INFRAHUB_API_TOKEN": "contract-destination-token",
+    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": "contract-destination-token",
 }
 
 

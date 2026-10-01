@@ -130,7 +130,8 @@ from the repository root.
    API and worker with the new environment:
 
     ```bash
-    export NETBOX_TOKEN=nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000
+    export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000
+    export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="${INFRAHUB_API_TOKEN:?export INFRAHUB_API_TOKEN from step 2 first}"
     uv run invoke start
     ```
 

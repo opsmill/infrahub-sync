@@ -185,6 +185,9 @@ def _runtime_env(values: dict[str, str]) -> dict[str, str]:
         {
             "INFRAHUB_ADDRESS": urls["infrahub"],
             "INFRAHUB_API_TOKEN": values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
+            # What a registered package's `infrahub-token` reference resolves: an `env`
+            # credential identifier must carry the credential prefix.
+            "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
             "PREFECT_API_URL": f"{urls['prefect']}/api",
             "INFRAHUB_SYNC_CONFIG_DIRECTORY": str(REPO_ROOT / "examples"),
             "INFRAHUB_SYNC_DATABASE_URL": (

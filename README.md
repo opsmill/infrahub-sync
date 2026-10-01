@@ -102,7 +102,7 @@ in the documentation. In short:
   container itself.
 - `uv run invoke netbox.seed --dataset demo` starts a local NetBox with the official demo
   data. The worker joins NetBox's network and reaches it at `http://netbox:8080`.
-- Set `INFRAHUB_API_TOKEN` and `NETBOX_TOKEN`, then run `uv run invoke start` again, so
+- Set `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, then run `uv run invoke start` again, so
   the worker has both tokens.
 
 When you are finished, run `uv run invoke destroy` to stop the stack and delete its data.

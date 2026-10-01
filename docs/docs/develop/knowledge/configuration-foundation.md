@@ -28,13 +28,19 @@ The package declares what that name means without carrying its value:
 credentials:
   netbox-token:
     provider: env
-    identifier: NETBOX_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
 ```
 
+An `env` identifier must start with `ENV_CREDENTIAL_PREFIX` (`INFRAHUB_SYNC_CREDENTIAL_`),
+checked twice: validation reports any other name as `malformed-credential-reference`, and
+`EnvironmentCredentialProvider` refuses it at resolution. The worker's environment also
+holds its own storage, database, and Prefect settings, and no service setting uses the
+prefix, so a registered package cannot select one of them. Every name in the namespace
+contains `CREDENTIAL`, so the runner's value-based redaction collects its values.
+
 A `$credential` node is only accepted where a credential is actually resolved: the
-credential setting paths of the adapter filling that role, and those of the declared
-store. The same node anywhere else — a non-credential setting, a schema-mapping static
-value — is refused, because nothing would resolve it and the adapter would receive the
+credential setting paths of the adapter filling that role. The same node anywhere else —
+a non-credential setting, a schema-mapping static value — is refused, because nothing would resolve it and the adapter would receive the
 node itself.
 
 Exactly one function turns a declared setting path into a pointer: `_settings_pointer` in
@@ -121,9 +127,11 @@ cannot be proven by a bundled capability declaration. Because they are always ab
 an accepted package, they are excluded from the declared content the checksum covers.
 Adapter names match the registered declaration exactly: a case variant is refused rather
 than folded, because the name is hashed as declared and every consumer resolves it
-verbatim. Redis accepts only its declared
-store settings; its URLs, usernames, and passwords follow the same credential-reference
-rule as adapter settings. Registered version-1 packages also refuse adapter settings
+verbatim. V3 keeps sync data in memory and refuses every non-null `store` block,
+including Redis. Remove the block before registration. For an already registered
+package, register a new version without the block and use that version for new runs.
+
+Registered version-1 packages also refuse adapter settings
 outside each bundled declaration, including custom HTTP headers and request parameters
 on Prometheus, GenericRESTAPI, and its PeeringManager subclass. Declared URLs, base URLs,
 and endpoint paths cannot contain user information, query parameters, or fragments.

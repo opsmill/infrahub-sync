@@ -27,7 +27,11 @@ COMPOSE_FILE = REPO_ROOT / "compose.yaml"
 # The settings the file reads from the environment, all optional. Removed from the
 # caller's own environment rather than merely left alone, so a developer who exports one
 # cannot make the run pass for everybody else.
-OPTIONAL_SETTINGS = ("INFRAHUB_API_TOKEN", "NETBOX_TOKEN", "NAUTOBOT_TOKEN")
+OPTIONAL_SETTINGS = (
+    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN",
+    "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
+    "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN",
+)
 
 _NO_COMPOSE_PLUGIN = "is not a docker command"
 

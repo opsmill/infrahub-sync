@@ -99,10 +99,10 @@ configuration:
 credentials:
   nautobot-token:
     provider: env
-    identifier: NAUTOBOT_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
 The worker uses the declared `url`. `NAUTOBOT_ADDRESS` and `NAUTOBOT_URL` in the worker environment do not replace it. The worker reads the token from the environment variable that the credential names. For direct adapter use without a registered package, `NAUTOBOT_ADDRESS`, `NAUTOBOT_URL`, and `NAUTOBOT_TOKEN` take precedence over the declared settings.

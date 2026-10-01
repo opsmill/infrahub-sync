@@ -102,20 +102,21 @@ configuration:
 credentials:
   slurpit-api-key:
     provider: env
-    identifier: SLURPIT_API_KEY
+    identifier: INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
 The worker resolves these references from its own environment. Give both
-`SLURPIT_API_KEY` and `INFRAHUB_API_TOKEN` to the custom service worker.
+`INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` to the custom service
+worker.
 
 The bundled [Compose deployment](../compose-deployment.mdx) cannot run this Slurp’it package.
 Its worker uses the bundle's bound image, which does not include the Slurp’it SDK, and the
-worker does not receive `SLURPIT_API_KEY`. Registering the package does not install the SDK
+worker does not receive `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY`. Registering the package does not install the SDK
 or pass the key to that worker. To run it with a service worker, deploy a worker image that
-includes the SDK and give `SLURPIT_API_KEY` to that worker's environment.
+includes the SDK and give `INFRAHUB_SYNC_CREDENTIAL_SLURPIT_API_KEY` to that worker's environment.
 
 See [Configuration package](../configuration-package.mdx) for the full envelope reference.
 

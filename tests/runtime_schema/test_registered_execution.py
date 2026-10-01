@@ -194,8 +194,8 @@ def _providers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[dict
     clients["schema_branches"] = schema_branches
     monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", _read_schema)
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
-    monkeypatch.setenv("NETBOX_TOKEN", "netbox-execution-canary")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "infrahub-execution-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "netbox-execution-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "infrahub-execution-canary")
     yield clients
     _forget_netbox_adapter()
 

@@ -36,7 +36,7 @@ def _package_data() -> dict[str, Any]:
             "incremental": None,
         },
         "package_metadata": {"adapter_api_version": 1},
-        "credentials": {"valid-name": {"provider": "env", "identifier": "TOKEN"}},
+        "credentials": {"valid-name": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}},
     }
 
 
@@ -180,7 +180,7 @@ def test_public_parse_reports_invalid_credential_name_with_bad_children() -> Non
 
 def test_direct_model_caller_context_cannot_disable_credential_key_validation() -> None:
     data = _package_data()
-    data["credentials"] = {"bad/name": {"provider": "env", "identifier": "TOKEN"}}
+    data["credentials"] = {"bad/name": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"}}
 
     with pytest.raises(ValidationError):
         ConfigurationPackage.model_validate(
@@ -210,7 +210,7 @@ def test_direct_model_reports_credential_key_and_child_errors_together() -> None
 @pytest.mark.parametrize("names", [("z/name", "a~name"), ("a~name", "z/name")], ids=["forward", "reverse"])
 def test_public_parse_orders_independent_credential_name_failures(names: tuple[str, str]) -> None:
     data = _package_data()
-    data["credentials"] = {name: {"provider": "env", "identifier": "TOKEN"} for name in names}
+    data["credentials"] = {name: {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"} for name in names}
 
     assert _parse_failure(data) == _PREFIX + (
         "/credentials/a~0name: invalid credential reference name; "
@@ -1090,7 +1090,7 @@ def test_public_parse_bounds_total_findings_after_custom_field_expansion(
 def test_public_parse_bounds_native_credential_key_findings(name_count: int) -> None:
     data = _package_data()
     names = tuple(f"bad/name-{index:03}" for index in range(name_count))
-    data["credentials"] = {name: {"provider": "env", "identifier": "TOKEN"} for name in names}
+    data["credentials"] = {name: {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"} for name in names}
 
     message = _parse_failure(data)
 
@@ -1109,7 +1109,7 @@ def test_public_parse_checks_natural_error_count_before_materializing_records(
 ) -> None:
     data = _package_data()
     names = tuple(f"bad/name-{index:03}" for index in range(257))
-    data["credentials"] = {name: {"provider": "env", "identifier": "TOKEN"} for name in names}
+    data["credentials"] = {name: {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_TOKEN"} for name in names}
     real_errors = ValidationError.errors
     errors_calls = 0
 
@@ -1194,3 +1194,40 @@ def test_public_parse_accepts_exact_metadata_resource_boundaries(
     monkeypatch: pytest.MonkeyPatch, errors: list[dict[str, object]], expected: str
 ) -> None:
     assert _parse_with_errors(monkeypatch, errors) == _PREFIX + expected
+
+
+def _package_with_transform(expression: str) -> dict[str, Any]:
+    data = _package_data()
+    data["configuration"]["schema_mapping"] = [
+        {
+            "name": "DcimDevice",
+            "mapping": "dcim.devices",
+            "fields": [{"name": "name", "mapping": "name"}],
+            "transforms": [{"field": "name", "expression": expression}],
+        }
+    ]
+    return data
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param("{{ name | upper }}", id="builtin-filter"),
+        pytest.param("{{ node_id | aci_device_name }}", id="adapter-filter-bound-at-render"),
+    ],
+)
+def test_public_parse_accepts_a_parseable_transform_expression(expression: str) -> None:
+    package = parse_configuration_package(_package_with_transform(expression))
+
+    assert package.configuration.schema_mapping[0].transforms is not None
+    assert package.configuration.schema_mapping[0].transforms[0].expression == expression
+
+
+def test_public_parse_rejects_transform_expression_syntax_without_echoing_it() -> None:
+    message = _parse_failure(_package_with_transform("{{ " + _REJECTED_CANARY + " | }}"))
+
+    assert message == (
+        _PREFIX + "/configuration/schema_mapping/0/transforms/0/expression: "
+        "transform expression is not valid Jinja2 syntax"
+    )
+    assert _REJECTED_CANARY not in message

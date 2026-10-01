@@ -194,8 +194,8 @@ def test_a_registered_run_refuses_a_checkout_dotted_source(monkeypatch: pytest.M
         }
     }
     monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", lambda _package, _branch: snapshot)
-    monkeypatch.setenv("NETBOX_TOKEN", "provenance-canary")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "provenance-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "provenance-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "provenance-canary")
     content = package_data()
     content["configuration"]["schema_mapping"] = [
         {"name": "BuiltinTag", "mapping": "extras.tags", "fields": [{"name": "name", "mapping": "name"}]}

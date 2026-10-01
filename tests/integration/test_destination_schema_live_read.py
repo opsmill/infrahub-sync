@@ -33,6 +33,12 @@ pytestmark = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _declared_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Expose the exported token under the name the package's `env` reference resolves."""
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", INFRAHUB_API_TOKEN or "")
+
+
 def _live_package_data() -> dict[str, Any]:
     return {
         "format_version": 1,
@@ -44,7 +50,9 @@ def _live_package_data() -> dict[str, Any]:
                 "settings": {"url": INFRAHUB_ADDRESS, "token": {"$credential": "infrahub-token"}},
             },
         },
-        "credentials": {"infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"}},
+        "credentials": {
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
+        },
     }
 
 

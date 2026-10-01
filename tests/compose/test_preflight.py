@@ -49,7 +49,7 @@ MINIMUM_COMPOSE = "2.17.3"
 # The source credentials the worker resolves. An operator sets these in the file
 # the bundle owns, so an exported shell value of the same name must not reach
 # Compose -- the same rule every other interpolated setting already follows.
-SOURCE_TOKEN_SETTINGS = ("NETBOX_TOKEN", "NAUTOBOT_TOKEN")
+SOURCE_TOKEN_SETTINGS = ("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN")
 
 DOCKER_SHIM = r"""#!/bin/sh
 # A Docker stand-in for the preflight suite. It answers exactly the questions the
@@ -68,7 +68,7 @@ if [ "$1" = "compose" ]; then
     done
     if [ "$sub" != "version" ] && [ "${SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT:-}" = "1" ]; then
         guarded="INFRAHUB_SYNC_IMAGE INFRAHUB_SYNC_INSTANCE INFRAHUB_SYNC_API_PORT"
-        guarded="$guarded NETBOX_TOKEN NAUTOBOT_TOKEN"
+        guarded="$guarded INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN"
         for name in $guarded; do
             eval "value=\${$name-}"
             if [ -n "$value" ]; then
@@ -999,7 +999,8 @@ def test_an_ambient_source_token_cannot_reach_compose(initialized: Path, shim: P
     """
     settings = initialized / "operator.env"
     settings.write_text(
-        settings.read_text(encoding="utf-8") + "NETBOX_TOKEN=preflight-declared-netbox-token-9c2f41\n",
+        settings.read_text(encoding="utf-8")
+        + "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=preflight-declared-netbox-token-9c2f41\n",
         encoding="utf-8",
     )
     argv_log = tmp_path / "compose-argv.log"
@@ -1011,8 +1012,8 @@ def test_an_ambient_source_token_cannot_reach_compose(initialized: Path, shim: P
         environment={
             "SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT": "1",
             "SHIM_ARGV_LOG": str(argv_log),
-            "NETBOX_TOKEN": "preflight-ambient-netbox-token-must-lose",
-            "NAUTOBOT_TOKEN": "preflight-ambient-nautobot-token-must-lose",
+            "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": "preflight-ambient-netbox-token-must-lose",
+            "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN": "preflight-ambient-nautobot-token-must-lose",
         },
     )
 

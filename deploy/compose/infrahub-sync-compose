@@ -52,10 +52,12 @@ INFRAHUB_SYNC_SERVICE_BEARER_TOKENS'
 # exported shell value otherwise outranks every --env-file, which would let the
 # command validate one image, identity, path, or port and execute another.
 # Keep this closed set equal to the ${...} names in compose.yaml.
-COMPOSE_SETTINGS='INFRAHUB_API_TOKEN
-INFRAHUB_SYNC_API_PORT
+COMPOSE_SETTINGS='INFRAHUB_SYNC_API_PORT
 INFRAHUB_SYNC_API_TOKEN
 INFRAHUB_SYNC_BIND_ADDRESS
+INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
+INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN
+INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
 INFRAHUB_SYNC_DATABASE_URL
 INFRAHUB_SYNC_IMAGE
 INFRAHUB_SYNC_IMAGE_PULL_POLICY
@@ -79,8 +81,6 @@ INFRAHUB_SYNC_S3_REGION
 INFRAHUB_SYNC_S3_SECRET_KEY
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS
 INFRAHUB_SYNC_WORK_POOL
-NAUTOBOT_TOKEN
-NETBOX_TOKEN
 PREFECT_WORKER_HEARTBEAT_SECONDS
 PREFECT_WORKER_QUERY_SECONDS'
 
@@ -644,9 +644,11 @@ command_init() {
 # that resolve them, and a run that selects a missing value fails that run.
 # Start again after changing any of these: a container reads its environment
 # once, and \`restart\` keeps the environment its container already has.
-#INFRAHUB_API_TOKEN=
-#NETBOX_TOKEN=
-#NAUTOBOT_TOKEN=
+# A package's \`env\` credential identifiers must start with INFRAHUB_SYNC_CREDENTIAL_;
+# these are the three this bundle passes to its services.
+#INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=
+#INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=
+#INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN=
 
 INFRAHUB_SYNC_PRODUCT_PASSWORD=$product
 INFRAHUB_SYNC_PREFECT_PASSWORD=$prefect

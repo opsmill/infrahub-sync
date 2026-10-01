@@ -225,7 +225,7 @@ services:
       # Optional, and empty when unset: a deployment starts before any package is
       # registered, so there is no destination to hold a credential for yet. A
       # run that selects an absent value fails that run, not this start.
-      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
     read_only: true
     tmpfs: *sync-scratch
     ports:
@@ -268,7 +268,7 @@ services:
       # paused worker at that thirty-second floor instead of Prefect's ninety.
       PREFECT_WORKER_HEARTBEAT_SECONDS: "${PREFECT_WORKER_HEARTBEAT_SECONDS}"
       # Optional for the same reason as on the API above.
-      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
       # The source credentials the bundled NetBox and Nautobot adapters resolve,
       # and the only service given either: a run is what consumes one, and the
       # worker is what runs one. Optional rather than required, because a
@@ -276,8 +276,8 @@ services:
       # token nothing selects has no reason to exist here. When a registered
       # package does select one, the resolver refuses an absent or empty value
       # by name, so an unset token fails that run rather than this container.
-      NETBOX_TOKEN: "${NETBOX_TOKEN:-}"
-      NAUTOBOT_TOKEN: "${NAUTOBOT_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN:-}"
     read_only: true
     tmpfs: *sync-scratch
 
