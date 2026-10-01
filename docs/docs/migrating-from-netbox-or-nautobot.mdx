@@ -41,13 +41,13 @@ The Infrahub Sync repository includes working examples at `examples/netbox_to_in
 
 Models must be synced in dependency order: anything referenced by another model must be synced first. A typical order:
 
-1. Independent objects: tags, locations, manufacturers, device roles, platforms
-2. IP namespaces (nothing else has to exist first)
+1. Independent objects: tags, locations, manufacturers, device roles, platforms, route targets
+2. IP namespaces, then VRFs (load any route targets before VRFs)
 3. Rack and site data (depends on locations)
 4. Devices (depends on locations, roles, manufacturers, platforms)
-5. Interfaces (depends on devices)
-6. IP addresses and prefixes (depends on IP namespaces, interfaces, VRFs)
-7. VLANs and VLAN groups
+5. IP addresses and prefixes (depends on IP namespaces, VRFs)
+6. VLANs and VLAN groups
+7. Interfaces (depends on devices, IP addresses, VLANs)
 
 The exact order depends on your schema. See [Sync instance configuration](./reference/config.mdx) for the syntax of the `order` key.
 

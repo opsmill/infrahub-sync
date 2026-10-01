@@ -15,6 +15,7 @@ null ones) and turns a nested record into a plain dict.
 
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -166,6 +167,17 @@ def test_identity_stand_ins_match_the_example(kind: str, identity_model: type[Di
     mapping = _mapping(kind)
 
     assert tuple(mapping.identifiers or ()) == identity_model._identifiers
+
+
+@pytest.mark.parametrize("side", ["netbox", "infrahub"])
+@pytest.mark.parametrize(("kind", "key_field"), KIND_KEY_FIELDS)
+def test_generated_models_match_the_example_identifiers(side: str, kind: str, key_field: str) -> None:
+    """Pin the shipped runtime models so stale generated identities cannot pass."""
+    models = import_module(f"examples.netbox_to_infrahub.{side}.sync_models")
+    generated_model = getattr(models, kind)
+
+    assert generated_model._identifiers == (key_field, "ip_namespace")
+    assert generated_model._identifiers == tuple(_mapping(kind).identifiers or ())
 
 
 def test_netbox_example_keeps_overlapping_prefixes_in_different_vrfs_apart() -> None:
