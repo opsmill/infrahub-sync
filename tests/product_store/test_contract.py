@@ -3226,13 +3226,13 @@ def test_a_public_json_artifact_stays_valid_json_when_a_secret_is_a_number(provi
         artifact_id="plan-review",
         kind="saved-plan-review",
         media_type="application/json",
-        data=json.dumps({"vlan": 7, "asn": int(secret)}).encode(),
+        data=json.dumps({"vlan": 7, "asn": int(secret), "serial": int(f"1{secret}")}).encode(),
         secrets=(secret,),
     )
 
     artifact = provider.lookup_artifact("run-001", "plan-review").value
     assert artifact is not None
-    assert json.loads(artifact) == {"vlan": 7, "asn": "***"}
+    assert json.loads(artifact) == {"vlan": 7, "asn": "***", "serial": "1***"}
 
 
 def test_concurrent_result_merges_retain_every_stage_on_both_profiles(provider: ProductProjection) -> None:
