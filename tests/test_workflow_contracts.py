@@ -2006,7 +2006,7 @@ def test_the_label_arriving_or_leaving_re_runs_the_gate() -> None:
 def test_the_fast_tier_starts_beside_the_lint_it_used_to_wait_for() -> None:
     """Ninety seconds on the critical path of every run, for an ordering nothing needs.
 
-    Lint still blocks a merge as its own required check; what it no longer does
+    Lint still blocks a merge, through the required job; what it no longer does
     is hold the tests and the image gate behind it.
     """
     graph = develop_jobs()
@@ -2293,3 +2293,20 @@ def test_the_sdk_update_pull_request_targets_the_matrix_branch() -> None:
 
     assert create_pr["env"]["MATRIX_BRANCH"] == SDK_MATRIX_BRANCH
     assert '--base "${MATRIX_BRANCH}"' in create_pr["run"]
+
+
+@pytest.mark.parametrize("check", ["linter", "tests", "uv-checker"])
+def test_the_required_check_waits_for_and_refuses_a_failed_fast_check(check: str) -> None:
+    """Only `Full qualification` is required, so a check it ignores is advisory.
+
+    The fast checks keep running beside the tier, so they are not ancestors of
+    the image gate; the required job is the one place that waits for them, and
+    its script reads each result.
+    """
+    job = job_of(DEVELOP_CALLER, REQUIRED_JOB)
+    script = "\n".join(str(step.get("run", "")) for step in job["steps"])
+    results = " ".join(str(value) for step in job["steps"] for value in (step.get("env") or {}).values())
+
+    assert check in _needs(job), f"{REQUIRED_JOB} does not wait for {check}"
+    assert f"needs.{check}.result" in results, f"{REQUIRED_JOB} does not read the result of {check}"
+    assert check in script, f"{REQUIRED_JOB} does not check {check}"

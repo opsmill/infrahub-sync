@@ -106,6 +106,14 @@ the frozen vendored upstream tests (excluded via `[tool.ty.src]`); the former pr
 `opsmill/prefect-extras` Git dependency is vendored in the repository, so no special access is
 required.
 
+A pull request into `feature/v3-develop` merges only when the one required status check,
+`Full qualification`, passes. That check is the `qualification-required` job in
+`.github/workflows/trigger-pr-develop.yml`. It waits for the `linter`, `tests`, and
+`uv-checker` calls beside the full qualification tier and fails unless each ended in
+`success`, or in `skipped` because its own path filter found nothing to check. A failing
+Ruff, Pylint, ty, unit-test, or lock-file check therefore blocks the merge, and the
+rule lives in the workflow rather than in repository settings.
+
 Python 3.10 linting uses `--extra dev --extra prefect` and runs:
 
 ```bash
