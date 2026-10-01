@@ -167,7 +167,7 @@ This transform:
 ### Authentication and connectivity
 
 - If you see token refresh errors, ensure the APIC response includes refreshTimeoutSeconds; the adapter forces re-login when refresh data is unavailable.
-- For TLS verification problems, check the APIC certificate and its trust chain. If you need to disable verification in a controlled environment, set `source.settings.verify: false` in the registered package. For direct adapter use, set `CISCO_APIC_VERIFY=false` or `settings.verify: false`. Disabling verification prevents certificate validation.
+- For TLS verification problems, check the APIC certificate and its trust chain. If you need to disable verification in a controlled environment, set `source.settings.verify: false` in the package and register a new version with `configs version`. Then run the new version. For direct adapter use, set `CISCO_APIC_VERIFY=false` or `settings.verify: false`. Disabling verification prevents certificate validation.
 
 ### Device reference resolution
 
