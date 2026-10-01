@@ -682,7 +682,7 @@ _LRI = chr(0x2066)
 # break up text without a visible glyph.
 _INVISIBLE_CODES = (0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x200E, 0x200F, 0x061C, 0x2028, 0x2029)
 _INVISIBLES = "".join(chr(code) for code in _INVISIBLE_CODES)
-_TERMINAL_CONTROLS = ("\x1b", "\r", "\x9b", "\x7f", _RLO, _LRI, *_INVISIBLES)
+_TERMINAL_CONTROLS = ("\x1b", "\r", "\t", "\x9b", "\x7f", _RLO, _LRI, *_INVISIBLES)
 
 
 def _assert_no_terminal_controls(rendered: str) -> None:
@@ -695,7 +695,7 @@ def _assert_no_terminal_controls(rendered: str) -> None:
 
 def test_runs_plan_detail_escapes_terminal_controls_in_source_values(client: MagicMock) -> None:
     """A source-derived value must not be able to rewrite the lines a reviewer approves."""
-    forged = f"edge\x1b[1A\x1b[2K\rop-forged create Device name=fake\n\x9b2K\x7f{_RLO}evil{_LRI}x{_INVISIBLES}"
+    forged = f"edge\x1b[1A\x1b[2K\rop-forged create Device name=fake\t\n\x9b2K\x7f{_RLO}evil{_LRI}x{_INVISIBLES}"
     plan = _plan()
     operation = plan.operations[0].model_copy(
         update={"kind": "Dev\x1bice", "identity": {"name": forged}, "destination_id": "dest\r1"}
@@ -718,7 +718,7 @@ def test_runs_plan_detail_escapes_terminal_controls_in_source_values(client: Mag
     lines = result.output.split("\n")
     assert (
         "op-create create Dev\\x1bice name=edge\\x1b[1A\\x1b[2K\\rop-forged create Device name=fake"
-        "\\n\\x9b2K\\x7f\\u202eevil\\u2066x"
+        "\\t\\n\\x9b2K\\x7f\\u202eevil\\u2066x"
         "\\u200b\\u200c\\u200d\\u2060\\ufeff\\u200e\\u200f\\u061c\\u2028\\u2029"
     ) in lines
     assert "  destination id: dest\\r1" in lines
