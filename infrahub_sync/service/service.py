@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
 from infrahub_sync.execution import collect_secret_values, redact, sanitize_exception_chain
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
@@ -221,6 +222,8 @@ class RunService:
             ) from None
         if package.checksum() != stored.package_checksum:
             raise self._error(503, "configuration-version-invalid", "the registered configuration version is invalid")
+        if package.configuration.store is not None:
+            raise self._error(422, "unsupported-sync-store", UNSUPPORTED_STORE_MESSAGE)
         return package.configuration.name, stored.package_checksum
 
     async def verify_run(

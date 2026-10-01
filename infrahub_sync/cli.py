@@ -36,6 +36,7 @@ from infrahub_sync.client import (
     TransportError,
     ValidationReportResource,
 )
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -193,6 +194,10 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
         result = "transport", (("operation", error.operation),)
     else:
         result = "sync-client", ()
+    if (isinstance(error, ConfigsAPIError) and error.reason == "unsupported-sync-store") or (
+        isinstance(error, APIError) and error.code == "unsupported-sync-store"
+    ):
+        result = (result[0], (*result[1], ("message", UNSUPPORTED_STORE_MESSAGE)))
     return result
 
 

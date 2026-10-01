@@ -1,6 +1,7 @@
 """The shipped refusal contract of ``validate_package_credentials``, pinned site by site.
 
-Every message below was observed by executing ``c767067``. The accumulating core replaces the
+The adapter and credential messages were observed by executing ``c767067``; store
+messages now follow the V3 memory-only policy. The accumulating core replaces the
 raise-first checks with finding producers, and the wrapper reproduces the message belonging to
 the finding the shipped code would have raised first — the **execution-order** element, not the
 sort-order one. A drift in either the messages or the check order moves an assertion here.
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from infrahub_sync.configuration import CredentialConfigurationError, validate_package_credentials
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
 from tests.configuration.validation_packages import package, package_data
 
 if TYPE_CHECKING:
@@ -116,27 +118,27 @@ SHIPPED_REFUSALS: tuple[tuple[str, Callable[[dict[str, Any]], None], str], ...] 
     (
         "missing-store-capabilities",
         _undeclared_store_type,
-        "store type 'mystery' has no configuration capability declaration",
+        UNSUPPORTED_STORE_MESSAGE,
     ),
     (
         "undeclared-setting-store",
         _undeclared_store_setting,
-        "store type 'redis' contains unsupported declared settings: [\"bogus\"]",
+        UNSUPPORTED_STORE_MESSAGE,
     ),
     (
         "unknown-credential-reference-store",
         _store_names_unknown_reference,
-        "/configuration/store/settings/password names unknown credential reference 'nope'",
+        UNSUPPORTED_STORE_MESSAGE,
     ),
     (
         "inline-credential-value-store",
         _store_carries_inline_value,
-        "/configuration/store/settings/password contains an inline credential value",
+        UNSUPPORTED_STORE_MESSAGE,
     ),
     (
         "malformed-credential-reference-store",
         _store_carries_malformed_reference,
-        "/configuration/store/settings/password contains a malformed credential reference",
+        UNSUPPORTED_STORE_MESSAGE,
     ),
     (
         "missing-adapter",

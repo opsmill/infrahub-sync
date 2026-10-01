@@ -55,7 +55,7 @@ def test_independent_defects_each_become_one_finding() -> None:
     assert _triples(data) == [
         ("undeclared-setting", "/configuration/destination/settings/bogus_dest"),
         ("endpoint-not-absolute", "/configuration/source/settings/url"),
-        ("unknown-credential-reference", "/configuration/store/settings/password"),
+        ("unsupported-sync-store", "/configuration/store"),
         ("unknown-credential-provider", "/credentials/netbox-token"),
     ]
 
@@ -148,7 +148,7 @@ def _nested_under_a_refused_store_setting(data: dict[str, Any]) -> None:
         ),
         pytest.param(
             _nested_under_a_refused_store_setting,
-            ("inline-credential-value", "/configuration/store/settings/password"),
+            ("unsupported-sync-store", "/configuration/store"),
             id="inline-credential-value",
         ),
     ],
@@ -269,14 +269,12 @@ def test_a_missing_adapter_suppresses_only_its_own_role() -> None:
     assert _triples(data) == [
         ("undeclared-setting", "/configuration/destination/settings/bogus_dest"),
         ("missing-adapter", "/configuration/source"),
-        ("inline-credential-value", "/configuration/store/settings/password"),
+        ("unsupported-sync-store", "/configuration/store"),
     ]
 
 
 def test_an_undeclared_store_type_suppresses_only_its_own_settings() -> None:
-    # The same rule the missing adapter above obeys, at the other unevaluable surface. Whether
-    # a store setting is credential-bearing is exactly what an undeclared store type makes
-    # unknowable, so the walk has no surface to judge "url" against and must not claim one.
+    # Refusing the whole store owns its settings; unrelated adapter defects still report.
     data = package_data()
     data["configuration"]["store"] = {"type": "mystery", "settings": {"url": {"$credential": "netbox-token"}}}
     data["configuration"]["destination"]["settings"]["bogus_dest"] = 1
@@ -285,17 +283,15 @@ def test_an_undeclared_store_type_suppresses_only_its_own_settings() -> None:
     assert _triples(data) == [
         ("undeclared-setting", "/configuration/destination/settings/bogus_dest"),
         ("credential-path-not-declared", "/configuration/source/settings/verify_ssl"),
-        ("missing-store-capabilities", "/configuration/store"),
+        ("unsupported-sync-store", "/configuration/store"),
     ]
 
 
-def test_an_undeclared_store_type_carrying_nothing_is_still_silent() -> None:
-    # Measured shipped behaviour: an undeclared store type declaring no settings declares
-    # nothing unsafe, so it is not a defect and suppresses nothing.
+def test_an_undeclared_store_type_carrying_nothing_is_refused() -> None:
     data = package_data()
     data["configuration"]["store"] = {"type": "mystery", "settings": {}}
 
-    assert _triples(data) == []
+    assert _triples(data) == [("unsupported-sync-store", "/configuration/store")]
 
 
 def _narrow_type_uses(tree: ast.AST) -> list[str]:
@@ -812,7 +808,7 @@ FROZEN_CODES = frozenset(
         "inline-credential-value",
         "malformed-credential-reference",
         "missing-adapter",
-        "missing-store-capabilities",
+        "unsupported-sync-store",
         "setting-contains-credential-material",
         "setting-not-a-string",
         "undeclared-setting",
@@ -896,7 +892,7 @@ def test_one_package_carrying_every_reachable_family_keeps_the_sort_total() -> N
 
     keys = [(finding.location, finding.severity, finding.code) for finding in findings]
     assert len(set(keys)) == len(keys)
-    assert len(keys) == 15
+    assert len(keys) == 12
     assert {finding.code for finding in findings} == {
         "credential-path-not-declared",
         "endpoint-not-absolute",
@@ -908,6 +904,7 @@ def test_one_package_carrying_every_reachable_family_keeps_the_sort_total() -> N
         "unknown-credential-provider",
         "unknown-credential-reference",
         # The adapter's own code, passed through rather than replaced.
+        "unsupported-sync-store",
         "unsafe-rest-request-endpoint",
     }
 
@@ -1080,13 +1077,6 @@ def _normalized_setting_collision() -> dict[str, Any]:
     return data
 
 
-def _normalized_store_collision() -> dict[str, Any]:
-    """Two undeclared store settings whose names differ only by a trailing space."""
-    data = package_data()
-    data["configuration"]["store"] = {"type": "redis", "settings": {"zz": 1, "zz ": 1}}
-    return data
-
-
 def _normalized_empty_component_collision() -> dict[str, Any]:
     """An empty declared key and a whitespace-only one, which normalize onto each other."""
     data = package_data()
@@ -1102,7 +1092,6 @@ def _normalized_empty_component_collision() -> dict[str, Any]:
     [
         pytest.param(_normalized_walk_collision, "credential-path-not-declared", id="walk"),
         pytest.param(_normalized_setting_collision, "undeclared-setting", id="adapter-setting"),
-        pytest.param(_normalized_store_collision, "undeclared-setting", id="store-setting"),
         pytest.param(_normalized_empty_component_collision, "credential-path-not-declared", id="empty-component"),
     ],
 )
@@ -1149,7 +1138,6 @@ def test_two_defects_at_one_normalized_pointer_keep_their_own_codes() -> None:
         pytest.param(_component_bound_collision, id="component-bound"),
         pytest.param(_normalized_walk_collision, id="normalized-walk"),
         pytest.param(_normalized_setting_collision, id="normalized-adapter-setting"),
-        pytest.param(_normalized_store_collision, id="normalized-store-setting"),
         pytest.param(_normalized_empty_component_collision, id="normalized-empty-component"),
     ],
 )

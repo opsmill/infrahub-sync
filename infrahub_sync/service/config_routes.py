@@ -95,7 +95,8 @@ class ConfigurationRoutes:
             if error_type is self._service.ConfigsRequestError:
                 raise ConfigurationAPIError(400, "request", proven_pre_effect=True) from None
             if error_type is self._service.ConfigsValidationError:
-                raise ConfigurationAPIError(422, "validation", proven_pre_effect=True) from None
+                reason = "unsupported-sync-store" if error.reason == "unsupported-sync-store" else None
+                raise ConfigurationAPIError(422, "validation", reason=reason, proven_pre_effect=True) from None
             if error_type is self._service.ConfigsNotFoundError:
                 raise ConfigurationAPIError(404, "not-found", reason=error.reason, proven_pre_effect=True) from None
             if error_type is self._service.ConfigsStorageError:
