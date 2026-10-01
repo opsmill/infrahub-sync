@@ -149,10 +149,7 @@ Use `+` as the id for a change with no issue number (`+short-slug.housekeeping.m
 
 Label a pull request `ci/skip-changelog` when it genuinely needs no entry — a dependency bump or a typo fix. Dependabot applies that label itself.
 
-Every normal pull request must also carry exactly one release-intent label:
-`changes/major`, `changes/minor`, or `changes/patch`. These labels alone
-determine the automatic version bump. Generated `chore(release):` pull requests
-are exempt because they apply, rather than introduce, that release intent.
+Every normal pull request must also carry exactly one release-intent label — `changes/major`, `changes/minor`, or `changes/patch` — and `release-label-check.yml` fails the PR if it does not. These labels alone determine the version bump. Dependabot and `update-infrahub-sdk.yml` apply `changes/patch` themselves; generated `chore(release):` pull requests are exempt because they apply, rather than introduce, that release intent.
 
 **Versions and `CHANGELOG.md` are never edited by hand.** Merging to `main` does not prepare a release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md).
 
