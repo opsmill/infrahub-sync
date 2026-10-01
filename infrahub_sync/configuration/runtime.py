@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 from infrahub_sync import SyncInstance
 
 from .credentials import _REGISTERED_CONTEXT, resolve_reference
+from .storage import UnsupportedSyncStoreError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -40,6 +41,9 @@ def resolve_runtime_instance(
     a source credential it never uses. Every source-using path — plan, sync, and
     configuration validation — keeps the default and resolves both sides.
     """
+
+    if package.configuration.store is not None:
+        raise UnsupportedSyncStoreError
 
     def resolve(value: object) -> object:
         if type(value) is dict:  # pylint: disable=unidiomatic-typecheck
