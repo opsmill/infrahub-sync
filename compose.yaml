@@ -15,7 +15,9 @@
 # Destination: none. A deployment starts with an empty configuration registry
 # and reaches nothing until a package is registered. To sync against a local
 # Infrahub, run `uv run invoke preview.up` and start this stack with
-# INFRAHUB_API_TOKEN set; sync-worker already carries the host route.
+# INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN set; sync-worker already carries the
+# host route. A package's `env` credential identifiers must start with
+# INFRAHUB_SYNC_CREDENTIAL_, and these three are the ones this stack passes.
 #
 # Source: the local NetBox (`uv run invoke netbox.up` or `netbox.seed`) publishes
 # on the host's loopback address only, which no container can reach. The Invoke
@@ -149,7 +151,7 @@ services:
         {"dev": {"token": "infrahub-sync-dev-token", "administrator": true}}
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "300"
       PREFECT_WORKER_QUERY_SECONDS: "10"
-      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
     ports:
       - "127.0.0.1:8030:8000"
     healthcheck:
@@ -175,9 +177,9 @@ services:
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "300"
       PREFECT_WORKER_QUERY_SECONDS: "10"
       PREFECT_WORKER_HEARTBEAT_SECONDS: "10"
-      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:-}"
-      NETBOX_TOKEN: "${NETBOX_TOKEN:-}"
-      NAUTOBOT_TOKEN: "${NAUTOBOT_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN:-}"
     # The only service that reaches a destination. The shipped bundle carries no
     # host route on purpose; a dev stack whose destination is `preview.up` on
     # this laptop needs one, and it costs nothing when unused.

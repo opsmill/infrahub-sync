@@ -17,8 +17,8 @@ The worker uses the two URLs in this package, `https://demo.netbox.dev` and
 `http://localhost:8000`. Environment variables such as `NETBOX_URL` and
 `INFRAHUB_ADDRESS` do not change them. To use other addresses, edit the URLs in a copy
 of the package before you register it, or register a new version of it with
-`configs version`. Only the two tokens, `NETBOX_TOKEN` and `INFRAHUB_API_TOKEN`, come
-from the worker's environment.
+`configs version`. Only the two tokens, `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and
+`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, come from the worker's environment.
 
 Connect to a Sync service whose worker has `pynetbox` installed, then register, plan,
 review, and apply:

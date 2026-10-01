@@ -33,6 +33,12 @@ pytestmark = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _declared_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Expose the exported token under the name the package's `env` reference resolves."""
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", INFRAHUB_API_TOKEN or "")
+
+
 def _live_package_data() -> dict[str, Any]:
     return {
         "format_version": 1,
@@ -44,7 +50,9 @@ def _live_package_data() -> dict[str, Any]:
                 "settings": {"url": INFRAHUB_ADDRESS, "token": {"$credential": "infrahub-token"}},
             },
         },
-        "credentials": {"infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"}},
+        "credentials": {
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
+        },
     }
 
 
@@ -61,21 +69,28 @@ def test_the_live_accessor_returns_a_judgeable_snapshot() -> None:
 
     assert snapshot
     for entry in snapshot.values():
-        assert set(entry) == {"human_friendly_id", "uniqueness_constraints", "attributes", "relationships"}
+        base_keys = {"human_friendly_id", "uniqueness_constraints", "attributes", "relationships"}
+        # Only generic entries carry `used_by`: the concrete kinds that implement the generic.
+        assert set(entry) in (base_keys, base_keys | {"used_by"})
+        if "used_by" in entry:
+            assert isinstance(entry["used_by"], list)
+            assert all(isinstance(kind, str) for kind in entry["used_by"])
         assert all(isinstance(component, str) for component in entry["human_friendly_id"])
         for constraint in entry["uniqueness_constraints"]:
             assert all(isinstance(component, str) for component in constraint)
         for attribute in entry["attributes"].values():
-            assert set(attribute) == {"kind", "optional", "default_value", "unique"}
+            assert set(attribute) == {"kind", "optional", "default_value", "unique", "read_only"}
             assert isinstance(attribute["kind"], str)
             assert isinstance(attribute["optional"], bool)
             assert isinstance(attribute["unique"], bool)
+            assert isinstance(attribute["read_only"], bool)
         for relationship in entry["relationships"].values():
-            assert set(relationship) == {"peer", "cardinality", "optional", "kind"}
+            assert set(relationship) == {"peer", "cardinality", "optional", "kind", "read_only"}
             assert isinstance(relationship["peer"], str)
             assert relationship["cardinality"] in CARDINALITIES
             assert isinstance(relationship["optional"], bool)
             assert isinstance(relationship["kind"], str)
+            assert isinstance(relationship["read_only"], bool)
 
 
 def test_the_live_snapshot_normalizes_into_the_closed_domain() -> None:

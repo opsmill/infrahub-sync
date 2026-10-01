@@ -68,13 +68,13 @@ ROUTED_SERVICES = {"sync-worker"}
 # and only the worker runs one, so the worker is the only service that may be
 # given either. Naming them here rather than deriving them from the file keeps
 # this a statement of the contract instead of a restatement of the YAML.
-SOURCE_TOKEN_SETTINGS = ("NETBOX_TOKEN", "NAUTOBOT_TOKEN")
+SOURCE_TOKEN_SETTINGS = ("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN")
 SOURCE_TOKEN_RECEIVERS = {"sync-worker"}
 
 # The destination credential, and the two services that resolve one. The API
 # resolves it for the destination schema reads it serves; the worker resolves it
 # for a run. Nothing else has a destination to reach.
-DESTINATION_CREDENTIAL = "INFRAHUB_API_TOKEN"
+DESTINATION_CREDENTIAL = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
 DESTINATION_CREDENTIAL_RECEIVERS = {"sync-api", "sync-worker"}
 
 # The opt-in client, and the profile that is the only way to resolve it.
@@ -84,6 +84,15 @@ CLI_SERVICE = "sync-cli"
 # would be a service carrying a credential for the service that dispatches it.
 CLIENT_CREDENTIAL = "INFRAHUB_SYNC_API_TOKEN"
 CLIENT_CREDENTIAL_RECEIVERS = {CLI_SERVICE}
+
+# The Prefect API credential: the operator setting `init` generates, the server
+# setting that turns authentication on, and the client setting every Prefect
+# caller presents. The bootstrap job applies the deployment, the API submits and
+# observes runs, and the worker polls for them; nothing else calls Prefect.
+PREFECT_CREDENTIAL_SETTING = "INFRAHUB_SYNC_PREFECT_AUTH_STRING"
+PREFECT_SERVER_CREDENTIAL = "PREFECT_SERVER_API_AUTH_STRING"
+PREFECT_CLIENT_CREDENTIAL = "PREFECT_API_AUTH_STRING"
+PREFECT_CREDENTIAL_RECEIVERS = {"sync-bootstrap", "sync-api", "sync-worker"}
 
 
 def services(model: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -207,6 +216,65 @@ def test_every_published_address_is_loopback(model: dict[str, Any]) -> None:
 def test_prefect_telemetry_is_off(model: dict[str, Any]) -> None:
     """An optional call home is not something a deployment should have to discover."""
     assert service(model, "prefect-server")["environment"]["PREFECT_SERVER_ANALYTICS_ENABLED"] == "false"
+
+
+# ---------------------------------------------------------------------------
+# The Prefect API credential
+# ---------------------------------------------------------------------------
+
+
+def test_the_prefect_server_requires_the_generated_credential(
+    compose_version: str, contract_environment: dict[str, str]
+) -> None:
+    """A caller that can create a deployment in the pool decides what the worker runs.
+
+    So the server is never started without authentication: the credential is the
+    operator's generated setting, and nothing else can stand in for it. Read from
+    raw output and compared privately, because the credential is redacted by name.
+    """
+    del compose_version
+    environment = service(resolve_privately(contract_environment), "prefect-server")["environment"]
+
+    requires_it = environment.get(PREFECT_SERVER_CREDENTIAL) == contract_environment[PREFECT_CREDENTIAL_SETTING]
+    assert requires_it, f"prefect-server does not require {PREFECT_CREDENTIAL_SETTING}"
+
+
+def test_every_prefect_client_presents_that_credential_and_nothing_else_holds_it(
+    compose_version: str, contract_environment: dict[str, str]
+) -> None:
+    """The three Sync processes that call Prefect carry it; the CLI and the jobs do not."""
+    del compose_version
+    resolved = resolve_privately(contract_environment)
+    holders = {
+        name
+        for name, definition in services(resolved).items()
+        if PREFECT_CLIENT_CREDENTIAL in (definition.get("environment") or {})
+    }
+
+    assert holders == PREFECT_CREDENTIAL_RECEIVERS, f"{PREFECT_CLIENT_CREDENTIAL} is given to {sorted(holders)}"
+    for name in sorted(holders):
+        presented = service(resolved, name)["environment"][PREFECT_CLIENT_CREDENTIAL]
+        same = presented == contract_environment[PREFECT_CREDENTIAL_SETTING]
+        assert same, f"{name} presents another credential"
+
+
+def test_the_cli_service_is_not_given_the_prefect_credential(cli_model: dict[str, Any]) -> None:
+    """The operator's client reaches the Sync API alone, so it has no Prefect access to hold."""
+    environment = service(cli_model, CLI_SERVICE).get("environment") or {}
+
+    assert PREFECT_CLIENT_CREDENTIAL not in environment
+
+
+def test_the_bundle_refuses_to_resolve_without_the_prefect_credential(
+    compose_version: str, contract_environment: dict[str, str]
+) -> None:
+    """An empty credential would start an unauthenticated server, so it is not a default."""
+    del compose_version
+    without = {key: value for key, value in contract_environment.items() if key != PREFECT_CREDENTIAL_SETTING}
+    result = compose(["config"], environment={**without, PREFECT_CREDENTIAL_SETTING: ""})
+
+    assert result.returncode != 0
+    assert "Prefect API credential" in result.stderr
 
 
 # ---------------------------------------------------------------------------

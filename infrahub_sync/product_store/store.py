@@ -22,7 +22,7 @@ from pydantic import TypeAdapter
 
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackage, validate_package_credentials
-from infrahub_sync.execution import REDACTED, redact
+from infrahub_sync.execution import REDACTED, json_string_forms, redact, redact_ordered, redaction_order
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store.bundle import (
     FINAL_CHECKPOINT_ARTIFACT_ID,
@@ -2943,7 +2943,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         if not self._records.exists(run_id):
             msg = f"Cannot publish an artifact for unavailable Sync run ID {run_id!r}"
             raise RunNotFoundError(msg)
-        sanitized = data if visibility == "internal" else _redact_bytes(data, secrets)
+        sanitized = data if visibility == "internal" else _redacted_public_bytes(data, media_type, secrets)
         artifact_id = redact(artifact_id, secrets)
         kind = redact(kind, secrets)
         media_type = redact(media_type, secrets)
@@ -3486,20 +3486,34 @@ def _redacted_baseline(baseline: BaselineWriteback | None, secrets: Sequence[str
     )
 
 
-def _redact_value(value: Any, secrets: Sequence[str]) -> Any:
+def _redact_value(value: Any, secrets: Sequence[str], *, numbers: bool = False) -> Any:
+    """Redact every string, and every mapping key, reachable from `value`.
+
+    With `numbers`, a number whose JSON text carries a secret is replaced by that text
+    redacted. Only a published document asks for it: a stored record keeps its typed fields.
+    """
+    return _redact_ordered_value(value, redaction_order(secrets), numbers=numbers)
+
+
+def _redact_ordered_value(value: Any, ordered: Sequence[str], *, numbers: bool) -> Any:
+    """Apply `_redact_value` with values already in `redaction_order`, ordered once per document."""
     if isinstance(value, str):
-        return redact(value, secrets)
+        return redact_ordered(value, ordered)
+    if numbers and isinstance(value, (int, float)) and not isinstance(value, bool):
+        text = json.dumps(value)
+        cleaned = redact_ordered(text, ordered)
+        return value if cleaned == text else cleaned
     if isinstance(value, Mapping):
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
-            sanitized_key = redact(str(key), secrets)
+            sanitized_key = redact_ordered(str(key), ordered)
             if sanitized_key in sanitized:
                 msg = f"Redaction would collapse multiple mapping keys into {sanitized_key!r}"
                 raise ValueError(msg)
-            sanitized[sanitized_key] = _redact_value(item, secrets)
+            sanitized[sanitized_key] = _redact_ordered_value(item, ordered, numbers=numbers)
         return sanitized
     if isinstance(value, (list, tuple)):
-        return [_redact_value(item, secrets) for item in value]
+        return [_redact_ordered_value(item, ordered, numbers=numbers) for item in value]
     return value
 
 
@@ -3518,10 +3532,49 @@ def _raise_active_cancellation_conflict(run_id: str) -> None:
     raise WriteAdmissionConflictError(msg)
 
 
+def _redacted_public_bytes(data: bytes, media_type: str, secrets: Sequence[str]) -> bytes:
+    """Return public artifact bytes carrying no collected value in any form they encode it in.
+
+    A JSON document is redacted on its decoded values first. A serializer escapes a quote, a
+    backslash, a control character and, with ``ensure_ascii``, every non-ASCII letter, so the
+    bytes can hold a secret in a spelling no raw match finds; the decoded strings hold it
+    exactly, whatever the serializer did. Bytes are re-serialized only when something was
+    replaced, so a document without a secret is published byte for byte.
+
+    The byte pass then runs over every artifact, JSON or not, for the raw value and its JSON
+    string forms: a payload that is not a JSON document, and text that quotes JSON inside it.
+    """
+    if _is_json_media_type(media_type):
+        data = _redacted_json_bytes(data, secrets)
+    return _redact_bytes(data, secrets)
+
+
+def _is_json_media_type(media_type: str) -> bool:
+    essence = media_type.split(";", 1)[0].strip().lower()
+    return essence == "application/json" or essence.endswith("+json")
+
+
+def _redacted_json_bytes(data: bytes, secrets: Sequence[str]) -> bytes:
+    # A decoded string can itself hold JSON text, such as a field that stores a serialized
+    # document, so it is matched against the JSON string forms as well as the raw value.
+    forms = json_string_forms(secrets)
+    if not forms:
+        # With no secret there is nothing to replace, so the document is not decoded.
+        return data
+    try:
+        document = json.loads(data)
+    except (ValueError, RecursionError):
+        # Declared JSON that does not parse gets the byte pass alone.
+        return data
+    sanitized = _redact_ordered_value(document, forms, numbers=True)
+    if sanitized == document:
+        return data
+    return json.dumps(sanitized, ensure_ascii=False, separators=(",", ":")).encode()
+
+
 def _redact_bytes(data: bytes, secrets: Sequence[str]) -> bytes:
-    for secret in secrets:
-        if secret:
-            data = data.replace(secret.encode(), REDACTED.encode())
+    for form in json_string_forms(secrets):
+        data = data.replace(form.encode(), REDACTED.encode())
     return data
 
 

@@ -1,6 +1,7 @@
 """The shipped refusal contract of ``validate_package_credentials``, pinned site by site.
 
-Every message below was observed by executing ``c767067``. The accumulating core replaces the
+The adapter and credential messages were observed by executing ``c767067``; store
+messages now follow the V3 memory-only policy. The accumulating core replaces the
 raise-first checks with finding producers, and the wrapper reproduces the message belonging to
 the finding the shipped code would have raised first — the **execution-order** element, not the
 sort-order one. A drift in either the messages or the check order moves an assertion here.
@@ -18,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from infrahub_sync.configuration import CredentialConfigurationError, validate_package_credentials
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
 from tests.configuration.validation_packages import package, package_data
 
 if TYPE_CHECKING:
@@ -116,27 +118,28 @@ SHIPPED_REFUSALS: tuple[tuple[str, Callable[[dict[str, Any]], None], str], ...] 
     (
         "missing-store-capabilities",
         _undeclared_store_type,
-        "store type 'mystery' has no configuration capability declaration",
+        "Configured sync stores, including Redis, are not supported in V3. "
+        "Remove the store block to keep sync data in memory.",
     ),
     (
         "undeclared-setting-store",
         _undeclared_store_setting,
-        "store type 'redis' contains unsupported declared settings: [\"bogus\"]",
+        UNSUPPORTED_STORE_MESSAGE,
     ),
     (
         "unknown-credential-reference-store",
         _store_names_unknown_reference,
-        "/configuration/store/settings/password names unknown credential reference 'nope'",
+        UNSUPPORTED_STORE_MESSAGE,
     ),
     (
         "inline-credential-value-store",
         _store_carries_inline_value,
-        "/configuration/store/settings/password contains an inline credential value",
+        UNSUPPORTED_STORE_MESSAGE,
     ),
     (
         "malformed-credential-reference-store",
         _store_carries_malformed_reference,
-        "/configuration/store/settings/password contains a malformed credential reference",
+        UNSUPPORTED_STORE_MESSAGE,
     ),
     (
         "missing-adapter",
@@ -316,7 +319,7 @@ def test_a_legacy_defect_keeps_its_shipped_message_when_warnings_are_also_declar
 def _two_defective_declarations(first_name: str, second_name: str) -> dict[str, Any]:
     data = package_data()
     declarations = {
-        "zeta": {"provider": "vault", "identifier": "ZETA_TOKEN"},
+        "zeta": {"provider": "vault", "identifier": "INFRAHUB_SYNC_CREDENTIAL_ZETA_TOKEN"},
         "alpha": {"provider": "env", "identifier": "ALPHA-TOKEN"},
     }
     data["credentials"] = {

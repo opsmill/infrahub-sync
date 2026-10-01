@@ -8,6 +8,7 @@ and no network call is possible.
 
 from __future__ import annotations
 
+import copy
 import importlib
 import sys
 import types
@@ -26,7 +27,7 @@ from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.plugin_loader import PluginLoadError
 from infrahub_sync.runtime_schema import build_runtime_model_plan
 from infrahub_sync.runtime_schema import worker as worker_module
-from infrahub_sync.utils import get_potenda_from_instance
+from infrahub_sync.utils import PlanApplier, get_potenda_from_instance
 from tests.configuration.validation_packages import package_data
 
 if TYPE_CHECKING:
@@ -193,8 +194,8 @@ def _providers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[dict
     clients["schema_branches"] = schema_branches
     monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", _read_schema)
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
-    monkeypatch.setenv("NETBOX_TOKEN", "netbox-execution-canary")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "infrahub-execution-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "netbox-execution-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "infrahub-execution-canary")
     yield clients
     _forget_netbox_adapter()
 
@@ -264,6 +265,64 @@ def test_the_run_binds_runtime_models_onto_both_installed_adapters(tmp_path: Pat
     assert source.BuiltinTag is plan.source.models["BuiltinTag"]
     assert destination.BuiltinTag is plan.destination.models["BuiltinTag"]
     assert issubclass(destination.BuiltinTag, live.InfrahubModel)
+
+
+def test_registered_engine_and_saved_plan_apply_use_snapshot_generic_peers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot = copy.deepcopy(SNAPSHOT)
+    snapshot["LocationSite"] = {
+        "human_friendly_id": ["name__value"],
+        "uniqueness_constraints": [["name__value"]],
+        "attributes": {"name": TAG_ATTRIBUTES["name"]},
+        "relationships": {},
+    }
+    snapshot["InfraDevice"] = {
+        "human_friendly_id": ["name__value"],
+        "uniqueness_constraints": [["name__value"]],
+        "attributes": {"name": TAG_ATTRIBUTES["name"]},
+        "relationships": {
+            "site": {"peer": "LocationHosting", "cardinality": "one", "optional": True, "kind": "Generic"}
+        },
+    }
+    snapshot["LocationHosting"] = {
+        "used_by": ["LocationSite", "UnmappedKind"],
+        "human_friendly_id": [],
+        "uniqueness_constraints": [],
+        "attributes": {},
+        "relationships": {},
+    }
+    monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", lambda _package, _branch: snapshot)
+    content = package_data()
+    content["configuration"]["schema_mapping"] = [
+        {"name": "LocationSite", "mapping": "dcim.sites", "fields": [{"name": "name", "mapping": "name"}]},
+        {
+            "name": "InfraDevice",
+            "mapping": "dcim.devices",
+            "fields": [
+                {"name": "name", "mapping": "name"},
+                {"name": "site", "mapping": "site", "reference": "LocationHosting"},
+            ],
+        },
+    ]
+    package = parse_configuration_package(content)
+    instance = resolve_runtime_instance(package, directory=str(tmp_path / "config"))
+    (tmp_path / "config").mkdir()
+    instance._runtime_models = build_runtime_model_plan(
+        package=package, instance=instance, run_branch=None, scope="both"
+    )
+    assert instance._runtime_models.generic_peers == {"LocationHosting": ("LocationSite", "UnmappedKind")}
+
+    engine = get_potenda_from_instance(sync_instance=instance, run_id="generic-engine")
+    assert engine.top_level == ["LocationSite", "InfraDevice"]
+    assert engine.tiers == [{"LocationSite"}, {"InfraDevice"}]
+
+    instance._runtime_models = build_runtime_model_plan(
+        package=package, instance=instance, run_branch=None, scope="destination"
+    )
+    applier = PlanApplier.open_existing(instance, run_id="generic-engine")
+    assert applier.engine.top_level == ["LocationSite", "InfraDevice"]
+    assert applier.engine.tiers == [{"LocationSite"}, {"InfraDevice"}]
 
 
 def test_no_generated_python_is_written_or_read_by_a_registered_run(tmp_path: Path) -> None:

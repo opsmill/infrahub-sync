@@ -219,7 +219,7 @@ services:
       retries: 10
       start_period: 3s
     ports:
-      - 15692:15692
+      - "127.0.0.1:15692:15692"
 
   cache:
     image: ${CACHE_DOCKER_IMAGE:-redis:8.4.0@sha256:c22af04bb576503bf16b3e34a1fd2fd82de0f765afd866d2e380145e0af30d78}
@@ -247,8 +247,8 @@ services:
       retries: 20
       start_period: 3s
     ports:
-      - 2004:2004
-      - 6362:6362
+      - "127.0.0.1:2004:2004"
+      - "127.0.0.1:6362:6362"
 
   task-manager:
     image: "${INFRAHUB_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub:${VERSION:-${INFRAHUB_DOCKER_IMAGE_DIGEST+1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-1.10.6@sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c}}${VERSION+${INFRAHUB_DOCKER_IMAGE_DIGEST-}}}${INFRAHUB_DOCKER_IMAGE:+:${VERSION:-1.10.6}${INFRAHUB_DOCKER_IMAGE_DIGEST-}}"
@@ -314,7 +314,7 @@ services:
       INFRAHUB_WORKFLOW_PORT: ${INFRAHUB_WORKFLOW_PORT:-4200}
       PREFECT_API_URL: http://${INFRAHUB_WORKFLOW_ADDRESS:-task-manager}:${INFRAHUB_WORKFLOW_PORT:-4200}/api
     ports:
-      - 8000:8000
+      - "127.0.0.1:8000:8000"
     volumes:
       - "storage_data:${INFRAHUB_STORAGE_LOCAL_PATH:-/opt/infrahub/storage}"
       - "workflow_data:/opt/infrahub/workflow"

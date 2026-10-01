@@ -111,9 +111,11 @@ Compose bundle's `sync-cli` service) with `INFRAHUB_SYNC_API_URL` and
 `INFRAHUB_SYNC_API_TOKEN` set. Register the configuration package with the service, and put
 source and destination credentials in the deployment's `operator.env`, where the worker
 resolves them — see [Container image](./container-image.mdx) and
-[Compose deployment](./compose-deployment.mdx). The Compose bundle gives those source
-credentials (for example `NETBOX_TOKEN`, `NAUTOBOT_TOKEN`) and `INFRAHUB_API_TOKEN` only to
-the `sync-worker` service; `sync-cli` receives only the Sync API URL and token.
+[Compose deployment](./compose-deployment.mdx). The Compose bundle gives the source
+credentials (for example `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`)
+only to the `sync-worker` service. `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` goes to
+`sync-worker` and `sync-api`, which reads the destination schema when it validates a
+package. `sync-cli` receives only the Sync API URL and token.
 
 ## What this release does not include
 

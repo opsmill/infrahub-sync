@@ -18,6 +18,7 @@ from infrahub_sync.client.models import (
     RegisteredVersionResource,
     ValidationReportResource,
 )
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
     AuditEvent,
@@ -88,6 +89,7 @@ class ConfigurationRoutes:
         self._secrets = secrets
 
     def _call(self, operation: Any, **kwargs: Any) -> Any:
+        """Translate configuration service refusals into fixed API classifications."""
         try:
             return operation(projection=self._projection, **kwargs)
         except self._service.ConfigsError as error:
@@ -95,7 +97,8 @@ class ConfigurationRoutes:
             if error_type is self._service.ConfigsRequestError:
                 raise ConfigurationAPIError(400, "request", proven_pre_effect=True) from None
             if error_type is self._service.ConfigsValidationError:
-                raise ConfigurationAPIError(422, "validation", proven_pre_effect=True) from None
+                reason = UNSUPPORTED_STORE_REASON if error.reason == UNSUPPORTED_STORE_REASON else None
+                raise ConfigurationAPIError(422, "validation", reason=reason, proven_pre_effect=True) from None
             if error_type is self._service.ConfigsNotFoundError:
                 raise ConfigurationAPIError(404, "not-found", reason=error.reason, proven_pre_effect=True) from None
             if error_type is self._service.ConfigsStorageError:

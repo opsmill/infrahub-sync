@@ -26,6 +26,7 @@ sanitize-and-wrap boundary that converts failures into
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -48,6 +49,7 @@ from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.paths import cache_root_for
 from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.configuration.models import REDACTED
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
@@ -127,14 +129,15 @@ MIN_SECRET_LENGTH = 6
 # credential-shaped when it CONTAINS one of the substrings, ENDS WITH one of the
 # suffixes, or equals one of the exact names. Substring matching is what catches
 # the bare `TOKEN`/`PASSWORD` names the genericrestapi adapter reads by default
-# (adapters/genericrestapi.py:72,90) and `AWS_SECRET_ACCESS_KEY`; the two
-# suffixes carry the names — `*_KEY`, `*_AUTH` — whose bare substrings would
-# match unrelated variables (`KEYCHAIN`, `SSH_AUTH_SOCK`). Adapter credentials
+# (adapters/genericrestapi.py:72,90) and `AWS_SECRET_ACCESS_KEY`; the
+# suffixes carry the names — `*_KEY`, `*_AUTH`, and Prefect's
+# `*_AUTH_STRING` — whose bare substrings would match unrelated variables
+# (`KEYCHAIN`, `SSH_AUTH_SOCK`). Adapter credentials
 # such as NETBOX_TOKEN reach the runner through the environment, outside the
 # resolved configuration's settings.
 SECRET_ENV_NAMES = ("INFRAHUB_API_TOKEN", "KEY", "AUTH")
 SECRET_ENV_NAME_SUBSTRINGS = ("TOKEN", "PASSWORD", "PASSWD", "SECRET", "CREDENTIAL", "APIKEY")
-SECRET_ENV_NAME_SUFFIXES = ("_KEY", "_AUTH")
+SECRET_ENV_NAME_SUFFIXES = ("_KEY", "_AUTH", "_AUTH_STRING")
 
 # Settings half. Every `settings` mapping of the resolved configuration — source,
 # destination, AND store — is walked RECURSIVELY, and a key is credential-shaped
@@ -449,7 +452,7 @@ def collect_secret_values(
             settings_blocks.append(sync_instance.store.settings)
         for settings in settings_blocks:
             _collect_from_settings(settings or {}, values, secret_context=False, environ=env, seen=set())
-    return tuple(sorted(values, key=lambda value: (-len(value), value)))
+    return redaction_order(values)
 
 
 @contextmanager
@@ -462,9 +465,43 @@ def _bind_remote_secret_values(values: list[str]) -> Iterator[None]:
         _REMOTE_SECRET_VALUES.reset(token)
 
 
-def redact(message: str, secrets: Sequence[str]) -> str:
-    """Replace every occurrence of a collected secret value with ``***``."""
+def redaction_order(secrets: Iterable[str]) -> tuple[str, ...]:
+    """Return the distinct non-empty values in the order sequential replacement needs.
+
+    Longest first, so a value containing another is replaced before the shorter one can
+    leave its remainder behind. Every replacing primitive orders its own input through
+    this, so a caller may merge secret lists in any order.
+    """
+    return tuple(sorted({secret for secret in secrets if secret}, key=lambda secret: (-len(secret), secret)))
+
+
+def json_string_forms(secrets: Iterable[str]) -> tuple[str, ...]:
+    """Return each value together with the text a JSON string literal writes it as.
+
+    Both ``ensure_ascii`` variants, quotes stripped: a value holding a quote, a backslash,
+    a control character or a non-ASCII letter never appears verbatim inside a serialized
+    document, so matching the raw value alone finds nothing there.
+    """
+    forms: set[str] = set()
     for secret in secrets:
+        forms.update(
+            (secret, json.dumps(secret, ensure_ascii=True)[1:-1], json.dumps(secret, ensure_ascii=False)[1:-1])
+        )
+    return redaction_order(forms)
+
+
+def redact(message: str, secrets: Iterable[str]) -> str:
+    """Replace every occurrence of a collected secret value with ``***``, longest first."""
+    return redact_ordered(message, redaction_order(secrets))
+
+
+def redact_ordered(message: str, ordered: Sequence[str]) -> str:
+    """Replace each value of an already ordered `redaction_order` result with ``***``.
+
+    For a caller that redacts many strings with one secret list: ordering once, instead
+    of on every string, keeps redaction of a large document linear in its size.
+    """
+    for secret in ordered:
         message = message.replace(secret, REDACTED)
     return message
 
@@ -1129,7 +1166,7 @@ def execute_run(
         RunConcurrencyError: the same synchronization remains locked after the
             bounded wait, with advisory context from the latest running sidecar.
         RunValidationError: an unsupported operation, a composed sync write, a
-            missing saved-plan id, an unconfirmed write, or an apply with no
+            configured sync store, missing saved-plan id, an unconfirmed write, or an apply with no
             write-ownership boundary (all refused before an adapter is built).
     """
     _validate_operation_request(
@@ -1139,6 +1176,9 @@ def execute_run(
         ownership=ownership,
         record_applied=record_applied,
     )
+
+    if sync_instance.store is not None:
+        raise RunValidationError(UNSUPPORTED_STORE_MESSAGE)
 
     if operation == "verify":
         assert run_id is not None  # narrowed above; verification never allocates a run.

@@ -3,12 +3,14 @@ from __future__ import annotations
 import importlib.util
 import logging
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union, cast
 
 import yaml
 from diffsync.store.local import LocalStore
 from diffsync.store.redis import RedisStore
+from infrahub_sdk.schema.main import GenericSchemaAPI
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.cache.paths import generate_run_id
@@ -34,6 +36,18 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import RawPlanArtifact
     from infrahub_sync.runtime_schema import RuntimeModelPlan
+
+
+def _generic_peers_for_order(
+    destination: object, runtime_models: RuntimeModelPlan | None
+) -> Mapping[str, tuple[str, ...]]:
+    """Use the run's validated snapshot, or the direct adapter's live schema."""
+    if runtime_models is not None:
+        return runtime_models.generic_peers
+    schema = getattr(destination, "schema", None)
+    if not isinstance(schema, Mapping):
+        return {}
+    return {kind: tuple(node.used_by) for kind, node in schema.items() if isinstance(node, GenericSchemaAPI)}
 
 
 def find_missing_schema_model(
@@ -268,7 +282,7 @@ def get_potenda_from_instance(  # pylint: disable=too-many-positional-arguments 
 
     # Single topological pass yields both the flat order and the tier layout
     # (tiers is None when an explicit `order` is configured).
-    top_level, tiers = sync_instance.compute_order_and_tiers()
+    top_level, tiers = sync_instance.compute_order_and_tiers(_generic_peers_for_order(dst, runtime_models))
 
     rid = run_id or generate_run_id()
     rdir = stored_run_dir(sync_instance.name, rid, base_directory=base_directory)
@@ -408,7 +422,7 @@ class PlanApplier:
         if runtime_models is not None:
             bind_runtime_models(destination, runtime_models.destination.models)
 
-        top_level, tiers = sync_instance.compute_order_and_tiers()
+        top_level, tiers = sync_instance.compute_order_and_tiers(_generic_peers_for_order(destination, runtime_models))
 
         # Located, never created: the run being applied already exists, and an apply that
         # allocated directories could manufacture the very run whose absence it should report.

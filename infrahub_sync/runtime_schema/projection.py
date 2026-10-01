@@ -111,7 +111,7 @@ def _kind_projection(
         member.name: member for member in members if has_field(config=configuration, name=node.kind, field=member.name)
     }
     identifiers = get_identifiers(node=cast("NodeSchema", node), config=configuration)
-    return {
+    projection: dict[str, Any] = {
         "kind": node.kind,
         "present": True,
         "identifiers": list(identifiers) if identifiers else None,
@@ -127,6 +127,17 @@ def _kind_projection(
             if member.name not in mapped and _is_mandatory_without_default(member)
         ],
     }
+    mapped_kinds = {mapping.name for mapping in configuration.schema_mapping}
+    generics = {
+        field.reference: sorted(mapped_kinds.intersection(snapshot.generic_peers[field.reference]))
+        for mapping in configuration.schema_mapping
+        if mapping.name == node.kind
+        for field in mapping.fields
+        if field.reference in snapshot.generic_peers
+    }
+    if generics:
+        projection["generic_references"] = {name: generics[name] for name in sorted(generics)}
+    return projection
 
 
 def canonical_consumed_schema_projection(

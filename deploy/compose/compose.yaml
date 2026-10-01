@@ -40,6 +40,10 @@ x-sync-storage: &sync-storage
   AWS_SECRET_ACCESS_KEY: "${INFRAHUB_SYNC_S3_SECRET_KEY:?the object-store secret key is required}"
   INFRAHUB_SYNC_SERVICE_WORK_POOL: "${INFRAHUB_SYNC_WORK_POOL}"
   PREFECT_API_URL: "http://prefect-server:4200/api"
+  # The Prefect server refuses every API call without this value, because a
+  # caller that can create a deployment in the work pool decides what the worker
+  # runs. Each Sync process presents it; the CLI service is not given it.
+  PREFECT_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
 
 services:
   postgres:
@@ -158,6 +162,10 @@ services:
       PREFECT_SERVER_API_PORT: "4200"
       PREFECT_SERVER_UI_API_URL: "http://${INFRAHUB_SYNC_BIND_ADDRESS}:${INFRAHUB_SYNC_PREFECT_PORT}/api"
       PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+      # Basic authentication on the whole API, the UI's calls included: the UI
+      # asks for this value once and sends it with each request. Prefect leaves
+      # only the health and readiness probes open, which the check below uses.
+      PREFECT_SERVER_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
     ports:
       - "${INFRAHUB_SYNC_BIND_ADDRESS}:${INFRAHUB_SYNC_PREFECT_PORT}:4200"
     healthcheck:
@@ -217,7 +225,7 @@ services:
       # Optional, and empty when unset: a deployment starts before any package is
       # registered, so there is no destination to hold a credential for yet. A
       # run that selects an absent value fails that run, not this start.
-      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
     read_only: true
     tmpfs: *sync-scratch
     ports:
@@ -260,7 +268,7 @@ services:
       # paused worker at that thirty-second floor instead of Prefect's ninety.
       PREFECT_WORKER_HEARTBEAT_SECONDS: "${PREFECT_WORKER_HEARTBEAT_SECONDS}"
       # Optional for the same reason as on the API above.
-      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
       # The source credentials the bundled NetBox and Nautobot adapters resolve,
       # and the only service given either: a run is what consumes one, and the
       # worker is what runs one. Optional rather than required, because a
@@ -268,8 +276,8 @@ services:
       # token nothing selects has no reason to exist here. When a registered
       # package does select one, the resolver refuses an absent or empty value
       # by name, so an unset token fails that run rather than this container.
-      NETBOX_TOKEN: "${NETBOX_TOKEN:-}"
-      NAUTOBOT_TOKEN: "${NAUTOBOT_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN:-}"
     read_only: true
     tmpfs: *sync-scratch
 

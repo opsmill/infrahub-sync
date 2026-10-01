@@ -66,8 +66,8 @@ PostgreSQL and the object store hold the only volumes that survive a restart.
 
 Running `init` writes `.instance`, `secrets/postgres-admin-password`, and
 `operator.env` with generated passwords for the two database owner roles, the
-object store, and one API principal. Nothing in `operator.env` is yours to
-supply before the first start.
+object store, the Prefect API, and one API principal. Nothing in `operator.env`
+is yours to supply before the first start.
 
 `init` needs no Docker. It reads `image.bind`, checks its grammar, and copies the
 index reference into `.instance` as plain text, which is what gives every later
@@ -81,10 +81,11 @@ by registering one through the Sync API. `configuration/qualification.yaml` in
 the bundle is an example of that package's shape and is never loaded for you.
 
 The credentials a registered package references belong in `operator.env` before
-the run that needs them, and `init` leaves each one commented:
+the run that needs them. `init` writes each one commented out; remove the leading `#`
+and add your value:
 
 ```bash
-INFRAHUB_API_TOKEN=<your Infrahub token>
+INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<your Infrahub token>
 ```
 
 Credentials in a package are references, never values:
@@ -95,8 +96,22 @@ token:
 credentials:
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
+
+An `env` identifier must start with `INFRAHUB_SYNC_CREDENTIAL_`; validation refuses any
+other identifier, so a package cannot name the deployment's own storage, database, or
+Prefect settings.
+
+If you upgrade from an earlier alpha, move to the prefixed names:
+
+1. In `operator.env`, rename `INFRAHUB_API_TOKEN`, `NETBOX_TOKEN`, and `NAUTOBOT_TOKEN` to
+   `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`,
+   and `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`.
+2. Change the `identifier` of each `env` credential in your packages to the new name.
+3. Register a new version of each package with `configs version`. A version registered
+   before the upgrade keeps its old identifiers, and its runs fail in the worker.
+4. Run `./infrahub-sync-compose start`, so the services receive the renamed variables.
 
 :::note
 A container reads its environment once, at start. After changing a value in
@@ -113,8 +128,8 @@ may declare either as its source. `init` leaves both token names commented in
 names.
 
 ```bash
-NETBOX_TOKEN=<your NetBox token>
-# NAUTOBOT_TOKEN=<your Nautobot token>
+INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=<your NetBox token>
+# INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN=<your Nautobot token>
 ```
 
 ```yaml
@@ -128,11 +143,11 @@ configuration:
 credentials:
   netbox-token:
     provider: env
-    identifier: NETBOX_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
 ```
 
 Nautobot uses the same shape with `nautobot`, `nautobot-token` and
-`NAUTOBOT_TOKEN`.
+`INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`.
 
 - **Name a URL a container can reach.** The worker resolves it from inside the
   Compose network, where `localhost` is the worker itself. If NetBox, Nautobot, or
@@ -209,6 +224,40 @@ Both published surfaces bind to loopback by default:
 
 External exposure and TLS termination are not part of this topology.
 
+### Prefect API authentication
+
+The Prefect server requires basic authentication on its whole API. A caller that
+can create a deployment in the work pool decides what the worker runs, so no
+Prefect call is accepted without the credential `init` generated as
+`INFRAHUB_SYNC_PREFECT_AUTH_STRING` in `operator.env`. The Sync API, the worker,
+and the bootstrap job present it; the `cli` service is not given it. Only the
+health and readiness probes answer without it.
+
+The worker adds a second boundary of its own. It starts a flow run only when the
+run belongs to the service's own deployment exactly as bootstrap applied it: the
+installed service entrypoint, no pull steps, no job variables, and the process
+pool's default job template. Any other flow run in the pool is marked `Crashed`
+with a fixed reason, and no process is started for it. The process that starts
+reads the deployment from Prefect again, so this check relies on the Prefect
+credential above: anyone who holds it could change the deployment between the
+check and the start.
+
+To open the Prefect UI, browse to `http://127.0.0.1:4200`. It asks for a
+password once per browser: enter the whole value of
+`INFRAHUB_SYNC_PREFECT_AUTH_STRING`. Read it from `operator.env` in a text
+editor or with `sed -n 's/^INFRAHUB_SYNC_PREFECT_AUTH_STRING=//p' operator.env`;
+never `source` the file.
+
+:::note
+To upgrade a bundle initialized before this credential existed, run
+`./infrahub-sync-compose init` again, then `./infrahub-sync-compose start`.
+`init` appends a generated `INFRAHUB_SYNC_PREFECT_AUTH_STRING` to an existing
+`operator.env` that has no line for it, and changes nothing else in the file.
+`start` recreates the Prefect server and the Sync services with it; `restart`
+keeps the environment the containers already have. Until then, `preflight`
+refuses with `credentials-missing` and names the setting.
+:::
+
 ## Prepare the destination schema
 
 The existing-Infrahub tutorials use a small destination schema with two kinds,
@@ -262,7 +311,7 @@ with the URL in `destination.settings.url`; do not source `operator.env`.
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' operator.env)"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' operator.env)"
   .schema-tools/bin/infrahubctl schema load schema.yml --branch BRANCH_NAME
 )
 ```
@@ -273,7 +322,7 @@ same scoped environment:
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' operator.env)"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' operator.env)"
   .schema-tools/bin/infrahubctl branch list
   # Only if you want to create a new branch:
   .schema-tools/bin/infrahubctl branch create BRANCH_NAME
@@ -300,8 +349,9 @@ presents. They are one credential: if you change one, change the other to the
 same value.
 
 An `operator.env` generated by an earlier alpha has no `INFRAHUB_SYNC_API_TOKEN`
-line at all, and nothing adds one: `init` leaves an existing file exactly as it
-found it, and this alpha migrates no state in place. Every `cli` call against
+line at all, and nothing adds one: apart from the Prefect API credential above,
+`init` leaves an existing file exactly as it found it, and this alpha migrates no
+state in place. Every `cli` call against
 such a bundle fails to authenticate. Add the setting by hand and give it the
 token already inside that same file's `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`,
 which is the principal the deployment authorizes; nothing rotates it for you,

@@ -48,10 +48,11 @@ print(json.dumps(sorted(bucket["Name"] for bucket in client.list_buckets()["Buck
 """
 
 PREFECT = """
-import json, httpx
+import base64, json, os, httpx
+PREFECT_AUTH = {"Authorization": "Basic " + base64.b64encode(os.environ["PREFECT_API_AUTH_STRING"].encode()).decode()}
 base = "http://prefect-server:4200/api"
-pools = httpx.post(f"{base}/work_pools/filter", json={}, timeout=30).json()
-deployments = httpx.post(f"{base}/deployments/filter", json={}, timeout=30).json()
+pools = httpx.post(f"{base}/work_pools/filter", json={}, headers=PREFECT_AUTH, timeout=30).json()
+deployments = httpx.post(f"{base}/deployments/filter", json={}, headers=PREFECT_AUTH, timeout=30).json()
 print(json.dumps({
     "pools": sorted((pool["name"], pool["type"]) for pool in pools),
     "deployments": sorted(deployment["name"] for deployment in deployments),

@@ -78,17 +78,19 @@ class DestinationSchemaSnapshot:
     """One immutable destination schema, keyed by kind name."""
 
     kinds: Mapping[str, NormalizedKind]
+    generic_peers: Mapping[str, tuple[str, ...]]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kinds", MappingProxyType(dict(self.kinds)))
+        object.__setattr__(self, "generic_peers", MappingProxyType(dict(self.generic_peers)))
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, DestinationSchemaSnapshot):
             return NotImplemented
-        return dict(self.kinds) == dict(other.kinds)
+        return dict(self.kinds) == dict(other.kinds) and dict(self.generic_peers) == dict(other.generic_peers)
 
     def __hash__(self) -> int:
-        return hash(tuple(sorted(self.kinds)))
+        return hash((tuple(sorted(self.kinds)), tuple(sorted(self.generic_peers.items()))))
 
 
 def _refuse(detail: str) -> NoReturn:
@@ -199,6 +201,7 @@ def normalize_destination_schema(snapshot: Mapping[str, Any]) -> DestinationSche
     """
     _require_mapping(snapshot, detail="snapshot root is not a mapping of kind names")
     kinds: dict[str, NormalizedKind] = {}
+    generic_peers: dict[str, tuple[str, ...]] = {}
     for kind, entry in snapshot.items():
         member = _require_mapping(entry, detail=f"kind {kind!r} is not a mapping")
         missing = {"human_friendly_id", "uniqueness_constraints", "attributes", "relationships"} - set(member)
@@ -209,6 +212,8 @@ def normalize_destination_schema(snapshot: Mapping[str, Any]) -> DestinationSche
             _refuse(f"kind {kind!r} declares non-list uniqueness constraints")
         attributes = _require_mapping(member["attributes"], detail=f"kind {kind!r} attributes")
         relationships = _require_mapping(member["relationships"], detail=f"kind {kind!r} relationships")
+        if "used_by" in member:
+            generic_peers[kind] = _component_paths(member["used_by"], kind=kind)
         kinds[kind] = NormalizedKind(
             kind=kind,
             human_friendly_id=_component_paths(member["human_friendly_id"] or (), kind=kind),
@@ -218,4 +223,4 @@ def normalize_destination_schema(snapshot: Mapping[str, Any]) -> DestinationSche
                 _normalized_relationship(name, relationships[name], kind=kind) for name in sorted(relationships)
             ),
         )
-    return DestinationSchemaSnapshot(kinds=kinds)
+    return DestinationSchemaSnapshot(kinds=kinds, generic_peers=generic_peers)

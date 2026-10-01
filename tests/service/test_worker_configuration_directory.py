@@ -92,8 +92,8 @@ def test_a_registered_run_resolves_with_no_configuration_directory(
     monkeypatch.delenv(CONFIG_DIR_ENV, raising=False)
     # The declared package references both credentials, so they have to resolve
     # for the run to reach the question this test is about.
-    monkeypatch.setenv("NETBOX_TOKEN", "registered-netbox-canary")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "registered-infrahub-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "registered-netbox-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "registered-infrahub-canary")
     run_id = "registered-without-directory"
     projection, binding = _registered_run(tmp_path / "product", run_id)
 

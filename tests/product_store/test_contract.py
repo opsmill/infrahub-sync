@@ -3,6 +3,7 @@
 # __all__ as a hand-maintained, independent list; pylint's similarity checker flags that overlap.
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
@@ -20,7 +21,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from infrahub_sync import product_store
 from infrahub_sync.configuration import ConfigurationPackage, CredentialConfigurationError
@@ -558,8 +559,8 @@ def _configuration_declaration(**settings_overrides: object) -> dict[str, Any]:
         },
         "package_metadata": {"adapter_api_version": 1},
         "credentials": {
-            "netbox-token": {"provider": "env", "identifier": "NETBOX_TOKEN"},
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"},
+            "netbox-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"},
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
         },
     }
 
@@ -3119,6 +3120,167 @@ def test_redaction_precedes_every_relational_and_artifact_write(provider: Produc
     assert artifact is not None
     assert secret.encode() not in artifact
     assert b"***" in artifact
+
+
+# A value a JSON serializer cannot write verbatim: a quote, a backslash, a line break, a
+# control character and a non-ASCII letter each come out escaped, or re-encoded, in the bytes.
+_ESCAPED_SECRET = 'pa"ss\\wörd\n-\x01-canary-649'  # noqa: S105 - deliberate persistence-boundary canary.
+
+
+class _ReviewCanary(BaseModel):
+    operations: list[dict[str, str]]
+
+
+@pytest.mark.parametrize(
+    "serialize",
+    [
+        pytest.param(
+            lambda value: _ReviewCanary(operations=[{"note": f"auth {value}"}]).model_dump_json().encode(),
+            id="model-dump-json",
+        ),
+        pytest.param(lambda value: json.dumps({"operations": [{"note": f"auth {value}"}]}).encode(), id="json-ascii"),
+        pytest.param(
+            lambda value: json.dumps({"operations": [{"note": f"auth {value}"}]}, ensure_ascii=False).encode(),
+            id="json-unicode",
+        ),
+    ],
+)
+def test_a_public_json_artifact_is_redacted_whatever_escaping_its_serializer_used(
+    serialize: Callable[[str], bytes], provider: ProductProjection
+) -> None:
+    provider.create_run(_run())
+
+    reference = provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=serialize(_ESCAPED_SECRET),
+        secrets=(_ESCAPED_SECRET,),
+    )
+
+    artifact = provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    forms = {
+        _ESCAPED_SECRET,
+        json.dumps(_ESCAPED_SECRET)[1:-1],
+        json.dumps(_ESCAPED_SECRET, ensure_ascii=False)[1:-1],
+    }
+    assert [form for form in forms if form.encode() in artifact] == []
+    assert json.loads(artifact) == {"operations": [{"note": "auth ***"}]}
+    assert reference.digest == sha256(artifact).hexdigest()
+    assert reference.size == len(artifact)
+
+
+def test_a_public_json_artifact_is_redacted_inside_json_text_held_by_a_field(provider: ProductProjection) -> None:
+    """A field that stores a serialized document holds the secret JSON-escaped once more."""
+    provider.create_run(_run())
+    nested = json.dumps({"pw": _ESCAPED_SECRET})
+
+    provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=json.dumps({"operations": [{"payload": {"config": nested}}]}).encode(),
+        secrets=(_ESCAPED_SECRET,),
+    )
+
+    artifact = provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    config = json.loads(artifact)["operations"][0]["payload"]["config"]
+    assert json.loads(config) == {"pw": "***"}
+
+
+def test_a_public_text_artifact_is_redacted_in_its_raw_and_json_escaped_forms(provider: ProductProjection) -> None:
+    provider.create_run(_run())
+    escaped = json.dumps(_ESCAPED_SECRET)[1:-1]
+
+    provider.publish_artifact(
+        "run-001",
+        artifact_id="log",
+        kind="log",
+        media_type="text/plain",
+        data=f"raw {_ESCAPED_SECRET} quoted {escaped}".encode(),
+        secrets=(_ESCAPED_SECRET,),
+    )
+
+    assert provider.lookup_artifact("run-001", "log").value == b"raw *** quoted ***"
+
+
+def test_a_public_json_artifact_stays_valid_json_when_a_secret_is_a_number(provider: ProductProjection) -> None:
+    """Rewriting digits inside a number leaves bytes the plan reader cannot parse."""
+    secret = "86427531"  # noqa: S105 - deliberate persistence-boundary canary.
+    provider.create_run(_run())
+
+    provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=json.dumps({"vlan": 7, "asn": int(secret), "serial": int(f"1{secret}")}).encode(),
+        secrets=(secret,),
+    )
+
+    artifact = provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    assert json.loads(artifact) == {"vlan": 7, "asn": "***", "serial": "1***"}
+
+
+def test_a_public_json_artifact_masks_a_number_written_without_the_exponent_sign(
+    provider: ProductProjection,
+) -> None:
+    """Pydantic writes 1e100 where json.dumps writes 1e+100; the decoded pass still sees the secret."""
+    secret = "1e+100"  # noqa: S105 - deliberate persistence-boundary canary.
+    provider.create_run(_run())
+
+    provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=b'{"operations":[{"payload":{"x":1e100}}]}',
+        secrets=(secret,),
+    )
+
+    artifact = provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    assert json.loads(artifact) == {"operations": [{"payload": {"x": "***"}}]}
+
+
+def test_a_public_json_artifact_whose_keys_collapse_under_redaction_is_refused(provider: ProductProjection) -> None:
+    """Two keys that redact to the same text would publish a document with a duplicate key."""
+    secret = "collapse-canary-5521"  # noqa: S105 - deliberate persistence-boundary canary.
+    provider.create_run(_run())
+
+    with pytest.raises(ValueError, match="collapse multiple mapping keys"):
+        provider.publish_artifact(
+            "run-001",
+            artifact_id="plan-review",
+            kind="saved-plan-review",
+            media_type="application/json",
+            data=json.dumps({secret: "one", "***": "two"}).encode(),
+            secrets=(secret,),
+        )
+
+    assert provider.lookup_artifact("run-001", "plan-review").value is None
+
+
+def test_a_public_json_artifact_without_secrets_is_published_byte_for_byte(provider: ProductProjection) -> None:
+    """With nothing to redact, the bytes are stored as given, spacing included."""
+    data = b'{ "operations" : [ { "note" : "nothing to hide" } ] }'
+    provider.create_run(_run())
+
+    provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=data,
+        secrets=(),
+    )
+
+    assert provider.lookup_artifact("run-001", "plan-review").value == data
 
 
 def test_concurrent_result_merges_retain_every_stage_on_sqlite_and_emulated_postgresql(

@@ -179,10 +179,11 @@ CONTRACT_ENVIRONMENT: dict[str, str] = {
     "INFRAHUB_SYNC_PREFECT_DATABASE_URL": "postgresql+asyncpg://prefect:contract@postgres:5432/prefect",
     "INFRAHUB_SYNC_PRODUCT_PASSWORD": "contract-product-password",
     "INFRAHUB_SYNC_PREFECT_PASSWORD": "contract-prefect-password",
+    "INFRAHUB_SYNC_PREFECT_AUTH_STRING": "contract-prefect-auth-string",
     "INFRAHUB_SYNC_S3_ACCESS_KEY": "contract-access-key",
     "INFRAHUB_SYNC_S3_SECRET_KEY": "contract-secret-key",
     "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": '{"contract": {"token": "contract-token-0123456789"}}',
-    "INFRAHUB_API_TOKEN": "contract-destination-token",
+    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": "contract-destination-token",
 }
 
 
@@ -385,6 +386,10 @@ def _infrahub_environment() -> dict[str, str]:
         **values,
         "COMPOSE_PROJECT_NAME": FIXTURE_PROJECT,
         "PREVIEW_INFRAHUB_PORT": FIXTURE_INFRAHUB_PORT,
+        # The development stack publishes on loopback, which the bundle's worker
+        # cannot reach: on Linux its host route is the Docker bridge gateway. This
+        # session-scoped fixture is removed afterwards, so it is widened here alone.
+        "PREVIEW_INFRAHUB_BIND_ADDRESS": "0.0.0.0",  # noqa: S104 - test fixture, see above.
     }
 
 
@@ -461,7 +466,10 @@ def canaries() -> dict[str, str]:
     """
     from tests.compose.lifecycle import canary
 
-    planted = {kind: canary(kind) for kind in ("administrator", "product", "prefect", "object_store", "principal")}
+    planted = {
+        kind: canary(kind)
+        for kind in ("administrator", "product", "prefect", "prefect_auth", "object_store", "principal")
+    }
     # Registered at the boundary, so no retained Compose or Docker stream can
     # render one. The sweeps still search the raw streams for these values.
     SECRETS.register(*planted.values())
