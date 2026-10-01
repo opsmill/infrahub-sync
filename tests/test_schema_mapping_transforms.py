@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import sys
+import threading
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -69,6 +71,30 @@ def test_transform_keeps_model_custom_filters() -> None:
     assert item["result"] == "ETH0!"
 
 
+def _called_from_a_template() -> bool:
+    """Whether a rendered template is on this thread's stack; Jinja compiles one as `<template>`."""
+    frame = sys._getframe(1)
+    while frame is not None:
+        if frame.f_code.co_filename == "<template>":
+            return True
+        frame = frame.f_back
+    return False
+
+
+def test_template_call_filter_ignores_plain_threads() -> None:
+    """The `os.getpid` filter counts a call made inside a template, not one from a plain thread."""
+    from jinja2 import Environment
+
+    seen: list[bool] = []
+    worker = threading.Thread(target=lambda: seen.append(_called_from_a_template()))
+    worker.start()
+    worker.join()
+    env = Environment()  # noqa: S701
+    env.from_string("{{ probe() }}").render(probe=lambda: seen.append(_called_from_a_template()) or "")
+
+    assert seen == [False, True]
+
+
 @pytest.mark.parametrize(
     "expression",
     [
@@ -83,8 +109,17 @@ def test_transform_keeps_model_custom_filters() -> None:
     ],
 )
 def test_transform_refuses_unsafe_attribute_access(expression: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unsafe attribute chains raise SecurityError before a template can reach `os.getpid`."""
     called: list[bool] = []
-    monkeypatch.setattr(os, "getpid", lambda: called.append(True) or 0)
+    real_getpid = os.getpid
+
+    def recording_getpid() -> int:
+        # Threads left running by other tests call os.getpid too; only a template's call counts.
+        if _called_from_a_template():
+            called.append(True)
+        return real_getpid()
+
+    monkeypatch.setattr(os, "getpid", recording_getpid)
     item: dict[str, Any] = {"name": "eth0"}
 
     with pytest.raises(ValueError, match="Failed to transform 'result'") as excinfo:
