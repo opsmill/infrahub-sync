@@ -307,14 +307,6 @@ max-complexity = 33
 
 [tool.ruff.lint.per-file-ignores]
 
-# The clean-host checks are scripts a container runs, not modules this repository
-# imports. They are mounted flat at one path and executed by name, so that path is
-# their import root and their standard output is how they report to the driver.
-"tests/compose/clean_host/checks/*.py" = [
-    "INP001",  # File is part of an implicit namespace package
-    "T201",  # `print` found
-]
-
 # The NetBox dataset seeders are standalone scripts invoked by path (`netbox.seed`
 # shells out to them), not modules this repository imports, and their printed JSON
 # summary is the operator-facing result. The fixed dataset they build is a long, flat

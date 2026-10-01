@@ -308,7 +308,7 @@ version. The wrapper and `deploy/compose/` are gone. The dev stack moves to
   - `tests/compose/test_redaction.py`;
   - `tests/compose/test_source_credentials.py`;
   - `tests/compose/test_documentation.py` (lines 104–113 and 359).
-- [ ] T043 [US4] Delete `tests/compose/test_preflight.py` and `deploy/compose/` (the whole directory: the wrapper, `OPERATING.md`, `defaults.conf`, `bootstrap/`, `configuration/` and `skills/`). Before deleting `deploy/compose/skills/*/SKILL.md`, carry their durable operator guidance (configuration registration, deployment steps) into `docs/docs/compose-deployment.mdx` (T045).
+- [X] T043 [US4] Delete `tests/compose/test_preflight.py` and `deploy/compose/` (the whole directory: the wrapper, `OPERATING.md`, `defaults.conf`, `bootstrap/`, `configuration/` and `skills/`). Before deleting `deploy/compose/skills/*/SKILL.md`, carry their durable operator guidance (configuration registration, deployment steps) into `docs/docs/compose-deployment.mdx` (T045).
 - [X] T044 [US4] Run the opt-in suite locally: `docker build -t infrahub-sync:compose-test .`, then `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose -x`. Fix any failure. In `.github/workflows/workflow-nightly-e2e.yml`, add (or adjust) a job that builds the image locally and runs the same command, so the suite keeps running nightly.
 - [ ] T045 [US4] Rewrite `docs/docs/compose-deployment.mdx` for the single-file flow:
   - **Prerequisites**: Docker Compose 2.24 or later; registry login until 3.0.0.
