@@ -132,7 +132,12 @@ def _await_schema_kinds(address: str, token: str, kinds: tuple[str, ...], timeou
         response.raise_for_status()
         missing = set(kinds) - {node["kind"] for node in response.json().get("nodes", [])}
         if not missing:
-            missing_mutations = {f"{kind}Create" for kind in kinds} - _graphql_mutation_names(address, token)
+            try:
+                exposed = _graphql_mutation_names(address, token)
+            except RuntimeError:
+                # GraphQL can answer with errors while it rebuilds its schema; keep polling until the deadline.
+                exposed = set()
+            missing_mutations = {f"{kind}Create" for kind in kinds} - exposed
             if not missing_mutations:
                 return
             missing = missing_mutations
