@@ -7,17 +7,22 @@ name: Release bump label
 # `edited` is listed because the generated release pull request exemption
 # depends on the title.
 #
-# The checker runs from the pull request's merge ref, like this workflow file
-# itself: pinning the script to the base commit would not stop an author who
-# can also edit the workflow, so the protection is review of changes to both.
+# `pull_request_target` runs this file and the checker as they are on `main`,
+# so a pull request cannot weaken the gate it is being checked by. The job
+# checks out only the base commit and the checker reads only the event
+# payload — never check out or run pull request head code here. The flip side:
+# a change to this workflow or the checker takes effect only once merged.
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - main
     types: [opened, synchronize, reopened, edited, labeled, unlabeled]
 
+# Keyed on the pull request, not `github.ref` (always `main` under
+# `pull_request_target`). Each label change fires its own event; cancelling
+# the older run keeps a stale result from overwriting the current one.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: label-gate-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions: {}
@@ -25,24 +30,21 @@ permissions: {}
 jobs:
   validate:
     name: Require one release bump label
-    runs-on: ubuntu-latest
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
-      - name: Validate release bump label
-        env:
-          PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
-          PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
-          PR_LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          REPOSITORY: ${{ github.repository }}
-        run: >-
-          python scripts/check_release_labels.py
-          --author-login "${PR_AUTHOR_LOGIN}"
-          --head-repository "${PR_HEAD_REPOSITORY}"
-          --labels-json "${PR_LABELS_JSON}"
-          --head-ref "${PR_HEAD_REF}"
-          --repository "${REPOSITORY}"
-          --title "${PR_TITLE}"
+      - name: "Check out base commit"
+        uses: "actions/checkout@v7"
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: "Set up Python"
+        uses: "actions/setup-python@v7"
+        with:
+          python-version: "3.12"
+
+      - name: "Validate release bump label"
+        run: python scripts/check_release_labels.py --event-path "${GITHUB_EVENT_PATH}"

@@ -194,7 +194,7 @@ Ensure PRs have appropriate labels before merging. If labels are missing, the ve
 | Workflow | Type | Purpose |
 |----------|------|---------|
 | `changelog-check.yml` | PR into `main` | Requires a news fragment on every pull request |
-| `release-label-check.yml` | PR into `main` | Requires exactly one `changes/*` release bump label |
+| `release-label-check.yml` | PR into `main` (`pull_request_target`) | Requires exactly one `changes/*` release bump label; runs as defined on `main`, so changes to it apply only after merge |
 | `trigger-push-stable.yml` | Dispatched on `main` | Resolves the version, bumps `pyproject.toml`, assembles the changelog, opens the release pull request |
 | `release-publish.yml` | Push to `main` | Tags and publishes the GitHub Release when a `release/*` pull request lands |
 | `trigger-release.yml` | GitHub Release published | Invokes the publish workflow |

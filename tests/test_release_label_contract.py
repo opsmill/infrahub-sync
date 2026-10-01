@@ -13,43 +13,43 @@ import yaml
 ROOT = Path(__file__).parents[1]
 CONFIG_PATH = ROOT / ".github" / "version-drafter.yml"
 LABELS_PATH = ROOT / ".github" / "labels.yml"
+WORKFLOW_PATH = ROOT / ".github" / "workflows" / "release-label-check.yml"
 CHECKER_PATH = ROOT / "scripts" / "check_release_labels.py"
 
 BUMP_LABELS = ("changes/major", "changes/minor", "changes/patch")
+REPOSITORY = "opsmill/example"
 RELEASE_PR = {
     "title": "chore(release): 1.2.3",
     "head_ref": "release/1.2.3",
     "author_login": "opsmill-bot",
-    "head_repository": "opsmill/example",
+    "head_repository": REPOSITORY,
 }
 
 
-def run_checker(
-    labels: list[str],
-    *,
-    title: str = "fix: example",
-    head_ref: str = "feature/example",
-    author_login: str = "contributor",
-    head_repository: str = "contributor/example",
-) -> subprocess.CompletedProcess[str]:
-    """Run the label checker as the workflow does."""
+CONTRIBUTOR_PR = {
+    "title": "fix: example",
+    "head_ref": "feature/example",
+    "author_login": "contributor",
+    "head_repository": "contributor/example",
+}
+
+
+def run_checker(tmp_path: Path, labels: list[str], **overrides: str) -> subprocess.CompletedProcess[str]:
+    """Run the label checker against a `pull_request_target` payload, as the workflow does."""
+    fields = {**CONTRIBUTOR_PR, **overrides}
+    event = {
+        "repository": {"full_name": REPOSITORY},
+        "pull_request": {
+            "title": fields["title"],
+            "user": {"login": fields["author_login"]},
+            "labels": [{"name": label} for label in labels],
+            "head": {"ref": fields["head_ref"], "repo": {"full_name": fields["head_repository"]}},
+        },
+    }
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
     return subprocess.run(  # noqa: S603
-        [
-            sys.executable,
-            str(CHECKER_PATH),
-            "--labels-json",
-            json.dumps(labels),
-            "--title",
-            title,
-            "--head-ref",
-            head_ref,
-            "--author-login",
-            author_login,
-            "--head-repository",
-            head_repository,
-            "--repository",
-            "opsmill/example",
-        ],
+        [sys.executable, str(CHECKER_PATH), "--event-path", str(event_path)],
         check=False,
         capture_output=True,
         text=True,
@@ -82,27 +82,51 @@ def test_sdk_update_pull_requests_carry_patch_label() -> None:
     assert '--label "changes/patch"' in workflow
 
 
+def test_workflow_never_checks_out_pull_request_code() -> None:
+    workflow = yaml.safe_load(WORKFLOW_PATH.read_text())
+    # PyYAML reads the bare `on` key as boolean True.
+    assert set(workflow[True]) == {"pull_request_target"}
+    steps = [step for job in workflow["jobs"].values() for step in job["steps"]]
+    checkouts = [step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@")]
+    assert checkouts
+    for checkout in checkouts:
+        assert checkout["with"]["ref"] == "${{ github.event.pull_request.base.sha }}"
+        assert checkout["with"]["persist-credentials"] is False
+    assert "pull_request.head" not in WORKFLOW_PATH.read_text()
+
+
 @pytest.mark.parametrize("label", BUMP_LABELS)
-def test_single_bump_label_is_accepted(label: str) -> None:
-    result = run_checker([label, "type/housekeeping"])
-    assert result.returncode == 0, result.stderr
+def test_single_bump_label_is_accepted(tmp_path: Path, label: str) -> None:
+    result = run_checker(tmp_path, [label, "type/housekeeping"])
+    assert result.returncode == 0, result.stdout
     assert label in result.stdout
 
 
 @pytest.mark.parametrize(
-    "labels",
-    [[], ["type/bug"], ["changes/patch", "changes/minor"]],
-    ids=["no-labels", "type-only", "conflicting"],
+    ("labels", "author_login"),
+    [
+        ([], "contributor"),
+        (["type/bug"], "contributor"),
+        (["changes/patch", "changes/minor"], "contributor"),
+        ([], "dependabot[bot]"),
+    ],
+    ids=["no-labels", "type-only", "conflicting", "unlabelled-dependabot"],
 )
-def test_missing_or_conflicting_bump_label_is_rejected(labels: list[str]) -> None:
-    result = run_checker(labels)
+def test_missing_or_conflicting_bump_label_is_rejected(tmp_path: Path, labels: list[str], author_login: str) -> None:
+    result = run_checker(tmp_path, labels, author_login=author_login)
     assert result.returncode != 0
-    assert "exactly one" in result.stderr
+    assert "::error::" in result.stdout
+    assert "exactly one" in result.stdout
 
 
-def test_generated_release_pull_request_is_exempt() -> None:
-    result = run_checker([], **RELEASE_PR)
-    assert result.returncode == 0, result.stderr
+@pytest.mark.parametrize(
+    "title",
+    ["chore(release): 1.2.3", "chore(release): 1.2.3 (edited)"],
+    ids=["generated-title", "edited-title"],
+)
+def test_generated_release_pull_request_is_exempt(tmp_path: Path, title: str) -> None:
+    result = run_checker(tmp_path, [], **{**RELEASE_PR, "title": title})
+    assert result.returncode == 0, result.stdout
     assert "generated release pull request" in result.stdout
 
 
@@ -110,13 +134,33 @@ def test_generated_release_pull_request_is_exempt() -> None:
     "override",
     [
         {"author_login": "contributor", "head_repository": "contributor/example"},
+        {"author_login": "opsmill-bot[bot]"},
         {"head_repository": "contributor/example"},
         {"title": "fix: example"},
-        {"title": "chore(release): arbitrary", "head_ref": "release/arbitrary"},
+        {"head_ref": "release/arbitrary"},
+        {"head_ref": "release/v1.2.3"},
     ],
-    ids=["untrusted-author", "forked-bot", "non-release-title", "non-version-ref"],
+    ids=[
+        "untrusted-author",
+        "app-bot-login",
+        "forked-bot",
+        "non-release-title",
+        "non-version-ref",
+        "v-prefixed-ref",
+    ],
 )
-def test_lookalike_release_pull_request_is_not_exempt(override: dict[str, str]) -> None:
-    result = run_checker([], **{**RELEASE_PR, **override})
+def test_lookalike_release_pull_request_is_not_exempt(tmp_path: Path, override: dict[str, str]) -> None:
+    result = run_checker(tmp_path, [], **{**RELEASE_PR, **override})
     assert result.returncode != 0
-    assert "exactly one" in result.stderr
+    assert "exactly one" in result.stdout
+
+
+def test_missing_event_payload_fails(tmp_path: Path) -> None:
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, str(CHECKER_PATH), "--event-path", str(tmp_path / "missing.json")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "Cannot read event payload" in result.stderr
