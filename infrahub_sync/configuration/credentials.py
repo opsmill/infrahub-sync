@@ -145,7 +145,10 @@ class EnvironmentCredentialProvider:
             msg = f"environment credential identifier {identifier!r} is invalid"
             raise CredentialConfigurationError(msg)
         if _ENV_CREDENTIAL_IDENTIFIER.fullmatch(identifier) is None:
-            msg = f"environment credential identifier {identifier!r} must start with {ENV_CREDENTIAL_PREFIX!r}"
+            msg = (
+                f"environment credential identifier {identifier!r} must start with "
+                f"{ENV_CREDENTIAL_PREFIX!r} followed by a name"
+            )
             raise CredentialConfigurationError(msg)
         value = self._environment.get(identifier)
         if value is None or not value:

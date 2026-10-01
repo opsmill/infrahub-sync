@@ -2078,7 +2078,7 @@ def test_environment_provider_refuses_invalid_identifier(identifier: str) -> Non
 def test_environment_provider_refuses_identifier_outside_credential_prefix(identifier: str) -> None:
     provider = EnvironmentCredentialProvider({identifier: "worker-infrastructure-secret"})
 
-    with pytest.raises(CredentialConfigurationError, match="INFRAHUB_SYNC_CREDENTIAL_") as caught:
+    with pytest.raises(CredentialConfigurationError, match="'INFRAHUB_SYNC_CREDENTIAL_' followed by a name") as caught:
         provider.resolve(identifier)
     assert "worker-infrastructure-secret" not in str(caught.value)
 

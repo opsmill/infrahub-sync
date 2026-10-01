@@ -251,7 +251,7 @@ def test_an_environment_identifier_outside_the_credential_prefix_is_one_finding(
     assert [(finding.code, finding.location) for finding in findings] == [
         ("malformed-credential-reference", "/credentials/worker-secret"),
     ]
-    assert "INFRAHUB_SYNC_CREDENTIAL_" in findings[0].message
+    assert "'INFRAHUB_SYNC_CREDENTIAL_' followed by a name" in findings[0].message
     assert "AWS_SECRET_ACCESS_KEY" not in findings[0].message
 
 

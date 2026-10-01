@@ -81,7 +81,8 @@ by registering one through the Sync API. `configuration/qualification.yaml` in
 the bundle is an example of that package's shape and is never loaded for you.
 
 The credentials a registered package references belong in `operator.env` before
-the run that needs them, and `init` leaves each one commented:
+the run that needs them. `init` writes each one commented out; remove the leading `#`
+and add your value:
 
 ```bash
 INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<your Infrahub token>
@@ -101,6 +102,16 @@ credentials:
 An `env` identifier must start with `INFRAHUB_SYNC_CREDENTIAL_`; validation refuses any
 other identifier, so a package cannot name the deployment's own storage, database, or
 Prefect settings.
+
+If you upgrade from an earlier alpha, move to the prefixed names:
+
+1. In `operator.env`, rename `INFRAHUB_API_TOKEN`, `NETBOX_TOKEN`, and `NAUTOBOT_TOKEN` to
+   `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`,
+   and `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`.
+2. Change the `identifier` of each `env` credential in your packages to the new name.
+3. Register a new version of each package with `configs version`. A version registered
+   before the upgrade keeps its old identifiers, and its runs fail in the worker.
+4. Run `./infrahub-sync-compose start`, so the services receive the renamed variables.
 
 :::note
 A container reads its environment once, at start. After changing a value in

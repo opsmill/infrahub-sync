@@ -90,8 +90,8 @@ worker's own storage, database, and Prefect settings share its environment, and
 no package can name them.
 
 The credentials a registered package references are yours to add to
-`operator.env` before the run that needs them, and `init` leaves each one
-commented:
+`operator.env` before the run that needs them. `init` writes each one
+commented out; remove the leading `#` and add your value:
 
 ```bash
 INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<your Infrahub token>

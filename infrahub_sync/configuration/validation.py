@@ -295,7 +295,7 @@ def _accumulate_reference_declarations(
                     message=(
                         f"credential reference {_rendered_component(name, secrets)!r} names an "
                         f"environment identifier outside the credential namespace; it must start "
-                        f"with {ENV_CREDENTIAL_PREFIX!r}"
+                        f"with {ENV_CREDENTIAL_PREFIX!r} followed by a name"
                     ),
                 )
             )

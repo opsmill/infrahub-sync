@@ -137,7 +137,7 @@ Configure the worker environment before it starts:
 | `INFRAHUB_SYNC_SERVICE_WORK_POOL` | Name of the existing Prefect pool used by the deployment, worker, and API reconciliation. It is never returned by the API. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | Optional decimal integer from 1 through 86400; defaults to 300. An unclaimed execution becomes abandoned at this inclusive deadline. |
 | `PREFECT_WORKER_QUERY_SECONDS` | Prefect worker polling interval. It must be a finite positive decimal no greater than 3600; the API derives its liveness thresholds from the same value. |
-| Adapter credential variables | The variables that the `credentials` entries of each registered package name, for example `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`. A registered run reads only these credential values from the worker environment; adapter URL variables such as `NETBOX_URL` do not replace the declared URLs. |
+| Adapter credential variables | The environment variables that the `credentials` entries of a registered package name, for example `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`. A registered run reads only these credential values from the worker environment; adapter URL variables such as `NETBOX_URL` do not replace the declared URLs. |
 
 The service flow accepts exactly eight bounded parameters:
 
