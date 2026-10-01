@@ -187,7 +187,7 @@ is not acceptable.
 
 - Do not force-push shared branches; use follow-up commits rather than amending to hide fixes.
 - Small, scoped, reversible commits; imperative subject line, rationale in the PR body.
-- Apply exactly one release-intent label (`changes/major`, `changes/minor`, or `changes/patch`); see `RELEASING.md`.
+- Apply exactly one release-intent label (`changes/major`, `changes/minor`, or `changes/patch`) to every normal pull request; generated `chore(release):` pull requests are exempt. See `RELEASING.md`.
 
 ## Governance
 
