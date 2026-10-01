@@ -32,7 +32,10 @@ module entrypoint, no pull steps, no job variables on the deployment or the flow
 process pool's default job template, and the default child command with no working
 directory. A refusal raises `ServiceFlowRunRefusedError` while the configuration is
 prepared, which Prefect records as a `Crashed` state before any process starts; its
-reason is fixed text and echoes no server value. Anything the service applies to its own
+reason is fixed text and echoes no server value. The admitted child then loads the
+deployment from the server again, so the check bounds what a run can execute only while
+no one else can write to the deployment; that is what the API authentication below
+provides. Anything the service applies to its own
 deployment later, such as job variables, has to be admitted here in the same change. The
 Compose bundle also turns on Prefect's API basic authentication, so reaching the Prefect
 API is not enough to create a deployment in the pool.

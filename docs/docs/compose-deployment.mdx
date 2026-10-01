@@ -237,7 +237,10 @@ The worker adds a second boundary of its own. It starts a flow run only when the
 run belongs to the service's own deployment exactly as bootstrap applied it: the
 installed service entrypoint, no pull steps, no job variables, and the process
 pool's default job template. Any other flow run in the pool is marked `Crashed`
-with a fixed reason, and no process is started for it.
+with a fixed reason, and no process is started for it. The process that starts
+reads the deployment from Prefect again, so this check relies on the Prefect
+credential above: anyone who holds it could change the deployment between the
+check and the start.
 
 To open the Prefect UI, browse to `http://127.0.0.1:4200`. It asks for a
 password once per browser: enter the whole value of
