@@ -177,8 +177,11 @@ def update_node(
 
                 elif rel_schema.cardinality == "many":
                     attr_manager: RelationshipManagerSync = getattr(node, attr_name)
+                    if not attr_manager.initialized:
+                        attr_manager.fetch()
                     existing_peer_ids = attr_manager.peer_ids
                     new_peer_ids = []
+                    unresolved_peer = False
 
                     for value in list(attr_value):
                         peer_node = resolve_peer_node(
@@ -192,14 +195,15 @@ def update_node(
                         )
                         if peer_node:
                             new_peer_ids.append(peer_node.id)
+                        else:
+                            logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, value)
+                            unresolved_peer = True
 
                     _, existing_only, new_only = compare_lists(existing_peer_ids, new_peer_ids)
 
-                    if not attr_manager.initialized:
-                        attr_manager.fetch()
-
-                    for existing_id in existing_only:
-                        attr_manager.remove(existing_id)
+                    if not unresolved_peer:
+                        for existing_id in existing_only:
+                            attr_manager.remove(existing_id)
 
                     for new_id in new_only:
                         attr_manager.add(_relationship_input_data(new_id, source, owner))
