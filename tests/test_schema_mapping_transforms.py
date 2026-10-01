@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -80,6 +81,20 @@ def _called_from_a_template() -> bool:
     return False
 
 
+def test_template_call_filter_ignores_plain_threads() -> None:
+    """The `os.getpid` filter counts a call made inside a template, not one from a plain thread."""
+    from jinja2 import Environment
+
+    seen: list[bool] = []
+    worker = threading.Thread(target=lambda: seen.append(_called_from_a_template()))
+    worker.start()
+    worker.join()
+    env = Environment()  # noqa: S701
+    env.from_string("{{ probe() }}").render(probe=lambda: seen.append(_called_from_a_template()) or "")
+
+    assert seen == [False, True]
+
+
 @pytest.mark.parametrize(
     "expression",
     [
@@ -94,6 +109,7 @@ def _called_from_a_template() -> bool:
     ],
 )
 def test_transform_refuses_unsafe_attribute_access(expression: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unsafe attribute chains raise SecurityError before a template can reach `os.getpid`."""
     called: list[bool] = []
     real_getpid = os.getpid
 
