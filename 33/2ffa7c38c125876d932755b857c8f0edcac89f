@@ -1,0 +1,19 @@
+dev/specs/007-harbor-image-publishing/opsmill-implement-report.md
+  s_e781df4f83e385::t_0b7272c98f724d 1-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "332ffa7c38c125876d932755b857c8f0edcac89f",
+  "prompts": {},
+  "sessions": {
+    "s_e781df4f83e385": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5e7508e3-b2e9-494a-a98a-ccc3d06e2a0a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
