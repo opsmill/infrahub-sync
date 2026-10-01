@@ -8,6 +8,7 @@ artifact_name
 async
 Authentik
 boolean
+callables
 check_definitions
 class_name
 CloudFormation
@@ -122,6 +123,7 @@ RIRs
 rowcount
 Rowcount
 rumdl
+sandboxed
 schema_mapping
 sdk
 Slurp'it
