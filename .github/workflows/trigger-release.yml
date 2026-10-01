@@ -13,11 +13,11 @@ on:
 jobs:
   publish:
     # A called workflow can only keep or narrow this token: signing the image
-    # needs `id-token` and pushing it needs `packages`.
+    # needs `id-token`. Harbor is reached with its own credentials, so nothing
+    # needs `packages`.
     permissions:
       contents: read
       id-token: write
-      packages: write
     uses: ./.github/workflows/workflow-publish.yml
     secrets: inherit
     with:

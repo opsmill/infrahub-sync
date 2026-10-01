@@ -110,10 +110,21 @@ jobs:
           # to see the same bare string, so strip the prefix once here rather
           # than at each use.
           VERSION="${RAW_VERSION#v}"
-          if ! printf '%s' "${VERSION}" \
-              | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
-            MSG="'${RAW_VERSION}' is not a usable version"
-            MSG="${MSG} string — refusing to prepare a release from it."
+          # Canonical PEP 440 only (`3.0.0a6`, `3.0.0rc1`, `3.0.0.dev1`), the same
+          # rule the Compose pin tasks apply: `3.0.0-alpha6` parses, but no tag or
+          # image would carry that spelling.
+          if ! VERSION="${VERSION}" uv run --no-project --with packaging python -c '
+          import os, sys
+          from packaging.version import InvalidVersion, Version
+          v = os.environ["VERSION"]
+          try:
+              canonical = str(Version(v))
+          except InvalidVersion:
+              canonical = None
+          sys.exit(0 if canonical == v else 1)
+          '; then
+            MSG="'${RAW_VERSION}' is not a canonical PEP 440 version"
+            MSG="${MSG} — refusing to prepare a release from it."
             echo "::error::${MSG}"
             exit 1
           fi

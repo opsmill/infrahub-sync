@@ -21,7 +21,8 @@ Callers that publish pass `secrets: inherit`. The pull-request caller passes no
 secrets, so fork pull requests run the same build.
 
 - `vars.HARBOR_HOST`, `secrets.HARBOR_USERNAME`, `secrets.HARBOR_PASSWORD`: read only
-  by steps guarded by `publish`, and never echoed.
+  by steps guarded by `publish`, and never echoed. A publishing run with an empty
+  `HARBOR_HOST` fails before building, since the login would otherwise go to Docker Hub.
 - Permissions are scoped per job: `build` and `merge` get `contents: read`, and
   `sign` and `sbom` add `id-token: write` for keyless signing. No job asks for
   `packages`, because Harbor uses its own credentials. GitHub checks every called
@@ -43,13 +44,19 @@ secrets, so fork pull requests run the same build.
 
    A failed smoke test fails the job, and nothing for that platform is pushed.
 2. **`merge`** (only with `publish`) needs every `build` job. It runs
-   `docker buildx imagetools create` with all tags, then outputs the manifest-list
-   digest. No tag is ever created while any platform has failed.
+   `docker buildx imagetools create` with all tags over every downloaded platform
+   digest, failing when there is none, then outputs the manifest-list digest, which
+   must match `^sha256:[0-9a-f]{64}$`. No tag is ever created while any platform has
+   failed.
 3. **`sign`** (only with `publish`) runs `cosign sign --yes --recursive <repo>@<digest>`
    with bounded retries.
 4. **`sbom`** (only with `publish`) runs syft to produce SPDX and CycloneDX, attaches
    both with `cosign attest --type spdxjson|cyclonedx`, and uploads the
    `sbom-<version>` artifact (90 days).
+
+Every multi-line script runs under `set -euo pipefail`. A newer run for the same
+`ref` cancels a build-only run (`cancel-in-progress: ${{ !inputs.publish }}`); a
+publishing run is never cancelled, so no pushed tag is left unsigned.
 
 ## Outputs
 

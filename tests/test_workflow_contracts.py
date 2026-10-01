@@ -21,6 +21,7 @@ import subprocess  # noqa: S404 — running the guard's own script is how its re
 import sys
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -410,9 +411,24 @@ def pull_request_reachable() -> set[Path]:
     return reachable(lambda path: "pull_request" in triggers(path))
 
 
+def _requires_publish(condition: object) -> bool:
+    """Report whether an `if:` only holds when `inputs.publish` is true.
+
+    A conjunction that includes `inputs.publish` itself qualifies. A negation,
+    `inputs.publish == false`, or any `||` that could admit a build-only run does not.
+    """
+    text = str(condition or "").strip()
+    if text.startswith("${{") and text.endswith("}}"):
+        text = text[3:-2]
+    if "||" in text:
+        return False
+    terms = [term.strip().strip("()").strip() for term in text.split("&&")]
+    return any(term in POSITIVE_PUBLISH_TERMS for term in terms)
+
+
 def _publish_guarded(job: dict, step: dict) -> bool:
     """Report whether a publishing step only runs when its workflow is asked to publish."""
-    return PUBLISH_GUARD in str(job.get("if", "")) or PUBLISH_GUARD in str(step.get("if", ""))
+    return _requires_publish(job.get("if")) or _requires_publish(step.get("if"))
 
 
 def unguarded_publishers() -> set[Path]:
@@ -703,7 +719,8 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
 
     It builds the image locally and names it through the two settings the root
     `docker-compose.yml` reads, so the run proves the operator file against this
-    commit's image without pulling anything.
+    commit's image without pulling anything. `--compose-zero-skip` turns a skipped
+    case into a failure, so a run that skipped everything cannot report green.
     """
     steps = jobs(NIGHTLY_WORKFLOW)["compose-suite"]["steps"]
     checkout = next(step for step in steps if str(step.get("uses", "")).startswith(CHECKOUT_ACTION))
@@ -718,7 +735,9 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
     runs = [str(step.get("run", "")) for step in steps]
     build = next(index for index, run in enumerate(runs) if run == "docker build -t infrahub-sync:compose-test .")
     suite = next(
-        index for index, run in enumerate(runs) if run == "uv run --no-sync pytest -m compose tests/compose -x"
+        index
+        for index, run in enumerate(runs)
+        if run == "uv run --no-sync pytest -m compose tests/compose -x --compose-zero-skip"
     )
     assert build < suite
     assert steps[suite]["env"] == {"INFRAHUB_SYNC_DOCKER_IMAGE": "infrahub-sync", "VERSION": "compose-test"}
@@ -859,10 +878,11 @@ def test_the_sdk_update_pull_request_targets_the_matrix_branch() -> None:
 # ci-docker-image
 # --------------------------------------------------------------------------
 # The reusable Harbor build-and-push workflow. Its inputs mirror infrahub-mcp's file
-# of the same name, every platform is smoke-tested before anything is pushed, and
-# every step that can reach the registry is behind `inputs.publish`.
+# of the same name, no tag is applied until every platform has passed its smoke
+# test, and every step that can reach the registry is behind `inputs.publish`.
 DOCKER_IMAGE_WORKFLOW = WORKFLOWS / "ci-docker-image.yml"
 PUBLISH_GUARD = "inputs.publish"
+POSITIVE_PUBLISH_TERMS = frozenset({PUBLISH_GUARD, f"{PUBLISH_GUARD} == true"})
 DOCKER_IMAGE_INPUTS = {
     "publish": {"type": "boolean", "required": False, "default": False},
     "version": {"type": "string", "required": False, "default": ""},
@@ -945,11 +965,16 @@ def test_a_run_names_the_ref_it_builds_and_whether_it_publishes() -> None:
 
 
 def test_only_a_newer_run_for_the_same_ref_cancels_an_image_build() -> None:
-    """The group is shared with the caller, so the ref keeps a run for one ref from cancelling another's."""
+    """The group is shared with the caller, so the ref keeps a run for one ref from cancelling another's.
+
+    Only a build-only run is cancelled; a publishing one runs to its signature.
+    """
     declared = load(DOCKER_IMAGE_WORKFLOW)["concurrency"]
 
     assert concurrency_group(DOCKER_IMAGE_WORKFLOW) == "${{ github.workflow }}-${{ inputs.ref }}"
-    assert declared.get("cancel-in-progress") is True
+    assert declared.get("cancel-in-progress") == "${{ !inputs.publish }}", (
+        "a publishing run cancelled between `merge` and `sign` leaves a pushed tag unsigned"
+    )
 
 
 def test_the_image_workflow_requests_exactly_what_signing_and_pushing_need() -> None:
@@ -1009,7 +1034,29 @@ def test_the_push_is_by_digest_without_provenance() -> None:
         "type=image,name=${{ vars.HARBOR_HOST }}/${{ github.repository }},"
         "push-by-digest=true,name-canonical=true,push=true"
     )
-    assert PUBLISH_GUARD in str(pushes[0].get("if", ""))
+    assert _requires_publish(pushes[0].get("if"))
+
+
+@pytest.mark.parametrize(
+    ("condition", "expected"),
+    [
+        ("inputs.publish", True),
+        ("${{ inputs.publish }}", True),
+        ("inputs.publish == true", True),
+        ("steps.check.outputs.skip == 'false' && inputs.publish", True),
+        ("!inputs.publish", False),
+        ("steps.check.outputs.skip == 'false' && !inputs.publish", False),
+        ("inputs.publish == false", False),
+        ("inputs.publish || always()", False),
+        ("steps.check.outputs.skip == 'false'", False),
+        (None, False),
+    ],
+)
+def test_the_publish_guard_check_requires_a_positive_publish_condition(
+    condition: str | None, *, expected: bool
+) -> None:
+    """A substring match would take `!inputs.publish` for the guard it negates."""
+    assert _requires_publish(condition) is expected
 
 
 def test_every_step_that_reads_a_secret_is_behind_the_publish_guard() -> None:
@@ -1018,9 +1065,7 @@ def test_every_step_that_reads_a_secret_is_behind_the_publish_guard() -> None:
         f"{name}: {_step_name(step)}"
         for name, job in jobs(DOCKER_IMAGE_WORKFLOW).items()
         for step in job.get("steps") or []
-        if "secrets." in str(step)
-        and PUBLISH_GUARD not in str(step.get("if", ""))
-        and PUBLISH_GUARD not in str(job.get("if", ""))
+        if "secrets." in str(step) and not _requires_publish(step.get("if")) and not _requires_publish(job.get("if"))
     ]
 
     assert not exposed, f"these steps read a secret without the publish guard: {exposed}"
@@ -1040,6 +1085,102 @@ def test_no_step_echoes_a_secret() -> None:
 @pytest.mark.parametrize("job", PUBLISH_ONLY_JOBS)
 def test_the_registry_jobs_only_run_when_publishing(job: str) -> None:
     assert docker_image_job(job)["if"] == PUBLISH_GUARD
+
+
+def test_every_multi_line_script_stops_on_the_first_failure() -> None:
+    """Without `pipefail`, a failed `imagetools inspect` piped into `jq` reads as success."""
+    loose = [
+        f"{name}: {_step_name(step)}"
+        for name, job in jobs(DOCKER_IMAGE_WORKFLOW).items()
+        for step in job.get("steps") or []
+        if "\n" in str(step.get("run", "")).strip()
+        and str(step["run"]).lstrip().splitlines()[0].strip() != "set -euo pipefail"
+    ]
+
+    assert not loose, f"these scripts do not start with `set -euo pipefail`: {loose}"
+
+
+def _image_step(job: str, name: str) -> dict:
+    found = [step for step in docker_image_job(job)["steps"] if step.get("name") == name]
+    assert len(found) == 1, f"{len(found)} steps named {name!r} in {job}"
+    return found[0]
+
+
+MANIFEST_DIGESTS = ("a" * 64, "b" * 64)
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected"),
+    [
+        ("r.example/o/s:1.0.0\n", ["r.example/o/s:1.0.0"]),
+        ("r.example/o/s:1.0.0\n\n  r.example/o/s:latest \n", ["r.example/o/s:1.0.0", "r.example/o/s:latest"]),
+    ],
+    ids=["one-tag", "two-tags-with-blank-lines"],
+)
+def test_the_manifest_list_tags_every_tag_line_over_every_platform_digest(tags: str, expected: list[str]) -> None:
+    step = _image_step("merge", "Create manifest list and push")
+
+    run = _run_step(
+        str(step["run"]),
+        {"REPOSITORY": "r.example/o/s", "TAGS": tags},
+        stubs=("docker",),
+        files=dict.fromkeys(MANIFEST_DIGESTS, ""),
+    )
+
+    assert run.returncode == 0, run.output
+    assert run.argv[:3] == ["buildx", "imagetools", "create"]
+    rest = run.argv[3:]
+    assert [rest[index + 1] for index, arg in enumerate(rest) if arg == "--tag"] == expected
+    sources = [arg for arg in rest if arg not in expected and arg != "--tag"]
+    assert sorted(sources) == [f"r.example/o/s@sha256:{digest}" for digest in MANIFEST_DIGESTS]
+
+
+def test_the_manifest_list_refuses_to_run_without_a_digest() -> None:
+    step = _image_step("merge", "Create manifest list and push")
+
+    run = _run_step(str(step["run"]), {"REPOSITORY": "r.example/o/s", "TAGS": "r.example/o/s:1.0.0"}, stubs=("docker",))
+
+    assert run.returncode != 0
+    assert "::error::" in run.output
+    assert not run.argv, "docker was called with no platform digest"
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="the inspect step pipes through jq, as the runner does")
+@pytest.mark.parametrize(
+    ("manifest", "ok"),
+    [
+        ('{"digest": "sha256:' + "c" * 64 + '"}', True),
+        ("{}", False),
+        ('{"digest": "sha256:short"}', False),
+        ("", False),
+    ],
+    ids=["digest", "no-digest", "malformed", "nothing"],
+)
+def test_the_inspected_manifest_must_be_a_digest(manifest: str, *, ok: bool) -> None:
+    """`sign` and `sbom` address the image by this digest; anything else would sign the wrong subject."""
+    step = _image_step("merge", "Inspect manifest")
+
+    run = _run_step(str(step["run"]), {"TAGS": "r.example/o/s:1.0.0"}, stdout=manifest, stubs=("docker",))
+
+    if ok:
+        assert run.returncode == 0, run.output
+        assert run.outputs == {"digest": "sha256:" + "c" * 64}
+    else:
+        assert run.returncode != 0
+        assert "::error::" in run.output
+        assert "digest" not in run.outputs
+
+
+@pytest.mark.parametrize(("digest", "ok"), [("sha256:" + "d" * 64, True), ("", False)])
+def test_an_empty_push_digest_fails_the_export(digest: str, *, ok: bool) -> None:
+    step = _image_step("build", "Export digest")
+    script = str(step["run"]).replace("/tmp/digests", "digests")  # noqa: S108 -- rewritten to the scratch directory
+
+    run = _run_step(script, {"DIGEST": digest})
+
+    assert (run.returncode == 0) is ok, run.output
+    if not ok:
+        assert "::error::" in run.output
 
 
 def test_the_manifest_list_waits_for_every_platform() -> None:
@@ -1070,7 +1211,7 @@ def test_every_action_is_pinned_to_a_full_commit_sha_with_its_version() -> None:
     assert not unpinned, f"these actions are not pinned to a commit: {unpinned}"
 
 
-def _tag_guard_exit(publish: str, tags: str) -> tuple[int, str]:
+def _tag_guard_exit(publish: str, tags: str, harbor_host: str = "registry.example") -> tuple[int, str]:
     """Run the build job's first step the way the runner would, with the two inputs it reads."""
     step = docker_image_build_steps()[0]
     bash = shutil.which("bash")
@@ -1078,7 +1219,7 @@ def _tag_guard_exit(publish: str, tags: str) -> tuple[int, str]:
     with tempfile.TemporaryDirectory() as scratch:
         result = subprocess.run(  # noqa: S603
             [bash, "-c", str(step["run"])],
-            env={"PUBLISH": publish, "TAGS": tags},
+            env={"PUBLISH": publish, "TAGS": tags, "HARBOR_HOST": harbor_host},
             cwd=scratch,
             capture_output=True,
             text=True,
@@ -1091,7 +1232,11 @@ def _tag_guard_exit(publish: str, tags: str) -> tuple[int, str]:
 def test_the_tag_guard_reads_the_two_inputs_it_judges() -> None:
     step = docker_image_build_steps()[0]
 
-    assert step["env"] == {"PUBLISH": "${{ inputs.publish }}", "TAGS": "${{ inputs.tags }}"}
+    assert step["env"] == {
+        "PUBLISH": "${{ inputs.publish }}",
+        "TAGS": "${{ inputs.tags }}",
+        "HARBOR_HOST": "${{ vars.HARBOR_HOST }}",
+    }
     assert "if" not in step, "the guard must run for every platform, skipped or not"
 
 
@@ -1113,6 +1258,22 @@ def test_the_tag_guard_admits_a_tagged_publish_and_any_build_only_run(publish: s
     assert code == 0, output
 
 
+@pytest.mark.parametrize("harbor_host", ["", "  "], ids=["empty", "blank"])
+def test_publishing_without_a_registry_fails_before_any_login(harbor_host: str) -> None:
+    """An empty registry sends docker/login-action, and the Harbor credentials, to Docker Hub."""
+    code, output = _tag_guard_exit("true", "registry.example/opsmill/infrahub-sync:1.0.0", harbor_host)
+
+    assert code != 0
+    assert "::error::" in output
+    assert "HARBOR_HOST" in output
+
+
+def test_a_build_only_run_needs_no_registry() -> None:
+    code, output = _tag_guard_exit("false", "infrahub-sync:pr", "")
+
+    assert code == 0, output
+
+
 # --------------------------------------------------------------------------
 # release path
 # --------------------------------------------------------------------------
@@ -1126,8 +1287,23 @@ METADATA_ACTION = "docker/metadata-action"
 PRERELEASE_COMMAND = "uv run --no-project --with packaging python -c"
 PRERELEASE_PROGRAM = re.compile(re.escape(PRERELEASE_COMMAND) + r"\s+'(?P<program>[^']*)'")
 CREATE_RELEASE_STEP = "Create the tag and the GitHub Release"
-# A stub that records how it was called, standing in for `gh` so the scripts run offline.
-ARGV_STUB = '#!/bin/sh\nprintf "%s\\n" "$@" > "$STUB_ARGV"\nprintf "%s\\n" "${STUB_STDOUT:-}"\n'
+# A stub that records how it was called, standing in for `gh` or `docker` so the
+# scripts run offline. It prints `STUB_STDOUT`, and `STUB_STDERR` when set, then
+# exits with `STUB_EXIT`.
+ARGV_STUB = (
+    "#!/bin/sh\n"
+    'printf "%s\\n" "$@" > "$STUB_ARGV"\n'
+    'printf "%s\\n" "${STUB_STDOUT:-}"\n'
+    '[ -n "${STUB_STDERR:-}" ] && printf "%s\\n" "$STUB_STDERR" >&2\n'
+    'exit "${STUB_EXIT:-0}"\n'
+)
+# `uv run --no-project --with packaging python -c ...` runs the program on this
+# interpreter, which already carries `packaging`, so the step runs offline.
+UV_STUB = '#!/bin/sh\nwhile [ "$#" -gt 0 ] && [ "$1" != "python" ]; do shift; done\nshift\nexec "$STUB_PYTHON" "$@"\n'
+# `git tag --list` prints `STUB_TAGS`; anything else, such as `rev-parse` for a tag
+# that does not exist yet, fails.
+GIT_STUB = '#!/bin/sh\ncase "$1" in\n  tag) printf "%s\\n" "${STUB_TAGS:-}" ;;\n  *) exit 1 ;;\nesac\n'
+STUB_SCRIPTS = {"uv": UV_STUB, "git": GIT_STUB}
 
 
 def release_publish_steps() -> list[dict]:
@@ -1144,7 +1320,13 @@ def _step_running(steps: list[dict], what: str, matches: Callable[[dict], bool])
 
 def prerelease_step() -> tuple[int, dict]:
     return _step_running(
-        release_publish_steps(), "decide the pre-release flag", lambda step: PRERELEASE_COMMAND in str(step.get("run"))
+        release_publish_steps(), "decide the pre-release flag", lambda step: step.get("id") == "prerelease"
+    )
+
+
+def newest_step() -> tuple[int, dict]:
+    return _step_running(
+        release_publish_steps(), "decide the newest stable release", lambda step: step.get("id") == "newest"
     )
 
 
@@ -1154,30 +1336,59 @@ def create_release_step() -> tuple[int, dict]:
     )
 
 
-def _run_with_stub(script: str, env: dict[str, str], stdout: str = "") -> tuple[list[str], dict[str, str]]:
-    """Run a step script under bash with `gh` stubbed; return the stub's argv and the step's outputs."""
+@dataclass(frozen=True)
+class StepRun:
+    """What one step script did: its exit code, what it printed, the recorded stub argv, and its outputs."""
+
+    returncode: int
+    output: str
+    argv: list[str]
+    outputs: dict[str, str]
+
+
+def _run_step(
+    script: str,
+    env: dict[str, str],
+    stdout: str = "",
+    *,
+    stubs: tuple[str, ...] = ("gh",),
+    files: dict[str, str] | None = None,
+) -> StepRun:
+    """Run a step script under bash in a scratch directory, with commands stubbed.
+
+    Each name in `stubs` records its argv (`ARGV_STUB`); `uv` and `git` are always
+    stubbed with `STUB_SCRIPTS`, so nothing reaches the network or the repository.
+    `files` are written into the scratch directory, which is the script's cwd.
+    """
     bash = shutil.which("bash")
     assert bash, "a POSIX shell is needed to run the step the way the runner does"
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
-        stub = root / "bin" / "gh"
-        stub.parent.mkdir()
-        stub.write_text(ARGV_STUB, encoding="utf-8")
-        stub.chmod(0o755)
+        bin_dir = root / "bin"
+        work = root / "work"
+        bin_dir.mkdir()
+        work.mkdir()
+        for name, content in {**STUB_SCRIPTS, **dict.fromkeys(stubs, ARGV_STUB)}.items():
+            stub = bin_dir / name
+            stub.write_text(content, encoding="utf-8")
+            stub.chmod(0o755)
+        for name, content in (files or {}).items():
+            (work / name).write_text(content, encoding="utf-8")
         output = root / "github-output"
         output.touch()
         result = subprocess.run(  # noqa: S603
             [bash, "-c", script],
             env={
+                "STUB_PYTHON": sys.executable,
                 **env,
-                "PATH": f"{stub.parent}:{os.environ['PATH']}",
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
                 "STUB_ARGV": str(root / "argv"),
                 "STUB_STDOUT": stdout,
                 "GITHUB_OUTPUT": str(output),
                 "GITHUB_REPOSITORY": "opsmill/infrahub-sync",
                 "GITHUB_SHA": "0" * 40,
             },
-            cwd=scratch,
+            cwd=work,
             capture_output=True,
             text=True,
             check=False,
@@ -1186,8 +1397,14 @@ def _run_with_stub(script: str, env: dict[str, str], stdout: str = "") -> tuple[
         argv_file = root / "argv"
         argv = argv_file.read_text(encoding="utf-8").splitlines() if argv_file.exists() else []
         outputs = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines() if "=" in line)
-    assert result.returncode == 0, result.stdout + result.stderr
-    return argv, outputs
+    return StepRun(result.returncode, result.stdout + result.stderr, argv, outputs)
+
+
+def _run_with_stub(script: str, env: dict[str, str], stdout: str = "") -> tuple[list[str], dict[str, str]]:
+    """Run a step script with `gh` stubbed and require it to succeed; return the stub's argv and the outputs."""
+    run = _run_step(script, env, stdout)
+    assert run.returncode == 0, run.output
+    return run.argv, run.outputs
 
 
 def test_the_prerelease_flag_is_decided_before_the_release_is_created() -> None:
@@ -1236,18 +1453,123 @@ def test_the_prerelease_flag_follows_packaging_version(version: str, expected: s
 
 
 @pytest.mark.parametrize(
-    ("prerelease", "flags"),
-    [("true", ["--prerelease", "--latest=false"]), ("false", ["--latest"])],
+    ("prerelease", "newest", "flags"),
+    [
+        ("true", "true", ["--prerelease", "--latest=false"]),
+        ("true", "false", ["--prerelease", "--latest=false"]),
+        ("false", "true", ["--latest"]),
+        ("false", "false", ["--latest=false"]),
+    ],
+    ids=["prerelease", "prerelease-older", "stable-newest", "stable-backport"],
 )
 def test_the_release_is_created_under_the_bare_version_with_its_prerelease_flags(
-    prerelease: str, flags: list[str]
+    prerelease: str, newest: str, flags: list[str]
 ) -> None:
     _index, step = create_release_step()
 
-    argv, _outputs = _run_with_stub(str(step["run"]), {"VERSION": "3.0.0", "PRERELEASE": prerelease})
+    argv, _outputs = _run_with_stub(str(step["run"]), {"VERSION": "3.0.0", "PRERELEASE": prerelease, "NEWEST": newest})
 
     assert argv[:3] == ["release", "create", "3.0.0"], "the tag is the bare version, with no `v`"
     assert [arg for arg in argv if arg.startswith("--latest") or arg == "--prerelease"] == flags
+
+
+@pytest.mark.parametrize(
+    ("tags", "version", "expected"),
+    [
+        ("2.0.1\n2.0.2\n3.0.0a5", "3.0.0", "true"),
+        ("2.0.1\n3.0.0\n3.1.0a1", "3.0.1", "true"),
+        ("2.0.1\n3.0.0", "2.0.3", "false"),
+        ("2.0.1\n3.0.0", "3.0.0", "true"),
+        ("3.0.0a5\n3.0.0a6\nnot-a-version", "2.0.3", "true"),
+        ("", "1.0.0", "true"),
+    ],
+    ids=["newer", "newer-than-a-later-prerelease", "backport", "same", "only-prereleases", "no-tags"],
+)
+def test_only_the_newest_stable_release_is_called_newest(tags: str, version: str, expected: str) -> None:
+    """A backport (2.0.3 after 3.0.0) must not take `latest`; pre-release tags never count."""
+    _index, step = newest_step()
+
+    run = _run_step(str(step["run"]), {"VERSION": version, "STUB_TAGS": tags})
+
+    assert run.returncode == 0, run.output
+    assert run.outputs == {"newest": expected}
+
+
+def test_the_newest_decision_feeds_the_release_and_runs_before_it() -> None:
+    decide, step = newest_step()
+    create, created = create_release_step()
+
+    assert decide < create
+    assert step["if"] == "steps.decide.outputs.publish == 'true'"
+    assert step["env"]["VERSION"] == "${{ steps.decide.outputs.version }}"
+    assert "git tag --list" in step["run"]
+    assert created["env"]["NEWEST"] == f"${{{{ steps.{step['id']}.outputs.newest }}}}"
+
+
+# The release pull request and the tag both refuse a version that is not canonical
+# PEP 440, the rule `tasks/release.py:_canonical` applies to the Compose pin.
+CANONICAL_VERSIONS = ("3.0.0", "3.0.0a6", "3.0.0b1", "3.0.0rc1", "3.0.0.dev1", "3.0.0.post1")
+NON_CANONICAL_VERSIONS = ("v3.0.0", "3.0.0-alpha6", "3.0.0A6", "3.0.0.a6", "", "not-a-version")
+RELEASE_PR_NUMBER = "1234"
+
+
+def _decide_release(version: str) -> StepRun:
+    """Run release-publish's `decide` step against a pyproject that declares `version`."""
+    _index, step = _step_running(release_publish_steps(), "decide the release", lambda s: s.get("id") == "decide")
+    return _run_step(
+        str(step["run"]),
+        {"GH_TOKEN": "unused"},
+        stdout=RELEASE_PR_NUMBER,
+        files={"pyproject.toml": f'[project]\nname = "infrahub-sync"\nversion = "{version}"\n'},
+    )
+
+
+@pytest.mark.parametrize("version", CANONICAL_VERSIONS)
+def test_the_tag_step_accepts_a_canonical_pep440_version(version: str) -> None:
+    run = _decide_release(version)
+
+    assert run.returncode == 0, run.output
+    assert run.outputs == {"publish": "true", "version": version}
+
+
+@pytest.mark.parametrize("version", NON_CANONICAL_VERSIONS)
+def test_the_tag_step_refuses_a_non_canonical_version(version: str) -> None:
+    run = _decide_release(version)
+
+    assert run.returncode != 0
+    assert "::error::" in run.output
+    assert "publish" not in run.outputs
+
+
+def _normalise_release_version(version: str) -> StepRun:
+    """Run the release pull request's `normalize` step on a typed version."""
+    _index, step = _step_running(prepare_release_steps(), "normalise the version", lambda s: s.get("id") == "normalize")
+    return _run_step(str(step["run"]), {"INPUT_VERSION": version, "DRAFTED_VERSION": ""})
+
+
+@pytest.mark.parametrize("version", CANONICAL_VERSIONS)
+def test_the_release_pull_request_accepts_a_canonical_pep440_version(version: str) -> None:
+    run = _normalise_release_version(version)
+
+    assert run.returncode == 0, run.output
+    assert run.outputs == {"version": version}
+
+
+def test_the_release_pull_request_strips_one_leading_v() -> None:
+    """A typed `v3.0.0a6` is the bare tag `3.0.0a6`; the strip is deliberate and predates the PEP 440 check."""
+    run = _normalise_release_version("v3.0.0a6")
+
+    assert run.returncode == 0, run.output
+    assert run.outputs == {"version": "3.0.0a6"}
+
+
+@pytest.mark.parametrize("version", ["vv3.0.0", "3.0.0-alpha6", "3.0.0A6", "3.0.0.a6", "not-a-version"])
+def test_the_release_pull_request_refuses_a_non_canonical_version(version: str) -> None:
+    run = _normalise_release_version(version)
+
+    assert run.returncode != 0
+    assert "::error::" in run.output
+    assert "version" not in run.outputs
 
 
 def test_the_release_trigger_passes_the_prerelease_flag_through() -> None:
@@ -1343,6 +1665,29 @@ def test_latest_moves_only_for_a_stable_release_github_calls_latest(
     if prerelease == "false":
         assert argv[:2] == ["api", "repos/opsmill/infrahub-sync/releases/latest"]
         assert "tag_name" in " ".join(argv[2:])
+
+
+@pytest.mark.parametrize(
+    ("stub_exit", "stderr", "ok"),
+    [("1", "gh: Not Found (HTTP 404)", True), ("1", "gh: Server Error (HTTP 500)", False), ("1", "", False)],
+    ids=["404-no-release", "500", "no-network"],
+)
+def test_only_a_404_reads_as_no_latest_release(stub_exit: str, stderr: str, *, ok: bool) -> None:
+    """An auth failure or outage must stop the release, not quietly keep `latest` where it was."""
+    step = docker_meta_step("decide latest", lambda step: "releases/latest" in str(step.get("run", "")))
+
+    run = _run_step(
+        str(step["run"]),
+        {"VERSION": "3.0.0", "PRERELEASE": "false", "STUB_EXIT": stub_exit, "STUB_STDERR": stderr},
+    )
+
+    if ok:
+        assert run.returncode == 0, run.output
+        assert run.outputs["latest"] == "false"
+    else:
+        assert run.returncode != 0
+        assert "::error::" in run.output
+        assert "latest" not in run.outputs
 
 
 def test_the_metadata_action_is_pinned_to_a_full_commit_sha_with_its_version() -> None:

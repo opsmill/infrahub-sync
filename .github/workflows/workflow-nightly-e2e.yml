@@ -247,7 +247,7 @@ jobs:
         env:
           INFRAHUB_SYNC_DOCKER_IMAGE: infrahub-sync
           VERSION: compose-test
-        run: uv run --no-sync pytest -m compose tests/compose -x
+        run: uv run --no-sync pytest -m compose tests/compose -x --compose-zero-skip
 
       - name: "Upload the diagnostics of a failed Compose case"
         if: failure()

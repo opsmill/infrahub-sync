@@ -4,8 +4,9 @@ name: Build And Push Docker image
 run-name: "Image ${{ inputs.ref }} (publish=${{ inputs.publish }})"
 
 # Reusable Harbor build-and-push workflow, shaped like infrahub-mcp's file of the
-# same name. Every platform is built, loaded and smoke-tested before anything is
-# pushed; `merge`, `sign` and `sbom` only run when publishing.
+# same name. Every platform is built, loaded and smoke-tested; no tag is applied
+# until every platform has passed its smoke test. `merge`, `sign` and `sbom` only
+# run when publishing.
 #
 # A caller that publishes passes `secrets: inherit`. A build-only caller, such as
 # the pull-request gate, passes no secrets.
@@ -81,9 +82,12 @@ on:
 permissions:
   contents: read
 
+# A newer build-only run cancels an older one for the same ref. A publishing run
+# is never cancelled: stopping it between `merge` and `sign` would leave a pushed
+# tag with no signature or SBOM.
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !inputs.publish }}
 
 jobs:
   build:
@@ -99,13 +103,24 @@ jobs:
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
     steps:
-      - name: Refuse to publish without a tag
+      # An empty HARBOR_HOST would point docker/login-action at Docker Hub, with
+      # the Harbor credentials, so a publish without one stops here.
+      - name: Refuse to publish without a tag or a registry
         env:
           PUBLISH: ${{ inputs.publish }}
           TAGS: ${{ inputs.tags }}
+          HARBOR_HOST: ${{ vars.HARBOR_HOST }}
         run: |
-          if [ "${PUBLISH}" = "true" ] && ! printf '%s\n' "${TAGS}" | grep -q '[^[:space:]]'; then
+          set -euo pipefail
+          if [ "${PUBLISH}" != "true" ]; then
+            exit 0
+          fi
+          if ! printf '%s\n' "${TAGS}" | grep -q '[^[:space:]]'; then
             echo "::error::publishing needs at least one tag"
+            exit 1
+          fi
+          if [ -z "${HARBOR_HOST//[[:space:]]/}" ]; then
+            echo "::error::publishing needs the HARBOR_HOST variable; without it the login would go to Docker Hub"
             exit 1
           fi
 
@@ -115,6 +130,7 @@ jobs:
           PLATFORMS: ${{ inputs.platforms }}
           PLATFORM: ${{ matrix.platform }}
         run: |
+          set -euo pipefail
           if [[ ",${PLATFORMS// /}," != *",${PLATFORM},"* ]]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -183,6 +199,11 @@ jobs:
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
+          set -euo pipefail
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::the push returned no digest"
+            exit 1
+          fi
           mkdir -p /tmp/digests
           touch "/tmp/digests/${DIGEST#sha256:}"
 
@@ -227,10 +248,16 @@ jobs:
           REPOSITORY: ${{ vars.HARBOR_HOST }}/${{ github.repository }}
           TAGS: ${{ inputs.tags }}
         run: |
+          set -euo pipefail
+          shopt -s nullglob
           SOURCES=()
           for digest in *; do
             SOURCES+=("${REPOSITORY}@sha256:${digest}")
           done
+          if [ "${#SOURCES[@]}" -eq 0 ]; then
+            echo "::error::no platform digest was downloaded; refusing to create an empty manifest list"
+            exit 1
+          fi
           TAG_ARGS=()
           while IFS= read -r tag; do
             tag="${tag//[[:space:]]/}"
@@ -244,6 +271,7 @@ jobs:
         env:
           TAGS: ${{ inputs.tags }}
         run: |
+          set -euo pipefail
           FIRST_TAG=""
           while IFS= read -r tag; do
             tag="${tag//[[:space:]]/}"
@@ -251,8 +279,16 @@ jobs:
             FIRST_TAG="$tag"
             break
           done <<< "${TAGS}"
+          if [ -z "${FIRST_TAG}" ]; then
+            echo "::error::no tag to inspect"
+            exit 1
+          fi
           digest=$(docker buildx imagetools inspect "$FIRST_TAG" \
             --format '{{json .Manifest}}' | jq -r '.digest')
+          if ! [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::${FIRST_TAG} resolved to '${digest}', which is not a manifest digest"
+            exit 1
+          fi
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
   sign:
@@ -277,6 +313,7 @@ jobs:
         env:
           IMAGE: ${{ vars.HARBOR_HOST }}/${{ github.repository }}@${{ needs.merge.outputs.digest }}
         run: |
+          set -euo pipefail
           # cosign gives up after two internal attempts when a Sigstore transparency
           # log write fails, so retry the whole command: three attempts with a
           # growing backoff. The sbom job carries a verbatim copy of this function
@@ -335,6 +372,7 @@ jobs:
         env:
           IMAGE: ${{ vars.HARBOR_HOST }}/${{ github.repository }}@${{ needs.merge.outputs.digest }}
         run: |
+          set -euo pipefail
           # Same transparency-log flakiness the sign job guards against; this is a
           # verbatim copy of that job's retry function. Keep the two copies identical.
           retry() {

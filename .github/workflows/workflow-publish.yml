@@ -112,8 +112,18 @@ jobs:
           set -euo pipefail
           LATEST=false
           if [ "${PRERELEASE}" != "true" ]; then
-            # No release yet, or no access, reads as "not latest": the safe answer.
-            LATEST_TAG=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>/dev/null || true)
+            # Only a 404 means "no latest release yet", which reads as "not latest".
+            # Any other failure (auth, rate limit, outage) stops the run: guessing
+            # would publish the image with the wrong `latest` decision.
+            API_ERROR=$(mktemp)
+            if LATEST_TAG=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>"${API_ERROR}"); then
+              :
+            elif grep -q 'HTTP 404' "${API_ERROR}"; then
+              LATEST_TAG=""
+            else
+              echo "::error::could not read the latest GitHub release: $(tr '\n' ' ' < "${API_ERROR}")"
+              exit 1
+            fi
             if [ -n "${LATEST_TAG}" ] && [ "${LATEST_TAG}" = "${VERSION}" ]; then
               LATEST=true
             fi
@@ -144,7 +154,6 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      packages: write
     uses: ./.github/workflows/ci-docker-image.yml
     secrets: inherit
     with:
