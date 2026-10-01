@@ -136,13 +136,13 @@ def test_registered_verify_reaches_http_request(
     instance = resolve_runtime_instance(package, directory="/registered")
     with warnings.catch_warnings():
         client = object.__new__(AciAdapter)._create_aci_client(instance.source)
-    assert client.verify is expected
-    assert client.base_url == f"{BASE_SETTINGS['url']}/api/"
-    assert client.username == "registered-user"
-    assert client.password == "registered-password"  # noqa: S105 - synthetic test credential.
-    response = Response()
-    response.status_code = 200
     try:
+        assert client.verify is expected
+        assert client.base_url == f"{BASE_SETTINGS['url']}/api/"
+        assert client.username == "registered-user"
+        assert client.password == "registered-password"  # noqa: S105 - synthetic test credential.
+        response = Response()
+        response.status_code = 200
         with patch.object(client.session, "request", return_value=response) as request:
             assert client._handle_request(client.base_url + "class/fabricNode.json") is response
         assert request.call_args.kwargs["verify"] is expected
