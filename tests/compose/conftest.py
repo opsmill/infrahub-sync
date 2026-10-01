@@ -38,7 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 
 # Turns a skipped Compose test into a failure, so a run that skipped everything
-# cannot pass as green.
+# cannot pass as green. The nightly `compose-suite` job passes it.
 ZERO_SKIP_OPTION = "--compose-zero-skip"
 
 # The two settings that choose the Sync image, and the default repository the file
@@ -66,7 +66,7 @@ def interpolated_settings() -> frozenset[str]:
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    """Register the flag the qualification command runs this suite with."""
+    """Register the flag the nightly `compose-suite` job runs this suite with."""
     parser.addoption(
         ZERO_SKIP_OPTION,
         action="store_true",
@@ -87,7 +87,7 @@ DIAGNOSTIC_DIR = REPO_ROOT / ".diagnostics"
 def pytest_runtest_makereport(
     item: pytest.Item, call: pytest.CallInfo[None]
 ) -> Generator[None, pytest.TestReport, pytest.TestReport]:
-    """Under qualification, turn a skipped mandatory case into a failed one.
+    """Under `--compose-zero-skip`, turn a skipped mandatory case into a failed one.
 
     Every row of the matrix is required, so a skip there is the claim quietly not
     being made. Changing the report itself is what makes the exit code follow,
@@ -99,7 +99,7 @@ def pytest_runtest_makereport(
     report = yield
     if report.skipped and item.get_closest_marker("compose") is not None and item.config.getoption(ZERO_SKIP_OPTION):
         report.outcome = "failed"
-        report.longrepr = f"{item.nodeid} skipped under qualification, where every matrix case is required"
+        report.longrepr = f"{item.nodeid} skipped under {ZERO_SKIP_OPTION}, where every matrix case is required"
     if report.when == "call":
         item.stash[FAILED] = report.failed
     return report

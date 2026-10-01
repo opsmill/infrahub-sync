@@ -5,6 +5,8 @@ Every Sync service in the root Compose file names its image as
 `update-docker-compose` rewrites `X` on those lines, and `validate-docker-compose`
 refuses a file where any of them names another version. Both edit or read the file
 as text, line by line, so comments, ordering and third-party pins stay byte-for-byte.
+Both also refuse an `image:` line that references the Sync image in any other form,
+such as a hard-coded tag or `:latest`, rather than skip it.
 
 Unlike infrahub, which bumps only for stable releases, this runs for pre-releases
 too: every tag in this repository publishes an image of the same version.
@@ -28,6 +30,14 @@ DOCKER_COMPOSE_FILE = REPO_BASE / "docker-compose.yml"
 # Only a line carrying this is a Sync image line; any other `${VERSION:-...}` is left alone.
 SYNC_IMAGE_MARKER = "registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-"
 VERSION_DEFAULT = re.compile(r"\$\{VERSION:-(?P<version>[^}]*)\}")
+# Any `image:` value that names the Sync image, in whatever form.
+SYNC_IMAGE_REFERENCE = re.compile(r"^\s*(?:-\s*)?image:.*opsmill/infrahub-sync")
+# The one form the tasks pin, optionally quoted and followed by a comment.
+PINNED_SYNC_IMAGE = re.compile(
+    r"^\s*(?:-\s*)?image:\s*(?P<quote>[\"']?)"
+    r"\$\{INFRAHUB_SYNC_DOCKER_IMAGE:-registry\.opsmill\.io/opsmill/infrahub-sync\}"
+    r":\$\{VERSION:-(?P<version>[^}\s\"']+)\}(?P=quote)\s*(?:#.*)?$"
+)
 
 
 def _canonical(version: str) -> str:
@@ -55,20 +65,35 @@ def _compose_path(docker_file: str | None) -> Path:
     return path
 
 
-def _sync_image_pins(lines: list[str]) -> list[tuple[int, str]]:
-    """Return `(line index, pinned version)` for every Sync image line."""
+def _sync_image_pins(path: Path, lines: list[str]) -> list[tuple[int, str]]:
+    """Return `(line index, pinned version)` for every Sync image line.
+
+    Stops the task when a line references the Sync image as its `image:` but not in
+    pinned form, listing every such line: skipping it would leave it unpinned.
+    """
     pins = []
+    malformed = []
     for index, line in enumerate(lines):
-        if SYNC_IMAGE_MARKER not in line:
+        if not SYNC_IMAGE_REFERENCE.match(line):
             continue
-        match = VERSION_DEFAULT.search(line, line.index(SYNC_IMAGE_MARKER))
+        match = PINNED_SYNC_IMAGE.match(line.rstrip("\r\n"))
         if match:
             pins.append((index, match["version"]))
+        else:
+            malformed.append(f"line {index + 1}: {line.strip()}")
+    if malformed:
+        log.error("compose_image_line_not_pinned", file=str(path), offending=malformed)
+        msg = (
+            f"{path} references the Sync image outside the pinned form "
+            f"'${{INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}}:${{VERSION:-X}}':\n  "
+            + "\n  ".join(malformed)
+        )
+        raise Exit(msg, code=1)
     return pins
 
 
 def _require_pins(path: Path, lines: list[str]) -> list[tuple[int, str]]:
-    pins = _sync_image_pins(lines)
+    pins = _sync_image_pins(path, lines)
     if not pins:
         msg = f"{path} has no Sync image line containing '{SYNC_IMAGE_MARKER}'."
         raise Exit(msg, code=1)

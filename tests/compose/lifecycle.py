@@ -18,7 +18,7 @@ import httpx
 import pytest
 
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
-from tests.compose.conftest import COMPOSE_FILE, PROJECT_LABEL, compose, start_command
+from tests.compose.conftest import COMPOSE_FILE, compose, start_command
 from tests.compose.redaction import SECRETS, Captured, capture
 
 if TYPE_CHECKING:
@@ -330,17 +330,6 @@ def write_diagnostic(deployment: Deployment, destination: Path, *, named: Mappin
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(report, encoding="utf-8")
     return f"diagnostic written to {destination}"
-
-
-def owned_volumes(deployment: Deployment) -> dict[str, str]:
-    """Return the volumes Compose labelled for this exact project, and the label each carries."""
-    result = docker(["volume", "ls", "--quiet", "--filter", f"label={PROJECT_LABEL}={deployment.project}"])
-    assert result.returncode == 0, result.stderr
-    found = {}
-    for name in result.stdout.split():
-        labels = inspect(name, kind="volume").get("Labels") or {}
-        found[name] = labels.get(PROJECT_LABEL, "")
-    return found
 
 
 def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies independently

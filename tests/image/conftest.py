@@ -88,16 +88,29 @@ def external_image_references(dockerfile: str) -> list[str]:
 
 
 def _require(name: str, description: str) -> str:
+    """Return the setting `name`, skipping locally but failing on a CI runner when it is unset.
+
+    On GitHub Actions a missing image would turn every smoke test into a skip, and
+    an all-skipped suite reports green without having checked anything.
+    """
     value = os.environ.get(name)
     if not value:
-        pytest.skip(f"{name} is unset; build and load an image, then name it here ({description})")
+        message = f"{name} is unset; build and load an image, then name it here ({description})"
+        if os.environ.get("GITHUB_ACTIONS"):
+            pytest.fail(message)
+        pytest.skip(message)
     return value
+
+
+def require_image_ref() -> str:
+    """Return the loaded image reference under test, or skip (fail on CI) when it is unset."""
+    return _require(IMAGE_REFERENCE_ENV, "it names the loaded image")
 
 
 @pytest.fixture(scope="session")
 def image_ref() -> str:
     """Return the loaded image reference under test."""
-    return _require(IMAGE_REFERENCE_ENV, "it names the loaded image")
+    return require_image_ref()
 
 
 def docker(argv: Sequence[str], *, timeout: int = CONTAINER_TIMEOUT_SECONDS) -> subprocess.CompletedProcess[str]:

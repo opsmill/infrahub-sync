@@ -3,7 +3,8 @@
 `release.update-docker-compose` rewrites the `${VERSION:-...}` default on every Sync
 image line and nothing else; `release.validate-docker-compose` refuses a file whose
 Sync image lines pin any other version. Each test runs against a copy of a small
-fixture in `tmp_path`, never against the repository's own `docker-compose.yml`.
+fixture in `tmp_path`; the one exception only reads the repository's own
+`docker-compose.yml`, to catch a pin that drifted from `pyproject.toml`.
 """
 
 from __future__ import annotations
@@ -15,7 +16,9 @@ import pytest
 from invoke import Context
 from invoke.exceptions import Exit
 
-from tasks.release import update_docker_compose, validate_docker_compose
+from tasks.release import DOCKER_COMPOSE_FILE, update_docker_compose, validate_docker_compose
+
+PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 
 THIRD_PARTY_IMAGE = (
     'image: "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"'
@@ -42,6 +45,15 @@ services:
 """
 
 MIXED_PINS = FIXTURE.replace("${VERSION:-3.0.0a5}", "${VERSION:-3.0.0a4}", 1)
+PINNED_WORKER = 'image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"'
+# Each replaces the second Sync image line (line 10) with a reference the tasks cannot pin.
+MISFORMATTED_SYNC_IMAGES = {
+    "hard-coded-tag": 'image: "registry.opsmill.io/opsmill/infrahub-sync:3.0.0a5"',
+    "latest": "image: registry.opsmill.io/opsmill/infrahub-sync:latest",
+    "unclosed-version-default": (
+        'image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5"'
+    ),
+}
 
 
 def _sync_lines(text: str) -> list[str]:
@@ -152,3 +164,30 @@ def test_validate_fails_on_a_single_mismatched_line_among_matches(tmp_path: Path
     message = str(raised.value.message)
     assert "line 8: pins 3.0.0a4" in message
     assert "line 10" not in message
+
+
+@pytest.mark.parametrize("task", [update_docker_compose, validate_docker_compose], ids=["update", "validate"])
+@pytest.mark.parametrize("line", list(MISFORMATTED_SYNC_IMAGES.values()), ids=list(MISFORMATTED_SYNC_IMAGES))
+def test_a_sync_image_line_outside_the_pinned_form_fails(tmp_path: Path, task: Callable[..., None], line: str) -> None:
+    """Skipping such a line would leave a Sync service on an image the release does not pin."""
+    content = line.join(FIXTURE.rsplit(PINNED_WORKER, 1))
+    assert content != FIXTURE
+    path = tmp_path / "docker-compose.yml"
+    path.write_text(content, encoding="utf-8")
+
+    with pytest.raises(Exit) as raised:
+        task(Context(), version="3.0.0a5", docker_file=str(path))
+
+    message = str(raised.value.message)
+    assert raised.value.code != 0
+    assert f"line 10: {line}" in message
+    assert "line 8" not in message
+    assert path.read_text(encoding="utf-8") == content
+
+
+def test_the_repository_compose_file_pins_the_project_version() -> None:
+    """A release bump that forgets the Compose file is caught before the tag is."""
+    tomllib = pytest.importorskip("tomllib")  # Python 3.11+; the other interpreters still cover it
+    version = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["project"]["version"]
+
+    validate_docker_compose(Context(), version=version, docker_file=str(DOCKER_COMPOSE_FILE))
