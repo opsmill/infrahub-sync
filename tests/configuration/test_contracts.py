@@ -48,6 +48,7 @@ from infrahub_sync.configuration import (
 )
 from infrahub_sync.configuration import models as configuration_models
 from infrahub_sync.configuration.models import safe_pointer_component
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
 
 
 def _package(**updates: object) -> ConfigurationPackage:
@@ -639,7 +640,6 @@ def test_default_empty_credentials_cannot_mutate_after_validation() -> None:
     [
         pytest.param(_set_source_setting, id="source-settings"),
         pytest.param(_set_destination_setting, id="destination-settings"),
-        pytest.param(_set_store_setting, id="store-settings"),
         pytest.param(_append_order, id="order"),
         pytest.param(_append_diffsync_flag, id="diffsync-flags"),
         pytest.param(_append_schema_mapping, id="schema-mapping-list"),
@@ -652,7 +652,10 @@ def test_default_empty_credentials_cannot_mutate_after_validation() -> None:
 def test_declared_configuration_cannot_mutate_after_validation(
     mutate: Callable[[ConfigurationPackage], None],
 ) -> None:
-    package = _package_with_nested_declared_content()
+    """Keep validated package content immutable."""
+    content = _package_with_nested_declared_content().model_dump(mode="json")
+    del content["configuration"]["store"]
+    package = ConfigurationPackage.model_validate(content)
     validate_package_credentials(package)
     declared_content = package.declared_content()
     checksum = package.checksum()
@@ -663,6 +666,22 @@ def test_declared_configuration_cannot_mutate_after_validation(
     assert package.declared_content() == declared_content
     assert package.checksum() == checksum
     validate_package_credentials(package)
+
+
+def test_a_previously_declared_store_stays_immutable_when_validation_refuses_it() -> None:
+    """Keep legacy store declarations immutable after refusal."""
+    package = _package_with_nested_declared_content()
+    content = package.declared_content()
+    checksum = package.checksum()
+    with pytest.raises(CredentialConfigurationError) as caught:
+        validate_package_credentials(package)
+    assert str(caught.value) == UNSUPPORTED_STORE_MESSAGE
+
+    with pytest.raises(TypeError):
+        _set_store_setting(package)
+
+    assert package.declared_content() == content
+    assert package.checksum() == checksum
 
 
 def test_default_package_dump_is_json_native_and_round_trips() -> None:
@@ -1569,24 +1588,10 @@ def _unsupported_adapter_settings_message(settings: Mapping[str, object]) -> str
     return str(caught.value)
 
 
-def _unsupported_store_settings_message(settings: Mapping[str, object]) -> str:
-    data = _package().model_dump(mode="json")
-    data["configuration"]["store"] = {
-        "type": "redis",
-        "settings": {"host": "localhost", **settings},
-    }
-    package = ConfigurationPackage.model_validate(data)
-
-    with pytest.raises(CredentialConfigurationError) as caught:
-        validate_package_credentials(package)
-
-    return str(caught.value)
-
-
 @pytest.mark.parametrize(
     "message_for_settings",
-    [_unsupported_adapter_settings_message, _unsupported_store_settings_message],
-    ids=["adapter", "redis-store"],
+    [_unsupported_adapter_settings_message],
+    ids=["adapter"],
 )
 def test_unsupported_setting_name_lists_preserve_unambiguous_boundaries(
     message_for_settings: Callable[[Mapping[str, object]], str],
@@ -1947,6 +1952,7 @@ def test_reserved_reference_node_is_refused_in_schema_mapping_static_value() -> 
 
 
 def test_store_inline_credential_is_refused_without_echoing_value() -> None:
+    """Store inline credential is refused without echoing value."""
     canary = "store-inline-secret"
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {
@@ -1958,12 +1964,13 @@ def test_store_inline_credential_is_refused_without_echoing_value() -> None:
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package)
 
-    assert "inline credential" in str(caught.value)
+    assert str(caught.value) == UNSUPPORTED_STORE_MESSAGE
     assert canary not in str(caught.value)
 
 
 @pytest.mark.parametrize("setting", ["sentinel_password", "tls_key_password"])
 def test_redis_store_rejects_undeclared_credential_settings(setting: str) -> None:
+    """Redis stores with undeclared credential settings fail with the fixed refusal and leak no secret."""
     canary = "undeclared-store-secret"
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {
@@ -1975,11 +1982,12 @@ def test_redis_store_rejects_undeclared_credential_settings(setting: str) -> Non
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package)
 
-    assert "unsupported declared settings" in str(caught.value)
+    assert str(caught.value) == UNSUPPORTED_STORE_MESSAGE
     assert canary not in str(caught.value)
 
 
-def test_redis_store_renders_unsupported_control_name_safely_without_echoing_value() -> None:
+def test_redis_store_refusal_omits_control_names_and_values() -> None:
+    """Redis store refusal omits control names and values."""
     canary = "store-control-value-canary"
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {
@@ -1992,12 +2000,13 @@ def test_redis_store_renders_unsupported_control_name_safely_without_echoing_val
         validate_package_credentials(package)
 
     message = str(caught.value)
-    assert message == r"""store type 'redis' contains unsupported declared settings: ["bad\\nfield~0~1"]"""
+    assert message == UNSUPPORTED_STORE_MESSAGE
     assert all(ord(character) >= 32 and not 127 <= ord(character) <= 159 for character in message)
     assert canary not in message
 
 
 def test_reserved_reference_node_is_refused_in_store_settings() -> None:
+    """Reserved reference node is refused in store settings."""
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {
         "type": "redis",
@@ -2008,7 +2017,7 @@ def test_reserved_reference_node_is_refused_in_store_settings() -> None:
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package)
 
-    assert str(caught.value) == ("store type 'redis' contains unsupported declared settings: [\"token\"]")
+    assert str(caught.value) == UNSUPPORTED_STORE_MESSAGE
 
 
 def test_declared_references_validate_without_resolving_environment() -> None:
@@ -2432,6 +2441,7 @@ def test_relative_endpoint_forms_remain_accepted(endpoint: str) -> None:
 
 
 def test_unknown_store_type_with_settings_is_refused_not_a_key_error() -> None:
+    """Unknown store type with settings is refused not a key error."""
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {"type": "mystery", "settings": {"url": "redis://localhost"}}
     package = ConfigurationPackage.model_validate(data)
@@ -2439,7 +2449,7 @@ def test_unknown_store_type_with_settings_is_refused_not_a_key_error() -> None:
     with pytest.raises(CredentialConfigurationError) as caught:
         validate_package_credentials(package)
 
-    assert str(caught.value) == "store type 'mystery' has no configuration capability declaration"
+    assert str(caught.value) == UNSUPPORTED_STORE_MESSAGE
 
 
 def test_store_declaration_cannot_be_half_declared() -> None:

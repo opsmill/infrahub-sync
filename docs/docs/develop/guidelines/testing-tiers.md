@@ -18,6 +18,8 @@ the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-syn
 and `check-310` were run at that revision. The integration sequence below was not replayed
 live for this revision; the nightly workflow runs a similar sequence.
 
+The Redis rows and steps were removed afterward, because V3 refuses configured sync stores; that part of the guide describes the later test classification, not this revision.
+
 Which test command to run, what each one needs before it can prove anything, and what it
 writes. [Testing](testing.md) covers what makes an individual test worth having; this page
 covers which suite it belongs in and which gate runs it.
@@ -102,7 +104,6 @@ needs, the second names each setting and where to get it.
 | Live stack | A running development stack, probed rather than configured | managed write-guard live |
 | Prefect idempotency | The `prefect` and `opsmill_prefect_extras` imports only | [`tests/integration/test_service_prefect_idempotency.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration/test_service_prefect_idempotency.py) |
 | Product store on PostgreSQL | A disposable PostgreSQL at `PRODUCT_STORE_TEST_POSTGRESQL_DSN`, plus `psycopg` | [`tests/product_store/test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_contract.py), [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_configuration_baseline.py), [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_write_admission.py), [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/service/test_apply_versus_verify_race.py) |
-| Redis store compatibility | A reachable `REDIS_URL` | [`tests/test_redis_store_compat.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/test_redis_store_compat.py) |
 
 | Setting | Points to | How to get it from the local stacks |
 |---|---|---|
@@ -115,13 +116,12 @@ needs, the second names each setting and where to get it.
 | `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_BUCKET`, `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_ENDPOINT_URL` | An S3-compatible bucket | The preview MinIO: bucket `infrahub-sync-preview` at `http://127.0.0.1:9010`. `preview.up` creates the bucket |
 | `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_PREFIX`, `INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_REGION` | Optional; the key prefix and region | Defaults: `integration` for the storage test, `us-east-1` for the region |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Credentials for that bucket | `PREVIEW_MINIO_ACCESS_KEY` and `PREVIEW_MINIO_SECRET_KEY` from `development/preview.env` |
-| `REDIS_URL` | A disposable Redis | A separate container. Neither local stack includes Redis |
 
 Use a separate, empty database for each of the three PostgreSQL settings. Do not reuse the
 preview service's own `infrahub_sync` database: these tests lock, terminate, create, and drop
 objects in the database they receive.
 
-Four families need more detail than the tables give:
+Three families need more detail than the tables give:
 
 - **Saved-plan apply** needs a NetBox reachable at `NETBOX_URL`, seeded with the fixed dataset
   the test module's own docstring describes (sites `site-a`/`site-b`/`site-c`, racks
@@ -175,13 +175,12 @@ Four families need more detail than the tables give:
     uv run --with 'psycopg[binary]' pytest -m integration tests/product_store tests/service
   ```
 
-- **Redis store compatibility** runs one functional round trip against a live server. Set
-  `REDIS_URL`; the test pings it first and skips when it is unset or unreachable. It writes
-  adapter state under its own store identifiers.
+V3 refuses configured sync stores, including Redis. The remaining Redis compatibility
+checks are unit tests and need no Redis server:
 
-  ```bash
-  REDIS_URL="redis://127.0.0.1:6379/0" uv run pytest -m integration tests/test_redis_store_compat.py
-  ```
+```bash
+uv run pytest tests/test_redis_store_compat.py tests/test_sync_store_policy.py tests/service/test_sync_store_policy.py
+```
 
 Most of the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-sync/tree/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration)
 also describe their setup in a module docstring, including the warnings about disposable
@@ -189,7 +188,7 @@ targets.
 
 ##### Run the complete tier
 
-This sequence uses the preview stack, a separate Redis container, and the local NetBox. Run it
+This sequence uses the preview stack and the local NetBox. Run it
 from the repository root. The values in angle brackets come from `development/preview.env` or
 from the `netbox.seed` output; do not commit them.
 
@@ -197,7 +196,6 @@ from the `netbox.seed` output; do not commit them.
 
    ```bash
    uv run invoke preview.up
-   docker run --detach --rm --name sync-test-redis -p 127.0.0.1:6379:6379 redis:7-alpine
    for database in apply_guard_test product_store_test storage_test; do
      docker exec infrahub-sync-preview-sync-postgres-1 createdb -U postgres "$database"
    done
@@ -216,7 +214,6 @@ from the `netbox.seed` output; do not commit them.
    export INFRAHUB_SYNC_STORAGE_INTEGRATION_S3_ENDPOINT_URL="http://127.0.0.1:9010"
    export AWS_ACCESS_KEY_ID="<PREVIEW_MINIO_ACCESS_KEY>"
    export AWS_SECRET_ACCESS_KEY="<PREVIEW_MINIO_SECRET_KEY>"
-   export REDIS_URL="redis://127.0.0.1:6379/0"
    ```
 
    For the remote-run test, also start the served deployment in a second terminal, as
@@ -253,14 +250,12 @@ from the `netbox.seed` output; do not commit them.
    ```bash
    uv run invoke preview.down --volumes
    uv run invoke netbox.down
-   docker stop sync-test-redis
    ```
 
    Stop the served deployment if you started one.
 
 The nightly workflow runs the same families through `.github/scripts/nightly_e2e.py`, which
-derives the settings from the preview configuration. It sets no `REDIS_URL`, so the Redis
-family skips there.
+derives the settings from the preview configuration.
 
 What these tests do to their targets differs, and the difference matters when you choose what to
 point them at:
@@ -270,7 +265,7 @@ point them at:
 - [`test_destination_schema_live_read.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration/test_destination_schema_live_read.py)
   reads a live Infrahub's schema and performs no mutation.
 - **Every other live-backed family** mutates, locks or writes the target it names — Infrahub
-  branches and nodes, the guard and product-store databases, the durable store, Redis, or the
+  branches and nodes, the guard and product-store databases, the durable store, or the
   development stack. Point each of those at something disposable.
 
 ##### The `from-netbox` example check

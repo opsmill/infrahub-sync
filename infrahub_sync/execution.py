@@ -48,6 +48,7 @@ from infrahub_sync.cache.locks import pipeline_lock
 from infrahub_sync.cache.paths import cache_root_for
 from infrahub_sync.cache.sidecars import RunFile
 from infrahub_sync.configuration.models import REDACTED
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
@@ -1129,7 +1130,7 @@ def execute_run(
         RunConcurrencyError: the same synchronization remains locked after the
             bounded wait, with advisory context from the latest running sidecar.
         RunValidationError: an unsupported operation, a composed sync write, a
-            missing saved-plan id, an unconfirmed write, or an apply with no
+            configured sync store, missing saved-plan id, an unconfirmed write, or an apply with no
             write-ownership boundary (all refused before an adapter is built).
     """
     _validate_operation_request(
@@ -1139,6 +1140,9 @@ def execute_run(
         ownership=ownership,
         record_applied=record_applied,
     )
+
+    if sync_instance.store is not None:
+        raise RunValidationError(UNSUPPORTED_STORE_MESSAGE)
 
     if operation == "verify":
         assert run_id is not None  # narrowed above; verification never allocates a run.

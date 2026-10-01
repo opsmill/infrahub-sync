@@ -22,7 +22,6 @@ Describes the overall synchronization configuration.
 | Property | Type | Description | Mandatory |
 | -------- | ---- | ----------- | --------- |
 | `name` | string | Unique identifier for the sync instance. | Yes |
-| `store` | `SyncStore` | Configuration for the optional storage mechanism. | No |
 | `source` | `SyncAdapter` | Configuration for the source adapter. | Yes |
 | `destination` | `SyncAdapter` | Configuration for the destination adapter. | Yes |
 | `order` | List of strings | Order in which objects should be synchronized. Optional — when omitted, infrahub-sync auto-computes tiers from schema_mapping. | No |
@@ -79,14 +78,12 @@ tier is the kind's position in the list you gave. The ordering is the same eithe
 the reviewed operation sequence is what an apply consumes, and there is no separate
 serial or parallel execution mode to choose.
 
-### Sync store
+### Sync data storage
 
-Optional configuration for a storage mechanism used for stateful synchronization.
-
-| Property | Type | Description | Mandatory |
-| -------- | ---- | ----------- | --------- |
-| type | string | Type of the store (for example    `redis`). | Yes |
-| settings | Dictionary | Connection details and other settings for the store. | No |
+V3 keeps sync data in memory during a run. It does not support a configured store,
+including Redis. Remove any `store` block before registering a configuration package.
+Removing the block from your local files does not change a version you already
+registered: register a new version, then run that version.
 
 <!-- vale off -->
 ### Source and Destination
