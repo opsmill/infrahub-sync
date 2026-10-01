@@ -30,20 +30,19 @@ Apply appropriate labels to PRs before merging. Labels determine the version bum
 
 | Label | Version Bump | Use When |
 |-------|--------------|----------|
-| `changes/major`, `type/breaking-change` | Major (1.0.0 → 2.0.0) | Breaking API changes |
-| `changes/minor`, `type/feature`, `type/refactoring` | Minor (1.0.0 → 1.1.0) | New features, refactoring |
-| `changes/patch`, `type/bug`, `type/housekeeping`, `type/documentation` | Patch (1.0.0 → 1.0.1) | Bug fixes, docs, maintenance |
+| `changes/major` | Major (1.0.0 → 2.0.0) | Breaking API changes |
+| `changes/minor` | Minor (1.0.0 → 1.1.0) | New features, refactoring |
+| `changes/patch` | Patch (1.0.0 → 1.0.1) | Bug fixes, docs, maintenance |
 
-The bump labels live in `.github/version-drafter.yml`. Apply them manually:
+The bump labels live in `.github/version-drafter.yml`. Every normal pull request must have exactly one — `release-label-check.yml` fails the pull request otherwise; `type/*` labels classify work but do not affect the release version. Dependabot and `update-infrahub-sdk.yml` apply `changes/patch` themselves. Apply the release-intent label manually:
 
 | PR Title Pattern | Recommended Label |
 |------------------|-------------------|
-| Contains `fix` | `type/bug` |
-| Contains `enhance`, `improve`, `feature` | `type/feature` |
-| Contains `chore` | `ci/skip-changelog` |
-| Contains `deprecat` | `type/deprecated` |
+| Contains `breaking` or an incompatible API change | `changes/major` |
+| Contains `enhance`, `improve`, `feature`, or `refactor` | `changes/minor` |
+| Contains `fix`, `docs`, `chore`, or a dependency update | `changes/patch` |
 
-Every pull request into `main` must also carry a news fragment under `changelog/` — `changelog-check.yml` enforces this. See the Changelog section of [AGENTS.md](AGENTS.md).
+Every pull request into `main` must also carry a news fragment under `changelog/`, checked by `changelog-check.yml` (its `pull_request` trigger is currently disabled while the towncrier rollout is reconsidered, so the gate only runs when dispatched). `ci/skip-changelog` remains a separate opt-out for changes that need no release-note entry. See the Changelog section of [AGENTS.md](AGENTS.md).
 
 ### Step 2: Merge to main
 
@@ -195,6 +194,7 @@ Ensure PRs have appropriate labels before merging. If labels are missing, the ve
 | Workflow | Type | Purpose |
 |----------|------|---------|
 | `changelog-check.yml` | PR into `main` | Requires a news fragment on every pull request |
+| `release-label-check.yml` | PR into `main` (`pull_request_target`) | Requires exactly one `changes/*` release bump label; runs as defined on `main`, so changes to it apply only after merge |
 | `trigger-push-stable.yml` | Dispatched on `main` | Resolves the version, bumps `pyproject.toml`, assembles the changelog, opens the release pull request |
 | `release-publish.yml` | Push to `main` | Tags and publishes the GitHub Release when a `release/*` pull request lands |
 | `trigger-release.yml` | GitHub Release published | Invokes the publish workflow |
