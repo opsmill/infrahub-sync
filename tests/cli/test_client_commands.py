@@ -853,6 +853,7 @@ def test_closed_client_errors_map_to_cli_exits(
 
 @pytest.mark.parametrize("operation", ["register", "diff"])
 def test_store_refusal_explains_how_to_keep_data_in_memory(tmp_path: Path, client: MagicMock, operation: str) -> None:
+    """Store refusal explains how to keep data in memory."""
     if operation == "register":
         package_path = tmp_path / "package.json"
         package_path.write_text("{}", encoding="utf-8")
@@ -867,5 +868,5 @@ def test_store_refusal_explains_how_to_keep_data_in_memory(tmp_path: Path, clien
     result = _invoke(client, *arguments)
 
     assert result.exit_code == 1
-    assert "Redis storage is not supported in V3." in result.output
+    assert "Configured sync stores, including Redis, are not supported in V3." in result.output
     assert "Remove the store block to keep sync data in memory." in result.output

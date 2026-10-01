@@ -38,7 +38,7 @@ from .models import (
     safe_pointer_component,
     sort_findings,
 )
-from .storage import UNSUPPORTED_STORE_MESSAGE
+from .storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from .warnings import accumulate_intentional_omissions, accumulate_unqualified_optional_features
 
 if TYPE_CHECKING:
@@ -66,7 +66,7 @@ _CODE_FINDING_LIMIT_REACHED = "finding-limit-reached"
 _CODE_INLINE_CREDENTIAL_VALUE = "inline-credential-value"
 _CODE_MALFORMED_CREDENTIAL_REFERENCE = "malformed-credential-reference"
 _CODE_MISSING_ADAPTER = "missing-adapter"
-_CODE_UNSUPPORTED_SYNC_STORE = "unsupported-sync-store"
+_CODE_UNSUPPORTED_SYNC_STORE = UNSUPPORTED_STORE_REASON
 _CODE_SETTING_CONTAINS_CREDENTIAL_MATERIAL = "setting-contains-credential-material"
 _CODE_SETTING_NOT_A_STRING = "setting-not-a-string"
 _CODE_UNDECLARED_SETTING = "undeclared-setting"

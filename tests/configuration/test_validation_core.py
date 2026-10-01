@@ -46,6 +46,7 @@ def test_a_valid_package_produces_no_findings() -> None:
 
 
 def test_independent_defects_each_become_one_finding() -> None:
+    """Independent defects each become one finding."""
     data = package_data()
     data["credentials"]["netbox-token"]["provider"] = "vault"
     data["configuration"]["source"]["settings"]["url"] = "demo.netbox.dev"
@@ -260,6 +261,7 @@ def test_a_missing_adapter_is_expressible_as_a_finding() -> None:
 def test_a_missing_adapter_suppresses_only_its_own_role() -> None:
     # Its settings cannot be judged against a surface that does not exist, so claiming a finding
     # about them would be inventing one. Everything else still runs.
+    """A missing adapter suppresses only its own role."""
     data = package_data()
     data["configuration"]["source"]["name"] = "NetBox"
     data["configuration"]["source"]["settings"]["bogus_source"] = 1
@@ -275,6 +277,7 @@ def test_a_missing_adapter_suppresses_only_its_own_role() -> None:
 
 def test_an_undeclared_store_type_suppresses_only_its_own_settings() -> None:
     # Refusing the whole store owns its settings; unrelated adapter defects still report.
+    """Refuse an unknown store without suppressing unrelated findings."""
     data = package_data()
     data["configuration"]["store"] = {"type": "mystery", "settings": {"url": {"$credential": "netbox-token"}}}
     data["configuration"]["destination"]["settings"]["bogus_dest"] = 1
@@ -288,6 +291,7 @@ def test_an_undeclared_store_type_suppresses_only_its_own_settings() -> None:
 
 
 def test_an_undeclared_store_type_carrying_nothing_is_refused() -> None:
+    """An undeclared store type carrying nothing is refused."""
     data = package_data()
     data["configuration"]["store"] = {"type": "mystery", "settings": {}}
 
@@ -819,13 +823,19 @@ FROZEN_CODES = frozenset(
 
 
 def _declared_codes(tree: ast.AST) -> set[str]:
+    """Collect local finding codes and aliases of imported shared constants."""
     declared: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
         names = [target.id for target in node.targets if isinstance(target, ast.Name)]
-        if any(name.startswith("_CODE_") for name in names) and isinstance(node.value, ast.Constant):
-            declared.add(str(node.value.value))
+        if any(name.startswith("_CODE_") for name in names):
+            if isinstance(node.value, ast.Constant):
+                declared.add(str(node.value.value))
+            elif isinstance(node.value, ast.Name):
+                value = getattr(validation, node.value.id)
+                assert isinstance(value, str)
+                declared.add(value)
     return declared
 
 
@@ -843,6 +853,7 @@ def _kebab_literals(tree: ast.AST) -> set[str]:
 
 
 def test_the_core_can_emit_exactly_the_frozen_code_enumeration() -> None:
+    """Keep local and shared finding codes within the frozen public inventory."""
     # Collected from the implementation, not restated: a new check introduces a code here and
     # this test is what asks whether the envelope agreed to it.
     tree = ast.parse(Path(validation.__file__).read_text(encoding="utf-8"))
@@ -850,7 +861,9 @@ def test_the_core_can_emit_exactly_the_frozen_code_enumeration() -> None:
     assert _declared_codes(tree) == FROZEN_CODES
     # A code written as a bare literal rather than as a _CODE_ constant would slip past the
     # scan above; every finding code is kebab-case and nothing else in the module is.
-    assert _kebab_literals(tree) == FROZEN_CODES
+    assert _kebab_literals(tree) == FROZEN_CODES - {"unsupported-sync-store"}
+    # The store reason has one shared definition; its alias still belongs to the inventory.
+    assert validation._CODE_UNSUPPORTED_SYNC_STORE == "unsupported-sync-store"
 
 
 def _totality_package_data() -> dict[str, Any]:
@@ -888,6 +901,7 @@ def _totality_package_data() -> dict[str, Any]:
 def test_one_package_carrying_every_reachable_family_keeps_the_sort_total() -> None:
     # Nine of these codes appear more than once and are separated only by location, which is
     # the collision a per-family test cannot see.
+    """Order all reachable findings deterministically."""
     findings = collect_findings(package(_totality_package_data()))
 
     keys = [(finding.location, finding.severity, finding.code) for finding in findings]

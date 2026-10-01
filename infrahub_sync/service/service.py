@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
-from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.execution import collect_secret_values, redact, sanitize_exception_chain
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
@@ -144,17 +144,6 @@ class RunService:
             config_id=request.config_id,
             branch=request.branch,
         )
-        sync_name, package_checksum = self._registered_configuration(request)
-        if request.operation == "sync" and not request.confirm_writes:
-            self._audit(
-                None,
-                actor=principal.actor,
-                operation="sync",
-                reason=request.reason,
-                outcome="refused-confirmation",
-            )
-            raise self._error(409, "confirmation-required", "confirm_writes=true is required for sync")
-
         run_id = generate_run_id()
         now = datetime.now(timezone.utc)
         receipt = self._new_receipt(
@@ -167,6 +156,22 @@ class RunService:
             reason=request.reason,
             now=now,
         )
+        existing = self._projection.lookup_mutation(receipt.actor, receipt.key_digest).value
+        if existing is not None:
+            self._require_matching_receipt(existing, receipt)
+            if existing.state == "accepted":
+                return await self._resume_or_replay(existing, {}, principal, request.reason)
+        sync_name, package_checksum = self._registered_configuration(request.config_id, request.registry_version)
+        if request.operation == "sync" and not request.confirm_writes:
+            self._audit(
+                None,
+                actor=principal.actor,
+                operation="sync",
+                reason=request.reason,
+                outcome="refused-confirmation",
+            )
+            raise self._error(409, "confirmation-required", "confirm_writes=true is required for sync")
+
         run = ProductRun(
             run_id=run_id,
             operation=request.operation,
@@ -207,9 +212,11 @@ class RunService:
         }
         return await self._submit(reserved, parameters, principal, request.reason)
 
-    def _registered_configuration(self, request: CreateRunRequest) -> tuple[str, str]:
+    def _registered_configuration(
+        self, config_id: str, registry_version: int, *, expected_checksum: str | None = None
+    ) -> tuple[str, str]:
         """Read the immutable registered package before allocating any run-side state."""
-        stored = self._projection.lookup_configuration_version(request.config_id, request.registry_version).value
+        stored = self._projection.lookup_configuration_version(config_id, registry_version).value
         if stored is None:
             raise self._error(
                 404, "configuration-version-not-found", "the requested configuration version does not exist"
@@ -220,10 +227,12 @@ class RunService:
             raise self._error(
                 503, "configuration-version-invalid", "the registered configuration version is invalid"
             ) from None
-        if package.checksum() != stored.package_checksum:
+        if package.checksum() != stored.package_checksum or (
+            expected_checksum is not None and expected_checksum != stored.package_checksum
+        ):
             raise self._error(503, "configuration-version-invalid", "the registered configuration version is invalid")
         if package.configuration.store is not None:
-            raise self._error(422, "unsupported-sync-store", UNSUPPORTED_STORE_MESSAGE)
+            raise self._error(422, UNSUPPORTED_STORE_REASON, UNSUPPORTED_STORE_MESSAGE)
         return package.configuration.name, stored.package_checksum
 
     async def verify_run(
@@ -243,6 +252,7 @@ class RunService:
         )
         if existing is not None:
             return await self._resume_or_replay(existing, parameters, principal, request.reason)
+        self._require_supported_run_configuration(run)
         self._plan(run_id)
         receipt = self._reserve_existing(
             run,
@@ -293,6 +303,7 @@ class RunService:
                 outcome="refused-confirmation",
             )
             raise self._error(409, "confirmation-required", "confirm_writes=true is required for apply", run_id=run_id)
+        self._require_supported_run_configuration(run)
         plan = self._plan(run_id)
         if not plan.checksum_ok or plan.checksum != request.expected_checksum:
             self._audit(
@@ -734,6 +745,12 @@ class RunService:
         self._require_matching_receipt(existing, requested)
         return existing
 
+    def _require_supported_run_configuration(self, run: ProductRun) -> None:
+        """Validate the immutable binding before submitting another execution."""
+        binding = run.configuration_binding
+        if binding is not None:
+            self._registered_configuration(binding[0], binding[1], expected_checksum=binding[2])
+
     async def _resume_or_replay(
         self,
         receipt: MutationReceipt,
@@ -741,6 +758,7 @@ class RunService:
         principal: Principal,
         reason: str,
     ) -> tuple[int, dict[str, Any]]:
+        """Replay completed receipts and revalidate configurations before submission."""
         if receipt.state == "accepted":
             self._audit(
                 receipt.run_id,
@@ -750,6 +768,8 @@ class RunService:
                 outcome=_reservation_outcome(receipt),
             )
             return self._stored_response(receipt)
+        assert receipt.run_id is not None
+        self._require_supported_run_configuration(self._required_run(receipt.run_id))
         return await self._submit(receipt, parameters, principal, reason)
 
     @staticmethod

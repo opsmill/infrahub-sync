@@ -1,1 +1,1 @@
-V3 now refuses configurations with a `store` block at registration and before a run reads data; remove the block to keep sync data in memory.
+V3 now refuses configurations with a `store` block at registration and before a run reads data; remove the block to keep sync data in memory, and register a new version if the package was already registered.

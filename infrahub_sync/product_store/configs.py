@@ -50,7 +50,7 @@ from infrahub_sync.configuration.schema_validation import (
     DestinationSchemaOptions,
     collect_destination_schema_findings,
 )
-from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.configuration.validation import _CODE_UNSUPPORTED_SYNC_STORE, _location_digest
 from infrahub_sync.execution import REDACTED, redact
 from infrahub_sync.product_store.store import (
@@ -91,10 +91,13 @@ class ConfigsValidationError(ConfigsError):
 
     family: ClassVar[str] = "validation"
 
-    def __init__(self, message: str, *, findings: tuple[ValidationFinding, ...] = ()) -> None:
+    def __init__(
+        self, message: str, *, findings: tuple[ValidationFinding, ...] = (), reason: str | None = None
+    ) -> None:
+        """Keep the structured refusal independent of its display message."""
         super().__init__(message)
         self.findings = findings
-        self.reason = "unsupported-sync-store" if message == UNSUPPORTED_STORE_MESSAGE else None
+        self.reason = reason
 
 
 class ConfigsNotFoundError(ConfigsError):
@@ -702,6 +705,7 @@ def _parse(package: Mapping[str, Any], *, refuse_store: bool = True) -> Configur
     if refuse_store and isinstance(configuration, dict) and configuration.get("store") is not None:
         raise ConfigsValidationError(
             UNSUPPORTED_STORE_MESSAGE,
+            reason=UNSUPPORTED_STORE_REASON,
             findings=(
                 ValidationFinding(
                     code=_CODE_UNSUPPORTED_SYNC_STORE,

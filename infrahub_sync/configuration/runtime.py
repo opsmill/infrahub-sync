@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 from infrahub_sync import SyncInstance
 
 from .credentials import _REGISTERED_CONTEXT, resolve_reference
-from .storage import UNSUPPORTED_STORE_MESSAGE
+from .storage import UnsupportedSyncStoreError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -43,7 +43,7 @@ def resolve_runtime_instance(
     """
 
     if package.configuration.store is not None:
-        raise ValueError(UNSUPPORTED_STORE_MESSAGE)
+        raise UnsupportedSyncStoreError
 
     def resolve(value: object) -> object:
         if type(value) is dict:  # pylint: disable=unidiomatic-typecheck

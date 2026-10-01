@@ -118,7 +118,8 @@ SHIPPED_REFUSALS: tuple[tuple[str, Callable[[dict[str, Any]], None], str], ...] 
     (
         "missing-store-capabilities",
         _undeclared_store_type,
-        UNSUPPORTED_STORE_MESSAGE,
+        "Configured sync stores, including Redis, are not supported in V3. "
+        "Remove the store block to keep sync data in memory.",
     ),
     (
         "undeclared-setting-store",

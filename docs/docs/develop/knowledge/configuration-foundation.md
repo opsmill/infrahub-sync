@@ -32,9 +32,8 @@ credentials:
 ```
 
 A `$credential` node is only accepted where a credential is actually resolved: the
-credential setting paths of the adapter filling that role, and those of the declared
-store. The same node anywhere else — a non-credential setting, a schema-mapping static
-value — is refused, because nothing would resolve it and the adapter would receive the
+credential setting paths of the adapter filling that role. The same node anywhere else —
+a non-credential setting, a schema-mapping static value — is refused, because nothing would resolve it and the adapter would receive the
 node itself.
 
 Exactly one function turns a declared setting path into a pointer: `_settings_pointer` in
@@ -121,9 +120,11 @@ cannot be proven by a bundled capability declaration. Because they are always ab
 an accepted package, they are excluded from the declared content the checksum covers.
 Adapter names match the registered declaration exactly: a case variant is refused rather
 than folded, because the name is hashed as declared and every consumer resolves it
-verbatim. Redis accepts only its declared
-store settings; its URLs, usernames, and passwords follow the same credential-reference
-rule as adapter settings. Registered version-1 packages also refuse adapter settings
+verbatim. V3 keeps sync data in memory and refuses every non-null `store` block,
+including Redis. Remove the block before registration. For an already registered
+package, register a new version without the block and use that version for new runs.
+
+Registered version-1 packages also refuse adapter settings
 outside each bundled declaration, including custom HTTP headers and request parameters
 on Prometheus, GenericRESTAPI, and its PeeringManager subclass. Declared URLs, base URLs,
 and endpoint paths cannot contain user information, query parameters, or fragments.

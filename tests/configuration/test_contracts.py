@@ -651,6 +651,7 @@ def test_default_empty_credentials_cannot_mutate_after_validation() -> None:
 def test_declared_configuration_cannot_mutate_after_validation(
     mutate: Callable[[ConfigurationPackage], None],
 ) -> None:
+    """Keep validated package content immutable."""
     content = _package_with_nested_declared_content().model_dump(mode="json")
     del content["configuration"]["store"]
     package = ConfigurationPackage.model_validate(content)
@@ -667,6 +668,7 @@ def test_declared_configuration_cannot_mutate_after_validation(
 
 
 def test_a_previously_declared_store_stays_immutable_when_validation_refuses_it() -> None:
+    """Keep legacy store declarations immutable after refusal."""
     package = _package_with_nested_declared_content()
     content = package.declared_content()
     checksum = package.checksum()
@@ -1949,6 +1951,7 @@ def test_reserved_reference_node_is_refused_in_schema_mapping_static_value() -> 
 
 
 def test_store_inline_credential_is_refused_without_echoing_value() -> None:
+    """Store inline credential is refused without echoing value."""
     canary = "store-inline-secret"
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {
@@ -1966,6 +1969,7 @@ def test_store_inline_credential_is_refused_without_echoing_value() -> None:
 
 @pytest.mark.parametrize("setting", ["sentinel_password", "tls_key_password"])
 def test_redis_store_rejects_undeclared_credential_settings(setting: str) -> None:
+    """Redis store rejects undeclared credential settings."""
     canary = "undeclared-store-secret"
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {
@@ -1982,6 +1986,7 @@ def test_redis_store_rejects_undeclared_credential_settings(setting: str) -> Non
 
 
 def test_redis_store_refusal_omits_control_names_and_values() -> None:
+    """Redis store refusal omits control names and values."""
     canary = "store-control-value-canary"
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {
@@ -2000,6 +2005,7 @@ def test_redis_store_refusal_omits_control_names_and_values() -> None:
 
 
 def test_reserved_reference_node_is_refused_in_store_settings() -> None:
+    """Reserved reference node is refused in store settings."""
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {
         "type": "redis",
@@ -2380,6 +2386,7 @@ def test_relative_endpoint_forms_remain_accepted(endpoint: str) -> None:
 
 
 def test_unknown_store_type_with_settings_is_refused_not_a_key_error() -> None:
+    """Unknown store type with settings is refused not a key error."""
     data = _package().model_dump(mode="json")
     data["configuration"]["store"] = {"type": "mystery", "settings": {"url": "redis://localhost"}}
     package = ConfigurationPackage.model_validate(data)

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     ],
 )
 def test_registration_refuses_every_store_block_without_persisting(tmp_path: Path, store: dict[str, Any]) -> None:
+    """Registration refuses every store block without persisting."""
     content = package_data()
     content["configuration"]["store"] = store
     projection = local_product_projection(tmp_path)
@@ -43,6 +44,7 @@ def test_registration_refuses_every_store_block_without_persisting(tmp_path: Pat
 
 
 def test_creating_a_version_refuses_a_store_block(tmp_path: Path) -> None:
+    """Creating a version refuses a store block."""
     projection = local_product_projection(tmp_path)
     content = package_data()
     registered = configs.register(package=content, projection=projection)
@@ -59,6 +61,7 @@ def test_creating_a_version_refuses_a_store_block(tmp_path: Path) -> None:
 def test_execution_refuses_a_store_before_initialization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: Literal["plan", "verify", "apply"]
 ) -> None:
+    """Execution refuses a store before initialization."""
     instance = SyncInstance.model_validate(
         {
             "name": "store-policy",
@@ -89,6 +92,7 @@ def test_execution_refuses_a_store_before_initialization(
 def test_direct_prefect_request_refuses_a_store_before_adapter_construction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Direct prefect request refuses a store before adapter construction."""
     directory = tmp_path / "store-policy"
     directory.mkdir()
     content = {
