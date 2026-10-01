@@ -77,6 +77,7 @@ def test_falls_back_to_full_load_when_no_prior_run(tmp_path: Path) -> None:
 
 
 def test_uses_incremental_when_prior_run_matches(tmp_path: Path) -> None:
+    """Combine cached rows and deltas when a matching safe cursor exists."""
     import json
 
     from infrahub_sync.cache.parquet_io import write_resource_side
@@ -143,6 +144,7 @@ def test_side_full_extract_answers_per_side_on_a_mixed_run(tmp_path: Path) -> No
 
 
 def test_cursor_persisted_after_load(tmp_path: Path) -> None:
+    """Persist the source bound independently of snapshot timestamps."""
     from infrahub_sync.cache.incremental import load_cursors
     from infrahub_sync.cache.parquet_io import write_resource_side
 

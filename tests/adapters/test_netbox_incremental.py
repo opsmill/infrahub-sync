@@ -80,6 +80,7 @@ class _FakeRecord(collections.UserDict):
 
 
 def test_list_changed_since_uses_last_updated_filter(tmp_path: Path) -> None:
+    """Pass the saved safe cursor unchanged to the last-updated filter."""
     from infrahub_sync.cache.incremental import load_cursors, persist_cursors
 
     adapter = _make_adapter(
@@ -189,6 +190,7 @@ def test_list_existing_ids_raises_for_unknown_model() -> None:
 
 
 def test_timestamp_source_has_no_established_safe_bound() -> None:
+    """Require full extraction when NetBox supplies no safe bound."""
     from infrahub_sync.cache.cursors import capture_safe_cursor
 
     adapter = _make_adapter([{"name": "InfraDevice", "mapping": "dcim.devices"}])

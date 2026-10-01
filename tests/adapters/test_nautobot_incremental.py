@@ -71,6 +71,7 @@ def test_cursor_tier_is_none_for_empty_mapping() -> None:
 
 
 def test_list_changed_since_uses_last_updated_filter(tmp_path: Path) -> None:
+    """Pass the saved safe cursor unchanged to the last-updated filter."""
     from infrahub_sync.cache.incremental import load_cursors, persist_cursors
 
     adapter = _make_adapter([{"name": "InfraDevice", "mapping": "dcim.devices", "identifiers": ["name"]}])
@@ -432,6 +433,7 @@ def test_depth_decides_the_payload_the_endpoint_returns() -> None:
 
 
 def test_timestamp_source_has_no_established_safe_bound() -> None:
+    """Require full extraction when Nautobot supplies no safe bound."""
     from infrahub_sync.cache.cursors import capture_safe_cursor
 
     adapter = _make_adapter([{"name": "InfraDevice", "mapping": "dcim.devices"}])

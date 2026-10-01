@@ -39,6 +39,7 @@ def test_cursor_state_value_required_for_non_none() -> None:
     ],
 )
 def test_safe_cursor_hook_rejects_unqualified_values(cursor: object) -> None:
+    """Reject source bounds without a matching qualified cursor."""
     from types import SimpleNamespace
 
     source = SimpleNamespace(safe_cursor_before_load=lambda _resource: cursor)
@@ -47,6 +48,7 @@ def test_safe_cursor_hook_rejects_unqualified_values(cursor: object) -> None:
 
 
 def test_no_source_guarantee_means_no_safe_cursor() -> None:
+    """Return no safe cursor when the source provides no guarantee."""
     from types import SimpleNamespace
 
     assert capture_safe_cursor(object(), "Device", CursorTier.TIMESTAMP) is None

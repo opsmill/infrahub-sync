@@ -263,6 +263,7 @@ class Potenda:
         continue_on_error: bool = False,
         concurrent_load: bool = True,
     ):
+        """Initialize adapters, execution options, and per-run cache state."""
         self.top_level = top_level
         self.tiers: list[set[str]] | None = tiers
         self.continue_on_error = continue_on_error
@@ -361,6 +362,7 @@ class Potenda:
         return self._prev_run_cached
 
     def _write_side_snapshot(self, side: str, adapter: Adapter) -> None:
+        """Write each resource snapshot with diagnostic extraction metadata."""
         if not self.run_dir:
             return
         from datetime import datetime, timezone
@@ -371,12 +373,7 @@ class Potenda:
         # Snapshot timestamps are diagnostic metadata, never incremental bounds.
         for kind in adapter.top_level:
             records = list(adapter.get_all(kind))
-            # Include both identifiers AND attributes so hydrate_from_parquet
-            # can reconstruct a complete payload — without identifiers, replaying
-            # a row through `model_cls(**payload)` fails pydantic validation for
-            # any required identifier field. `get_identifiers` is guarded for
-            # adapter stubs that don't implement it; falling back to just
-            # attributes is what the pre-fix behavior did.
+            # Include identifiers for cached-row validation when the adapter supports get_identifiers.
             # Side B additionally carries `local_id`, the destination node id an update is
             # keyed by. Without it a warm run rebuilds destination models with no id and
             # every derived update is refused. It is written as its own column and never
@@ -443,6 +440,7 @@ class Potenda:
         models = required_resource_models(adapter=adapter, side=side)
 
         def _add(model_name: str, payload: dict, _adapter: Adapter = adapter) -> None:
+            """Add a cached resource row to the selected adapter."""
             _adapter.add(models[model_name](**payload))
 
         cursors = load_cursors(prev_run / "cursors.json", side=side)
@@ -510,9 +508,11 @@ class Potenda:
                 self._side_cursors.pop(side, None)
 
     def source_load(self):
+        """Load the source and write its snapshot."""
         self._load_side(side="A", adapter=self.source)
 
     def destination_load(self):
+        """Load the destination and write its snapshot."""
         self._load_side(side="B", adapter=self.destination)
 
     def load_both_sides(self) -> None:

@@ -53,6 +53,7 @@ def test_cursor_tier_is_none_for_unknown_kinds() -> None:
 
 
 def test_list_changed_since_uses_updated_at_filter(tmp_path: Path) -> None:
+    """Pass the saved safe cursor unchanged to the updated-at filter."""
     from infrahub_sync.cache.cursors import CursorState
     from infrahub_sync.cache.incremental import load_cursors, persist_cursors
 
@@ -164,6 +165,7 @@ def test_model_loader_requests_identifiers_and_mapped_attributes() -> None:
 
 
 def test_timestamp_source_has_no_established_safe_bound() -> None:
+    """Require full extraction when Infrahub supplies no safe bound."""
     from infrahub_sync.cache.cursors import capture_safe_cursor
 
     adapter = _make_adapter(["InfraDevice"])

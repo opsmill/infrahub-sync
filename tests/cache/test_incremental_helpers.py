@@ -92,6 +92,7 @@ def test_load_cursors_empty(tmp_path: Path) -> None:
 
 
 def test_persist_then_load_roundtrip(tmp_path: Path) -> None:
+    """Preserve cursor values, tiers, and safety across both saved sides."""
     path = tmp_path / "cursors.json"
     persist_cursors(
         path,

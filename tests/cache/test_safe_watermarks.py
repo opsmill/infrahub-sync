@@ -44,6 +44,7 @@ class _TimestampSource(Adapter):
     top_level: ClassVar[list[str]] = ["Device", "Empty"]
 
     def __init__(self, rows: dict[str, list[dict]], *, safe: bool, exclusive: bool, mutate: bool) -> None:
+        """Initialize synthetic rows, cursor guarantees, and query tracking."""
         super().__init__(name="timestamp-source")
         self.rows = rows
         self.safe = safe
@@ -52,9 +53,11 @@ class _TimestampSource(Adapter):
         self.calls: list[tuple[str, object]] = []
 
     def cursor_tier_for(self, _model_name: str) -> CursorTier:  # noqa: PLR6301
+        """Advertise timestamp queries for each synthetic resource."""
         return CursorTier.TIMESTAMP
 
     def safe_cursor_before_load(self, model_name: str) -> CursorState | None:
+        """Return a source bound that accounts for precision and query boundaries."""
         self.calls.append(("bound", model_name))
         # The synthetic source guarantees this bound precedes all changes that
         # can commit after the queries start, including its precision bucket.
@@ -62,6 +65,7 @@ class _TimestampSource(Adapter):
         return CursorState(CursorTier.TIMESTAMP, bound.isoformat(), safe=True) if self.safe else None
 
     def model_loader(self, model_name: str, model: type[DiffSyncModel]) -> None:
+        """Load a resource and optionally change rows during the final query."""
         self.calls.append(("full", model_name))
         for row in self.rows[model_name]:
             self.add(model(**row))
@@ -71,10 +75,12 @@ class _TimestampSource(Adapter):
                 self.rows["Empty"] = [{"name": "appeared", "description": "new"}]
 
     def load(self) -> None:
+        """Load every configured synthetic resource in order."""
         for model_name in self.top_level:
             self.model_loader(model_name, getattr(self, model_name))
 
     def list_changed_since(self, model_name: str, cursor: CursorState) -> list[dict]:
+        """Return repeated changed rows using the configured timestamp boundary."""
         self.calls.append(("delta", cursor))
         assert cursor.value is not None
         bound = datetime.fromisoformat(cursor.value)
@@ -85,6 +91,7 @@ class _TimestampSource(Adapter):
 
 
 def _engine(root: Path, run: str, source: _TimestampSource, side: str) -> Potenda:
+    """Build a sequential engine with an isolated run directory."""
     other = _TimestampSource({"Device": [], "Empty": []}, safe=False, exclusive=False, mutate=False)
     pot = Potenda(
         source=source if side == "A" else other,
@@ -151,10 +158,12 @@ def test_in_flight_change_is_read_next_run(
 
 
 def test_failed_load_does_not_persist_a_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Discard the captured source bound when extraction fails."""
     source = _TimestampSource({"Device": []}, safe=True, exclusive=False, mutate=False)
     pot = _engine(tmp_path, "run-1", source, "A")
 
     def fail() -> None:
+        """Raise a synthetic extraction failure."""
         msg = "load failed"
         raise RuntimeError(msg)
 
@@ -195,6 +204,7 @@ def test_interrupted_reload_cannot_advance_cursor_against_retained_snapshot(
     interrupt = interrupt_type("reload interrupted")
 
     def reload() -> None:
+        """Update the stored row and optionally interrupt extraction."""
         row = rows["Device"][0]
         source.update_or_add_model_instance(
             _Device(name=row["name"], description=row["description"], local_id=row["local_id"])
@@ -203,6 +213,7 @@ def test_interrupted_reload_cannot_advance_cursor_against_retained_snapshot(
             raise interrupt
 
     def interrupt_snapshot(**_kwargs: object) -> None:
+        """Interrupt snapshot writing before any bytes are written."""
         raise interrupt
 
     with monkeypatch.context() as patch:
@@ -232,6 +243,7 @@ def test_interrupted_reload_cannot_advance_cursor_against_retained_snapshot(
 
 
 def test_forced_full_extract_does_not_request_a_safe_cursor(tmp_path: Path) -> None:
+    """Bypass source cursor hooks during forced full extraction."""
     source = _TimestampSource({"Device": []}, safe=True, exclusive=False, mutate=False)
     pot = _engine(tmp_path, "run-1", source, "A")
     pot.force_full_extract = True
@@ -243,6 +255,7 @@ def test_forced_full_extract_does_not_request_a_safe_cursor(tmp_path: Path) -> N
 
 
 def test_legacy_watermark_is_not_used_even_with_a_safe_source(tmp_path: Path) -> None:
+    """Replace an unqualified host watermark with a full extraction."""
     source = _TimestampSource(
         {"Device": [{"name": "device", "description": "old"}]}, safe=True, exclusive=False, mutate=True
     )
@@ -284,6 +297,7 @@ def test_overlap_updates_are_in_memory(tmp_path: Path, monkeypatch: pytest.Monke
     )
 
     def refuse_write(*_args: object, **_kwargs: object) -> None:
+        """Fail if extraction invokes a destination write method."""
         pytest.fail("extraction must not invoke a model write method")
 
     monkeypatch.setattr(_Device, "update", refuse_write)
@@ -481,6 +495,7 @@ def test_failed_resource_fallback_is_not_marked_full(
     completed: list[str] = []
 
     def fail_later_resource(model_name: str, model: type[DiffSyncModel]) -> None:  # noqa: ARG001
+        """Fail the later resource after recording the first successful query."""
         if model_name == "Empty":
             msg = "later resource failed"
             raise RuntimeError(msg)
