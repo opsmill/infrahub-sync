@@ -30,8 +30,9 @@ def is_registered_context(settings: Mapping[str, object]) -> bool:
     """Whether adapter settings belong to a registered package's runtime instance.
 
     Registered settings are the package's whole authority: an adapter reads no worker
-    environment variable for an address, a credential, TLS verification, or SDK settings
-    when this is true. Only direct adapter use keeps an environment fallback.
+    environment variable for an address, a credential, or TLS verification when this is
+    true. Transport settings such as a CA file, a proxy, or retries still come from the
+    environment. Only direct adapter use keeps an environment fallback.
     """
     return settings.get(_REGISTERED_CONTEXT) is True
 
