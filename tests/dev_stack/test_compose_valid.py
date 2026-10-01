@@ -74,8 +74,8 @@ def test_resolves_without_its_optional_settings() -> None:
 def test_optional_settings_resolve_to_empty(setting: str) -> None:
     """An unset source credential leaves an empty value rather than refusing to resolve.
 
-    The shipped bundle guards its required settings with `${VAR:?}`. These three stay
-    optional there too, and they have to stay optional here: the stack starts before any
+    The root `docker-compose.yml` guards its required settings with `${VAR:?}`. These
+    three stay optional there too, and they have to stay optional here: the stack starts before any
     configuration package is registered, so there is no destination to hold a credential
     for yet.
     """

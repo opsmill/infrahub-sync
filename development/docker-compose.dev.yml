@@ -78,8 +78,9 @@ services:
       retries: 30
 
   object-store:
-    # The same temporary Chainguard build the shipped bundle and the preview stack pin: the
-    # quay.io MinIO image no longer allows anonymous pulls (since 2026-09-24).
+    # The same temporary Chainguard build the root `docker-compose.yml` and the
+    # preview stack pin: the quay.io MinIO image no longer allows anonymous pulls
+    # (since 2026-09-24).
     image: "cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba"  # yamllint disable-line rule:line-length
     command: ["server", "/data"]
     environment:
@@ -180,8 +181,8 @@ services:
       INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:-}"
       NETBOX_TOKEN: "${NETBOX_TOKEN:-}"
       NAUTOBOT_TOKEN: "${NAUTOBOT_TOKEN:-}"
-    # The only service that reaches a destination. The shipped bundle carries no
-    # host route on purpose; a dev stack whose destination is `preview.up` on
+    # The only service that reaches a destination. The root `docker-compose.yml`
+    # carries no host route on purpose; a dev stack whose destination is `preview.up` on
     # this laptop needs one, and it costs nothing when unused.
     extra_hosts:
       - "host.docker.internal:host-gateway"

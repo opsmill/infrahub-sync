@@ -14,8 +14,9 @@ Every release publishes the image to the OpsMill registry:
 registry.opsmill.io/opsmill/infrahub-sync
 ```
 
-The release workflow builds the image from the release commit, smoke-tests every
-platform, and only then pushes, tags, signs, and attaches the bills of materials.
+The release workflow builds the image from the release commit and smoke-tests
+every platform. No tag is applied until every platform has passed its smoke test;
+the workflow then tags, signs, and attaches the bills of materials.
 
 ## Tags
 

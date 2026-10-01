@@ -10,9 +10,10 @@
 #      stops before any container starts, naming the first one that is missing.
 #   3. docker compose up -d
 #
-# Every Sync service runs `${INFRAHUB_SYNC_DOCKER_IMAGE}:${VERSION}`. Both default
-# to the release this file was taken from; the release tasks keep that pin in step
-# with the package version. Every other image carries its digest, so a re-pointed
+# Every Sync service runs `${INFRAHUB_SYNC_DOCKER_IMAGE}:${VERSION}`. `VERSION`
+# defaults to this file's release; `INFRAHUB_SYNC_DOCKER_IMAGE` defaults to
+# `registry.opsmill.io/opsmill/infrahub-sync`. The release tasks keep the `VERSION`
+# pin in step with the package version. Every other image carries its digest, so a re-pointed
 # tag cannot change what this file runs.
 #
 # Two properties this file exists to hold:

@@ -290,8 +290,9 @@ External exposure and TLS termination are not part of this topology.
 
 ## Choose an image
 
-Every Sync service runs `${INFRAHUB_SYNC_DOCKER_IMAGE}:${VERSION}`. Both default
-to the release the file was taken from, so the file and the image stay in step.
+Every Sync service runs `${INFRAHUB_SYNC_DOCKER_IMAGE}:${VERSION}`. `VERSION`
+defaults to this file's release, so the file and the image stay in step;
+`INFRAHUB_SYNC_DOCKER_IMAGE` defaults to `registry.opsmill.io/opsmill/infrahub-sync`.
 To run another release, or the same release from a mirror, set either one in
 `.env`:
 

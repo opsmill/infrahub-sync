@@ -64,8 +64,6 @@ AMBIENT_URL = "https://ambient-source.invalid"
 NAUTOBOT_VERSION_URL = f"{NAUTOBOT_URL}/api/"
 NAUTOBOT_API_VERSION = "2.4"
 
-# The built candidate the Docker-marked cases run against.
-
 # Both SDKs are declared `python_version >= '3.11'` in the service extra, so the
 # Python 3.10 profile does not install them and cannot construct either client.
 # Keyed to the interpreter rather than to whether the import happens to work: on
