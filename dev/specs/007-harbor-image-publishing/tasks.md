@@ -205,10 +205,10 @@ archive handoff, clean-host suite and their tasks, tests and docs. US4 removes
 **Independent Test**: quickstart §8 (the parts that aren't Compose-related). Unit
 tests still collect and pass.
 
-- [ ] T022 [US5] Delete `.github/workflows/workflow-candidate.yml` and `.github/workflows/workflow-image.yml`. Search `.github/` for any remaining caller (`grep -rn 'workflow-image\|workflow-candidate' .github`) and remove it.
-- [ ] T023 [US5] Delete `tasks/image.py` and `tasks/compose.py`. In `tasks/__init__.py`, remove the `image` and `compose` collection registrations, and the `release` registration for now (T035 re-adds it). Move `ZERO_SKIP_OPTION`, which `tests/compose/conftest.py` imports from `tasks.compose`, into `tests/compose/conftest.py` as a local constant with the same value.
-- [ ] T024 [US5] Delete the contents of `tasks/release.py` (the 1012-line candidate, kit, qualify and packet module), leaving an empty module docstring, ready for T035.
-- [ ] T025 [P] [US5] Delete the image tests that serve the removed machinery:
+- [X] T022 [US5] Delete `.github/workflows/workflow-candidate.yml` and `.github/workflows/workflow-image.yml`. Search `.github/` for any remaining caller (`grep -rn 'workflow-image\|workflow-candidate' .github`) and remove it.
+- [X] T023 [US5] Delete `tasks/image.py` and `tasks/compose.py`. In `tasks/__init__.py`, remove the `image` and `compose` collection registrations, and the `release` registration for now (T035 re-adds it). Move `ZERO_SKIP_OPTION`, which `tests/compose/conftest.py` imports from `tasks.compose`, into `tests/compose/conftest.py` as a local constant with the same value.
+- [X] T024 [US5] Delete the contents of `tasks/release.py` (the 1012-line candidate, kit, qualify and packet module), leaving an empty module docstring, ready for T035.
+- [X] T025 [P] [US5] Delete the image tests that serve the removed machinery:
   - `tests/image/canary.py`
   - `tests/image/test_candidate_reuse.py`
   - `tests/image/test_docker_archive.py`
@@ -219,16 +219,16 @@ tests still collect and pass.
   - `tests/image/test_image_documentation.py`
 
   Also delete `vulnerability-waivers.yml` if it exists at the repository root. Open `tests/image/test_image_build_inputs.py`: keep it if it checks only `Dockerfile` or `.dockerignore` inputs, and delete it if it reads `.image/` or `tasks.image`.
-- [ ] T026 [P] [US5] Delete `tests/release/` (the whole directory).
-- [ ] T027 [P] [US5] Delete the Compose qualification tests:
+- [X] T026 [P] [US5] Delete `tests/release/` (the whole directory).
+- [X] T027 [P] [US5] Delete the Compose qualification tests:
   - `tests/compose/clean_host/` (the whole directory);
   - every `tests/compose/test_clean_host_*.py` file;
   - `tests/compose/test_qualification.py`.
-- [ ] T028 [US5] In `tests/test_workflow_contracts.py`, delete the tests and constants for these removed contracts: clean-host, packet, candidate, handoff, kit, `workflow-image.yml` and `workflow-candidate.yml` (roughly lines 583–2225). Remove the `tasks.release` import at line 28. Keep the US1, US2 and US3 contracts added above.
-- [ ] T029 [P] [US5] Delete `examples/tester_packet/`, `docs/docs/develop/guides/building-a-tester-packet.md` and `docs/docs/develop/guides/qualifying-an-internal-candidate.md`. Remove their entries from `docs/sidebars.ts` (around lines 120–121) and their links from `docs/docs/develop/guides/index.md`.
-- [ ] T030 [P] [US5] In `.gitignore`, remove the `.image/` and `.release/` entries (around lines 32–34). In `pyproject.toml`, rewrite the pytest marker help text (around lines 241–243) so `docker` reads "image smoke tests; needs Docker and `INFRAHUB_SYNC_IMAGE_REF`" and `compose` reads "Compose deployment lifecycle; needs Docker". Drop the mentions of `invoke image.*` and `compose.lifecycle`.
-- [ ] T031 [US5] In `.github/file-filters.yml`, delete the `image_files`, `compose_files`, `image_all` and `qualify_all` filters, leaving `image_inputs`. Run `grep -rn 'image_all\|qualify_all\|image_files\|compose_files' .github` and expect no matches.
-- [ ] T032 [US5] Run `uv run pytest -q --co` and `uv run pytest -q -m "not docker and not compose"`. Fix any import error left by T022–T031. The Compose suite may be collect-only broken until US4 if it imports `tasks.image` or `tasks.release`. In that case, delete only the import and the `write_candidate_binding` helper in `tests/compose/lifecycle.py` now, and note it for T041.
+- [X] T028 [US5] In `tests/test_workflow_contracts.py`, delete the tests and constants for these removed contracts: clean-host, packet, candidate, handoff, kit, `workflow-image.yml` and `workflow-candidate.yml` (roughly lines 583–2225). Remove the `tasks.release` import at line 28. Keep the US1, US2 and US3 contracts added above.
+- [X] T029 [P] [US5] Delete `examples/tester_packet/`, `docs/docs/develop/guides/building-a-tester-packet.md` and `docs/docs/develop/guides/qualifying-an-internal-candidate.md`. Remove their entries from `docs/sidebars.ts` (around lines 120–121) and their links from `docs/docs/develop/guides/index.md`.
+- [X] T030 [P] [US5] In `.gitignore`, remove the `.image/` and `.release/` entries (around lines 32–34). In `pyproject.toml`, rewrite the pytest marker help text (around lines 241–243) so `docker` reads "image smoke tests; needs Docker and `INFRAHUB_SYNC_IMAGE_REF`" and `compose` reads "Compose deployment lifecycle; needs Docker". Drop the mentions of `invoke image.*` and `compose.lifecycle`.
+- [X] T031 [US5] In `.github/file-filters.yml`, delete the `image_files`, `compose_files`, `image_all` and `qualify_all` filters, leaving `image_inputs`. Run `grep -rn 'image_all\|qualify_all\|image_files\|compose_files' .github` and expect no matches.
+- [X] T032 [US5] Run `uv run pytest -q --co` and `uv run pytest -q -m "not docker and not compose"`. Fix any import error left by T022–T031. The Compose suite may be collect-only broken until US4 if it imports `tasks.image` or `tasks.release`. In that case, delete only the import and the `write_candidate_binding` helper in `tests/compose/lifecycle.py` now, and note it for T041.
 
 **Checkpoint**: there is no candidate, packet, archive or kit code left, and the unit
 suite is green.

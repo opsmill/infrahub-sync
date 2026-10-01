@@ -355,8 +355,11 @@ def write_candidate_binding(bundle: Path, image: str) -> bytes:
     suite is on the classic image store and the archive it would be derived from
     has already been reclaimed by the time the matrix runs.
     """
-    from tasks.image import read_digests, recorded_identity
-    from tasks.release import BINDING_CONFIG_KEY, BINDING_MEMBER, image_binding
+    # Pending T041: tasks.image and the binding helpers in tasks.release were removed with
+    # the old image machinery; the Compose rework replaces this helper and its callers.
+    from tasks.image import read_digests, recorded_identity  # ty: ignore[unresolved-import]
+
+    from tasks.release import BINDING_CONFIG_KEY, BINDING_MEMBER, image_binding  # ty: ignore[unresolved-import]
 
     record = read_digests()
     binding = image_binding(record, recorded_identity(record), loaded_manifest=HARNESS_MANIFEST)

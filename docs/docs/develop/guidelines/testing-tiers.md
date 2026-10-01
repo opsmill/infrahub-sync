@@ -45,11 +45,10 @@ uv run invoke tests.tests-unit
 This is the single offline default, and it is what a change has to keep green. It runs:
 
 ```text
-pytest -m "not integration and not preview and not docker and not builder and not compose"
+pytest -m "not integration and not preview and not docker and not compose"
 ```
 
-So it excludes five marker families: `integration`, `preview`, `docker`, `builder` and
-`compose`. It needs no network, no credentials and no running stack.
+So it excludes four marker families: `integration`, `preview`, `docker` and `compose`. It needs no network, no credentials and no running stack.
 
 **It does need the `docker compose` CLI on your PATH.** One unmarked module under
 `tests/preview/` shells out to `docker compose … config --format json` to resolve the preview

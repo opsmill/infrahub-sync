@@ -107,8 +107,7 @@ in the documentation. In short:
 
 When you are finished, run `uv run invoke destroy` to stop the stack and delete its data.
 
-This build keeps its own BuildKit cache, separate from the one `invoke image.build` uses,
-so the first build each way starts with an empty cache.
+This build keeps its own BuildKit cache, so the first build starts with an empty cache.
 
 ---
 

@@ -182,7 +182,7 @@ Use `+` as the id for a change with no issue number (`+short-slug.housekeeping.m
 
 Label a pull request `ci/skip-changelog` when it needs no entry, for example a dependency bump or a typo fix. Dependabot applies that label itself.
 
-**Versions and `CHANGELOG.md` are never edited manually.** For a V2 release from `main`, merging does not prepare the release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md). V3 pre-release candidates are built by `workflow-candidate.yml` instead; see [`develop/guides/qualifying-an-internal-candidate.md`](docs/docs/develop/guides/qualifying-an-internal-candidate.md).
+**Versions and `CHANGELOG.md` are never edited manually.** For a V2 release from `main`, merging does not prepare the release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md).
 
 ## Invoke Tasks (reference)
 

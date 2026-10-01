@@ -22,8 +22,6 @@ DOCUMENT_IDS = [
     "develop/knowledge/quality-gates",
     "develop/guides/adding-an-adapter",
     "develop/guides/testing-an-adapter",
-    "develop/guides/building-a-tester-packet",
-    "develop/guides/qualifying-an-internal-candidate",
     "develop/guidelines/writing-an-adapter",
     "develop/guidelines/testing-adapters",
     "develop/guidelines/testing",

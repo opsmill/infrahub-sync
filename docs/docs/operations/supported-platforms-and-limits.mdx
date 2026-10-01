@@ -9,9 +9,7 @@ deployment tests that each release package passes.
 ## Release package qualification
 
 Each release package passes full qualification on one Linux amd64 host running Docker
-Compose 2.17.3 or later, following the checkout-free clean-host procedure in
-[Qualifying an internal candidate](../develop/guides/qualifying-an-internal-candidate.md).
-That page also names the qualification record each candidate build produces.
+Compose 2.17.3 or later, following the checkout-free clean-host procedure.
 
 The candidate build also builds an arm64 image and runs the image test suite against
 it in continuous integration (CI), under emulation on an amd64 runner. Those tests are
