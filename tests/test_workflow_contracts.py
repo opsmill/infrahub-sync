@@ -2293,3 +2293,220 @@ def test_the_sdk_update_pull_request_targets_the_matrix_branch() -> None:
 
     assert create_pr["env"]["MATRIX_BRANCH"] == SDK_MATRIX_BRANCH
     assert '--base "${MATRIX_BRANCH}"' in create_pr["run"]
+
+
+# --------------------------------------------------------------------------
+# ci-docker-image
+# --------------------------------------------------------------------------
+# The reusable Harbor build-and-push workflow. Its inputs mirror infrahub-mcp's file
+# of the same name, every platform is smoke-tested before anything is pushed, and
+# every step that can reach the registry is behind `inputs.publish`.
+DOCKER_IMAGE_WORKFLOW = WORKFLOWS / "ci-docker-image.yml"
+PUBLISH_GUARD = "inputs.publish"
+DOCKER_IMAGE_INPUTS = {
+    "publish": {"type": "boolean", "required": False, "default": False},
+    "version": {"type": "string", "required": False, "default": ""},
+    "ref": {"type": "string", "required": True},
+    "tags": {"type": "string", "required": True},
+    "labels": {"type": "string", "required": True},
+    "platforms": {"type": "string", "required": False, "default": "linux/amd64,linux/arm64"},
+}
+DOCKER_IMAGE_RUNNERS = {"linux/amd64": "ubuntu-24.04", "linux/arm64": "ubuntu-24.04-arm"}
+PUBLISH_ONLY_JOBS = ("merge", "sign", "sbom")
+SMOKE_COMMAND = "uv run pytest -m docker tests/image/test_image_artifact.py"
+SMOKE_IMAGE = "infrahub-sync:smoke"
+LOGIN_ACTION = "docker/login-action"
+BUILD_PUSH_ACTION = "docker/build-push-action"
+TAG_GUARD_MESSAGE = "publishing needs at least one tag"
+# `uses: owner/repo[/path]@<40 hex> # vX.Y.Z` -- a SHA alone cannot be read, and a
+# tag alone can be moved under the workflow.
+PINNED_USES = re.compile(r"^\s*(?:-\s+)?uses:\s*\S+@[0-9a-f]{40}\s+#\s*v\d[\w.\-]*\s*$")
+
+
+def docker_image_job(name: str) -> dict:
+    """Return one job of the reusable image workflow."""
+    return job_of(DOCKER_IMAGE_WORKFLOW, name)
+
+
+def docker_image_build_steps() -> list[dict]:
+    """Return the steps of the per-platform build job, in order."""
+    return docker_image_job("build")["steps"]
+
+
+def _uses(step: dict, action: str) -> bool:
+    return str(step.get("uses", "")).startswith(f"{action}@")
+
+
+def _pushes(step: dict) -> bool:
+    """Report whether one step logs in to or pushes to a registry."""
+    if _uses(step, LOGIN_ACTION):
+        return True
+    declared = step.get("with") or {}
+    return _uses(step, BUILD_PUSH_ACTION) and (
+        "push=true" in str(declared.get("outputs", "")) or bool(declared.get("push"))
+    )
+
+
+@pytest.mark.parametrize("trigger", ["workflow_call", "workflow_dispatch"])
+def test_the_image_workflow_takes_the_inputs_the_contract_names(trigger: str) -> None:
+    """The same names and defaults as infrahub-mcp's, so callers read alike in both repositories."""
+    declared = triggers_of(DOCKER_IMAGE_WORKFLOW)[trigger]["inputs"]
+
+    assert set(declared) == set(DOCKER_IMAGE_INPUTS)
+    for name, expected in DOCKER_IMAGE_INPUTS.items():
+        assert {key: declared[name].get(key) for key in expected} == expected, name
+        if "default" not in expected:
+            assert "default" not in declared[name], f"{name} is required and must not carry a default"
+
+
+def test_the_image_workflow_requests_exactly_what_signing_and_pushing_need() -> None:
+    assert permissions(DOCKER_IMAGE_WORKFLOW) == {"contents": "read", "id-token": "write", "packages": "write"}
+
+
+def test_each_platform_builds_on_its_own_native_runner() -> None:
+    matrix = docker_image_job("build")["strategy"]["matrix"]["include"]
+
+    assert {entry["platform"]: entry["runner"] for entry in matrix} == DOCKER_IMAGE_RUNNERS
+    assert docker_image_job("build")["runs-on"] == "${{ matrix.runner }}"
+
+
+def test_the_build_loads_the_root_dockerfile_under_the_smoke_tag_with_the_callers_labels() -> None:
+    builds = [step for step in docker_image_build_steps() if _uses(step, BUILD_PUSH_ACTION) and not _pushes(step)]
+
+    assert len(builds) == 1, "exactly one local build feeds the smoke test"
+    declared = builds[0]["with"]
+    assert declared["load"] is True
+    assert declared["tags"] == SMOKE_IMAGE
+    assert declared["labels"] == "${{ inputs.labels }}"
+    assert declared["file"] == "Dockerfile"
+
+
+def test_the_smoke_test_runs_against_the_loaded_image() -> None:
+    smoke = [step for step in docker_image_build_steps() if SMOKE_COMMAND in str(step.get("run", ""))]
+
+    assert len(smoke) == 1
+    assert smoke[0]["env"]["INFRAHUB_SYNC_IMAGE_REF"] == SMOKE_IMAGE
+
+
+def test_the_smoke_test_comes_before_any_login_or_push() -> None:
+    """A platform that fails its smoke test must leave nothing in the registry."""
+    steps = docker_image_build_steps()
+    smoke = next(index for index, step in enumerate(steps) if SMOKE_COMMAND in str(step.get("run", "")))
+    pushing = [index for index, step in enumerate(steps) if _pushes(step)]
+
+    assert pushing, "the build job never pushes"
+    assert smoke < min(pushing), f"step {min(pushing)} reaches the registry before the smoke test at step {smoke}"
+
+
+def test_the_push_is_by_digest_without_provenance() -> None:
+    pushes = [step for step in docker_image_build_steps() if _uses(step, BUILD_PUSH_ACTION) and _pushes(step)]
+
+    assert len(pushes) == 1
+    declared = pushes[0]["with"]
+    assert declared["provenance"] is False
+    assert declared["outputs"] == (
+        "type=image,name=${{ vars.HARBOR_HOST }}/${{ github.repository }},"
+        "push-by-digest=true,name-canonical=true,push=true"
+    )
+    assert PUBLISH_GUARD in str(pushes[0].get("if", ""))
+
+
+def test_every_step_that_reads_a_secret_is_behind_the_publish_guard() -> None:
+    """A step-level guard, or a job that only runs when publishing."""
+    exposed = [
+        f"{name}: {_step_name(step)}"
+        for name, job in jobs(DOCKER_IMAGE_WORKFLOW).items()
+        for step in job.get("steps") or []
+        if "secrets." in str(step)
+        and PUBLISH_GUARD not in str(step.get("if", ""))
+        and PUBLISH_GUARD not in str(job.get("if", ""))
+    ]
+
+    assert not exposed, f"these steps read a secret without the publish guard: {exposed}"
+
+
+def test_no_step_echoes_a_secret() -> None:
+    echoed = [
+        _step_name(step)
+        for job in jobs(DOCKER_IMAGE_WORKFLOW).values()
+        for step in job.get("steps") or []
+        if "secrets." in str(step.get("run", ""))
+    ]
+
+    assert not echoed, f"these run scripts expand a secret: {echoed}"
+
+
+@pytest.mark.parametrize("job", PUBLISH_ONLY_JOBS)
+def test_the_registry_jobs_only_run_when_publishing(job: str) -> None:
+    assert docker_image_job(job)["if"] == PUBLISH_GUARD
+
+
+def test_the_manifest_list_waits_for_every_platform() -> None:
+    """No tag is created while any platform has failed its build or smoke test."""
+    assert _needs(docker_image_job("merge")) == ("build",)
+
+
+@pytest.mark.parametrize("job", ["sign", "sbom"])
+def test_every_cosign_call_is_retried(job: str) -> None:
+    """A transparency-log hiccup should not fail a release that already pushed."""
+    scripts = [str(step.get("run", "")) for step in docker_image_job(job)["steps"]]
+    calls_made = [
+        line.strip()
+        for script in scripts
+        for line in script.splitlines()
+        if "cosign " in line and not line.strip().startswith("#")
+    ]
+
+    assert calls_made, f"{job} calls no cosign"
+    assert all(line.startswith("retry cosign ") for line in calls_made), calls_made
+
+
+def test_every_action_is_pinned_to_a_full_commit_sha_with_its_version() -> None:
+    lines = [line for line in DOCKER_IMAGE_WORKFLOW.read_text(encoding="utf-8").splitlines() if "uses:" in line]
+
+    assert lines
+    unpinned = [line.strip() for line in lines if not PINNED_USES.match(line)]
+    assert not unpinned, f"these actions are not pinned to a commit: {unpinned}"
+
+
+def _tag_guard_exit(publish: str, tags: str) -> tuple[int, str]:
+    """Run the build job's first step the way the runner would, with the two inputs it reads."""
+    step = docker_image_build_steps()[0]
+    bash = shutil.which("bash")
+    assert bash, "a POSIX shell is needed to run the guard the way the runner does"
+    with tempfile.TemporaryDirectory() as scratch:
+        result = subprocess.run(  # noqa: S603
+            [bash, "-c", str(step["run"])],
+            env={"PUBLISH": publish, "TAGS": tags},
+            cwd=scratch,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GUARD_TIMEOUT_SECONDS,
+        )
+    return result.returncode, result.stdout + result.stderr
+
+
+def test_the_tag_guard_reads_the_two_inputs_it_judges() -> None:
+    step = docker_image_build_steps()[0]
+
+    assert step["env"] == {"PUBLISH": "${{ inputs.publish }}", "TAGS": "${{ inputs.tags }}"}
+    assert "if" not in step, "the guard must run for every platform, skipped or not"
+
+
+@pytest.mark.parametrize("tags", ["", "\n", "  \n\t\n"], ids=["empty", "newline", "blank-lines"])
+def test_publishing_without_a_tag_fails_before_building(tags: str) -> None:
+    code, output = _tag_guard_exit("true", tags)
+
+    assert code != 0
+    assert TAG_GUARD_MESSAGE in output
+
+
+@pytest.mark.parametrize(
+    ("publish", "tags"),
+    [("true", "registry.example/opsmill/infrahub-sync:1.0.0"), ("false", ""), ("false", "infrahub-sync:pr")],
+)
+def test_the_tag_guard_admits_a_tagged_publish_and_any_build_only_run(publish: str, tags: str) -> None:
+    code, output = _tag_guard_exit(publish, tags)
+
+    assert code == 0, output

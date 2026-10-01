@@ -47,11 +47,11 @@ all call this workflow.
 
 **⚠️ CRITICAL**: No user-story phase can start until this phase is done.
 
-- [ ] T003 [P] Reduce `tests/image/conftest.py` to the smoke fixtures:
+- [X] T003 [P] Reduce `tests/image/conftest.py` to the smoke fixtures:
   - Keep `image_ref`, which reads `INFRAHUB_SYNC_IMAGE_REF`, along with `docker`, `run_in_image`, `api_environment`, `started_container`, `wait_for_api` and the constants they use.
   - Delete the `image_layout` fixture, `IMAGE_LAYOUT_ENV`, and every helper used only by the OCI-layout or archive tests.
   - `api_environment` must start its throwaway PostgreSQL on whatever architecture the host runs. Do not hard-code amd64.
-- [ ] T004 [P] Retarget `tests/image/test_image_artifact.py` so it needs only `INFRAHUB_SYNC_IMAGE_REF` and a running Docker daemon, with no OCI layout and no digest record.
+- [X] T004 [P] Retarget `tests/image/test_image_artifact.py` so it needs only `INFRAHUB_SYNC_IMAGE_REF` and a running Docker daemon, with no OCI layout and no digest record.
   - **Keep these checks**:
     - the CLI answers `infrahub-sync --help`;
     - the default command serves the API, polled at `GET /version` with a 60-second bound;
@@ -60,8 +60,8 @@ all call this workflow.
     - the source-provenance check.
   - **Add** a test that `org.opencontainers.image.source`, `org.opencontainers.image.version` and `org.opencontainers.image.revision` labels are present and non-empty (FR-007).
   - **Add** a test that the API container's logs contain none of the bearer-token, database or S3 secret values that `api_environment` injected (Principle VI).
-- [ ] T005 [P] Keep `tests/image/test_version_policy.py`, because `test_image_artifact.py` imports `RUNTIME_PYTHON_FLOOR` from it. Also keep `tests/image/test_build_context.py`, which checks `.dockerignore`. Make sure neither imports `tasks.image` or `tasks.release`, and fix any that do.
-- [ ] T006 Create `.github/workflows/ci-docker-image.yml` per [contracts/ci-docker-image.md](contracts/ci-docker-image.md), copying the structure of `../infrahub-mcp/.github/workflows/ci-docker-image.yml`:
+- [X] T005 [P] Keep `tests/image/test_version_policy.py`, because `test_image_artifact.py` imports `RUNTIME_PYTHON_FLOOR` from it. Also keep `tests/image/test_build_context.py`, which checks `.dockerignore`. Make sure neither imports `tasks.image` or `tasks.release`, and fix any that do.
+- [X] T006 Create `.github/workflows/ci-docker-image.yml` per [contracts/ci-docker-image.md](contracts/ci-docker-image.md), copying the structure of `../infrahub-mcp/.github/workflows/ci-docker-image.yml`:
   - **Triggers and inputs**: `workflow_call` and `workflow_dispatch`, each with the inputs `publish`, `version`, `ref`, `tags`, `labels` and `platforms`.
   - **Permissions**: `contents: read`, `id-token: write`, `packages: write`.
   - **Dockerfile**: the root `Dockerfile`, not infrahub-mcp's `development/Dockerfile`.
@@ -76,8 +76,8 @@ all call this workflow.
   - **`merge`, `sign` and `sbom` jobs**: copy them from infrahub-mcp, all with `if: inputs.publish`. Wrap each `cosign sign` and `cosign attest` call in a bounded retry (three attempts with backoff), as `../infrahub/.github/workflows/ci-docker-image.yml` does.
   - **Pinning**: pin every action by full commit SHA, with a version comment.
   - **Secrets**: never `echo` them. Only steps guarded by `publish` may reference `secrets.*`.
-- [ ] T007 Add a guard as the first step of the `build` job in `.github/workflows/ci-docker-image.yml`. When `inputs.publish` is true and `inputs.tags` has no non-blank line, it fails with "publishing needs at least one tag" (spec edge case).
-- [ ] T008 Add contract tests for `ci-docker-image.yml` in `tests/test_workflow_contracts.py`, under a new `ci-docker-image` section. Parse the YAML with the existing helpers in that file and assert:
+- [X] T007 Add a guard as the first step of the `build` job in `.github/workflows/ci-docker-image.yml`. When `inputs.publish` is true and `inputs.tags` has no non-blank line, it fails with "publishing needs at least one tag" (spec edge case).
+- [X] T008 Add contract tests for `ci-docker-image.yml` in `tests/test_workflow_contracts.py`, under a new `ci-docker-image` section. Parse the YAML with the existing helpers in that file and assert:
   - the input names and defaults match the contract;
   - the `build` runners are `ubuntu-24.04` and `ubuntu-24.04-arm`;
   - the smoke step comes before any login or push step;

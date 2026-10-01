@@ -1,10 +1,10 @@
-"""Fixtures for the container-image suite.
+"""Fixtures for the container-image smoke suite.
 
-The Docker-backed tests run against an image the `image.build` task has already
-produced, named to them through `INFRAHUB_SYNC_IMAGE_REF`, and against the OCI
-layout that build wrote, named through `INFRAHUB_SYNC_IMAGE_LAYOUT`. They never
-build one themselves: a test that builds its own subject cannot prove anything
-about the artifact the gate ships.
+The Docker-backed tests run against an image that is already built and loaded,
+named to them through `INFRAHUB_SYNC_IMAGE_REF`; the reusable image workflow
+loads each platform under `infrahub-sync:smoke` and runs this suite before it
+pushes anything. They never build one themselves: a test that builds its own
+subject cannot prove anything about the image that ships.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
 IMAGE_REFERENCE_ENV = "INFRAHUB_SYNC_IMAGE_REF"
-IMAGE_LAYOUT_ENV = "INFRAHUB_SYNC_IMAGE_LAYOUT"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -91,23 +90,14 @@ def external_image_references(dockerfile: str) -> list[str]:
 def _require(name: str, description: str) -> str:
     value = os.environ.get(name)
     if not value:
-        pytest.skip(f"{name} is unset; run this suite through `uv run invoke image.smoke` ({description})")
+        pytest.skip(f"{name} is unset; build and load an image, then name it here ({description})")
     return value
 
 
 @pytest.fixture(scope="session")
 def image_ref() -> str:
-    """Return the loaded image reference the gate built and is testing."""
-    return _require(IMAGE_REFERENCE_ENV, "it names the built image")
-
-
-@pytest.fixture(scope="session")
-def image_layout() -> Path:
-    """Return the OCI layout directory the gate built."""
-    layout = Path(_require(IMAGE_LAYOUT_ENV, "it names the built OCI layout"))
-    if not (layout / "index.json").is_file():
-        pytest.fail(f"{layout} is not an OCI layout")
-    return layout
+    """Return the loaded image reference under test."""
+    return _require(IMAGE_REFERENCE_ENV, "it names the loaded image")
 
 
 def docker(argv: Sequence[str], *, timeout: int = CONTAINER_TIMEOUT_SECONDS) -> subprocess.CompletedProcess[str]:
@@ -153,12 +143,20 @@ def run_in_image(
 # provider connects and creates its schema there, so the API cannot start without
 # a real database. This runs one throwaway PostgreSQL beside the image on a
 # private network for the duration of the suite. It is test scaffolding for that
-# one boundary, not a deployment: no volume, no published port, no bundle.
+# one boundary, not a deployment: no volume, no published port, no bundle. The
+# reference is a multi-platform index digest and no `--platform` is passed, so
+# Docker runs the variant native to the host, amd64 or arm64 alike.
 POSTGRES_IMAGE = "postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73"
 STORAGE_DATABASE = "smoke"
 STORAGE_USER = "smoke"
-STORAGE_PASSWORD = "smoke"  # noqa: S105 -- throwaway credential on a private container network
+STORAGE_PASSWORD = "smoke-db-password-5d1c9e"  # noqa: S105 -- throwaway credential on a private container network
 STORAGE_READY_SECONDS = 120
+# Distinct, greppable throwaway values, so a test can prove none of them reaches
+# the container's logs (constitution Principle VI).
+BEARER_TOKEN = "smoke-token-0123456789"  # noqa: S105 -- throwaway credential for the smoke container
+S3_SECRET_KEY = "smoke-secret-key-8a4f2b"  # noqa: S105 -- throwaway credential for the smoke container
+INJECTED_SECRETS = (BEARER_TOKEN, STORAGE_PASSWORD, S3_SECRET_KEY)
+API_READY_SECONDS = 60
 
 
 def _unique(prefix: str) -> str:
@@ -237,11 +235,9 @@ def api_environment(storage_host: str) -> dict[str, str]:
         "INFRAHUB_SYNC_S3_BUCKET": "smoke",
         "INFRAHUB_SYNC_S3_REGION": "us-east-1",
         "AWS_ACCESS_KEY_ID": "smoke-access-key",
-        "AWS_SECRET_ACCESS_KEY": "smoke-secret-key",
+        "AWS_SECRET_ACCESS_KEY": S3_SECRET_KEY,
         "PREFECT_API_URL": "http://127.0.0.1:4200/api",
-        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": json.dumps(
-            {"smoke": {"token": "smoke-token-0123456789", "administrator": False}}
-        ),
+        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": json.dumps({"smoke": {"token": BEARER_TOKEN, "administrator": False}}),
     }
 
 
@@ -268,11 +264,9 @@ def started_container(image_ref: str, storage_network: str, storage: str) -> Ite
         docker(["rm", "--force", container])
 
 
-def wait_for_api(container: str, *, timeout: int = 90) -> dict[str, object]:
-    """Return the served OpenAPI document once the container's API answers."""
-    probe = (
-        "import json,httpx;print(json.dumps(httpx.get('http://127.0.0.1:8000/openapi.json', timeout=5).json()['info']))"
-    )
+def wait_for_api(container: str, *, timeout: int = API_READY_SECONDS) -> dict[str, object]:
+    """Return the served `GET /version` document once the container's API answers it."""
+    probe = "import json,httpx;print(json.dumps(httpx.get('http://127.0.0.1:8000/version', timeout=5).raise_for_status().json()))"
     deadline = time.monotonic() + timeout
     last = "no attempt made"
     while time.monotonic() < deadline:
@@ -282,4 +276,4 @@ def wait_for_api(container: str, *, timeout: int = 90) -> dict[str, object]:
         last = result.stderr.strip()[-400:]
         time.sleep(2)
     logs = docker(["logs", "--tail", "40", container]).stdout
-    pytest.fail(f"the image's default command did not serve the API within {timeout}s: {last}\n{logs}")
+    pytest.fail(f"the image's default command did not answer GET /version within {timeout}s: {last}\n{logs}")
