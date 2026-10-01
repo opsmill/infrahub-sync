@@ -7,20 +7,21 @@ import subprocess  # noqa: S404
 import sys
 from pathlib import Path
 
+import pytest
+import yaml
+
 ROOT = Path(__file__).parents[1]
 CONFIG_PATH = ROOT / ".github" / "version-drafter.yml"
 LABELS_PATH = ROOT / ".github" / "labels.yml"
 CHECKER_PATH = ROOT / "scripts" / "check_release_labels.py"
 
-CANONICAL_CONFIG = """---
-# Only explicit release-intent labels drive semantic version bumps.
-major-labels:
-  - "changes/major"
-minor-labels:
-  - "changes/minor"
-patch-labels:
-  - "changes/patch"
-"""
+BUMP_LABELS = ("changes/major", "changes/minor", "changes/patch")
+RELEASE_PR = {
+    "title": "chore(release): 1.2.3",
+    "head_ref": "release/1.2.3",
+    "author_login": "opsmill-bot",
+    "head_repository": "opsmill/example",
+}
 
 
 def run_checker(
@@ -55,38 +56,55 @@ def run_checker(
     )
 
 
-def test_release_label_contract() -> None:
-    assert CONFIG_PATH.read_text() == CANONICAL_CONFIG
+def test_version_drafter_only_uses_bump_labels() -> None:
+    config = yaml.safe_load(CONFIG_PATH.read_text())
+    assert config == {
+        "major-labels": ["changes/major"],
+        "minor-labels": ["changes/minor"],
+        "patch-labels": ["changes/patch"],
+    }
 
-    declared_labels = LABELS_PATH.read_text()
-    for label in ("changes/major", "changes/minor", "changes/patch"):
-        assert f'name: "{label}"' in declared_labels
 
-        accepted = run_checker([label, "type/housekeeping"])
-        assert accepted.returncode == 0, accepted.stderr
-        assert label in accepted.stdout
+@pytest.mark.parametrize("label", BUMP_LABELS)
+def test_bump_label_is_declared(label: str) -> None:
+    declared = {entry["name"] for entry in yaml.safe_load(LABELS_PATH.read_text())}
+    assert label in declared
 
-    for labels in ([], ["type/bug"], ["changes/patch", "changes/minor"]):
-        rejected = run_checker(labels)
-        assert rejected.returncode != 0
-        assert "exactly one" in rejected.stderr
 
-    spoofed_release_pr = run_checker([], title="chore(release): 1.2.3", head_ref="release/1.2.3")
-    assert spoofed_release_pr.returncode != 0
-    assert "exactly one" in spoofed_release_pr.stderr
+@pytest.mark.parametrize("label", BUMP_LABELS)
+def test_single_bump_label_is_accepted(label: str) -> None:
+    result = run_checker([label, "type/housekeeping"])
+    assert result.returncode == 0, result.stderr
+    assert label in result.stdout
 
-    forked_bot_release_pr = run_checker(
-        [], title="chore(release): 1.2.3", head_ref="release/1.2.3", author_login="opsmill-bot"
-    )
-    assert forked_bot_release_pr.returncode != 0
-    assert "exactly one" in forked_bot_release_pr.stderr
 
-    release_pr = run_checker(
-        [],
-        title="chore(release): 1.2.3",
-        head_ref="release/1.2.3",
-        author_login="opsmill-bot",
-        head_repository="opsmill/example",
-    )
-    assert release_pr.returncode == 0, release_pr.stderr
-    assert "generated release pull request" in release_pr.stdout
+@pytest.mark.parametrize(
+    "labels",
+    [[], ["type/bug"], ["changes/patch", "changes/minor"]],
+    ids=["no-labels", "type-only", "conflicting"],
+)
+def test_missing_or_conflicting_bump_label_is_rejected(labels: list[str]) -> None:
+    result = run_checker(labels)
+    assert result.returncode != 0
+    assert "exactly one" in result.stderr
+
+
+def test_generated_release_pull_request_is_exempt() -> None:
+    result = run_checker([], **RELEASE_PR)
+    assert result.returncode == 0, result.stderr
+    assert "generated release pull request" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"author_login": "contributor", "head_repository": "contributor/example"},
+        {"head_repository": "contributor/example"},
+        {"title": "fix: example"},
+    ],
+    ids=["untrusted-author", "forked-bot", "non-release-title"],
+)
+def test_lookalike_release_pull_request_is_not_exempt(override: dict[str, str]) -> None:
+    result = run_checker([], **{**RELEASE_PR, **override})
+    assert result.returncode != 0
+    assert "exactly one" in result.stderr
