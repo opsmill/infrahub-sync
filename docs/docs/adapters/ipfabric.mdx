@@ -94,7 +94,7 @@ credentials:
     identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
-When `base_url` or `auth` is not declared, the adapter reads `IPF_URL` or `IPF_TOKEN` from the worker environment instead.
+A registered package must declare both `base_url` and `auth`; the adapter refuses to start without them. When `verify_ssl` is not declared, TLS is verified, and the adapter reads the latest snapshot. `IPF_VERIFY` and `IPF_SNAPSHOT` in the worker environment do not change either. For direct adapter use without a registered package, the adapter reads `IPF_URL` or `IPF_TOKEN` from the environment when `base_url` or `auth` is not declared.
 
 ### Schema mapping
 

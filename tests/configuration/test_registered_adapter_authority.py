@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import sys
 import types
 from collections.abc import Mapping
@@ -14,6 +15,23 @@ import pytest
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.utils import PlanApplier, get_potenda_from_instance
+
+_REGISTERED_CONTEXT = "_infrahub_sync_registered_context"
+
+
+def _slurpit_api_signature(
+    url: object, *, api_key: object = None, verify: object = True, auto_pagination: object = True, debug: object = False
+) -> None:
+    """Mirror ``slurpit.api.__init__`` of the pinned ``slurpit-sdk``: no ``**kwargs``.
+
+    The adapter passes keywords only, so the optional parameters are keyword-only here.
+    """
+
+
+def _strict_slurpit_api(**kwargs: object) -> object:
+    """Refuse a keyword the real Slurp'it SDK would refuse, then build a stub client."""
+    inspect.signature(_slurpit_api_signature).bind(**kwargs)
+    return types.SimpleNamespace()
 
 
 @dataclass(frozen=True)
@@ -134,7 +152,7 @@ def _install_optional_sdk_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     prometheus_parser = cast("Any", types.ModuleType("prometheus_client.parser"))
     prometheus_parser.text_string_to_metric_families = lambda _text: ()
     slurpit = cast("Any", types.ModuleType("slurpit"))
-    slurpit.api = lambda **_kwargs: types.SimpleNamespace()
+    slurpit.api = _strict_slurpit_api
     for name, module in {
         "pynetbox": pynetbox,
         "pynautobot": pynautobot,
@@ -216,7 +234,8 @@ def _capture_client(
     elif row.name == "slurpitsync":
 
         def make_slurpit_client(**kwargs: object) -> object:
-            """Create the stub Slurp'it SDK client."""
+            """Create the stub Slurp'it SDK client, refusing keywords the real SDK refuses."""
+            inspect.signature(_slurpit_api_signature).bind(**kwargs)
             observed.append(kwargs)
 
             async def get_devices() -> list[object]:  # matches the current async SDK
@@ -518,3 +537,96 @@ def test_ipfabric_resolves_into_local_settings_without_mutating_caller(
     ]
     assert declared.settings is caller_settings
     assert caller_settings == settings
+
+
+def _construct(monkeypatch: pytest.MonkeyPatch, tmp_path: object, row: AdapterRow, instance: SyncInstance) -> None:
+    """Construct both sides of ``instance`` through the real engine seam."""
+    _patch_engine(monkeypatch, tmp_path)
+    module = sys.modules[f"infrahub_sync.adapters.{row.name}"]
+    monkeypatch.setattr("infrahub_sync.utils.import_adapter", lambda **_kwargs: getattr(module, _class_name(row)))
+    get_potenda_from_instance(instance, run_id=f"ambient-{row.name}")
+
+
+def test_registered_ipfabric_never_falls_back_to_ambient_url_or_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """A registered package that declares no IP Fabric URL or token is refused, not completed."""
+    row = next(candidate for candidate in ROWS if candidate.name == "ipfabricsync")
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    for name, value in row.ambient.items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match="registered package"):
+        _construct(monkeypatch, tmp_path, row, _instance(row, {"verify_ssl": True, _REGISTERED_CONTEXT: True}))
+    assert observed == []
+
+
+def test_registered_ipfabric_pins_the_sdk_settings_it_would_read_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """``IPFClient`` reads ``IPF_*`` variables for unset fields, so a registered run sets them."""
+    row = next(candidate for candidate in ROWS if candidate.name == "ipfabricsync")
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    monkeypatch.setenv("IPF_VERIFY", "false")
+    monkeypatch.setenv("IPF_SNAPSHOT", "ambient-snapshot")
+
+    _construct(monkeypatch, tmp_path, row, _instance(row, {**row.settings, _REGISTERED_CONTEXT: True}))
+
+    expected = {**row.settings, "verify": True, "snapshot_id": "$last"}
+    assert observed == [expected, expected]
+
+
+def test_registered_aci_tls_verification_ignores_the_worker_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """``CISCO_APIC_VERIFY`` cannot turn off a registered package's TLS verification."""
+    row = next(candidate for candidate in ROWS if candidate.name == "aci")
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    monkeypatch.setenv("CISCO_APIC_VERIFY", "false")
+
+    _construct(monkeypatch, tmp_path, row, _instance(row, {**row.settings, "verify": True, _REGISTERED_CONTEXT: True}))
+    _construct(monkeypatch, tmp_path, row, _instance(row, {**row.settings, _REGISTERED_CONTEXT: True}))
+
+    assert [call["verify"] for call in observed] == [True, True, True, True]
+
+
+def test_direct_aci_keeps_the_environment_first_tls_setting(monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
+    """Direct adapter use keeps its documented ``CISCO_APIC_VERIFY`` precedence."""
+    row = next(candidate for candidate in ROWS if candidate.name == "aci")
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    monkeypatch.setenv("CISCO_APIC_VERIFY", "false")
+
+    _construct(monkeypatch, tmp_path, row, _instance(row, {**row.settings, "verify": True}))
+
+    assert [call["verify"] for call in observed] == [False, False]
+
+
+@pytest.mark.parametrize("execution", ["registered", "direct"])
+def test_infrahub_sdk_config_takes_authority_only_from_a_registered_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object, execution: str
+) -> None:
+    """The SDK's ``INFRAHUB_*`` settings cannot add credentials or disable TLS on a registered run."""
+    from infrahub_sdk import Config
+
+    row = next(candidate for candidate in ROWS if candidate.name == "infrahub")
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    monkeypatch.setattr(cast("Any", module), "Config", Config)
+    monkeypatch.setenv("INFRAHUB_USERNAME", "ambient-user")
+    monkeypatch.setenv("INFRAHUB_PASSWORD", "ambient-password")
+    monkeypatch.setenv("INFRAHUB_TLS_INSECURE", "true")
+    registered = execution == "registered"
+    settings: dict[str, object] = dict(row.settings)
+    if registered:
+        settings[_REGISTERED_CONTEXT] = True
+
+    _construct(monkeypatch, tmp_path, row, _instance(row, settings))
+
+    configs = [cast("Config", call["config"]) for call in observed]
+    assert [config.api_token for config in configs] == ["registered-token", "registered-token"]
+    assert [(config.username, config.password) for config in configs] == [(None, None), (None, None)]
+    assert [config.tls_insecure for config in configs] == [not registered, not registered]

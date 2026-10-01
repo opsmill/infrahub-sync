@@ -22,7 +22,11 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier
-from infrahub_sync.configuration.credentials import select_runtime_credential
+from infrahub_sync.configuration.credentials import (
+    is_registered_context,
+    pin_infrahub_sdk_authority,
+    select_runtime_credential,
+)
 from infrahub_sync.generator import has_field
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.errors import (
@@ -696,6 +700,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         }
         if verify_ssl is not None:
             sdk_config["tls_insecure"] = not verify_ssl
+        if is_registered_context(settings):
+            # Direct use keeps the SDK's `INFRAHUB_*` fallbacks; a registered package does not.
+            sdk_config = pin_infrahub_sdk_authority(sdk_config)
 
         self.client = InfrahubClientSync(address=infrahub_url, config=Config(**sdk_config))
 

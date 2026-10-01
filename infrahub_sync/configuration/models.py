@@ -11,6 +11,7 @@ from typing import Annotated, Any, Literal, cast
 from unicodedata import category
 
 from diffsync.enum import DiffSyncFlags
+from jinja2 import TemplateSyntaxError
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -33,6 +34,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
     SyncStore,
+    new_transform_environment,
 )
 from infrahub_sync.plan.canonical import canonical_json_bytes
 
@@ -66,6 +68,7 @@ _INVALID_UNICODE_SURROGATE_ERROR = "invalid_unicode_surrogate"
 _INVALID_JSON_VALUE_ERROR = "invalid_json_value"
 _INVALID_DIFFSYNC_FLAG_NAME_ERROR = "invalid_diffsync_flag_name"
 _UNSUPPORTED_ADAPTER_SPEC_ERROR = "unsupported_adapter_spec"
+_INVALID_TRANSFORM_EXPRESSION_ERROR = "invalid_transform_expression"
 # An installed source adapter is one Python import target: dot-separated identifiers,
 # optionally naming a class after a colon. Every filesystem form a plugin loader would
 # otherwise accept fails this by construction — a path separator, a leading "." or "~",
@@ -87,6 +90,7 @@ _SAFE_PYDANTIC_FAILURE_REASONS = {
     "int_parsing": "wrong type",
     "int_from_float": "wrong type",
     "int_parsing_size": "number is outside supported range",
+    _INVALID_TRANSFORM_EXPRESSION_ERROR: "transform expression is not valid Jinja2 syntax",
 }
 _DIFFSYNC_FLAG_CONTAINER_REASONS = frozenset({"diffsync flags must be declared as a list"})
 _DIFFSYNC_FLAG_MEMBER_REASONS = frozenset(
@@ -333,6 +337,20 @@ class _ImmutableSchemaMappingTransform(SchemaMappingTransform):
     """Package-local immutable form of a legacy schema transform."""
 
     model_config = ConfigDict(frozen=True)
+
+    @field_validator("expression")
+    @classmethod
+    def _require_parseable_expression(cls, value: str) -> str:
+        # Syntax only: filter names are bound at render time by the adapter model, and the
+        # render sandbox, not admission, is what refuses unsafe access.
+        try:
+            new_transform_environment().parse(value)
+        except TemplateSyntaxError:
+            raise PydanticCustomError(
+                _INVALID_TRANSFORM_EXPRESSION_ERROR,
+                "transform expression is not valid Jinja2 syntax",
+            ) from None
+        return value
 
 
 class _ImmutableSchemaMappingField(SchemaMappingField):

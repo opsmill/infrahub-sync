@@ -187,7 +187,7 @@ def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tup
     """
     # Imported here, not at module load, for the same reason as the client imports below.
     # pylint: disable-next=import-outside-toplevel
-    from .credentials import CredentialConfigurationError, resolve_reference
+    from .credentials import CredentialConfigurationError, pin_infrahub_sdk_authority, resolve_reference
 
     settings = package.configuration.destination.settings or {}
     url = settings.get("url")
@@ -212,7 +212,9 @@ def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tup
     verify_ssl = settings.get("verify_ssl")
     if verify_ssl is not None:
         sdk_config["tls_insecure"] = not verify_ssl
-    return url, sdk_config
+    # The SDK fills every field left out from `INFRAHUB_*`, which would hand the worker's
+    # own token to the declared URL when the package declares none.
+    return url, pin_infrahub_sdk_authority(sdk_config)
 
 
 def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str) -> Mapping[str, Any]:
