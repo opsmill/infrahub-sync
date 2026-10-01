@@ -18,9 +18,10 @@ def reference_candidates(config: SyncConfig | None, kind: str) -> dict[str, tupl
     `{LocationRack, LocationSite}` for `DcimDevice.location` on the qualified path. Sorted
     so the probe order, and therefore the wording of a failure, is deterministic.
 
-    A `reference` that names a generic is expanded to the concrete kinds the validated
-    destination schema lists for it and the configuration maps, the same set automatic
-    ordering uses, because no record is stored under the generic's own name.
+    A `reference` that names a generic is expanded to the concrete kinds the destination
+    schema lists for it and the configuration maps, the same set automatic ordering uses,
+    because no record is stored under the generic's own name. The schema is the validated
+    snapshot, or on a direct run the destination adapter's live schema.
     """
     if config is None:
         return {}

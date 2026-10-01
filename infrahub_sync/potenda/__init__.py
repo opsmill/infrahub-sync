@@ -6,7 +6,7 @@ import sys
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
-# SDK errors define the operational exception boundary for apply.
+# The one costly module-level import: apply's exception boundary must name the SDK's errors.
 from infrahub_sdk.exceptions import (
     AuthenticationError,
     GraphQLError,

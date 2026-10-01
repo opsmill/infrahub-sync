@@ -1587,6 +1587,33 @@ def test_a_generic_reference_is_probed_under_each_mapped_concrete_kind() -> None
     assert devices["d2"].identity["location"] == {"peer_kind": "LocationSite", "identity": {"name": "hq"}}
 
 
+def test_a_mapped_generic_stays_a_candidate_beside_its_mapped_concrete_kinds() -> None:
+    """A generic the configuration itself maps can hold records, so it is probed too."""
+    config = build_config(
+        order=DUPLICATE_ORDER,
+        schema_mapping=[
+            mapping_entry("LocationSite", identifiers=["name"], fields={"name": None}),
+            mapping_entry("LocationAny", identifiers=["name"], fields={"name": None}),
+            mapping_entry(
+                "DcimDevice", identifiers=["name", "location"], fields={"name": None, "location": "LocationAny"}
+            ),
+        ],
+    )
+    config._runtime_models = SimpleNamespace(  # ty: ignore[invalid-assignment]
+        generic_peers={"LocationAny": ("LocationRack", "LocationSite")}, schema_fingerprint=None
+    )
+    assert reference_candidates(config, "DcimDevice") == {"location": ("LocationAny", "LocationSite")}
+
+
+def test_a_generic_with_no_mapped_concrete_kind_stays_the_only_candidate() -> None:
+    """An empty expansion keeps the generic, so the peer fails as unresolved instead of vanishing."""
+    config = duplicate_location_config("LocationAny")
+    config._runtime_models = SimpleNamespace(  # ty: ignore[invalid-assignment]
+        generic_peers={"LocationAny": ("LocationHub",)}, schema_fingerprint=None
+    )
+    assert reference_candidates(config, "DcimDevice") == {"location": ("LocationAny",)}
+
+
 def test_a_direct_run_expands_a_generic_reference_from_the_destination_live_schema() -> None:
     """With no runtime snapshot, derivation reads the live schema ordering reads."""
     from infrahub_sdk.schema.main import GenericSchemaAPI
