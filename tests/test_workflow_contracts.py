@@ -2361,6 +2361,38 @@ def test_the_image_workflow_takes_the_inputs_the_contract_names(trigger: str) ->
             assert "default" not in declared[name], f"{name} is required and must not carry a default"
 
 
+def test_a_dispatch_takes_exactly_the_inputs_a_call_does() -> None:
+    """A hand-run image is the same build a release calls for, so the two input sets cannot drift."""
+    declared = triggers_of(DOCKER_IMAGE_WORKFLOW)
+
+    assert declared["workflow_dispatch"]["inputs"] == declared["workflow_call"]["inputs"]
+
+
+@pytest.mark.parametrize("trigger", ["workflow_call", "workflow_dispatch"])
+def test_the_tags_input_says_it_takes_newline_separated_full_references(trigger: str) -> None:
+    description = triggers_of(DOCKER_IMAGE_WORKFLOW)[trigger]["inputs"]["tags"]["description"].lower()
+
+    assert "newline-separated" in description
+    assert "full" in description
+
+
+def test_a_run_names_the_ref_it_builds_and_whether_it_publishes() -> None:
+    """The run list then tells two dispatches apart without opening either."""
+    run_name = load(DOCKER_IMAGE_WORKFLOW).get("run-name")
+
+    assert isinstance(run_name, str), "the image workflow declares no run-name"
+    assert "${{ inputs.ref }}" in run_name
+    assert "${{ inputs.publish }}" in run_name
+
+
+def test_only_a_newer_run_for_the_same_ref_cancels_an_image_build() -> None:
+    """The group is shared with the caller, so the ref keeps a run for one ref from cancelling another's."""
+    declared = load(DOCKER_IMAGE_WORKFLOW)["concurrency"]
+
+    assert concurrency_group(DOCKER_IMAGE_WORKFLOW) == "${{ github.workflow }}-${{ inputs.ref }}"
+    assert declared.get("cancel-in-progress") is True
+
+
 def test_the_image_workflow_requests_exactly_what_signing_and_pushing_need() -> None:
     assert permissions(DOCKER_IMAGE_WORKFLOW) == {"contents": "read", "id-token": "write", "packages": "write"}
 

@@ -119,6 +119,7 @@ const sidebars: SidebarsConfig = {
             'develop/guides/testing-an-adapter',
             'develop/guides/building-a-tester-packet',
             'develop/guides/qualifying-an-internal-candidate',
+            'develop/guides/publishing-an-image',
           ],
         },
         {

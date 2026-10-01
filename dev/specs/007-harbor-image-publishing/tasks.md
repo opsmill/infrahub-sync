@@ -147,12 +147,12 @@ and check where `latest` points for a pre-release and for a stable release.
 the listed tags, signed and with SBOMs attached. With `publish: false` nothing is
 pushed. A single platform builds only that one. An empty tag list fails.
 
-- [ ] T015 [P] [US2] In `tests/test_workflow_contracts.py`, assert that `ci-docker-image.yml` declares `workflow_dispatch` with the same six inputs as `workflow_call`, and that `run-name` (or the concurrency group) includes `inputs.ref`.
-- [ ] T016 [US2] In `.github/workflows/ci-docker-image.yml`:
+- [X] T015 [P] [US2] In `tests/test_workflow_contracts.py`, assert that `ci-docker-image.yml` declares `workflow_dispatch` with the same six inputs as `workflow_call`, and that `run-name` (or the concurrency group) includes `inputs.ref`.
+- [X] T016 [US2] In `.github/workflows/ci-docker-image.yml`:
   - Add a `run-name: "Image ${{ inputs.ref }} (publish=${{ inputs.publish }})"`.
   - Add a concurrency group `${{ github.workflow }}-${{ inputs.ref }}` with `cancel-in-progress: true`.
   - In both `inputs` blocks, give `tags` a description saying it is newline-separated full references.
-- [ ] T017 [P] [US2] Write `docs/docs/develop/guides/publishing-an-image.md`, a maintainer guide covering:
+- [X] T017 [P] [US2] Write `docs/docs/develop/guides/publishing-an-image.md`, a maintainer guide covering:
   - when to dispatch, for example a pre-release image for testers;
   - the input values, with a worked example for `registry.opsmill.io/opsmill/infrahub-sync:dispatch-test`;
   - how to verify the result (quickstart §4 commands);

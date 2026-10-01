@@ -31,6 +31,9 @@ how the system works, see [Knowledge](../knowledge/index.md).
   against `qualification.json` from the qualification step.
 - [Qualifying an internal candidate](qualifying-an-internal-candidate.md) — how a teammate
   obtains a pre-release candidate from its Actions run and qualifies it on their own host.
+- [Publishing an image by hand](publishing-an-image.md) — when and how to dispatch the image
+  workflow for a chosen commit and tags, how to verify the pushed image, and why a dispatch
+  leaves `latest` alone.
 
 ### Related
 

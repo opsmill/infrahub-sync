@@ -1,6 +1,7 @@
 ---
 # yamllint disable rule:truthy rule:line-length
 name: Build And Push Docker image
+run-name: "Image ${{ inputs.ref }} (publish=${{ inputs.publish }})"
 
 # Reusable Harbor build-and-push workflow, shaped like infrahub-mcp's file of the
 # same name. Every platform is built, loaded and smoke-tested before anything is
@@ -29,7 +30,7 @@ on:
       tags:
         type: string
         required: true
-        description: Newline-separated full image references to apply when publishing
+        description: Newline-separated full image references (registry/repository:tag) to apply when publishing
       labels:
         type: string
         required: true
@@ -62,7 +63,7 @@ on:
       tags:
         type: string
         required: true
-        description: Newline-separated full image references to apply when publishing
+        description: Newline-separated full image references (registry/repository:tag) to apply when publishing
       labels:
         type: string
         required: true
