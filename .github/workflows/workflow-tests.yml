@@ -81,6 +81,50 @@ jobs:
       - name: "pytest: unit tests"
         run: uv run invoke tests.tests-unit
 
+  # The unit tier above excludes `integration`, so nothing there touches a real
+  # PostgreSQL server. This job runs only the product store's and the admission
+  # race's integration tests against a service container, and `tests-product-store-postgresql` fails on
+  # any skip, an unset DSN, or an empty selection, so a missing server or driver
+  # cannot pass as green.
+  product-store-postgresql:
+    name: "Product store on PostgreSQL"
+    needs: ["files-changed"]
+    if: needs.files-changed.outputs.sync == 'true'
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+        env:
+          POSTGRES_PASSWORD: probe
+          POSTGRES_DB: probe
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d probe"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      PRODUCT_STORE_TEST_POSTGRESQL_DSN: "host=127.0.0.1 port=5432 user=postgres password=probe dbname=probe"
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v7"
+
+      - name: "Install uv"
+        uses: "astral-sh/setup-uv@v7"
+        with:
+          version: "latest"
+
+      - name: "Set up Python 3.13"
+        run: uv python install 3.13
+
+      - name: "Install service dependencies"
+        run: uv sync --python 3.13 --frozen --extra dev --extra prefect --extra service
+
+      - name: "pytest: product store on PostgreSQL"
+        run: uv run --no-sync invoke tests.tests-product-store-postgresql
+
   base-install-tests:
     # One leg WITHOUT the `prefect` extra. `tests/test_no_prefect_import.py` asserts
     # the base package neither imports nor needs Prefect; only an install where
