@@ -10,7 +10,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, TypedDict
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+if __name__ == "__main__" and not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from development.netbox.datasets.netbox_api import NetboxAPI, environment_credentials, relation_kind
 from development.netbox.datasets.tier_data import KINDS, TIER_COUNTS, Row, build_dataset
@@ -182,8 +183,6 @@ def plan_changes(tier: str) -> list[Change]:
     counts = TIER_COUNTS[tier]
     total = (sum(counts.values()) + 50) // 100
     actions = apportion(total, {"update": 70, "create": 20, "delete": 10})
-    if tier == "S":
-        actions = {"update": 4, "create": 1, "delete": 1}
     result: list[Change] = []
     deleted: dict[str, set[int]] = {}
     for kind, count in apportion(
@@ -266,6 +265,9 @@ def live_identifier(kind: str, fields: dict[str, Any]) -> str:
     elif kind == "ipam/vlans":
         parts = [fields["group"]["name"], fields["vid"], fields["name"]]
     elif kind in {"ipam/prefixes", "ipam/ip-addresses"}:
+        if not fields.get("vrf"):
+            msg = f"restore the tier: expected {kind} object has no VRF"
+            raise ValueError(msg)
         parts = [fields["vrf"]["name"], fields.get("prefix", fields.get("address"))]
     else:
         parts = [fields.get("name", fields.get("prefix", fields.get("cid")))]

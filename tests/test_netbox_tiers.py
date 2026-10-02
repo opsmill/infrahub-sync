@@ -5,7 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import subprocess  # noqa: S404 -- cold-import probe runs only this Python interpreter
+import sys
 from collections import Counter
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -293,3 +296,59 @@ def test_force_finds_prefix_updates_after_namespace_identity_change() -> None:
     ids = {(row["kind"], change.identifier(row["kind"], after, data)): 999}
     change.add_update_aliases([row], data, ids)
     assert ids[row["kind"], row["identifier"]] == 999
+
+
+@pytest.mark.parametrize("module", ["change_netbox", "seed_netbox"])
+def test_dataset_import_preserves_search_path_and_precedence(module: str) -> None:
+    # A fresh process exercises the first import, before pytest collection caches it.
+    probe = """
+import importlib
+import importlib.util
+import sys
+before = sys.path.copy()
+origin = importlib.util.find_spec("tasks").origin
+importlib.import_module(sys.argv[1])
+assert sys.path == before
+assert importlib.util.find_spec("tasks").origin == origin
+"""
+    result = subprocess.run(  # noqa: S603 -- fixed probe and parametrized local module names
+        [sys.executable, "-c", probe, f"development.netbox.datasets.{module}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_change_cli_defaults_to_repository_changes_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    api = MemoryNetbox()
+    seed_dataset(api, build_dataset("S"), "S")
+    monkeypatch.setattr(change, "__file__", str(tmp_path / "development/netbox/datasets/change_netbox.py"))
+    monkeypatch.setattr(sys, "argv", ["change_netbox.py", "--tier", "S"])
+    monkeypatch.setenv("NETBOX_URL", "http://example.invalid")
+    monkeypatch.setenv("NETBOX_API_TOKEN", "unused")
+
+    def client(url: str, token: str) -> nullcontext[MemoryNetbox]:
+        assert url == "http://example.invalid"
+        assert token == "unused"  # noqa: S105 -- synthetic credential for the mocked client
+        return nullcontext(api)
+
+    monkeypatch.setattr(change, "NetboxAPI", client)
+    change.main()
+    output = tmp_path / ".netbox/changes/S.expected.json"
+    assert output.read_text() == change.expected_text("S", change.plan_changes("S"))
+    assert not output.with_suffix(".partial.json").exists()
+
+
+@pytest.mark.parametrize("kind", ["ipam/prefixes", "ipam/ip-addresses"])
+def test_change_refuses_missing_vrf_before_writing(kind: str, tmp_path: Path) -> None:
+    api = MemoryNetbox()
+    seed_dataset(api, build_dataset("S"), "S")
+    api.all(kind)[0]["vrf"] = None
+    api.calls.clear()
+    output = tmp_path / "S.expected.json"
+    with pytest.raises(ValueError, match=f"expected {kind} object has no VRF"):
+        change.apply_changes(api, "S", output)
+    assert api.calls == []
+    assert not output.exists()
+    assert not output.with_suffix(".partial.json").exists()

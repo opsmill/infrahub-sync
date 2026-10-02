@@ -478,7 +478,7 @@ def seed(context: Context, dataset: str = DEFAULT_DATASET, tier: str = "S") -> N
             pty=False,
         )
     record_tier(tier)
-    attach_dev_worker(context, values)
+    _ready(context, values)
     print(f" - [{NAMESPACE}] NetBox tier {tier} ready")
 
 

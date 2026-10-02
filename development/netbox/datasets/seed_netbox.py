@@ -7,7 +7,8 @@ import sys
 from pathlib import Path
 
 # Invoke executes this file by path; keep its package imports available in a base checkout.
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+if __name__ == "__main__" and not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from development.netbox.datasets.netbox_api import NetboxAPI, environment_credentials, seed_dataset, verify_counts
 from development.netbox.datasets.tier_data import build_dataset

@@ -36,6 +36,8 @@ REQUIRED_VALUES = {
 @pytest.fixture(autouse=True)
 def isolated_tier_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(netbox, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(netbox, "attach_dev_worker", lambda _context, _values: False)
+    monkeypatch.setattr(netbox, "detach_dev_worker", lambda _context, _values: None)
 
 
 def test_dataset_script_resolves_the_seed_dataset() -> None:
@@ -147,7 +149,7 @@ def test_seed_resets_the_database_before_loading_the_dataset(monkeypatch: pytest
     assert "--token" not in run_event[1]
 
 
-def test_seed_reports_the_tier_without_printing_credentials(
+def test_seed_reports_the_tier_and_development_banner(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     context = Context()
@@ -160,7 +162,8 @@ def test_seed_reports_the_tier_without_printing_credentials(
 
     printed = capsys.readouterr().out
     assert "NetBox tier S ready" in printed
-    assert "nbt_" not in printed
+    assert f"URL:   {netbox.netbox_url(REQUIRED_VALUES)}" in printed
+    assert f"Token: {netbox.netbox_token(REQUIRED_VALUES)}" in printed
 
 
 def test_seed_refuses_an_unknown_dataset_before_touching_the_database(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -538,10 +541,32 @@ def test_restore_refuses_invalid_sidecar_before_touching_database(
 def test_tier_restore_orders_database_load_before_netbox_and_reapplies_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     sql = write_tier_dump("M")
     calls: list[str] = []
+    context = Context()
+
+    def refuse_subprocess(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("restore unit test attempted a host subprocess")
+
+    monkeypatch.setattr(context, "run", refuse_subprocess)
+
+    def detach(ctx: Context, values: dict[str, str]) -> None:
+        assert ctx is context
+        assert values == REQUIRED_VALUES
+        calls.append("detach")
+
+    def attach(ctx: Context, values: dict[str, str]) -> bool:
+        assert ctx is context
+        assert values == REQUIRED_VALUES
+        calls.append("attach")
+        return True
+
+    monkeypatch.setattr(netbox, "detach_dev_worker", detach)
+    monkeypatch.setattr(netbox, "attach_dev_worker", attach)
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
     monkeypatch.setattr(netbox, "_compose", lambda _context, args, _values: calls.append(args))
     monkeypatch.setattr(netbox, "_wait_for_http", lambda *_args: calls.append("wait"))
-    cast("Task", netbox.restore).body(Context(), tier="M")
+    cast("Task", netbox.restore).body(context, tier="M")
+    assert calls.pop(0) == "detach"
+    assert calls.pop() == "attach"
     assert calls[0] == "down --volumes"
     assert calls[1].endswith("netbox-database netbox-redis")
     assert "psql" in calls[2]

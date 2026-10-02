@@ -27,7 +27,7 @@ Use the disposable NetBox tasks from a development environment with the `dev`, `
 and `service` extras. `seed` and `restore` replace the entire local NetBox database.
 Tier S preserves the qualification dataset. The tiers contain 560, 10,207, and 87,815
 syncable NetBox objects respectively, plus known unnamed-device and ungrouped-VLAN skip
-cases. Tier L seeding takes one to two hours; large benchmark runs can also take hours.
+cases. Tier L seeding can take hours; large benchmark runs can also take hours.
 
 ```bash
 uv run invoke netbox.seed --tier S
@@ -51,9 +51,11 @@ rounded with largest remainders in a 70/20/10 update/create/delete split. Create
 use only leaf kinds; referenced leaves are excluded from deletion and their allocation
 moves to available kinds. At least 30% of updates change relationships.
 
-These are direct NetBox mutations. Namespace changes and assigned-address changes can
-also change mapped identifiers or inverse interface relationships. Compare the expected
-fields with the mapping when checking a sync result. A marker in an existing tag's unmapped
+These are direct NetBox mutations. A prefix VRF move changes its mapped
+`[prefix, ip_namespace]` identifier, so a sync sees a delete and a create. IP reassignment
+and deletion change the owning interface's mapped `ip_addresses` relationship. The
+benchmark runner must translate these mutations through the mapping before comparing
+the expected file with applied sync actions. A marker in an existing tag's unmapped
 slug blocks a second mutation without adding a syncable tag. Restore before another run;
 `--force` reapplies the same updates and leaves already completed creates and deletes
 in place; its expected file describes the intended mutations, rather than new work on
