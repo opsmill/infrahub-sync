@@ -2100,7 +2100,6 @@ def test_no_service_setting_uses_the_credential_namespace() -> None:
     prefix = configuration_credentials.ENV_CREDENTIAL_PREFIX
     owner = root / "infrahub_sync" / "configuration" / "credentials.py"
     readers = [path for path in (root / "infrahub_sync").rglob("*.py") if path != owner]
-    readers.append(root / "deploy" / "compose" / "defaults.conf")
 
     assert [str(path.relative_to(root)) for path in readers if prefix in path.read_text(encoding="utf-8")] == []
 

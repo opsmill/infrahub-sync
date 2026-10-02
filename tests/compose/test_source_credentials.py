@@ -38,8 +38,9 @@ import requests
 from infrahub_sync.configuration import collect_findings, parse_configuration_package
 from infrahub_sync.configuration.credentials import CredentialConfigurationError, select_runtime_credential
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
-from tests.compose.conftest import CONTRACT_ENVIRONMENT, DEFAULTS_FILE, compose
+from tests.compose.conftest import CONTRACT_ENVIRONMENT, compose
 from tests.compose.redaction import SECRETS
+from tests.docker_image import IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV, image_settings
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -63,9 +64,6 @@ AMBIENT_URL = "https://ambient-source.invalid"
 # other request is rejected.
 NAUTOBOT_VERSION_URL = f"{NAUTOBOT_URL}/api/"
 NAUTOBOT_API_VERSION = "2.4"
-
-# The built candidate the Docker-marked cases run against.
-IMAGE_REFERENCE_ENV = "INFRAHUB_SYNC_IMAGE"
 
 # Both SDKs are declared `python_version >= '3.11'` in the service extra, so the
 # Python 3.10 profile does not install them and cannot construct either client.
@@ -509,29 +507,23 @@ print("PKG-R1-CONTAINER PASS" if all(checks.values()) else "PKG-R1-CONTAINER FAI
 """
 
 
-def container_environment(tmp_path: Path) -> dict[str, str]:
-    """Every operator input the bundle needs, with the image under test named.
+def container_environment() -> dict[str, str]:
+    """Every operator input the file needs, with the image under test named.
 
     Deliberately carries no source token. The whole point of the container proof
-    is that the declared value arrives through the operator file, so handing it
-    to Compose in the process environment here would make the test pass whether
-    or not operator-file loading works at all.
+    is that the declared value arrives through the operator's `.env`, so handing
+    it to Compose in the process environment here would make the test pass
+    whether or not `.env` loading works at all.
     """
-    image = os.environ.get(IMAGE_REFERENCE_ENV, "").strip()
-    if not image:
-        pytest.skip(f"{IMAGE_REFERENCE_ENV} names no built image; this gate runs against the candidate artifact")
-    secret = tmp_path / "postgres-admin-password"
-    secret.write_text("container-administrator-password\n", encoding="utf-8")
-    return {
-        **CONTRACT_ENVIRONMENT,
-        IMAGE_REFERENCE_ENV: image,
-        "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD_FILE": str(secret),
-    }
+    image = image_settings()
+    if not all(image.values()):
+        pytest.skip(f"{IMAGE_REPOSITORY_ENV} and {IMAGE_VERSION_ENV} name no built image to run")
+    return {**CONTRACT_ENVIRONMENT, **image}
 
 
 def operator_file(tmp_path: Path, **settings: str) -> Path:
-    """Write one operator-format env file, in the shape `init` generates."""
-    path = tmp_path / "operator.env"
+    """Write one operator `.env` holding exactly these settings."""
+    path = tmp_path / ".env"
     path.write_text("".join(f"{name}={value}\n" for name, value in settings.items()), encoding="utf-8")
     path.chmod(0o600)
     return path
@@ -551,11 +543,11 @@ CONTAINER_TOKENS = {
 def test_the_worker_container_gives_the_declared_credential_to_the_real_adapter(
     docker_daemon: None, source: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """One `compose run` in the shipped image, resolving and constructing for real.
+    """One `compose run` in the image under test, resolving and constructing for real.
 
-    The declared token reaches Compose only through an operator-format env file
-    placed after `defaults.conf`, and is absent from this process's environment,
-    so the case fails if operator-file loading is broken rather than passing on a
+    The declared token reaches Compose only through the operator's `.env`, and is
+    absent from this process's environment, so the case fails if `.env` loading
+    is broken rather than passing on a
     value Compose was handed directly. A hostile ambient URL is exported into the
     same container. What the adapter ends up holding is compared inside the
     container and only verdicts are printed, so the value never reaches anything
@@ -586,11 +578,11 @@ def test_the_worker_container_gives_the_declared_credential_to_the_real_adapter(
             CONTAINER_DECLARED_URL[source],
             source,
         ],
-        environment=container_environment(tmp_path),
-        env_files=(DEFAULTS_FILE, settings),
+        environment=container_environment(),
+        env_files=(settings,),
     )
 
-    assert profile.identifier not in os.environ, "the token must reach Compose from the operator file alone"
+    assert profile.identifier not in os.environ, "the token must reach Compose from the operator's .env alone"
     assert result.returncode == 0, result.output
     assert "PKG-R1-CONTAINER PASS" in result.stdout, result.output
     assert SECRETS.leaked(result.unredacted(), {profile.identifier: token}) == []
@@ -626,8 +618,8 @@ def test_a_missing_source_token_fails_the_run_inside_the_container(
             CONTAINER_DECLARED_URL["netbox"],
             "netbox",
         ],
-        environment=container_environment(tmp_path),
-        env_files=(DEFAULTS_FILE, operator_file(tmp_path)),
+        environment=container_environment(),
+        env_files=(operator_file(tmp_path),),
     )
 
     names_expected_identifier = "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN" in result.unredacted()

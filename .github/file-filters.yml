@@ -45,42 +45,6 @@ uv_files: &uv_files
   - "pyproject.toml"
   - "uv.lock"
 
-image_files: &image_files
-  - "Dockerfile"
-  - ".dockerignore"
-  - "vulnerability-waivers.yml"
-  # Build-context inputs rather than documentation here: the Dockerfile copies
-  # both into the wheel's build, so a change to either changes the image the gate
-  # would qualify. `tests/test_workflow_contracts.py` reads the Dockerfile's own
-  # COPY lines and fails if an input stops being named.
-  - "README.md"
-  - "LICENSE.txt"
-  - "tests/image/**"
-  - ".github/workflows/workflow-image.yml"
-  # And this document, because `image_all` below is what selects the image job
-  # and the checkout-free clean-host job. Re-aiming that selection is the one
-  # change most able to hide a regression, so it has to face the gate it aims.
-  # The exact path only: `.github/workflows/**` would rebuild and rescan the
-  # image for an edit to an unrelated workflow.
-  - ".github/file-filters.yml"
-
-# The Compose bundle is qualified in the image gate's own job, against the image
-# that job just built, so a change to the bundle or its suites re-runs the gate.
-compose_files: &compose_files
-  - "deploy/compose/**"
-  - "tests/compose/**"
-
-# The clean-host kit's inputs that live outside the trees above. `release.kit`
-# copies these exact files into the kit a bare host runs, so a change to one
-# changes what the clean-host matrix qualifies against. Named file by file
-# rather than by directory, because the rest of `development/` and `examples/`
-# is not image-gate input and must not be routed into it.
-qualification_kit_files: &qualification_kit_files
-  - "development/docker-compose.infrahub.yml"
-  - "development/docker-compose.preview.yml"
-  - "development/preview.env"
-  - "examples/prefect_remote_run/schemas/infra_device.yml"
-
 sync_all:
   - *sync_files
   - *test_files
@@ -93,44 +57,20 @@ documentation_all:
   - *doc_files
   - *markdown_all
 
-# The image gate rebuilds and rescans, so it runs for the image itself, the
-# scanner policy, and the dependency set it installs. It runs its steps through
-# Invoke, so it takes the whole task tree rather than the one module it is
-# about: the entry point that registers that module, and everything it imports,
-# decide what `invoke image.*` actually does.
-image_all:
-  - *image_files
-  - *compose_files
-  - *qualification_kit_files
-  - *sync_files
-  - *development_files
-  - *uv_files
-
-# What raises a pull request from the fast tier to the full one without anybody
-# labelling it. Deliberately narrower than `image_all`: that filter decides
-# whether the image job runs at all, and an application change still builds,
-# scans and smokes on every push. This one decides whether that job also runs
-# the warm-builder rebuild, the arm64 platform, the Compose lifecycle and the
-# clean-host matrix — the twenty-seven minutes the tier split exists to defer —
-# so it names only what those stages alone are about.
-#
-# `tasks/image.py` and `tasks/compose.py` by name rather than `tasks/**`: the
-# rest of the tree is fast-tier input, already covered by `image_all`, and
-# routing it here would put every task edit back on the long path.
-#
-# The last three entries are this split's own declarations. A tier boundary that
-# can be re-aimed without facing the tier it aims proves nothing, so editing one
-# of them runs the full qualification itself.
-qualify_all:
+# What the image gate (`ci-docker-image.yml`) rebuilds for: the build
+# context the Dockerfile copies, the dependency set it installs, the root
+# Compose file the smoke test starts, and the smoke suite itself. The last three
+# entries are the gate's own declarations, so re-aiming it faces the gate it
+# aims.
+image_inputs:
   - "Dockerfile"
   - ".dockerignore"
-  - "vulnerability-waivers.yml"
+  - "pyproject.toml"
+  - "uv.lock"
+  - "infrahub_sync/**"
+  - "opsmill_prefect_extras/**"
+  - "docker-compose.yml"
   - "tests/image/**"
-  - "tasks/compose.py"
-  - "tasks/image.py"
-  - "tasks/release.py"
-  - *compose_files
-  - *qualification_kit_files
-  - ".github/workflows/workflow-image.yml"
+  - ".github/workflows/ci-docker-image.yml"
   - ".github/workflows/trigger-pr-develop.yml"
   - ".github/file-filters.yml"

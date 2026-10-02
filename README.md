@@ -17,7 +17,7 @@ command-line client sends requests to that service.
 
 - **V3 documentation:** [feature-v3-develop.infrahub-sync.pages.dev](https://feature-v3-develop.infrahub-sync.pages.dev/),
   built from this branch.
-- **OpsMill staff testing a V3 candidate:** start at the internal
+- **OpsMill staff testing a V3 pre-release:** start at the internal
   [V3 start page](https://github.com/opsmill/infrahub-sync-process#readme).
 - **V2** is the version on [PyPI](https://pypi.org/project/infrahub-sync/) and on the
   `main` branch. Its documentation is at [docs.infrahub.app/sync](https://docs.infrahub.app/sync).
@@ -50,14 +50,14 @@ as part of the [Infrahub](https://github.com/opsmill/infrahub) ecosystem.
 - **Run from source** — to try the latest changes or use a Mac. Build and start the
   service from a checkout of `feature/v3-develop`, on any platform Docker supports,
   including Apple Silicon.
-- **Run a release package** — to test a fixed version. A candidate is a prebuilt image
-  and Docker Compose bundle for one fixed version, tested together on Linux amd64
-  before it is published.
+- **Run the container image** — to run a fixed version. Every release publishes a signed
+  image for Linux amd64 and arm64 to `registry.opsmill.io/opsmill/infrahub-sync`, and the
+  release tag's `docker-compose.yml` runs the whole service from it.
 
 Both run the same Sync service. A source build has passed the pull request checks, but
-not the full deployment tests that each release package passes.
+not the release checks that each published image passes.
 
-To run a release package, follow
+To run the container image, follow
 [Install Infrahub Sync](https://feature-v3-develop.infrahub-sync.pages.dev/installation).
 To run from source, continue below.
 
@@ -67,8 +67,8 @@ To run from source, continue below.
 
 ## Run From Source
 
-You need Docker, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13. The root
-`compose.yaml` builds the image from your checkout, for your host's own architecture, and
+You need Docker, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13. The
+development stack, `development/docker-compose.dev.yml`, builds the image from your checkout, for your host's own architecture, and
 runs the Sync API, the worker, PostgreSQL, object storage, and Prefect:
 
 ```bash
@@ -108,8 +108,7 @@ in the documentation. In short:
 
 When you are finished, run `uv run invoke destroy` to stop the stack and delete its data.
 
-This build keeps its own BuildKit cache, separate from the one `invoke image.build` uses,
-so the first build each way starts with an empty cache.
+This build keeps its own BuildKit cache, so the first build starts with an empty cache.
 
 ---
 

@@ -43,6 +43,12 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   time and a create by proving its own payload, and what plan format 3 carries. Closes AD067.
 - [0014 — V3 writes through saved-plan apply](0014-v3-writes-through-saved-plan-apply.md)
   — why the direct DiffSync write path is removed from v3.
+- [0015 — Images publish to Harbor through one reusable workflow](0015-images-publish-to-harbor-through-one-reusable-workflow.md)
+  — why the artifact handoff became a Harbor build-and-push workflow, how a tag waits for every
+  platform's smoke test, and when `latest` moves.
+- [0016 — The Compose deployment is one tag-pinned file](0016-the-compose-deployment-is-one-tag-pinned-file.md)
+  — why the wrapper and digest binding became a root `docker-compose.yml` pinned by the
+  release commit, and what was given up.
 
 ## Related
 

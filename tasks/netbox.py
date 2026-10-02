@@ -15,9 +15,9 @@ points at this local NetBox and the preview Infrahub. `invoke netbox.down` remov
 containers and their volumes.
 
 NetBox publishes its port on the host's loopback address only. A container cannot reach
-that address, so the local development stack's worker (`compose.yaml`, `invoke start`)
-joins NetBox's own Compose network instead and reads NetBox at `WORKER_NETBOX_URL`. These
-tasks connect the worker when NetBox becomes ready and disconnect it before NetBox's
+that address, so the local development stack's worker
+(`development/docker-compose.dev.yml`, `invoke start`) joins NetBox's own Compose network
+instead and reads NetBox at `WORKER_NETBOX_URL`. These tasks connect the worker when NetBox becomes ready and disconnect it before NetBox's
 network is removed; `invoke start` connects a recreated worker again.
 
 Configuration ships in `development/netbox/netbox.env` (no secrets -- local-only
@@ -110,8 +110,8 @@ SHIPPED_PACKAGE = REPO_ROOT / "examples" / "netbox_to_infrahub" / "package.yml"
 LOCAL_PACKAGE = STATE_DIR / "from-netbox.local.yml"
 SHIPPED_NETBOX_URL = "https://demo.netbox.dev"
 SHIPPED_INFRAHUB_URL = "http://localhost:8000"
-# The local development stack (`compose.yaml`) and its one service that reads a source. Its
-# project name is fixed by the file's top-level `name:`.
+# The local development stack (`development/docker-compose.dev.yml`) and its one service
+# that reads a source. Its project name is fixed by the file's top-level `name:`.
 DEV_STACK_PROJECT = "infrahub-sync-dev"
 DEV_STACK_WORKER_SERVICE = "sync-worker"
 # The address the dev stack's worker uses for NetBox once it has joined NetBox's network:

@@ -105,6 +105,7 @@ const sidebars: SidebarsConfig = {
             'develop/knowledge/execution-surface',
             'develop/knowledge/orchestration-prefect',
             'develop/knowledge/quality-gates',
+            'develop/knowledge/image-publishing',
           ],
         },
         {
@@ -117,9 +118,8 @@ const sidebars: SidebarsConfig = {
           items: [
             'develop/guides/adding-an-adapter',
             'develop/guides/testing-an-adapter',
+            'develop/guides/publishing-an-image',
             'develop/guides/netbox-benchmark-tiers',
-            'develop/guides/building-a-tester-packet',
-            'develop/guides/qualifying-an-internal-candidate',
           ],
         },
         {
@@ -135,6 +135,7 @@ const sidebars: SidebarsConfig = {
             'develop/guidelines/testing',
             'develop/guidelines/testing-tiers',
             'develop/guidelines/secret-redaction',
+            'develop/guidelines/ci-workflows',
           ],
         },
         'develop/constitution',

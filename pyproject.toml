@@ -238,9 +238,8 @@ testpaths = [
 markers = [
     "integration: tests that require a running Infrahub instance. Skipped by default; opt in with -m integration. Each family skips when its settings are missing; see docs/docs/develop/guidelines/testing-tiers.md#integration. The remote-run test additionally needs a live Prefect server (PREFECT_API_URL) and a separately started served deployment (`python -m infrahub_sync.orchestration.serve`, from the repository root).",
     "preview: end-to-end smoke tests against a running preview environment (`invoke preview.up`). Opt in with -m preview; each test skips when the environment is not reachable.",
-    "docker: container-image tests that run the built image through a Docker daemon. Opt in with -m docker; they are driven by `invoke image.smoke`, which exports the built image from the retained layout, loads it, and names it to them.",
-    "builder: warm-builder freshness tests that run two real image builds through a Docker daemon. Opt in with -m builder; they are driven by `invoke image.freshness`, which names the shared buildx builder to them.",
-    "compose: Compose bundle lifecycle tests that run a real deployment through a Docker daemon. Opt in with -m compose; they are driven by `invoke compose.lifecycle`, which names the already-built image to them. They share one session-scoped stack and run single-process.",
+    "docker: image smoke tests; needs Docker, `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`. Opt in with -m docker.",
+    "compose: Compose deployment lifecycle; needs Docker. Opt in with -m compose. They share one session-scoped stack and run single-process.",
     "timeout: bounds a test's wall-clock runtime via pytest-timeout; the test fails instead of hanging past the given number of seconds.",
 ]
 filterwarnings = [
@@ -307,14 +306,6 @@ max-line-length = 150
 max-complexity = 33
 
 [tool.ruff.lint.per-file-ignores]
-
-# The clean-host checks are scripts a container runs, not modules this repository
-# imports. They are mounted flat at one path and executed by name, so that path is
-# their import root and their standard output is how they report to the driver.
-"tests/compose/clean_host/checks/*.py" = [
-    "INP001",  # File is part of an implicit namespace package
-    "T201",  # `print` found
-]
 
 # NetBox dataset tooling includes scripts invoked by path and reusable modules
 # imported by Invoke tasks and tests. Endpoint progress is logged during seeding.
@@ -442,6 +433,7 @@ disable = [
     "MD047",  # single trailing newline
 ]
 exclude = [
+    ".specify/**",
     ".agents/**",
     ".claude/**",
     ".codex/**",

@@ -14,18 +14,21 @@ strings, is left to GitHub.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess  # noqa: S404 — running the guard's own script is how its refusal is measured
+import sys
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
 import yaml
 
-from tasks import ns, release
+from tasks import ns
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -36,25 +39,14 @@ CALLERS = tuple(sorted(path.name for path in WORKFLOWS.glob("trigger-*.yml")))
 ACCESS = {"none": 0, "read": 1, "write": 2}
 
 UPLOAD_ACTION = "actions/upload-artifact"
-# The artifacts an approval is later bound to, as opposed to evidence a run
-# leaves for whoever reads it that day.
-CANDIDATE_ARTIFACTS = ("infrahub-sync-candidate", "infrahub-sync-qualification")
 # `invoke` as the command being run, optionally through `uv run`, so that naming
 # it as an argument — installing it, say — is not read as running a task.
 INVOKE_TASK = re.compile(
     r"(?:^|&&|;|\|)\s*(?:uv\s+run\s+(?:--\S+\s+)*)?invoke\s+([A-Za-z][\w.-]*)",
     re.MULTILINE,
 )
-# The tree every Invoke task is defined in, and so the tree any workflow that
-# runs one depends on beyond the single module it names.
-TASK_TREE = "tasks/**"
-# What the image gate installs into the artifact it builds, and what the Compose
-# phase of that same job then qualifies by running it.
-QUALIFIED_TREES = ("infrahub_sync/**", "deploy/compose/**", "tests/compose/**")
 
 PUBLISH_WORKFLOW = WORKFLOWS / "workflow-publish.yml"
-IMAGE_WORKFLOW = WORKFLOWS / "workflow-image.yml"
-CANDIDATE_WORKFLOW = WORKFLOWS / "workflow-candidate.yml"
 NIGHTLY_WORKFLOW = WORKFLOWS / "workflow-nightly-e2e.yml"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 
@@ -118,157 +110,21 @@ GUARD_TIMEOUT_SECONDS = 30
 # dispatch, and a call from one, carry a person's decision about a candidate.
 APPROVED_EVENTS = frozenset({"workflow_dispatch", "workflow_call"})
 
-# The job that qualifies the candidate on a host that has never seen this
-# repository, and everything it is not allowed to have.
-CLEAN_HOST_JOB = "clean-host"
-LIFECYCLE_JOB = "compose-lifecycle"
-FINAL_QUALIFICATION_JOB = "final-qualification"
-GATE_INPUT_ARTIFACT = "infrahub-sync-qualification-gate-input"
-LIFECYCLE_RESULT_ARTIFACT = "infrahub-sync-qualification-lifecycle-result"
 CHECKOUT_ACTION = "actions/checkout"
-INTERPRETER_ACTIONS = ("astral-sh/setup-uv", "actions/setup-python")
-# `python` and `python3` among them: an interpreter the runner happens to ship
-# is still an interpreter, and a job that reaches for one is no longer showing
-# that the released artifact runs on a host holding nothing but the artifact.
-HOST_TOOLS = ("uv ", "uvx ", "pipx ", "poetry ", "pytest ", "python ", "python3 ")
-DRIVER_ENTRYPOINT = "clean-host.sh"
-DOWNLOAD_ACTION = "actions/download-artifact"
-# The two routes to that job. Pull-request validation qualifies bytes that exist
-# for one download and are deleted inside the run; the manual candidate route
-# qualifies the retained bytes an approval is later bound to. Both run the same
-# driver on the same kind of host, so every property of the job holds on both.
-CLEAN_HOST_ROUTES = (IMAGE_WORKFLOW, CANDIDATE_WORKFLOW)
 
-# The candidate route's own two jobs: one builds the tester packet from what the
-# candidate job retained -- the raw archive is gone from disk by the time
-# qualification finishes, so it can only be built from the upload -- and the
-# other rehearses the tester path from that one download, on a host that has
-# never seen this repository and never pulled the image either.
-PACKET_JOB = "packet"
-PACKET_REHEARSAL_JOB = "packet-rehearsal"
-PACKET_ARTIFACT = "infrahub-sync-candidate-packet"
-
-# The manual candidate route. The commit to build is an input rather than the
-# ref's tip: `workflow_dispatch` runs against a ref, so a branch that moved
+# The nightly route's commit input. The commit to build is an input rather than
+# the ref's tip: `workflow_dispatch` runs against a ref, so a branch that moved
 # between the merge and the dispatch would build different source.
 SHA_INPUT = "sha"
-# Passed through an environment value rather than interpolated into the script,
-# which is also what makes the refusals runnable outside a workflow.
-SHA_ENVIRONMENT = "CANDIDATE_SHA"
 HEAD_READBACK = "git rev-parse HEAD"
 ANCESTRY_CHECK = "git merge-base --is-ancestor"
-# What a step that has started building looks like: it runs an Invoke task, or it
-# sets up one of the build actions. Both refusals precede every one of them.
-BUILD_ACTIONS = ("docker/setup-qemu-action", "docker/setup-buildx-action", "astral-sh/setup-uv")
-# The window this route names, and the seven groups it is asked for. Exactly 30:
-# a floor is the wrong end to check on a public repository, where `>= 30` is what
-# let a 90-day pull-request candidate sit behind public download links.
-CANDIDATE_WINDOW_NAME = "CANDIDATE_RETENTION_DAYS"
-CANDIDATE_WINDOW = "${{ env.CANDIDATE_RETENTION_DAYS }}"
-CANDIDATE_WINDOW_DAYS = 30
-# How far the granted window may drift from the requested one before the
-# read-back refuses it. `created_at` trails the start of the upload it
-# belongs to, so this covers an upload's own duration without being wide
-# enough to miss a real cap on retention.
-RETENTION_DRIFT_TOLERANCE_NAME = "RETENTION_DRIFT_TOLERANCE_SECONDS"
-RETENTION_DRIFT_TOLERANCE_SECONDS = 3600
-CANDIDATE_GROUPS = frozenset(
-    {
-        "infrahub-sync-candidate-image",
-        "infrahub-sync-candidate-identity",
-        "infrahub-sync-candidate-distributions",
-        "infrahub-sync-candidate-bundle",
-        "infrahub-sync-candidate-sboms",
-        "infrahub-sync-qualification-kit",
-        "infrahub-sync-qualification-record",
-        "infrahub-sync-candidate-packet",
-    }
-)
-# Asking for a window is not being granted one, so the run reads its own
-# artifacts back. `expires_at` is the field that says what it really got.
-RETENTION_READBACK = ("actions/runs", "expires_at")
-# A run's title is the one place a dispatched run states the commit it was told
-# to build: `head_sha` is the tip of the ref it started against.
-RUN_TITLE = "run-name"
 # What `actions/checkout` does with the run's token unless told otherwise. Left
 # on, it writes the token into `.git/config` of the tree every later step runs
 # third-party code against.
 PERSISTED_CREDENTIALS = "persist-credentials"
-# The two shapes publication would arrive in even with no publishing command
-# present: a switch that turns one on, and the protected environment it runs in.
-PUBLICATION_INPUT = "publish"
-RELEASE_ENVIRONMENT = "environment"
 
-# The job that deletes the handoff inside the run that created it. A handoff is
-# not retention: an artifact is the only transfer GitHub offers between two
-# jobs, so the bytes exist for one download and the run ends holding none.
-CLEANUP_JOB = "handoff-cleanup"
-# The two windows the image workflow names, and what each upload has to
-# reference. One day is the fail-safe for a run that lost its cleanup, never a
-# window anything may rely on; seven is how long a failure is worked in.
-WINDOWS = {"HANDOFF_RETENTION_DAYS": 1, "DIAGNOSTIC_RETENTION_DAYS": 7}
-HANDOFF_WINDOW = "${{ env.HANDOFF_RETENTION_DAYS }}"
-DIAGNOSTIC_WINDOW = "${{ env.DIAGNOSTIC_RETENTION_DAYS }}"
-# Deleting one artifact, and deleting the run that is the evidence the gate ran.
-ARTIFACT_ENDPOINT = "actions/artifacts"
-RUN_ENDPOINT = "actions/runs"
-
-# The one input that decides whether this run may hand bytes between two jobs at
-# all, and the token every stage and job that does so has to name in its `if`.
-# A fork's token is read-only whatever a workflow asks for, so a fork run
-# produces no handoff rather than producing one it cannot delete.
-HANDOFF_INPUT = "same-repository"
-HANDOFF_GUARD = f"inputs.{HANDOFF_INPUT}"
-# What marks a step as producing or describing the handoff: it stages the bytes,
-# writes what the service is holding, writes the record read from them, or
-# uploads one of the three artifacts.
-HANDOFF_MARKERS = (".release/handoff", ".release/artifacts.json", "invoke release.qualify")
-# The qualification a fork keeps. None of these may be behind the *trust* guard,
-# or a fork pull request stops building, scanning, smoking and running the
-# lifecycle. Which tier runs them is a separate question, asked below: a fork
-# that qualifies runs everything here, and this case is what stops the trust
-# guard from being widened into a reason to run nothing.
-UNGUARDED_TASKS = ("release.kit", "image.build", "image.scan", "image.smoke", "compose.lifecycle")
-
-# The second input the gate takes, and the token every step and job that only a
-# qualifying run performs has to name in its `if`. False by default for the same
-# reason the trust input is: the route a caller who says nothing inherits is the
-# cheap one, and the expensive one is asked for.
-TIER_INPUT = "qualify"
-TIER_GUARD = f"inputs.{TIER_INPUT}"
-# What every push to a pull request runs. Nothing here may be behind the tier
-# guard, or a fast tier that qualifies nothing would satisfy every case below.
-FAST_TIER_TASKS = (
-    "release.identity",
-    "release.build",
-    "image.build",
-    "image.inspect",
-    "release.kit",
-    "image.sbom",
-    "image.scan",
-)
-# What only a run believed ready runs. These are the measured minutes the fast
-# tier exists to defer: the warm-builder rebuild, and the Compose lifecycle with
-# the reclaim that clears the disk for it.
-FULL_TIER_TASKS = ("image.freshness", "compose.reclaim", "compose.lifecycle")
-# The platform every tier qualifies, and the one only a qualifying run builds.
-FAST_PLATFORM = "linux/amd64"
-FULL_PLATFORM = "linux/arm64"
-# `image.build` clears the whole build directory before it runs, so the extra
-# platform cannot be a second build: it would take the first build's digest
-# record, SBOM and scan report with it. The tier therefore picks the platform
-# list the one build is given, and this reads both halves of that choice.
-TIER_PLATFORM_CHOICE = re.compile(rf"\$\{{\{{\s*{re.escape(TIER_GUARD)}\s*&&\s*'([^']+)'\s*\|\|\s*'([^']+)'\s*\}}\}}")
-
-# The caller the two tiers exist for, the filter that escalates a change to the
-# full one without anybody labelling it, and the label that asks for it.
+# The pull-request caller.
 DEVELOP_CALLER = WORKFLOWS / "trigger-pr-develop.yml"
-ESCALATION_FILTER = "qualify_all"
-QUALIFY_LABEL = "qualify"
-# A label arriving or leaving moves a pull request between the tiers, and
-# neither is a type `pull_request` sends by default.
-LABEL_EVENT_TYPES = ("labeled", "unlabeled")
-DEFAULT_EVENT_TYPES = ("opened", "synchronize", "reopened")
 # The branch this gate guards, and so the one tree a pull-request run never
 # builds as itself: the merge commit. Qualifying it is a push route, separate
 # from anything a pull request can ask for.
@@ -279,63 +135,8 @@ POST_MERGE_BRANCH = "feature/v3-develop"
 PUSHED_BRANCHES = frozenset({"renovate/**", POST_MERGE_BRANCH})
 # The job branch protection requires by name. A skipped job satisfies a required
 # check, so the gate that has not run cannot be the thing required: this one
-# always runs and refuses a head the full tier never qualified.
+# always runs and reports on the image call whether it ran or not.
 REQUIRED_JOB = "qualification-required"
-# The one line it says when it refuses, so the contributor reads what to do
-# rather than which expression was false.
-REQUIRED_REFUSAL = "add the `qualify` label to run full qualification before merge"
-# The job name the full tier has always reported under. Branch protection and
-# every reader's memory of this gate are written against it, so the fast tier
-# takes a different one rather than renaming this.
-FULL_TIER_JOB_NAME = "Image and Compose gate (build amd64 + arm64, qualify amd64)"
-# How the caller tells this gate which route a run takes. Compared as text
-# rather than evaluated: this suite reads declarations, and a workflow-expression
-# evaluator is a second implementation of GitHub.
-TRUST_COMPARISON = "github.event.pull_request.head.repo.full_name == github.repository"
-# The artifact record `release.qualify` reads, and the one document the candidate
-# it names may come from. `read_artifacts` refuses a record naming any other
-# candidate, so a writer that retyped the identity would pass on the run that
-# wrote it and refuse the next rebuild of the same version.
-ARTIFACT_RECORD = ".release/artifacts.json"
-RECORDED_IDENTITY = ".release/identity.json"
-
-# The order the merged image gate proved, which the candidate route reuses. The
-# archive upload is in the sequence rather than beside it: `compose.reclaim`
-# deletes the files it uploads, so uploading after the reclaim uploads nothing,
-# and `release.qualify` reads the record, so writing it after would read a
-# record for the previous candidate or none at all.
-ARCHIVE_UPLOAD = "infrahub-sync-candidate-image"
-APPROVED_ORDER = (
-    "release.identity",
-    "release.build",
-    # After the digests exist. The bundle ships a binding derived from the image
-    # this build recorded, so a kit produced before it would have nothing to
-    # derive from -- and there is no unbound-bundle mode to fall back to.
-    "image.build",
-    "image.inspect",
-    "release.kit",
-    "image.freshness",
-    "image.sbom",
-    "image.scan",
-    "image.smoke",
-    ARCHIVE_UPLOAD,
-    "compose.reclaim",
-    "compose.lifecycle",
-    ARTIFACT_RECORD,
-    "release.qualify",
-)
-
-# How the writer names one upload's outputs, and how the record keys them. Both
-# sides of every entry are resolved, not just the identifier: a digest hardcoded
-# to a literal, or read from a different upload, leaves an entry that still
-# names the right group and describes bytes the service holds under another one.
-#
-# The output kind is captured separately from the variable's own suffix, so
-# `--arg x_digest "…outputs.artifact-id"` is a mismatch rather than a match.
-WRITER_BINDING = re.compile(
-    r"--arg\s+(\w+)_(id|digest)\s+\"\$\{\{\s*steps\.([\w-]+)\.outputs\.artifact-(id|digest)\s*\}\}\""
-)
-WRITER_ENTRY = re.compile(r"\"(infrahub-sync-[\w-]+)\":\s*\{id:\s*\$(\w+)_id,\s*digest:\s*\$(\w+)_digest\}")
 
 
 def load(path: Path) -> dict:
@@ -433,11 +234,6 @@ def uploads() -> list[tuple[Path, str, str, dict]]:
                 if str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@")
             )
     return steps
-
-
-def candidates() -> list[tuple[Path, str, str, dict]]:
-    """Return every upload of a handoff artifact, as opposed to a run's own evidence."""
-    return [entry for entry in uploads() if str(entry[3].get("name", "")).startswith(CANDIDATE_ARTIFACTS)]
 
 
 def _hidden(path: str) -> bool:
@@ -539,11 +335,6 @@ def filter_patterns(name: str) -> list[str]:
     return [pattern for entry in declared for pattern in (entry if isinstance(entry, list) else [entry])]
 
 
-def image_filter_patterns() -> list[str]:
-    """Return every path pattern the image gate's own filter expands to."""
-    return filter_patterns("image_all")
-
-
 def routed(path: Path, patterns: list[str]) -> bool:
     """Report whether one repository path is named by any of these filter patterns.
 
@@ -552,72 +343,6 @@ def routed(path: Path, patterns: list[str]) -> bool:
     """
     relative = str(path.relative_to(REPO_ROOT))
     return any(fnmatch(relative, pattern) for pattern in patterns)
-
-
-def build_context_inputs() -> set[str]:
-    """Return every path the Dockerfile copies out of the build context.
-
-    Read from the Dockerfile rather than listed here: a file joining the build
-    context changes the wheel and the image, and a hand-written list is one edit
-    behind the moment someone adds one. `--from=` copies are excluded because
-    they come from another stage or another image, not from this tree.
-    """
-    found: set[str] = set()
-    # A `COPY` may continue across physical lines. Joining them first is what
-    # keeps every source after the first one from being read as a line that does
-    # not begin with `COPY`, and so silently left out of the comparison below.
-    joined = re.sub(r"\\[ \t]*\n", " ", DOCKERFILE.read_text(encoding="utf-8"))
-    for line in joined.splitlines():
-        parts = line.split()
-        if not parts or parts[0].upper() != "COPY":
-            continue
-        arguments = [part for part in parts[1:] if not part.startswith("--")]
-        if any(part.startswith("--from=") for part in parts[1:]) or len(arguments) < 2:
-            continue
-        # `COPY dir/ ./` and `COPY dir ./` copy the same tree, so both have to
-        # produce the one name the filter's patterns are written against.
-        found.update(argument.rstrip("/") for argument in arguments[:-1])
-    return found
-
-
-def test_the_image_filter_covers_every_input_the_dockerfile_copies() -> None:
-    """A file the image is built from, that the filter does not name, skips the gate.
-
-    `README.md` was exactly that: copied at `COPY pyproject.toml uv.lock
-    README.md LICENSE.txt ./`, absent from the filter, so a pull request touching
-    only it changed the wheel and the image and never re-ran the gate.
-    """
-    patterns = set(image_filter_patterns())
-    inputs = build_context_inputs()
-
-    assert inputs, "no COPY line in the Dockerfile reads from the build context"
-    uncovered = sorted(name for name in inputs if name not in patterns and f"{name}/**" not in patterns)
-    assert not uncovered, f"the image is built from {uncovered}, which image_all does not name"
-
-
-@pytest.mark.parametrize("tree", QUALIFIED_TREES)
-def test_the_image_filter_covers_every_tree_its_gate_qualifies(tree: str) -> None:
-    """The gate builds an image and then runs it; both depend on more than the Dockerfile.
-
-    A change to the application the image installs, or to the bundle that starts
-    it, changes what the gate would find — and a filter that does not name it
-    leaves that change qualified by the previous commit's run.
-    """
-    assert tree in image_filter_patterns(), (
-        f"the image gate builds and runs {tree}, so image_all has to include it or the gate does not re-run"
-    )
-
-
-def test_the_image_filter_covers_the_whole_tree_its_gate_runs_from() -> None:
-    """The gate runs Invoke, so any task module can change what it does.
-
-    Naming only the one module the gate is about leaves the rest of the tree able
-    to change the gate's behaviour without re-running it.
-    """
-    assert TASK_TREE in image_filter_patterns(), (
-        f"a change under {TASK_TREE} can alter what `invoke image.*` does, "
-        f"so image_all has to include it or the gate does not re-run"
-    )
 
 
 def _publishes(step: dict) -> bool:
@@ -686,8 +411,43 @@ def pull_request_reachable() -> set[Path]:
     return reachable(lambda path: "pull_request" in triggers(path))
 
 
+def _requires_publish(condition: object) -> bool:
+    """Report whether an `if:` only holds when `inputs.publish` is true.
+
+    A conjunction that includes `inputs.publish` itself qualifies. A negation,
+    `inputs.publish == false`, or any `||` that could admit a build-only run does not.
+    """
+    text = str(condition or "").strip()
+    if text.startswith("${{") and text.endswith("}}"):
+        text = text[3:-2]
+    if "||" in text:
+        return False
+    terms = [term.strip().strip("()").strip() for term in text.split("&&")]
+    return any(term in POSITIVE_PUBLISH_TERMS for term in terms)
+
+
+def _publish_guarded(job: dict, step: dict) -> bool:
+    """Report whether a publishing step only runs when its workflow is asked to publish."""
+    return _requires_publish(job.get("if")) or _requires_publish(step.get("if"))
+
+
+def unguarded_publishers() -> set[Path]:
+    """Return every workflow holding a publishing step that `inputs.publish` does not guard."""
+    return {
+        path
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+        for job in load(path).get("jobs", {}).values()
+        for step in job.get("steps") or []
+        if _publishes(step) and not _publish_guarded(job, step)
+    }
+
+
 def test_nothing_a_pull_request_reaches_publishes_anything() -> None:
-    """Validation is lint, unit, image, smoke and Compose, and none of that publishes.
+    """Validation is lint, unit, image build and smoke, and none of that publishes.
+
+    The image gate is reusable and does publish when asked, so a workflow a pull
+    request reaches may hold publishing steps only behind `inputs.publish`, and
+    every call a pull-request workflow makes into one passes `publish: false`.
 
     Narrowed to a pull request rather than to every automatic trigger, because the
     legacy release route really does publish: a published release reaches
@@ -705,9 +465,16 @@ def test_nothing_a_pull_request_reaches_publishes_anything() -> None:
 
     assert publishing, WORKFLOWS
     assert reached, WORKFLOWS
-    assert not (reached & publishing), (
-        f"{sorted(path.name for path in reached & publishing)} can publish from a pull request"
+    assert not (reached & unguarded_publishers()), (
+        f"{sorted(path.name for path in reached & unguarded_publishers())} can publish from a pull request"
     )
+    for caller in sorted(reached):
+        for name, job in jobs(caller).items():
+            called = called_workflow(job)
+            if called in publishing:
+                assert (job.get("with") or {}).get("publish") is False, (
+                    f"{caller.name} job {name} calls {called.name} from a pull request without publish: false"
+                )
 
 
 def test_the_legacy_release_route_is_what_the_case_above_would_otherwise_name() -> None:
@@ -720,7 +487,7 @@ def test_the_legacy_release_route_is_what_the_case_above_would_otherwise_name() 
     publishing = {workflow for workflow, _job, _step in publishing_steps()}
 
     assert publishing & reachable_from_an_event(), "no trigger reaches a publication, so the exclusion proves nothing"
-    assert not (publishing & pull_request_reachable())
+    assert not (unguarded_publishers() & pull_request_reachable())
 
 
 def test_one_workflow_is_the_only_route_to_a_package_index() -> None:
@@ -888,289 +655,6 @@ def job_of(workflow: Path, name: str) -> dict:
     return defined[name]
 
 
-def image_job(name: str) -> dict:
-    """Return one job of the image workflow, refusing a workflow that no longer defines it."""
-    return job_of(IMAGE_WORKFLOW, name)
-
-
-def candidate_steps(name: str) -> list[dict]:
-    """Return the steps of one job of the manual candidate workflow."""
-    return list(job_of(CANDIDATE_WORKFLOW, name)["steps"])
-
-
-def refusal_script() -> str:
-    """Return the one script that refuses a wrong checkout or an unmerged commit.
-
-    Found by what it runs rather than by step name, and required to be single:
-    two scripts each checking one thing is two places for the order to be wrong.
-    """
-    refusing = [
-        step
-        for step in candidate_steps("candidate")
-        if HEAD_READBACK in str(step.get("run", "")) or ANCESTRY_CHECK in str(step.get("run", ""))
-    ]
-    assert len(refusing) == 1, f"{len(refusing)} steps of the candidate job refuse a commit"
-    return str(refusing[0]["run"])
-
-
-def cleanup_script() -> str:
-    """Return everything the cleanup job runs, as one body to read its claims out of."""
-    return "\n".join(str(step.get("run", "")) for step in image_job(CLEANUP_JOB)["steps"])
-
-
-@pytest.mark.parametrize("workflow", CLEAN_HOST_ROUTES, ids=_identify)
-def test_the_clean_host_gate_runs_the_shipped_driver_bounded_inside_its_job(workflow: Path) -> None:
-    """A gate wired to an event this line never raises, or running nothing, has never run.
-
-    The eleven rows and their refusal to be skipped are the driver's own; what is
-    checked here is that this line reaches a job that runs it and is bounded.
-    Which job it depends on is a separate case, derived from what really uploads.
-    """
-    job = job_of(workflow, CLEAN_HOST_JOB)
-    bounded = [step for step in job["steps"] if "timeout-minutes" in step]
-
-    assert workflow in v3_reachable()
-    assert [step for step in job["steps"] if DRIVER_ENTRYPOINT in str(step.get("run", ""))], (
-        f"{workflow.name}'s {CLEAN_HOST_JOB} job runs no {DRIVER_ENTRYPOINT}"
-    )
-    assert bounded, f"no step of {workflow.name}'s {CLEAN_HOST_JOB} job states a timeout"
-    for step in bounded:
-        assert step["timeout-minutes"] < job["timeout-minutes"], (
-            f"the step {step.get('name')!r} is not bounded inside its job"
-        )
-
-
-@pytest.mark.parametrize("workflow", CLEAN_HOST_ROUTES, ids=_identify)
-def test_the_clean_host_job_checks_nothing_out_and_installs_no_interpreter(workflow: Path) -> None:
-    """The subject is the released artifact, so the tree that produced it is not present.
-
-    Read off the job, because one that happens to omit a checkout today is one
-    edit from having one.
-    """
-    job = job_of(workflow, CLEAN_HOST_JOB)
-    rendered = yaml.safe_dump(job)
-
-    assert CHECKOUT_ACTION not in rendered
-    for action in INTERPRETER_ACTIONS:
-        assert action not in rendered, f"{workflow.name}'s {CLEAN_HOST_JOB} job sets up an interpreter with {action}"
-    for step in job["steps"]:
-        for tool in HOST_TOOLS:
-            assert tool not in str(step.get("run", "")), (
-                f"{workflow.name}'s {CLEAN_HOST_JOB} job runs {tool.strip()} on the host"
-            )
-
-
-@pytest.mark.parametrize("workflow", CLEAN_HOST_ROUTES, ids=_identify)
-def test_the_clean_host_job_takes_this_runs_artifacts_and_never_another_runs(workflow: Path) -> None:
-    """Naming a `run-id` is the one edit that would qualify a candidate some other commit built."""
-    downloads = [
-        step
-        for step in job_of(workflow, CLEAN_HOST_JOB)["steps"]
-        if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
-    ]
-
-    assert downloads, f"{workflow.name}'s {CLEAN_HOST_JOB} job downloads nothing, so it qualifies nothing"
-    for step in downloads:
-        assert "run-id" not in (step.get("with") or {}), f"{_step_name(step)!r} downloads from another run"
-
-
-@pytest.mark.parametrize("workflow", CLEAN_HOST_ROUTES, ids=_identify)
-def test_the_clean_host_diagnostic_is_published_by_name_for_a_failure_only(workflow: Path) -> None:
-    """The working directory beside the swept file holds the list of this run's own credentials.
-
-    Uploading the directory would publish both. A withheld diagnostic is an
-    absent file, so the step tolerates finding nothing. Every upload of this job
-    is checked, not merely one: the job publishes the diagnostic and nothing else.
-    """
-    published = [
-        step
-        for step in job_of(workflow, CLEAN_HOST_JOB)["steps"]
-        if str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@")
-    ]
-
-    assert published, f"{workflow.name}'s {CLEAN_HOST_JOB} job publishes nothing a failed row leaves behind"
-    for step in published:
-        assert step.get("if") == "failure()"
-        assert str(step["with"]["path"]).endswith("diagnostic.txt"), "a directory of the driver's working files"
-        assert step["with"]["if-no-files-found"] == "ignore"
-
-
-@pytest.mark.parametrize("workflow", CLEAN_HOST_ROUTES, ids=_identify)
-def test_the_clean_host_job_needs_the_job_that_really_produces_what_it_downloads(workflow: Path) -> None:
-    """A literal job name is not evidence that the dependency still produces the artifacts.
-
-    Derived from which job holds the candidate uploads, so renaming or splitting
-    the producer leaves the gate needing something that builds nothing, and fails
-    here rather than at the download step of a run.
-    """
-    downloaded = {
-        str((step.get("with") or {}).get("name", ""))
-        for step in job_of(workflow, CLEAN_HOST_JOB)["steps"]
-        if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
-    }
-    producing = {
-        job
-        for path, job, _step, declared in candidates()
-        if path == workflow and str(declared.get("name", "")) in downloaded
-    }
-    needed = set(_needs(job_of(workflow, CLEAN_HOST_JOB)))
-
-    assert producing, f"{workflow.name} uploads no candidate artifact, so this proves nothing"
-    assert producing <= needed, (
-        f"{workflow.name}'s {CLEAN_HOST_JOB} job needs {sorted(needed)}, "
-        f"which does not cover the producer {sorted(producing)}"
-    )
-
-
-def test_trusted_lifecycle_and_clean_host_run_in_parallel_from_one_producer() -> None:
-    """Both expensive consumers start from the candidate handoff, not from each other."""
-    graph = jobs(IMAGE_WORKFLOW)
-    needs = {name: _needs(job) for name, job in graph.items()}
-
-    assert set(needs[LIFECYCLE_JOB]) == {"image"}
-    assert set(needs[CLEAN_HOST_JOB]) == {"image"}
-    assert LIFECYCLE_JOB not in _ancestors(CLEAN_HOST_JOB, needs)
-    assert CLEAN_HOST_JOB not in _ancestors(LIFECYCLE_JOB, needs)
-
-
-def test_final_qualification_waits_for_both_parallel_gates() -> None:
-    """No final record can exist before lifecycle and clean-host both pass."""
-    final = image_job(FINAL_QUALIFICATION_JOB)
-    uploads_record = [
-        step
-        for step in final["steps"]
-        if str((step.get("with") or {}).get("name", "")) == "infrahub-sync-qualification-record"
-    ]
-
-    assert {LIFECYCLE_JOB, CLEAN_HOST_JOB} <= set(_needs(final))
-    assert len(uploads_record) == 1
-    assert not [
-        step
-        for name, job in jobs(IMAGE_WORKFLOW).items()
-        if name != FINAL_QUALIFICATION_JOB
-        for step in job.get("steps", [])
-        if str((step.get("with") or {}).get("name", "")) == "infrahub-sync-qualification-record"
-    ]
-
-
-def test_clean_host_consumes_candidate_input_and_never_the_final_record() -> None:
-    """Clean-host is a prerequisite of the final record, so that record cannot be one of its inputs."""
-    downloads = {
-        str((step.get("with") or {}).get("name", ""))
-        for step in image_job(CLEAN_HOST_JOB)["steps"]
-        if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
-    }
-
-    assert "infrahub-sync-candidate-handoff" in downloads
-    assert "infrahub-sync-qualification-kit" in downloads
-    assert "infrahub-sync-qualification-record" not in downloads
-
-
-def test_the_handoff_carries_the_flat_digest_record_the_lifecycle_restores() -> None:
-    """The sibling resolves `candidate_reference()` from the producer's record, never a rebuild."""
-    staged = "\n".join(str(step.get("run", "")) for step in image_job("image")["steps"])
-    lifecycle = "\n".join(str(step.get("run", "")) for step in image_job(LIFECYCLE_JOB)["steps"])
-
-    assert "cp .image/digests.json .release/handoff/digests.json" in staged
-    assert "cp candidate/digests.json .image/digests.json" in lifecycle
-    assert "docker load --input candidate/image-linux-amd64.tar" in lifecycle
-    assert lifecycle.index("docker load --input") < lifecycle.index("invoke compose.lifecycle")
-
-
-def test_the_gate_input_restores_every_producer_path_exactly() -> None:
-    """Final qualification receives the producer's records and reports without retyping them."""
-    upload = step_of(IMAGE_WORKFLOW, "image", GATE_INPUT_ARTIFACT)
-    uploaded = {line.strip() for line in str(upload["with"]["path"]).splitlines() if line.strip()}
-    expected = {
-        ".release/identity.json",
-        ARTIFACT_RECORD,
-        ".release/results/",
-        ".release/bundle/",
-        ".image/digests.json",
-        ".image/*-sbom-linux-*.spdx.json",
-        ".image/*-vulnerabilities-linux-*.json",
-    }
-    final = image_job(FINAL_QUALIFICATION_JOB)
-    downloads = [step for step in final["steps"] if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")]
-
-    assert uploaded == expected
-    gate_input = [step for step in downloads if (step.get("with") or {}).get("name") == GATE_INPUT_ARTIFACT]
-    assert len(gate_input) == 1
-    assert gate_input[0]["with"]["path"] == "."
-    assert not [step for step in final["steps"] if ARTIFACT_RECORD in str(step.get("run", ""))]
-
-
-@pytest.mark.parametrize("job", [LIFECYCLE_JOB, FINAL_QUALIFICATION_JOB])
-def test_checkout_consumers_use_the_exact_source_sha_and_required_profile(job: str) -> None:
-    """Task code, waivers, and the candidate records all come from the same revision."""
-    steps = image_job(job)["steps"]
-    checkouts = [step for step in steps if str(step.get("uses", "")).startswith(CHECKOUT_ACTION)]
-    installs = [str(step.get("run", "")) for step in steps if "uv sync" in str(step.get("run", ""))]
-
-    assert len(checkouts) == 1
-    assert checkouts[0]["with"]["ref"] == "${{ github.sha }}"
-    assert checkouts[0]["with"][PERSISTED_CREDENTIALS] is False
-    assert installs == ["uv sync --frozen --extra dev --extra prefect --extra service"]
-
-
-def test_the_final_job_restores_lifecycle_into_results_and_runs_the_strict_qualifier() -> None:
-    """The final job joins evidence; it does not replace the qualifier or synthesize a result."""
-    final = image_job(FINAL_QUALIFICATION_JOB)
-    lifecycle = [step for step in final["steps"] if (step.get("with") or {}).get("name") == LIFECYCLE_RESULT_ARTIFACT]
-    qualifiers = [step for step in final["steps"] if "invoke release.qualify" in str(step.get("run", ""))]
-
-    assert len(lifecycle) == 1
-    assert lifecycle[0]["with"]["path"] == ".release/results"
-    assert len(qualifiers) == 1
-    assert not [
-        step
-        for job_name, job in jobs(IMAGE_WORKFLOW).items()
-        if job_name != FINAL_QUALIFICATION_JOB
-        for step in job.get("steps", [])
-        if "invoke release.qualify" in str(step.get("run", ""))
-    ]
-
-
-def test_new_parallel_job_names_are_literal() -> None:
-    """Expressions in job names become phantom checks instead of stable check identities."""
-    for name in (LIFECYCLE_JOB, CLEAN_HOST_JOB, FINAL_QUALIFICATION_JOB, CLEANUP_JOB):
-        declared = str(image_job(name).get("name", ""))
-        assert declared
-        assert "${{" not in declared, f"{name} has an expression name: {declared}"
-
-
-def test_inline_and_sibling_lifecycle_routes_are_mutually_exclusive() -> None:
-    """Forks keep inline coverage while trusted runs use only the sibling job."""
-    inline = [step for step in image_job("image")["steps"] if "invoke compose.lifecycle" in str(step.get("run", ""))]
-
-    assert len(inline) == 1
-    assert f"!{HANDOFF_GUARD}" in str(inline[0].get("if", "")).replace(" ", "")
-    sibling_guard = str(image_job(LIFECYCLE_JOB).get("if", ""))
-    assert HANDOFF_GUARD in sibling_guard
-    assert TIER_GUARD in sibling_guard
-
-
-def test_release_task_changes_raise_the_full_qualification_tier() -> None:
-    """The module writes both the consumer manifest and the final record."""
-    assert "tasks/release.py" in filter_patterns(ESCALATION_FILTER)
-
-
-def test_the_candidate_route_answers_no_event_and_is_manual() -> None:
-    """The inverse of the pull-request case: this route runs when a person names a commit.
-
-    A trigger here would build and retain a candidate nobody asked for, from
-    whatever the ref pointed at, which is the mistake the exact-commit input
-    exists to prevent.
-    """
-    assert triggers(CANDIDATE_WORKFLOW) == {"workflow_dispatch"}, (
-        f"{CANDIDATE_WORKFLOW.name} answers {sorted(triggers(CANDIDATE_WORKFLOW))}"
-    )
-    assert CANDIDATE_WORKFLOW not in reachable_from_an_event()
-    assert CLEAN_HOST_JOB in jobs(CANDIDATE_WORKFLOW), (
-        f"{CANDIDATE_WORKFLOW.name} holds no {CLEAN_HOST_JOB} job, so this route qualifies nothing"
-    )
-
-
 def test_nightly_route_is_dispatch_only_and_requires_an_exact_merged_commit() -> None:
     """A scheduled or pull-request run must not qualify a moving branch tip."""
     assert triggers(NIGHTLY_WORKFLOW) == {"workflow_dispatch"}
@@ -1230,743 +714,38 @@ def test_nightly_suites_report_independently_and_clean_up() -> None:
     assert ".github/scripts/nightly_e2e.py" in filter_patterns("sync_all")
 
 
-def test_the_candidate_workflow_takes_the_commit_to_build_as_a_required_input() -> None:
-    """`github.sha` is the ref's tip when the run starts, which is not the merge that landed."""
-    declared = triggers_of(CANDIDATE_WORKFLOW)["workflow_dispatch"]["inputs"]
+def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
+    """The opt-in Compose suite keeps running: nightly, on the exact merged commit.
 
-    assert SHA_INPUT in declared, f"{CANDIDATE_WORKFLOW.name} declares {sorted(declared)} and no commit to build"
-    assert declared[SHA_INPUT]["required"] is True
-    assert declared[SHA_INPUT]["type"] == "string"
-
-
-def test_the_candidate_run_states_the_commit_it_built_in_its_own_title() -> None:
-    """A dispatched run's `head_sha` is the ref's tip, not the commit it was told to build.
-
-    The two are equal only while the branch has not moved, which is exactly the
-    case this route exists to stop anyone relying on: the same commit is
-    rebuilt from a much later tip when a window lapses. So the run states the
-    input itself, and nothing downstream has to infer the built commit from the
-    revision of the workflow definition that ran.
+    It builds the image locally and names it through the two settings the root
+    `docker-compose.yml` reads, so the run proves the operator file against this
+    commit's image without pulling anything. `--compose-zero-skip` turns a skipped
+    case into a failure, so a run that skipped everything cannot report green.
     """
-    document = load(CANDIDATE_WORKFLOW)
-
-    assert RUN_TITLE in document, f"{CANDIDATE_WORKFLOW.name} does not name the commit it builds in its run title"
-    assert f"inputs.{SHA_INPUT}" in str(document[RUN_TITLE]), (
-        f"the run title is {document[RUN_TITLE]!r}, which does not carry the commit to build"
-    )
-    assert "github.sha" not in str(document[RUN_TITLE]), "the run title names the ref's tip, not the input"
-
-
-def test_the_candidate_run_checks_out_the_named_commit_and_reads_the_whole_history() -> None:
-    """Ancestry cannot be proved against a shallow clone, and a ref is not a commit."""
-    checkouts = [step for step in candidate_steps("candidate") if str(step.get("uses", "")).startswith(CHECKOUT_ACTION)]
-
-    assert len(checkouts) == 1, f"{len(checkouts)} steps of the candidate job check something out"
-    declared = checkouts[0]["with"]
-    assert declared["ref"] == f"${{{{ inputs.{SHA_INPUT} }}}}", f"the checkout takes {declared.get('ref')!r}"
-    assert declared["fetch-depth"] == 0
-
-
-def test_the_candidate_checkout_leaves_no_token_behind_for_the_build_to_read() -> None:
-    """Everything after the checkout runs third-party code against the tree it produced.
-
-    `uv sync` resolves a lock file, the image build runs a Dockerfile, and the
-    lifecycle phase starts two container stacks. The default leaves this run's
-    token in `.git/config` for all of them, and nothing on this route pushes, so
-    nothing needs it kept.
-    """
-    checkouts = [step for step in candidate_steps("candidate") if str(step.get("uses", "")).startswith(CHECKOUT_ACTION)]
-
-    assert checkouts, "the candidate job checks nothing out"
-    for step in checkouts:
-        assert (step.get("with") or {}).get(PERSISTED_CREDENTIALS) is False, (
-            f"{_step_name(step)!r} keeps the run's token in the checkout it hands to the build"
-        )
-
-
-def test_the_candidate_run_refuses_a_checkout_that_did_not_land_where_it_was_told() -> None:
-    """Compared, not merely set: `actions/checkout` reports success for a ref it resolved.
-
-    The commit arrives through an environment value rather than interpolated into
-    the script, so the script is the same text a test can run against a real
-    repository and watch refuse.
-    """
-    script = refusal_script()
-    refusing = [step for step in candidate_steps("candidate") if str(step.get("run", "")) == script]
-
-    assert HEAD_READBACK in script, f"the candidate run never reads back what it checked out: {script}"
-    assert SHA_ENVIRONMENT in script, "the refusal does not read the commit from an environment value"
-    assert (refusing[0].get("env") or {}).get(SHA_ENVIRONMENT) == f"${{{{ inputs.{SHA_INPUT} }}}}"
-    assert re.search(r"exit\s+1", script), "the refusal cannot fail the run"
-
-
-def test_the_candidate_run_refuses_a_commit_that_never_merged() -> None:
-    """Building an unmerged commit and calling the result a candidate approves the wrong bytes.
-
-    Against a freshly fetched remote branch rather than whatever the checkout
-    left behind, because a stale local ref would admit a commit merged nowhere.
-    """
-    script = refusal_script()
-
-    assert ANCESTRY_CHECK in script, f"the candidate run proves no ancestry: {script}"
-    assert V3_BRANCH in script, f"the ancestry check names no branch: {script}"
-    assert "git fetch" in script, "the ancestry check reads a ref this run did not refresh"
-
-
-def test_both_refusals_precede_everything_the_candidate_run_builds() -> None:
-    """A refusal after the build has already spent the run and produced the bytes it rejects."""
-    steps = candidate_steps("candidate")
-    script = refusal_script()
-    refusal = next(index for index, step in enumerate(steps) if str(step.get("run", "")) == script)
-    building = [
+    steps = jobs(NIGHTLY_WORKFLOW)["compose-suite"]["steps"]
+    checkout = next(step for step in steps if str(step.get("uses", "")).startswith(CHECKOUT_ACTION))
+    assert checkout["with"] == {
+        "ref": f"${{{{ inputs.{SHA_INPUT} }}}}",
+        "fetch-depth": 0,
+        "persist-credentials": False,
+    }
+    guard = next(step for step in steps if step.get("id") == "sha_guard")["run"]
+    assert ANCESTRY_CHECK in guard
+    assert HEAD_READBACK in guard
+    runs = [str(step.get("run", "")) for step in steps]
+    build = next(index for index, run in enumerate(runs) if run == "docker build -t infrahub-sync:compose-test .")
+    suite = next(
         index
-        for index, step in enumerate(steps)
-        if INVOKE_TASK.search(str(step.get("run", "")))
-        or any(str(step.get("uses", "")).startswith(action) for action in BUILD_ACTIONS)
-    ]
-
-    assert building, "the candidate job builds nothing, so this proves nothing"
-    assert refusal < min(building), (
-        f"the refusal is step {refusal} and the candidate job starts building at step {min(building)}"
+        for index, run in enumerate(runs)
+        if run == "uv run --no-sync pytest -m compose tests/compose -x --compose-zero-skip"
     )
-
-
-def test_the_candidate_route_retains_every_group_for_exactly_the_window_it_names() -> None:
-    """Exactly 30, and the seven groups an approval needs to exist without a rebuild.
-
-    A floor is the wrong end to check on a public repository: `>= 30` is what let
-    a 90-day pull-request candidate sit behind public download links until an
-    external reviewer found it. Each upload references the window named once at
-    the top of the workflow rather than a number of its own.
-    """
-    retained = [(step, declared) for path, _job, step, declared in candidates() if path == CANDIDATE_WORKFLOW]
-
-    assert {str(declared["name"]) for _step, declared in retained} == CANDIDATE_GROUPS
-    for step, declared in retained:
-        assert declared.get("retention-days") == CANDIDATE_WINDOW, (
-            f"{step!r} keeps {declared['name']} for {declared.get('retention-days')!r}"
-        )
-    assert load(CANDIDATE_WORKFLOW)["env"][CANDIDATE_WINDOW_NAME] == CANDIDATE_WINDOW_DAYS
-
-
-def test_every_candidate_producing_job_reads_back_the_window_the_service_actually_granted() -> None:
-    """Requesting 30 days is not being given 30 days, and the difference is only visible after upload.
-
-    Every group the workflow uploads is named in a read-back, derived from the
-    uploads themselves: a group added without being read back would be retained
-    on a promise instead of on the expiry the service returned. Read back inside
-    the job that made the upload, one script per job: the packet is a second
-    job's own retained bytes, built after the first job already reported what it
-    was granted, so its proof cannot live in that first script without naming an
-    artifact that does not exist yet when it runs.
-    """
-    by_job: dict[str, set[str]] = {}
-    for path, job, _step, declared in candidates():
-        if path == CANDIDATE_WORKFLOW:
-            by_job.setdefault(job, set()).add(str(declared["name"]))
-
-    assert by_job, f"{CANDIDATE_WORKFLOW.name} retains nothing to read back"
-    for job, names in by_job.items():
-        reading = [
-            step
-            for step in candidate_steps(job)
-            if all(marker in str(step.get("run", "")) for marker in RETENTION_READBACK)
-        ]
-
-        assert len(reading) == 1, f"{len(reading)} steps of {job!r} read the granted retention back"
-        script = str(reading[0]["run"])
-        for name in names:
-            assert name in script, f"{job!r}'s read-back never names {name}"
-        assert CANDIDATE_WINDOW_NAME in script, f"{job!r}'s read-back compares the expiry against no window"
-        assert re.search(r"exit\s+1", script), f"{job!r}'s read-back cannot fail a run whose bytes will not survive"
-        # How wide the tolerance is, and whether it is a tolerance at all, is
-        # proved by running this script in
-        # `tests/release/test_candidate_retention_readback.py`. Pinning the
-        # arithmetic here as text would fix the spelling of a bound rather than
-        # the bound, so what is asserted is only that the comparison is made in
-        # seconds against the declared window.
-        assert "86400" in script, f"{job!r}'s read-back does not compare against the window in seconds"
-
-
-def test_the_packet_job_builds_from_this_runs_own_uploads_and_installs_no_publication() -> None:
-    """The raw archive is gone by the time qualification finishes, so the packet can only come from a download.
-
-    `compose.reclaim` frees the disk the lifecycle needs before it runs, deleting
-    the exported archive from the candidate job's own filesystem. The image
-    artifact still holds it, because the upload ran before the reclaim. Building
-    the packet from anywhere but that download, and the bundle, identity and
-    qualification-record uploads beside it, would either fail on a missing file
-    or read a stale one a later re-run of the same job left behind.
-    """
-    steps = candidate_steps(PACKET_JOB)
-    downloaded = {
-        str((step.get("with") or {}).get("name", ""))
-        for step in steps
-        if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
-    }
-    building = [step for step in steps if "invoke release.packet" in str(step.get("run", ""))]
-
-    assert {
-        "infrahub-sync-candidate-image",
-        "infrahub-sync-candidate-identity",
-        "infrahub-sync-candidate-bundle",
-        "infrahub-sync-qualification-record",
-    } <= downloaded, f"{PACKET_JOB!r} downloads {sorted(downloaded)}, missing a recorded input `release.packet` reads"
-    assert len(building) == 1, f"{len(building)} steps of {PACKET_JOB!r} run `invoke release.packet`"
-
-
-def test_the_packet_job_downloads_only_this_runs_own_artifacts() -> None:
-    """Naming a `run-id` is the one edit that would package a candidate some other commit built."""
-    downloads = [
-        step for step in candidate_steps(PACKET_JOB) if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
-    ]
-
-    assert downloads, f"{PACKET_JOB!r} downloads nothing, so it packages nothing"
-    for step in downloads:
-        assert "run-id" not in (step.get("with") or {}), f"{_step_name(step)!r} downloads from another run"
-
-
-def test_the_packet_job_checks_out_the_named_commit_with_the_required_profile() -> None:
-    """The packet job runs Invoke tasks, so it needs the same commit and profile the candidate job used."""
-    steps = candidate_steps(PACKET_JOB)
-    checkouts = [step for step in steps if str(step.get("uses", "")).startswith(CHECKOUT_ACTION)]
-    installs = [str(step.get("run", "")) for step in steps if "uv sync" in str(step.get("run", ""))]
-
-    assert len(checkouts) == 1, f"{len(checkouts)} steps of {PACKET_JOB!r} check something out"
-    declared = checkouts[0]["with"]
-    assert declared["ref"] == f"${{{{ inputs.{SHA_INPUT} }}}}", f"the checkout takes {declared.get('ref')!r}"
-    assert declared.get(PERSISTED_CREDENTIALS) is False, f"{PACKET_JOB!r} keeps the run's token in its checkout"
-    assert installs == ["uv sync --frozen --extra dev --extra prefect --extra service"]
-
-
-def test_the_packet_job_needs_clean_host_to_have_passed() -> None:
-    """A failed clean-host qualification must not still leave a 30-day tester packet behind.
-
-    `packet` also needs `candidate`, which `clean-host` itself needs, so this
-    does not change what commit is packaged -- only that the packaging waits
-    for clean-host's verdict before it runs.
-    """
-    needed = set(_needs(job_of(CANDIDATE_WORKFLOW, PACKET_JOB)))
-
-    assert CLEAN_HOST_JOB in needed, f"{PACKET_JOB!r} needs {sorted(needed)}, so clean-host failing does not stop it"
-
-
-def test_the_packet_rehearsal_job_needs_the_job_that_builds_the_packet() -> None:
-    """A literal job name is not evidence that the dependency still produces the packet."""
-    downloaded = {
-        str((step.get("with") or {}).get("name", ""))
-        for step in candidate_steps(PACKET_REHEARSAL_JOB)
-        if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
-    }
-    producing = {
-        job
-        for path, job, _step, declared in candidates()
-        if path == CANDIDATE_WORKFLOW and str(declared.get("name", "")) in downloaded
-    }
-
-    assert downloaded == {PACKET_ARTIFACT}, (
-        f"{PACKET_REHEARSAL_JOB!r} downloads {sorted(downloaded)}, not the packet alone"
-    )
-    assert producing <= set(_needs(job_of(CANDIDATE_WORKFLOW, PACKET_REHEARSAL_JOB))), (
-        f"{PACKET_REHEARSAL_JOB!r} does not need {sorted(producing)}, which produces what it downloads"
-    )
-
-
-def test_the_packet_rehearsal_job_checks_nothing_out_and_installs_no_interpreter() -> None:
-    """The subject is the packet a tester receives, so nothing this repository built directly is present."""
-    job = job_of(CANDIDATE_WORKFLOW, PACKET_REHEARSAL_JOB)
-    rendered = yaml.safe_dump(job)
-
-    assert CHECKOUT_ACTION not in rendered
-    for action in INTERPRETER_ACTIONS:
-        assert action not in rendered, f"{PACKET_REHEARSAL_JOB!r} sets up an interpreter with {action}"
-    for step in job["steps"]:
-        for tool in HOST_TOOLS:
-            assert tool not in str(step.get("run", "")), f"{PACKET_REHEARSAL_JOB!r} runs {tool.strip()} on the host"
-
-
-def test_the_packet_rehearsal_verifies_both_checksums_the_image_labels_and_the_empty_registry() -> None:
-    """Every claim the packet's own README makes to a tester is exercised here.
-
-    The outer archive, the inner layout, the loaded image's identity, a `READY`
-    deployment, and an empty configuration registry -- the same five things
-    `docs/docs/develop/guides/building-a-tester-packet.md` tells a tester to
-    check, run from the one download this job takes.
-    """
-    steps = candidate_steps(PACKET_REHEARSAL_JOB)
-    script = "\n".join(str(step.get("run", "")) for step in steps)
-
-    assert script.count("sha256sum -c") == 2, "the rehearsal does not verify both the outer and inner checksums"
-    empty_check = "docker image ls -aq"
-    assert empty_check in script, "the rehearsal never checks that the Docker daemon starts out with no images"
-    assert script.index(empty_check) < script.index("docker load"), (
-        "the rehearsal checks the daemon is empty after loading the image, not before"
-    )
-    assert "docker load" in script, "the rehearsal never loads the image the packet ships"
-    assert "org.opencontainers.image.version" in script, "the rehearsal never reads the loaded image's version label"
-    assert "org.opencontainers.image.revision" in script, "the rehearsal never reads the loaded image's revision label"
-    assert "./infrahub-sync-compose init" in script
-    assert "./infrahub-sync-compose start" in script
-    assert "./infrahub-sync-compose status" in script
-    assert "configs list" in script, "the rehearsal never checks that the configuration registry is empty"
-    assert "./infrahub-sync-compose reset" in script, "the rehearsal never tears the deployment down"
-
-
-def test_the_candidate_route_reaches_no_publication_of_any_kind() -> None:
-    """Publication is PR-D's, after team testing and non-author tutorial acceptance.
-
-    Followed through calls, and read off the shared constants rather than a list
-    written here, so a capability this suite already knows how to name cannot
-    arrive on this route by being spelled differently.
-    """
-    publishing = {path for path, _job, _step in publishing_steps()}
-    reached = reachable(lambda path: path == CANDIDATE_WORKFLOW)
-    rendered = CANDIDATE_WORKFLOW.read_text(encoding="utf-8")
-
-    assert publishing, WORKFLOWS
-    assert not (reached & publishing), f"{sorted(path.name for path in reached & publishing)} publishes"
-    for command in (*PUBLISHING_COMMANDS, *PUBLISHING_ACTIONS, *PACKAGE_UPLOAD, *IDENTITY_REWRITING):
-        assert command not in rendered, f"{CANDIDATE_WORKFLOW.name} can reach {command!r}"
-    assert PUBLICATION_INPUT not in triggers_of(CANDIDATE_WORKFLOW)["workflow_dispatch"]["inputs"]
-    for name, definition in jobs(CANDIDATE_WORKFLOW).items():
-        assert RELEASE_ENVIRONMENT not in definition, f"{name} runs in a deployment environment"
-
-
-def test_the_candidate_route_holds_no_permission_that_could_change_anything() -> None:
-    """Read-only throughout, including the token the retention read-back needs.
-
-    A candidate build that could write would be a publication route with no
-    publishing command in it yet.
-    """
-    for declared in (
-        permissions(CANDIDATE_WORKFLOW),
-        *(job_permissions(CANDIDATE_WORKFLOW, job) or {} for job in jobs(CANDIDATE_WORKFLOW)),
-    ):
-        for scope, level in declared.items():
-            assert ACCESS[level] < ACCESS["write"], f"the candidate route asks for {scope}: {level}"
-
-
-def test_every_upload_states_the_window_its_kind_of_artifact_is_kept_for() -> None:
-    """A handoff and a diagnostic are different kinds of thing, kept for different reasons.
-
-    Both windows are named once at the top of the workflow, so what is checked is
-    that each upload references the one for what it is and that those two
-    references resolve to the two numbers below.
-    """
-    retained = {
-        IMAGE_WORKFLOW: HANDOFF_WINDOW,
-        CANDIDATE_WORKFLOW: CANDIDATE_WINDOW,
-    }
-    handoffs = {str(declared["name"]) for _w, _j, _s, declared in candidates()}
-    for workflow, _job, step, declared in uploads():
-        if workflow not in retained:
-            continue
-        expected = retained[workflow] if str(declared["name"]) in handoffs else DIAGNOSTIC_WINDOW
-        assert declared.get("retention-days") == expected, f"{step!r} keeps {declared['name']} for the wrong window"
-
-    assert load(IMAGE_WORKFLOW)["env"] == WINDOWS
-    assert load(CANDIDATE_WORKFLOW)["env"] == {
-        CANDIDATE_WINDOW_NAME: CANDIDATE_WINDOW_DAYS,
-        "DIAGNOSTIC_RETENTION_DAYS": WINDOWS["DIAGNOSTIC_RETENTION_DAYS"],
-        RETENTION_DRIFT_TOLERANCE_NAME: RETENTION_DRIFT_TOLERANCE_SECONDS,
-    }
-
-
-def test_the_cleanup_job_follows_every_job_that_uploads_or_reads_a_handoff() -> None:
-    """A cleanup that can start early deletes bytes the gate has not read yet.
-
-    `always()` carries it past a dependency that failed, was skipped or was
-    cancelled, which leave the same bytes behind as a passing one.
-    """
-    job = image_job(CLEANUP_JOB)
-    uploading = {name for workflow, name, _step, _declared in candidates() if workflow == IMAGE_WORKFLOW}
-
-    assert uploading, f"{IMAGE_WORKFLOW.name} uploads no handoff, so this proves nothing"
-    assert uploading | {CLEAN_HOST_JOB} <= set(_needs(job)), f"{CLEANUP_JOB} waits for {sorted(_needs(job))}"
-    assert "always()" in str(job.get("if", ""))
-
-
-def test_the_cleanup_job_deletes_each_named_artifact_and_never_the_run() -> None:
-    """Deletion is by the exact names this run uploaded, never by a pattern.
-
-    A glob deletes whatever else matches and stops matching a renamed artifact.
-    The run is not this job's to delete: it is the evidence the gate ran.
-
-    Scoped to the uploads of the workflow this job belongs to. It deletes its own
-    workflow's handoff, and a handoff is what a pull-request run makes; the
-    manual candidate route retains its uploads deliberately and has no cleanup
-    job for this one to inventory. An added handoff upload on *this* workflow is
-    still uncovered and still fails.
-    """
-    script = cleanup_script()
-    inventoried = [declared for path, _job, _step, declared in candidates() if path == IMAGE_WORKFLOW]
-
-    assert f"{ARTIFACT_ENDPOINT}/" in script, f"{CLEANUP_JOB} deletes no artifact"
-    assert inventoried, f"{IMAGE_WORKFLOW.name} uploads no handoff, so this proves nothing"
-    for declared in inventoried:
-        assert str(declared["name"]) in script, f"{CLEANUP_JOB} never names {declared['name']}"
-    assert not re.search(rf"--method\s+DELETE\s+\S*{re.escape(RUN_ENDPOINT)}/\$?\{{?[A-Za-z_]", script), (
-        f"{CLEANUP_JOB} deletes a workflow run"
-    )
-
-
-def test_only_the_cleanup_job_can_delete_anything() -> None:
-    """`actions: write` is repository-wide, so exactly one job may hold it.
-
-    At the workflow level every step of the build, of the gate and of their
-    third-party actions would carry it.
-    """
-    assert image_job(CLEANUP_JOB)
-    assert "actions" not in permissions(IMAGE_WORKFLOW)
-    for job in jobs(IMAGE_WORKFLOW):
-        declared = job_permissions(IMAGE_WORKFLOW, job) or {}
-        if job == CLEANUP_JOB:
-            assert declared.get("actions") == "write", f"{CLEANUP_JOB} cannot delete what it is there to delete"
-        else:
-            assert ACCESS[declared.get("actions", "none")] < ACCESS["write"], f"{job} can delete an artifact"
-
-
-def test_no_candidate_artifact_outlives_a_run_something_started_on_its_own() -> None:
-    """A run nobody chose describes bytes nobody will ship, so it ends holding none of them.
-
-    What such a run produces is a handoff: one job builds the bytes, a host that
-    has never seen this repository qualifies them, and the run deletes them
-    before it finishes. Keeping them put gigabytes of pre-release bytes behind
-    public download links.
-
-    Scoped to the V3 workflows an *event* reaches, which is the set whose bytes
-    nobody chose. Retention is the whole point of the manual candidate route: a
-    person names an exact merged commit and the run keeps what it built for the
-    approval window. Giving that route any automatic trigger puts it back in
-    scope here, and its retained uploads then fail this case rather than quietly
-    becoming a candidate no one asked for.
-
-    Two claims, because issuing deletions and holding nothing are different: the
-    job reads the run back and fails on anything remaining, and every candidate
-    upload such a run can reach is covered by a cleanup that waits for the job
-    holding it. Failure-only diagnostics carry neither prefix and are absent on
-    success, so they are deliberately not caught here.
-    """
-    script = cleanup_script()
-    assert "expired" in script, f"{CLEANUP_JOB} does not read back what the run still holds"
-    assert re.search(r"exit\s+1", script), f"{CLEANUP_JOB} cannot fail a run that still holds a handoff"
-
-    reachable = v3_reachable() & reachable_from_an_event()
-    uncovered = [
-        f"{workflow.name}: {job}: {step}"
-        for workflow, job, step, _declared in candidates()
-        if workflow in reachable
-        and not [
-            name
-            for name, definition in jobs(workflow).items()
-            if job in _needs(definition) and "always()" in str(definition.get("if", ""))
-        ]
-    ]
-
-    # The narrowed scope has to still contain something, or an exclusion that
-    # emptied it would satisfy the case below by covering nothing at all.
-    assert [entry for entry in candidates() if entry[0] in reachable], (
-        f"no candidate upload is reachable from an event on the V3 line, so this proves nothing: {WORKFLOWS}"
-    )
-    assert uncovered == [], f"{len(uncovered)} candidate uploads outlive their run: {uncovered}"
-
-
-def handoff_steps() -> list[tuple[str, dict]]:
-    """Return every step of every job that produces or describes the handoff."""
-    return [
-        (job_name, step)
-        for job_name, job in jobs(IMAGE_WORKFLOW).items()
-        for step in job.get("steps", [])
-        if any(marker in str(step.get("run", "")) for marker in HANDOFF_MARKERS)
-        or str((step.get("with") or {}).get("name", "")).startswith(CANDIDATE_ARTIFACTS)
-    ]
-
-
-def test_the_gate_takes_one_input_and_assumes_the_untrusted_route_without_it() -> None:
-    """A caller that says nothing gets the route that produces no handoff.
-
-    The default is what a new caller inherits, so it is the fork route: a run
-    that builds, scans, smokes and qualifies the lifecycle, and hands nothing to
-    a second job it could not then delete.
-    """
-    declared = triggers_of(IMAGE_WORKFLOW)["workflow_call"]["inputs"][HANDOFF_INPUT]
-
-    assert declared["type"] == "boolean"
-    assert declared["default"] is False
-
-
-def test_every_stage_that_produces_the_handoff_is_behind_the_trust_guard() -> None:
-    """A fork's token is read-only, so a fork that uploads a handoff cannot delete it."""
-    producers = handoff_steps()
-
-    assert {job for job, _step in producers} == {
-        "image",
-        LIFECYCLE_JOB,
-        CLEAN_HOST_JOB,
-        FINAL_QUALIFICATION_JOB,
-    }
-    for marker in HANDOFF_MARKERS:
-        assert [step for _job, step in producers if marker in str(step.get("run", ""))], marker
-    for job_name, step in producers:
-        guarded = f"{jobs(IMAGE_WORKFLOW)[job_name].get('if', '')} {step.get('if', '')}"
-        assert HANDOFF_GUARD in guarded, f"{job_name}: {_step_name(step)!r} runs on a fork"
-
-
-@pytest.mark.parametrize("job", [LIFECYCLE_JOB, CLEAN_HOST_JOB, FINAL_QUALIFICATION_JOB, CLEANUP_JOB])
-def test_both_jobs_that_consume_or_delete_the_handoff_are_behind_the_guard(job: str) -> None:
-    """Neither has anything to do on a fork, and the second would fail on a 403."""
-    assert HANDOFF_GUARD in str(image_job(job).get("if", "")), f"{job} runs on a fork"
-
-
-@pytest.mark.parametrize("task", UNGUARDED_TASKS)
-def test_the_qualification_a_fork_still_runs_is_not_behind_the_guard(task: str) -> None:
-    """Routing the handoff by trust is not permission to stop qualifying a fork.
-
-    Without this the guard could be moved up the job and satisfy every case
-    above while a fork pull request built nothing and ran no lifecycle.
-    """
-    running = [step for step in image_job("image")["steps"] if task in str(step.get("run", ""))]
-
-    assert running, f"no step of the image job runs {task}"
-    for step in running:
-        condition = "".join(str(step.get("if", "")).split())
-        assert HANDOFF_GUARD not in condition or (task == "compose.lifecycle" and f"!{HANDOFF_GUARD}" in condition), (
-            f"a fork no longer runs {task}"
-        )
-
-
-def test_the_caller_derives_the_route_from_the_head_repository() -> None:
-    """The input is only as good as what the caller puts in it.
-
-    Read as text, deliberately: evaluating the expression would mean
-    reimplementing GitHub's own context resolution inside this suite.
-    """
-    calling = [
-        job for caller in CALLERS for job in jobs(WORKFLOWS / caller).values() if called_workflow(job) == IMAGE_WORKFLOW
-    ]
-
-    assert calling, f"no caller reaches {IMAGE_WORKFLOW.name}"
-    for job in calling:
-        passed = str((job.get("with") or {}).get(HANDOFF_INPUT, ""))
-        assert TRUST_COMPARISON in passed, f"the image call derives {HANDOFF_INPUT} from {passed!r}"
-
-
-def tier_steps(task: str) -> list[dict]:
-    """Return every step of the image job that runs one Invoke task."""
-    running = [step for step in image_job("image")["steps"] if task in str(step.get("run", ""))]
-    assert running, f"no step of the image job runs {task}"
-    return running
+    assert build < suite
+    assert steps[suite]["env"] == {"INFRAHUB_SYNC_DOCKER_IMAGE": "infrahub-sync", "VERSION": "compose-test"}
 
 
 def develop_jobs() -> dict[str, dict]:
     """Return the job graph of the caller the two tiers exist for."""
     return jobs(DEVELOP_CALLER)
-
-
-def image_call() -> dict:
-    """Return the job of that caller which calls the image gate."""
-    calling = [job for job in develop_jobs().values() if called_workflow(job) == IMAGE_WORKFLOW]
-    assert len(calling) == 1, f"{DEVELOP_CALLER.name} makes {len(calling)} calls into {IMAGE_WORKFLOW.name}"
-    return calling[0]
-
-
-def tier_decision() -> dict:
-    """Return the job whose output decides which tier this head runs.
-
-    Found by the output it publishes rather than by name, so renaming the job
-    does not quietly leave every case below asserting nothing.
-    """
-    deciding = [job for job in develop_jobs().values() if TIER_INPUT in (job.get("outputs") or {})]
-    assert len(deciding) == 1, f"{len(deciding)} jobs of {DEVELOP_CALLER.name} publish a {TIER_INPUT} output"
-    return deciding[0]
-
-
-def test_the_gate_takes_a_tier_input_and_assumes_the_fast_one_without_it() -> None:
-    """A caller that says nothing gets the tier that qualifies on every push.
-
-    The expensive half is asked for, never inherited: a new caller that forgot
-    this input would otherwise run the Compose lifecycle and the clean-host
-    matrix on every push it makes.
-    """
-    declared = triggers_of(IMAGE_WORKFLOW)["workflow_call"]["inputs"][TIER_INPUT]
-
-    assert declared["type"] == "boolean"
-    assert declared["default"] is False
-
-
-@pytest.mark.parametrize("task", FAST_TIER_TASKS)
-def test_the_fast_tier_runs_on_every_push_whatever_the_tier_says(task: str) -> None:
-    """Tiering is deferral, not removal, and this is the half that is never deferred.
-
-    Without it the tier guard could be moved up the job and satisfy every case
-    below while an unlabelled pull request built nothing, scanned nothing and
-    produced no kit.
-    """
-    for step in tier_steps(task):
-        assert TIER_GUARD not in str(step.get("if", "")), f"{task} no longer runs on an unlabelled pull request"
-
-
-@pytest.mark.parametrize("task", FULL_TIER_TASKS)
-def test_only_a_run_believed_ready_runs_the_full_tier(task: str) -> None:
-    """These are the measured minutes the fast tier exists to defer.
-
-    A step of this half that lost its guard puts the whole cost back on every
-    push, which is the regression this change is about and is invisible from the
-    step itself.
-    """
-    for step in tier_steps(task):
-        assert TIER_GUARD in str(step.get("if", "")), f"{task} runs on every push again"
-
-
-def test_the_fast_tier_builds_the_one_platform_it_qualifies() -> None:
-    """One build, so the extra platform is a longer platform list rather than a second build.
-
-    `image.build` clears the whole build directory first, so a second build for
-    arm64 would delete the amd64 digest record, SBOM and scan report the fast
-    tier just produced and leave every later step describing the wrong one.
-    """
-    building = tier_steps("image.build")
-
-    assert len(building) == 1, f"{len(building)} steps build the image"
-    declared = str(building[0].get("if", ""))
-    assert TIER_GUARD not in declared, "an unlabelled pull request builds no image at all"
-
-    text = str(building[0].get("run", "")) + "\n" + yaml.safe_dump(building[0].get("env") or {})
-    chosen = TIER_PLATFORM_CHOICE.search(text)
-    assert chosen, f"the build does not pick its platforms from {TIER_GUARD}: {text!r}"
-    full, fast = chosen.groups()
-    assert sorted(full.split(",")) == sorted((FAST_PLATFORM, FULL_PLATFORM)), (
-        f"a qualifying run builds {full}, not both platforms"
-    )
-    assert fast == FAST_PLATFORM, f"an unlabelled pull request builds {fast}"
-
-
-def test_the_non_native_platform_is_smoked_only_by_a_run_that_built_it() -> None:
-    """Emulated arm64 smoke is four of the measured minutes, and it is the tier's to defer.
-
-    It is also the one step that would fail rather than skip if it were left
-    unguarded: the fast tier records no arm64 image, and `image.smoke` refuses a
-    platform the build never produced.
-    """
-    smoking = {
-        FAST_PLATFORM: [step for step in tier_steps("image.smoke") if FAST_PLATFORM in str(step.get("run", ""))],
-        FULL_PLATFORM: [step for step in tier_steps("image.smoke") if FULL_PLATFORM in str(step.get("run", ""))],
-    }
-
-    for platform, steps in smoking.items():
-        assert len(steps) == 1, f"{len(steps)} steps smoke {platform}"
-    assert TIER_GUARD not in str(smoking[FAST_PLATFORM][0].get("if", "")), (
-        f"{FAST_PLATFORM} is no longer smoked on every push"
-    )
-    assert TIER_GUARD in str(smoking[FULL_PLATFORM][0].get("if", "")), (
-        f"{FULL_PLATFORM} is smoked on a push that never built it"
-    )
-
-
-@pytest.mark.parametrize("job", [LIFECYCLE_JOB, CLEAN_HOST_JOB, FINAL_QUALIFICATION_JOB, CLEANUP_JOB])
-def test_the_jobs_only_a_qualifying_run_feeds_are_behind_the_tier_guard(job: str) -> None:
-    """A fast tier hands nothing over, so both of these have nothing to do.
-
-    The clean-host matrix would fail on a missing artifact and the cleanup would
-    inventory a handoff nobody uploaded, so neither may be left running.
-    """
-    assert TIER_GUARD in str(image_job(job).get("if", "")), f"{job} runs for a head that produced no handoff"
-
-
-@pytest.mark.parametrize("job", [LIFECYCLE_JOB, CLEAN_HOST_JOB, FINAL_QUALIFICATION_JOB, CLEANUP_JOB])
-def test_the_tier_guard_is_a_second_condition_and_not_a_replacement(job: str) -> None:
-    """Fork routing and tier routing answer different questions and both still have to hold.
-
-    A fork's token is read-only whatever the tier is, so replacing the trust
-    guard with the tier guard would put a labelled fork pull request back on the
-    route that uploads a handoff it cannot delete.
-    """
-    assert HANDOFF_GUARD in str(image_job(job).get("if", "")), f"{job} stopped asking which repository the head is in"
-
-
-def test_the_fast_tier_reports_under_a_name_of_its_own() -> None:
-    """Two tiers, two check names, so the one branch protection knows keeps meaning what it did.
-
-    The full tier's name is what every required-check setting and every reader's
-    memory of this gate is written against; a fast run reporting under it would
-    look like a qualification that had happened.
-    """
-    declared = str(image_job("image").get("name", ""))
-
-    assert TIER_GUARD in declared, f"the image job reports under one name for both tiers: {declared!r}"
-    assert FULL_TIER_JOB_NAME in declared, f"the full tier no longer reports as {FULL_TIER_JOB_NAME!r}"
-
-
-@pytest.mark.parametrize("task", FULL_TIER_TASKS)
-def test_the_escalation_filter_covers_every_tree_the_full_tier_alone_runs(task: str) -> None:
-    """A change to what only the full tier exercises has to raise the tier by itself.
-
-    Otherwise the one contributor most likely to break the lifecycle — the one
-    editing it — is the one asked to remember a label.
-    """
-    module = REPO_ROOT / "tasks" / f"{task.split('.', maxsplit=1)[0]}.py"
-
-    assert routed(module, filter_patterns(ESCALATION_FILTER)), (
-        f"{module.relative_to(REPO_ROOT)} decides what `invoke {task}` does, and {ESCALATION_FILTER} does not name it"
-    )
-
-
-@pytest.mark.parametrize("tree", QUALIFIED_TREES[1:])
-def test_the_escalation_filter_covers_every_bundle_the_full_tier_qualifies(tree: str) -> None:
-    """The Compose bundle and its suite are only ever run by the full tier."""
-    assert tree in filter_patterns(ESCALATION_FILTER), (
-        f"only the full tier runs {tree}, so {ESCALATION_FILTER} has to name it"
-    )
-
-
-@pytest.mark.parametrize("declaration", [IMAGE_WORKFLOW, DEVELOP_CALLER, FILE_FILTERS, DOCKERFILE], ids=_identify)
-def test_the_escalation_filter_routes_the_documents_that_declare_the_tiers(declaration: Path) -> None:
-    """A tier split that can be re-aimed without facing the tier it aims proves nothing.
-
-    These four are what decide which tier a head runs and what that tier does.
-    Editing one of them is the change most able to hide a regression, so it runs
-    the full tier itself — which is why this pull request runs it.
-    """
-    assert routed(declaration, filter_patterns(ESCALATION_FILTER)), (
-        f"{declaration.relative_to(REPO_ROOT)} declares the tiers, and {ESCALATION_FILTER} does not name it"
-    )
-
-
-def test_the_escalation_filter_does_not_name_the_tree_the_fast_tier_already_covers() -> None:
-    """Escalating on every application change is the wait this whole split removes.
-
-    `image_all` still selects the image job from that tree, so an adapter change
-    is built, scanned and smoked; what it does not do is add the lifecycle and
-    the clean-host matrix to a review round.
-    """
-    patterns = filter_patterns(ESCALATION_FILTER)
-
-    assert "infrahub_sync/**" not in patterns, (
-        f"{ESCALATION_FILTER} names the application tree, so every code change runs the full tier again"
-    )
-    assert TASK_TREE not in patterns, (
-        f"{ESCALATION_FILTER} names {TASK_TREE} whole; it names the three modules the full tier alone runs"
-    )
-
-
-def test_the_caller_raises_the_tier_on_the_label_or_a_sensitive_path() -> None:
-    """The input is only as good as what the caller puts in it.
-
-    Read as text, deliberately: evaluating these expressions would mean
-    reimplementing GitHub's own context resolution inside this suite. Three
-    routes raise the tier — anything that is not a pull request, the label, and
-    the filter — and dropping any one of them silently narrows the gate.
-    """
-    decided = str((tier_decision().get("outputs") or {})[TIER_INPUT])
-
-    assert "github.event_name != 'pull_request'" in decided, "a dispatch or a branch push no longer qualifies"
-    assert "labels" in decided, f"the {QUALIFY_LABEL} label no longer qualifies"
-    assert f"'{QUALIFY_LABEL}'" in decided, f"the label read is not {QUALIFY_LABEL}"
-    assert f"outputs.{ESCALATION_FILTER}" in decided, f"{ESCALATION_FILTER} no longer raises the tier by itself"
-
-    passed = str((image_call().get("with") or {})[TIER_INPUT])
-    assert "needs." in passed, f"the image call derives {TIER_INPUT} from {passed!r}, not from the job that decided"
-    assert TIER_INPUT in passed, f"the image call derives {TIER_INPUT} from {passed!r}"
 
 
 def test_a_merge_into_the_branch_this_gate_guards_re_qualifies_it() -> None:
@@ -1991,18 +770,6 @@ def test_a_merge_into_the_branch_this_gate_guards_re_qualifies_it() -> None:
     )
 
 
-def test_the_label_arriving_or_leaving_re_runs_the_gate() -> None:
-    """A label nothing listens for is a label that qualifies nothing.
-
-    The three default types are restated alongside the two new ones, because
-    declaring `types` at all replaces the defaults rather than adding to them.
-    """
-    declared = triggers_of(DEVELOP_CALLER)["pull_request"]["types"]
-
-    for wanted in LABEL_EVENT_TYPES + DEFAULT_EVENT_TYPES:
-        assert wanted in declared, f"{DEVELOP_CALLER.name} does not run on a {wanted} pull request"
-
-
 def test_the_fast_tier_starts_beside_the_lint_it_used_to_wait_for() -> None:
     """Ninety seconds on the critical path of every run, for an ordering nothing needs.
 
@@ -2016,182 +783,6 @@ def test_the_fast_tier_starts_beside_the_lint_it_used_to_wait_for() -> None:
     assert linting, f"{DEVELOP_CALLER.name} runs no linter"
     for name in ("tests", "image"):
         assert not linting & _ancestors(name, needs), f"{name} still waits for {sorted(linting)}"
-
-
-def test_a_head_the_full_tier_never_qualified_cannot_satisfy_the_required_check() -> None:
-    """A skipped job satisfies a required check, so the tiered gate cannot be the thing required.
-
-    This job is: it always runs, it refuses a head whose tier never rose, and it
-    refuses one whose full tier ran and failed. Branch protection requires this
-    name, and a pull request without the label is a visible block rather than a
-    silent merge.
-    """
-    job = job_of(DEVELOP_CALLER, REQUIRED_JOB)
-    script = "\n".join(str(step.get("run", "")) for step in job["steps"])
-    watched = set(_needs(job))
-
-    assert "always()" in str(job.get("if", "")), f"{REQUIRED_JOB} is skipped by the very thing it refuses"
-    assert watched & {name for name, definition in develop_jobs().items() if called_workflow(definition)}, (
-        f"{REQUIRED_JOB} watches no call, so it cannot know whether the full tier ran"
-    )
-    assert REQUIRED_REFUSAL in script, f"{REQUIRED_JOB} does not say what to do about it"
-    assert re.search(r"exit\s+1", script), f"{REQUIRED_JOB} cannot fail a head that never qualified"
-    assert "success" in script, f"{REQUIRED_JOB} accepts a full tier that ran and failed"
-
-
-@pytest.mark.parametrize(
-    ("workflow", "job"), [(IMAGE_WORKFLOW, "image"), (CANDIDATE_WORKFLOW, "candidate")], ids=_identify
-)
-def test_the_artifact_record_names_the_candidate_from_the_one_document_that_holds_it(workflow: Path, job: str) -> None:
-    """`release.qualify` refuses a record describing another candidate's uploads.
-
-    So the writer copies the identity out of the document `release.identity`
-    wrote rather than retyping it. A retyped version would pass on the run that
-    wrote it and refuse a rebuild of that version at a new revision.
-
-    The identifiers come from the uploads themselves, derived from which steps
-    the workflow gave an `id` and then uploaded under: a record naming a group
-    the run never uploaded, or omitting one it did, describes bytes the service
-    is not holding under that name.
-    """
-    writers = [step for step in job_of(workflow, job)["steps"] if ARTIFACT_RECORD in str(step.get("run", ""))]
-
-    assert len(writers) == 1, f"{len(writers)} steps of {workflow.name} write {ARTIFACT_RECORD}"
-    script = str(writers[0]["run"])
-    assert RECORDED_IDENTITY in script, f"the writer does not read the candidate from {RECORDED_IDENTITY}"
-    assert "identity:" in script, f"the writer records no identity in {ARTIFACT_RECORD}"
-
-    # Which upload each `--arg` reads from, and what it reads. Keyed by the
-    # variable *and* its kind, so the identifier and the digest of one group are
-    # resolved separately and neither is taken on the strength of the other.
-    bound = {
-        (variable, kind): (producer, output) for variable, kind, producer, output in WRITER_BINDING.findall(script)
-    }
-    recorded = {
-        name: (id_variable, digest_variable) for name, id_variable, digest_variable in WRITER_ENTRY.findall(script)
-    }
-
-    # A document cannot carry its own upload digest, so the record's own group is
-    # the one exception; everything else the run retained has to be named.
-    #
-    # Compared by value: `candidates()` builds a fresh `Path` per call, so an
-    # identity test here silently skips every group and asserts nothing.
-    checked = [
-        str(declared["name"])
-        for path, producing_job, _step, declared in candidates()
-        if path == workflow
-        and producing_job == job
-        and ARTIFACT_RECORD
-        not in str((step_of(workflow, job, str(declared["name"])).get("with") or {}).get("path", ""))
-        and not str(declared["name"]).endswith("qualification-record")
-    ]
-
-    assert checked, f"{workflow.name} retains no group whose identifiers the record could bind"
-    for name in checked:
-        producing = str(step_of(workflow, job, name).get("id", ""))
-
-        assert producing, f"the step uploading {name} declares no id, so nothing can read its outputs"
-        assert name in recorded, f"{ARTIFACT_RECORD} records no entry for {name}"
-
-        # Both sides, each against the upload that really produced this group.
-        for kind, variable in zip(("id", "digest"), recorded[name], strict=True):
-            assert (variable, kind) in bound, (
-                f"{ARTIFACT_RECORD} records {name}'s {kind} from ${variable}_{kind}, which no upload output is bound to"
-            )
-            producer, output = bound[variable, kind]
-            assert output == kind, f"{name}'s {kind} is read from an upload's artifact-{output}"
-            assert producer == producing, (
-                f"{ARTIFACT_RECORD} records {name}'s {kind} from step {producer!r}, "
-                f"but {producing!r} is what uploads it"
-            )
-
-
-def step_of(workflow: Path, job: str, artifact: str) -> dict:
-    """Return the step of one job that uploads one named artifact."""
-    uploading = [
-        step
-        for step in job_of(workflow, job)["steps"]
-        if str((step.get("with") or {}).get("name", "")) == artifact
-        and str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@")
-    ]
-    assert len(uploading) == 1, f"{len(uploading)} steps of {workflow.name} upload {artifact}"
-    return uploading[0]
-
-
-def candidate_sequence() -> list[str]:
-    """Return what the candidate job does, in order, as the names the plan uses.
-
-    An Invoke task is named by the task; an upload is named by the artifact it
-    creates; the record is named by the file it writes. Everything else is
-    dropped, so adding a step between two of these does not move them.
-    """
-    ordered = []
-    for step in candidate_steps("candidate"):
-        run = str(step.get("run", ""))
-        declared = str((step.get("with") or {}).get("name", ""))
-        if ARTIFACT_RECORD in run:
-            ordered.append(ARTIFACT_RECORD)
-        ordered.extend(INVOKE_TASK.findall(run))
-        if declared in CANDIDATE_GROUPS and str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@"):
-            ordered.append(declared)
-    return ordered
-
-
-def test_the_candidate_run_does_the_approved_steps_in_the_approved_order() -> None:
-    """Three of these orderings are load-bearing and none of them is visible from one step.
-
-    `compose.reclaim` deletes the archives the image upload publishes, so an
-    upload after it publishes nothing. `release.qualify` reads the artifact
-    record, so a record written after it describes the previous candidate or
-    nothing. And the lifecycle has to run against the image the reclaim left
-    behind rather than before it was built.
-
-    Compared as the whole sequence rather than as pairs, because a pairwise
-    check passes on a permutation that satisfies every pair it names.
-    """
-    sequence = [entry for entry in candidate_sequence() if entry in APPROVED_ORDER]
-
-    assert sequence == list(APPROVED_ORDER), f"the candidate job runs {sequence}"
-
-
-def kit_inputs() -> list[Path]:
-    """Return every repository file `build_qualification_kit()` copies into the kit.
-
-    Read off that function's own declarations rather than listed here, so a
-    renamed or repointed source follows automatically. What it cannot see is a
-    brand-new source constant; the case below is the reason to add one here too.
-    """
-    return [
-        release.QUALIFICATION_SOURCE / "clean-host.sh",
-        *sorted((release.QUALIFICATION_SOURCE / "checks").glob("*.py")),
-        *(release.DESTINATION_SOURCE / name for name in release.DESTINATION_FILES),
-        release.EXAMPLE_SCHEMA,
-    ]
-
-
-@pytest.mark.parametrize("source", kit_inputs(), ids=lambda path: path.name)
-def test_the_image_filter_covers_every_input_the_qualification_kit_carries(source: Path) -> None:
-    """The clean-host gate runs the kit, so a change to what goes in it re-runs the gate.
-
-    An input the filter does not name leaves the clean-host matrix qualifying
-    the previous commit's fixture — the row passes, and it passed against the
-    wrong bytes.
-    """
-    assert routed(source, image_filter_patterns()), (
-        f"the qualification kit carries {source.relative_to(REPO_ROOT)}, which image_all does not name"
-    )
-
-
-@pytest.mark.parametrize("source", kit_inputs(), ids=lambda path: path.name)
-def test_the_escalation_filter_covers_every_input_the_qualification_kit_carries(source: Path) -> None:
-    """The clean-host matrix is full-tier only, and the kit is what it runs.
-
-    An input the escalation filter does not name leaves a kit change qualified
-    by whoever remembers to label the pull request that makes it.
-    """
-    assert routed(source, filter_patterns(ESCALATION_FILTER)), (
-        f"the qualification kit carries {source.relative_to(REPO_ROOT)}, which {ESCALATION_FILTER} does not name"
-    )
 
 
 @pytest.mark.parametrize("declaration", [WORKFLOWS, FILE_FILTERS, DOCKERFILE], ids=lambda path: path.name)
@@ -2219,18 +810,6 @@ def test_the_sync_filter_routes_the_examples_tree() -> None:
 
     assert routed(probe, filter_patterns("sync_all")), (
         f"unit tests read fixtures under {probe.parent.relative_to(REPO_ROOT)}, which sync_all does not name"
-    )
-
-
-def test_the_image_filter_routes_the_document_that_declares_it() -> None:
-    """A selector that does not name itself can be re-aimed without facing the gate it aims.
-
-    `image_all` is what decides whether the image job and the checkout-free
-    clean-host job run at a head. Editing that decision is the one change most
-    able to hide a regression, so the edit has to run the gate it re-routes.
-    """
-    assert routed(FILE_FILTERS, image_filter_patterns()), (
-        f"{FILE_FILTERS.name} selects the image and clean-host jobs, and image_all does not name it"
     )
 
 
@@ -2295,50 +874,1157 @@ def test_the_sdk_update_pull_request_targets_the_matrix_branch() -> None:
     assert '--base "${MATRIX_BRANCH}"' in create_pr["run"]
 
 
-@pytest.mark.parametrize("check", ["linter", "tests", "uv-checker"])
-def test_the_required_check_waits_for_and_refuses_a_failed_fast_check(check: str) -> None:
-    """The required check waits for each fast workflow and reads its result.
+# --------------------------------------------------------------------------
+# ci-docker-image
+# --------------------------------------------------------------------------
+# The reusable Harbor build-and-push workflow. Its inputs mirror infrahub-mcp's file
+# of the same name, no tag is applied until every platform has passed its smoke
+# test, and every step that can reach the registry is behind `inputs.publish`.
+DOCKER_IMAGE_WORKFLOW = WORKFLOWS / "ci-docker-image.yml"
+PUBLISH_GUARD = "inputs.publish"
+POSITIVE_PUBLISH_TERMS = frozenset({PUBLISH_GUARD, f"{PUBLISH_GUARD} == true"})
+DOCKER_IMAGE_INPUTS = {
+    "publish": {"type": "boolean", "required": False, "default": False},
+    "version": {"type": "string", "required": False, "default": ""},
+    "ref": {"type": "string", "required": True},
+    "tags": {"type": "string", "required": True},
+    "labels": {"type": "string", "required": True},
+    "platforms": {"type": "string", "required": False, "default": "linux/amd64,linux/arm64"},
+}
+DOCKER_IMAGE_RUNNERS = {"linux/amd64": "ubuntu-24.04", "linux/arm64": "ubuntu-24.04-arm"}
+PUBLISH_ONLY_JOBS = ("merge", "sign", "sbom")
+SIGNING_JOBS = ("sign", "sbom")
+SMOKE_COMMAND = "uv run pytest -m docker tests/image/test_image_artifact.py"
+SMOKE_IMAGE = "infrahub-sync:smoke"
+LOGIN_ACTION = "docker/login-action"
+BUILD_PUSH_ACTION = "docker/build-push-action"
+TAG_GUARD_MESSAGE = "publishing needs at least one tag"
+# `uses: owner/repo[/path]@<40 hex> # vX.Y.Z` -- a SHA alone cannot be read, and a
+# tag alone can be moved under the workflow.
+PINNED_USES = re.compile(r"^\s*(?:-\s+)?uses:\s*\S+@[0-9a-f]{40}\s+#\s*v\d[\w.\-]*\s*$")
 
-    The fast checks keep running beside the tier, so they are not ancestors of
-    the image gate; the required job is the one place that waits for them, and
-    its script reads each result.
+
+def docker_image_job(name: str) -> dict:
+    """Return one job of the reusable image workflow."""
+    return job_of(DOCKER_IMAGE_WORKFLOW, name)
+
+
+def docker_image_build_steps() -> list[dict]:
+    """Return the steps of the per-platform build job, in order."""
+    return docker_image_job("build")["steps"]
+
+
+def _uses(step: dict, action: str) -> bool:
+    return str(step.get("uses", "")).startswith(f"{action}@")
+
+
+def _pushes(step: dict) -> bool:
+    """Report whether one step logs in to or pushes to a registry."""
+    if _uses(step, LOGIN_ACTION):
+        return True
+    declared = step.get("with") or {}
+    return _uses(step, BUILD_PUSH_ACTION) and (
+        "push=true" in str(declared.get("outputs", "")) or bool(declared.get("push"))
+    )
+
+
+@pytest.mark.parametrize("trigger", ["workflow_call", "workflow_dispatch"])
+def test_the_image_workflow_takes_the_inputs_the_contract_names(trigger: str) -> None:
+    """The same names and defaults as infrahub-mcp's, so callers read alike in both repositories."""
+    declared = triggers_of(DOCKER_IMAGE_WORKFLOW)[trigger]["inputs"]
+
+    assert set(declared) == set(DOCKER_IMAGE_INPUTS)
+    for name, expected in DOCKER_IMAGE_INPUTS.items():
+        assert {key: declared[name].get(key) for key in expected} == expected, name
+        if "default" not in expected:
+            assert "default" not in declared[name], f"{name} is required and must not carry a default"
+
+
+def test_a_dispatch_takes_exactly_the_inputs_a_call_does() -> None:
+    """A hand-run image is the same build a release calls for, so the two input sets cannot drift."""
+    declared = triggers_of(DOCKER_IMAGE_WORKFLOW)
+
+    assert declared["workflow_dispatch"]["inputs"] == declared["workflow_call"]["inputs"]
+
+
+@pytest.mark.parametrize("trigger", ["workflow_call", "workflow_dispatch"])
+def test_the_tags_input_says_it_takes_newline_separated_full_references(trigger: str) -> None:
+    description = triggers_of(DOCKER_IMAGE_WORKFLOW)[trigger]["inputs"]["tags"]["description"].lower()
+
+    assert "newline-separated" in description
+    assert "full" in description
+
+
+def test_a_run_names_the_ref_it_builds_and_whether_it_publishes() -> None:
+    """The run list then tells two dispatches apart without opening either."""
+    run_name = load(DOCKER_IMAGE_WORKFLOW).get("run-name")
+
+    assert isinstance(run_name, str), "the image workflow declares no run-name"
+    assert "${{ inputs.ref }}" in run_name
+    assert "${{ inputs.publish }}" in run_name
+
+
+def test_only_a_newer_run_for_the_same_ref_cancels_an_image_build() -> None:
+    """The group is shared with the caller, so the ref keeps a run for one ref from cancelling another's.
+
+    Only a build-only run is cancelled; a publishing one runs to its signature. A
+    cancelling run cancels everything in progress in its group, so publishing
+    runs sit in a group no build-only run joins.
     """
-    job = job_of(DEVELOP_CALLER, REQUIRED_JOB)
-    script = "\n".join(str(step.get("run", "")) for step in job["steps"])
-    results = " ".join(str(value) for step in job["steps"] for value in (step.get("env") or {}).values())
+    declared = load(DOCKER_IMAGE_WORKFLOW)["concurrency"]
 
-    assert check in _needs(job), f"{REQUIRED_JOB} does not wait for {check}"
-    assert f"needs.{check}.result" in results, f"{REQUIRED_JOB} does not read the result of {check}"
-    assert check in script, f"{REQUIRED_JOB} does not check {check}"
+    assert concurrency_group(DOCKER_IMAGE_WORKFLOW) == (
+        "${{ github.workflow }}-${{ inputs.ref }}-${{ inputs.publish && 'publish' || 'build' }}"
+    )
+    assert declared.get("cancel-in-progress") == "${{ !inputs.publish }}", (
+        "a publishing run cancelled between `merge` and `sign` leaves a pushed tag unsigned"
+    )
 
 
-@pytest.mark.parametrize("check", ["linter", "tests", "uv-checker"])
+def test_the_image_workflow_requests_exactly_what_signing_and_pushing_need() -> None:
+    """Scoped per job, so the build a pull request runs asks for nothing it can write with.
+
+    Harbor is reached with its own credentials, so no job needs `packages`; only
+    keyless signing and attestation need `id-token`.
+    """
+    assert permissions(DOCKER_IMAGE_WORKFLOW) == {"contents": "read"}
+    for name in jobs(DOCKER_IMAGE_WORKFLOW):
+        expected = {"contents": "read", "id-token": "write"} if name in SIGNING_JOBS else {"contents": "read"}
+        assert job_permissions(DOCKER_IMAGE_WORKFLOW, name) == expected, f"{name} requests the wrong permissions"
+
+
+def test_each_platform_builds_on_its_own_native_runner() -> None:
+    matrix = docker_image_job("build")["strategy"]["matrix"]["include"]
+
+    assert {entry["platform"]: entry["runner"] for entry in matrix} == DOCKER_IMAGE_RUNNERS
+    assert docker_image_job("build")["runs-on"] == "${{ matrix.runner }}"
+
+
+def test_the_build_loads_the_root_dockerfile_under_the_smoke_tag_with_the_callers_labels() -> None:
+    builds = [step for step in docker_image_build_steps() if _uses(step, BUILD_PUSH_ACTION) and not _pushes(step)]
+
+    assert len(builds) == 1, "exactly one local build feeds the smoke test"
+    declared = builds[0]["with"]
+    assert declared["load"] is True
+    assert declared["tags"] == SMOKE_IMAGE
+    assert declared["labels"] == "${{ inputs.labels }}"
+    assert declared["file"] == "Dockerfile"
+
+
+def test_the_smoke_test_runs_against_the_loaded_image() -> None:
+    smoke = [step for step in docker_image_build_steps() if SMOKE_COMMAND in str(step.get("run", ""))]
+
+    assert len(smoke) == 1
+    repository, _, tag = SMOKE_IMAGE.partition(":")
+    assert smoke[0]["env"] == {"INFRAHUB_SYNC_DOCKER_IMAGE": repository, "VERSION": tag}
+
+
+def test_the_smoke_test_comes_before_any_login_or_push() -> None:
+    """A platform that fails its smoke test must leave nothing in the registry."""
+    steps = docker_image_build_steps()
+    smoke = next(index for index, step in enumerate(steps) if SMOKE_COMMAND in str(step.get("run", "")))
+    pushing = [index for index, step in enumerate(steps) if _pushes(step)]
+
+    assert pushing, "the build job never pushes"
+    assert smoke < min(pushing), f"step {min(pushing)} reaches the registry before the smoke test at step {smoke}"
+
+
+def test_the_push_is_by_digest_without_provenance() -> None:
+    pushes = [step for step in docker_image_build_steps() if _uses(step, BUILD_PUSH_ACTION) and _pushes(step)]
+
+    assert len(pushes) == 1
+    declared = pushes[0]["with"]
+    assert declared["provenance"] is False
+    assert declared["outputs"] == (
+        "type=image,name=${{ vars.HARBOR_HOST }}/${{ github.repository }},"
+        "push-by-digest=true,name-canonical=true,push=true"
+    )
+    assert _requires_publish(pushes[0].get("if"))
+
+
 @pytest.mark.parametrize(
-    ("result", "exit_code"),
-    [("success", 0), ("skipped", 0), ("failure", 1), ("cancelled", 1)],
+    ("condition", "expected"),
+    [
+        ("inputs.publish", True),
+        ("${{ inputs.publish }}", True),
+        ("inputs.publish == true", True),
+        ("steps.check.outputs.skip == 'false' && inputs.publish", True),
+        ("!inputs.publish", False),
+        ("steps.check.outputs.skip == 'false' && !inputs.publish", False),
+        ("inputs.publish == false", False),
+        ("inputs.publish || always()", False),
+        ("steps.check.outputs.skip == 'false'", False),
+        (None, False),
+    ],
 )
-def test_the_required_check_script_refuses_a_failed_fast_check(check: str, result: str, exit_code: int) -> None:
-    """Run the required job's script with one fast check ending in each result.
+def test_the_publish_guard_check_requires_a_positive_publish_condition(
+    condition: str | None, *, expected: bool
+) -> None:
+    """A substring match would take `!inputs.publish` for the guard it negates."""
+    assert _requires_publish(condition) is expected
 
-    Reading the script cannot tell a refusal from a permission, so it is executed
-    with every other result at `success` and judged by its exit code.
-    """
-    job = job_of(DEVELOP_CALLER, REQUIRED_JOB)
-    step = next(step for step in job["steps"] if "UV_CHECKER" in (step.get("env") or {}))
-    env = {name: str(value) for name, value in step["env"].items()}
-    env.update({"DECISION": "success", "QUALIFY": "true", "IMAGE": "success"})
-    env.update({"LINTER": "success", "TESTS": "success", "UV_CHECKER": "success"})
-    env[check.upper().replace("-", "_")] = result
+
+def test_every_step_that_reads_a_secret_is_behind_the_publish_guard() -> None:
+    """A step-level guard, or a job that only runs when publishing."""
+    exposed = [
+        f"{name}: {_step_name(step)}"
+        for name, job in jobs(DOCKER_IMAGE_WORKFLOW).items()
+        for step in job.get("steps") or []
+        if "secrets." in str(step) and not _requires_publish(step.get("if")) and not _requires_publish(job.get("if"))
+    ]
+
+    assert not exposed, f"these steps read a secret without the publish guard: {exposed}"
+
+
+def test_no_step_echoes_a_secret() -> None:
+    echoed = [
+        _step_name(step)
+        for job in jobs(DOCKER_IMAGE_WORKFLOW).values()
+        for step in job.get("steps") or []
+        if "secrets." in str(step.get("run", ""))
+    ]
+
+    assert not echoed, f"these run scripts expand a secret: {echoed}"
+
+
+@pytest.mark.parametrize("job", PUBLISH_ONLY_JOBS)
+def test_the_registry_jobs_only_run_when_publishing(job: str) -> None:
+    assert docker_image_job(job)["if"] == PUBLISH_GUARD
+
+
+def test_every_multi_line_script_stops_on_the_first_failure() -> None:
+    """Without `pipefail`, a failed `imagetools inspect` piped into `jq` reads as success."""
+    loose = [
+        f"{name}: {_step_name(step)}"
+        for name, job in jobs(DOCKER_IMAGE_WORKFLOW).items()
+        for step in job.get("steps") or []
+        if "\n" in str(step.get("run", "")).strip()
+        and str(step["run"]).lstrip().splitlines()[0].strip() != "set -euo pipefail"
+    ]
+
+    assert not loose, f"these scripts do not start with `set -euo pipefail`: {loose}"
+
+
+def _image_step(job: str, name: str) -> dict:
+    found = [step for step in docker_image_job(job)["steps"] if step.get("name") == name]
+    assert len(found) == 1, f"{len(found)} steps named {name!r} in {job}"
+    return found[0]
+
+
+MANIFEST_DIGESTS = ("a" * 64, "b" * 64)
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected"),
+    [
+        ("r.example/o/s:1.0.0\n", ["r.example/o/s:1.0.0"]),
+        ("r.example/o/s:1.0.0\n\n  r.example/o/s:latest \n", ["r.example/o/s:1.0.0", "r.example/o/s:latest"]),
+    ],
+    ids=["one-tag", "two-tags-with-blank-lines"],
+)
+def test_the_manifest_list_tags_every_tag_line_over_every_platform_digest(tags: str, expected: list[str]) -> None:
+    step = _image_step("merge", "Create manifest list and push")
+
+    run = _run_step(
+        str(step["run"]),
+        {"REPOSITORY": "r.example/o/s", "TAGS": tags},
+        stubs=("docker",),
+        files=dict.fromkeys(MANIFEST_DIGESTS, ""),
+    )
+
+    assert run.returncode == 0, run.output
+    assert run.argv[:3] == ["buildx", "imagetools", "create"]
+    rest = run.argv[3:]
+    assert [rest[index + 1] for index, arg in enumerate(rest) if arg == "--tag"] == expected
+    sources = [arg for arg in rest if arg not in expected and arg != "--tag"]
+    assert sorted(sources) == [f"r.example/o/s@sha256:{digest}" for digest in MANIFEST_DIGESTS]
+
+
+def test_the_manifest_list_refuses_to_run_without_a_digest() -> None:
+    step = _image_step("merge", "Create manifest list and push")
+
+    run = _run_step(str(step["run"]), {"REPOSITORY": "r.example/o/s", "TAGS": "r.example/o/s:1.0.0"}, stubs=("docker",))
+
+    assert run.returncode != 0
+    assert "::error::" in run.output
+    assert not run.argv, "docker was called with no platform digest"
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="the inspect step pipes through jq, as the runner does")
+@pytest.mark.parametrize(
+    ("manifest", "ok"),
+    [
+        ('{"digest": "sha256:' + "c" * 64 + '"}', True),
+        ("{}", False),
+        ('{"digest": "sha256:short"}', False),
+        ("", False),
+    ],
+    ids=["digest", "no-digest", "malformed", "nothing"],
+)
+def test_the_inspected_manifest_must_be_a_digest(manifest: str, *, ok: bool) -> None:
+    """`sign` and `sbom` address the image by this digest; anything else would sign the wrong subject."""
+    step = _image_step("merge", "Inspect manifest")
+
+    run = _run_step(str(step["run"]), {"TAGS": "r.example/o/s:1.0.0"}, stdout=manifest, stubs=("docker",))
+
+    if ok:
+        assert run.returncode == 0, run.output
+        assert run.outputs == {"digest": "sha256:" + "c" * 64}
+    else:
+        assert run.returncode != 0
+        assert "::error::" in run.output
+        assert "digest" not in run.outputs
+
+
+@pytest.mark.parametrize(("digest", "ok"), [("sha256:" + "d" * 64, True), ("", False)])
+def test_an_empty_push_digest_fails_the_export(digest: str, *, ok: bool) -> None:
+    step = _image_step("build", "Export digest")
+    script = str(step["run"]).replace("/tmp/digests", "digests")  # noqa: S108 -- rewritten to the scratch directory
+
+    run = _run_step(script, {"DIGEST": digest})
+
+    assert (run.returncode == 0) is ok, run.output
+    if not ok:
+        assert "::error::" in run.output
+
+
+def test_the_manifest_list_waits_for_every_platform() -> None:
+    """No tag is created while any platform has failed its build or smoke test."""
+    assert _needs(docker_image_job("merge")) == ("build",)
+
+
+@pytest.mark.parametrize("job", ["sign", "sbom"])
+def test_every_cosign_call_is_retried(job: str) -> None:
+    """A transparency-log hiccup should not fail a release that already pushed."""
+    scripts = [str(step.get("run", "")) for step in docker_image_job(job)["steps"]]
+    calls_made = [
+        line.strip()
+        for script in scripts
+        for line in script.splitlines()
+        if "cosign " in line and not line.strip().startswith("#")
+    ]
+
+    assert calls_made, f"{job} calls no cosign"
+    assert all(line.startswith("retry cosign ") for line in calls_made), calls_made
+
+
+def test_every_action_is_pinned_to_a_full_commit_sha_with_its_version() -> None:
+    lines = [line for line in DOCKER_IMAGE_WORKFLOW.read_text(encoding="utf-8").splitlines() if "uses:" in line]
+
+    assert lines
+    unpinned = [line.strip() for line in lines if not PINNED_USES.match(line)]
+    assert not unpinned, f"these actions are not pinned to a commit: {unpinned}"
+
+
+def _tag_guard_exit(publish: str, tags: str, harbor_host: str = "registry.example") -> tuple[int, str]:
+    """Run the build job's first step the way the runner would, with the two inputs it reads."""
+    step = docker_image_build_steps()[0]
     bash = shutil.which("bash")
-    assert bash, "a POSIX shell is needed to run the gate the way the runner does"
-
+    assert bash, "a POSIX shell is needed to run the guard the way the runner does"
     with tempfile.TemporaryDirectory() as scratch:
-        completed = subprocess.run(  # noqa: S603
+        result = subprocess.run(  # noqa: S603
             [bash, "-c", str(step["run"])],
-            env=env,
+            env={"PUBLISH": publish, "TAGS": tags, "HARBOR_HOST": harbor_host},
             cwd=scratch,
             capture_output=True,
+            text=True,
             check=False,
             timeout=GUARD_TIMEOUT_SECONDS,
         )
-    assert completed.returncode == exit_code, completed.stderr.decode()
+    return result.returncode, result.stdout + result.stderr
+
+
+def test_the_tag_guard_reads_the_two_inputs_it_judges() -> None:
+    step = docker_image_build_steps()[0]
+
+    assert step["env"] == {
+        "PUBLISH": "${{ inputs.publish }}",
+        "TAGS": "${{ inputs.tags }}",
+        "HARBOR_HOST": "${{ vars.HARBOR_HOST }}",
+    }
+    assert "if" not in step, "the guard must run for every platform, skipped or not"
+
+
+@pytest.mark.parametrize("tags", ["", "\n", "  \n\t\n"], ids=["empty", "newline", "blank-lines"])
+def test_publishing_without_a_tag_fails_before_building(tags: str) -> None:
+    code, output = _tag_guard_exit("true", tags)
+
+    assert code != 0
+    assert TAG_GUARD_MESSAGE in output
+
+
+@pytest.mark.parametrize(
+    ("publish", "tags"),
+    [("true", "registry.example/opsmill/infrahub-sync:1.0.0"), ("false", ""), ("false", "infrahub-sync:pr")],
+)
+def test_the_tag_guard_admits_a_tagged_publish_and_any_build_only_run(publish: str, tags: str) -> None:
+    code, output = _tag_guard_exit(publish, tags)
+
+    assert code == 0, output
+
+
+@pytest.mark.parametrize("harbor_host", ["", "  "], ids=["empty", "blank"])
+def test_publishing_without_a_registry_fails_before_any_login(harbor_host: str) -> None:
+    """An empty registry sends docker/login-action, and the Harbor credentials, to Docker Hub."""
+    code, output = _tag_guard_exit("true", "registry.example/opsmill/infrahub-sync:1.0.0", harbor_host)
+
+    assert code != 0
+    assert "::error::" in output
+    assert "HARBOR_HOST" in output
+
+
+def test_a_build_only_run_needs_no_registry() -> None:
+    code, output = _tag_guard_exit("false", "infrahub-sync:pr", "")
+
+    assert code == 0, output
+
+
+# --------------------------------------------------------------------------
+# release path
+# --------------------------------------------------------------------------
+# A release pull request merged to `main` tags the release and marks a pre-release
+# as one (release-publish.yml). Publishing that release runs trigger-release.yml,
+# which hands the flag to workflow-publish.yml, which ships PyPI and then the image.
+# `latest` only moves for a stable release that GitHub also calls its latest.
+RELEASE_PUBLISH_WORKFLOW = WORKFLOWS / "release-publish.yml"
+TRIGGER_RELEASE_WORKFLOW = WORKFLOWS / "trigger-release.yml"
+METADATA_ACTION = "docker/metadata-action"
+PRERELEASE_COMMAND = "uv run --no-project --with packaging python -c"
+PRERELEASE_PROGRAM = re.compile(re.escape(PRERELEASE_COMMAND) + r"\s+'(?P<program>[^']*)'")
+CREATE_RELEASE_STEP = "Create the tag and the GitHub Release"
+# A stub that records how it was called, standing in for `gh` or `docker` so the
+# scripts run offline. It prints `STUB_STDOUT`, and `STUB_STDERR` when set, then
+# exits with `STUB_EXIT`.
+ARGV_STUB = (
+    "#!/bin/sh\n"
+    'printf "%s\\n" "$@" > "$STUB_ARGV"\n'
+    'printf "%s\\n" "${STUB_STDOUT:-}"\n'
+    '[ -n "${STUB_STDERR:-}" ] && printf "%s\\n" "$STUB_STDERR" >&2\n'
+    'exit "${STUB_EXIT:-0}"\n'
+)
+# `uv run --no-project --with packaging python -c ...` runs the program on this
+# interpreter, which already carries `packaging`, so the step runs offline.
+UV_STUB = '#!/bin/sh\nwhile [ "$#" -gt 0 ] && [ "$1" != "python" ]; do shift; done\nshift\nexec "$STUB_PYTHON" "$@"\n'
+# `git tag --list` prints `STUB_TAGS`; anything else, such as `rev-parse` for a tag
+# that does not exist yet, fails.
+GIT_STUB = '#!/bin/sh\ncase "$1" in\n  tag) printf "%s\\n" "${STUB_TAGS:-}" ;;\n  *) exit 1 ;;\nesac\n'
+STUB_SCRIPTS = {"uv": UV_STUB, "git": GIT_STUB}
+
+
+def release_publish_steps() -> list[dict]:
+    """Return the steps of the job that tags and publishes a release, in order."""
+    return job_of(RELEASE_PUBLISH_WORKFLOW, "publish")["steps"]
+
+
+def _step_running(steps: list[dict], what: str, matches: Callable[[dict], bool]) -> tuple[int, dict]:
+    """Return the single step that does something, with its position, located by what it does."""
+    found = [(index, step) for index, step in enumerate(steps) if matches(step)]
+    assert len(found) == 1, f"{len(found)} steps {what}"
+    return found[0]
+
+
+def prerelease_step() -> tuple[int, dict]:
+    return _step_running(
+        release_publish_steps(), "decide the pre-release flag", lambda step: step.get("id") == "prerelease"
+    )
+
+
+def newest_step() -> tuple[int, dict]:
+    return _step_running(
+        release_publish_steps(), "decide the newest stable release", lambda step: step.get("id") == "newest"
+    )
+
+
+def create_release_step() -> tuple[int, dict]:
+    return _step_running(
+        release_publish_steps(), "create the release", lambda step: "gh release create" in str(step.get("run"))
+    )
+
+
+@dataclass(frozen=True)
+class StepRun:
+    """What one step script did: its exit code, what it printed, the recorded stub argv, and its outputs."""
+
+    returncode: int
+    output: str
+    argv: list[str]
+    outputs: dict[str, str]
+
+
+def _run_step(
+    script: str,
+    env: dict[str, str],
+    stdout: str = "",
+    *,
+    stubs: tuple[str, ...] = ("gh",),
+    files: dict[str, str] | None = None,
+) -> StepRun:
+    """Run a step script under bash in a scratch directory, with commands stubbed.
+
+    Each name in `stubs` records its argv (`ARGV_STUB`); `uv` and `git` are always
+    stubbed with `STUB_SCRIPTS`, so nothing reaches the network or the repository.
+    `files` are written into the scratch directory, which is the script's cwd.
+    """
+    bash = shutil.which("bash")
+    assert bash, "a POSIX shell is needed to run the step the way the runner does"
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        bin_dir = root / "bin"
+        work = root / "work"
+        bin_dir.mkdir()
+        work.mkdir()
+        for name, content in {**STUB_SCRIPTS, **dict.fromkeys(stubs, ARGV_STUB)}.items():
+            stub = bin_dir / name
+            stub.write_text(content, encoding="utf-8")
+            stub.chmod(0o755)
+        for name, content in (files or {}).items():
+            (work / name).write_text(content, encoding="utf-8")
+        output = root / "github-output"
+        output.touch()
+        result = subprocess.run(  # noqa: S603
+            [bash, "-c", script],
+            env={
+                "STUB_PYTHON": sys.executable,
+                **env,
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "STUB_ARGV": str(root / "argv"),
+                "STUB_STDOUT": stdout,
+                "GITHUB_OUTPUT": str(output),
+                "GITHUB_REPOSITORY": "opsmill/infrahub-sync",
+                "GITHUB_SHA": "0" * 40,
+            },
+            cwd=work,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GUARD_TIMEOUT_SECONDS,
+        )
+        argv_file = root / "argv"
+        argv = argv_file.read_text(encoding="utf-8").splitlines() if argv_file.exists() else []
+        outputs = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines() if "=" in line)
+    return StepRun(result.returncode, result.stdout + result.stderr, argv, outputs)
+
+
+def _run_with_stub(script: str, env: dict[str, str], stdout: str = "") -> tuple[list[str], dict[str, str]]:
+    """Run a step script with `gh` stubbed and require it to succeed; return the stub's argv and the outputs."""
+    run = _run_step(script, env, stdout)
+    assert run.returncode == 0, run.output
+    return run.argv, run.outputs
+
+
+def test_the_prerelease_flag_is_decided_before_the_release_is_created() -> None:
+    decide, step = prerelease_step()
+    create, created = create_release_step()
+
+    assert decide < create
+    assert created["name"] == CREATE_RELEASE_STEP
+    assert step["if"] == created["if"] == "steps.decide.outputs.publish == 'true'"
+    assert step["env"]["VERSION"] == "${{ steps.decide.outputs.version }}"
+    assert created["env"]["PRERELEASE"] == f"${{{{ steps.{step['id']}.outputs.prerelease }}}}"
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [
+        ("3.0.0", "false"),
+        ("2.0.1", "false"),
+        ("3.0.0.post1", "false"),
+        ("3.0.0a1", "true"),
+        ("3.0.0b2", "true"),
+        ("3.0.0rc1", "true"),
+        ("3.0.0.dev4", "true"),
+    ],
+)
+def test_the_prerelease_flag_follows_packaging_version(version: str, expected: str) -> None:
+    """Alpha, beta, release-candidate and dev versions are pre-releases; nothing else is."""
+    _index, step = prerelease_step()
+    match = PRERELEASE_PROGRAM.search(str(step["run"]))
+    assert match, "the pre-release program is not a single-quoted `python -c` argument"
+    program = match["program"]
+    assert "packaging.version" in program
+    assert "is_prerelease" in program
+    assert "is_devrelease" in program
+
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", program],
+        env={"VERSION": version, "PATH": os.environ["PATH"]},
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=GUARD_TIMEOUT_SECONDS,
+    )
+
+    assert result.stdout.strip() == f"prerelease={expected}"
+
+
+@pytest.mark.parametrize(
+    ("prerelease", "newest", "flags"),
+    [
+        ("true", "true", ["--prerelease", "--latest=false"]),
+        ("true", "false", ["--prerelease", "--latest=false"]),
+        ("false", "true", ["--latest"]),
+        ("false", "false", ["--latest=false"]),
+    ],
+    ids=["prerelease", "prerelease-older", "stable-newest", "stable-backport"],
+)
+def test_the_release_is_created_under_the_bare_version_with_its_prerelease_flags(
+    prerelease: str, newest: str, flags: list[str]
+) -> None:
+    _index, step = create_release_step()
+
+    argv, _outputs = _run_with_stub(str(step["run"]), {"VERSION": "3.0.0", "PRERELEASE": prerelease, "NEWEST": newest})
+
+    assert argv[:3] == ["release", "create", "3.0.0"], "the tag is the bare version, with no `v`"
+    assert [arg for arg in argv if arg.startswith("--latest") or arg == "--prerelease"] == flags
+
+
+@pytest.mark.parametrize(
+    ("tags", "version", "expected"),
+    [
+        ("2.0.1\n2.0.2\n3.0.0a5", "3.0.0", "true"),
+        ("2.0.1\n3.0.0\n3.1.0a1", "3.0.1", "true"),
+        ("2.0.1\n3.0.0", "2.0.3", "false"),
+        ("2.0.1\n3.0.0", "3.0.0", "true"),
+        ("3.0.0a5\n3.0.0a6\nnot-a-version", "2.0.3", "true"),
+        ("", "1.0.0", "true"),
+    ],
+    ids=["newer", "newer-than-a-later-prerelease", "backport", "same", "only-prereleases", "no-tags"],
+)
+def test_only_the_newest_stable_release_is_called_newest(tags: str, version: str, expected: str) -> None:
+    """A backport (2.0.3 after 3.0.0) must not take `latest`; pre-release tags never count."""
+    _index, step = newest_step()
+
+    run = _run_step(str(step["run"]), {"VERSION": version, "STUB_TAGS": tags})
+
+    assert run.returncode == 0, run.output
+    assert run.outputs == {"newest": expected}
+
+
+def test_the_newest_decision_feeds_the_release_and_runs_before_it() -> None:
+    decide, step = newest_step()
+    create, created = create_release_step()
+
+    assert decide < create
+    assert step["if"] == "steps.decide.outputs.publish == 'true'"
+    assert step["env"]["VERSION"] == "${{ steps.decide.outputs.version }}"
+    assert "git tag --list" in step["run"]
+    assert created["env"]["NEWEST"] == f"${{{{ steps.{step['id']}.outputs.newest }}}}"
+
+
+# The release pull request and the tag both refuse a version that is not canonical
+# PEP 440, the rule `tasks/release.py:_canonical` applies to the Compose pin.
+CANONICAL_VERSIONS = ("3.0.0", "3.0.0a6", "3.0.0b1", "3.0.0rc1", "3.0.0.dev1", "3.0.0.post1")
+# Canonical PEP 440 that a Docker tag cannot hold: `!` and `+` are outside the tag grammar.
+UNTAGGABLE_VERSIONS = ("1!3.0.0", "3.0.0+local", "3.0.0a6+build.1")
+NON_CANONICAL_VERSIONS = ("v3.0.0", "3.0.0-alpha6", "3.0.0A6", "3.0.0.a6", "", "not-a-version", *UNTAGGABLE_VERSIONS)
+RELEASE_PR_NUMBER = "1234"
+
+
+def _decide_release(version: str) -> StepRun:
+    """Run release-publish's `decide` step against a pyproject that declares `version`."""
+    _index, step = _step_running(release_publish_steps(), "decide the release", lambda s: s.get("id") == "decide")
+    return _run_step(
+        str(step["run"]),
+        {"GH_TOKEN": "unused"},
+        stdout=RELEASE_PR_NUMBER,
+        files={"pyproject.toml": f'[project]\nname = "infrahub-sync"\nversion = "{version}"\n'},
+    )
+
+
+@pytest.mark.parametrize("version", CANONICAL_VERSIONS)
+def test_the_tag_step_accepts_a_canonical_pep440_version(version: str) -> None:
+    run = _decide_release(version)
+
+    assert run.returncode == 0, run.output
+    assert run.outputs == {"publish": "true", "version": version}
+
+
+@pytest.mark.parametrize("version", NON_CANONICAL_VERSIONS)
+def test_the_tag_step_refuses_a_non_canonical_version(version: str) -> None:
+    run = _decide_release(version)
+
+    assert run.returncode != 0
+    assert "::error::" in run.output
+    assert "publish" not in run.outputs
+
+
+def _normalise_release_version(version: str) -> StepRun:
+    """Run the release pull request's `normalize` step on a typed version."""
+    _index, step = _step_running(prepare_release_steps(), "normalise the version", lambda s: s.get("id") == "normalize")
+    return _run_step(str(step["run"]), {"INPUT_VERSION": version, "DRAFTED_VERSION": ""})
+
+
+@pytest.mark.parametrize("version", CANONICAL_VERSIONS)
+def test_the_release_pull_request_accepts_a_canonical_pep440_version(version: str) -> None:
+    run = _normalise_release_version(version)
+
+    assert run.returncode == 0, run.output
+    assert run.outputs == {"version": version}
+
+
+def test_the_release_pull_request_strips_one_leading_v() -> None:
+    """A typed `v3.0.0a6` is the bare tag `3.0.0a6`; the strip is deliberate and predates the PEP 440 check."""
+    run = _normalise_release_version("v3.0.0a6")
+
+    assert run.returncode == 0, run.output
+    assert run.outputs == {"version": "3.0.0a6"}
+
+
+@pytest.mark.parametrize(
+    "version", ["vv3.0.0", "3.0.0-alpha6", "3.0.0A6", "3.0.0.a6", "not-a-version", *UNTAGGABLE_VERSIONS]
+)
+def test_the_release_pull_request_refuses_a_non_canonical_version(version: str) -> None:
+    run = _normalise_release_version(version)
+
+    assert run.returncode != 0
+    assert "::error::" in run.output
+    assert "version" not in run.outputs
+
+
+def test_the_release_trigger_passes_the_prerelease_flag_through() -> None:
+    job = job_of(TRIGGER_RELEASE_WORKFLOW, "publish")
+
+    assert called_workflow(job) == PUBLISH_WORKFLOW
+    assert job["secrets"] == "inherit"
+    assert job["with"] == {
+        "publish": True,
+        "version": "${{ github.ref_name }}",
+        "prerelease": "${{ github.event.release.prerelease }}",
+    }
+
+
+@pytest.mark.parametrize("trigger", ["workflow_call", "workflow_dispatch"])
+def test_the_publish_workflow_takes_a_prerelease_input(trigger: str) -> None:
+    declared = triggers_of(PUBLISH_WORKFLOW)[trigger]["inputs"]["prerelease"]
+
+    assert {key: declared.get(key) for key in ("type", "required", "default")} == {
+        "type": "boolean",
+        "required": False,
+        "default": False,
+    }
+
+
+def test_the_package_upload_honours_the_publish_input() -> None:
+    uploads_ = [
+        step
+        for step in job_of(PUBLISH_WORKFLOW, "publish_to_pypi")["steps"]
+        if any(command in str(step.get("run", "")) for command in PACKAGE_UPLOAD)
+    ]
+
+    assert len(uploads_) == 1
+    assert str(uploads_[0].get("if", "")).strip("${} ") == PUBLISH_GUARD
+
+
+def docker_meta_step(what: str, matches: Callable[[dict], bool]) -> dict:
+    return _step_running(job_of(PUBLISH_WORKFLOW, "docker_meta")["steps"], what, matches)[1]
+
+
+def test_the_image_metadata_waits_for_the_package_and_pins_the_release_commit() -> None:
+    """`ref` and the revision label are one SHA, which the image smoke test checks."""
+    job = job_of(PUBLISH_WORKFLOW, "docker_meta")
+    ref = docker_meta_step("set the ref", lambda step: step.get("id") == "ref")
+
+    assert _needs(job) == ("publish_to_pypi",)
+    assert ref["run"].strip() == 'echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"'
+    assert job["outputs"] == {
+        "tags": "${{ steps.meta.outputs.tags }}",
+        "labels": "${{ steps.meta.outputs.labels }}",
+        "ref": "${{ steps.ref.outputs.ref }}",
+    }
+
+
+def test_the_image_is_tagged_with_its_version_and_latest_only_by_decision() -> None:
+    meta = docker_meta_step("compute the metadata", lambda step: _uses(step, METADATA_ACTION))
+    latest = docker_meta_step("decide latest", lambda step: "releases/latest" in str(step.get("run", "")))
+    declared = meta["with"]
+
+    assert meta["id"] == "meta"
+    assert declared["images"].strip() == "${{ vars.HARBOR_HOST }}/${{ github.repository }}"
+    assert declared["tags"].strip() == "type=raw,value=${{ inputs.version }}"
+    assert declared["flavor"].strip() == f"latest=${{{{ steps.{latest['id']}.outputs.latest }}}}"
+    assert {line.strip() for line in declared["labels"].splitlines() if line.strip()} == {
+        "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}",
+        "org.opencontainers.image.version=${{ inputs.version }}",
+        "org.opencontainers.image.revision=${{ github.sha }}",
+    }
+    assert latest["env"]["VERSION"] == "${{ inputs.version }}"
+    assert latest["env"]["PRERELEASE"] == "${{ inputs.prerelease }}"
+
+
+@pytest.mark.parametrize(
+    ("prerelease", "github_latest", "expected"),
+    [
+        ("false", "3.0.0", "true"),
+        ("false", "3.1.0", "false"),
+        ("false", "", "false"),
+        ("true", "3.0.0", "false"),
+    ],
+    ids=["stable-and-latest", "stable-backport", "no-release-yet", "prerelease"],
+)
+def test_latest_moves_only_for_a_stable_release_github_calls_latest(
+    prerelease: str, github_latest: str, expected: str
+) -> None:
+    step = docker_meta_step("decide latest", lambda step: "releases/latest" in str(step.get("run", "")))
+
+    argv, outputs = _run_with_stub(
+        str(step["run"]), {"VERSION": "3.0.0", "PRERELEASE": prerelease}, stdout=github_latest
+    )
+
+    assert outputs["latest"] == expected
+    if prerelease == "false":
+        assert argv[:2] == ["api", "repos/opsmill/infrahub-sync/releases/latest"]
+        assert "tag_name" in " ".join(argv[2:])
+
+
+@pytest.mark.parametrize(
+    ("stub_exit", "stderr", "ok"),
+    [("1", "gh: Not Found (HTTP 404)", True), ("1", "gh: Server Error (HTTP 500)", False), ("1", "", False)],
+    ids=["404-no-release", "500", "no-network"],
+)
+def test_only_a_404_reads_as_no_latest_release(stub_exit: str, stderr: str, *, ok: bool) -> None:
+    """An auth failure or outage must stop the release, not quietly keep `latest` where it was."""
+    step = docker_meta_step("decide latest", lambda step: "releases/latest" in str(step.get("run", "")))
+
+    run = _run_step(
+        str(step["run"]),
+        {"VERSION": "3.0.0", "PRERELEASE": "false", "STUB_EXIT": stub_exit, "STUB_STDERR": stderr},
+    )
+
+    if ok:
+        assert run.returncode == 0, run.output
+        assert run.outputs["latest"] == "false"
+    else:
+        assert run.returncode != 0
+        assert "::error::" in run.output
+        assert "latest" not in run.outputs
+
+
+def test_the_metadata_action_is_pinned_to_a_full_commit_sha_with_its_version() -> None:
+    lines = [line for line in PUBLISH_WORKFLOW.read_text(encoding="utf-8").splitlines() if METADATA_ACTION in line]
+
+    assert lines
+    assert all(PINNED_USES.match(line) for line in lines), lines
+
+
+def test_the_release_publishes_the_image_through_the_reusable_workflow() -> None:
+    job = job_of(PUBLISH_WORKFLOW, "publish_docker_image")
+
+    assert called_workflow(job) == DOCKER_IMAGE_WORKFLOW
+    assert _needs(job) == ("docker_meta",)
+    assert job["secrets"] == "inherit"
+    assert job["with"] == {
+        "publish": "${{ inputs.publish }}",
+        "version": "${{ inputs.version }}",
+        "ref": "${{ needs.docker_meta.outputs.ref }}",
+        "tags": "${{ needs.docker_meta.outputs.tags }}",
+        "labels": "${{ needs.docker_meta.outputs.labels }}",
+    }
+
+
+@pytest.mark.parametrize(
+    ("caller", "job", "called"),
+    [
+        (PUBLISH_WORKFLOW, "publish_docker_image", DOCKER_IMAGE_WORKFLOW),
+        (TRIGGER_RELEASE_WORKFLOW, "publish", PUBLISH_WORKFLOW),
+    ],
+    ids=["publish->image", "trigger->publish"],
+)
+def test_each_release_call_grants_what_the_called_workflow_requests(caller: Path, job: str, called: Path) -> None:
+    """The generic case above only reads `trigger-*` callers; the release chain has one that is not."""
+    granted = job_permissions(caller, job) or permissions(caller)
+
+    assert granted, f"{caller.name} job {job} grants nothing explicitly, so signing gets no id-token"
+    for asking in jobs(called):
+        for scope, level in (job_permissions(called, asking) or permissions(called)).items():
+            assert ACCESS[level] <= ACCESS[granted.get(scope, "none")], (
+                f"{called.name} job {asking} requests {scope}: {level}, which {caller.name} job {job} does not grant"
+            )
+
+
+# The root `docker-compose.yml` names the release's image by version. The release
+# pull request pins it (trigger-push-stable.yml), and the tag is refused for a file
+# pinned to any other version (release-publish.yml).
+PREPARE_RELEASE_WORKFLOW = WORKFLOWS / TWO_LINE_AUTOMATION
+PIN_COMPOSE_COMMAND = 'uv run --no-sync invoke release.update-docker-compose --version "${VERSION}"'
+VALIDATE_COMPOSE_COMMAND = 'uv run --no-sync invoke release.validate-docker-compose --version "${VERSION}"'
+RELEASE_PR_GIT_ADD = re.compile(r"^\s*git add (?P<paths>.+)$", re.MULTILINE)
+
+
+def prepare_release_steps() -> list[dict]:
+    """Return the steps of the job that prepares the release pull request, in order."""
+    return job_of(PREPARE_RELEASE_WORKFLOW, "prepare_release")["steps"]
+
+
+def _syncs_dev_tools_before(steps: list[dict], index: int) -> bool:
+    """Report whether the step at `index`, or one before it, installs the dev extra that carries `invoke`."""
+    return any(
+        "uv sync" in str(step.get("run")) and "--extra dev" in str(step.get("run")) for step in steps[: index + 1]
+    )
+
+
+def test_the_release_pull_request_pins_the_compose_image_after_the_lock() -> None:
+    steps = prepare_release_steps()
+    names = [step.get("name") for step in steps]
+    pin, step = _step_running(steps, "pin the Compose image", lambda s: PIN_COMPOSE_COMMAND in str(s.get("run")))
+
+    assert step["name"] == "Pin the Compose image to the release"
+    assert names[pin - 1] == "Update lock file", "the pin runs right after the lock is refreshed"
+    assert step["env"]["VERSION"] == "${{ steps.normalize.outputs.version }}"
+    assert _syncs_dev_tools_before(steps, pin), "`uv run --no-sync invoke` needs the dev extra installed first"
+
+
+def test_the_release_pull_request_commits_the_pinned_compose_file() -> None:
+    _index, step = _step_running(
+        prepare_release_steps(), "open the release pull request", lambda s: "git commit" in str(s.get("run"))
+    )
+    added = RELEASE_PR_GIT_ADD.findall(str(step["run"]))
+
+    assert len(added) == 1
+    assert "docker-compose.yml" in added[0].split()
+
+
+def test_the_tag_is_refused_for_a_compose_file_pinned_to_another_version() -> None:
+    steps = release_publish_steps()
+    check, step = _step_running(
+        steps, "validate the Compose pin", lambda s: VALIDATE_COMPOSE_COMMAND in str(s.get("run"))
+    )
+    create, _created = create_release_step()
+
+    assert step["name"] == "Refuse a Compose file pinned to another version"
+    assert check < create
+    assert step["if"] == "steps.decide.outputs.publish == 'true'"
+    assert step["env"]["VERSION"] == "${{ steps.decide.outputs.version }}"
+    assert _syncs_dev_tools_before(steps, check), "`uv run --no-sync invoke` needs the dev extra installed first"
+
+
+# --------------------------------------------------------------------------
+# pull-request gate
+# --------------------------------------------------------------------------
+# A pull request that changes an image input builds and smoke-tests the image on
+# both platforms through `ci-docker-image.yml`, publishing nothing and using no
+# secret. The required check `Full qualification` always runs and passes when
+# that build succeeded, or was skipped because no image input changed.
+REQUIRED_JOB_NAME = "Full qualification"
+IMAGE_CHANGES_JOB = "image-changes"
+PR_IMAGE_JOB = "image"
+IMAGE_INPUTS_FILTER = "image_inputs"
+PATHS_FILTER_ACTION = "opsmill/paths-filter"
+PR_IMAGE_REF = "${{ github.event.pull_request.head.sha || github.sha }}"
+PR_IMAGE_TAG = "infrahub-sync:pr"
+OCI_LABEL_KEYS = (
+    "org.opencontainers.image.source",
+    "org.opencontainers.image.version",
+    "org.opencontainers.image.revision",
+)
+# Result pairs (image-changes, image) and whether the required check passes them.
+REQUIRED_CHECK_VERDICTS = [
+    ("success", "success", 0),
+    ("success", "skipped", 0),
+    ("success", "failure", 1),
+    ("success", "cancelled", 1),
+    ("failure", "skipped", 1),
+    ("cancelled", "skipped", 1),
+    ("skipped", "skipped", 1),
+]
+
+
+def pr_job(name: str) -> dict:
+    """Return one job of the pull-request caller."""
+    return job_of(DEVELOP_CALLER, name)
+
+
+def required_check_script() -> tuple[dict, str]:
+    """Return the required check's one step's environment and script."""
+    steps = pr_job(REQUIRED_JOB)["steps"]
+    assert len(steps) == 1, f"{REQUIRED_JOB} has {len(steps)} steps"
+    return steps[0].get("env") or {}, str(steps[0]["run"])
+
+
+FAST_CHECK_JOBS = ("linter", "tests", "uv-checker")
+
+
+def _required_check_exit(changes: str, image: str, fast: dict[str, str] | None = None) -> tuple[int, str]:
+    """Run the required check's script with each `needs.<job>.result` it reads set as given.
+
+    A fast check not named in `fast` ends in `success`.
+    """
+    env, script = required_check_script()
+    results = {
+        f"${{{{ needs.{IMAGE_CHANGES_JOB}.result }}}}": changes,
+        f"${{{{ needs.{PR_IMAGE_JOB}.result }}}}": image,
+    }
+    for check in FAST_CHECK_JOBS:
+        results[f"${{{{ needs.{check}.result }}}}"] = (fast or {}).get(check, "success")
+    bash = shutil.which("bash")
+    assert bash, "a POSIX shell is needed to run the check the way the runner does"
+    with tempfile.TemporaryDirectory() as scratch:
+        result = subprocess.run(  # noqa: S603
+            [bash, "-c", script],
+            env={key: results.get(str(value), str(value)) for key, value in env.items()},
+            cwd=scratch,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GUARD_TIMEOUT_SECONDS,
+        )
+    return result.returncode, result.stdout + result.stderr
+
+
+def test_the_required_check_keeps_its_id_and_name() -> None:
+    """Branch protection requires it by this name, so renaming it would need a coordinated change."""
+    assert pr_job(REQUIRED_JOB)["name"] == REQUIRED_JOB_NAME
+
+
+def test_the_required_check_always_runs_after_every_check_it_judges() -> None:
+    """A skipped job satisfies a required check, so this one must run whatever the others did."""
+    job = pr_job(REQUIRED_JOB)
+
+    assert list(_needs(job)) == [IMAGE_CHANGES_JOB, PR_IMAGE_JOB, *FAST_CHECK_JOBS]
+    assert job.get("if") == "${{ always() }}" or job.get("if") == "always()"
+
+
+def test_the_required_check_reads_both_results_it_judges() -> None:
+    env, _script = required_check_script()
+
+    assert set(env.values()) >= {
+        f"${{{{ needs.{IMAGE_CHANGES_JOB}.result }}}}",
+        f"${{{{ needs.{PR_IMAGE_JOB}.result }}}}",
+    }
+
+
+@pytest.mark.parametrize("check", FAST_CHECK_JOBS)
+@pytest.mark.parametrize(("result", "expected"), [("success", 0), ("skipped", 0), ("failure", 1), ("cancelled", 1)])
+def test_the_required_check_refuses_a_failed_fast_check(check: str, result: str, expected: int) -> None:
+    """Lint, unit tests, and the lock-file check block a merge through the one required check."""
+    env, _script = required_check_script()
+    assert f"${{{{ needs.{check}.result }}}}" in env.values(), f"{REQUIRED_JOB} does not read {check}"
+
+    code, output = _required_check_exit("success", "success", {check: result})
+
+    assert code == expected, f"{check}={result} exited {code}: {output!r}"
+
+
+@pytest.mark.parametrize(("changes", "image", "expected"), REQUIRED_CHECK_VERDICTS)
+def test_the_required_check_passes_only_a_built_or_skipped_image(changes: str, image: str, expected: int) -> None:
+    """`skipped` passes only because the filter ran and found no image input."""
+    code, _output = _required_check_exit(changes, image)
+
+    assert code == expected, f"image-changes={changes}, image={image} exited {code}"
+
+
+@pytest.mark.parametrize(
+    ("changes", "image", "blamed"),
+    [("failure", "skipped", IMAGE_CHANGES_JOB), ("success", "failure", PR_IMAGE_JOB)],
+)
+def test_each_refusal_names_the_job_that_failed(changes: str, image: str, blamed: str) -> None:
+    code, output = _required_check_exit(changes, image)
+
+    assert code == 1
+    assert f"`{blamed}`" in output, f"the refusal does not name {blamed}: {output!r}"
+
+
+def test_the_pull_request_image_call_builds_without_publishing_or_secrets() -> None:
+    """Forks get the same check as internal branches, because nothing here needs a secret."""
+    job = pr_job(PR_IMAGE_JOB)
+    given = job.get("with") or {}
+
+    assert called_workflow(job) == DOCKER_IMAGE_WORKFLOW
+    assert given.get("publish") is False
+    assert "secrets" not in job, f"{PR_IMAGE_JOB} passes secrets into a pull-request build"
+    assert given.get("ref") == PR_IMAGE_REF
+    assert given.get("tags") == PR_IMAGE_TAG
+
+
+def test_the_pull_request_image_call_grants_no_write_beyond_the_signing_token() -> None:
+    """`id-token` only because GitHub checks every called job, the skipped signing jobs included."""
+    granted = job_permissions(DEVELOP_CALLER, PR_IMAGE_JOB)
+
+    assert granted == {"contents": "read", "id-token": "write"}
+    assert "actions" not in (granted or {})
+
+
+def test_the_pull_request_image_labels_name_the_commit_it_builds() -> None:
+    """The smoke test refuses a revision label naming any commit but the one checked out."""
+    labels = str((pr_job(PR_IMAGE_JOB).get("with") or {}).get("labels", ""))
+    pairs = dict(line.split("=", 1) for line in labels.strip().splitlines())
+
+    assert tuple(pairs) == OCI_LABEL_KEYS
+    assert pairs["org.opencontainers.image.source"] == "${{ github.server_url }}/${{ github.repository }}"
+    assert pairs["org.opencontainers.image.revision"] == PR_IMAGE_REF
+    assert f"needs.{IMAGE_CHANGES_JOB}.outputs.version" in pairs["org.opencontainers.image.version"]
+
+
+def test_the_image_call_runs_only_when_an_image_input_changes() -> None:
+    job = pr_job(PR_IMAGE_JOB)
+
+    assert list(_needs(job)) == [IMAGE_CHANGES_JOB]
+    assert str(job.get("if", "")).strip() == f"needs.{IMAGE_CHANGES_JOB}.outputs.{IMAGE_INPUTS_FILTER} == 'true'"
+    assert filter_patterns(IMAGE_INPUTS_FILTER), f"{IMAGE_INPUTS_FILTER} matches nothing"
+
+
+def test_the_filter_job_reads_the_image_inputs_filter_and_the_version() -> None:
+    job = pr_job(IMAGE_CHANGES_JOB)
+    filtering = [
+        step for step in job.get("steps") or [] if str(step.get("uses", "")).startswith(f"{PATHS_FILTER_ACTION}@")
+    ]
+
+    assert len(filtering) == 1
+    assert filtering[0]["with"]["filters"] == ".github/file-filters.yml"
+    outputs = job.get("outputs") or {}
+    assert outputs[IMAGE_INPUTS_FILTER] == f"${{{{ steps.{filtering[0]['id']}.outputs.{IMAGE_INPUTS_FILTER} }}}}"
+    assert "version" in outputs
+
+
+def test_the_tier_decision_and_its_label_triggers_are_gone() -> None:
+    """Nothing heavy is left to opt into, so neither the decision job nor the label events remain."""
+    declared = triggers_of(DEVELOP_CALLER)["pull_request"]
+
+    assert "qualification" not in develop_jobs()
+    assert not [name for name, job in develop_jobs().items() if "qualify" in (job.get("outputs") or {})]
+    assert not {"labeled", "unlabeled"} & set(declared.get("types") or ())
+
+
+# The guard reads pyproject.toml with tomllib and runs on Python 3.13; the uv stub
+# runs it on this interpreter, where a refusal on 3.10 would only mean a failed import.
+NEEDS_TOMLLIB = pytest.mark.skipif(sys.version_info < (3, 11), reason="the guard step runs on Python 3.13 (tomllib)")
+
+
+def _refuse_untaggable_publish(version: str, declared: str = "3.0.0a6") -> StepRun:
+    """Run the PyPI job's version guard against a pyproject that declares `declared`."""
+    _index, step = _step_running(
+        job_of(PUBLISH_WORKFLOW, "publish_to_pypi")["steps"],
+        "guard the published version",
+        lambda s: "the image cannot carry" in str(s.get("name", "")),
+    )
+    assert step.get("if") == "inputs.publish"
+    return _run_step(
+        str(step["run"]),
+        {"VERSION": version},
+        files={"pyproject.toml": f'[project]\nname = "infrahub-sync"\nversion = "{declared}"\n'},
+    )
+
+
+def test_the_version_guard_runs_before_anything_is_uploaded() -> None:
+    steps = job_of(PUBLISH_WORKFLOW, "publish_to_pypi")["steps"]
+    guard = next(i for i, step in enumerate(steps) if "the image cannot carry" in str(step.get("name", "")))
+    upload = next(i for i, step in enumerate(steps) if "uv publish" in str(step.get("run", "")))
+
+    assert guard < upload
+
+
+@NEEDS_TOMLLIB
+def test_the_version_guard_accepts_the_declared_version() -> None:
+    run = _refuse_untaggable_publish("3.0.0a6")
+
+    assert run.returncode == 0, run.output
+
+
+@NEEDS_TOMLLIB
+@pytest.mark.parametrize("version", ["", "3.0.0a5", "v3.0.0a6", "3.0.0a6+local"])
+def test_the_version_guard_refuses_a_version_the_image_cannot_carry(version: str) -> None:
+    """An empty, mismatched, prefixed or local version would upload a package and then fail the image."""
+    run = _refuse_untaggable_publish(version, declared="3.0.0a6+local" if "+" in version else "3.0.0a6")
+
+    assert run.returncode != 0
+    assert "::error::" in run.output
+    assert "Traceback" not in run.output, run.output

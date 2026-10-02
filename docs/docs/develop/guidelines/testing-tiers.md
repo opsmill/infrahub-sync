@@ -4,7 +4,7 @@ title: "Testing tiers"
 
 ## Testing tiers
 
-> Part of: Develop > Guidelines | Related: [Testing](testing.md), [Quality gates](../knowledge/quality-gates.md), [Qualifying an internal candidate](../guides/qualifying-an-internal-candidate.md)
+> Part of: Develop > Guidelines | Related: [Testing](testing.md), [Quality gates](../knowledge/quality-gates.md), [Contributing](../../contributing.mdx#ci-checks)
 
 **Checked 2026-09-29 against source revision
 [`d9ef147c569a42ec4471bba78ec270c343cdfa28`](https://github.com/opsmill/infrahub-sync/tree/d9ef147c569a42ec4471bba78ec270c343cdfa28).** The commands, markers,
@@ -12,7 +12,6 @@ settings and skip behavior below were read at that revision from
 [`tasks/tests.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/tests.py),
 [`tasks/__init__.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/__init__.py),
 [`tasks/preview.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/preview.py),
-[`tasks/compose.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tasks/compose.py),
 the modules under [`tests/integration/`](https://github.com/opsmill/infrahub-sync/tree/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration) and the
 `[tool.pytest.ini_options]` markers in [`pyproject.toml`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/pyproject.toml). The unit tier
 and `check-310` were run at that revision. The integration sequence below was not replayed
@@ -47,11 +46,10 @@ uv run invoke tests.tests-unit
 This is the single offline default, and it is what a change has to keep green. It runs:
 
 ```text
-pytest -m "not integration and not preview and not docker and not builder and not compose"
+pytest -m "not integration and not preview and not docker and not compose"
 ```
 
-So it excludes five marker families: `integration`, `preview`, `docker`, `builder` and
-`compose`. It needs no network, no credentials and no running stack.
+So it excludes four marker families: `integration`, `preview`, `docker` and `compose`. It needs no network, no credentials and no running stack.
 
 **It does need the `docker compose` CLI on your PATH.** One unmarked module under
 `tests/preview/` shells out to `docker compose … config --format json` to resolve the preview
@@ -76,8 +74,8 @@ preview and integration suites against whatever environment your shell happens t
 | Unit | `uv run invoke tests.tests-unit` | The installed extras, plus the `docker compose` CLI on your PATH | Nothing outside `tmp_path` |
 | Integration | `uv run invoke tests.tests-integration` | Varies by family — see below; no single set of variables covers the tier | Varies by family: read-only, temporary local state, or a disposable live target — see below |
 | Preview smoke | `uv run invoke preview.smoke` | The preview stack, started with `preview.up` | Seeds and writes to the disposable stack |
-| Compose lifecycle | `uv run invoke compose.lifecycle` | An already built and loaded candidate image, and a Docker daemon | A real container stack it brings up and tears down |
-| Clean-host qualification | See the candidate guide | A checkout-free host holding only the artifact | A real deployment |
+| Image smoke | `uv run pytest -m docker tests/image/test_image_artifact.py` | A locally built image named by `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, and a Docker daemon | Throwaway containers it starts and removes |
+| Compose (opt-in) | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose` | A Docker daemon and a locally built `infrahub-sync:compose-test` image | A real container stack it brings up and tears down |
 
 #### Integration
 
@@ -507,28 +505,33 @@ uv run pytest -q -m "not preview" tests/preview
 [Local development stack](../../development-stack.mdx) is the full procedure for the stack
 itself.
 
-#### Compose lifecycle
+#### Image smoke
 
 ```bash
-uv run invoke compose.lifecycle
+docker build -t infrahub-sync:smoke .
+INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=smoke uv run pytest -m docker tests/image/test_image_artifact.py
 ```
 
-This one does **not** build anything. It consumes the candidate image the image gate already
-built and loaded, addressed by the configuration digest that build recorded, and refuses to
-run when the daemon does not hold it — building here would qualify a different artifact.
+This is what the image check runs on a pull request, once per platform, on a native
+`linux/amd64` and a native `linux/arm64` runner. It checks that the CLI answers `--help`, that
+the API answers `GET /version`, and that the image carries its OCI labels. The revision label
+case compares the label to the commit checked out, so a local build without labels fails that
+case. Pass the same `--label` values CI passes to reproduce it in full.
 
-It enforces its own zero-skip policy internally: the task passes `--compose-zero-skip` and
-runs single-process, so under it a skipped `compose`-marked case is a failed one. Running
-`pytest tests/compose -m compose` directly keeps the ordinary Docker and platform skips
-instead, which is useful while developing a case and useless as a qualification claim.
+The tests skip when `INFRAHUB_SYNC_DOCKER_IMAGE` or `VERSION` is unset, so confirm they ran before treating a
+green result as evidence.
 
-#### Clean-host qualification
+#### Compose (opt-in)
 
-The checkout-free driver and the full qualification route are already explained by
-[Qualifying an internal candidate](../guides/qualifying-an-internal-candidate.md). That
-procedure deliberately uses no interpreter, package manager or checkout on the host, because
-the claim being made is that a host holding the artifact alone can run it. Do not reproduce
-its steps here.
+```bash
+docker build -t infrahub-sync:compose-test .
+INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose
+```
+
+The Compose suite brings up the root `docker-compose.yml` through a Docker daemon, against the
+image you built, and tears it down. The nightly workflow runs the same command; no pull request
+job runs it. Run it by hand when a change touches the Compose deployment. It keeps the
+ordinary Docker and platform skips, so confirm what ran before claiming it passed.
 
 ### `check-310`
 

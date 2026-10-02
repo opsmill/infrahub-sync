@@ -2,77 +2,100 @@
 title: Operate a Compose deployment
 ---
 
-Check the health of a running release-package deployment, stop or restart it, change
-its credentials, and recover from a write with an unknown outcome. Each section links
-the full procedure in the [Compose deployment guide](../compose-deployment).
+Check the health of a running Compose deployment, stop or restart it, change its
+credentials, and recover from a write with an unknown outcome. Run every command from
+the directory that holds `docker-compose.yml` and `.env`. Each section links the full
+procedure in the [Compose deployment guide](../compose-deployment).
 
 ## Check health and status
 
-Run `./infrahub-sync-compose status`. It reports one of three states:
+Run `docker compose ps` to see each container and the health of PostgreSQL, the object
+store, and Prefect. Then ask the Sync API whether a worker is live:
 
-| State | Exit code | Meaning | Next action |
-| --- | --- | --- | --- |
-| `READY` | 0 | The dependencies and the Sync API answer, and a registered worker sends heartbeats. | None. `READY` does not check a registered source or destination. |
-| `DEGRADED` | 3 | Some of the deployment's containers exist, but not all of the `READY` conditions are true. A stopped or hung worker causes this state. | Read the logs, then run `restart`. |
-| `STOPPED` | 4 | No container of this deployment is running. | Run `start`. |
+```sh
+curl -s http://127.0.0.1:8000/status
+```
 
-See the [status procedure](../compose-deployment#status) for the details of each state.
+The response's `worker.state` is one of three values:
 
-`./infrahub-sync-compose logs` prints the last 200 lines of each service. Credentials are
-removed from run failures before they are printed. See the
+| `worker.state` | Meaning | Next action |
+| --- | --- | --- |
+| `ready` | A registered worker sends heartbeats and can take a run. | None. A live worker does not check a registered source or destination. |
+| `busy` | A registered worker sends heartbeats and is running work. | None. |
+| `no-live-worker` | No worker has sent a heartbeat recently. A stopped, paused, or hung worker causes this state. | Read the worker logs, then run `docker compose restart sync-api sync-worker`. |
+
+If no container is running at all, run `docker compose up -d --wait`. See the
+[status procedure](../compose-deployment#status) for the details of each state.
+
+`docker compose logs --no-color --tail 200` prints the last 200 lines of each service.
+Credentials are removed from run failures before they are printed. See the
 [log procedure](../compose-deployment#logs).
 
 ## Stop, restart, or reset
 
 The [stop, restart, and reset procedure](../compose-deployment#stop-restart-and-reset)
-describes each action and its safeguards:
+describes each action:
 
-- `stop` stops all services and keeps their containers and volumes. Run `start` to
-  resume the deployment, including its dependencies.
-- `restart` replaces only the API and worker processes and keeps the durable records.
-  The dependencies must already be running.
-- `reset` deletes this deployment's containers, network, and volumes. You cannot undo it.
+- `docker compose stop` stops all services and keeps their containers and volumes. Run
+  `docker compose up -d --wait` to resume the deployment, including its dependencies.
+- `docker compose restart sync-api sync-worker` replaces only the API and worker
+  processes and keeps the durable records. The dependencies must already be running.
+- `docker compose down --volumes --remove-orphans` deletes this deployment's
+  containers, network, and volumes, with every registered configuration, run, and
+  artifact. Nothing asks for confirmation, and you cannot undo it.
 
 Before planned maintenance, ask everyone who submits runs to this deployment to stop
 submitting new runs. Then check each run you know of with
-`./infrahub-sync-compose cli runs show RUN_ID`, and wait until its `execution_state` is
-`completed`, `failed`, `cancelled`, `abandoned`, or `interrupted`. `status` can report
-`READY` while runs are still executing. If you cannot account for every submitted run,
-postpone the maintenance.
+`docker compose run --rm --no-deps -T cli runs show RUN_ID`, and wait until its
+`execution_state` is `completed`, `failed`, `cancelled`, `abandoned`, or `interrupted`.
+A `ready` worker says nothing about runs still executing. If you cannot account for
+every submitted run, postpone the maintenance.
 
 After you resume the deployment,
 [verify a retained configuration version](../compose-deployment#verify-a-retained-configuration)
 to check that your registered packages are still available.
 
+## Change the image
+
+Set `VERSION`, and optionally `INFRAHUB_SYNC_DOCKER_IMAGE`, in `.env`, then run
+`docker compose up -d --wait`. Compose recreates only the services whose image changed.
+See [Choose an image](../compose-deployment#choose-an-image). This release has no
+in-place state migration, so a release that needs a new state requires a fresh
+deployment.
+
 ## Replace a deployment with a fresh one
 
-Use `reset` only when you intend to delete the deployment's data. V3 releases are test
-versions, and they have no in-place migration, backup, or restore procedure. To replace
-a deployment, follow the
+Delete the volumes only when you intend to delete the deployment's data. V3 releases
+are test versions, and they have no in-place migration, backup, or restore procedure.
+To replace a deployment, follow the
 [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment):
-reset the old deployment, then run `init` and `start`. `init` generates a new instance
-identity, the ID that labels the deployment's containers and volumes. The new deployment
-starts with an empty registry, so register your packages again.
+run `docker compose down --volumes --remove-orphans`, then `docker compose up -d --wait`.
+The new deployment starts with an empty registry, so register your packages again.
+
+The volumes are named after the Compose project, which defaults to the directory name.
+Moving or renaming the directory starts a different, empty deployment. Set
+`COMPOSE_PROJECT_NAME` in `.env` if the directory may change.
 
 ## Change credentials
 
-Source and destination tokens belong in `operator.env`. Packages contain references to
-them, not their values. To add or change a token, edit its line in `operator.env` as the
-[configuration prerequisites](../compose-deployment#configuration-prerequisites) describe,
-then run `./infrahub-sync-compose start`. `start` recreates the services whose
-environment changed. `restart` keeps the environment the containers already had.
+Source and destination tokens belong in `.env`. Packages contain references to them,
+not their values. To add or change a token, edit its line in `.env` as
+[The `.env` file](../compose-deployment#configuration-prerequisites) describes, then
+run `docker compose up -d --wait`, which recreates the services whose environment
+changed. `docker compose restart` keeps the environment the containers already had.
 
 This release has no tested procedure for rotating credentials. The Sync API token that
-the included CLI uses is generated by `init`, and nothing rotates it; see
+the `cli` service presents, `INFRAHUB_SYNC_API_TOKEN`, must equal the principal's token
+in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`; change both together. See
 [Use it](../compose-deployment#use-it).
 
-Never `source` `operator.env` or put a credential on a command line. Keep values out of
-logs, shell history, and configuration packages.
+Never `source` `.env` or put a credential on a command line. Keep values out of logs,
+shell history, and configuration packages.
 
 ## Recover from a write with an unknown outcome
 
 A write has an unknown outcome when the run ended without a record of what reached the
-destination. `./infrahub-sync-compose cli runs show RUN_ID` then reports
+destination. `docker compose run --rm --no-deps -T cli runs show RUN_ID` then reports
 `reconciliation_required: true`, or an apply ends with phase `apply-failed` and
 `summary.may_have_partially_written` set.
 

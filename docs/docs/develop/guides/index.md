@@ -25,14 +25,9 @@ how the system works, see [Knowledge](../knowledge/index.md).
 
 ### Releases
 
-- [Building a private tester packet](building-a-tester-packet.md) — how to assemble the
-  archive handed to a Linux amd64 tester (the qualified image, the Compose deployment
-  bundle, and an example configuration) and how the packet task checks the three input
-  files against the checksums recorded in `candidate-input.json` during the build step,
-  then checks the qualified image configuration and the bundle and release identity
-  against `qualification.json` from the qualification step.
-- [Qualifying an internal candidate](qualifying-an-internal-candidate.md) — how a teammate
-  obtains a pre-release candidate from its Actions run and qualifies it on their own host.
+- [Publishing an image by hand](publishing-an-image.md) — when and how to dispatch the image
+  workflow for a chosen commit and tags, how to verify the pushed image, and why a dispatch
+  leaves `latest` alone.
 
 ### Related
 

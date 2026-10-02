@@ -1,1012 +1,146 @@
-"""The one place a release identity is read, validated, and turned into names.
+"""Release tasks: keep the root `docker-compose.yml` pinned to the release version.
 
-Everything a release produces is named from here: the image's version label, the
-two Python distributions, the Compose bundle, the tag, and the release itself. A
-second reader would be a second answer, and the first time the two disagreed
-would be after something had already been published under one of them.
+Every Sync service in the root Compose file names its image as
+`${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-X}`.
+`update-docker-compose` rewrites `X` on those lines, and `validate-docker-compose`
+refuses a file where any of them names another version. Both edit or read the file
+as text, line by line, so comments, ordering and third-party pins stay byte-for-byte.
+Both also refuse an `image:` line that references the Sync image in any other form,
+such as a hard-coded tag or `:latest`, rather than skip it.
 
-The declared version has to be its own normalized form, so there is one string
-rather than a declared form and a filename form that a reader has to reconcile.
-
-Nothing here logs in, pushes, tags for a registry, publishes, or promotes.
+Unlike infrahub, which bumps only for stable releases, this runs for pre-releases
+too: every tag in this repository publishes an image of the same version.
 """
 
 from __future__ import annotations
 
-import gzip
-import json
 import re
-import tarfile
-from collections.abc import Mapping
-from dataclasses import dataclass
-from datetime import datetime
-from hashlib import sha256
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as installed_version
-from io import BytesIO
 from pathlib import Path
-from shutil import copyfile, rmtree
-from typing import Any, cast
 
+import structlog
 from invoke import Context, task
+from invoke.exceptions import Exit
 from packaging.version import InvalidVersion, Version
 
-from .utils import ESCAPED_REPO_PATH, REPO_BASE
+from .utils import REPO_BASE
 
-NAMESPACE = "INFRAHUB-SYNC-RELEASE"
+log = structlog.get_logger(__name__)
 
-REPO_ROOT = REPO_BASE
-RECORD_DIR = REPO_ROOT / ".release"
-RECORD_FILE = RECORD_DIR / "identity.json"
-DIST_DIR = RECORD_DIR / "dist"
-BUNDLE_DIR = RECORD_DIR / "bundle"
-CANDIDATE_INPUT_NAME = "candidate-input.json"
-EXAMPLE_PACKAGE = REPO_ROOT / "examples" / "tester_packet" / "example-package.yml"
-PACKET_DIR = RECORD_DIR / "packet"
-QUALIFICATION_DIR = RECORD_DIR / "qualification"
-QUALIFICATION_FILE = RECORD_DIR / "qualification.json"
-RESULTS_DIR = RECORD_DIR / "results"
-ARTIFACTS_FILE = RECORD_DIR / "artifacts.json"
-
-# The clean-host gate's own inputs: the driver a bare host runs, the checks it
-# executes inside the candidate image, the schemas those checks load, and the
-# pinned destination they qualify against. All evidence. None of it ships in the
-# deployment bundle, and none of it is the example content an operator follows.
-QUALIFICATION_SOURCE = REPO_ROOT / "tests" / "compose" / "clean_host"
-DESTINATION_SOURCE = REPO_ROOT / "development"
-DESTINATION_FILES = ("docker-compose.infrahub.yml", "docker-compose.preview.yml", "preview.env")
-# The example schema the gate loads unchanged, so what it qualifies against is
-# what the documentation tells an operator to load.
-EXAMPLE_SCHEMA = REPO_ROOT / "examples" / "prefect_remote_run" / "schemas" / "infra_device.yml"
-
-# The deployment bundle, as the repository holds it. Which of its files ship is
-# decided by what they are, not by what they are called: `configuration/
-# qualification.yaml` is an example declared package an operator registers
-# explicitly through the Sync API, so it ships despite its name. What never ships
-# is what a deployment generates on its host — `operator.env`, `secrets/`, and
-# `.instance` — none of which Git tracks.
-BUNDLE_SOURCE = REPO_ROOT / "deploy" / "compose"
-BUNDLE_TREE = "deploy/compose"
-CHECKSUM_SUFFIX = ".sha256"
-
-# The one member a release generates rather than copies: the image the bundle was
-# qualified against, named in the three encodings a host can hold it under. It has
-# no file in `deploy/compose` and never acquires one — a tracked digest would be
-# a second answer that a checkout could contradict, and an untracked file there
-# would be picked up as bundle content by nothing and left behind by everything.
-BINDING_MEMBER = "image.bind"
-BINDING_MODE = 0o644
-# The platform the Compose lifecycle claim is made on. The image gate builds and
-# smokes arm64 too; what a deployment runs is this one.
-BINDING_PLATFORM = "linux/amd64"
-BINDING_PLATFORM_KEY = "INFRAHUB_SYNC_IMAGE_PLATFORM"
-BINDING_INDEX_KEY = "INFRAHUB_SYNC_IMAGE_INDEX"
-# What Docker's containerd image store calls the loaded archive: the digest of a
-# schema2 manifest the engine synthesizes for an archive that carries none. It is
-# derived from the exported archive's bytes, never read from a daemon.
-BINDING_MANIFEST_KEY = "INFRAHUB_SYNC_IMAGE_MANIFEST"
-BINDING_CONFIG_KEY = "INFRAHUB_SYNC_IMAGE_CONFIG"
-
-_IMMUTABLE_REFERENCE = re.compile(r"(?:.+@)?sha256:[0-9a-f]{64}")
-
-# Everything a tar entry or a gzip stream carries beside the file's content.
-# Each one is fixed because each one otherwise differs between two runs, two
-# hosts, or two checkouts of one commit — and a bundle whose bytes move cannot
-# be the thing a checksum in a release record names.
-ARCHIVE_FORMAT = tarfile.USTAR_FORMAT
-ARCHIVE_OWNER = 0
-# Stated rather than left to the archive module's defaults. Reading an entry off
-# the filesystem instead would carry whoever ran the build, which is the
-# difference between a developer's machine and a runner.
-ARCHIVE_OWNER_NAME = ""
-DIRECTORY_MODE = 0o755
-GZIP_LEVEL = 9
-
-DISTRIBUTION = "infrahub-sync"
-# PEP 427 replaces every run of `-`, `_`, or `.` in a distribution name with a
-# single `_` for the file it writes, so the two forms are derived, not listed.
-DISTRIBUTION_FILE = re.sub(r"[-_.]+", "_", DISTRIBUTION)
-BUNDLE_STEM = "infrahub-sync-compose"
-TAG_PREFIX = "v"
-TITLE_STEM = "Infrahub Sync"
-# The one wheel this project builds is pure Python and supports every
-# interpreter its metadata claims, so its compatibility tags are fixed.
-WHEEL_TAGS = "py3-none-any"
-
-RECORD_SCHEMA_VERSION = 1
-QUALIFICATION_SCHEMA_VERSION = 1
-
-_REVISION = re.compile(r"[0-9a-f]{40}")
+DOCKER_COMPOSE_FILE = REPO_BASE / "docker-compose.yml"
+# Only a line carrying this is a Sync image line; any other `${VERSION:-...}` is left alone.
+SYNC_IMAGE_MARKER = "registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-"
+VERSION_DEFAULT = re.compile(r"\$\{VERSION:-(?P<version>[^}]*)\}")
+# Any `image:` value that names the Sync image, in whatever form.
+SYNC_IMAGE_REFERENCE = re.compile(r"^\s*(?:-\s*)?image:.*opsmill/infrahub-sync")
+# The one form the tasks pin, optionally quoted and followed by a comment.
+PINNED_SYNC_IMAGE = re.compile(
+    r"^\s*(?:-\s*)?image:\s*(?P<quote>[\"']?)"
+    r"\$\{INFRAHUB_SYNC_DOCKER_IMAGE:-registry\.opsmill\.io/opsmill/infrahub-sync\}"
+    r":\$\{VERSION:-(?P<version>[^}\s\"']+)\}(?P=quote)\s*(?:#.*)?$"
+)
 
 
-class ReleaseTaskError(RuntimeError):
-    """Raised when a release identity is unreadable, invalid, or contradicted by an input."""
+def _canonical(version: str) -> str:
+    """Return `version` if it is a canonical PEP 440 version, or stop the task.
 
-
-@dataclass(frozen=True)
-class ReleaseIdentity:
-    """One release, and every artifact name that follows from it."""
-
-    version: str
-    revision: str
-    created: str
-
-    @property
-    def tag(self) -> str:
-        """The Git tag this release is published under."""
-        return f"{TAG_PREFIX}{self.version}"
-
-    @property
-    def title(self) -> str:
-        """The title the published release carries."""
-        return f"{TITLE_STEM} - {self.tag}"
-
-    @property
-    def wheel(self) -> str:
-        """The built distribution's filename."""
-        return f"{DISTRIBUTION_FILE}-{self.version}-{WHEEL_TAGS}.whl"
-
-    @property
-    def sdist(self) -> str:
-        """The source distribution's filename."""
-        return f"{DISTRIBUTION_FILE}-{self.version}.tar.gz"
-
-    @property
-    def bundle(self) -> str:
-        """The Compose bundle archive's filename."""
-        return f"{BUNDLE_STEM}-{self.version}.tar.gz"
-
-    @property
-    def timestamp(self) -> int:
-        """The source commit's own time, as the seconds a tar entry and a gzip header hold."""
-        return int(_instant(self.created).timestamp())
-
-    def record(self) -> dict[str, object]:
-        """Return the identity as the document every later phase reads it from."""
-        return {
-            "schema_version": RECORD_SCHEMA_VERSION,
-            "version": self.version,
-            "revision": self.revision,
-            "created": self.created,
-            "tag": self.tag,
-            "title": self.title,
-            "wheel": self.wheel,
-            "sdist": self.sdist,
-            "bundle": self.bundle,
-        }
-
-
-def release_identity(*, version: str, revision: str, created: str) -> ReleaseIdentity:
-    """Validate one release identity, and refuse anything that names no single release.
-
-    An abbreviated revision or a local timestamp would leave artifacts nobody can
-    trace back to one commit. An unnormalized version would leave two spellings
-    of one release, and the artifacts named from each would not match.
+    `v3.0.0` and `3.0.0-alpha6` parse, but they are not the string the image is tagged with,
+    so only the normalized spelling is accepted rather than silently rewritten.
     """
     try:
-        parsed_version = Version(version)
+        parsed = Version(version)
     except InvalidVersion:
-        msg = f"version {version!r} is not a release identifier"
-        raise ReleaseTaskError(msg) from None
-    if str(parsed_version) != version:
-        msg = f"version {version!r} is not its own normalized form; declare {parsed_version} instead"
-        raise ReleaseTaskError(msg)
-    if not _REVISION.fullmatch(revision):
-        msg = f"revision {revision!r} is not a full commit identifier"
-        raise ReleaseTaskError(msg)
-    try:
-        parsed = _instant(created)
-    except ValueError:
-        msg = f"created {created!r} is not an ISO 8601 timestamp"
-        raise ReleaseTaskError(msg) from None
-    if parsed.utcoffset() is None:
-        msg = f"created {created!r} has no UTC offset, so it names no absolute instant"
-        raise ReleaseTaskError(msg)
-    return ReleaseIdentity(version=version, revision=revision, created=created)
-
-
-def _instant(created: str) -> datetime:
-    """Return the instant a commit timestamp names.
-
-    Git writes a terminal `Z` for a commit made at UTC, and `fromisoformat` does
-    not read it before Python 3.11. Rewriting that one designator is what lets
-    this run on every supported interpreter; it is done for parsing alone, so a
-    timestamp no commit carried cannot reach an artifact.
-    """
-    return datetime.fromisoformat(f"{created[:-1]}+00:00" if created.endswith("Z") else created)
-
-
-def read_release_identity(context: Context) -> ReleaseIdentity:
-    """Derive the release identity from the installed distribution and the source commit.
-
-    `created` comes from the commit, never the build clock, so two builds of one
-    revision record the same creation time.
-    """
-    try:
-        version = installed_version(DISTRIBUTION)
-    except PackageNotFoundError:
-        msg = f"{DISTRIBUTION} is not installed; run `uv sync --extra dev --extra prefect --extra service`"
-        raise ReleaseTaskError(msg) from None
-    return release_identity(
-        version=version,
-        revision=_git(context, "rev-parse HEAD"),
-        created=_git(context, "show -s --format=%cI HEAD"),
-    )
-
-
-def match_declared(identity: ReleaseIdentity, declared: str) -> ReleaseIdentity:
-    """Refuse a declared version that is not the one the source carries.
-
-    Accepting it would let the caller name the artifacts rather than the source,
-    which is the one thing a declared version must not be able to do.
-    """
-    if declared != identity.version:
-        msg = f"the declared version {declared!r} is not the source's {identity.version!r}"
-        raise ReleaseTaskError(msg)
-    return identity
-
-
-def _git(context: Context, arguments: str) -> str:
-    with context.cd(ESCAPED_REPO_PATH):
-        result = context.run(f"git {arguments}", hide=True, warn=True, pty=False)
-    if result is None or result.exited != 0:
-        msg = f"`git {arguments}` failed in {REPO_ROOT}"
-        raise ReleaseTaskError(msg)
-    return result.stdout.strip()
-
-
-def identity_from(recorded: object, source: str) -> ReleaseIdentity:
-    """Return the identity one recorded document names, refusing a document naming none.
-
-    Only the three source values are read back. Every name beside them is derived
-    again from the version, so a hand-edited record cannot rename an artifact.
-    """
-    if not isinstance(recorded, dict):
-        msg = f"{source} must record an identity as a mapping"
-        raise ReleaseTaskError(msg)
-    document = cast("dict[str, object]", recorded)
-    version = document.get("version")
-    revision = document.get("revision")
-    created = document.get("created")
-    if not (isinstance(version, str) and isinstance(revision, str) and isinstance(created, str)):
-        msg = f"{source} does not record a version, a revision, and a creation time"
-        raise ReleaseTaskError(msg)
-    return release_identity(version=version, revision=revision, created=created)
-
-
-def read_recorded_identity() -> ReleaseIdentity:
-    """Return the identity the validation step recorded, refusing a run without one."""
-    if not RECORD_FILE.is_file():
-        msg = f"{RECORD_FILE} is missing; run `uv run invoke release.identity --version <version>` first"
-        raise ReleaseTaskError(msg)
-    try:
-        record = json.loads(RECORD_FILE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        msg = f"{RECORD_FILE} is not JSON"
-        raise ReleaseTaskError(msg) from None
-    return identity_from(record, str(RECORD_FILE))
-
-
-def bundle_paths(context: Context) -> dict[str, int]:
-    """Return every path the deployment bundle ships, with the mode Git records for it.
-
-    The mode comes from the index rather than from the filesystem: a checkout's
-    umask decides what the working tree shows, and the lifecycle entry point has
-    to arrive executable on a host that has never seen this repository.
-    """
-    paths = {}
-    for line in _git(context, f"ls-files --stage -- {BUNDLE_TREE}").splitlines():
-        metadata, _, tracked = line.partition("\t")
-        paths[tracked.removeprefix(f"{BUNDLE_TREE}/")] = int(metadata.split()[0], 8) & 0o777
-    if not paths:
-        msg = f"{BUNDLE_TREE} tracks no files, so there is no bundle to archive"
-        raise ReleaseTaskError(msg)
-    return paths
-
-
-def require_archivable_bundle(context: Context) -> None:
-    """Refuse to archive a bundle whose files are not the ones the commit holds.
-
-    The archive takes its content from the working tree and its revision from
-    `HEAD`. Those are the same bytes only while these paths are clean, so without
-    this a record could bind a bundle checksum to a revision whose content was
-    never archived — a statement that reads as a fact and is not one.
-    """
-    reported = _git(context, f"status --porcelain -- {BUNDLE_TREE}")
-    if reported:
-        differing = ", ".join(sorted(line[3:] for line in reported.splitlines()))
-        msg = f"{differing} differ from HEAD; commit or restore them before building the candidate kit"
-        raise ReleaseTaskError(msg)
-
-
-def bundle_root(identity: ReleaseIdentity) -> str:
-    """Return the one directory an extracted bundle unpacks into."""
-    return f"{BUNDLE_STEM}-{identity.version}"
-
-
-@dataclass(frozen=True, order=True)
-class BundleMember:
-    """One entry of the archive: a directory, a committed file, or generated bytes.
-
-    Ordered by name, which is what fixes the archive's own order, and it puts
-    each directory before what it holds because a name is a prefix of everything
-    beneath it.
-
-    The three kinds are distinguished by what the entry carries rather than by an
-    empty source standing in for a directory. A generated member and a directory
-    sentinel travel the same writer, and one written as the other extracts as the
-    wrong thing on a host this repository never sees again.
-    """
-
-    name: str
-    mode: int
-    source: str | None = None
-    data: bytes | None = None
-
-    @property
-    def is_directory(self) -> bool:
-        """Whether this entry is a directory the archive writes rather than a file."""
-        return self.source is None and self.data is None
-
-
-def bundle_members(
-    identity: ReleaseIdentity, tracked: dict[str, int], generated: Mapping[str, bytes]
-) -> list[BundleMember]:
-    """Return every entry the archive holds, in the order it writes them.
-
-    Directories are written rather than left for extraction to invent, so what a
-    clean host ends up with is decided here instead of by its umask.
-
-    A generated name that a committed path already holds is refused: the archive
-    would carry two entries under one name, and which of them an extraction keeps
-    is the reader's choice rather than this release's.
-    """
-    root = bundle_root(identity)
-    collided = sorted(set(generated) & set(tracked))
-    if collided:
-        msg = f"{', '.join(collided)} is both committed and generated, so the archive would hold it twice"
-        raise ReleaseTaskError(msg)
-    directories = {root}
-    for name in (*tracked, *generated):
-        parts = name.split("/")[:-1]
-        directories.update(f"{root}/{'/'.join(parts[:depth])}" for depth in range(1, len(parts) + 1))
-    entries = [BundleMember(name=name, mode=DIRECTORY_MODE) for name in directories]
-    entries += [BundleMember(name=f"{root}/{name}", mode=mode, source=name) for name, mode in tracked.items()]
-    entries += [
-        BundleMember(name=f"{root}/{name}", mode=BINDING_MODE, data=content) for name, content in generated.items()
-    ]
-    return sorted(entries)
-
-
-def write_bundle(
-    identity: ReleaseIdentity,
-    tracked: dict[str, int],
-    destination: Path,
-    *,
-    generated: Mapping[str, bytes],
-) -> Path:
-    """Write the deployment bundle archive, fixing everything about it except content.
-
-    Two runs from one tree have to produce the same bytes, so every field a tar
-    entry or a gzip stream carries independently of content is pinned here. The
-    gzip layer is opened directly because the archive module offers no way to
-    set the header's timestamp or to keep the output file's own name out of it.
-
-    `generated` is required rather than defaulted. A bundle with no binding is a
-    bundle an operator has to name an image for, and that is the state this whole
-    unit removes — so producing one has to be something a caller says out loud.
-    """
-    destination.mkdir(parents=True, exist_ok=True)
-    archive = destination / identity.bundle
-    modified = identity.timestamp
-    with (
-        archive.open("wb") as raw,
-        gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=GZIP_LEVEL, filename="", mtime=modified) as compressed,
-        tarfile.open(fileobj=compressed, mode="w", format=ARCHIVE_FORMAT) as bundle,
-    ):
-        for member in bundle_members(identity, tracked, generated):
-            entry = tarfile.TarInfo(member.name)
-            entry.mtime = modified
-            entry.mode = member.mode
-            entry.uid = entry.gid = ARCHIVE_OWNER
-            entry.uname = entry.gname = ARCHIVE_OWNER_NAME
-            if member.is_directory:
-                entry.type = tarfile.DIRTYPE
-                bundle.addfile(entry)
-            elif member.data is not None:
-                entry.size = len(member.data)
-                bundle.addfile(entry, BytesIO(member.data))
-            else:
-                held = BUNDLE_SOURCE / str(member.source)
-                entry.size = held.stat().st_size
-                with held.open("rb") as content:
-                    bundle.addfile(entry, content)
-    return archive
-
-
-def image_binding(digests: Mapping[str, Any], identity: ReleaseIdentity, *, loaded_manifest: str) -> bytes:
-    """Return the binding record this release's bundle ships, from one build's digests.
-
-    Four settings, in a `KEY=VALUE` file the deployment's own reader parses
-    without sourcing it. Three of them are the same image in the three encodings
-    a host can hold it under: the index as the exporter named it, the digest of
-    the schema2 manifest Docker's containerd image store synthesizes for the
-    loaded archive, and the configuration digest a classic `docker load` leaves
-    behind. Which one a host can resolve is that host's question — it depends on
-    which image store its engine runs — and the deployment answers it locally, in
-    the order they are written here.
-
-    Everything but the manifest is derived from the record the build wrote, and
-    the manifest is derived by the caller from the exported archive's own bytes
-    rather than from any engine. There is no caller-chosen digest and no mode
-    that produces an unbound bundle: a candidate that cannot name its own image
-    is a refusal here, before anything is archived.
-    """
-    built = identity_from(digests.get("provenance"), "the digest record")
-    if built != identity:
-        msg = (
-            f"the built image records {built.version} at {built.revision}, a different release "
-            f"from {identity.version} at {identity.revision}; rebuild the candidate"
-        )
-        raise ReleaseTaskError(msg)
-    name = digests.get("index_name")
-    if not isinstance(name, str) or not name:
-        msg = "the digest record retains no index name, so the binding's index reference would name nothing"
-        raise ReleaseTaskError(msg)
-    index_digest = digests.get("index_digest")
-    if not isinstance(index_digest, str):
-        msg = "the digest record holds no index digest"
-        raise ReleaseTaskError(msg)
-    platforms = digests.get("platforms")
-    qualified = platforms.get(BINDING_PLATFORM) if isinstance(platforms, Mapping) else None
-    if not isinstance(qualified, Mapping) or not isinstance(qualified.get("config"), str):
-        msg = f"the digest record holds no {BINDING_PLATFORM} image, which is the platform this bundle is qualified on"
-        raise ReleaseTaskError(msg)
-    values = {
-        BINDING_PLATFORM_KEY: BINDING_PLATFORM,
-        BINDING_INDEX_KEY: f"{name}@{index_digest}",
-        BINDING_MANIFEST_KEY: loaded_manifest,
-        BINDING_CONFIG_KEY: str(qualified["config"]),
-    }
-    for key, value in values.items():
-        # The deployment reads this file a line at a time. A value carrying a
-        # newline is two settings, and one carrying a space is a reference no
-        # engine resolves — both are the record lying about what it names.
-        if value != value.strip() or any(character.isspace() for character in value):
-            msg = f"{key} would carry whitespace, so the record it writes names no single image"
-            raise ReleaseTaskError(msg)
-    for key in (BINDING_INDEX_KEY, BINDING_MANIFEST_KEY, BINDING_CONFIG_KEY):
-        if not _IMMUTABLE_REFERENCE.fullmatch(values[key]):
-            msg = f"{key} is {values[key]!r}, which is not an immutable sha256 reference"
-            raise ReleaseTaskError(msg)
-    return "".join(f"{key}={value}\n" for key, value in values.items()).encode("utf-8")
-
-
-def write_checksum(archive: Path) -> Path:
-    """Write the archive's SHA-256 in the two-space form a clean host's tools read."""
-    checksum = archive.with_name(archive.name + CHECKSUM_SUFFIX)
-    checksum.write_text(f"{_digest(archive)}  {archive.name}\n", encoding="utf-8")
-    return checksum
-
-
-def candidate_input_document(
-    digests: Mapping[str, Any], identity: ReleaseIdentity, archive: Path, image_archive: Path
-) -> dict[str, object]:
-    """Return the narrow manifest a qualification consumer may read before gates pass."""
-    built = identity_from(digests.get("provenance"), "the digest record")
-    if built != identity:
-        msg = (
-            f"the built image records {built.version} at {built.revision}, a different release "
-            f"from {identity.version} at {identity.revision}; rebuild the candidate"
-        )
-        raise ReleaseTaskError(msg)
-    platforms = digests.get("platforms")
-    qualified = platforms.get(BINDING_PLATFORM) if isinstance(platforms, Mapping) else None
-    if not isinstance(qualified, Mapping) or not isinstance(qualified.get("config"), str):
-        msg = f"the digest record holds no {BINDING_PLATFORM} image, so qualification has no candidate input"
-        raise ReleaseTaskError(msg)
-    return {
-        "bundle": {"name": archive.name, "sha256": _digest(archive)},
-        "example": {"name": EXAMPLE_PACKAGE.name, "sha256": _digest(EXAMPLE_PACKAGE)},
-        "identity": {"tag": identity.tag, "version": identity.version},
-        "image": {"platforms": {BINDING_PLATFORM: {"config": qualified["config"], "sha256": _digest(image_archive)}}},
-    }
-
-
-# The whole of what a result document says, in the order `record_gate` writes it.
-# Named once because the reader checks each field and returns nothing else: the
-# directory is persisted input, and a document is only usable if it says all four.
-RESULT_FIELDS = ("gate", "platform", "image", "command")
-
-
-def record_gate(gate: str, *, platform: str, image: str, command: str) -> Path:
-    """Record that one qualification gate ran, against which bytes, and how.
-
-    The candidate record links its test results to the artifact they ran against,
-    so each gate leaves this behind. A gate that left nothing would be one the
-    record could only claim had passed.
-    """
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    result = RESULTS_DIR / f"{gate}-{platform.replace('/', '-')}.json"
-    document = {"gate": gate, "platform": platform, "image": image, "command": command}
-    result.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return result
-
-
-def read_results() -> dict[tuple[str, str], dict[str, str]]:
-    """Return every gate result this candidate's runs left behind, keyed by gate and platform.
-
-    This directory is persisted input rather than something one run hands the
-    next, so what a document says is settled here instead of wherever a field is
-    read. A document that does not say all four things `record_gate` writes -- an
-    earlier schema, an interrupted write, a file this module did not write -- is
-    the module's own refusal, not a `KeyError` from whichever line reached for the
-    field first. Only the four are returned, so nothing else a document carries
-    reaches the record.
-    """
-    results = {}
-    for path in sorted(RESULTS_DIR.glob("*.json")) if RESULTS_DIR.is_dir() else ():
-        recorded = identity_document(path)
-        described: dict[str, str] = {}
-        for field in RESULT_FIELDS:
-            value = recorded.get(field)
-            if not isinstance(value, str) or not value:
-                msg = f"{path} records no {field}, so it describes no gate that ran"
-                raise ReleaseTaskError(msg)
-            described[field] = value
-        results[described["gate"], described["platform"]] = described
-    return results
-
-
-def read_artifacts(candidate: ReleaseIdentity) -> dict[str, Any]:
-    """Return the identifiers the service gave this candidate's uploaded artifacts.
-
-    An approval is bound to bytes a service still holds, so the record carries
-    what names them there and how long they last. A missing or partial entry is
-    a refusal: promotion has nothing to check an artifact against without it.
-
-    The document names the candidate whose uploads it describes, and one naming
-    another candidate is refused rather than reused. Nothing rewrites this file
-    when a second candidate starts in the same workspace, so the identifiers the
-    first one uploaded stay readable — and merging those would bind an approval
-    of these bytes to bytes a service is holding under another release.
-    """
-    if not ARTIFACTS_FILE.is_file():
-        msg = f"{ARTIFACTS_FILE} is missing; the candidate workflow writes it from what each upload returned"
-        raise ReleaseTaskError(msg)
-    document = identity_document(ARTIFACTS_FILE)
-    uploaded_for = identity_from(document.get("identity"), f"the identity in {ARTIFACTS_FILE}")
-    if uploaded_for != candidate:
-        msg = (
-            f"{ARTIFACTS_FILE} describes uploads of {uploaded_for.version} at {uploaded_for.revision}, "
-            f"not of this candidate; upload this candidate's artifacts and record what the service returned"
-        )
-        raise ReleaseTaskError(msg)
-    retention = document.get("retention_days")
-    if not isinstance(retention, int) or retention <= 0:
-        msg = f"{ARTIFACTS_FILE} must record a positive retention_days covering the approval window"
-        raise ReleaseTaskError(msg)
-    uploaded = document.get("artifacts")
-    if not isinstance(uploaded, dict) or not uploaded:
-        msg = f"{ARTIFACTS_FILE} must record every uploaded artifact"
-        raise ReleaseTaskError(msg)
-    for name, entry in sorted(cast("dict[str, Any]", uploaded).items()):
-        described = cast("dict[str, Any]", entry) if isinstance(entry, dict) else {}
-        if not described.get("id") or not described.get("digest"):
-            msg = f"{ARTIFACTS_FILE} records {name} without both an identifier and a digest"
-            raise ReleaseTaskError(msg)
-    return {"retention_days": retention, "artifacts": uploaded}
-
-
-def identity_document(path: Path) -> dict[str, Any]:
-    """Return one JSON mapping this repository wrote, refusing anything else."""
-    try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        msg = f"{path} is not JSON"
-        raise ReleaseTaskError(msg) from None
-    if not isinstance(document, dict):
-        msg = f"{path} must be a mapping"
-        raise ReleaseTaskError(msg)
-    return cast("dict[str, Any]", document)
-
-
-@task(name="identity")
-def identity(context: Context, version: str = "") -> None:
-    """Record the release identity the source declares, refusing a caller who renames it.
-
-    The version is optional because the source is what declares it, and a
-    candidate build has nothing of its own to declare. Passing one is how a caller
-    that already carries a version — an operator, or an approval naming one — has
-    the source contradict it rather than quietly go along with it.
-    """
-    declared = read_release_identity(context)
-    if version:
-        match_declared(declared, version)
-    RECORD_DIR.mkdir(parents=True, exist_ok=True)
-    record = declared.record()
-    RECORD_FILE.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    for name, value in sorted(record.items()):
-        print(f" - [{NAMESPACE}] {name:<14} {value}")
-    print(f" - [{NAMESPACE}] Identity recorded in {RECORD_FILE}")
-
-
-@task(name="build")
-def build(context: Context) -> None:
-    """Build the two distributions this release publishes and refuse a name it did not derive.
-
-    This is the whole package side of a run with publication disabled: it produces
-    the artifacts a later approval would upload, and reaches nothing that could
-    upload them. A build whose output is not what the recorded identity names
-    fails here rather than at the upload it would otherwise be handed to.
-    """
-    identity = read_recorded_identity()
-    rmtree(DIST_DIR, ignore_errors=True)
-    with context.cd(ESCAPED_REPO_PATH):
-        context.run(f"uv build --out-dir {DIST_DIR}", pty=True)
-    # uv writes a `.gitignore` beside the distributions; the release is the rest.
-    produced = sorted(path.name for path in DIST_DIR.iterdir() if not path.name.startswith("."))
-    expected = sorted((identity.sdist, identity.wheel))
-    if produced != expected:
-        msg = f"the build produced {produced}, not the {identity.version} distributions {expected}"
-        raise ReleaseTaskError(msg)
-    for name in expected:
-        print(f" - [{NAMESPACE}] Built {DIST_DIR / name}")
-
-
-def build_qualification_kit() -> None:
-    """Assemble what a bare host needs to run the clean-host gate.
-
-    The driver and its checks, the schemas the checks load, and the pinned
-    destination they qualify against. The example schema is copied beside the
-    checks so the gate loads the same file the documentation names.
-    """
-    rmtree(QUALIFICATION_DIR, ignore_errors=True)
-    checks = QUALIFICATION_DIR / "checks"
-    checks.mkdir(parents=True)
-    copyfile(QUALIFICATION_SOURCE / "clean-host.sh", QUALIFICATION_DIR / "clean-host.sh")
-    (QUALIFICATION_DIR / "clean-host.sh").chmod(0o755)
-    for module in sorted((QUALIFICATION_SOURCE / "checks").glob("*.py")):
-        copyfile(module, checks / module.name)
-    # Both suffixes: the kit carries destination schemas and a declared
-    # configuration package, and the two conventions differ in this repository.
-    for declared in sorted((QUALIFICATION_SOURCE / "destination").iterdir()):
-        if declared.suffix in {".yml", ".yaml"}:
-            copyfile(declared, checks / declared.name)
-    copyfile(EXAMPLE_SCHEMA, checks / EXAMPLE_SCHEMA.name)
-    destination = QUALIFICATION_DIR / "destination"
-    destination.mkdir()
-    for name in DESTINATION_FILES:
-        copyfile(DESTINATION_SOURCE / name, destination / name)
-
-
-@task(name="kit")
-def kit(context: Context) -> None:
-    """Produce the deterministic deployment bundle and the separate qualification kit.
-
-    Two archives with different audiences. The bundle is what an operator
-    deploys; the qualification kit holds what the clean-host gate needs and an
-    operator does not.
-
-    The bundle names its own image, so this runs after the candidate has been
-    built: the binding is derived from that build's digests, and the identity
-    equality is the same one the qualification record makes — a digest record
-    left by another release binds this bundle to somebody else's image.
-
-    One of the three identities it names is not in the digest record at all. The
-    identity a containerd image store gives the loaded archive is a function of
-    that archive's bytes, so the qualified platform is exported here — reusing an
-    export that already holds this candidate — and read rather than asked of any
-    daemon.
-
-    Imported here rather than at the top for the reason `qualify` states: the
-    image tasks read this module, so this is the one place that sees both.
-    """
-    from .image import archive_manifest, read_digests, transferable_archive  # noqa: PLC0415 -- see the docstring
-
-    identity = read_recorded_identity()
-    require_archivable_bundle(context)
-    record = read_digests()
-    image_archive = transferable_archive(context, record, BINDING_PLATFORM)
-    manifest = archive_manifest(image_archive)
-    binding = image_binding(record, identity, loaded_manifest=manifest)
-    archive = write_bundle(identity, bundle_paths(context), BUNDLE_DIR, generated={BINDING_MEMBER: binding})
-    checksum = write_checksum(archive)
-    candidate_input = BUNDLE_DIR / CANDIDATE_INPUT_NAME
-    candidate_input.write_text(
-        json.dumps(candidate_input_document(record, identity, archive, image_archive), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    build_qualification_kit()
-    print(f" - [{NAMESPACE}] Bundle    {archive}")
-    print(f" - [{NAMESPACE}] Checksum  {checksum.read_text(encoding='utf-8').strip()}")
-    print(f" - [{NAMESPACE}] Input     {candidate_input}")
-    print(f" - [{NAMESPACE}] Binding   {BINDING_MEMBER} names the {BINDING_PLATFORM} candidate")
-    print(f" - [{NAMESPACE}] Manifest  {manifest} is what a containerd image store calls the loaded archive")
-    print(f" - [{NAMESPACE}] Qualification kit in {QUALIFICATION_DIR}")
-
-
-@task(name="qualify")
-def qualify(context: Context) -> None:
-    """Record what this candidate is, what it is made of, and what passed against it.
-
-    Imported here rather than at the top because the image tasks read this
-    module's identity: the record is what ties the two together, so it is the one
-    place that has to see both.
-    """
-    del context
-    from datetime import date  # noqa: PLC0415 -- see the docstring
-
-    from .image import (  # noqa: PLC0415 -- see the docstring
-        blocking_findings,
-        read_digests,
-        read_waivers,
-        recorded_identity,
-        sbom_file,
-        scan_file,
-    )
-
-    digests = read_digests()
-    identity = recorded_identity(digests)
-    if identity != read_recorded_identity():
-        msg = "the built image and the recorded identity name different releases; rebuild the candidate"
-        raise ReleaseTaskError(msg)
-
-    archive = BUNDLE_DIR / identity.bundle
-    if not archive.is_file():
-        msg = f"{archive} is missing; run `uv run invoke release.kit` first"
-        raise ReleaseTaskError(msg)
-
-    waivers = read_waivers(today=date.today())  # noqa: DTZ011 -- a waiver expiry is a calendar date
-    platforms = sorted(digests["platforms"])
-    # A gate result names the configuration digest it ran against, so a result
-    # left by an earlier candidate satisfies nothing here: the record has to link
-    # what passed to the bytes this candidate is made of.
-    configurations = {name: digests["platforms"][name]["config"] for name in platforms}
-    results = read_results()
-    missing = [
-        ("image-smoke", name)
-        for name in platforms
-        if results.get(("image-smoke", name), {}).get("image") != configurations[name]
-    ]
-    qualified = set(configurations.values())
-    if results.get(("compose-lifecycle", BINDING_PLATFORM), {}).get("image") != configurations[BINDING_PLATFORM]:
-        missing.append(("compose-lifecycle", BINDING_PLATFORM))
-    if missing:
-        listed = ", ".join(f"{gate} on {platform}" for gate, platform in missing)
-        msg = f"{listed} left no result naming this candidate's own bytes, so it qualified nothing"
-        raise ReleaseTaskError(msg)
-
-    scanned = {}
-    for name in platforms:
-        report = scan_file(identity, name)
-        if not report.is_file():
-            msg = f"{report} is missing; run `uv run invoke image.scan` first"
-            raise ReleaseTaskError(msg)
-        findings = blocking_findings(json.loads(report.read_text(encoding="utf-8")), waivers=waivers)
-        scanned[name] = {"report": report.name, "sha256": _digest(report), "blocking": len(findings)}
-
-    record = {
-        "schema_version": QUALIFICATION_SCHEMA_VERSION,
-        "identity": identity.record(),
-        "image": {"index": digests["index_digest"], "platforms": digests["platforms"]},
-        "bundle": {"name": archive.name, "sha256": _digest(archive)},
-        "sboms": {
-            name: {"document": sbom_file(identity, name).name, "sha256": _digest(sbom_file(identity, name))}
-            for name in platforms
-        },
-        "scan": {"waivers_in_force": len(waivers), "platforms": scanned},
-        # The refusal above reads only the results a required gate leaves. This is
-        # every result in the directory, so one on a key nothing required reads --
-        # a platform this candidate did not build, a second lifecycle run -- is
-        # dropped rather than recorded as a gate that faced these bytes. By gate
-        # and platform, so a record does not depend on directory order.
-        "tests": [result for _, result in sorted(results.items()) if result["image"] in qualified],
-        **read_artifacts(identity),
-    }
-    QUALIFICATION_FILE.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(f" - [{NAMESPACE}] Qualification record written to {QUALIFICATION_FILE}")
-
-
-def packet_readme(identity: ReleaseIdentity) -> bytes:
-    """Give a tester the commands and documentation for these exact source bytes."""
-    root = f"private-candidate-{identity.version}-{identity.revision[:7]}"
-    guides = (
-        ("Compose quickstart", "quickstart-compose.mdx"),
-        ("Compose deployment", "compose-deployment.mdx"),
-        ("NetBox tutorial", "tutorials/netbox-to-existing-infrahub.mdx"),
-        ("Nautobot tutorial", "tutorials/nautobot-to-existing-infrahub.mdx"),
-    )
-    links = "\n".join(
-        f"- [{title}](https://github.com/opsmill/infrahub-sync/blob/{identity.revision}/docs/docs/{path})"
-        for title, path in guides
-    )
-    return f"""# Infrahub Sync private tester packet
-
-Version: {identity.version}
-Commit: {identity.revision}
-Platform: Linux amd64
-
-Verify the outer download before extracting it. Then verify the three input files
-inside the packet before loading or unpacking them:
-
-```sh
-set -eu
-sha256sum -c {root}.tar.gz.sha256
-tar -xzf {root}.tar.gz
-cd {root}/linux-amd64
-sha256sum -c SHA256SUMS
-docker load -i image-linux-amd64.tar
-tar -xzf {identity.bundle}
-cd {BUNDLE_STEM}-{identity.version}
-./infrahub-sync-compose init
-./infrahub-sync-compose start
-./infrahub-sync-compose status
-```
-
-The Infrahub Sync image is loaded from this packet and is never pulled. Docker
-still pulls the PostgreSQL, Prefect, and object-store images from the internet.
-The example package is not registered automatically. Replace its URL placeholders,
-provide the referenced credentials, and load a matching destination schema first.
-
-Guides for the exact commit in this packet:
-
-{links}
-""".encode()
-
-
-def _recorded_checksum(record: Mapping[str, Any], section: str, name: str) -> str:
-    """Read a named SHA-256 from a candidate input record."""
-    entry = record.get(section)
-    digest = entry.get("sha256") if isinstance(entry, Mapping) and entry.get("name") == name else None
-    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
-        msg = f"candidate input does not record a SHA-256 for {name}"
-        raise ReleaseTaskError(msg)
-    return digest
-
-
-def _packet_document(path: Path) -> dict[str, Any]:
-    """Read a required packet build record with a release-specific error."""
+        msg = f"'{version}' is not a valid PEP 440 version."
+        raise Exit(msg, code=1) from None
+    if str(parsed) != version:
+        msg = f"'{version}' is not in canonical form; the release tag would be '{parsed}'."
+        raise Exit(msg, code=1)
+    if parsed.epoch or parsed.local is not None:
+        msg = f"'{version}' carries an epoch or a local part, which a Docker image tag cannot hold."
+        raise Exit(msg, code=1)
+    return version
+
+
+def _compose_path(docker_file: str | None) -> Path:
+    path = Path(docker_file) if docker_file else DOCKER_COMPOSE_FILE
     if not path.is_file():
-        msg = f"{path} is missing; build and qualify the candidate first"
-        raise ReleaseTaskError(msg)
-    return identity_document(path)
+        msg = f"{path} does not exist."
+        raise Exit(msg, code=1)
+    return path
 
 
-def _verify_packet_inputs(
-    identity: ReleaseIdentity, image_archive: Path, bundle: Path, example: Path, candidate: dict[str, Any]
-) -> None:
-    """Refuse input bytes that the build and qualification records do not name."""
-    from .image import archive_configuration  # noqa: PLC0415 -- release and image import each other
+def _sync_image_pins(path: Path, lines: list[str]) -> list[tuple[int, str]]:
+    """Return `(line index, pinned version)` for every Sync image line.
 
-    qualified = _packet_document(QUALIFICATION_FILE)
-    if identity_from(qualified.get("identity"), str(QUALIFICATION_FILE)) != identity:
-        msg = "qualification record names a different release"
-        raise ReleaseTaskError(msg)
-    if candidate.get("identity") != {"tag": identity.tag, "version": identity.version}:
-        msg = "candidate input names a different release"
-        raise ReleaseTaskError(msg)
-    qualified_bundle = qualified.get("bundle")
-    qualified_image = qualified.get("image")
-    image_platforms = qualified_image.get("platforms") if isinstance(qualified_image, Mapping) else None
-    image_record = image_platforms.get(BINDING_PLATFORM) if isinstance(image_platforms, Mapping) else None
-    candidate_image = candidate.get("image")
-    candidate_platforms = candidate_image.get("platforms") if isinstance(candidate_image, Mapping) else None
-    candidate_platform = candidate_platforms.get(BINDING_PLATFORM) if isinstance(candidate_platforms, Mapping) else None
-    expected_config = image_record.get("config") if isinstance(image_record, Mapping) else None
-    if not isinstance(expected_config, str) or not isinstance(candidate_platform, Mapping):
-        msg = "build and qualification records do not name the Linux amd64 image"
-        raise ReleaseTaskError(msg)
-    if candidate_platform.get("config") != expected_config:
-        msg = "candidate input image differs from the qualified image"
-        raise ReleaseTaskError(msg)
-    results = qualified.get("tests")
-    gates = (
-        {
-            result.get("gate")
-            for result in results
-            if isinstance(result, Mapping)
-            and result.get("platform") == BINDING_PLATFORM
-            and result.get("image") == expected_config
-        }
-        if isinstance(results, list)
-        else set()
-    )
-    if not {"image-smoke", "compose-lifecycle"} <= gates:
-        msg = "qualification record does not show the Linux amd64 image and Compose checks"
-        raise ReleaseTaskError(msg)
-    image_digest = candidate_platform.get("sha256")
-    if (
-        image_archive.name != "image-linux-amd64.tar"
-        or not isinstance(image_digest, str)
-        or not re.fullmatch(r"[0-9a-f]{64}", image_digest)
-    ):
-        msg = "candidate input does not record the Linux amd64 archive SHA-256"
-        raise ReleaseTaskError(msg)
-    checksums = (
-        (image_archive, image_digest),
-        (bundle, _recorded_checksum(candidate, "bundle", bundle.name)),
-        (example, _recorded_checksum(candidate, "example", example.name)),
-    )
-    for path, digest in checksums:
-        if not path.is_file():
-            msg = f"{path} is missing"
-            raise ReleaseTaskError(msg)
-        if _digest(path) != digest:
-            msg = f"{path.name} checksum does not match the candidate build record"
-            raise ReleaseTaskError(msg)
-    if qualified_bundle != candidate.get("bundle"):
-        msg = "candidate input bundle differs from the qualified bundle"
-        raise ReleaseTaskError(msg)
-    if archive_configuration(image_archive) != expected_config:
-        msg = "image archive does not hold the qualified Linux amd64 image"
-        raise ReleaseTaskError(msg)
+    Stops the task when a line references the Sync image as its `image:` but not in
+    pinned form, listing every such line: skipping it would leave it unpinned.
+    """
+    pins = []
+    malformed = []
+    for index, line in enumerate(lines):
+        if not SYNC_IMAGE_REFERENCE.match(line):
+            continue
+        match = PINNED_SYNC_IMAGE.match(line.rstrip("\r\n"))
+        if match:
+            pins.append((index, match["version"]))
+        else:
+            malformed.append(f"line {index + 1}: {line.strip()}")
+    if malformed:
+        log.error("compose_image_line_not_pinned", file=str(path), offending=malformed)
+        msg = (
+            f"{path} references the Sync image outside the pinned form "
+            f"'${{INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}}:${{VERSION:-X}}':\n  "
+            + "\n  ".join(malformed)
+        )
+        raise Exit(msg, code=1)
+    return pins
 
 
-def write_packet(identity: ReleaseIdentity, image_archive: Path, bundle: Path, example: Path, output: Path) -> Path:
-    """Write the tester layout and its reproducible outer archive."""
-    root_name = f"private-candidate-{identity.version}-{identity.revision[:7]}"
-    root = output / root_name
-    platform_dir = root / "linux-amd64"
-    rmtree(root, ignore_errors=True)
-    platform_dir.mkdir(parents=True)
-    for source, name in (
-        (image_archive, "image-linux-amd64.tar"),
-        (bundle, identity.bundle),
-        (example, "example-package.yml"),
-    ):
-        copyfile(source, platform_dir / name)
-    checksums = "".join(
-        f"{_digest(platform_dir / name)}  {name}\n"
-        for name in ("example-package.yml", "image-linux-amd64.tar", identity.bundle)
-    )
-    (platform_dir / "SHA256SUMS").write_text(checksums, encoding="utf-8")
-    (platform_dir / "README.md").write_bytes(packet_readme(identity))
-    archive = output / f"{root_name}.tar.gz"
-    with (
-        archive.open("wb") as raw,
-        gzip.GzipFile(
-            fileobj=raw, mode="wb", compresslevel=GZIP_LEVEL, filename="", mtime=identity.timestamp
-        ) as compressed,
-        tarfile.open(fileobj=compressed, mode="w", format=ARCHIVE_FORMAT) as opened,
-    ):
-        for path in (root, platform_dir, *sorted(platform_dir.iterdir())):
-            entry = tarfile.TarInfo(path.relative_to(output).as_posix())
-            entry.mtime = identity.timestamp
-            entry.mode = DIRECTORY_MODE if path.is_dir() else 0o644
-            entry.uid = entry.gid = ARCHIVE_OWNER
-            entry.uname = entry.gname = ARCHIVE_OWNER_NAME
-            if path.is_dir():
-                entry.type = tarfile.DIRTYPE
-                opened.addfile(entry)
-            else:
-                entry.size = path.stat().st_size
-                with path.open("rb") as content:
-                    opened.addfile(entry, content)
-    write_checksum(archive)
-    rmtree(root)
-    return archive
+def _require_pins(path: Path, lines: list[str]) -> list[tuple[int, str]]:
+    pins = _sync_image_pins(path, lines)
+    if not pins:
+        msg = f"{path} has no Sync image line containing '{SYNC_IMAGE_MARKER}'."
+        raise Exit(msg, code=1)
+    return pins
 
 
-@task(name="packet")
-def packet(context: Context, output: str = "") -> None:
-    """Build a Linux amd64 tester packet from recorded qualified inputs."""
-    del context
-    from .image import archive_file  # noqa: PLC0415 -- release and image import each other
+@task(
+    help={
+        "version": "Release version to pin, in canonical PEP 440 form (for example 3.0.0a6).",
+        "docker_file": "Compose file to edit (default: the repository's root docker-compose.yml).",
+    }
+)
+def update_docker_compose(context: Context, version: str, docker_file: str | None = None) -> None:  # noqa: ARG001  # pylint: disable=unused-argument
+    """Pin every Sync image line of the root Compose file to `version`."""
+    version = _canonical(version)
+    path = _compose_path(docker_file)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    pins = _require_pins(path, lines)
 
-    identity = read_recorded_identity()
-    candidate = _packet_document(BUNDLE_DIR / CANDIDATE_INPUT_NAME)
-    image_archive = archive_file(BINDING_PLATFORM)
-    bundle = BUNDLE_DIR / identity.bundle
-    _verify_packet_inputs(identity, image_archive, bundle, EXAMPLE_PACKAGE, candidate)
-    archive = write_packet(identity, image_archive, bundle, EXAMPLE_PACKAGE, Path(output) if output else PACKET_DIR)
-    print(f" - [{NAMESPACE}] Packet    {archive}")
-    print(f" - [{NAMESPACE}] Checksum  {archive.with_name(archive.name + CHECKSUM_SUFFIX)}")
+    for index, _old in pins:
+        line = lines[index]
+        start = line.index(SYNC_IMAGE_MARKER)
+        lines[index] = line[:start] + VERSION_DEFAULT.sub(f"${{VERSION:-{version}}}", line[start:], count=1)
+
+    changed = [index + 1 for index, old in pins if old != version]
+    if changed:
+        path.write_text("".join(lines), encoding="utf-8")
+    log.info("compose_image_pinned", file=str(path), version=version, sync_lines=len(pins), changed_lines=changed)
 
 
-def _digest(path: Path) -> str:
-    digest = sha256()
-    with path.open("rb") as content:
-        for chunk in iter(lambda: content.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+@task(
+    help={
+        "version": "Release version every Sync image line must pin.",
+        "docker_file": "Compose file to check (default: the repository's root docker-compose.yml).",
+    }
+)
+def validate_docker_compose(context: Context, version: str, docker_file: str | None = None) -> None:  # noqa: ARG001  # pylint: disable=unused-argument
+    """Refuse a Compose file whose Sync image lines pin anything but `version`."""
+    path = _compose_path(docker_file)
+    pins = _require_pins(path, path.read_text(encoding="utf-8").splitlines())
+
+    offending = [f"line {index + 1}: pins {found}" for index, found in pins if found != version]
+    if offending:
+        log.error("compose_image_pin_mismatch", file=str(path), expected=version, offending=offending)
+        msg = f"{path} does not pin every Sync image to {version}:\n  " + "\n  ".join(offending)
+        raise Exit(msg, code=1)
+    log.info("compose_image_pin_valid", file=str(path), version=version, sync_lines=len(pins))

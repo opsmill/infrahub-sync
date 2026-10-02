@@ -89,8 +89,8 @@ def test_the_deployment_start_uses_the_declared_bound_and_a_cushioned_process(
         return None
 
     monkeypatch.setattr(lifecycle_module, "compose", record)
-    environment = tmp_path / "operator.env"
-    environment.write_text("INFRAHUB_SYNC_INSTANCE=bounds\n", encoding="utf-8")
+    environment = tmp_path / ".env"
+    environment.write_text("VERSION=bounds\n", encoding="utf-8")
 
     Deployment(instance="bounds", environment_file=environment).up("sync-api", "sync-worker")
 

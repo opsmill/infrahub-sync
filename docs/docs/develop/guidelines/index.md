@@ -26,6 +26,8 @@ testing, and secret redaction. For how the system works, see
   before it proves anything, what it writes, and why a skipped check is not a pass.
 - [Secret redaction](secret-redaction.md) — rules for any failure path that crosses a
   process boundary: where to sanitize, what to collect, and how over-collection fails.
+- [CI workflows](ci-workflows.md) — shell strictness, secret and input handling, pinning,
+  concurrency, and how workflow behaviour is tested.
 
 ### Related
 

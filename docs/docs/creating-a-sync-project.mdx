@@ -86,7 +86,7 @@ A registered run can write only to Infrahub, so `destination.name` is `infrahub`
 The `credentials` block declares each `$credential` reference. `identifier` is the name of
 the environment variable that the Sync worker reads when a run starts. In this example, the
 worker needs `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. On a Compose deployment, set them in
-`operator.env`, then run `./infrahub-sync-compose start`. See
+the deployment's `.env`, then run `docker compose up -d --wait`. See
 [Credentials](./configuration-package.mdx#credentials).
 
 ## Schema mapping
