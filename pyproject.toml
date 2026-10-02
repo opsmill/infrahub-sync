@@ -316,14 +316,12 @@ max-complexity = 33
     "T201",  # `print` found
 ]
 
-# The NetBox dataset seeders are standalone scripts invoked by path (`netbox.seed`
-# shells out to them), not modules this repository imports, and their printed JSON
-# summary is the operator-facing result. The fixed dataset they build is a long, flat
-# sequence of literal objects rather than a reusable API, so the usual complexity and
-# magic-value limits do not fit it either.
+# NetBox dataset tooling includes scripts invoked by path and reusable modules
+# imported by Invoke tasks and tests. Endpoint progress is logged during seeding.
+# Fixed tier payloads and relationship dispatch need flat literal data and branches,
+# so the usual complexity and magic-value limits do not fit these modules.
 "development/netbox/datasets/*.py" = [
     "INP001",  # File is part of an implicit namespace package
-    "T201",  # `print` found
     "PLR0912",  # Too many branches
     "PLR0914",  # Too many local variables
     "PLR0915",  # Too many statements

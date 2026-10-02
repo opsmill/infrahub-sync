@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import gzip
 import hashlib
+import json
+import shlex
 from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -28,6 +31,14 @@ REQUIRED_VALUES = {
     "NETBOX_TOKEN_KEY": "devnetboxkey",
     "NETBOX_TOKEN": "devnetboxseedtoken0000000000000000000000",
 }
+
+
+@pytest.fixture(autouse=True)
+def isolated_tier_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Isolate generated tier files and suppress live worker connections."""
+    monkeypatch.setattr(netbox, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(netbox, "attach_dev_worker", lambda _context, _values: False)
+    monkeypatch.setattr(netbox, "detach_dev_worker", lambda _context, _values: None)
 
 
 def test_dataset_script_resolves_the_seed_dataset() -> None:
@@ -121,13 +132,21 @@ def test_reset_database_recreates_before_it_waits(monkeypatch: pytest.MonkeyPatc
 
 
 def test_seed_resets_the_database_before_loading_the_dataset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reset before seeding and pass both credentials through the subprocess environment."""
     events: list[tuple[str, str]] = []
+    environments: list[dict[str, str]] = []
     context = Context()
 
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
     monkeypatch.setattr(netbox, "reset_database", lambda _context, _values: events.append(("reset", "")))
     monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
-    monkeypatch.setattr(context, "run", lambda command, **_kwargs: events.append(("run", command)))
+
+    def run(command: str, *, env: dict[str, str], **_kwargs: object) -> None:
+        """Capture the command and its required environment without executing a subprocess."""
+        events.append(("run", command))
+        environments.append(env)
+
+    monkeypatch.setattr(context, "run", run)
 
     cast("Task", netbox.seed).body(context, dataset="seed")
 
@@ -135,13 +154,17 @@ def test_seed_resets_the_database_before_loading_the_dataset(monkeypatch: pytest
     run_event = events[1]
     assert run_event[0] == "run"
     assert str(netbox.DATASETS["seed"]) in run_event[1]
-    assert "--url http://localhost:8082" in run_event[1]
-    assert "--token nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000" in run_event[1]
+    assert "--tier S" in run_event[1]
+    assert "--token" not in run_event[1]
+    assert environments == [
+        {"NETBOX_URL": netbox.netbox_url(REQUIRED_VALUES), "NETBOX_API_TOKEN": netbox.netbox_token(REQUIRED_VALUES)}
+    ]
 
 
-def test_seed_prints_the_url_and_token_banner(
+def test_seed_reports_the_tier_and_development_banner(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """Report the loaded tier alongside the development connection banner."""
     context = Context()
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
     monkeypatch.setattr(netbox, "reset_database", lambda _context, _values: None)
@@ -151,8 +174,9 @@ def test_seed_prints_the_url_and_token_banner(
     cast("Task", netbox.seed).body(context, dataset="seed")
 
     printed = capsys.readouterr().out
-    assert "http://localhost:8082" in printed
-    assert "nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000" in printed
+    assert "NetBox tier S ready" in printed
+    assert f"URL:   {netbox.netbox_url(REQUIRED_VALUES)}" in printed
+    assert f"Token: {netbox.netbox_token(REQUIRED_VALUES)}" in printed
 
 
 def test_seed_refuses_an_unknown_dataset_before_touching_the_database(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -311,6 +335,7 @@ def test_seed_demo_restores_into_a_fresh_database_then_creates_the_token(
     restore_file = tmp_path / "demo.restore.sql"
     real_prepare = netbox.prepare_restore_sql
     events: list[str] = []
+    netbox.record_tier("L")
     context = Context()
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
     monkeypatch.setattr(netbox, "fetch_demo_sql", lambda: sql_file)
@@ -337,6 +362,9 @@ def test_seed_demo_restores_into_a_fresh_database_then_creates_the_token(
     # The changed copy is removed once restored; only the verified dump stays.
     assert not restore_file.exists()
     assert sql_file.exists()
+    assert not (netbox.STATE_DIR / "tier.json").exists()
+    with pytest.raises(netbox.NetboxError, match="seed or restore"):
+        cast("Task", netbox.dump).body(context, tier="L")
     printed = capsys.readouterr().out
     assert "http://localhost:8082" in printed
     assert "nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000" in printed
@@ -453,3 +481,195 @@ def test_demo_package_writes_the_local_copy(
     assert written["configuration"]["source"]["settings"]["url"] == "http://localhost:8082"
     assert written["configuration"]["destination"]["settings"]["url"] == "http://localhost:18080"
     assert str(destination) in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(("dataset", "tier"), [("seed", "X"), ("demo", "M"), ("demo", "L")])
+def test_seed_rejects_tier_errors_before_reset(monkeypatch: pytest.MonkeyPatch, dataset: str, tier: str) -> None:
+    """Reject unsupported tiers before resetting the database."""
+    events: list[str] = []
+    monkeypatch.setattr(netbox, "reset_database", lambda *_args: events.append("reset"))
+    with pytest.raises((ValueError, netbox.NetboxError), match="tier"):
+        cast("Task", netbox.seed).body(Context(), dataset=dataset, tier=tier)
+    assert not events
+
+
+@pytest.mark.parametrize("tier", ["S", "M", "L"])
+def test_tier_dump_paths_are_isolated_and_validated(tier: str) -> None:
+    """Keep each valid tier dump separate and reject invalid tier names."""
+    sql, sidecar = netbox.tier_paths(tier)
+    assert sql == netbox.STATE_DIR / "dumps" / f"netbox-tier-{tier}.sql.gz"
+    assert sidecar == sql.with_suffix(".json")
+    with pytest.raises(ValueError, match="tier"):
+        netbox.tier_paths("../invalid")
+
+
+def write_tier_dump(
+    tier: str,
+    *,
+    content: bytes = (netbox.DEMO_SQL_SEARCH_PATH_LINE + "\nSELECT 1;\n").encode(),
+    image: str | None = None,
+) -> Path:
+    """Write a synthetic compressed dump and its matching metadata."""
+    sql, metadata = netbox.tier_paths(tier)
+    sql.parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(sql, "wb") as handle:
+        handle.write(content)
+    metadata.write_text(
+        json.dumps(
+            {
+                "format_version": 1,
+                "tier": tier,
+                "image": image or netbox.netbox_image(),
+                "sha256": netbox.sha256_of(sql),
+            }
+        )
+    )
+    return sql
+
+
+def test_restore_refuses_missing_dump_before_touching_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject a missing dump before running database commands."""
+    calls: list[str] = []
+    monkeypatch.setattr(netbox, "_compose", lambda _context, args, _values: calls.append(args))
+    with pytest.raises(netbox.NetboxError, match="missing tier M dump"):
+        cast("Task", netbox.restore).body(Context(), tier="M")
+    assert not calls
+
+
+@pytest.mark.parametrize("problem", ["image", "tier", "checksum", "malformed", "version"])
+def test_restore_refuses_invalid_sidecar_before_touching_database(
+    monkeypatch: pytest.MonkeyPatch, problem: str
+) -> None:
+    """Reject mismatched dump metadata before running database commands."""
+    sql = write_tier_dump("M")
+    metadata = sql.with_suffix(".json")
+    info = json.loads(metadata.read_text())
+    if problem == "image":
+        info["image"] = "different-image"
+    elif problem == "tier":
+        info["tier"] = "S"
+    elif problem == "checksum":
+        info["sha256"] = "wrong"
+    elif problem == "version":
+        info["format_version"] = 2
+    metadata.write_text("invalid json" if problem == "malformed" else json.dumps(info))
+    calls: list[str] = []
+    monkeypatch.setattr(netbox, "_compose", lambda _context, args, _values: calls.append(args))
+    with pytest.raises(netbox.NetboxError):
+        cast("Task", netbox.restore).body(Context(), tier="M")
+    assert not calls
+
+
+def test_tier_restore_orders_database_load_before_netbox_and_reapplies_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restore before starting NetBox and recreate development credentials."""
+    sql = write_tier_dump("M")
+    calls: list[str] = []
+    context = Context()
+
+    def refuse_subprocess(*_args: object, **_kwargs: object) -> None:
+        """Fail if the restore test attempts a host subprocess."""
+        pytest.fail("restore unit test attempted a host subprocess")
+
+    monkeypatch.setattr(context, "run", refuse_subprocess)
+
+    def detach(ctx: Context, values: dict[str, str]) -> None:
+        """Record worker detachment with the original context and settings."""
+        assert ctx is context
+        assert values == REQUIRED_VALUES
+        calls.append("detach")
+
+    def attach(ctx: Context, values: dict[str, str]) -> bool:
+        """Record worker attachment with the original context and settings."""
+        assert ctx is context
+        assert values == REQUIRED_VALUES
+        calls.append("attach")
+        return True
+
+    monkeypatch.setattr(netbox, "detach_dev_worker", detach)
+    monkeypatch.setattr(netbox, "attach_dev_worker", attach)
+    monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
+    monkeypatch.setattr(netbox, "_compose", lambda _context, args, _values: calls.append(args))
+    monkeypatch.setattr(netbox, "_wait_for_http", lambda *_args: calls.append("wait"))
+    cast("Task", netbox.restore).body(context, tier="M")
+    assert calls.pop(0) == "detach"
+    assert calls.pop() == "attach"
+    assert calls[0] == "down --volumes"
+    assert calls[1].endswith("netbox-database netbox-redis")
+    assert "psql" in calls[2]
+    assert "ON_ERROR_STOP=1 --single-transaction" in calls[2]
+    assert calls[3] == f"up --detach --wait --wait-timeout {netbox.WAIT_TIMEOUT_SECONDS}"
+    assert "User.objects.get_or_create" in calls[4]
+    assert "Token.objects.filter" in calls[4]
+    assert "Token.objects.create" in calls[4]
+    assert calls[5] == "wait"
+    assert not sql.with_suffix(".restore.sql").exists()
+    assert json.loads((netbox.STATE_DIR / "tier.json").read_text())["tier"] == "M"
+
+
+def test_dump_compresses_with_checksum_metadata_and_no_raw_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Publish a compressed dump with verified metadata and remove raw files."""
+    netbox.record_tier("M")
+    calls: list[str] = []
+    context = Context()
+    monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
+    monkeypatch.setattr(context, "run", lambda cmd, **_kwargs: calls.append(cmd))
+
+    def compose(_context: Context, arguments: str, _values: dict[str, str]) -> None:
+        """Capture the dump command and write synthetic database output."""
+        calls.append(arguments)
+        Path(shlex.split(arguments)[-1]).write_bytes(b"SELECT 42;\n")
+
+    monkeypatch.setattr(netbox, "_compose", compose)
+    monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
+    cast("Task", netbox.dump).body(context, tier="M")
+    sql, metadata = netbox.tier_paths("M")
+    assert calls[0].endswith("--tier M --verify-only")
+    assert "pg_dump" in calls[1]
+    assert "--no-owner --no-privileges" in calls[1]
+    assert gzip.decompress(sql.read_bytes()) == b"SELECT 42;\n"
+    assert json.loads(metadata.read_text())["sha256"] == netbox.sha256_of(sql)
+    assert netbox.verify_tier_dump("M") == sql
+    assert not list(sql.parent.glob("*partial*"))
+
+
+def test_dump_refuses_other_tier_or_changed_phase(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Refuse a dump when recorded tier or mutation phase does not match."""
+    calls: list[str] = []
+    monkeypatch.setattr(netbox, "_compose", lambda _context, args, _values: calls.append(args))
+    netbox.record_tier("S")
+    with pytest.raises(netbox.NetboxError, match="differs"):
+        cast("Task", netbox.dump).body(Context(), tier="L")
+    netbox.record_tier("S", phase="changed")
+    with pytest.raises(netbox.NetboxError, match="changes were applied"):
+        cast("Task", netbox.dump).body(Context(), tier="S")
+    assert calls == []
+
+
+def test_change_task_passes_credentials_only_in_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pass change credentials through the environment and record its phase."""
+    calls: list[tuple[str, dict[str, str]]] = []
+    context = Context()
+    monkeypatch.setattr(netbox, "load_netbox_env", lambda: REQUIRED_VALUES)
+    monkeypatch.setattr(context, "cd", lambda _path: nullcontext())
+    monkeypatch.setattr(context, "run", lambda command, *, env, **_kwargs: calls.append((command, env)))
+    cast("Task", netbox.change).body(context, tier="L", force=True)
+    assert calls[0][0].endswith("--tier L --force")
+    assert netbox.netbox_token(REQUIRED_VALUES) not in calls[0][0]
+    assert calls[0][1]["NETBOX_API_TOKEN"] == netbox.netbox_token(REQUIRED_VALUES)
+    assert json.loads((netbox.STATE_DIR / "tier.json").read_text())["phase"] == "changed"
+
+
+def test_restore_refuses_invalid_gzip_before_reset_and_cleans_raw_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject corrupt compressed data before reset and remove extraction files."""
+    sql = write_tier_dump("S")
+    sql.write_bytes(b"not gzip")
+    metadata = sql.with_suffix(".json")
+    info = json.loads(metadata.read_text())
+    info["sha256"] = netbox.sha256_of(sql)
+    metadata.write_text(json.dumps(info))
+    calls: list[str] = []
+    monkeypatch.setattr(netbox, "_compose", lambda _context, args, _values: calls.append(args))
+    with pytest.raises(gzip.BadGzipFile):
+        cast("Task", netbox.restore).body(Context(), tier="S")
+    assert not calls
+    assert not sql.with_suffix(".restore.sql").exists()
