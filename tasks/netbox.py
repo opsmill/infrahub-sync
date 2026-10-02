@@ -2,7 +2,7 @@
 
 `invoke netbox.up` starts a disposable local NetBox instance and prints its URL and
 development token. `invoke netbox.seed` resets the database, loads a named dataset, and
-reports the loaded tier for `seed`, or the URL and token banner for `demo`:
+prints the URL and token banner for both datasets; `seed` also reports its loaded tier:
 
 - `seed` (the default) is the deterministic dataset
   `tests/integration/test_saved_plan_apply_integration.py` requires.
