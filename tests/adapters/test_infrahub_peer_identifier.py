@@ -1406,17 +1406,29 @@ def test_id_scan_rejects_null_identifier(monkeypatch: pytest.MonkeyPatch, identi
 
 
 @pytest.mark.parametrize("identifier", ["device", "name"])
-def test_store_insert_rejects_null_identifier(identifier: str) -> None:
+@pytest.mark.parametrize("continue_on_error", [False, True])
+def test_store_insert_rejects_null_identifier(
+    caplog: pytest.LogCaptureFixture,
+    identifier: str,
+    *,
+    continue_on_error: bool,
+) -> None:
     from diffsync import Adapter
 
     harness = _RelationshipHarness(rehydrated_peer=None)
     harness.store = Adapter().store
+    harness.continue_on_error = continue_on_error
     data: dict[str, str | None] = {"device": "router-1", "name": "lag-1"}
     data[identifier] = None
 
-    with pytest.raises(ValidationError, match=rf"missing or null identifier key.*{identifier}"):
-        harness.add(_NullableLagModel.model_validate(data))
-
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"):
+        if continue_on_error:
+            harness.add(_NullableLagModel.model_validate(data))
+            assert "Skipping InterfaceLag[None]" in caplog.text
+            assert identifier in caplog.text
+        else:
+            with pytest.raises(ValidationError, match=rf"missing or null identifier key.*{identifier}"):
+                harness.add(_NullableLagModel.model_validate(data))
     assert not harness.store.get_all(model="InterfaceLag")
 
 
@@ -1432,3 +1444,34 @@ def test_store_insert_accepts_netbox_global_table_identity(netbox_global_table: 
     adapter.add(item)
 
     assert adapter.get(case.model, case.unique_id) is item
+
+
+class _ManyIdentifierModel(InfrahubModel):
+    """A record identity distinct from the SDK peer-alias contract."""
+
+    _modelname = "TestingGroup"
+    _identifiers = ("members",)
+    members: list[str]
+
+
+@pytest.mark.parametrize("members", [[], ["member-a", "member-b"]])
+def test_populated_many_identifier_can_be_stored_as_record(members: list[str]) -> None:
+    from diffsync import Adapter
+
+    schema = NodeSchemaAPI(
+        namespace="Testing",
+        name="Group",
+        attributes=[],
+        relationships=[
+            RelationshipSchemaAPI(name="members", peer="TestingMember", cardinality=RelationshipCardinality.MANY),
+        ],
+    )
+    adapter = InfrahubAdapter.__new__(InfrahubAdapter)
+    Adapter.__init__(adapter)  # noqa: PLC2801 -- initialize the store without a remote client
+    adapter.schema = {"TestingGroup": schema}
+    adapter.continue_on_error = False
+    item = _ManyIdentifierModel(members=members)
+
+    adapter.add(item)
+
+    assert adapter.get(_ManyIdentifierModel, item.get_unique_id()) is item

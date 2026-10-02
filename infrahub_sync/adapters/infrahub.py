@@ -440,7 +440,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     def add(self, obj: DiffSyncModel) -> None:
         """Validate Infrahub identities before full or incremental store insertion."""
         if isinstance(obj, InfrahubModel):
-            obj.validate_identifiers(self.schema[obj.get_type()])
+            try:
+                obj.validate_identifiers(self.schema[obj.get_type()])
+            except ValidationError as exc:
+                if not self.continue_on_error:
+                    raise
+                logger.warning(
+                    "Skipping %s[%s]: cannot build DiffSync model. Pydantic errors: %s",
+                    obj.get_type(),
+                    obj.local_id,
+                    exc.errors(include_url=False),
+                )
+                return
         super().add(obj)
 
     def cursor_tier_for(self, model_name: str) -> CursorTier:
