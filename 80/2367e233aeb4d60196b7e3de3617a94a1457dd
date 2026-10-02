@@ -1,0 +1,23 @@
+tests/compose/test_documentation.py
+  s_e87e829f9360b6::t_3021759e618a21 318-321,330-333
+docs/docs/develop/guides/publishing-an-image.md
+  s_e87e829f9360b6::t_3021759e618a21 82-87
+docs/docs/develop/guidelines/ci-workflows.md
+  s_e87e829f9360b6::t_3021759e618a21 52-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "802367e233aeb4d60196b7e3de3617a94a1457dd",
+  "prompts": {},
+  "sessions": {
+    "s_e87e829f9360b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "11928a3e-529f-47b9-b31d-1cc6ccbdc7b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
