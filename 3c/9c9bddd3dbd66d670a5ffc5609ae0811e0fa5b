@@ -1,0 +1,24 @@
+tests/compose/test_documentation.py
+  s_e87e829f9360b6::t_33c49568232898 316-342
+  s_e87e829f9360b6::t_ea6b57c8126eb5 343-344
+docs/docs/compose-deployment.mdx
+  s_e87e829f9360b6::t_33c49568232898 158-160,164,170
+docs/docs/quickstart-compose.mdx
+  s_e87e829f9360b6::t_33c49568232898 57,64-66,70,76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "3c9c9bddd3dbd66d670a5ffc5609ae0811e0fa5b",
+  "prompts": {},
+  "sessions": {
+    "s_e87e829f9360b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "11928a3e-529f-47b9-b31d-1cc6ccbdc7b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
