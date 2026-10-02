@@ -773,6 +773,16 @@ STATE_FILE_NAME = ".instance"
 INTERRUPT_STEP_SECONDS = 180
 
 
+def default_sigint() -> None:
+    """Give the child the default `SIGINT` action, whatever pytest was started with.
+
+    A unit tier started as a background job runs with `SIGINT` ignored, and an
+    ignored signal survives `exec`. Without this the child would never see the
+    interrupt this test sends it.
+    """
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+
 @pytest.fixture
 def state_shim(shim: Path) -> Path:
     """The Docker stand-in directory, with a `grep` that can fail the state read."""
@@ -835,6 +845,7 @@ def test_an_interrupted_state_write_leaves_the_old_state_and_no_scratch_beside_i
     process = subprocess.Popen(  # noqa: S603 -- the entry point under test, with a fixed argv
         [str(initialized / ENTRY_POINT), "preflight"],
         start_new_session=True,
+        preexec_fn=default_sigint,  # noqa: PLW1509 -- one signal call, no threads started by this test
         env={
             **os.environ,
             "PATH": f"{state_shim}{os.pathsep}{os.environ['PATH']}",
