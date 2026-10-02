@@ -14,13 +14,19 @@ stand-in adapter that reuses the real helper. The focused cases cover:
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import runpy
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Protocol, cast
+from unittest.mock import Mock
 
 import pytest
 from diffsync.exceptions import ObjectNotFound
 from infrahub_sdk.exceptions import NodeNotFoundError
+from infrahub_sdk.schema import AttributeSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
+from infrahub_sdk.schema.main import AttributeKind, RelationshipCardinality
 from pydantic import ValidationError
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
@@ -224,7 +230,7 @@ class _RelationshipHarness(InfrahubAdapter):
                     SimpleNamespace(name="name", optional=False),
                     SimpleNamespace(name="description", optional=True),
                 ],
-                relationships=[SimpleNamespace(name="device", peer="InfraDevice", cardinality="one")],
+                relationships=[SimpleNamespace(name="device", peer="InfraDevice", cardinality="one", optional=False)],
             ),
         }
         self.config = SyncConfig(
@@ -277,7 +283,7 @@ def _make_sdk_node(
     kind: str,
     node_id: str,
     attrs: dict[str, object],
-    relationships: dict[str, tuple[str, str]] | None = None,
+    relationships: dict[str, tuple[str, str | None]] | None = None,
 ) -> SimpleNamespace:
     relationship_data = relationships or {}
     node = SimpleNamespace(
@@ -288,7 +294,7 @@ def _make_sdk_node(
             attribute_names=list(attrs),
             attributes=[SimpleNamespace(name=name, optional=False) for name in attrs],
             relationships=[
-                SimpleNamespace(name=name, peer=peer_kind, cardinality="one")
+                SimpleNamespace(name=name, peer=peer_kind, cardinality="one", optional=False)
                 for name, (peer_kind, _peer_id) in relationship_data.items()
             ],
         ),
@@ -332,17 +338,18 @@ def _resolve_cached_sdk_peer(harness: InfrahubAdapter, *, kind: str, unique_id: 
     )
 
 
-@pytest.mark.parametrize("identifier", ["device", "name"])
 @pytest.mark.parametrize("omit_identifier", [False, True])
-def test_loaded_model_rejects_null_identifiers(identifier: str, *, omit_identifier: bool) -> None:
+def test_loaded_model_rejects_null_attribute_identifier(*, omit_identifier: bool) -> None:
+    identifier = "name"
     data: dict[str, str | None] = {"device": "router-1", "name": "lag-1"}
     if omit_identifier:
         del data[identifier]
     else:
         data[identifier] = None
 
-    with pytest.raises(ValidationError, match=f"missing or null identifier key.*{identifier}"):
-        _NullableLagModel.model_validate(data)
+    harness = _RelationshipHarness(rehydrated_peer=None)
+    with pytest.raises(ValidationError, match=f"null attribute identifier key.*{identifier}"):
+        _NullableLagModel.model_validate(data).validate_attribute_identifiers(harness.schema["InterfaceLag"])
 
 
 def test_loaded_model_accepts_null_non_identifier_attribute() -> None:
@@ -375,7 +382,7 @@ def test_model_loader_rejects_null_attribute_identifier(
             harness.model_loader("InterfaceLag", _NullableLagModel)
             assert "Skipping InterfaceLag[peer-id]" in caplog.text
         else:
-            with pytest.raises(ValidationError, match=r"missing or null identifier key.*name"):
+            with pytest.raises(ValidationError, match=r"null attribute identifier key.*name"):
                 harness.model_loader("InterfaceLag", _NullableLagModel)
 
     assert not harness._instances
@@ -1091,7 +1098,7 @@ def test_reconciliation_rejects_null_cardinality_one_relationship_identifier() -
         _schema=SimpleNamespace(
             kind="InterfaceLag",
             attributes=[SimpleNamespace(name="name", optional=False)],
-            relationships=[SimpleNamespace(name="device", cardinality="one")],
+            relationships=[SimpleNamespace(name="device", cardinality="one", optional=False)],
         ),
         name=SimpleNamespace(value="lag-1"),
         device=SimpleNamespace(id=None),
@@ -1190,3 +1197,188 @@ def test_complete_peer_adds_identity_alias_without_replacing_uuid_entry() -> Non
         == "dc-east|acme"
     )
     assert len(harness.client.store.set_calls) == set_call_count
+
+
+@pytest.mark.parametrize("cached_identity", [False, True])
+def test_complete_uuid_node_cannot_replace_fuller_identity_alias(*, cached_identity: bool) -> None:
+    rich_peer = _make_sdk_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1", "description": "keep this"},
+        {"device": ("InfraDevice", "device-id")},
+    )
+    narrow_peer = _make_sdk_node(
+        "InterfaceLag",
+        "lag-id",
+        {"name": "lag-1"},
+        {"device": ("InfraDevice", "device-id")},
+    )
+    harness = _RelationshipHarness(rehydrated_peer=narrow_peer)
+    _seed_relationship_stores(harness, peer=rich_peer, peer_key="router-1|lag-1")
+    harness.client.store.set(key="later-narrow", node=narrow_peer)
+    if cached_identity:
+        harness._peer_unique_ids["InterfaceLag", "lag-id"] = "router-1|lag-1"
+
+    result = harness._resolve_peer_unique_id(
+        parent_node=_make_node("InfraDevice", "parent-id", {}),  # ty: ignore[invalid-argument-type]
+        rel_name="bundle",
+        peer_node=narrow_peer,  # ty: ignore[invalid-argument-type]
+    )
+
+    assert result == "router-1|lag-1"
+    assert not harness.client.get_calls
+    assert harness.client.store.get(kind="InterfaceLag", key="lag-id") is rich_peer
+    assert _resolve_cached_sdk_peer(harness, kind="InterfaceLag", unique_id=result) is rich_peer
+    assert rich_peer.description.value == "keep this"
+
+
+@pytest.fixture(scope="module")
+def netbox_example_models() -> dict[str, Any]:
+    """Use the shipped models to preserve nullable VRF identifiers."""
+    return runpy.run_path(
+        str(Path(__file__).resolve().parents[2] / "examples/netbox_to_infrahub/infrahub/sync_models.py")
+    )
+
+
+@pytest.fixture(params=[("IpamPrefix", "prefix"), ("IpamIPAddress", "address")])
+def netbox_global_table(
+    request: pytest.FixtureRequest,
+    netbox_example_models: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> SimpleNamespace:
+    """Build a server-free adapter around the shipped nullable-VRF models."""
+    model_name, attribute = request.param
+    address = ipaddress.IPv4Interface((0xC0000201, 24))
+    value = str(address.network if attribute == "prefix" else address)
+    model = netbox_example_models[model_name]
+    assert issubclass(model, InfrahubModel)
+    peer = _make_sdk_node(model_name, "peer-id", {attribute: value}, {"vrf": ("IpamVRF", None)})
+    peer.save = Mock()
+    harness = _RelationshipHarness(rehydrated_peer=peer)
+    schema = NodeSchemaAPI(
+        namespace="Ipam",
+        name=model_name.removeprefix("Ipam"),
+        attributes=[AttributeSchemaAPI(name=attribute, kind=AttributeKind.TEXT)],
+        relationships=[
+            RelationshipSchemaAPI(name="vrf", peer="IpamVRF", cardinality=RelationshipCardinality.ONE, optional=True)
+        ],
+    )
+    harness.schema[model_name] = schema
+    harness.schema["IpamVRF"] = NodeSchemaAPI(namespace="Ipam", name="VRF", attributes=[])
+    setattr(harness, model_name, model)
+    harness.config.schema_mapping.append(
+        SchemaMappingModel(
+            name=model_name,
+            mapping=model_name,
+            identifiers=[attribute, "vrf"],
+            fields=[SchemaMappingField(name=name, mapping=name) for name in (attribute, "vrf")],
+        )
+    )
+    monkeypatch.setattr(harness.client, "all", lambda **_kwargs: [peer], raising=False)
+    harness.source_node = None
+    harness.owner_node = None
+    monkeypatch.setattr(
+        harness.client,
+        "schema",
+        SimpleNamespace(get=lambda **_kwargs: schema, generate_payload_create=lambda **kwargs: kwargs["data"]),
+        raising=False,
+    )
+    create = Mock(return_value=peer)
+    monkeypatch.setattr(harness.client, "create", create, raising=False)
+    return SimpleNamespace(
+        harness=harness,
+        model=model,
+        model_name=model_name,
+        peer=peer,
+        attribute=attribute,
+        value=value,
+        unique_id=f"{value}__None",
+        create=create,
+    )
+
+
+def test_netbox_global_table_model_load_and_id_scan(netbox_global_table: SimpleNamespace) -> None:
+    case = netbox_global_table
+    case.harness.model_loader(case.model_name, case.model)
+
+    loaded = case.harness._instances[-1]
+    assert loaded.get_unique_id() == case.unique_id
+    assert loaded.vrf is None
+    assert list(case.harness.list_existing_ids(case.model_name)) == [case.unique_id]
+
+
+@pytest.mark.parametrize("omit_vrf", [False, True])
+def test_netbox_global_table_model_create(netbox_global_table: SimpleNamespace, *, omit_vrf: bool) -> None:
+    case = netbox_global_table
+    ids = {case.attribute: case.value}
+    if not omit_vrf:
+        ids["vrf"] = None
+    assert case.model(**ids).get_unique_id() == case.unique_id
+
+    created = case.model.create(adapter=case.harness, ids=ids, attrs={})
+
+    assert created is not None
+    assert created.get_unique_id() == case.unique_id
+    assert created.vrf is None
+    assert case.create.call_args.kwargs == {"kind": case.model_name, "data": {case.attribute: case.value}}
+    case.peer.save.assert_called_once_with(allow_upsert=True)
+
+
+def test_netbox_global_table_peer_alias(netbox_global_table: SimpleNamespace) -> None:
+    case = netbox_global_table
+    result = case.harness._resolve_peer_unique_id(
+        parent_node=_make_node("InfraDevice", "parent-id", {}),
+        rel_name="prefix",
+        peer_node=case.peer,
+    )
+
+    assert result == case.unique_id
+    assert not case.harness.client.get_calls
+    assert _resolve_cached_sdk_peer(case.harness, kind=case.model_name, unique_id=result) is case.peer
+
+
+def test_hydrated_netbox_global_table_peer_alias(netbox_global_table: SimpleNamespace) -> None:
+    case = netbox_global_table
+    shallow_peer = _make_sdk_node(
+        case.model_name,
+        "peer-id",
+        {case.attribute: None},
+        {"vrf": ("IpamVRF", None)},
+    )
+
+    result = case.harness._resolve_peer_unique_id(
+        parent_node=_make_node("InfraDevice", "parent-id", {}),
+        rel_name="prefix",
+        peer_node=shallow_peer,
+    )
+
+    assert result == case.unique_id
+    assert len(case.harness.client.get_calls) == 1
+    assert _resolve_cached_sdk_peer(case.harness, kind=case.model_name, unique_id=result) is case.peer
+
+
+@pytest.mark.parametrize("omit_name", [False, True])
+def test_create_rejects_null_attribute_identifier_before_write(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    omit_name: bool,
+) -> None:
+    harness = _RelationshipHarness(rehydrated_peer=None)
+    schema = NodeSchemaAPI(
+        namespace="Interface",
+        name="Lag",
+        attributes=[
+            AttributeSchemaAPI(name="name", kind=AttributeKind.TEXT, optional=True),
+        ],
+    )
+    monkeypatch.setattr(harness.client, "schema", SimpleNamespace(get=lambda **_kwargs: schema), raising=False)
+    create = Mock()
+    monkeypatch.setattr(harness.client, "create", create, raising=False)
+    ids: dict[str, str | None] = {"device": "router-1"}
+    if not omit_name:
+        ids["name"] = None
+
+    with pytest.raises(ValidationError, match=r"null attribute identifier key.*name"):
+        _NullableLagModel.create(adapter=harness, ids=ids, attrs={})
+
+    create.assert_not_called()

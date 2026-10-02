@@ -16,7 +16,7 @@ from infrahub_sdk.exceptions import NodeNotFoundError
 from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from infrahub_sdk.utils import compare_lists
-from pydantic import ValidationError, model_validator
+from pydantic import ValidationError
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -340,7 +340,7 @@ def _sdk_node_has_identifiers(node: object, identifiers: tuple[str, ...], node_s
         if relationship is None or relationship.cardinality != "one":
             return False
         related_node = getattr(node, identifier, None)
-        if related_node is None or getattr(related_node, "id", None) is None:
+        if related_node is None or (getattr(related_node, "id", None) is None and not relationship.optional):
             return False
     return True
 
@@ -348,9 +348,19 @@ def _sdk_node_has_identifiers(node: object, identifiers: tuple[str, ...], node_s
 def _unresolved_peer_identifiers(
     peer_data: Mapping[str, Any],
     identifiers: tuple[str, ...],
+    node_schema: MainSchemaTypesAPI,
 ) -> tuple[str, ...]:
-    """Return identifiers absent from peer data or carrying a null value."""
-    return tuple(identifier for identifier in identifiers if peer_data.get(identifier) is None)
+    """Require populated attributes while allowing explicit optional single-peer nulls."""
+    nullable_relationships = {
+        relationship.name
+        for relationship in node_schema.relationships
+        if relationship.cardinality == "one" and relationship.optional
+    }
+    return tuple(
+        identifier
+        for identifier in identifiers
+        if identifier not in peer_data or (peer_data[identifier] is None and identifier not in nullable_relationships)
+    )
 
 
 class InfrahubAdapter(DiffSyncMixin, Adapter):
@@ -522,6 +532,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 original_node: InfrahubNodeSync = next(node for node, obj in node_dict_pairs if obj == transformed_obj)
                 try:
                     item = model(**transformed_obj)
+                    item.validate_attribute_identifiers(self.schema[model_name])
                 except ValidationError as exc:
                     if not self.continue_on_error:
                         raise
@@ -592,7 +603,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             identifiers=identifiers,
             hydration_attempted=hydration_attempted,
         )
-        missing = _unresolved_peer_identifiers(peer_data, identifiers)
+        missing = _unresolved_peer_identifiers(peer_data, identifiers, self.schema[peer_kind])
         if missing:
             err = PeerIdentifierError(
                 parent_kind=parent_node.get_kind(),
@@ -670,7 +681,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     ) -> tuple[dict[str, Any], InfrahubNodeSync | None]:
         """Read peer data and perform at most one bounded hydration attempt."""
         peer_data = self.infrahub_node_to_diffsync(peer_node)
-        unresolved_identifiers = _unresolved_peer_identifiers(peer_data, identifiers)
+        unresolved_identifiers = _unresolved_peer_identifiers(peer_data, identifiers, self.schema[peer_kind])
         if not unresolved_identifiers:
             return peer_data, None
 
@@ -690,10 +701,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             return peer_data, None
 
         hydrated_peer_data = self.infrahub_node_to_diffsync(hydrated_peer)
+        unresolved = _unresolved_peer_identifiers(hydrated_peer_data, identifiers, self.schema[peer_kind])
         hydrated_identifiers = {
-            identifier: hydrated_peer_data[identifier]
-            for identifier in identifiers
-            if hydrated_peer_data.get(identifier) is not None
+            identifier: hydrated_peer_data[identifier] for identifier in identifiers if identifier not in unresolved
         }
         return {**peer_data, **hydrated_identifiers}, hydrated_peer
 
@@ -709,13 +719,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """Alias the peer identity key to an identity-complete SDK node."""
         sdk_peer_by_uuid = self.client.store.get(key=peer_id, kind=peer_kind, raise_when_missing=False)
         sdk_peer_by_identity = self.client.store.get(key=unique_id, kind=peer_kind, raise_when_missing=False)
-        sdk_peer = next(
+        # On equal attribute completeness, keep the existing identity alias.
+        sdk_peer = max(
             (
                 peer
-                for peer in (sdk_peer_by_uuid, sdk_peer_by_identity, fallback_node)
+                for peer in (sdk_peer_by_identity, sdk_peer_by_uuid, fallback_node)
                 if peer is not None and _sdk_node_has_identifiers(peer, identifiers, self.schema[peer_kind])
             ),
-            None,
+            key=lambda peer: sum(
+                getattr(getattr(peer, attribute.name, None), "value", None) is not None
+                for attribute in self.schema[peer_kind].attributes
+            ),
+            default=None,
         )
         if sdk_peer is None:
             return False
@@ -766,6 +781,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             if rel_schema.cardinality == "one":
                 rel: RelatedNodeSync = getattr(node, rel_schema.name)
                 if not rel.id:
+                    model = getattr(self, node_kind, None)
+                    if rel_schema.optional and model and rel_schema.name in model._identifiers:
+                        data[rel_schema.name] = None
                     continue
                 peer_node = resolve_peer_node(
                     key=rel.id,
@@ -814,20 +832,22 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
 
 class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
-    @model_validator(mode="after")
-    def validate_identifiers(self) -> Self:
-        """Reject null identifiers before a loaded model can build its identity."""
-        identifiers = tuple(self._identifiers)
-        missing = _unresolved_peer_identifiers(
-            {identifier: getattr(self, identifier, None) for identifier in identifiers}, identifiers
+    def validate_attribute_identifiers(self, node_schema: MainSchemaTypesAPI) -> None:
+        """Reject null attribute identifiers using the loaded Infrahub schema."""
+        attributes = {attribute.name for attribute in node_schema.attributes}
+        missing = tuple(
+            identifier
+            for identifier in self._identifiers
+            if identifier in attributes and getattr(self, identifier, None) is None
         )
         if missing:
-            msg = (
-                f"Cannot build {self.get_type()} identity: missing or null identifier key(s) {list(missing)}. "
-                "Ensure the identifier fields are populated."
+            error = ValueError(
+                f"Cannot build {self.get_type()} identity: null attribute identifier key(s) {list(missing)}"
             )
-            raise ValueError(msg)
-        return self
+            raise ValidationError.from_exception_data(
+                self.get_type(),
+                [{"type": "value_error", "loc": (), "input": self.get_identifiers(), "ctx": {"error": error}}],
+            )
 
     @classmethod
     def create(
@@ -847,7 +867,9 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
         data = diffsync_to_infrahub(
             ids=ids, attrs=attrs, node_schema=node_schema, store=adapter.client.store, schemas=adapter.schema
         )
-        unique_id = cls(**ids, **attrs).get_unique_id()
+        item = cls(**ids, **attrs)
+        item.validate_attribute_identifiers(node_schema)
+        unique_id = item.get_unique_id()
         source_id = adapter.source_node.id if adapter.source_node else None
         owner_id = adapter.owner_node.id if adapter.owner_node else None
         create_data = adapter.client.schema.generate_payload_create(
