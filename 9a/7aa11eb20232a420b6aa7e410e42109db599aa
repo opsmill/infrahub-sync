@@ -1,0 +1,43 @@
+development/docker-compose.preview.yml
+  s_e87e829f9360b6::t_40363d5d37a242 11,71
+development/preview.env
+  s_e87e829f9360b6::t_40363d5d37a242 46-47
+docker-compose.yml
+  s_e87e829f9360b6::t_40363d5d37a242 151
+docs/docs/reference/prefect-remote-run.mdx
+  s_e87e829f9360b6::t_b715e197c4bd92 37
+infrahub_sync/service/worker.py
+  s_e87e829f9360b6::t_b715e197c4bd92 41
+tests/service/test_worker_claim.py
+  s_e87e829f9360b6::t_b715e197c4bd92 38,115
+tests/service/test_service_worker.py
+  s_e87e829f9360b6::t_b715e197c4bd92 379
+docs/docs/reference/sync-http-api.mdx
+  s_e87e829f9360b6::t_b715e197c4bd92 26,104
+examples/prefect_remote_run/README.md
+  s_e87e829f9360b6::t_b715e197c4bd92 73
+development/docker-compose.dev.yml
+  s_e87e829f9360b6::t_40363d5d37a242 101
+pyproject.toml
+  s_e87e829f9360b6::t_4782b17900212c 72,89
+docs/docs/develop/knowledge/orchestration-prefect.md
+  s_e87e829f9360b6::t_b715e197c4bd92 199,205
+uv.lock
+  s_e87e829f9360b6::t_c80cbe321d2942 82,94,96,1272-1273,2100,2163,2165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9a7aa11eb20232a420b6aa7e410e42109db599aa",
+  "prompts": {},
+  "sessions": {
+    "s_e87e829f9360b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "11928a3e-529f-47b9-b31d-1cc6ccbdc7b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
