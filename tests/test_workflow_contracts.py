@@ -967,11 +967,15 @@ def test_a_run_names_the_ref_it_builds_and_whether_it_publishes() -> None:
 def test_only_a_newer_run_for_the_same_ref_cancels_an_image_build() -> None:
     """The group is shared with the caller, so the ref keeps a run for one ref from cancelling another's.
 
-    Only a build-only run is cancelled; a publishing one runs to its signature.
+    Only a build-only run is cancelled; a publishing one runs to its signature. A
+    cancelling run cancels everything in progress in its group, so publishing
+    runs sit in a group no build-only run joins.
     """
     declared = load(DOCKER_IMAGE_WORKFLOW)["concurrency"]
 
-    assert concurrency_group(DOCKER_IMAGE_WORKFLOW) == "${{ github.workflow }}-${{ inputs.ref }}"
+    assert concurrency_group(DOCKER_IMAGE_WORKFLOW) == (
+        "${{ github.workflow }}-${{ inputs.ref }}-${{ inputs.publish && 'publish' || 'build' }}"
+    )
     assert declared.get("cancel-in-progress") == "${{ !inputs.publish }}", (
         "a publishing run cancelled between `merge` and `sign` leaves a pushed tag unsigned"
     )

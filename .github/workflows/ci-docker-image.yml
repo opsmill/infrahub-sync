@@ -84,9 +84,11 @@ permissions:
 
 # A newer build-only run cancels an older one for the same ref. A publishing run
 # is never cancelled: stopping it between `merge` and `sign` would leave a pushed
-# tag with no signature or SBOM.
+# tag with no signature or SBOM. Publishing runs get their own group, because a
+# build-only run arriving with `cancel-in-progress: true` cancels whatever is in
+# progress in its group, publishing runs included.
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.ref }}
+  group: ${{ github.workflow }}-${{ inputs.ref }}-${{ inputs.publish && 'publish' || 'build' }}
   cancel-in-progress: ${{ !inputs.publish }}
 
 jobs:

@@ -44,8 +44,12 @@ a passing run would otherwise hide.
 
 - **Pin every `uses:` to a full 40-character commit SHA**, with a version comment. Reuse pins
   already present in this repository or in `infrahub` before resolving new ones.
-- **Never use `cancel-in-progress` on a run that publishes.** A cancelled run can leave a
-  pushed tag unsigned. Use `cancel-in-progress: ${{ !inputs.publish }}`.
+- **Never let anything cancel a run that publishes.** A cancelled run can leave a pushed tag
+  unsigned. In a workflow with a boolean `publish` input, set
+  `cancel-in-progress: ${{ !inputs.publish }}` and put publishing runs in their own group, for
+  example by ending the group with `${{ inputs.publish && 'publish' || 'build' }}`. A run that
+  arrives with `cancel-in-progress: true` cancels every run in progress in its group, so a
+  shared group lets a build-only run cancel a publishing one.
 
 ### Testing workflows
 

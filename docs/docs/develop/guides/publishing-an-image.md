@@ -78,9 +78,10 @@ The `ref` input picks the commit that gets built. The two can differ.
 
 A run is named after its inputs, for example
 `Image 0123abcd… (publish=true)`, so you can find it in the run list. A
-newer run for the same `ref` cancels a build-only run still in progress. A
-publishing run is never cancelled, so it can't stop between pushing a tag and
-signing it.
+newer build-only run for the same `ref` cancels a build-only run still in
+progress. Publishing runs use a separate concurrency group and are never
+cancelled, so one can't stop between pushing a tag and signing it; a second
+publishing run for the same `ref` waits for the first.
 
 A dispatch with `publish` set to `true` fails before it builds anything when
 `tags` is empty, or when the repository has no `HARBOR_HOST` variable.
