@@ -20,6 +20,8 @@ how the system works, see [Knowledge](../knowledge/index.md).
 
 - [Local development stack](../../development-stack.mdx) — starting the disposable stack, the
   service development loop, and the destructive reset.
+- [NetBox benchmark tiers](netbox-benchmark-tiers.md) — seeding, dumping, restoring, and changing
+  the S, M, and L NetBox tiers.
 
 ### Releases
 

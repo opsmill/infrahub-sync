@@ -94,8 +94,11 @@ uv run invoke netbox.seed                  # the `seed` dataset
 uv run invoke netbox.seed --dataset demo   # the `demo` dataset
 ```
 
-`netbox.seed` resets the database, loads the dataset, and prints the NetBox URL and
-development token. It starts NetBox itself, so you do not need to run `netbox.up` first.
+`netbox.seed` resets the database and loads the dataset. The `seed` dataset accepts
+`--tier S|M|L` (default S) and reports the loaded tier. Both datasets print the URL and
+development-token banner. See [the tier guide](../docs/docs/develop/guides/netbox-benchmark-tiers.md)
+for dumps, restores, and fixed changes. The task starts NetBox itself, so you do not need
+to run `netbox.up` first.
 Doing so anyway makes NetBox run its first migration twice; on a small host that first
 migration can take 15 minutes or more. The `demo` dataset skips most of that wait, because
 NetBox starts against the restored data. Run `netbox.up` on its own only
@@ -142,5 +145,8 @@ lists every command, from a fresh Infrahub to `diff` and `sync`.
 | `netbox/netbox.env` | Shipped defaults — the host port and development-only NetBox credentials. Nothing here is a secret; never point these values at a shared or internet-facing instance. |
 | `netbox/netbox.local.env` | Your personal overrides (gitignored). |
 | `netbox/datasets/seed_netbox.py` | The `seed` dataset's seeder script. Asserts the instance is empty before writing and never deletes. |
+| `netbox/datasets/tier_data.py` | Deterministic tier counts, skip cases, and object payloads. |
+| `netbox/datasets/netbox_api.py` | Bounded REST batches, relationship resolution, progress logging, and count checks. |
+| `netbox/datasets/change_netbox.py` | Fixed 1% tier mutations and expected-change files. |
 | `../tasks/netbox.py` | The `demo` dataset's pinned commit, URL, and SHA-256, and the restore steps. |
-| `../.netbox/` | Gitignored. The downloaded demo dump and the generated `from-netbox.local.yml`. The restore writes a changed copy of the dump here and deletes it when the restore ends. |
+| `../.netbox/` | Gitignored. The downloaded demo dump, generated `from-netbox.local.yml`, tier dumps and metadata in `dumps/`, expected and partial mutations in `changes/`, and loaded-tier state in `tier.json`. The restore writes a changed copy of the dump here and deletes it when the restore ends. |

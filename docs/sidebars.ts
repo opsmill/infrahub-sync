@@ -119,6 +119,7 @@ const sidebars: SidebarsConfig = {
             'develop/guides/adding-an-adapter',
             'develop/guides/testing-an-adapter',
             'develop/guides/publishing-an-image',
+            'develop/guides/netbox-benchmark-tiers',
           ],
         },
         {

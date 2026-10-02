@@ -2,7 +2,7 @@
 
 `invoke netbox.up` starts a disposable local NetBox instance and prints its URL and
 development token. `invoke netbox.seed` resets the database, loads a named dataset, and
-prints the same URL and token banner:
+prints the URL and token banner for both datasets; `seed` also reports its loaded tier:
 
 - `seed` (the default) is the deterministic dataset
   `tests/integration/test_saved_plan_apply_integration.py` requires.
@@ -28,14 +28,18 @@ gitignored `.netbox/` directory at the repository root.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import shlex
+import shutil
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from invoke import Context, task
+
+from development.netbox.datasets.tier_data import validate_tier
 
 from .preview import load_preview_env, preview_urls
 from .utils import ESCAPED_REPO_PATH
@@ -378,6 +382,7 @@ def restore_demo_database(context: Context, values: dict[str, str], sql_file: Pa
     restore_file = prepare_restore_sql(sql_file)
     print(f" - [{NAMESPACE}] Resetting the local NetBox database")
     detach_dev_worker(context, values)
+    (STATE_DIR / "tier.json").unlink(missing_ok=True)
     _compose(context, "down --volumes", values)
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} netbox-database netbox-redis", values)
     psql = "exec -T netbox-database psql --quiet --username netbox --dbname netbox"
@@ -450,8 +455,12 @@ def up(context: Context) -> None:
 
 
 @task
-def seed(context: Context, dataset: str = DEFAULT_DATASET) -> None:
-    """Reset the database, then load the named dataset: `seed` (default) or `demo`."""
+def seed(context: Context, dataset: str = DEFAULT_DATASET, tier: str = "S") -> None:
+    """Reset and load `seed` at tier S/M/L (default S), or the pinned `demo` dataset."""
+    validate_tier(tier)
+    if dataset == DEMO_DATASET and tier != "S":
+        msg = "--tier applies only to the seed dataset"
+        raise NetboxError(msg)
     if dataset == DEMO_DATASET:
         values = load_netbox_env()
         # Verified before anything is reset: a refused download leaves NetBox as it was.
@@ -465,11 +474,13 @@ def seed(context: Context, dataset: str = DEFAULT_DATASET) -> None:
     print(f" - [{NAMESPACE}] Loading the {dataset!r} dataset from {script}")
     with context.cd(ESCAPED_REPO_PATH):
         context.run(
-            f"uv run python {shlex.quote(str(script))} "
-            f"--url {shlex.quote(netbox_url(values))} --token {shlex.quote(netbox_token(values))}",
+            f"uv run python {shlex.quote(str(script))} --tier {shlex.quote(tier)}",
+            env={"NETBOX_URL": netbox_url(values), "NETBOX_API_TOKEN": netbox_token(values)},
             pty=False,
         )
+    record_tier(tier)
     _ready(context, values)
+    print(f" - [{NAMESPACE}] NetBox tier {tier} ready")
 
 
 @task(name="demo-package")
@@ -504,3 +515,146 @@ def down(context: Context) -> None:
     detach_dev_worker(context, values)
     _compose(context, "down --volumes", values)
     print(f" - [{NAMESPACE}] Local NetBox stopped and data volumes removed")
+
+
+def netbox_image() -> str:
+    """Read the full pinned NetBox image reference without loading credentials."""
+    import yaml  # noqa: PLC0415 -- keep task imports lightweight
+
+    return yaml.safe_load(COMPOSE_FILE.read_text(encoding="utf-8"))["services"]["netbox"]["image"]
+
+
+def tier_paths(tier: str) -> tuple[Path, Path]:
+    """Return the ignored compressed dump and metadata paths for one valid tier."""
+    validate_tier(tier)
+    sql = STATE_DIR / "dumps" / f"netbox-tier-{tier}.sql.gz"
+    return sql, sql.with_suffix(".json")
+
+
+def record_tier(tier: str, phase: str = "seeded") -> None:
+    """Record the last successfully loaded tier for dump validation."""
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    (STATE_DIR / "tier.json").write_text(
+        json.dumps({"tier": tier, "image": netbox_image(), "phase": phase}), encoding="utf-8"
+    )
+
+
+def verify_tier_dump(tier: str) -> Path:
+    """Reject missing, mismatched or corrupted dumps before any database reset."""
+    sql, metadata = tier_paths(tier)
+    if not sql.is_file() or not metadata.is_file():
+        msg = f"missing tier {tier} dump or metadata; run netbox.dump --tier {tier}"
+        raise NetboxError(msg)
+    try:
+        info = json.loads(metadata.read_text(encoding="utf-8"))
+        if info["format_version"] != 1 or info["tier"] != tier or info["image"] != netbox_image():
+            msg = "dump tier or NetBox image differs; seed and dump the tier again"
+            raise NetboxError(msg)
+        verify_sha256(sql, info["sha256"], "tier dump")
+    except (KeyError, TypeError, json.JSONDecodeError):
+        msg = "invalid tier dump metadata; seed and dump the tier again"
+        raise NetboxError(msg) from None
+    return sql
+
+
+@task
+def dump(context: Context, tier: str = "S") -> None:
+    """Save the seeded tier database as ignored SQL gzip plus image and checksum metadata."""
+    sql, metadata = tier_paths(tier)
+    state_file = STATE_DIR / "tier.json"
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        msg = "seed or restore a tier before dumping it"
+        raise NetboxError(msg) from None
+    if state != {"tier": tier, "image": netbox_image(), "phase": "seeded"}:
+        msg = "requested tier differs from the seeded database, or changes were applied"
+        raise NetboxError(msg)
+    values = load_netbox_env()
+    with context.cd(ESCAPED_REPO_PATH):
+        context.run(
+            f"uv run python {shlex.quote(str(DATASETS['seed']))} --tier {tier} --verify-only",
+            env={"NETBOX_URL": netbox_url(values), "NETBOX_API_TOKEN": netbox_token(values)},
+            pty=False,
+        )
+    sql.parent.mkdir(parents=True, exist_ok=True)
+    raw = sql.with_suffix(".partial.sql")
+    partial = sql.with_suffix(".partial.gz")
+    try:
+        _compose(
+            context,
+            f"exec -T netbox-database pg_dump --username netbox --dbname netbox --no-owner --no-privileges > {shlex.quote(str(raw))}",
+            values,
+        )
+        with raw.open("rb") as source, gzip.open(partial, "wb") as destination:
+            shutil.copyfileobj(source, destination)
+        partial.replace(sql)
+        metadata.write_text(
+            json.dumps({"format_version": 1, "tier": tier, "image": netbox_image(), "sha256": sha256_of(sql)}),
+            encoding="utf-8",
+        )
+    finally:
+        raw.unlink(missing_ok=True)
+        partial.unlink(missing_ok=True)
+    print(f" - [{NAMESPACE}] Saved tier {tier} to {sql}")
+
+
+TIER_ADMIN_SETUP_SCRIPT = DEMO_ADMIN_SETUP_SCRIPT.replace(
+    'user = User.objects.get(username=environ["SUPERUSER_NAME"])',
+    'user, _ = User.objects.get_or_create(username=environ["SUPERUSER_NAME"], defaults={"is_superuser": True, "is_staff": True})',
+).replace(
+    "Token.objects.create(",
+    'Token.objects.filter(user=user, key=environ["SUPERUSER_API_KEY"]).delete()\nToken.objects.create(',
+)
+
+
+@task
+def restore(context: Context, tier: str = "S") -> None:
+    """Replace the whole local database with a verified tier and reapply development auth."""
+    sql = verify_tier_dump(tier)
+    values = load_netbox_env()
+    raw = sql.with_suffix(".restore.sql")
+    try:
+        # Fully decompress before reset, so a broken archive leaves the current database alone.
+        with gzip.open(sql, "rb") as source, raw.open("wb") as destination:
+            shutil.copyfileobj(source, destination)
+        # NetBox's ltree trigger comparisons require public on the restore search path.
+        prepare_restore_sql(raw, destination=raw)
+        detach_dev_worker(context, values)
+        _compose(context, "down --volumes", values)
+        up_command = f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}"
+        _compose(context, f"{up_command} netbox-database netbox-redis", values)
+        _compose(
+            context,
+            "exec -T netbox-database psql --quiet --username netbox --dbname netbox "
+            f"--set ON_ERROR_STOP=1 --single-transaction --output /dev/null < {shlex.quote(str(raw))}",
+            values,
+        )
+        _compose(context, up_command, values)
+        _compose(
+            context,
+            "exec -T netbox /opt/netbox/netbox/manage.py shell --no-startup --no-imports "
+            f"--command {shlex.quote(TIER_ADMIN_SETUP_SCRIPT)}",
+            values,
+        )
+        _wait_for_http(f"{netbox_url(values)}/api/", "NetBox")
+        attach_dev_worker(context, values)
+        record_tier(tier)
+    finally:
+        raw.unlink(missing_ok=True)
+    print(f" - [{NAMESPACE}] Restored tier {tier}")
+
+
+@task
+def change(context: Context, tier: str = "S", *, force: bool = False) -> None:
+    """Apply the fixed 1% mutation and write .netbox/changes/<tier>.expected.json."""
+    validate_tier(tier)
+    values = load_netbox_env()
+    script = DATASETS_DIR / "change_netbox.py"
+    with context.cd(ESCAPED_REPO_PATH):
+        context.run(
+            f"uv run python {shlex.quote(str(script))} --tier {tier}" + (" --force" if force else ""),
+            env={"NETBOX_URL": netbox_url(values), "NETBOX_API_TOKEN": netbox_token(values)},
+            pty=False,
+        )
+    record_tier(tier, phase="changed")
