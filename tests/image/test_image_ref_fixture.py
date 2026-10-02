@@ -15,7 +15,7 @@ def test_an_unset_image_skips_outside_ci(monkeypatch: pytest.MonkeyPatch, unset:
     monkeypatch.delenv(unset)
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
 
-    with pytest.raises(pytest.skip.Exception, match=unset):
+    with pytest.raises(pytest.skip.Exception, match=f"^{unset} unset"):
         conftest.require_image_ref()
 
 
@@ -27,7 +27,7 @@ def test_an_unset_image_fails_on_github_actions(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.delenv(unset)
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
 
-    with pytest.raises(pytest.fail.Exception, match=unset):
+    with pytest.raises(pytest.fail.Exception, match=f"^{unset} unset"):
         conftest.require_image_ref()
 
 
