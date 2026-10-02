@@ -43,10 +43,10 @@ time, instead of reading only what changed.
 ## What a saved plan records about deletes
 
 Timestamp-based incremental extraction can miss deleted source rows, so a plan records
-whether its deletes were derived from a fully enumerated destination. When the destination
+whether its deletes were derived from a fully enumerated source and destination. When either
 side did not run a full extract, the saved plan reports `delete_operations_computed:
 false`, and `runs plan` discloses that the review may omit destination deletes. A run that
-extracted the destination in full records `true`.
+extracted both sides in full records `true`.
 
 Current timestamp-capable adapters include NetBox, Nautobot, and Infrahub. Other adapters
 use full extraction unless their capability contract says otherwise.

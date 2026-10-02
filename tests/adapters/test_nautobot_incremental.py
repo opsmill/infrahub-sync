@@ -1,4 +1,5 @@
 from collections import UserDict
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
@@ -69,7 +70,10 @@ def test_cursor_tier_is_none_for_empty_mapping() -> None:
     assert adapter.cursor_tier_for("InfraDevice") is CursorTier.NONE
 
 
-def test_list_changed_since_uses_last_updated_filter() -> None:
+def test_list_changed_since_uses_last_updated_filter(tmp_path: Path) -> None:
+    """Pass the saved safe cursor unchanged to the last-updated filter."""
+    from infrahub_sync.cache.incremental import load_cursors, persist_cursors
+
     adapter = _make_adapter([{"name": "InfraDevice", "mapping": "dcim.devices", "identifiers": ["name"]}])
     fake_record = _FakeRecord({"id": 1, "name": "leaf1"})
     fake_endpoint = MagicMock()
@@ -81,7 +85,15 @@ def test_list_changed_since_uses_last_updated_filter() -> None:
     fake_model.transform_records.side_effect = lambda records, **_kw: records
     adapter.InfraDevice = fake_model  # ty: ignore[unresolved-attribute]
 
-    cursor = CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00Z")
+    # This tests saved-cursor pass-through, not the server's filter semantics.
+    path = tmp_path / "cursors.json"
+    persist_cursors(
+        path,
+        side="A",
+        cursors={"InfraDevice": CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00Z", safe=True)},
+    )
+    cursor = load_cursors(path, side="A")["InfraDevice"]
+    assert cursor.safe
     rows = list(adapter.list_changed_since("InfraDevice", cursor))
 
     fake_endpoint.filter.assert_called_once_with(last_updated__gte="2026-05-17T10:00:00Z")
@@ -418,3 +430,11 @@ def test_depth_decides_the_payload_the_endpoint_returns() -> None:
 
     assert adapter.get(model, "ams01-edge-01").model_dump()["model"] == "mx-100"
     assert api.http_session_reads == 0
+
+
+def test_timestamp_source_has_no_established_safe_bound() -> None:
+    """Require full extraction when Nautobot supplies no safe bound."""
+    from infrahub_sync.cache.cursors import capture_safe_cursor
+
+    adapter = _make_adapter([{"name": "InfraDevice", "mapping": "dcim.devices"}])
+    assert capture_safe_cursor(adapter, "InfraDevice", CursorTier.TIMESTAMP) is None

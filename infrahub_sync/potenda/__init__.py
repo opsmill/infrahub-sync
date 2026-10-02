@@ -70,7 +70,6 @@ OPERATIONAL_APPLY_FAILURES: tuple[type[Exception], ...] = (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from datetime import datetime
     from pathlib import Path
 
     from diffsync import Adapter
@@ -78,6 +77,7 @@ if TYPE_CHECKING:
     from diffsync.enum import DiffSyncFlags
 
     from infrahub_sync import SyncInstance
+    from infrahub_sync.cache.cursors import CursorState
     from infrahub_sync.plan.models import PlanManifest, PlannedOperation, VerificationFailure
     from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import RawPlanArtifact
@@ -256,6 +256,7 @@ class Potenda:
         continue_on_error: bool = False,
         concurrent_load: bool = True,
     ):
+        """Initialize adapters, execution options, and per-run cache state."""
         self.top_level = top_level
         self.tiers: list[set[str]] | None = tiers
         self.continue_on_error = continue_on_error
@@ -290,7 +291,7 @@ class Potenda:
         # cannot answer for one side: it is deliberately true when either side ran
         # full. Absent side means "did not load".
         self._side_full_extract: dict[str, bool] = {}
-        self._side_extract_ts: dict[str, datetime] = {}
+        self._side_cursors: dict[str, dict[str, CursorState]] = {}
         self._prev_run_resolved: bool = False
         self._prev_run_cached: Path | None = None
         # Runtime toggle set per-command by the CLI just before load.
@@ -360,6 +361,7 @@ class Potenda:
         return self._prev_run_cached
 
     def _write_side_snapshot(self, side: str, adapter: Adapter) -> None:
+        """Write each resource snapshot with diagnostic extraction metadata."""
         if not self.run_dir:
             return
         from datetime import datetime, timezone
@@ -367,19 +369,10 @@ class Potenda:
         from infrahub_sync.cache.parquet_io import write_resource_side
 
         extract_ts = datetime.now(timezone.utc)
-        # Remember when this side started loading so persist_cursors_for_run
-        # can anchor a cursor for resources whose snapshot is empty (e.g. the
-        # destination on a fresh Infrahub — nothing exists pre-sync, but the
-        # next warm run still needs a cursor to query `_updated_at__gte` from).
-        self._side_extract_ts[side] = extract_ts
+        # Snapshot timestamps are diagnostic metadata, never incremental bounds.
         for kind in adapter.top_level:
             records = list(adapter.get_all(kind))
-            # Include both identifiers AND attributes so hydrate_from_parquet
-            # can reconstruct a complete payload — without identifiers, replaying
-            # a row through `model_cls(**payload)` fails pydantic validation for
-            # any required identifier field. `get_identifiers` is guarded for
-            # adapter stubs that don't implement it; falling back to just
-            # attributes is what the pre-fix behavior did.
+            # Include identifiers for cached-row validation when the adapter supports get_identifiers.
             # Side B additionally carries `local_id`, the destination node id an update is
             # keyed by. Without it a warm run rebuilds destination models with no id and
             # every derived update is refused. It is written as its own column and never
@@ -412,13 +405,21 @@ class Potenda:
         there is no prior successful run, the schema-subhash mismatches, or
         the caller asked for a full extract.
         """
-        from infrahub_sync.cache.cursors import CursorTier
+        from infrahub_sync.cache.cursors import capture_safe_cursors
         from infrahub_sync.cache.incremental import (
+            apply_changed_rows,
             hydrate_from_parquet,
             load_cursors,
+            required_resource_models,
             should_use_incremental,
             snapshot_carries_local_id,
         )
+
+        # Capture every resource before the first query, including empty resources.
+        # Clear earlier candidates so a failed repeated load cannot advance a cursor.
+        self._side_cursors.pop(side, None)
+        self._side_full_extract[side] = False
+        next_cursors = {} if self.force_full_extract else capture_safe_cursors(adapter, adapter.top_level)
 
         prev_run = self._previous_run()
 
@@ -428,35 +429,40 @@ class Potenda:
             force_full=self.force_full_extract,
         )
 
-        self._did_full_extract = self._did_full_extract or (not use_inc)
-        # Per-side answer for FR-015. `should_use_incremental` already returns False
-        # when there is no prior run, so `not use_inc` is exactly "this side ran a
-        # full extract" for both arms of the branch below.
-        self._side_full_extract[side] = not use_inc
-
         if not use_inc or prev_run is None:
             adapter.load()
+            self._side_full_extract[side] = True
+            self._did_full_extract = True
+            self._side_cursors[side] = next_cursors
             return
 
+        # Validate all models before querying; a skipped source kind could cause false deletes.
+        models = required_resource_models(adapter=adapter, side=side)
+
         def _add(model_name: str, payload: dict, _adapter: Adapter = adapter) -> None:
-            model_cls = getattr(_adapter, model_name)
-            _adapter.add(model_cls(**payload))
+            """Add a cached resource row to the selected adapter."""
+            _adapter.add(models[model_name](**payload))
 
         cursors = load_cursors(prev_run / "cursors.json", side=side)
+        full_resources: set[str] = set()
         for resource in adapter.top_level:
             tier_supported = adapter.cursor_tier_for(resource)  # ty: ignore[unresolved-attribute]
             cursor = cursors.get(resource)
-            model_cls = getattr(adapter, resource, None)
-            if model_cls is None:
-                continue
-            if cursor is None or tier_supported is CursorTier.NONE:
+            model_cls = models[resource]
+            cached = (prev_run / side / f"{resource}.parquet").is_file()
+            if (
+                not cached
+                or cursor is None
+                or not cursor.safe
+                or cursor.tier is not tier_supported
+                or resource not in next_cursors
+            ):
+                logger.info("Incremental: no safe cursor or snapshot for %s; loading in full", resource)
                 adapter.model_loader(model_name=resource, model=model_cls)  # ty: ignore[unresolved-attribute]
+                full_resources.add(resource)
                 continue
 
-            # A side-B snapshot written before plan format 3 has no `local_id` column, so
-            # hydrating from it would rebuild destination models with no destination id and
-            # every derived update would be refused. Treat it as a cache miss for this
-            # resource and extract it fully instead, saying why.
+            # Pre-format-3 destination snapshots lack the local_id required to key updates.
             if side == "B" and not snapshot_carries_local_id(run_dir=prev_run, side=side, resource=resource):
                 logger.info(
                     "Incremental: the previous run's destination snapshot for %s carries no local_id column, "
@@ -464,6 +470,7 @@ class Potenda:
                     resource,
                 )
                 adapter.model_loader(model_name=resource, model=model_cls)  # ty: ignore[unresolved-attribute]
+                full_resources.add(resource)
                 continue
 
             hydrate_from_parquet(
@@ -472,26 +479,34 @@ class Potenda:
                 resource=resource,
                 add_row=_add,
             )
-            for row in adapter.list_changed_since(resource, cursor):  # ty: ignore[unresolved-attribute]
-                adapter.add(model_cls(**row))
+            apply_changed_rows(adapter, resource, model_cls, cursor)
+        # Only successful full resource loads establish a complete side.
+        self._side_full_extract[side] = full_resources == set(adapter.top_level)
+        self._did_full_extract = self._did_full_extract or self._side_full_extract[side]
+        self._side_cursors[side] = next_cursors
+
+    def _load_side(self, *, side: str, adapter: Adapter) -> None:
+        """Keep cursors publishable only when loading and snapshotting both succeed."""
+        completed = False
+        try:
+            logger.info("Load: Importing data from %s", adapter)
+            self.load_one_side(side=side, adapter=adapter)
+            self._write_side_snapshot(side, adapter)
+            completed = True
+        except Exception as exc:
+            msg = f"An error occurred while loading {adapter}: {exc!s}"
+            raise ValueError(msg) from exc
+        finally:
+            if not completed:
+                self._side_cursors.pop(side, None)
 
     def source_load(self):
-        try:
-            logger.info("Load: Importing data from %s", self.source)
-            self.load_one_side(side="A", adapter=self.source)
-            self._write_side_snapshot("A", self.source)
-        except Exception as exc:
-            msg = f"An error occurred while loading {self.source}: {exc!s}"
-            raise ValueError(msg) from exc
+        """Load the source and write its snapshot."""
+        self._load_side(side="A", adapter=self.source)
 
     def destination_load(self):
-        try:
-            logger.info("Load: Importing data from %s", self.destination)
-            self.load_one_side(side="B", adapter=self.destination)
-            self._write_side_snapshot("B", self.destination)
-        except Exception as exc:
-            msg = f"An error occurred while loading {self.destination}: {exc!s}"
-            raise ValueError(msg) from exc
+        """Load the destination and write its snapshot."""
+        self._load_side(side="B", adapter=self.destination)
 
     def load_both_sides(self) -> None:
         """Load source and destination.
@@ -649,8 +664,10 @@ class Potenda:
             )
 
         # FR-015: deletes are derived only where the destination side holds a complete
-        # picture, and the manifest records which of the two happened.
-        deletes_computed = self._side_full_extract.get("B", False)
+        # picture, and the manifest records which of the two happened. A source hydrated
+        # from a prior snapshot plus changed-since rows still holds objects deleted at the
+        # source, so the source must also be fully extracted before deletes count as computed.
+        deletes_computed = self._side_full_extract.get("A", False) and self._side_full_extract.get("B", False)
         operations.extend(
             derive_deletes(
                 kinds=list(self.top_level),
@@ -960,40 +977,19 @@ class Potenda:
         return completed
 
     def persist_cursors_for_run(self, *, side: str) -> None:
-        """Walk the run_dir snapshot files for `side`, compute per-resource
-        cursors (max `_extract_ts`), and persist into `<run_dir>/cursors.json`.
+        """Persist source-guaranteed bounds captured before a successful side load.
+
+        Snapshot timestamps, including those of empty resources, do not establish
+        a safe changed-since bound. Callers still own the successful-run lifecycle.
         """
         if not self.run_dir:
             return
-        import pyarrow.compute as pc
-
-        from infrahub_sync.cache.cursors import CursorState, CursorTier
         from infrahub_sync.cache.incremental import persist_cursors
-        from infrahub_sync.cache.parquet_io import read_table
 
-        side_dir = self.run_dir / side
-        if not side_dir.exists():
-            return
-
-        adapter = self.source if side == "A" else self.destination
-        fallback_ts = self._side_extract_ts.get(side)
-        cursors: dict[str, CursorState] = {}
-        for parquet_path in side_dir.glob("*.parquet"):
-            resource = parquet_path.stem
-            tier = adapter.cursor_tier_for(resource)  # ty: ignore[unresolved-attribute]
-            if tier is CursorTier.NONE:
-                continue
-            table = read_table(str(parquet_path))
-            if table.num_rows == 0:
-                # Empty snapshot (e.g. destination on a fresh Infrahub).
-                # Anchor the cursor to when this side started loading so the
-                # next warm run's `_updated_at__gte=<cursor>` picks up
-                # whatever this run wrote afterwards.
-                if fallback_ts is not None:
-                    cursors[resource] = CursorState(tier=tier, value=fallback_ts.isoformat())
-                continue
-            max_ts = pc.max(table.column("_extract_ts")).as_py()  # ty: ignore[unresolved-attribute]
-            cursors[resource] = CursorState(tier=tier, value=max_ts.isoformat())
-
+        cursors = {
+            resource: cursor
+            for resource, cursor in self._side_cursors.get(side, {}).items()
+            if (self.run_dir / side / f"{resource}.parquet").exists()
+        }
         if cursors:
             persist_cursors(self.run_dir / "cursors.json", side=side, cursors=cursors)
