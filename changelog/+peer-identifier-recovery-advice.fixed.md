@@ -1,1 +1,1 @@
-The error for an Infrahub peer that lacks a required identity field no longer recommends an option that `diff` and `sync` do not accept; it now says to add the field to the schema mapping or populate it on the peer, then run the command again.
+The error for an Infrahub peer that lacks a required identity field no longer recommends an option that `diff` and `sync` do not accept; it now says to populate the field on the peer, or to add it to the schema mapping, create a new configuration version, and run with the new `--version`.

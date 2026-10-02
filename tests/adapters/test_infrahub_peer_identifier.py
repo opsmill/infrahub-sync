@@ -381,7 +381,9 @@ def test_missing_identifier_guidance_matches_command_surface(command: str) -> No
 
     assert "--continue-on-error" not in message
     assert "skip" not in message.lower()
-    assert "same diff or sync command" in message
+    assert "configs version" in message
+    assert "new --version" in message
+    assert "LocationGeneric peer record" in message
     help_text = CliRunner().invoke(app, [command, "--help"]).output
     assert "--continue-on-error" not in help_text
 
