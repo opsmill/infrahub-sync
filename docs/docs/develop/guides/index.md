@@ -26,7 +26,7 @@ how the system works, see [Knowledge](../knowledge/index.md).
 Use the disposable NetBox tasks from a development environment with the `dev`, `prefect`,
 and `service` extras. `seed` and `restore` replace the entire local NetBox database.
 Tier S preserves the qualification dataset. The tiers contain 560, 10,207, and 87,815
-syncable NetBox objects respectively, plus known unnamed-device and ungrouped-VLAN skip
+mapped NetBox objects respectively, plus known unnamed-device and ungrouped-VLAN skip
 cases. Tier L seeding can take hours; large benchmark runs can also take hours.
 
 ```bash
@@ -42,6 +42,10 @@ sidecars live under `.netbox/dumps/`; restore refuses a missing dump, a differen
 image, or a checksum mismatch. Restore reapplies the local development administrator and
 token. Keep these generated files private and outside Git.
 
+Before dumping, the task checks every seeded endpoint's count, the mapped versus skipped
+row counts, and the change marker. It does not compare every field with the generated
+dataset. Seed or restore a tier before dumping if you have edited its contents by hand.
+
 The change script uses environment credentials and fixed names. It writes
 `.netbox/changes/<tier>.expected.json` only after every mutation succeeds, with
 `format_version`, `tier`, action `counts`, and `changes`. Each change has `action`, `kind`,
@@ -56,7 +60,7 @@ These are direct NetBox mutations. A prefix VRF move changes its mapped
 and deletion change the owning interface's mapped `ip_addresses` relationship. The
 benchmark runner must translate these mutations through the mapping before comparing
 the expected file with applied sync actions. A marker in an existing tag's unmapped
-slug blocks a second mutation without adding a syncable tag. Restore before another run;
+slug blocks a second mutation without adding a mapped tag. Restore before another run;
 `--force` reapplies the same updates and leaves already completed creates and deletes
 in place; its expected file describes the intended mutations, rather than new work on
 that rerun. A failed mutation leaves a `.partial.json` file and the marker, so restore the dump

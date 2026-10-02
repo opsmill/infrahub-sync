@@ -382,6 +382,7 @@ def restore_demo_database(context: Context, values: dict[str, str], sql_file: Pa
     restore_file = prepare_restore_sql(sql_file)
     print(f" - [{NAMESPACE}] Resetting the local NetBox database")
     detach_dev_worker(context, values)
+    (STATE_DIR / "tier.json").unlink(missing_ok=True)
     _compose(context, "down --volumes", values)
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} netbox-database netbox-redis", values)
     psql = "exec -T netbox-database psql --quiet --username netbox --dbname netbox"

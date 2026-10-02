@@ -18,7 +18,9 @@ def main() -> None:
     """Seed using environment credentials; never include a token in argv or output."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tier", choices=("S", "M", "L"), default="S")
-    parser.add_argument("--verify-only", action="store_true", help="Verify a pristine tier before dumping it")
+    parser.add_argument(
+        "--verify-only", action="store_true", help="Check tier counts and the change marker before dumping"
+    )
     args = parser.parse_args()
     try:
         url, token = environment_credentials()

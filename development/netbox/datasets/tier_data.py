@@ -57,6 +57,7 @@ SKIP_COUNTS = dict(
         strict=True,
     )
 )
+FOUNDATION_COUNTS = {"dcim/device-roles": 1, "circuits/circuit-types": 1}
 
 # Every ordinal-valued API field has one destination endpoint.
 RELATIONS = {
@@ -107,6 +108,7 @@ class Row:
 
 
 def _expand_foundations(kind: str, payloads: list[dict[str, Any]], tier: str) -> list[dict[str, Any]]:
+    """Extend fixed S foundations to the selected tier without randomness."""
     sizes = TIER_COUNTS[tier]
     if tier == "S":
         return payloads
@@ -146,12 +148,14 @@ def build_dataset(tier: str = "S") -> dict[str, list[Row]]:
     per_rack = racked // sizes["dcim/racks"]
 
     def add(kind: str, payloads: list[dict[str, Any]]) -> list[Row]:
+        """Append payloads with endpoint-local ordinal IDs."""
         rows = data.setdefault(kind, [])
         new = [Row(len(rows) + i + 1, payload) for i, payload in enumerate(payloads)]
         rows.extend(new)
         return new
 
     def expand(kind: str, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Expand a foundational endpoint to the selected tier size."""
         return _expand_foundations(kind, payloads, tier)
 
     # --- tags ---------------------------------------------------------------
@@ -165,6 +169,7 @@ def build_dataset(tier: str = "S") -> dict[str, list[Row]]:
     tag_ids = [t.id for t in tags]
 
     def tag_pair(i: int) -> list[int]:
+        """Select two consecutive tags from the fixed cyclic pool."""
         return [tag_ids[i % len(tag_ids)], tag_ids[(i + 1) % len(tag_ids)]]
 
     # --- sites / racks ------------------------------------------------------
@@ -335,11 +340,12 @@ def build_dataset(tier: str = "S") -> dict[str, list[Row]]:
             "description": f"seed device {d}",
             "tags": tag_pair(d),
         }
-        if d <= racked:  # racked: 5 per rack, distinct u positions, front face
+        if d <= racked:  # S/M/L: 5/20/35 devices per rack, distinct positions, front face
             rack_idx = (d - 1) // per_rack
             payload["site"] = racks[rack_idx].fields["site"]
             payload["rack"] = rack_ids[rack_idx]
-            payload["position"] = (5 if tier == "S" else 1) * ((d - 1) % per_rack) + 1  # 5U spacing fits the 2.5U types
+            # S uses 5U spacing for fractional-height types; M/L use 1U types and spacing.
+            payload["position"] = (5 if tier == "S" else 1) * ((d - 1) % per_rack) + 1
             payload["face"] = "front"
         else:  # unracked: site-only location path
             payload["site"] = site_ids[(d - racked - 1) % len(sites)]
@@ -490,24 +496,25 @@ def build_dataset(tier: str = "S") -> dict[str, list[Row]]:
         ),
     )
 
-    prefix_payloads = [
-        {"prefix": "10.0.0.0/8", "status": "container", "vrf": vrfs[0].id, "description": "seed container"},
-        {"prefix": "192.168.0.0/16", "status": "container", "vrf": vrfs[1].id, "description": "seed container"},
-    ]
-    prefix_payloads += [
-        {"prefix": f"10.1.{i}.0/24", "status": "active", "vrf": vrfs[i % 2].id, "description": "seed vrf prefix"}
-        for i in range(10)
-    ]
-    prefix_payloads += [
-        {
-            "prefix": f"192.168.{i}.0/24",
-            "status": "active",
-            "vrf": vrfs[i % 2].id,
-            "description": "seed formerly-global prefix",
-        }
-        for i in range(8)
-    ]
-    if tier != "S":
+    if tier == "S":
+        prefix_payloads = [
+            {"prefix": "10.0.0.0/8", "status": "container", "vrf": vrfs[0].id, "description": "seed container"},
+            {"prefix": "192.168.0.0/16", "status": "container", "vrf": vrfs[1].id, "description": "seed container"},
+        ]
+        prefix_payloads += [
+            {"prefix": f"10.1.{i}.0/24", "status": "active", "vrf": vrfs[i % 2].id, "description": "seed vrf prefix"}
+            for i in range(10)
+        ]
+        prefix_payloads += [
+            {
+                "prefix": f"192.168.{i}.0/24",
+                "status": "active",
+                "vrf": vrfs[i % 2].id,
+                "description": "seed formerly-global prefix",
+            }
+            for i in range(8)
+        ]
+    else:
         prefix_payloads = [
             {
                 "prefix": f"10.{i // 250}.{i % 250}.0/24",
@@ -520,37 +527,37 @@ def build_dataset(tier: str = "S") -> dict[str, list[Row]]:
     add("ipam/prefixes", prefix_payloads)
 
     ip_payloads = []
-    for idx, d in enumerate(named, start=1):
-        eth0 = by_dev_name[d.id, "eth0"]
-        vlan_if = by_dev_name[d.id, "vlan100"]
-        ip_payloads.extend(
-            [
-                {
-                    "address": f"10.1.{idx}.1/24",
-                    "status": "active",
-                    "vrf": vrfs[idx % 2].id,
-                    "description": "seed eth0",
-                    "assigned_object_type": "dcim.interface",
-                    "assigned_object_id": eth0.id,
-                },
-                {
-                    "address": f"10.2.{idx}.1/24",
-                    "status": "active",
-                    "vrf": vrfs[idx % 2].id,
-                    "description": "seed vlan100",
-                    "assigned_object_type": "dcim.interface",
-                    "assigned_object_id": vlan_if.id,
-                },
-                {
-                    "address": f"10.3.{idx}.1/24",
-                    "status": "active",
-                    "vrf": vrfs[idx % 2].id,
-                    "description": "seed loose",
-                },
-            ]
-        )
-    if tier != "S":
-        ip_payloads = []
+    if tier == "S":
+        for idx, d in enumerate(named, start=1):
+            eth0 = by_dev_name[d.id, "eth0"]
+            vlan_if = by_dev_name[d.id, "vlan100"]
+            ip_payloads.extend(
+                [
+                    {
+                        "address": f"10.1.{idx}.1/24",
+                        "status": "active",
+                        "vrf": vrfs[idx % 2].id,
+                        "description": "seed eth0",
+                        "assigned_object_type": "dcim.interface",
+                        "assigned_object_id": eth0.id,
+                    },
+                    {
+                        "address": f"10.2.{idx}.1/24",
+                        "status": "active",
+                        "vrf": vrfs[idx % 2].id,
+                        "description": "seed vlan100",
+                        "assigned_object_type": "dcim.interface",
+                        "assigned_object_id": vlan_if.id,
+                    },
+                    {
+                        "address": f"10.3.{idx}.1/24",
+                        "status": "active",
+                        "vrf": vrfs[idx % 2].id,
+                        "description": "seed loose",
+                    },
+                ]
+            )
+    else:
         for i, device in enumerate(named):
             for host in (1, 2, 3):
                 payload: dict[str, Any] = {

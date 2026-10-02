@@ -14,7 +14,7 @@ if __name__ == "__main__" and not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from development.netbox.datasets.netbox_api import NetboxAPI, environment_credentials, relation_kind
-from development.netbox.datasets.tier_data import KINDS, TIER_COUNTS, Row, build_dataset
+from development.netbox.datasets.tier_data import FOUNDATION_COUNTS, KINDS, SKIP_COUNTS, TIER_COUNTS, Row, build_dataset
 
 LEAF_KINDS = ("dcim/interfaces", "ipam/ip-addresses", "ipam/prefixes", "ipam/vlans", "circuits/circuits")
 MARKER_SLUG = "benchmark-change-started"
@@ -64,6 +64,7 @@ def symbolic_fields(kind: str, fields: dict[str, Any], data: dict[str, list[Row]
         if target and value is not None:
 
             def reference(ordinal: int, target: str = target) -> dict[str, str]:
+                """Name an ordinal relationship target without exposing database IDs."""
                 return {"kind": target, "identifier": identifier(target, data[target][ordinal - 1].fields, data)}
 
             result[field] = [reference(i) for i in value] if isinstance(value, list) else reference(value)
@@ -278,6 +279,7 @@ def resolve_symbols(fields: dict[str, Any], ids: dict[tuple[str, str], int]) -> 
     """Resolve symbolic references against the current database snapshot."""
 
     def resolve(value: Any) -> Any:  # noqa: ANN401 -- nested JSON may contain scalar or relationship values
+        """Resolve nested symbolic references to current database IDs."""
         if isinstance(value, dict) and set(value) == {"kind", "identifier"}:
             return ids[value["kind"], value["identifier"]]
         if isinstance(value, list):
@@ -303,6 +305,19 @@ def add_update_aliases(changes: list[Change], data: dict[str, list[Row]], ids: d
             ids[key] = ids[new_key]
 
 
+def verify_change_counts(api: NetboxAPI, tier: str, changes: list[Change], *, force: bool) -> None:
+    """Require the selected tier, allowing only planned count changes during forced retries."""
+    creates = Counter(c["kind"] for c in changes if c["action"] == "create")
+    deletes = Counter(c["kind"] for c in changes if c["action"] == "delete")
+    for kind, expected in (TIER_COUNTS[tier] | FOUNDATION_COUNTS).items():
+        baseline = expected + SKIP_COUNTS[tier].get(kind, 0)
+        minimum = baseline - (deletes[kind] if force else 0)
+        maximum = baseline + (creates[kind] if force else 0)
+        if not minimum <= api.count(kind) <= maximum:
+            msg = f"restore tier {tier}: unexpected {kind} count"
+            raise ValueError(msg)
+
+
 def apply_changes(api: NetboxAPI, tier: str, output: Path, *, force: bool = False) -> None:
     """Refuse a second mutation; mark starts so partial failures also require restore."""
     tags = api.all("extras/tags")
@@ -311,6 +326,7 @@ def apply_changes(api: NetboxAPI, tier: str, output: Path, *, force: bool = Fals
         raise ValueError(msg)
     data = build_dataset(tier)
     changes = plan_changes(tier)
+    verify_change_counts(api, tier, changes, force=force)
     ids: dict[tuple[str, str], int] = {}
     for kind in (*KINDS, "circuits/circuit-types"):
         for row in api.all(kind):

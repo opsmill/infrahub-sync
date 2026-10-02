@@ -9,7 +9,7 @@ import httpx
 import structlog
 from typing_extensions import Self
 
-from development.netbox.datasets.tier_data import RELATIONS, SKIP_COUNTS, TIER_COUNTS, Row
+from development.netbox.datasets.tier_data import FOUNDATION_COUNTS, RELATIONS, SKIP_COUNTS, TIER_COUNTS, Row
 
 BATCH_SIZE = 200
 log = structlog.get_logger()
@@ -19,14 +19,17 @@ class NetboxAPI:
     """REST client whose failure boundary never exposes response bodies or credentials."""
 
     def __init__(self, url: str, token: str) -> None:
+        """Initialize the bounded REST client."""
         self.client = httpx.Client(
             base_url=url.rstrip("/") + "/", headers={"Authorization": f"Bearer {token}"}, timeout=120
         )
 
     def __enter__(self) -> Self:
+        """Return the client for a managed request session."""
         return self
 
     def __exit__(self, *_args: object) -> None:
+        """Close the HTTP client when its managed session ends."""
         self.client.close()
 
     def request(self, method: str, kind: str, payload: Any = None, suffix: str = "") -> Any:  # noqa: ANN401 -- REST JSON responses have endpoint-specific shapes
@@ -115,7 +118,7 @@ def seed_dataset(api: NetboxAPI, data: dict[str, list[Row]], tier: str) -> None:
 
 def verify_counts(api: NetboxAPI, tier: str) -> None:
     """Assert endpoint totals and mapped versus deliberately skipped row counts."""
-    for kind, expected in TIER_COUNTS[tier].items():
+    for kind, expected in (TIER_COUNTS[tier] | FOUNDATION_COUNTS).items():
         actual = api.count(kind)
         if actual != expected + SKIP_COUNTS[tier].get(kind, 0):
             msg = f"wrong final count for {kind}: {actual}"

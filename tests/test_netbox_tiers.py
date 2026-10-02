@@ -15,8 +15,9 @@ import httpx
 import pytest
 
 from development.netbox.datasets import change_netbox as change
-from development.netbox.datasets.netbox_api import BATCH_SIZE, NetboxAPI, relation_kind, seed_dataset
-from development.netbox.datasets.tier_data import KINDS, SKIP_COUNTS, TIER_COUNTS, build_dataset
+from development.netbox.datasets import seed_netbox as seed
+from development.netbox.datasets.netbox_api import BATCH_SIZE, NetboxAPI, relation_kind, seed_dataset, verify_counts
+from development.netbox.datasets.tier_data import FOUNDATION_COUNTS, KINDS, SKIP_COUNTS, TIER_COUNTS, build_dataset
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
     ("tier", "total", "skips"), [("S", 560, (2, 4, 2)), ("M", 10207, (8, 16, 12)), ("L", 87815, (35, 70, 40))]
 )
 def test_tier_count_table_and_skip_cases(tier: str, total: int, skips: tuple[int, int, int]) -> None:
+    """Match all mapped counts and deliberate skip cases at each tier."""
     data = build_dataset(tier)
     assert len(TIER_COUNTS[tier]) == len(KINDS)
     assert sum(TIER_COUNTS[tier].values()) == total
@@ -38,6 +40,7 @@ def test_tier_count_table_and_skip_cases(tier: str, total: int, skips: tuple[int
 def test_s_retains_every_original_seed_payload_and_lag_relationship() -> None:
     # Captured from the pre-tier seeder at 70c31576 using endpoint-local sequential IDs.
     # This covers every field, name, skip case and relationship, rather than counts alone.
+    """Preserve every original S payload and relationship by its recorded digest."""
     data = {kind: [row.fields for row in rows] for kind, rows in build_dataset("S").items()}
     encoded = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == "ec37cd8332faab01335a5386945e76759879cdf78da69667d51a7a06b0a45094"
@@ -47,6 +50,7 @@ def test_s_retains_every_original_seed_payload_and_lag_relationship() -> None:
 def test_scaled_shape_has_collision_free_addresses_matching_manufacturers_and_safe_racks(
     tier: str, per_rack: int
 ) -> None:
+    """Verify scaled addresses, rack occupancy, manufacturer matching and relationships."""
     data = build_dataset(tier)
     devices = change.eligible("dcim/devices", data)
     racked = [row for row in devices if "rack" in row.fields]
@@ -91,6 +95,7 @@ def test_scaled_shape_has_collision_free_addresses_matching_manufacturers_and_sa
 def test_change_plan_is_deterministic_proportional_and_has_only_unreferenced_leaf_deletes(
     tier: str, totals: dict[str, int]
 ) -> None:
+    """Verify deterministic plans, proportional actions and safe leaf deletions."""
     first = change.plan_changes(tier)
     assert change.expected_text(tier, first) == change.expected_text(tier, change.plan_changes(tier))
     expected = json.loads(change.expected_text(tier, first))
@@ -129,16 +134,20 @@ class MemoryNetbox(NetboxAPI):
     """A REST substitute that deliberately assigns IDs unrelated to seed ordinals."""
 
     def __init__(self) -> None:
+        """Start with empty endpoint records and a write-call log."""
         self.rows: dict[str, list[dict[str, Any]]] = {}
         self.calls: list[tuple[str, str, Any, str]] = []
 
     def all(self, kind: str) -> list[dict[str, Any]]:
+        """Return the current in-memory records for an endpoint."""
         return self.rows.get(kind, [])
 
     def count(self, kind: str) -> int:
+        """Return the in-memory endpoint total."""
         return len(self.all(kind))
 
     def request(self, method: str, kind: str, payload: Any = None, suffix: str = "") -> Any:  # noqa: ANN401 -- mirrors JSON client boundary
+        """Emulate writes with nonordinal IDs and nested relationship records."""
         self.calls.append((method, kind, payload, suffix))
         rows = self.rows.setdefault(kind, [])
         if method == "POST":
@@ -169,6 +178,7 @@ class MemoryNetbox(NetboxAPI):
 
 
 def test_seed_writer_resolves_real_ids_batches_creates_and_full_lag_updates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve nonordinal IDs and batch both creates and LAG membership updates."""
     api = MemoryNetbox()
     # Exercise multiple batches at S without building a second live-sized tier.
     monkeypatch.setattr("development.netbox.datasets.netbox_api.BATCH_SIZE", 17)
@@ -185,6 +195,7 @@ def test_seed_writer_resolves_real_ids_batches_creates_and_full_lag_updates(monk
 
 
 def test_change_writer_payloads_marker_and_expected_file(tmp_path: Path) -> None:
+    """Resolve mutations, mark starts and publish the expected file on success."""
     api = MemoryNetbox()
     seed_dataset(api, build_dataset("S"), "S")
     api.calls.clear()
@@ -210,6 +221,7 @@ def test_change_writer_payloads_marker_and_expected_file(tmp_path: Path) -> None
 
 
 def test_change_refuses_wrong_tier_before_writing(tmp_path: Path) -> None:
+    """Reject a mismatched restored tier before any mutation."""
     api = MemoryNetbox()
     seed_dataset(api, build_dataset("S"), "S")
     api.calls.clear()
@@ -218,12 +230,75 @@ def test_change_refuses_wrong_tier_before_writing(tmp_path: Path) -> None:
     assert api.calls == []
 
 
+@pytest.mark.parametrize(("tier", "restored"), [("S", "M"), ("S", "L"), ("M", "L"), ("M", "S"), ("L", "S"), ("L", "M")])
+@pytest.mark.parametrize("force", [False, True])
+def test_change_refuses_other_tier_counts_before_writes_or_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tier: str, restored: str, *, force: bool
+) -> None:
+    """Reject every mismatched restored tier even when forced, before publishing files."""
+    api = MemoryNetbox()
+    counts = TIER_COUNTS[restored] | FOUNDATION_COUNTS
+    monkeypatch.setattr(api, "count", lambda kind: counts[kind] + SKIP_COUNTS[restored].get(kind, 0))
+    output = tmp_path / f"{tier}.expected.json"
+    output.write_text("previous result")
+    with pytest.raises(ValueError, match=f"restore tier {tier}"):
+        change.apply_changes(api, tier, output, force=force)
+    assert api.calls == []
+    assert output.read_text() == "previous result"
+    assert not output.with_suffix(".partial.json").exists()
+
+
+@pytest.mark.parametrize("kind", list(FOUNDATION_COUNTS))
+@pytest.mark.parametrize("count", [0, 2])
+def test_verify_only_refuses_missing_or_extra_foundations(
+    monkeypatch: pytest.MonkeyPatch, kind: str, count: int
+) -> None:
+    """The pre-dump command rejects missing or extra roles and circuit types."""
+    api = MemoryNetbox()
+    seed_dataset(api, build_dataset("S"), "S")
+    api.rows[kind] = api.rows[kind][:count] if count == 0 else api.rows[kind] * count
+    api.calls.clear()
+    monkeypatch.setattr(seed, "environment_credentials", lambda: ("http://example.invalid", "unused"))
+    monkeypatch.setattr(seed, "NetboxAPI", lambda _url, _token: nullcontext(api))
+    monkeypatch.setattr(sys, "argv", ["seed_netbox.py", "--tier", "S", "--verify-only"])
+    with pytest.raises(RuntimeError, match=f"wrong final count for {kind}"):
+        verify_counts(api, "S")
+    with pytest.raises(SystemExit) as exit_error:
+        seed.main()
+    assert exit_error.value.code == 1
+    assert api.calls == []
+
+
+def test_force_retries_after_partial_count_changes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Allow the selected tier's forced retry after a completed deletion and failed update."""
+    api = MemoryNetbox()
+    seed_dataset(api, build_dataset("S"), "S")
+    original = api.request
+
+    def fail_update(method: str, kind: str, payload: Any = None, suffix: str = "") -> Any:  # noqa: ANN401 -- mirrors JSON client boundary
+        """Stop after the planned deletion without undoing its changed endpoint count."""
+        if method == "PATCH" and kind != "extras/tags":
+            msg = "update failed"
+            raise RuntimeError(msg)
+        return original(method, kind, payload, suffix)
+
+    monkeypatch.setattr(api, "request", fail_update)
+    output = tmp_path / "S.expected.json"
+    with pytest.raises(RuntimeError, match="update failed"):
+        change.apply_changes(api, "S", output)
+    monkeypatch.setattr(api, "request", original)
+    change.apply_changes(api, "S", output, force=True)
+    assert output.read_text() == change.expected_text("S", change.plan_changes("S"))
+
+
 def test_failed_mutation_leaves_marker_and_no_success_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep partial-run evidence and remove stale success output on failure."""
     api = MemoryNetbox()
     seed_dataset(api, build_dataset("S"), "S")
     original = api.request
 
     def fail_delete(method: str, kind: str, payload: Any = None, suffix: str = "") -> Any:  # noqa: ANN401 -- mirrors JSON client boundary
+        """Inject a delete failure after earlier mutations have started."""
         if method == "DELETE":
             msg = "HTTP failure"
             raise RuntimeError(msg)
@@ -240,7 +315,10 @@ def test_failed_mutation_leaves_marker_and_no_success_file(monkeypatch: pytest.M
 
 
 def test_http_failure_hides_credentials_and_server_body() -> None:
+    """Report HTTP status without exposing credentials or response bodies."""
+
     def handler(request: httpx.Request) -> httpx.Response:
+        """Return a synthetic forbidden response."""
         assert request.headers["Authorization"] == "Bearer synthetic-secret"
         return httpx.Response(403, json={"error": "synthetic-secret"})
 
@@ -258,9 +336,11 @@ def test_http_failure_hides_credentials_and_server_body() -> None:
 
 
 def test_api_pagination_uses_bounded_offsets() -> None:
+    """Read successive bounded pages using deterministic offsets."""
     offsets: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
+        """Return one synthetic bounded page and record its offset."""
         offsets.append(request.url.params["offset"])
         assert request.url.params["limit"] == str(BATCH_SIZE)
         return httpx.Response(
@@ -275,6 +355,7 @@ def test_api_pagination_uses_bounded_offsets() -> None:
 
 
 def test_force_reapplies_updates_without_duplicate_creates_or_deletes(tmp_path: Path) -> None:
+    """Repeat updates while skipping completed creates and deletions."""
     api = MemoryNetbox()
     seed_dataset(api, build_dataset("S"), "S")
     output = tmp_path / "S.expected.json"
@@ -286,6 +367,7 @@ def test_force_reapplies_updates_without_duplicate_creates_or_deletes(tmp_path: 
 
 
 def test_force_finds_prefix_updates_after_namespace_identity_change() -> None:
+    """Alias a prefix update after its VRF changes its natural key."""
     data = build_dataset("M")
     changes = change.plan_changes("M")
     row = next(c for c in changes if c["kind"] == "ipam/prefixes" and "vrf" in c["fields"])
@@ -301,6 +383,7 @@ def test_force_finds_prefix_updates_after_namespace_identity_change() -> None:
 @pytest.mark.parametrize("module", ["change_netbox", "seed_netbox"])
 def test_dataset_import_preserves_search_path_and_precedence(module: str) -> None:
     # A fresh process exercises the first import, before pytest collection caches it.
+    """Keep ordinary imports from changing module search order."""
     probe = """
 import importlib
 import importlib.util
@@ -321,6 +404,7 @@ assert importlib.util.find_spec("tasks").origin == origin
 
 
 def test_change_cli_defaults_to_repository_changes_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Write the default expected file under the repository state directory."""
     api = MemoryNetbox()
     seed_dataset(api, build_dataset("S"), "S")
     monkeypatch.setattr(change, "__file__", str(tmp_path / "development/netbox/datasets/change_netbox.py"))
@@ -329,6 +413,7 @@ def test_change_cli_defaults_to_repository_changes_file(monkeypatch: pytest.Monk
     monkeypatch.setenv("NETBOX_API_TOKEN", "unused")
 
     def client(url: str, token: str) -> nullcontext[MemoryNetbox]:
+        """Validate environment credentials and return the in-memory client."""
         assert url == "http://example.invalid"
         assert token == "unused"  # noqa: S105 -- synthetic credential for the mocked client
         return nullcontext(api)
@@ -342,6 +427,7 @@ def test_change_cli_defaults_to_repository_changes_file(monkeypatch: pytest.Monk
 
 @pytest.mark.parametrize("kind", ["ipam/prefixes", "ipam/ip-addresses"])
 def test_change_refuses_missing_vrf_before_writing(kind: str, tmp_path: Path) -> None:
+    """Reject incomplete nested VRF records before mutation or output files."""
     api = MemoryNetbox()
     seed_dataset(api, build_dataset("S"), "S")
     api.all(kind)[0]["vrf"] = None

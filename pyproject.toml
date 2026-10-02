@@ -322,7 +322,6 @@ max-complexity = 33
 # so the usual complexity and magic-value limits do not fit these modules.
 "development/netbox/datasets/*.py" = [
     "INP001",  # File is part of an implicit namespace package
-    "T201",  # `print` found
     "PLR0912",  # Too many branches
     "PLR0914",  # Too many local variables
     "PLR0915",  # Too many statements
