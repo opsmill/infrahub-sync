@@ -1,0 +1,53 @@
+tests/adapters/test_infrahub_peer_identifier.py
+  s_e87e829f9360b6::t_a96c513a763741 29,339-389
+docs/docs/develop/guides/index.md
+  s_e87e829f9360b6::t_a96c513a763741 23-24
+development/netbox/datasets/seed_netbox.py
+  s_e87e829f9360b6::t_a96c513a763741 1,7,9-11,13-14,17-22,24-36
+docs/docs/develop/guides/netbox-benchmark-tiers.md
+  s_e87e829f9360b6::t_a96c513a763741 1-54
+tests/adapters/test_netbox_benchmark_changes.py
+  s_e87e829f9360b6::t_a96c513a763741 1-83
+changelog/+netbox-benchmark-tiers.changed.md
+  s_e87e829f9360b6::t_a96c513a763741 1
+infrahub_sync/adapters/infrahub.py
+  s_e87e829f9360b6::t_a96c513a763741 610-614
+changelog/+preflight-test-child-sigint.housekeeping.md
+  s_e87e829f9360b6::t_a96c513a763741 1
+changelog/+peer-identifier-recovery-advice.fixed.md
+  s_e87e829f9360b6::t_a96c513a763741 1
+development/netbox/datasets/tier_data.py
+  s_e87e829f9360b6::t_a96c513a763741 1-616
+development/README.md
+  s_e87e829f9360b6::t_a96c513a763741 97-101,148-150,152
+development/netbox/datasets/netbox_api.py
+  s_e87e829f9360b6::t_a96c513a763741 1-140
+pyproject.toml
+  s_e87e829f9360b6::t_a96c513a763741 310-313
+docs/sidebars.ts
+  s_e87e829f9360b6::t_a96c513a763741 122
+tests/test_netbox_tasks.py
+  s_e87e829f9360b6::t_a96c513a763741 5,7-8,36-43,135,137,143-149,157-161,164,167,177-179,338,365-367,484-675
+tasks/netbox.py
+  s_e87e829f9360b6::t_a96c513a763741 5,31,35,42-43,385,458-463,477-478,481,483,518-660
+tests/test_netbox_tiers.py
+  s_e87e829f9360b6::t_a96c513a763741 1-533
+development/netbox/datasets/change_netbox.py
+  s_e87e829f9360b6::t_a96c513a763741 1-388
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "411e91a6c9219e298c49050fb34b46db4f2fcc23",
+  "prompts": {},
+  "sessions": {
+    "s_e87e829f9360b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "11928a3e-529f-47b9-b31d-1cc6ccbdc7b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
