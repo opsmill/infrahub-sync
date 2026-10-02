@@ -336,6 +336,35 @@ def test_missing_identifier_raises_with_rich_context() -> None:
     assert "organization" in str(err)
     assert "LocationGeneric" in str(err)
     assert "InfraDevice.location" in str(err)
+    assert "parent id=parent-id" in str(err)
+    assert "required identifiers=['name', 'organization']" in str(err)
+    assert "present keys=['name']" in str(err)
+
+
+@pytest.mark.parametrize("command", ["diff", "sync"])
+def test_missing_identifier_guidance_matches_command_surface(command: str) -> None:
+    """The recovery advice names no unavailable option and does not promise a matching destination."""
+    from typer.testing import CliRunner
+
+    from infrahub_sync.cli import app
+
+    err = PeerIdentifierError(
+        parent_kind="InfraDevice",
+        parent_id="parent-id",
+        rel_name="location",
+        peer_kind="LocationGeneric",
+        peer_id="peer-id",
+        identifiers=("name", "organization"),
+        missing_keys=("organization",),
+        present_keys=("name",),
+    )
+    message = str(err)
+
+    assert "--continue-on-error" not in message
+    assert "skip" not in message.lower()
+    assert "same diff or sync command" in message
+    help_text = CliRunner().invoke(app, [command, "--help"]).output
+    assert "--continue-on-error" not in help_text
 
 
 def test_missing_identifier_skipped_when_continue_on_error(caplog: pytest.LogCaptureFixture) -> None:

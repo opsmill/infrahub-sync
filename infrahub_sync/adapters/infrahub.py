@@ -607,7 +607,9 @@ class PeerIdentifierError(ValueError):
             f"required identifiers={list(identifiers)}, present keys={list(present_keys)}. "
             "Likely cause: schema_mapping does not declare a 'fields:' entry for the missing "
             "key, or the peer record was not loaded with that field populated. "
-            "Re-run with --continue-on-error to skip these peers."
+            "To fix it, add the missing key to the 'fields:' entry for this kind in the "
+            "schema_mapping, or populate it on the peer record in Infrahub, then run the "
+            "same diff or sync command again."
         )
         super().__init__(msg)
 
