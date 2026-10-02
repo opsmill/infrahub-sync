@@ -96,7 +96,7 @@ uv run invoke netbox.seed --dataset demo   # the `demo` dataset
 
 `netbox.seed` resets the database and loads the dataset. The `seed` dataset accepts
 `--tier S|M|L` (default S) and reports the loaded tier. Both datasets print the URL and
-development-token banner. See [the tier guide](../docs/docs/develop/guides/index.md#seed-dump-and-change-a-netbox-tier)
+development-token banner. See [the tier guide](../docs/docs/develop/guides/netbox-benchmark-tiers.md)
 for dumps, restores, and fixed changes. The task starts NetBox itself, so you do not need
 to run `netbox.up` first.
 Doing so anyway makes NetBox run its first migration twice; on a small host that first

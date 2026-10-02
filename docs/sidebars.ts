@@ -117,6 +117,7 @@ const sidebars: SidebarsConfig = {
           items: [
             'develop/guides/adding-an-adapter',
             'develop/guides/testing-an-adapter',
+            'develop/guides/netbox-benchmark-tiers',
             'develop/guides/building-a-tester-packet',
             'develop/guides/qualifying-an-internal-candidate',
           ],
