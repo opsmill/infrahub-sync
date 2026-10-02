@@ -3,12 +3,13 @@
 # __all__ as a hand-maintained, independent list; pylint's similarity checker flags that overlap.
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
 import subprocess  # noqa: S404 - fixed local interpreter probes restart durability.
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -20,7 +21,8 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
+from typing_extensions import LiteralString
 
 from infrahub_sync import product_store
 from infrahub_sync.configuration import ConfigurationPackage, CredentialConfigurationError
@@ -53,7 +55,7 @@ from infrahub_sync.product_store.store import (
     SQLiteRunStore,
     _RelationalRunStore,
 )
-from tests.product_store.postgresql_isolation import isolated_schema
+from tests.product_store.postgresql_isolation import IsolatedSchema, dsn_or_skip, isolated_schema
 
 # This intentionally mirrors infrahub_sync/product_store/__init__.py's __all__, hand-maintained
 # so a change to the module's exports has to touch this list too.
@@ -93,7 +95,10 @@ _POSTGRESQL_EMULATION_CONSTRAINTS_TABLE = "_fake_postgresql_constraints"
 
 
 class _CursorAdapter:
-    """DB-API cursor over a literal SQLite file for the ``%s``-placeholder "production" profile.
+    """DB-API cursor over a literal SQLite file for the ``%s``-placeholder "postgresql-emulated" profile.
+
+    This profile runs on SQLite, not a PostgreSQL server; real-server coverage lives in the
+    ``integration``-marked cases that use ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``.
 
     Genuine CRUD statements pass straight through with ``%s`` translated to ``?``, so every
     contract test below still exercises a real database engine. SQLite has neither
@@ -555,8 +560,8 @@ def _configuration_declaration(**settings_overrides: object) -> dict[str, Any]:
         },
         "package_metadata": {"adapter_api_version": 1},
         "credentials": {
-            "netbox-token": {"provider": "env", "identifier": "NETBOX_TOKEN"},
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"},
+            "netbox-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"},
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
         },
     }
 
@@ -686,7 +691,7 @@ def test_sqlite_unique_constraint_codes_are_duplicates(error_code: int) -> None:
     assert product_store_store._is_unique_violation(error)
 
 
-@pytest.fixture(params=("local", "production"))
+@pytest.fixture(params=("local", "postgresql-emulated"))
 def provider(request, tmp_path: Path) -> ProductProjection:
     if request.param == "local":
         return ProductProjection(
@@ -698,6 +703,38 @@ def provider(request, tmp_path: Path) -> ProductProjection:
         PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
         S3ArtifactStore(fake_s3, bucket="product-artifacts", prefix="contract"),
     )
+
+
+@pytest.fixture(params=("local", "postgresql-emulated", pytest.param("postgresql", marks=pytest.mark.integration)))
+def redaction_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
+    """The ``provider`` profiles plus a real PostgreSQL server, for the redaction boundary.
+
+    The ``postgresql`` parameter needs ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` and runs each case
+    in its own generated schema, dropped afterwards.
+    """
+    if request.param == "local":
+        yield ProductProjection(SQLiteRunStore(tmp_path / "local.sqlite3"), FileArtifactStore(tmp_path / "objects"))
+        return
+    if request.param == "postgresql-emulated":
+        yield ProductProjection(
+            PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
+            S3ArtifactStore(_FakeS3(), bucket="product-artifacts", prefix="contract"),
+        )
+        return
+    schema = isolated_schema(dsn_or_skip("the redaction contract's PostgreSQL parameter"))
+    schema.create()
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
+
+    try:
+        yield ProductProjection(
+            PostgreSQLRunStore(lambda: PsycopgConnectionFactory(psycopg.connect)(schema.dsn)),
+            FileArtifactStore(tmp_path / "objects"),
+        )
+    finally:
+        schema.drop()
 
 
 def test_zero_link_run_round_trip(provider: ProductProjection) -> None:
@@ -712,7 +749,7 @@ def test_zero_link_run_round_trip(provider: ProductProjection) -> None:
     assert result.value.prefect_executions == ()
 
 
-def test_mutation_reservation_atomically_creates_one_run_and_replays_on_both_profiles(
+def test_mutation_reservation_atomically_creates_one_run_and_replays_on_sqlite_and_emulated_postgresql(
     provider: ProductProjection,
 ) -> None:
     receipt = _receipt()
@@ -853,7 +890,9 @@ def test_sqlite_concurrent_mutation_reservation_creates_exactly_one_product_run(
     assert projection.lookup_run(winning_run_id).available
 
 
-def test_write_capable_mutation_admission_is_atomic_on_both_profiles(provider: ProductProjection) -> None:
+def test_write_capable_mutation_admission_is_atomic_on_sqlite_and_emulated_postgresql(
+    provider: ProductProjection,
+) -> None:
     """One admission wins; the loser keeps a receipt carrying its own stored refusal."""
     provider.create_run(_run())
 
@@ -2593,7 +2632,7 @@ def test_reviewed_apply_extends_plan_record_without_a_second_run_id(provider: Pr
     assert [reference.artifact_id for reference in result.artifact_refs] == ["apply-result", "plan"]
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_interrupted_publication_can_resume_and_finish_the_run(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
     if profile == "local":
@@ -2630,7 +2669,7 @@ def test_interrupted_publication_can_resume_and_finish_the_run(profile: str, tmp
     assert failed.outcome == "failed"
     assert failed.finished_at is not None
     assert projection.lookup_artifact("run-001", "plan").reason == "artifact-publication-incomplete"
-    if profile == "production":
+    if profile == "postgresql-emulated":
         assert not [key for (_, key) in fake_s3.objects if key.endswith("manifest.json")]
     else:
         assert not list((tmp_path / "objects").rglob("manifest.json"))
@@ -2657,7 +2696,7 @@ def test_interrupted_publication_can_resume_and_finish_the_run(profile: str, tmp
     assert completed.artifact_refs == (reference,)
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_manifest_complete_but_relational_mark_failed_resumes_without_republication(
     profile: str, tmp_path: Path
 ) -> None:
@@ -2709,7 +2748,7 @@ def test_manifest_complete_but_relational_mark_failed_resumes_without_republicat
         assert len([key for (_, key) in fake_s3.objects if key.endswith("manifest.json")]) == 1
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_published_row_with_missing_manifest_accepts_only_an_exact_repair(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
     if profile == "local":
@@ -2887,7 +2926,7 @@ def test_s3_cleanup_is_best_effort_after_successful_manifest_commit() -> None:
     assert store.lookup(reference).value == b"{}"
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 @pytest.mark.parametrize(
     "retry",
     [
@@ -2935,7 +2974,7 @@ def test_mismatched_pending_publication_retry_is_rejected_without_overwrite(
     assert resumed.lookup_artifact("run-001", "plan").value == b"{}"
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_duplicate_artifact_identity_is_rejected_before_a_second_provider_write(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
     if profile == "local":
@@ -2965,7 +3004,7 @@ def test_duplicate_artifact_identity_is_rejected_before_a_second_provider_write(
         assert len([key for (_, key) in fake_s3.objects if key.endswith("manifest.json")]) == 1
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_missing_object_is_unavailable_without_hiding_run(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
     if profile == "local":
@@ -3079,7 +3118,7 @@ def test_non_mapping_manifest_is_reported_as_invalid(manifest: bytes) -> None:
     assert product_store_store._validate_publication(reference, manifest, data).reason == "manifest-invalid"
 
 
-def test_redaction_precedes_every_relational_and_artifact_write(provider: ProductProjection) -> None:
+def test_redaction_precedes_every_relational_and_artifact_write(redaction_provider: ProductProjection) -> None:
     secret = "canary-secret-649"  # noqa: S105 - deliberate persistence-boundary canary.
     record = _run().model_copy(
         update={
@@ -3089,8 +3128,8 @@ def test_redaction_precedes_every_relational_and_artifact_write(provider: Produc
             "summary": {"nested": [secret]},
         }
     )
-    provider.create_run(record, secrets=(secret,))
-    provider.publish_artifact(
+    redaction_provider.create_run(record, secrets=(secret,))
+    redaction_provider.publish_artifact(
         "run-001",
         artifact_id="result",
         kind="result",
@@ -3098,7 +3137,7 @@ def test_redaction_precedes_every_relational_and_artifact_write(provider: Produc
         data=f'{{"credential":"{secret}"}}'.encode(),
         secrets=(secret,),
     )
-    provider.finish_run(
+    redaction_provider.finish_run(
         "run-001",
         phase="applied",
         outcome="succeeded",
@@ -3107,8 +3146,8 @@ def test_redaction_precedes_every_relational_and_artifact_write(provider: Produc
         secrets=(secret,),
     )
 
-    loaded = provider.lookup_run("run-001").value
-    artifact = provider.lookup_artifact("run-001", "result").value
+    loaded = redaction_provider.lookup_run("run-001").value
+    artifact = redaction_provider.lookup_artifact("run-001", "result").value
     assert loaded is not None
     assert secret not in loaded.model_dump_json()
     assert artifact is not None
@@ -3116,7 +3155,180 @@ def test_redaction_precedes_every_relational_and_artifact_write(provider: Produc
     assert b"***" in artifact
 
 
-def test_concurrent_result_merges_retain_every_stage_on_both_profiles(provider: ProductProjection) -> None:
+# A value a JSON serializer cannot write verbatim: a quote, a backslash, a line break, a
+# control character and a non-ASCII letter each come out escaped, or re-encoded, in the bytes.
+_ESCAPED_SECRET = 'pa"ss\\wörd\n-\x01-canary-649'  # noqa: S105 - deliberate persistence-boundary canary.
+
+
+class _ReviewCanary(BaseModel):
+    operations: list[dict[str, str]]
+
+
+@pytest.mark.parametrize(
+    "serialize",
+    [
+        pytest.param(
+            lambda value: _ReviewCanary(operations=[{"note": f"auth {value}"}]).model_dump_json().encode(),
+            id="model-dump-json",
+        ),
+        pytest.param(lambda value: json.dumps({"operations": [{"note": f"auth {value}"}]}).encode(), id="json-ascii"),
+        pytest.param(
+            lambda value: json.dumps({"operations": [{"note": f"auth {value}"}]}, ensure_ascii=False).encode(),
+            id="json-unicode",
+        ),
+    ],
+)
+def test_a_public_json_artifact_is_redacted_whatever_escaping_its_serializer_used(
+    serialize: Callable[[str], bytes], redaction_provider: ProductProjection
+) -> None:
+    redaction_provider.create_run(_run())
+
+    reference = redaction_provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=serialize(_ESCAPED_SECRET),
+        secrets=(_ESCAPED_SECRET,),
+    )
+
+    artifact = redaction_provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    forms = {
+        _ESCAPED_SECRET,
+        json.dumps(_ESCAPED_SECRET)[1:-1],
+        json.dumps(_ESCAPED_SECRET, ensure_ascii=False)[1:-1],
+    }
+    assert [form for form in forms if form.encode() in artifact] == []
+    assert json.loads(artifact) == {"operations": [{"note": "auth ***"}]}
+    assert reference.digest == sha256(artifact).hexdigest()
+    assert reference.size == len(artifact)
+
+
+def test_a_public_json_artifact_is_redacted_inside_json_text_held_by_a_field(
+    redaction_provider: ProductProjection,
+) -> None:
+    """A field that stores a serialized document holds the secret JSON-escaped once more."""
+    redaction_provider.create_run(_run())
+    nested = json.dumps({"pw": _ESCAPED_SECRET})
+
+    redaction_provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=json.dumps({"operations": [{"payload": {"config": nested}}]}).encode(),
+        secrets=(_ESCAPED_SECRET,),
+    )
+
+    artifact = redaction_provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    config = json.loads(artifact)["operations"][0]["payload"]["config"]
+    assert json.loads(config) == {"pw": "***"}
+
+
+def test_a_public_text_artifact_is_redacted_in_its_raw_and_json_escaped_forms(
+    redaction_provider: ProductProjection,
+) -> None:
+    redaction_provider.create_run(_run())
+    escaped = json.dumps(_ESCAPED_SECRET)[1:-1]
+
+    redaction_provider.publish_artifact(
+        "run-001",
+        artifact_id="log",
+        kind="log",
+        media_type="text/plain",
+        data=f"raw {_ESCAPED_SECRET} quoted {escaped}".encode(),
+        secrets=(_ESCAPED_SECRET,),
+    )
+
+    assert redaction_provider.lookup_artifact("run-001", "log").value == b"raw *** quoted ***"
+
+
+def test_a_public_json_artifact_stays_valid_json_when_a_secret_is_a_number(
+    redaction_provider: ProductProjection,
+) -> None:
+    """Rewriting digits inside a number leaves bytes the plan reader cannot parse."""
+    secret = "86427531"  # noqa: S105 - deliberate persistence-boundary canary.
+    redaction_provider.create_run(_run())
+
+    redaction_provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=json.dumps({"vlan": 7, "asn": int(secret), "serial": int(f"1{secret}")}).encode(),
+        secrets=(secret,),
+    )
+
+    artifact = redaction_provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    assert json.loads(artifact) == {"vlan": 7, "asn": "***", "serial": "1***"}
+
+
+def test_a_public_json_artifact_masks_a_number_written_without_the_exponent_sign(
+    redaction_provider: ProductProjection,
+) -> None:
+    """Pydantic writes 1e100 where json.dumps writes 1e+100; the decoded pass still sees the secret."""
+    secret = "1e+100"  # noqa: S105 - deliberate persistence-boundary canary.
+    redaction_provider.create_run(_run())
+
+    redaction_provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=b'{"operations":[{"payload":{"x":1e100}}]}',
+        secrets=(secret,),
+    )
+
+    artifact = redaction_provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    assert json.loads(artifact) == {"operations": [{"payload": {"x": "***"}}]}
+
+
+def test_a_public_json_artifact_whose_keys_collapse_under_redaction_is_refused(
+    redaction_provider: ProductProjection,
+) -> None:
+    """Two keys that redact to the same text would publish a document with a duplicate key."""
+    secret = "collapse-canary-5521"  # noqa: S105 - deliberate persistence-boundary canary.
+    redaction_provider.create_run(_run())
+
+    with pytest.raises(ValueError, match="collapse multiple mapping keys"):
+        redaction_provider.publish_artifact(
+            "run-001",
+            artifact_id="plan-review",
+            kind="saved-plan-review",
+            media_type="application/json",
+            data=json.dumps({secret: "one", "***": "two"}).encode(),
+            secrets=(secret,),
+        )
+
+    assert redaction_provider.lookup_artifact("run-001", "plan-review").value is None
+
+
+def test_a_public_json_artifact_without_secrets_is_published_byte_for_byte(
+    redaction_provider: ProductProjection,
+) -> None:
+    """With nothing to redact, the bytes are stored as given, spacing included."""
+    data = b'{ "operations" : [ { "note" : "nothing to hide" } ] }'
+    redaction_provider.create_run(_run())
+
+    redaction_provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=data,
+        secrets=(),
+    )
+
+    assert redaction_provider.lookup_artifact("run-001", "plan-review").value == data
+
+
+def test_concurrent_result_merges_retain_every_stage_on_sqlite_and_emulated_postgresql(
+    provider: ProductProjection,
+) -> None:
     provider.create_run(_run())
     ready = Barrier(2)
 
@@ -3216,8 +3428,11 @@ def test_finish_run_rejects_non_utf8_bytes_before_updating_the_record(provider: 
     assert unchanged.outcome is None
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
-def test_secret_canary_is_absent_from_raw_provider_contents(profile: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
+def test_secret_canary_is_absent_from_raw_provider_contents(
+    profile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(globals(), "_APPEND_ORDINAL", count(1))
     secret = "raw-provider-canary-649"  # noqa: S105 - deliberate persistence-boundary canary.
     fake_s3 = _FakeS3()
     if profile == "local":
@@ -3256,7 +3471,7 @@ def test_secret_canary_is_absent_from_raw_provider_contents(profile: str, tmp_pa
     assert secret.encode() not in persisted
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_pending_publication_persists_no_secret_canary(profile: str, tmp_path: Path) -> None:
     secret = "pending-provider-canary-649"  # noqa: S105 - deliberate persistence-boundary canary.
     fake_s3 = _FakeS3()
@@ -3350,7 +3565,7 @@ assert p.lookup_artifact('run-001', 'result').value == b'durable'
     assert not (second_cwd / ".infrahub-sync-cache").exists()
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_provider_profile_survives_reconstruction(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
 
@@ -3561,7 +3776,7 @@ def test_insert_configuration_version_row_rejects_a_checksum_content_mismatch(tm
         connection.close()
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
 def test_configuration_registry_survives_store_reconstruction(profile: str, tmp_path: Path) -> None:
     fake_s3 = _FakeS3()
 
@@ -3584,7 +3799,7 @@ def test_configuration_registry_survives_store_reconstruction(profile: str, tmp_
     assert after_restart.lookup_configuration_version(first.config_id, 2) == product_store.LookupResult(value=second)
 
 
-def test_list_configurations_orders_by_created_at_then_config_id_on_both_profiles(
+def test_list_configurations_orders_by_created_at_then_config_id_on_sqlite_and_emulated_postgresql(
     provider: ProductProjection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The configurations listing carries one total ORDER BY: ``created_at``, then ``config_id``.
@@ -3751,7 +3966,7 @@ def test_registration_rejects_an_inline_credential_value_on_an_existing_configur
     assert provider.list_configuration_versions(first.config_id) == (first,)
 
 
-def test_concurrent_new_checksums_allocate_distinct_sequential_versions_on_both_profiles(
+def test_concurrent_new_checksums_allocate_distinct_sequential_versions_on_sqlite_and_emulated_postgresql(
     provider: ProductProjection,
 ) -> None:
     first = provider.create_configuration(_configuration_package())
@@ -3773,7 +3988,7 @@ def test_concurrent_new_checksums_allocate_distinct_sequential_versions_on_both_
     assert len(provider.list_configuration_versions(first.config_id)) == 3
 
 
-def test_concurrent_new_checksums_allocate_distinct_versions_at_eight_writers_on_both_profiles(
+def test_concurrent_new_checksums_allocate_distinct_versions_at_eight_writers_on_sqlite_and_emulated_postgresql(
     provider: ProductProjection,
 ) -> None:
     """The measured, supported concurrency degree for ``add_configuration_version``: 8
@@ -3809,8 +4024,8 @@ def test_configuration_version_allocation_exhaustion_raises_a_typed_error(tmp_pa
         store.add_configuration_version(first.config_id, _configuration_package(verify_ssl=False))
 
 
-@pytest.mark.parametrize("profile", ["local", "production"])
-def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_both_profiles(
+@pytest.mark.parametrize("profile", ["local", "postgresql-emulated"])
+def test_concurrent_identical_checksums_deduplicate_to_exactly_one_row_on_sqlite_and_emulated_postgresql(
     profile: str, tmp_path: Path
 ) -> None:
     """Every caller -- winner and losers alike -- must resolve in exactly one
@@ -4432,6 +4647,115 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
         _assert_real_postgresql_refuses_partial_configuration_binding(dsn)
     finally:
         schema.drop()
+
+
+# The pre-migration shape of the two tables that carry their own column migrations.
+_LEGACY_RECEIPT_AND_EXECUTION_DDL: list[LiteralString] = [
+    "CREATE TABLE mutation_receipts ("
+    "receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL, "
+    "operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL, "
+    "reason TEXT NOT NULL, run_id TEXT NOT NULL, prefect_key TEXT NOT NULL, "
+    "state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT, "
+    "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (actor, key_digest))",
+    "CREATE TABLE prefect_executions ("
+    "run_id TEXT NOT NULL, flow_run_id TEXT NOT NULL, deployment_id TEXT, purpose TEXT NOT NULL, "
+    "attempt INTEGER NOT NULL, last_observed_state TEXT, last_observed_at TEXT, "
+    "position INTEGER NOT NULL, mutation_receipt_id TEXT UNIQUE, "
+    "PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id), "
+    "FOREIGN KEY (mutation_receipt_id) REFERENCES mutation_receipts(receipt_id))",
+]
+
+
+@pytest.mark.integration
+def test_postgresql_migration_ignores_same_named_tables_in_a_sibling_schema() -> None:
+    """A sibling schema's migrated ``product_runs`` must not suppress the target's column migration.
+
+    Column introspection that omits ``table_schema`` sees the sibling's migrated columns, decides
+    nothing is missing, and leaves the target's legacy ``product_runs``, ``mutation_receipts`` and
+    ``prefect_executions`` without them.
+    """
+    endpoint = _reachable_postgresql_dsn()
+    if endpoint is None:
+        pytest.skip("psycopg is not installed, or PRODUCT_STORE_TEST_POSTGRESQL_DSN is unset/unreachable")
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
+
+    target = isolated_schema(endpoint)
+    sibling = isolated_schema(endpoint)
+    binding_columns = {"config_id", "registry_version", "package_checksum"}
+
+    def columns_of(schema_name: str, dsn: str) -> set[str]:
+        with psycopg.connect(dsn) as admin:
+            rows = admin.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'product_runs' AND table_schema = %s",
+                (schema_name,),
+            ).fetchall()
+        return {row[0] for row in rows}
+
+    def constraints_of(schema_name: str, dsn: str) -> set[tuple[str, str]]:
+        with psycopg.connect(dsn) as admin:
+            rows = admin.execute(
+                "SELECT table_name, constraint_name FROM information_schema.table_constraints "
+                "WHERE table_name IN ('product_runs', 'mutation_receipts') AND table_schema = %s",
+                (schema_name,),
+            ).fetchall()
+        return {(row[0], row[1]) for row in rows}
+
+    guards = {
+        ("product_runs", product_store_store._CONFIGURATION_BINDING_CONSTRAINT),
+        ("mutation_receipts", product_store_store._MUTATION_RECEIPT_RESOURCE_CONSTRAINT),
+    }
+
+    try:
+        sibling.create()
+        target.create()
+        # The sibling is fully migrated, so it carries the binding columns.
+        PostgreSQLRunStore(lambda: PsycopgConnectionFactory(psycopg.connect)(sibling.dsn))
+        assert binding_columns <= columns_of(sibling.name, sibling.dsn)
+        assert guards <= constraints_of(sibling.name, sibling.dsn)
+
+        # The target holds the legacy tables only: same table names, none of the later columns.
+        # The two tables with their own migrations get their legacy shape, not the current one.
+        migrated_elsewhere = ("configurations", "configuration_versions", "mutation_receipts", "prefect_executions")
+        liveness = {column for column, _ in product_store_store._PREFECT_EXECUTION_LIVENESS_COLUMNS}
+        with psycopg.connect(target.dsn) as admin:
+            for statement in product_store_store._SCHEMA.split(";"):
+                if statement.strip() and not any(table in statement for table in migrated_elsewhere):
+                    admin.execute(statement)
+            for statement in _LEGACY_RECEIPT_AND_EXECUTION_DDL:
+                admin.execute(statement)
+            admin.commit()
+
+        def legacy_columns_of(table: str, schema: IsolatedSchema) -> set[str]:
+            with psycopg.connect(schema.dsn) as admin:
+                rows = admin.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = %s AND table_schema = %s",
+                    (table, schema.name),
+                ).fetchall()
+            return {row[0] for row in rows}
+
+        assert not binding_columns & columns_of(target.name, target.dsn)
+        assert not guards & constraints_of(target.name, target.dsn)
+        assert not {"resource_kind", "resource_id"} & legacy_columns_of("mutation_receipts", target)
+        assert not liveness & legacy_columns_of("prefect_executions", target)
+        assert {"resource_kind", "resource_id"} <= legacy_columns_of("mutation_receipts", sibling)
+        assert liveness <= legacy_columns_of("prefect_executions", sibling)
+
+        PostgreSQLRunStore(lambda: PsycopgConnectionFactory(psycopg.connect)(target.dsn))
+
+        assert binding_columns <= columns_of(target.name, target.dsn)
+        assert {"resource_kind", "resource_id"} <= legacy_columns_of("mutation_receipts", target)
+        assert liveness <= legacy_columns_of("prefect_executions", target)
+        # A same-named constraint in the sibling must not satisfy the existence checks.
+        assert guards <= constraints_of(target.name, target.dsn)
+    finally:
+        try:
+            target.drop()
+        finally:
+            sibling.drop()
 
 
 def _assert_real_postgresql_refuses_partial_configuration_binding(dsn: str) -> None:

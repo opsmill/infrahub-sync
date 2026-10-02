@@ -129,7 +129,7 @@ def declared_package() -> dict[str, Any]:
             ],
         },
         # Nothing sets this variable, so the reference is declared and unresolved.
-        "credentials": {"startup-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_R2_ABSENT_TOKEN"}},
+        "credentials": {"startup-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_R2_ABSENT_TOKEN"}},
     }
 
 
@@ -181,7 +181,7 @@ def test_a_deployment_with_no_configuration_reaches_ready(started: Deployment) -
     """No package, no credentials, no destination — and a live worker anyway."""
     assert started.status() == "READY"
     assert worker_state(started) in {"ready", "busy"}
-    assert not started.setting("INFRAHUB_API_TOKEN"), "the fixture supplied a destination credential"
+    assert not started.setting("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"), "the fixture supplied a destination credential"
     assert probe_json(started, SCHEMA_TABLES) > 0, "the deployment came back with no product schema"
     assert probe_json(started, REGISTRY) == [], "a start registered something"
     assert probe_json(started, AUDIT) == [], "a start recorded an audit event"

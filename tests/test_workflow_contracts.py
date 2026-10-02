@@ -773,7 +773,7 @@ def test_a_merge_into_the_branch_this_gate_guards_re_qualifies_it() -> None:
 def test_the_fast_tier_starts_beside_the_lint_it_used_to_wait_for() -> None:
     """Ninety seconds on the critical path of every run, for an ordering nothing needs.
 
-    Lint still blocks a merge as its own required check; what it no longer does
+    Lint still blocks a merge, through the required job; what it no longer does
     is hold the tests and the image gate behind it.
     """
     graph = develop_jobs()
@@ -1831,13 +1831,21 @@ def required_check_script() -> tuple[dict, str]:
     return steps[0].get("env") or {}, str(steps[0]["run"])
 
 
-def _required_check_exit(changes: str, image: str) -> tuple[int, str]:
-    """Run the required check's script with each `needs.<job>.result` it reads set as given."""
+FAST_CHECK_JOBS = ("linter", "tests", "uv-checker")
+
+
+def _required_check_exit(changes: str, image: str, fast: dict[str, str] | None = None) -> tuple[int, str]:
+    """Run the required check's script with each `needs.<job>.result` it reads set as given.
+
+    A fast check not named in `fast` ends in `success`.
+    """
     env, script = required_check_script()
     results = {
         f"${{{{ needs.{IMAGE_CHANGES_JOB}.result }}}}": changes,
         f"${{{{ needs.{PR_IMAGE_JOB}.result }}}}": image,
     }
+    for check in FAST_CHECK_JOBS:
+        results[f"${{{{ needs.{check}.result }}}}"] = (fast or {}).get(check, "success")
     bash = shutil.which("bash")
     assert bash, "a POSIX shell is needed to run the check the way the runner does"
     with tempfile.TemporaryDirectory() as scratch:
@@ -1858,11 +1866,11 @@ def test_the_required_check_keeps_its_id_and_name() -> None:
     assert pr_job(REQUIRED_JOB)["name"] == REQUIRED_JOB_NAME
 
 
-def test_the_required_check_always_runs_after_the_filter_and_the_image_call() -> None:
-    """A skipped job satisfies a required check, so this one must run whatever the image call did."""
+def test_the_required_check_always_runs_after_every_check_it_judges() -> None:
+    """A skipped job satisfies a required check, so this one must run whatever the others did."""
     job = pr_job(REQUIRED_JOB)
 
-    assert list(_needs(job)) == [IMAGE_CHANGES_JOB, PR_IMAGE_JOB]
+    assert list(_needs(job)) == [IMAGE_CHANGES_JOB, PR_IMAGE_JOB, *FAST_CHECK_JOBS]
     assert job.get("if") == "${{ always() }}" or job.get("if") == "always()"
 
 
@@ -1873,6 +1881,18 @@ def test_the_required_check_reads_both_results_it_judges() -> None:
         f"${{{{ needs.{IMAGE_CHANGES_JOB}.result }}}}",
         f"${{{{ needs.{PR_IMAGE_JOB}.result }}}}",
     }
+
+
+@pytest.mark.parametrize("check", FAST_CHECK_JOBS)
+@pytest.mark.parametrize(("result", "expected"), [("success", 0), ("skipped", 0), ("failure", 1), ("cancelled", 1)])
+def test_the_required_check_refuses_a_failed_fast_check(check: str, result: str, expected: int) -> None:
+    """Lint, unit tests, and the lock-file check block a merge through the one required check."""
+    env, _script = required_check_script()
+    assert f"${{{{ needs.{check}.result }}}}" in env.values(), f"{REQUIRED_JOB} does not read {check}"
+
+    code, output = _required_check_exit("success", "success", {check: result})
+
+    assert code == expected, f"{check}={result} exited {code}: {output!r}"
 
 
 @pytest.mark.parametrize(("changes", "image", "expected"), REQUIRED_CHECK_VERDICTS)

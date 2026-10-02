@@ -50,8 +50,8 @@ compatibility with other server versions.
 Open `.env` and add the source and destination tokens:
 
 ```dotenv
-NETBOX_TOKEN=<your NetBox token>
-INFRAHUB_API_TOKEN=<your Infrahub token>
+INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=<your NetBox token>
+INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<your Infrahub token>
 ```
 
 For NetBox 4.6, use a v2 API token. It starts with `nbt_` and contains a dot;
@@ -60,10 +60,10 @@ account settings; a login password does not work here. Use source credentials
 that can read the mapped objects and an Infrahub token that can load schema and
 read those destination kinds on your chosen branch.
 
-Do not change the Sync API credentials you generated for the deployment. The
-bundled CLI uses them to contact Sync; `INFRAHUB_API_TOKEN` authenticates to the
-destination Infrahub. Do not run `source .env`: that file also contains the
-deployment's internal credentials.
+Do not change the Sync API credentials you generated for the deployment. The bundled CLI uses them to
+contact Sync; `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` authenticates to the destination Infrahub.
+Do not run `source .env`: that file also contains the deployment's
+internal credentials.
 
 ## Prepare the destination schema
 
@@ -121,7 +121,7 @@ inside the parentheses.
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' .env)"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' .env)"
   .schema-tools/bin/infrahubctl branch list
 )
 ```
@@ -134,7 +134,7 @@ environment block before loading the schema.
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' .env)"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' .env)"
   .schema-tools/bin/infrahubctl schema load schema.yml --branch BRANCH_NAME
 )
 ```
@@ -158,7 +158,8 @@ loaded:
 ---
 # Replace the URL placeholders and load a matching destination schema before registration.
 # Supply token values through the named environment variables, never in this file.
-# Set NETBOX_TOKEN and INFRAHUB_API_TOKEN in the deployment's .env file.
+# Set INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN and INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
+# in the deployment's .env file.
 format_version: 1
 configuration:
   name: netbox-evaluation
@@ -193,8 +194,8 @@ configuration:
           mapping: site
           reference: TestingSite
 credentials:
-  netbox-token: {provider: env, identifier: NETBOX_TOKEN}
-  infrahub-token: {provider: env, identifier: INFRAHUB_API_TOKEN}
+  netbox-token: {provider: env, identifier: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN}
+  infrahub-token: {provider: env, identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN}
 ```
 
 Before registering `package.yml`:

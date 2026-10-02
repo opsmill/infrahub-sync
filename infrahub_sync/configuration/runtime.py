@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 from infrahub_sync import SyncInstance
 
 from .credentials import _REGISTERED_CONTEXT, resolve_reference
+from .storage import UnsupportedSyncStoreError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -41,6 +42,9 @@ def resolve_runtime_instance(
     configuration validation — keeps the default and resolves both sides.
     """
 
+    if package.configuration.store is not None:
+        raise UnsupportedSyncStoreError
+
     def resolve(value: object) -> object:
         if type(value) is dict:  # pylint: disable=unidiomatic-typecheck
             mapping = cast("dict[str, object]", value)
@@ -61,7 +65,14 @@ def resolve_runtime_instance(
         if type(adapter) is dict:  # pylint: disable=unidiomatic-typecheck
             adapter_mapping = cast("dict[str, object]", adapter)
             settings = adapter_mapping.get("settings")
-            if type(settings) is dict:  # pylint: disable=unidiomatic-typecheck
-                cast("dict[str, object]", settings)[_REGISTERED_CONTEXT] = True
+            if settings is None:
+                # A declared `settings: null` means no settings, not "unregistered": left
+                # unmarked, the adapter would fill its address and credentials from the
+                # worker environment instead of refusing the missing declaration.
+                settings = adapter_mapping["settings"] = {}
+            if type(settings) is not dict:  # pylint: disable=unidiomatic-typecheck
+                msg = f"registered {side} adapter settings must be a mapping"
+                raise TypeError(msg)
+            cast("dict[str, object]", settings)[_REGISTERED_CONTEXT] = True
     runtime["directory"] = directory
     return SyncInstance.model_validate(runtime)

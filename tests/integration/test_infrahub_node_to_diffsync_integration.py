@@ -105,11 +105,20 @@ def _graphql(address: str, token: str, query: str) -> dict[str, Any]:
     return body
 
 
+def _graphql_mutation_names(address: str, token: str) -> set[str]:
+    """Return the names of the mutations GraphQL currently exposes."""
+    body = _graphql(address, token, '{ __type(name: "Mutation") { fields { name } } }')
+    mutation_type = body["data"]["__type"] or {}
+    return {field["name"] for field in mutation_type.get("fields") or []}
+
+
 def _await_schema_kinds(address: str, token: str, kinds: tuple[str, ...], timeout: float = 90.0) -> None:
-    """Block until `main` serves every one of `kinds`.
+    """Block until `main` serves every one of `kinds` and GraphQL exposes each `<Kind>Create` mutation.
 
     `POST /api/schema/load` returns once the payload is accepted, not once the kinds it
-    declares are available to GraphQL. A create issued in that window fails with
+    declares are available to GraphQL. `GET /api/schema` serves a new kind before GraphQL
+    exposes its create mutation (14.5 s against 20.3 s on one fresh stack), so the REST read
+    alone is not enough. A create issued in that window fails with
     `Cannot query field '<Kind>Create' on type 'Mutation'`, which reads as a broken adapter
     rather than a slow schema load.
     """
@@ -123,10 +132,18 @@ def _await_schema_kinds(address: str, token: str, kinds: tuple[str, ...], timeou
         response.raise_for_status()
         missing = set(kinds) - {node["kind"] for node in response.json().get("nodes", [])}
         if not missing:
-            return
+            try:
+                exposed = _graphql_mutation_names(address, token)
+            except RuntimeError:
+                # GraphQL can answer with errors while it rebuilds its schema; keep polling until the deadline.
+                exposed = set()
+            missing_mutations = {f"{kind}Create" for kind in kinds} - exposed
+            if not missing_mutations:
+                return
+            missing = missing_mutations
         if time.monotonic() >= deadline:
             msg = (
-                f"Infrahub did not serve {sorted(missing)} on 'main' within {timeout:.0f}s of a successful "
+                f"Infrahub did not expose {sorted(missing)} on 'main' within {timeout:.0f}s of a successful "
                 f"schema load, so the throwaway schema this test measures against is not in place."
             )
             raise AssertionError(msg)

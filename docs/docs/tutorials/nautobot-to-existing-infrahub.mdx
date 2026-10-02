@@ -61,8 +61,8 @@ missing.
 Open `.env` and add the source and destination tokens:
 
 ```dotenv
-NAUTOBOT_TOKEN=<your Nautobot token>
-INFRAHUB_API_TOKEN=<your Infrahub token>
+INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN=<your Nautobot token>
+INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<your Infrahub token>
 ```
 
 Paste the Nautobot API token exactly as issued under your user profile's API
@@ -71,10 +71,10 @@ token created under your account settings; a login password does not work here.
 Use source credentials that can read the mapped objects and an Infrahub token
 that can load schema and read those destination kinds on your chosen branch.
 
-Do not change the Sync API credentials you generated for the deployment. The
-bundled CLI uses them to contact Sync; `INFRAHUB_API_TOKEN` authenticates to the
-destination Infrahub. Do not run `source .env`: that file also contains the
-deployment's internal credentials.
+Do not change the Sync API credentials you generated for the deployment. The bundled CLI uses them to
+contact Sync; `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` authenticates to the destination Infrahub.
+Do not run `source .env`: that file also contains the deployment's
+internal credentials.
 
 ## Prepare the destination schema
 
@@ -132,7 +132,7 @@ inside the parentheses.
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' .env)"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' .env)"
   .schema-tools/bin/infrahubctl branch list
 )
 ```
@@ -145,7 +145,7 @@ environment block before loading the schema.
 ```sh
 (
   export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
-  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_API_TOKEN=//p' .env)"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' .env)"
   .schema-tools/bin/infrahubctl schema load schema.yml --branch BRANCH_NAME
 )
 ```
@@ -165,7 +165,8 @@ complete Nautobot mapping:
 ---
 # Map Nautobot locations and devices to TestingSite and TestingDevice in Infrahub.
 # Replace both URLs and provide the matching destination schema before registration.
-# Set NAUTOBOT_TOKEN and INFRAHUB_API_TOKEN in the deployment's .env file.
+# Set INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN and INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
+# in the deployment's .env file.
 format_version: 1
 configuration:
   name: my-nautobot-evaluation
@@ -201,8 +202,8 @@ configuration:
           mapping: location
           reference: TestingSite
 credentials:
-  nautobot-token: {provider: env, identifier: NAUTOBOT_TOKEN}
-  infrahub-token: {provider: env, identifier: INFRAHUB_API_TOKEN}
+  nautobot-token: {provider: env, identifier: INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN}
+  infrahub-token: {provider: env, identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN}
 ```
 
 This mapping sends every Nautobot location to `TestingSite`, whatever its `location_type`.

@@ -78,7 +78,9 @@ SECRETS = SecretRegistry()
 
 # A credential-bearing setting name, in any of the spellings the services here
 # use. Matched case-insensitively, so `token`, `TOKEN`, and `Token` are one rule.
-SECRET_NAME = r"[A-Za-z0-9_.-]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|ACCESS_KEY|CREDENTIAL)[A-Za-z0-9_.-]*"  # noqa: S105 -- a pattern that recognises credential-bearing names, not a credential
+SECRET_NAME = (
+    r"[A-Za-z0-9_.-]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|ACCESS_KEY|CREDENTIAL|AUTH_STRING)[A-Za-z0-9_.-]*"  # noqa: S105 -- a pattern that recognises credential-bearing names, not a credential
+)
 
 # One JSON string, escapes and all. Compose and Docker both print structured
 # output whose values are JSON-encoded documents of their own, so a value pattern

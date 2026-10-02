@@ -106,6 +106,26 @@ When a destination field is a relationship to another model that is also being s
 
 This says: the value of the source's `device.name` field should resolve to the `Device` object with that name in the destination. infrahub-sync computes a write order from `reference` fields so the referenced model is normally synced before this one, but a reference outside the kind's `identifiers` is optional and can be dropped to break a cycle, so that guarantee does not always hold; see [Automatic write order](config.mdx#automatic-write-order). You can override the computed order with the optional `order` key in the project configuration.
 
+### Generic reference limitations
+
+For an Infrahub destination, `reference` can name a generic kind. Planning looks up
+loaded peers under the generic's mapped concrete kinds. This supports a relationship
+with one peer, or several peers that all belong to one concrete kind.
+
+A relationship with several peers of different concrete kinds fails planning with
+`SourcePeerUnresolvedError` ("names peers of more than one kind"). One saved
+relationship reference cannot record multiple peer kinds.
+
+A missing peer also fails planning when the generic schema lists more than one
+possible concrete kind, even if only one is mapped. A same-name destination object
+of that mapped kind does not prove it is the intended peer. The destination-only
+literal identity exception requires one possible kind and a supported single-field
+destination key.
+
+Mapping both the generic and its concrete kinds can produce duplicate matches for
+one peer. Planning refuses these ambiguous matches; this case is tracked in
+[SYNC-216](https://opsmill.atlassian.net/browse/SYNC-216).
+
 ## Identifiers
 
 The `identifiers` list defines which field(s) uniquely identify an object of this model. Identifiers are used to determine whether an object already exists in the destination and should be updated, or whether a new object should be created.
@@ -218,6 +238,8 @@ For cases where a field value needs to be transformed during the mapping — upp
     - field: name
       expression: "{{ name | upper }}"
 ```
+
+Transform expressions run in a Jinja2 sandbox. They can read the source object's fields, use Jinja filters, and call methods that return a new value, such as `split` or `replace`. They cannot call arbitrary Python methods or functions, change a value in place (for example with `append` or `update`), or access private attributes (names starting with `_`). An expression that tries fails the transform with an error naming the field. Registering a configuration package checks each expression's syntax, and a syntax error refuses the package.
 
 Adapters can also register custom Jinja filters via a `_add_custom_filters` class method on the adapter model. The ACI adapter, for example, includes an `aci_device_name` filter for resolving ACI node IDs to device names. See [Local adapters](../adapters/local-adapters.mdx) for the implementation pattern, and [Sync instance configuration](./config.mdx) for the full `transforms` syntax.
 

@@ -78,10 +78,10 @@ configuration:
 credentials:
   peering-manager-token:
     provider: env
-    identifier: PEERING_MANAGER_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_PEERING_MANAGER_TOKEN
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
 A registered package uses its declared settings and resolved credentials. For direct adapter use without a registered package, the adapter reads `PEERING_MANAGER_ADDRESS` or `PEERING_MANAGER_URL`, `PEERING_MANAGER_TOKEN`, and, for basic authentication, `PEERING_MANAGER_USERNAME` and `PEERING_MANAGER_PASSWORD`. These variables take precedence over declared settings. Bare `USERNAME` and `PASSWORD` variables are not read.

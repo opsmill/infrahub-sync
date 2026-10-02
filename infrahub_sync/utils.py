@@ -3,20 +3,19 @@ from __future__ import annotations
 import importlib.util
 import logging
 import sys
-from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union, cast
 
 import yaml
 from diffsync.store.local import LocalStore
 from diffsync.store.redis import RedisStore
-from infrahub_sdk.schema.main import GenericSchemaAPI
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.cache.paths import run_dir as stored_run_dir
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.generator import render_template
+from infrahub_sync.generic_peers import generic_peers_for_destination as _generic_peers_for_order
 from infrahub_sync.plan.errors import PlanVerificationError
 from infrahub_sync.plan.reader import read_plan_artifact_bytes
 from infrahub_sync.plan.verify import destination_binding_failure
@@ -36,18 +35,6 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import RawPlanArtifact
     from infrahub_sync.runtime_schema import RuntimeModelPlan
-
-
-def _generic_peers_for_order(
-    destination: object, runtime_models: RuntimeModelPlan | None
-) -> Mapping[str, tuple[str, ...]]:
-    """Use the run's validated snapshot, or the direct adapter's live schema."""
-    if runtime_models is not None:
-        return runtime_models.generic_peers
-    schema = getattr(destination, "schema", None)
-    if not isinstance(schema, Mapping):
-        return {}
-    return {kind: tuple(node.used_by) for kind, node in schema.items() if isinstance(node, GenericSchemaAPI)}
 
 
 def find_missing_schema_model(

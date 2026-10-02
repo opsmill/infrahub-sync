@@ -50,8 +50,9 @@ from infrahub_sync.configuration.schema_validation import (
     DestinationSchemaOptions,
     collect_destination_schema_findings,
 )
-from infrahub_sync.configuration.validation import _location_digest
-from infrahub_sync.execution import REDACTED, redact
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
+from infrahub_sync.configuration.validation import _CODE_UNSUPPORTED_SYNC_STORE, _location_digest
+from infrahub_sync.execution import REDACTED, json_string_forms, redact, redaction_order
 from infrahub_sync.product_store.store import (
     ConfigurationNotFoundError,
     ConfigurationVersionAllocationError,
@@ -90,9 +91,13 @@ class ConfigsValidationError(ConfigsError):
 
     family: ClassVar[str] = "validation"
 
-    def __init__(self, message: str, *, findings: tuple[ValidationFinding, ...] = ()) -> None:
+    def __init__(
+        self, message: str, *, findings: tuple[ValidationFinding, ...] = (), reason: str | None = None
+    ) -> None:
+        """Keep the structured refusal independent of its display message."""
         super().__init__(message)
         self.findings = findings
+        self.reason = reason
 
 
 class ConfigsNotFoundError(ConfigsError):
@@ -348,16 +353,22 @@ def redact_pointer(location: str, secrets: Sequence[str]) -> str:
 # secret, derived the same way the JSON form is — by running the real renderer, not by
 # restating what it emits.
 #
-# What this returns is therefore four *known* renderings of a collected value, and not every
-# rendering of it. Nobody has shown the producer set is closed, and one producer outside it is
-# already known: ``_render_context_pointer`` in ``configuration/models.py`` escapes a parse
-# diagnostic's pointer a fifth way, and a value holding ":" together with a '"' or a non-ASCII
-# character reaches a parse refusal in a form none of the four match. Enumerating renderings is
+# The raw value's own JSON string forms, both ``ensure_ascii`` variants, are added through
+# ``json_string_forms``: the derivation a public artifact is redacted by, shared so the two
+# cannot drift.
+#
+# What this returns is therefore a fixed set of *known* renderings of a collected value, and
+# not every rendering of it. Nobody has shown the producer set is closed, and one producer
+# outside it is already known: ``_render_context_pointer`` in ``configuration/models.py``
+# escapes a parse diagnostic's pointer another way, and a value holding ":" together with a
+# '"' or a non-ASCII character reaches a parse refusal in a form none of these match. Enumerating renderings is
 # the wrong mechanism at that point and escaping belongs at a single chokepoint instead, which
 # is a change this function does not make.
 def _message_secret_forms(secrets: Sequence[str]) -> tuple[str, ...]:
     """Return every collected value together with the encodings a message writes it as."""
-    forms: set[str] = set()
+    # The raw value and its JSON string forms come from the derivation public artifacts use
+    # too, so a message and an artifact cannot disagree about how a value is written in JSON.
+    forms: set[str] = set(json_string_forms(secrets))
     for secret in secrets:
         escaped = _encode_pointer_component(secret)
         # Quotes stripped in both derived forms: what is wanted is the content between the
@@ -366,15 +377,13 @@ def _message_secret_forms(secrets: Sequence[str]) -> tuple[str, ...]:
         # pair is stripped by position rather than by naming one of them.
         forms.update(
             (
-                secret,
                 escaped,
                 json.dumps(escaped, ensure_ascii=True)[1:-1],
                 repr(secret)[1:-1],
             )
         )
-    # Longest first, matching ``collect_secret_values``, so an encoded form is replaced before
-    # any shorter form contained inside it.
-    return tuple(sorted(forms, key=lambda form: (-len(form), form)))
+    # Longest first, so an encoded form is replaced before any shorter form contained inside it.
+    return redaction_order(forms)
 
 
 def redact_message(text: str, secrets: Sequence[str]) -> str:
@@ -388,12 +397,12 @@ def redact_message(text: str, secrets: Sequence[str]) -> str:
     from drifting behind :func:`redact_finding`.
 
     **It matches renderings; it does not escape at the point of writing, and the difference is
-    where its two known limits come from.** What is verified is that the four renderings
+    where its two known limits come from.** What is verified is that the renderings
     :func:`_message_secret_forms` derives are removed at all seven enumerated exits, on the
-    in-bound and the out-bound pass. What is not claimed is that those four are every
+    in-bound and the out-bound pass. What is not claimed is that those are every
     rendering:
 
-    * A parse diagnostic's pointer is escaped by ``_render_context_pointer``, which is a fifth
+    * A parse diagnostic's pointer is escaped by ``_render_context_pointer``, which is an
       escaping this does not derive. A collected value holding ":" together with a '"' or a
       non-ASCII character survives in a parse refusal.
     * ``_bounded_component`` cuts a declared key at 64 characters *before* escaping it, so a
@@ -687,7 +696,7 @@ def _require_json_native_package(package: object) -> None:
         raise ConfigsRequestError(msg) from None
 
 
-def _parse(package: Mapping[str, Any]) -> ConfigurationPackage:
+def _parse(package: Mapping[str, Any], *, refuse_store: bool = True) -> ConfigurationPackage:
     """Parse declared JSON-native content, requiring exactly that shape before anything else.
 
     Structural acceptance (:func:`_require_json_native_package`) runs first, so only a
@@ -696,6 +705,20 @@ def _parse(package: Mapping[str, Any]) -> ConfigurationPackage:
     merely non-native value is refused as the caller's own input without being invoked.
     """
     _require_json_native_package(package)
+    configuration = package.get("configuration")
+    if refuse_store and isinstance(configuration, dict) and configuration.get("store") is not None:
+        raise ConfigsValidationError(
+            UNSUPPORTED_STORE_MESSAGE,
+            reason=UNSUPPORTED_STORE_REASON,
+            findings=(
+                ValidationFinding(
+                    code=_CODE_UNSUPPORTED_SYNC_STORE,
+                    severity="error",
+                    location="/configuration/store",
+                    message=UNSUPPORTED_STORE_MESSAGE,
+                ),
+            ),
+        )
     try:
         return parse_configuration_package(dict(package))
     except ConfigurationPackageParseError as exc:
@@ -871,7 +894,7 @@ def validate(
     if stored is None:
         msg = f"configuration {config_id!r} has no registered version {registry_version} ({lookup.reason})"
         raise ConfigsNotFoundError(msg)
-    parsed = _parse(stored.declared_content)
+    parsed = _parse(stored.declared_content, refuse_store=False)
     findings = collect_findings(parsed, secrets)
     fingerprint: str | None = None
     if destination_schema is not None:

@@ -163,8 +163,8 @@ def _harness(
     destination_branch: str | None = None,
 ) -> _Harness:
     """Register one configuration, retain one plan against it, and disarm execution."""
-    monkeypatch.setenv("NETBOX_TOKEN", NETBOX_CANARY)
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", INFRAHUB_CANARY)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", NETBOX_CANARY)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", INFRAHUB_CANARY)
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
 

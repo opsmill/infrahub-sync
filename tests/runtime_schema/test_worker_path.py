@@ -114,8 +114,8 @@ def _spy(monkeypatch: pytest.MonkeyPatch) -> _SnapshotSpy:
 
 @pytest.fixture(name="credentials", autouse=True)
 def _credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NETBOX_TOKEN", "netbox-worker-canary")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "infrahub-worker-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "netbox-worker-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "infrahub-worker-canary")
 
 
 @pytest.fixture(name="netbox_driver", autouse=True)

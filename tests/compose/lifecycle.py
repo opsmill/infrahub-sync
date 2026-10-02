@@ -359,11 +359,12 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
         "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD": canaries["administrator"],
         "INFRAHUB_SYNC_PRODUCT_PASSWORD": canaries["product"],
         "INFRAHUB_SYNC_PREFECT_PASSWORD": canaries["prefect"],
+        "INFRAHUB_SYNC_PREFECT_AUTH_STRING": canaries["prefect_auth"],
         "INFRAHUB_SYNC_S3_ACCESS_KEY": "compose-suite-access-key",
         "INFRAHUB_SYNC_S3_SECRET_KEY": canaries["object_store"],
         "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": principals,
         "INFRAHUB_SYNC_API_TOKEN": canaries["principal"],
-        "INFRAHUB_API_TOKEN": destination_token,
+        "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": destination_token,
     }
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / ".env"
@@ -463,7 +464,9 @@ def smoke_package(destination_url: str) -> dict[str, Any]:
                 }
             ],
         },
-        "credentials": {"infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"}},
+        "credentials": {
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
+        },
     }
 
 
@@ -492,7 +495,7 @@ def plant_pending_update(infrahub_fixture: Mapping[str, str]) -> str:
 # so each answer comes from the store that holds it rather than from a cache the
 # lifecycle command happens to have.
 DURABLE_STATE = """
-import json, os, boto3, httpx, psycopg
+import base64, json, os, boto3, httpx, psycopg
 from infrahub_sync.product_store import configs
 from infrahub_sync.service.storage import service_product_projection
 projection = service_product_projection()
@@ -510,7 +513,10 @@ client = boto3.client(
     region_name=os.environ["INFRAHUB_SYNC_S3_REGION"],
 )
 listing = client.list_objects_v2(Bucket=os.environ["INFRAHUB_SYNC_S3_BUCKET"])
-deployments = httpx.post("http://prefect-server:4200/api/deployments/filter", json={}, timeout=30).json()
+PREFECT_AUTH = {"Authorization": "Basic " + base64.b64encode(os.environ["PREFECT_API_AUTH_STRING"].encode()).decode()}
+deployments = httpx.post(
+    "http://prefect-server:4200/api/deployments/filter", json={}, headers=PREFECT_AUTH, timeout=30
+).json()
 print(json.dumps({
     "configuration_versions": sorted(versions),
     "runs": runs,
@@ -520,10 +526,11 @@ print(json.dumps({
 """
 
 WORKERS = """
-import json, httpx
+import base64, json, os, httpx
+PREFECT_AUTH = {"Authorization": "Basic " + base64.b64encode(os.environ["PREFECT_API_AUTH_STRING"].encode()).decode()}
 pool = "infrahub-sync"
 records = httpx.post(
-    f"http://prefect-server:4200/api/work_pools/{pool}/workers/filter", json={}, timeout=30
+    f"http://prefect-server:4200/api/work_pools/{pool}/workers/filter", json={}, headers=PREFECT_AUTH, timeout=30
 ).json()
 print(json.dumps(sorted((record["name"], record["status"]) for record in records)))
 """

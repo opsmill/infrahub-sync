@@ -23,7 +23,7 @@ future change cannot silently drop one:
 - Environment canaries the parent sets and later inspects: ``INFRAHUB_SYNC_CACHE_DIR``
   (a retired setting that must stay unused) and a working directory that is deliberately
   not the stage root (a stage that reaches for either is what the test catches).
-- ``INFRAHUB_SYNC_CONFIG_DIRECTORY``, ``INFRAHUB_API_TOKEN``, and ``NETBOX_TOKEN``, the
+- ``INFRAHUB_SYNC_CONFIG_DIRECTORY`` and the two ``INFRAHUB_SYNC_CREDENTIAL_`` tokens, the
   environment the child needs to resolve its configuration and construct adapters.
 - The serialized JSON input document (read from the file path given as ``sys.argv[1]``):
   ``report``, ``stage``, ``run_id``, ``binding``, ``flow_run_id``, ``worker_id``,

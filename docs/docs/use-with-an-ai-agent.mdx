@@ -119,8 +119,8 @@ report source checks separately from checks against my installed deployment.
 Use configuration name netbox-agent-draft. Source adapter: netbox, URL
 https://netbox.example.invalid. Destination adapter: infrahub, URL
 https://infrahub.example.invalid. These are synthetic addresses; do not
-contact them. Credential variable NAMES only: NETBOX_TOKEN for NetBox and
-INFRAHUB_API_TOKEN for Infrahub. Use $credential references with provider env.
+contact them. Credential variable NAMES only: INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN for NetBox
+and INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN for Infrahub. Use $credential references with provider env.
 
 Synthetic destination schema:
 - TestingSite: required Text attribute name; identifier name, unique by name.
@@ -158,7 +158,8 @@ it. Check these parts:
 - Device fields `name`, `model`, and `serial`, plus `site` with
   `reference: TestingSite`.
 - Token settings containing `$credential` references whose declarations use
-  `provider: env` and the identifiers `NETBOX_TOKEN` and `INFRAHUB_API_TOKEN`.
+  `provider: env` and the identifiers `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and
+  `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`.
 
 Read the agent's report as well as the file. It should name the sources and
 checks it used, and identify assumptions about unique names, required fields,

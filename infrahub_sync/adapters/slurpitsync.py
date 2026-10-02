@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import logging
 import weakref
@@ -19,6 +20,7 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.adapters.utils import build_mapping, get_value
+from infrahub_sync.configuration.credentials import declared_settings
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -83,7 +85,8 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
 
     def _create_slurpit_client(self, adapter: SyncAdapter) -> slurpit.api:
         """Create and check the configured Slurp'it client."""
-        settings = dict(adapter.settings or {})
+        # `slurpit.api` has a fixed signature, so the registered-context marker stays behind.
+        settings = declared_settings(adapter.settings or {})
         verify = settings.pop("verify_ssl", True)
         client = slurpit.api(verify=verify, **settings)
         self.client = client
@@ -144,11 +147,15 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             network = entry.get("Network", "")
             mask = entry.get("Mask", "")
             if "/" in network:
-                entry["normalized_prefix"] = network
+                prefix = network
             elif mask:
-                entry["normalized_prefix"] = f"{network}/{mask}"
+                prefix = f"{network}/{mask}"
             else:
-                entry["normalized_prefix"] = network
+                prefix = network
+            # Use the network address so it matches the prefix computed for IP addresses.
+            with contextlib.suppress(ValueError):
+                prefix = str(ipaddress.ip_network(prefix, strict=False))
+            entry["normalized_prefix"] = prefix
             return entry
 
         def should_ignore(network) -> bool:

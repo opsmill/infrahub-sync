@@ -441,11 +441,10 @@ def run_plan(potenda: Potenda) -> None:
 def pin_extraction_decisions(monkeypatch: pytest.MonkeyPatch, decisions: Sequence[bool]) -> None:
     """Pin `should_use_incremental`'s answer, one entry per side load, in call order.
 
-    `should_use_incremental` is the function whose answer *defines* the extraction mode:
-    `Potenda.load_one_side` records `_side_full_extract[side] = not use_inc` from it
-    (`infrahub_sync/potenda/__init__.py`). Pinning it therefore pins the mode
-    through the real code path rather than by assigning the flag the code is supposed to
-    set. It takes no `side` argument, so the pinning is by call order — deterministic here
+    This pins the prior-run eligibility gate. `Potenda.load_one_side` finalizes
+    `_side_full_extract` after loading: missing prior runs and complete resource
+    fallbacks count as full extraction even when the pinned gate returns True.
+    The gate takes no `side` argument, so the pinning is by call order, deterministic here
     because every Potenda in this module is built with `concurrent_load=False`, which loads
     A then B. Callers assert the resulting per-side flags anyway.
     """
@@ -832,16 +831,13 @@ def test_derived_deletes_carry_identifiers_and_no_payload() -> None:
 # =======================================================================================
 
 
-def test_delete_computation_record_distinguishes_full_from_incremental_extract(
+def test_missing_prior_run_records_full_extract_despite_incremental_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SC-017: the same input yields deletes on a full destination extract and none on an
-    incremental one, and the incremental plan says so rather than reading as "no deletes".
+    """Eligibility alone cannot make an actual full load incremental.
 
-    The apply-side form of the last assertion — `summary["skipped_delete_count"] == 0` on
-    the run record — is asserted at T054 and T065, on the Phase E/F apply path where an
-    apply exists. What is decidable here is the value that count is derived from: a plan
-    with no delete operation has nothing to skip, so no phantom delete can inflate it.
+    Both engines have no prior run to restore. The true incremental destination
+    and per-resource fallback cases use real adapters in test_safe_watermarks.
     """
     config = build_config()
     source = qualified_source()
@@ -852,34 +848,38 @@ def test_delete_computation_record_distinguishes_full_from_incremental_extract(
     run_plan(full)
 
     pin_extraction_decisions(monkeypatch, [False, True])
-    incremental = build_potenda(config=config, source=source, destination=destination, run_id="20260726T1100-bbbbbbbb")
-    run_plan(incremental)
+    eligible = build_potenda(config=config, source=source, destination=destination, run_id="20260726T1100-bbbbbbbb")
+    run_plan(eligible)
 
-    # The extraction mode each run actually took, per side.
     assert full._side_full_extract == {"A": True, "B": True}
-    assert incremental._side_full_extract == {"A": True, "B": False}
+    assert eligible._side_full_extract == {"A": True, "B": True}
+    for engine in (full, eligible):
+        assert read_manifest(plan_run_dir(engine))["delete_operations_computed"] is True
+        assert engine.run_id is not None
+        plan = read_saved_plan(sync_name=config.name, run_id=engine.run_id, config=config)
+        assert plan.summary().by_action.get("delete") == 1
+        assert plan.summary().delete_operations_computed is True
+        assert plan.manifest.delete_operations_computed is True
+        assert plan.summary().deletes_not_executed == 1
 
-    full_manifest = read_manifest(plan_run_dir(full))
-    incremental_manifest = read_manifest(plan_run_dir(incremental))
-    assert full_manifest["delete_operations_computed"] is True
-    assert incremental_manifest["delete_operations_computed"] is False
 
-    full_plan = read_saved_plan(sync_name=config.name, run_id="20260726T1000-aaaaaaaa", config=config)
-    incremental_plan = read_saved_plan(sync_name=config.name, run_id="20260726T1100-bbbbbbbb", config=config)
+def test_incomplete_source_extraction_skips_deletes_despite_complete_destination() -> None:
+    """A source side that is not fully extracted records deletes as not computed, with no delete proposed."""
+    config = build_config()
+    potenda = build_potenda(
+        config=config,
+        source=qualified_source(),
+        destination=destination_with_orphan(),
+        run_id="20260726T1200-cccccccc",
+    )
+    potenda.load_both_sides()
+    potenda._side_full_extract = {"A": False, "B": True}
+    potenda.write_plan(potenda.diff())
 
-    assert full_plan.summary().by_action.get("delete") == 1
-    assert full_plan.summary().delete_operations_computed is True
-    assert full_plan.summary().deletes_not_executed == 1
-
-    # Both review depths read the disclosure from the plan they are handed: the summary
-    # depth from `summary()`, the per-object depth from the manifest the same object
-    # carries. Neither can render "no deletes" for a run that never computed them (AD056).
-    assert incremental_plan.summary().delete_operations_computed is False
-    assert incremental_plan.manifest.delete_operations_computed is False
-    assert "delete" not in incremental_plan.summary().by_action
-    assert [operation.action for operation in incremental_plan.operations() if operation.action == "delete"] == []
-    # The value AD055's skipped-delete count is derived from: nothing to skip.
-    assert incremental_plan.summary().deletes_not_executed == 0
+    assert read_manifest(plan_run_dir(potenda))["delete_operations_computed"] is False
+    assert potenda.run_id is not None
+    plan = read_saved_plan(sync_name=config.name, run_id=potenda.run_id, config=config)
+    assert plan.summary().by_action.get("delete", 0) == 0
 
 
 def test_delete_only_saved_plan_drives_the_execution_result(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1317,13 +1317,12 @@ def _pinned_plan_run(  # noqa: PLR0913 — one parameter per axis a pinned plan 
 
 
 def test_two_plan_runs_over_identical_input_encode_identically(monkeypatch: pytest.MonkeyPatch) -> None:
-    """SC-006, with Trap 1 disarmed: pin the mode on both runs and both sides, assert the
-    pinning held, and only then compare bytes.
+    """SC-006: two plan runs over identical input encode identically.
 
-    `delete_operations_computed` sits inside `plan_checksum` and is **not** one of SC-006's
-    two masked fields, so a run that silently switched to an incremental destination extract
-    would differ for a reason that has nothing to do with encoding determinism. The pinning
-    assertion below is what keeps this test measuring what SC-006 is about.
+    No plan run here has a prior successful run, so both runs extract in full on both sides.
+    The assertion below pins that before the bytes are compared, because
+    `delete_operations_computed` sits inside `plan_checksum` and is not one of SC-006's two
+    masked fields.
     """
     config = build_config()
     source = qualified_source()
@@ -1358,47 +1357,6 @@ def test_two_plan_runs_over_identical_input_encode_identically(monkeypatch: pyte
     # And the mask is doing work rather than the two runs being the same directory twice.
     assert first_manifest["run_id"] != second_manifest["run_id"]
     assert first_manifest != second_manifest
-
-
-def test_two_plan_runs_at_different_extraction_modes_are_expected_to_differ(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The negative control for Trap 1: the pinning is load-bearing, not incidental.
-
-    Without it the comparison above could pass by accident on a pair of runs that happened
-    to take the same extraction mode. Here the destination side differs between the two
-    runs and the artifacts differ accordingly — so if pinning were dropped, SC-006 would be
-    measuring extraction-mode luck rather than encoding determinism.
-    """
-    config = build_config()
-    source = qualified_source()
-    destination = destination_with_orphan()
-
-    full = _pinned_plan_run(
-        monkeypatch,
-        config=config,
-        source=source,
-        destination=destination,
-        run_id="20260726T1800-33333333",
-        decisions=[False, False],
-    )
-    incremental = _pinned_plan_run(
-        monkeypatch,
-        config=config,
-        source=source,
-        destination=destination,
-        run_id="20260726T1900-44444444",
-        decisions=[False, True],
-    )
-
-    assert full._side_full_extract == {"A": True, "B": True}
-    assert incremental._side_full_extract == {"A": True, "B": False}
-
-    full_manifest = read_manifest(plan_run_dir(full))
-    incremental_manifest = read_manifest(plan_run_dir(incremental))
-    assert full_manifest["delete_operations_computed"] != incremental_manifest["delete_operations_computed"]
-    assert read_operations_bytes(plan_run_dir(full)) != read_operations_bytes(plan_run_dir(incremental))
-    assert masked(full_manifest) != masked(incremental_manifest)
 
 
 # ---------------------------------------------------------------------------------------
@@ -1561,6 +1519,96 @@ def test_the_peer_kind_is_the_kind_that_actually_holds_the_peer() -> None:
     # And the two entries' operations stay distinguishable.
     assert devices["d1"].identity != devices["d2"].identity
     assert devices["d1"].operation_id != devices["d2"].operation_id
+
+
+def generic_location_config() -> SyncInstance:
+    """`DcimDevice.location` references the generic `LocationAny`, which the schema says rack and site share."""
+    config = duplicate_location_config("LocationAny")
+    config._runtime_models = SimpleNamespace(  # ty: ignore[invalid-assignment]
+        generic_peers={"LocationAny": ("LocationRack", "LocationSite")}, schema_fingerprint=None
+    )
+    return config
+
+
+def test_a_generic_reference_is_probed_under_each_mapped_concrete_kind() -> None:
+    """The generic names no stored kind, so its mapped concrete peers are the candidates."""
+    config = generic_location_config()
+    assert reference_candidates(config, "DcimDevice") == {"location": LOCATION_CANDIDATES}
+
+    source = location_side("source", racks=["r1"], sites=["hq"], devices=[("d1", "r1"), ("d2", "hq")])
+    operations = derive_over(config, source)
+
+    devices = {operation.identity["name"]: operation for operation in operations if operation.kind == "DcimDevice"}
+    assert references_by_field(devices["d1"])["location"].peer_kind == "LocationRack"
+    assert references_by_field(devices["d2"])["location"].peer_kind == "LocationSite"
+    assert devices["d1"].identity["location"] == {"peer_kind": "LocationRack", "identity": {"name": "r1"}}
+    assert devices["d2"].identity["location"] == {"peer_kind": "LocationSite", "identity": {"name": "hq"}}
+
+
+def test_a_mapped_generic_stays_a_candidate_beside_its_mapped_concrete_kinds() -> None:
+    """A generic the configuration itself maps can hold records, so it is probed too."""
+    config = build_config(
+        order=DUPLICATE_ORDER,
+        schema_mapping=[
+            mapping_entry("LocationSite", identifiers=["name"], fields={"name": None}),
+            mapping_entry("LocationAny", identifiers=["name"], fields={"name": None}),
+            mapping_entry(
+                "DcimDevice", identifiers=["name", "location"], fields={"name": None, "location": "LocationAny"}
+            ),
+        ],
+    )
+    config._runtime_models = SimpleNamespace(  # ty: ignore[invalid-assignment]
+        generic_peers={"LocationAny": ("LocationRack", "LocationSite")}, schema_fingerprint=None
+    )
+    assert reference_candidates(config, "DcimDevice") == {"location": ("LocationAny", "LocationSite")}
+
+
+def test_a_generic_with_no_mapped_concrete_kind_stays_the_only_candidate() -> None:
+    """An empty expansion keeps the generic, so the peer fails as unresolved instead of vanishing."""
+    config = duplicate_location_config("LocationAny")
+    config._runtime_models = SimpleNamespace(  # ty: ignore[invalid-assignment]
+        generic_peers={"LocationAny": ("LocationHub",)}, schema_fingerprint=None
+    )
+    assert reference_candidates(config, "DcimDevice") == {"location": ("LocationAny",)}
+
+
+def test_a_direct_run_expands_a_generic_reference_from_the_destination_live_schema() -> None:
+    """With no runtime snapshot, derivation reads the live schema ordering reads."""
+    from infrahub_sdk.schema.main import GenericSchemaAPI
+
+    config = duplicate_location_config("LocationAny")
+    assert config._runtime_models is None
+    destination = _FakeAdapter("destination")
+    destination.schema = {
+        "LocationAny": GenericSchemaAPI(name="Any", namespace="Location", used_by=["LocationRack", "LocationSite"])
+    }
+    source = location_side("source", racks=["r1"], sites=["hq"], devices=[("d1", "r1"), ("d2", "hq")])
+    build_potenda(config=config, source=source, destination=destination, run_id="20260726T2000-77777777")
+
+    assert reference_candidates(config, "DcimDevice") == {"location": LOCATION_CANDIDATES}
+    operations = derive_over(config, source)
+    devices = {operation.identity["name"]: operation for operation in operations if operation.kind == "DcimDevice"}
+    assert devices["d1"].identity["location"] == {"peer_kind": "LocationRack", "identity": {"name": "r1"}}
+    assert devices["d2"].identity["location"] == {"peer_kind": "LocationSite", "identity": {"name": "hq"}}
+
+
+def test_an_unresolved_generic_peer_names_the_concrete_candidate_kinds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = generic_location_config()
+    source = location_side("source", racks=["r1"], sites=["hq"], devices=[("d1", "ghost")])
+
+    error = failing_plan_run(
+        monkeypatch,
+        config=config,
+        source=source,
+        destination=_FakeAdapter("destination"),
+        run_id="20260726T2000-66666666",
+        error=SourcePeerUnresolvedError,
+    )
+
+    assert "Candidate peer kinds tried: LocationRack, LocationSite" in str(error)
+    assert "LocationAny" not in str(error)
 
 
 def test_a_peer_under_no_candidate_kind_fails_the_command_and_leaves_no_artifact(

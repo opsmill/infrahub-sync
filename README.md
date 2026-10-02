@@ -99,10 +99,11 @@ in the documentation. In short:
 
 - `uv run invoke preview.up` starts a local Infrahub on `http://localhost:8080`. The worker
   reaches it at `http://host.docker.internal:8080`; inside the worker, `localhost` is the
-  container itself.
+  container itself. On Linux, set `PREVIEW_INFRAHUB_BIND_ADDRESS` first, as the
+  documentation describes, because Infrahub listens on `127.0.0.1` only.
 - `uv run invoke netbox.seed --dataset demo` starts a local NetBox with the official demo
   data. The worker joins NetBox's network and reaches it at `http://netbox:8080`.
-- Set `INFRAHUB_API_TOKEN` and `NETBOX_TOKEN`, then run `uv run invoke start` again, so
+- Set `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, then run `uv run invoke start` again, so
   the worker has both tokens.
 
 When you are finished, run `uv run invoke destroy` to stop the stack and delete its data.

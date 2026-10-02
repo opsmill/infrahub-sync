@@ -1,0 +1,1 @@
+The plan now looks up a `reference:` that names a generic under its mapped concrete kinds, so `diff` can plan relationships with one peer or several peers of one concrete kind while refusing missing peers whose kind the full generic schema leaves ambiguous.

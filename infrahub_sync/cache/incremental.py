@@ -18,6 +18,8 @@ from infrahub_sync.cache.sidecars import CursorsFile
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from diffsync import Adapter, DiffSyncModel
+
 logger = logging.getLogger(__name__)
 
 
@@ -108,9 +110,14 @@ def load_cursors(path: Path, *, side: str) -> dict[str, CursorState]:
     raw = CursorsFile.load_or_default(path).cursors.get(side, {})
     out: dict[str, CursorState] = {}
     for model_name, packed in raw.items():
-        tier_name, _, value = packed.partition(":")
+        safe = packed.startswith("safe-v1:")
+        tier_name, _, value = packed.removeprefix("safe-v1:").partition(":")
+        if tier_name not in CursorTier.__members__:
+            # An unknown tier or version prefix (for example from a newer release)
+            # is no cursor at all: the resource falls back to a full extraction.
+            continue
         tier = CursorTier[tier_name]
-        out[model_name] = CursorState(tier=tier, value=value or None)
+        out[model_name] = CursorState(tier=tier, value=value or None, safe=safe)
     return out
 
 
@@ -131,8 +138,21 @@ def persist_cursors(
     sidecar = CursorsFile.load_or_default(path)
     bucket = sidecar.cursors.setdefault(side, {})
     for model_name, state in cursors.items():
-        bucket[model_name] = f"{state.tier.name}:{state.value or ''}"
+        prefix = "safe-v1:" if state.safe else ""
+        bucket[model_name] = f"{prefix}{state.tier.name}:{state.value or ''}"
     sidecar.save()
+
+
+def required_resource_models(*, adapter: Adapter, side: str) -> dict[str, type[DiffSyncModel]]:
+    """Resolve every mapped model before extraction; missing kinds must not look empty."""
+    models: dict[str, type[DiffSyncModel]] = {}
+    for resource in adapter.top_level:
+        model_cls = getattr(adapter, resource, None)
+        if model_cls is None:
+            msg = f"Cannot load side {side}: required model {resource!r} is missing"
+            raise ValueError(msg)
+        models[resource] = model_cls
+    return models
 
 
 def snapshot_carries_local_id(*, run_dir: Path, side: str, resource: str) -> bool:
@@ -188,3 +208,18 @@ def hydrate_from_parquet(
         if ts is not None and (max_ts is None or ts > max_ts):
             max_ts = ts
     return rows_loaded, max_ts
+
+
+def apply_changed_rows(adapter: Adapter, resource: str, model_cls: type[DiffSyncModel], cursor: CursorState) -> None:
+    """Apply changed rows to the hydrated store without writing to the system.
+
+    Overlap can return cached identifiers repeatedly. The stored object is persisted
+    after each change because a store may hand back a detached copy.
+    """
+    for row in adapter.list_changed_since(resource, cursor):  # ty: ignore[unresolved-attribute]
+        item = model_cls(**row)
+        stored, _ = adapter.update_or_add_model_instance(item)
+        if "local_id" in row and hasattr(stored, "local_id"):
+            # TODO: type mapped models with their declared local_id field.
+            setattr(stored, "local_id", item.local_id)  # noqa: B010  # ty: ignore[unresolved-attribute]
+        adapter.update(stored)

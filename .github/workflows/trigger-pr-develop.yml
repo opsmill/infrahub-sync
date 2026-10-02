@@ -65,9 +65,10 @@ jobs:
   uv-checker:
     uses: ./.github/workflows/workflow-uv-check.yml
 
-  # No `needs` on the lint calls above. Lint still blocks a merge as its own
-  # required check; holding these behind it only put its ninety seconds on the
-  # critical path of every run, including every run that was going to pass.
+  # No `needs` on the lint calls above. Holding the tests behind them would put
+  # their ninety seconds on the critical path of every run, including every run
+  # that was going to pass. They still block a merge: `qualification-required`
+  # below waits for them and refuses a head where any of them failed.
   tests:
     uses: ./.github/workflows/workflow-tests.yml
 
@@ -96,21 +97,25 @@ jobs:
         org.opencontainers.image.version=${{ needs.image-changes.outputs.version }}
         org.opencontainers.image.revision=${{ github.event.pull_request.head.sha || github.sha }}
 
-  # What branch protection requires by name. It cannot require the image call
-  # itself: a skipped job satisfies a required check, so this job always runs and
-  # judges the two results instead.
+  # The one check branch protection requires by name. A skipped job satisfies a
+  # required check, so this job always runs and judges the others: it waits for
+  # the image, lint, unit-test, and lock-file calls and refuses a head where any
+  # of them failed or was cancelled.
   qualification-required:
     name: "Full qualification"
-    needs: ["image-changes", "image"]
+    needs: ["image-changes", "image", "linter", "tests", "uv-checker"]
     # Not `success()`: the whole point is to report on a call that was skipped.
     if: ${{ always() }}
     runs-on: "ubuntu-24.04"
     timeout-minutes: 5
     steps:
-      - name: "Refuse a head whose image did not build"
+      - name: "Refuse a head whose checks did not pass"
         env:
           CHANGES: ${{ needs.image-changes.result }}
           IMAGE: ${{ needs.image.result }}
+          LINTER: ${{ needs.linter.result }}
+          TESTS: ${{ needs.tests.result }}
+          UV_CHECKER: ${{ needs.uv-checker.result }}
         run: |
           set -euo pipefail
           # The backticks are job names in prose, single-quoted so the shell
@@ -127,4 +132,10 @@ jobs:
             printf '`image` ended in %s\n' "${IMAGE}" >&2
             exit 1
           fi
-          echo "the image check covered this head (image: ${IMAGE})"
+          for check in "linter:${LINTER}" "tests:${TESTS}" "uv-checker:${UV_CHECKER}"; do
+            if [ "${check#*:}" != "success" ] && [ "${check#*:}" != "skipped" ]; then
+              echo "the ${check%%:*} check ended in ${check#*:}" >&2
+              exit 1
+            fi
+          done
+          echo "every check covered this head (image: ${IMAGE})"

@@ -94,7 +94,7 @@ SOURCES = {
             name="netbox",
             url=NETBOX_URL,
             reference="netbox-token",
-            identifier="NETBOX_TOKEN",
+            identifier="INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
             ambient_url_names=("NETBOX_ADDRESS", "NETBOX_URL"),
             mapping="extras.tags",
         ),
@@ -102,7 +102,7 @@ SOURCES = {
             name="nautobot",
             url=NAUTOBOT_URL,
             reference="nautobot-token",
-            identifier="NAUTOBOT_TOKEN",
+            identifier="INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN",
             ambient_url_names=("NAUTOBOT_ADDRESS", "NAUTOBOT_URL"),
             mapping="extras.tags",
         ),
@@ -112,6 +112,9 @@ SOURCES = {
 # Every environment name any of this touches, cleared before each case so an
 # ambient value on the developer's machine cannot decide an outcome.
 MANAGED_ENVIRONMENT = (
+    "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
+    "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN",
+    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN",
     "NETBOX_TOKEN",
     "NETBOX_ADDRESS",
     "NETBOX_URL",
@@ -159,7 +162,7 @@ def package_content(source: str) -> dict[str, Any]:
         },
         "credentials": {
             profile.reference: {"provider": "env", "identifier": profile.identifier},
-            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"},
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
         },
     }
 
@@ -230,7 +233,7 @@ def test_a_refusal_names_the_environment_identifier_and_never_the_value(
 ) -> None:
     """The diagnosis an operator needs is the name; the value must not be in it."""
     profile = SOURCES[source]
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
 
     with pytest.raises(CredentialConfigurationError) as raised:
         runtime_instance(source)
@@ -244,7 +247,7 @@ def test_a_refusal_names_the_environment_identifier_and_never_the_value(
 def test_the_source_a_package_does_not_select_may_be_absent(source: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """One deployment serves packages of both kinds; only the selected token is needed."""
     monkeypatch.setenv(SOURCES[source].identifier, DECLARED_SOURCE_TOKEN)
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
 
     instance = runtime_instance(source)
 
@@ -276,7 +279,7 @@ def test_declared_validation_resolves_no_source_credential(source: str, monkeypa
 @pytest.mark.parametrize("source", sorted(SOURCES))
 def test_a_saved_plan_apply_needs_no_source_token(source: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """An apply host constructs the destination only, so it holds no source secret."""
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
 
     instance = runtime_instance(source, resolve_source_credentials=False)
 
@@ -296,7 +299,7 @@ def test_the_registered_url_and_token_beat_a_conflicting_ambient_pair(
     """
     profile = SOURCES[source]
     monkeypatch.setenv(profile.identifier, DECLARED_SOURCE_TOKEN)
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
     instance = runtime_instance(source)
     settings = instance.source.settings or {}
 
@@ -328,8 +331,8 @@ def test_the_netbox_adapter_client_carries_the_registered_credential(
     del deny_network
     from infrahub_sync.adapters.netbox import NetboxAdapter
 
-    monkeypatch.setenv("NETBOX_TOKEN", DECLARED_SOURCE_TOKEN)
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", DECLARED_SOURCE_TOKEN)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
     instance = runtime_instance("netbox")
     for name in SOURCES["netbox"].ambient_url_names:
         monkeypatch.setenv(name, AMBIENT_URL)
@@ -382,8 +385,8 @@ def test_the_nautobot_adapter_client_carries_the_registered_credential(
         return answer
 
     monkeypatch.setattr(requests.Session, "get", version_only_get)
-    monkeypatch.setenv("NAUTOBOT_TOKEN", DECLARED_SOURCE_TOKEN)
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN", DECLARED_SOURCE_TOKEN)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", DECLARED_DESTINATION_TOKEN)
     instance = runtime_instance("nautobot")
     for name in SOURCES["nautobot"].ambient_url_names:
         monkeypatch.setenv(name, AMBIENT_URL)
@@ -422,7 +425,7 @@ from infrahub_sync.configuration.runtime import resolve_runtime_instance
 declared_url = sys.argv[1]
 source = sys.argv[2]
 reference = f"{source}-token"
-identifier = f"{source.upper()}_TOKEN"
+identifier = f"INFRAHUB_SYNC_CREDENTIAL_{source.upper()}_TOKEN"
 
 package = parse_configuration_package({
     "format_version": 1,
@@ -438,7 +441,7 @@ package = parse_configuration_package({
     },
     "credentials": {
         reference: {"provider": "env", "identifier": identifier},
-        "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"},
+        "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
     },
 })
 instance = resolve_runtime_instance(package, directory="/tmp/infrahub-sync/pkg-r1")
@@ -599,7 +602,7 @@ def test_a_missing_source_token_fails_the_run_inside_the_container(
     holds the raw text afterwards.
     """
     del docker_daemon
-    monkeypatch.delenv("NETBOX_TOKEN", raising=False)
+    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", raising=False)
 
     result = compose(
         [
@@ -618,7 +621,7 @@ def test_a_missing_source_token_fails_the_run_inside_the_container(
         env_files=(operator_file(tmp_path),),
     )
 
-    names_expected_identifier = "NETBOX_TOKEN" in result.unredacted()
+    names_expected_identifier = "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN" in result.unredacted()
 
     assert result.returncode != 0
     assert names_expected_identifier, "the refusal did not name the expected environment identifier"

@@ -82,6 +82,11 @@ class Population(Adapter):
         """Support the timestamp cursor used by the warm-run fixture."""
         return CursorTier.TIMESTAMP
 
+    @staticmethod
+    def safe_cursor_before_load(_kind: str) -> CursorState:
+        """Guarantee the synthetic fixture's bound precedes its changed records."""
+        return CursorState(CursorTier.TIMESTAMP, "2026-09-29T00:00:00Z", safe=True)
+
     def model_loader(self, model_name: str, model: Any) -> None:  # noqa: ANN401
         """Leave already seeded peers in place."""
 
@@ -211,7 +216,7 @@ def test_warm_incremental_population_includes_unchanged_collision(tmp_path: Path
     previous = tmp_path / "previous"
     previous.mkdir()
     (previous / "schema-sub-hash.txt").write_text("schema-hash")
-    (previous / "cursors.json").write_text(json.dumps({"A": {"TestRack": "TIMESTAMP:2026-09-29T00:00:00Z"}}))
+    (previous / "cursors.json").write_text(json.dumps({"A": {"TestRack": "safe-v1:TIMESTAMP:2026-09-29T00:00:00Z"}}))
     write_resource_side(
         run_dir=previous,
         side="A",
@@ -271,7 +276,7 @@ def test_unchanged_missing_identity_peer_warns_and_writes_plan(
         previous.mkdir()
         (previous / "schema-sub-hash.txt").write_text("schema-hash")
         (previous / "cursors.json").write_text(
-            json.dumps({"A": {"InterfacePhysical": "TIMESTAMP:2026-09-29T00:00:00Z"}})
+            json.dumps({"A": {"InterfacePhysical": "safe-v1:TIMESTAMP:2026-09-29T00:00:00Z"}})
         )
         write_resource_side(
             run_dir=previous,

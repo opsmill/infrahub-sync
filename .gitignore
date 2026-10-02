@@ -2,10 +2,12 @@
 coverage.xml
 *junit*
 **/*.pyc
+__pycache__/
+*.py[cod]
 *.env
 script.py
 **/*.local.*
-.vscode/settings.json
+.vscode/
 node_modules/*
 **/.DS_Store
 .python-version

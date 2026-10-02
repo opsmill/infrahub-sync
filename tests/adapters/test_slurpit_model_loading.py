@@ -446,3 +446,41 @@ def test_declared_sdk_floor_excludes_synchronous_release() -> None:
     assert Version("0.9.32") not in requirement.specifier
     assert Version("0.9.47") not in requirement.specifier
     assert Version("0.9.52") in requirement.specifier
+
+
+@pytest.mark.parametrize(
+    ("row", "address", "expected"),
+    [
+        ({"Network": "10.0.0.0/24", "Vrf": "default"}, "10.0.0.9/24", "10.0.0.0/24"),
+        ({"Network": "10.0.0.5/24", "Vrf": "default"}, "10.0.0.9/24", "10.0.0.0/24"),
+        ({"Network": "10.0.0.5", "Mask": "255.255.255.0", "Vrf": "default"}, "10.0.0.9/24", "10.0.0.0/24"),
+        ({"Network": "10.0.0.5", "Mask": "24", "Vrf": "default"}, "10.0.0.9/24", "10.0.0.0/24"),
+        ({"Network": "2001:db8::5/64", "Vrf": "default"}, "2001:db8::9/64", "2001:db8::/64"),
+        ({"Network": "2001:db8::5", "Mask": "64", "Vrf": "default"}, "2001:db8::9/64", "2001:db8::/64"),
+    ],
+)
+def test_prefix_and_address_use_the_same_network_address(
+    adapter_module: types.ModuleType, row: dict[str, str], address: str, expected: str
+) -> None:
+    """Verify a prefix reported with host bits matches the prefix computed for its addresses."""
+    instance, _ = _adapter(adapter_module, "filter_networks")
+    instance.planning_results = lambda _name: [dict(row)]
+    networks = instance.filter_networks()
+    assert [network["normalized_prefix"] for network in networks] == [expected]
+    interfaces = instance.run_async(instance.filter_interfaces([{"IP": address}]))
+    assert interfaces[0]["prefix"] == expected
+    assert interfaces[0]["prefix"] == networks[0]["normalized_prefix"]
+    assert interfaces[0]["vrf"] == "default"
+
+
+def test_filter_networks_still_ignores_host_routes_and_ignored_networks(adapter_module: types.ModuleType) -> None:
+    """Verify normalization keeps the ignored-network and host-route exclusions."""
+    instance, _ = _adapter(adapter_module, "filter_networks")
+    instance.planning_results = lambda _name: [
+        {"Network": "10.0.0.7/32"},
+        {"Network": "127.0.0.5/8"},
+        {"Network": "0.0.0.0", "Mask": "0"},  # noqa: S104
+        {"Network": "10.1.0.5/24", "Vrf": "blue"},
+    ]
+    networks = instance.filter_networks()
+    assert [(n["normalized_prefix"], n["Vrf"]) for n in networks] == [("10.1.0.0/24", "blue")]

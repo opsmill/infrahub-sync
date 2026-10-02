@@ -21,7 +21,7 @@ for a model. It returns a `CursorTier` (an `IntEnum`, defined in
 |------|-------|---------|
 | `NONE` | 0 | The source cannot filter by change; always full extract. The default. |
 | `PAGE_TOKEN` | 1 | Intended for a source that paginates with an opaque `?next=` token, so a crashed extraction could resume mid-page instead of restarting. No product adapter returns this tier yet, and no product entry point persists a cursor across a restart, so the resume behavior is not currently reachable. |
-| `TIMESTAMP` | 2 | The source can filter by modification time (for example NetBox / Nautobot `last_updated__gte`); extract only changed-since records. |
+| `TIMESTAMP` | 2 | The source can filter by modification time (for example NetBox / Nautobot `last_updated__gte`). A safe bound is required before using this filter. |
 | `INFRAHUB_DIFF` | 3 | Intended for the Infrahub destination's diff API to return the changed records directly. No adapter returns this tier yet; the Infrahub adapter returns `TIMESTAMP` for kinds present in its schema and `NONE` otherwise. |
 
 `TIMESTAMP` and `INFRAHUB_DIFF` would extract less data than `NONE` by filtering at the source
@@ -33,10 +33,10 @@ an adapter with no incremental support inherits the `NONE` default from `DiffSyn
 
 ### What an adapter implements
 
-Three methods, layered on top of `model_loader`:
+The extraction methods are layered on top of `model_loader`:
 
-- `cursor_tier_for(model_name)` — return the tier. This is the switch that turns incremental
-  on for a model.
+- `cursor_tier_for(model_name)` — declare eligibility for a model. A tier alone does not
+  establish a safe cursor.
 - `list_changed_since(model_name, cursor)` — **required when the tier is not `NONE`.** Yield
   the raw records changed since `cursor`, in the same shape `model_loader` feeds to
   `self.add(...)`. `DiffSyncMixin` raises `NotImplementedError` until you override it.
@@ -45,7 +45,7 @@ Three methods, layered on top of `model_loader`:
   that an object disappeared.
 
 `CursorState` (also in `cache/cursors.py`) carries the tier and the saved value (a timestamp
-or id watermark) from the previous run.
+or opaque watermark) from the previous run. Its `safe` flag defaults to `False`.
 
 ### Full re-extraction cadence
 
@@ -71,25 +71,70 @@ The cache root defaults to `<cwd>/.infrahub-sync-cache/<sync_name>/`, with each 
 own `<run_id>/`. Set `INFRAHUB_SYNC_CACHE_DIR` to relocate it (for example to a shared volume);
 the path may not contain `..` traversal segments.
 
-`source_load()` and `destination_load()` call `load_one_side()` on every `plan` and `sync`
-extract (`potenda/__init__.py:482,491`), so the method itself always runs. Every current entry
-point runs with `full_extract=True`. The `execute_run()` default is `True` (`execution.py:1095`),
-and the managed service's `execute_run` call (`service/flow.py:201`) does not override it. The
-`BaselineWriteback` at `service/flow.py:288` only records that fact in metadata. So on every
-current path `load_one_side()` calls `adapter.load()` and returns without reading any cursor
-(`potenda/__init__.py:438-440`).
+### Cursor safety and current reachability
 
-Only a direct `execute_run(full_extract=False)` call, made with a prior successful run present
-and a matching schema sub-hash, reaches the per-resource branch instead
-(`potenda/__init__.py:446-477`). There, `load_cursors()` returns `{}` (`cache/incremental.py:99-114`)
-because no product code has ever written `cursors.json`: `persist_cursors_for_run()`
-(`potenda/__init__.py:954`) is the direct engine method that would write it, and nothing calls
-it. With no saved cursor, that branch still falls to `model_loader` for every resource, one
-resource at a time; `hydrate_from_parquet()` plus `list_changed_since()` run only for a
-resource that does have a saved cursor, which does not happen on any current path.
+Current v3 service and Prefect entry points use full extraction. The service's `_plan`
+(`service/flow.py`) calls `execute_run` (`execution.py`) with its `full_extract=True` default.
+The Prefect flow calls `run_remote_request`, which uses the same default. Both reach
+`_run_plan_lifecycle`, `Potenda.load_both_sides`, and `source_load` / `destination_load`.
+Neither calls `Potenda.persist_cursors_for_run()`. Verify and apply do not extract data.
 
-`verify` and `apply` do not extract at all: verify reads the saved plan back, and apply opens
-and applies it through `PlanApplier.open_existing`.
+A direct Python caller must enable incremental extraction, retain a matching schema hash
+and a successful run record, and explicitly persist cursors to use the warm path. This
+safety contract does not enable incremental extraction or add cursor persistence to
+current product flows.
+
+An adapter can opt in with `safe_cursor_before_load(model_name) -> CursorState | None`.
+Potenda calls this hook for every resource before it queries the first resource on that
+side. Return `CursorState(tier=..., value=..., safe=True)` only when the source guarantees
+that the next changed-since query includes every change that can commit during or after
+this extraction. Return `None` when that guarantee cannot be established. The cursor tier
+must match `cursor_tier_for(model_name)`.
+
+For a timestamp cursor, the guarantee must cover the source's clock, timestamp resolution,
+transaction visibility and the filter's boundary semantics. A documented overlap can
+establish this guarantee only if it bounds clock differences and precision. NetBox and
+supported Nautobot endpoints use inclusive `last_updated__gte`; Infrahub uses
+`node_metadata__updated_at__after`, which must be treated as exclusive. A source with
+one-second resolution and an exclusive filter must provide a bound before the entire
+start-time second, rather than rounding the start time down to that second. An HTTP Date
+header or a maximum timestamp from returned rows does not establish this guarantee.
+
+The bundled NetBox, Nautobot and Infrahub adapters currently provide neither a safe source
+watermark nor a bounded overlap. Potenda therefore extracts those resources in full,
+even if a direct caller requests incremental extraction. It also extracts in full if the
+saved cursor is unqualified, the tier changed, or the current source cannot guarantee a
+safe next bound, or the prior resource snapshot is missing. An empty source snapshot is a
+valid baseline and can still use a qualified cursor. An empty destination snapshot
+carries no `local_id` column, so the destination extracts that resource in full. A
+missing mapped model refuses the load before any resource query; it cannot stand in
+for an empty source kind.
+
+When every source resource and every destination resource falls back to a full load, the
+saved plan computes delete proposals for destination-only objects and records
+`delete_operations_computed=true`. If either side uses a delta for any resource, delete
+proposals are not computed: a source hydrated from a prior snapshot still holds objects
+deleted at the source, and a destination delta omits destination-only objects. Apply
+continues to skip all delete operations and records them as skipped; it does not delete
+these objects.
+
+Forced full extraction does not request the safe-cursor hook or capture new cursors.
+The next direct run therefore loads those resources in full again before it can establish
+safe cursors for later incremental runs.
+
+After a successful load, an explicit `persist_cursors_for_run()` call saves the captured
+bound for each resource, including empty snapshots. The `safe-v1:` prefix in `cursors.json`
+marks bounds established under this contract; older cursors require full extraction.
+Parquet `_extract_ts` values remain diagnostic host timestamps and never become query
+bounds. Capture failure, load failure or an interrupted snapshot write clears the candidate
+cursor, so explicit persistence after an unsuccessful load cannot advance it.
+
+Safe bounds can re-read records already in the cached snapshot. Potenda uses DiffSync's
+in-memory `update_or_add_model_instance` for these rows: later yielded attributes replace
+earlier values for the same identifier, without invoking destination writes. Destination
+`local_id` values supplied by the delta are retained; an omitted value preserves the cached
+id. Each updated object is stored again, so the update is kept by stores that return copies of
+their objects. This prevents the same-identifier warm update failure for deliberate overlap reads.
 
 ### The row-count baseline
 

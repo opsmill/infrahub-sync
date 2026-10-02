@@ -42,8 +42,8 @@ IMAGE_UID = 10001
 # must not. Distinct per name, so a private comparison can say which one crossed.
 CLIENT_CREDENTIAL = "cli-container-client-token-8ad3f1"
 SOURCE_TOKENS = {
-    "NETBOX_TOKEN": "cli-container-netbox-token-2b71ce",
-    "NAUTOBOT_TOKEN": "cli-container-nautobot-token-6f0a94",
+    "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": "cli-container-netbox-token-2b71ce",
+    "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN": "cli-container-nautobot-token-6f0a94",
 }
 
 

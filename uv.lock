@@ -1266,7 +1266,7 @@ requires-dist = [
     { name = "invoke", marker = "extra == 'dev'", specifier = ">=2.2.1,<4" },
     { name = "ipfabric", marker = "python_full_version >= '3.11' and extra == 'ipfabric'", specifier = ">=8.0,<9" },
     { name = "ipython", marker = "extra == 'dev'", specifier = ">=8.18" },
-    { name = "jinja2", specifier = ">=3.0.2" },
+    { name = "jinja2", specifier = ">=3.1.6" },
     { name = "netutils", specifier = ">=1.12,<2.0" },
     { name = "packaging", specifier = ">=22.0" },
     { name = "prefect", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = "==3.8.1" },
