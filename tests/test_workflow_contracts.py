@@ -1982,3 +1982,41 @@ def test_the_tier_decision_and_its_label_triggers_are_gone() -> None:
     assert "qualification" not in develop_jobs()
     assert not [name for name, job in develop_jobs().items() if "qualify" in (job.get("outputs") or {})]
     assert not {"labeled", "unlabeled"} & set(declared.get("types") or ())
+
+
+def _refuse_untaggable_publish(version: str, declared: str = "3.0.0a6") -> StepRun:
+    """Run the PyPI job's version guard against a pyproject that declares `declared`."""
+    _index, step = _step_running(
+        job_of(PUBLISH_WORKFLOW, "publish_to_pypi")["steps"],
+        "guard the published version",
+        lambda s: "the image cannot carry" in str(s.get("name", "")),
+    )
+    assert step.get("if") == "inputs.publish"
+    return _run_step(
+        str(step["run"]),
+        {"VERSION": version},
+        files={"pyproject.toml": f'[project]\nname = "infrahub-sync"\nversion = "{declared}"\n'},
+    )
+
+
+def test_the_version_guard_runs_before_anything_is_uploaded() -> None:
+    steps = job_of(PUBLISH_WORKFLOW, "publish_to_pypi")["steps"]
+    guard = next(i for i, step in enumerate(steps) if "the image cannot carry" in str(step.get("name", "")))
+    upload = next(i for i, step in enumerate(steps) if "uv publish" in str(step.get("run", "")))
+
+    assert guard < upload
+
+
+def test_the_version_guard_accepts_the_declared_version() -> None:
+    run = _refuse_untaggable_publish("3.0.0a6")
+
+    assert run.returncode == 0, run.output
+
+
+@pytest.mark.parametrize("version", ["", "3.0.0a5", "v3.0.0a6", "3.0.0a6+local"])
+def test_the_version_guard_refuses_a_version_the_image_cannot_carry(version: str) -> None:
+    """An empty, mismatched, prefixed or local version would upload a package and then fail the image."""
+    run = _refuse_untaggable_publish(version, declared="3.0.0a6+local" if "+" in version else "3.0.0a6")
+
+    assert run.returncode != 0
+    assert "::error::" in run.output

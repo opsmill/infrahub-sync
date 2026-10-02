@@ -75,6 +75,32 @@ jobs:
       - name: "Set up Python"
         run: uv python install 3.12
 
+      # Before anything is uploaded: PyPI goes first and the image second, so a
+      # version the image step cannot tag would leave a package with no image.
+      # The version must be the one this checkout's package declares, and one a
+      # Docker tag can hold (no epoch, no local part).
+      - name: "Refuse to publish a version the image cannot carry"
+        if: inputs.publish
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if ! uv run --no-project --with packaging python -c '
+          import os, sys, tomllib
+          from packaging.version import InvalidVersion, Version
+          v = os.environ["VERSION"]
+          with open("pyproject.toml", "rb") as handle:
+              declared = tomllib.load(handle)["project"]["version"]
+          try:
+              parsed = Version(v)
+          except InvalidVersion:
+              sys.exit(1)
+          sys.exit(0 if v == declared == str(parsed) and parsed.epoch == 0 and parsed.local is None else 1)
+          '; then
+            echo "::error::publishing needs 'version' set to the package's own canonical version (got '${VERSION}')"
+            exit 1
+          fi
+
       - name: "Build package"
         run: uv build
 
