@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel, ValidationError
+from typing_extensions import LiteralString
 
 from infrahub_sync import product_store
 from infrahub_sync.configuration import ConfigurationPackage, CredentialConfigurationError
@@ -4649,7 +4650,7 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
 
 
 # The pre-migration shape of the two tables that carry their own column migrations.
-_LEGACY_RECEIPT_AND_EXECUTION_DDL = [
+_LEGACY_RECEIPT_AND_EXECUTION_DDL: list[LiteralString] = [
     "CREATE TABLE mutation_receipts ("
     "receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL, "
     "operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL, "
