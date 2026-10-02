@@ -56,10 +56,13 @@ use only leaf kinds; referenced leaves are excluded from deletion and their allo
 moves to available kinds. At least 30% of updates change relationships.
 
 These are direct NetBox mutations. A prefix VRF move changes its mapped
-`[prefix, ip_namespace]` identifier, so a sync sees a delete and a create. IP reassignment
-and deletion change the owning interface's mapped `ip_addresses` relationship. The
-benchmark runner must translate these mutations through the mapping before comparing
-the expected file with applied sync actions. A marker in an existing tag's unmapped
+`[prefix, ip_namespace]` identifier, so a sync sees a delete and a create. The
+benchmark runner must translate these prefix moves through the mapping before comparing
+the expected file with applied sync actions. IP updates change the mapped description.
+The pinned NetBox interface response contains `count_ipaddresses`, without an
+`ip_addresses` list, so the source adapter projects that relationship as empty.
+IP deletion therefore does not also update an interface relationship.
+A marker in an existing tag's unmapped
 slug blocks a second mutation without adding a mapped tag. Restore before another run;
 `--force` reapplies the same updates and leaves already completed creates and deletes
 in place; its expected file describes the intended mutations, rather than new work on

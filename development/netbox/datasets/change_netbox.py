@@ -114,18 +114,6 @@ def update_fields(kind: str, row: Row, index: int, data: dict[str, list[Row]]) -
         return {"asset_tag": f"changed-asset-{index}"}
     if kind == "dcim/platforms":
         return {"manufacturer": row.fields["manufacturer"] % len(data["dcim/manufacturers"]) + 1}
-    if kind == "ipam/ip-addresses" and index % 2 and "assigned_object_id" in row.fields:
-        original = data["dcim/interfaces"][row.fields["assigned_object_id"] - 1]
-        target = next(
-            candidate
-            for candidate in data["dcim/interfaces"]
-            if candidate.fields["device"] == original.fields["device"] and candidate.name == "eth1"
-        )
-        return {
-            "assigned_object_type": "dcim.interface",
-            "assigned_object_id": target.id,
-            "description": f"changed address {index}",
-        }
     if kind == "ipam/prefixes" and index % 2:
         return {"vrf": row.fields["vrf"] % len(data["ipam/vrfs"]) + 1, "description": f"changed prefix {index}"}
     return {"part_number" if kind == "dcim/device-types" else "description": f"benchmark changed {kind} {index}"}
@@ -146,17 +134,19 @@ def create_fields(kind: str, index: int, data: dict[str, list[Row]]) -> dict[str
     if kind == "ipam/ip-addresses":
         # Continue the next device-address slot, with no assignment to an interface.
         slot, host = divmod(count + index, 3)
+        vrfs = eligible("ipam/vrfs", data)
         return {
             "address": f"10.{slot // 250}.{slot % 250}.{host + 1}/24",
-            "vrf": data["ipam/vrfs"][index % len(data["ipam/vrfs"])].id,
+            "vrf": vrfs[index % len(vrfs)].id,
             "status": "active",
             "description": "benchmark created",
         }
     if kind == "ipam/prefixes":
         slot = count + index
+        vrfs = eligible("ipam/vrfs", data)
         return {
             "prefix": f"10.{slot // 250}.{slot % 250}.0/24",
-            "vrf": data["ipam/vrfs"][index % len(data["ipam/vrfs"])].id,
+            "vrf": vrfs[index % len(vrfs)].id,
             "status": "active",
             "description": "benchmark created",
         }

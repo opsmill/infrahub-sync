@@ -22,6 +22,29 @@ from development.netbox.datasets.tier_data import FOUNDATION_COUNTS, KINDS, SKIP
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from development.netbox.datasets.tier_data import Row
+
+
+def incoming_leaf_references(data: dict[str, list[Row]]) -> dict[str, Counter[int]]:
+    """Count inbound leaf references without using the planner's relationship helpers."""
+    leaf_fields = {
+        "lag": "dcim/interfaces",
+        "assigned_object_id": "dcim/interfaces",
+        "untagged_vlan": "ipam/vlans",
+        "tagged_vlans": "ipam/vlans",
+        "vlan": "ipam/vlans",
+        "primary_ip4": "ipam/ip-addresses",
+        "primary_ip6": "ipam/ip-addresses",
+    }
+    incoming: dict[str, Counter[int]] = {kind: Counter() for kind in change.LEAF_KINDS}
+    for items in data.values():
+        for item in items:
+            for field, target in leaf_fields.items():
+                value = item.fields.get(field)
+                if value is not None:
+                    incoming[target].update(value if isinstance(value, list) else [value])
+    return incoming
+
 
 @pytest.mark.parametrize(
     ("tier", "total", "skips"), [("S", 560, (2, 4, 2)), ("M", 10207, (8, 16, 12)), ("L", 87815, (35, 70, 40))]
@@ -85,15 +108,55 @@ def test_scaled_shape_has_collision_free_addresses_matching_manufacturers_and_sa
 
 
 @pytest.mark.parametrize(
-    ("tier", "totals"),
+    ("tier", "totals", "allocations"),
     [
-        ("S", {"update": 4, "create": 1, "delete": 1}),
-        ("M", {"update": 72, "create": 20, "delete": 10}),
-        ("L", {"update": 615, "create": 175, "delete": 88}),
+        (
+            "S",
+            {"update": 4, "create": 1, "delete": 1},
+            {
+                "update": {"dcim/devices": 1, "dcim/interfaces": 2, "ipam/ip-addresses": 1},
+                "create": {"dcim/interfaces": 1},
+                "delete": {"dcim/interfaces": 1},
+            },
+        ),
+        (
+            "M",
+            {"update": 72, "create": 20, "delete": 10},
+            {
+                "update": {
+                    "extras/tags": 1,
+                    "dcim/devices": 6,
+                    "dcim/interfaces": 45,
+                    "ipam/vlans": 1,
+                    "ipam/prefixes": 2,
+                    "ipam/ip-addresses": 17,
+                },
+                "create": {"dcim/interfaces": 14, "ipam/ip-addresses": 5, "ipam/prefixes": 1},
+                "delete": {"dcim/interfaces": 7, "ipam/ip-addresses": 3},
+            },
+        ),
+        (
+            "L",
+            {"update": 615, "create": 175, "delete": 88},
+            {
+                "update": {
+                    "extras/tags": 1,
+                    "dcim/racks": 1,
+                    "dcim/devices": 49,
+                    "dcim/interfaces": 392,
+                    "circuits/circuits": 1,
+                    "ipam/vlans": 6,
+                    "ipam/prefixes": 18,
+                    "ipam/ip-addresses": 147,
+                },
+                "create": {"dcim/interfaces": 122, "ipam/ip-addresses": 46, "ipam/prefixes": 5, "ipam/vlans": 2},
+                "delete": {"dcim/interfaces": 62, "ipam/ip-addresses": 23, "ipam/prefixes": 3},
+            },
+        ),
     ],
 )
 def test_change_plan_is_deterministic_proportional_and_has_only_unreferenced_leaf_deletes(
-    tier: str, totals: dict[str, int]
+    tier: str, totals: dict[str, int], allocations: dict[str, dict[str, int]]
 ) -> None:
     """Verify deterministic plans, proportional actions and safe leaf deletions."""
     first = change.plan_changes(tier)
@@ -104,30 +167,60 @@ def test_change_plan_is_deterministic_proportional_and_has_only_unreferenced_lea
     assert expected["counts"] == totals
     assert Counter(row["action"] for row in first) == totals
     data = build_dataset(tier)
-    updates = [row for row in first if row["action"] == "update"]
-    assert Counter(row["kind"] for row in updates) == +Counter(change.apportion(totals["update"], TIER_COUNTS[tier]))
-    assert sum("untagged_vlan" in row["fields"] for row in updates) >= math.ceil(totals["update"] * 0.3)
+    for action, allocation in allocations.items():
+        assert Counter(row["kind"] for row in first if row["action"] == action) == allocation
     keys = [(row["kind"], row["identifier"]) for row in first]
     assert len(keys) == len(set(keys))
     baselines = {
-        kind: {change.identifier(kind, item.fields, data) for item in change.eligible(kind, data)} for kind in KINDS
+        kind: {change.identifier(kind, item.fields, data): item for item in change.eligible(kind, data)}
+        for kind in KINDS
     }
-    leaves = {
-        kind: {change.identifier(kind, item.fields, data) for item in change.unreferenced(kind, data)}
-        for kind in change.LEAF_KINDS
-    }
+    ordinals = {(kind, ident): item.id for kind, items in baselines.items() for ident, item in items.items()}
+    incoming = incoming_leaf_references(data)
+    if tier == "L":
+        vlan100 = baselines["ipam/vlans"]['["grp-a",100,"vlan-100"]']
+        assert incoming["ipam/vlans"][vlan100.id] == 42
+    relationship_updates = 0
     for row in first:
         kind, ident = row["kind"], row["identifier"]
         baseline = baselines[kind]
         if row["action"] in {"create", "delete"}:
             assert kind in change.LEAF_KINDS
         if row["action"] == "delete":
-            assert ident in leaves[kind]
+            assert ident in baseline
+            assert incoming[kind][baseline[ident].id] == 0
+            if kind == "dcim/interfaces":
+                assert baseline[ident].name in {"eth2", "eth3"}
         elif row["action"] == "create":
             assert ident not in baseline
         else:
             assert ident in baseline
+            changed_relationship = False
+            for field, value in row["fields"].items():
+                if isinstance(value, dict):
+                    target_id = ordinals[value["kind"], value["identifier"]]
+                    assert target_id != baseline[ident].fields.get(field)
+                    changed_relationship = True
+                else:
+                    assert value != baseline[ident].fields.get(field)
+            relationship_updates += changed_relationship
         assert {"action", "kind", "identifier", "fields"} == row.keys()
+    assert relationship_updates >= math.ceil(totals["update"] * 0.3)
+
+
+@pytest.mark.parametrize("tier", ["S", "M", "L"])
+@pytest.mark.parametrize("kind", ["ipam/ip-addresses", "ipam/prefixes"])
+def test_created_ip_leaves_cycle_vrf_parents_by_sorted_name(tier: str, kind: str) -> None:
+    """Choose the literal sorted VRF worksheet, rather than insertion order."""
+    data = build_dataset(tier)
+    names = {
+        "S": ["vrf-blue", "vrf-red"],
+        "M": ["vrf-blue", "vrf-red", "vrfs-003", "vrfs-004", "vrfs-005", "vrfs-006"],
+        "L": ["vrf-blue", "vrf-red", *[f"vrfs-{i:03d}" for i in range(3, 13)]],
+    }[tier]
+    for index in range(len(names) + 1):
+        fields = change.create_fields(kind, index, data)
+        assert data["ipam/vrfs"][fields["vrf"] - 1].name == names[index % len(names)]
 
 
 class MemoryNetbox(NetboxAPI):
