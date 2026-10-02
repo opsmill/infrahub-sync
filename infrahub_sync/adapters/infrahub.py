@@ -323,6 +323,15 @@ class PeerSdkAliasError(PeerIdentityError):
         )
 
 
+def _sdk_relationship_is_null(node: object, name: str) -> bool:
+    """Distinguish an explicit null response from an unloaded SDK relationship."""
+    raw_data = getattr(node, "get_raw_graphql_data", lambda: None)() or {}
+    if name not in raw_data:
+        return False
+    value = raw_data[name]
+    return value is None or (isinstance(value, dict) and "node" in value and value["node"] is None)
+
+
 def _sdk_node_has_identifiers(node: object, identifiers: tuple[str, ...], node_schema: MainSchemaTypesAPI) -> bool:
     """Return whether an SDK node carries every DiffSync identifier value."""
     attributes = {attribute.name for attribute in node_schema.attributes}
@@ -340,7 +349,11 @@ def _sdk_node_has_identifiers(node: object, identifiers: tuple[str, ...], node_s
         if relationship is None or relationship.cardinality != "one":
             return False
         related_node = getattr(node, identifier, None)
-        if related_node is None or (getattr(related_node, "id", None) is None and not relationship.optional):
+        if related_node is None:
+            return False
+        if getattr(related_node, "id", None) is None and not (
+            relationship.optional and _sdk_relationship_is_null(node, identifier)
+        ):
             return False
     return True
 
@@ -798,10 +811,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 continue
 
             if rel_schema.cardinality == "one":
-                rel: RelatedNodeSync = getattr(node, rel_schema.name)
-                if not rel.id:
+                rel: RelatedNodeSync | None = getattr(node, rel_schema.name, None)
+                if rel is None or not rel.id:
                     model = getattr(self, node_kind, None)
-                    if rel_schema.optional and model and rel_schema.name in model._identifiers:
+                    if (
+                        rel_schema.optional
+                        and model
+                        and rel_schema.name in model._identifiers
+                        and _sdk_relationship_is_null(node, rel_schema.name)
+                    ):
                         data[rel_schema.name] = None
                     continue
                 peer_node = resolve_peer_node(
@@ -855,7 +873,13 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
         """Require identifier values except for optional single-peer relationships."""
         identifiers = tuple(self._identifiers)
         missing = _unresolved_peer_identifiers(
-            {identifier: getattr(self, identifier, None) for identifier in identifiers}, identifiers, node_schema
+            {
+                identifier: getattr(self, identifier, None)
+                for identifier in identifiers
+                if identifier in self.model_fields_set
+            },
+            identifiers,
+            node_schema,
         )
         if missing:
             error = ValueError(

@@ -24,7 +24,9 @@ from unittest.mock import Mock
 
 import pytest
 from diffsync.exceptions import ObjectNotFound
+from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.exceptions import NodeNotFoundError
+from infrahub_sdk.node import InfrahubNodeSync
 from infrahub_sdk.schema import AttributeSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from infrahub_sdk.schema.main import AttributeKind, RelationshipCardinality
 from pydantic import ValidationError
@@ -289,6 +291,13 @@ def _make_sdk_node(
     node = SimpleNamespace(
         id=node_id,
         get_kind=lambda: kind,
+        get_raw_graphql_data=lambda: {
+            **{name: {"value": value} for name, value in attrs.items()},
+            **{
+                name: {"node": {"id": peer_id}} if peer_id else None
+                for name, (_kind, peer_id) in relationship_data.items()
+            },
+        },
         _schema=SimpleNamespace(
             kind=kind,
             attribute_names=list(attrs),
@@ -1315,12 +1324,9 @@ def test_netbox_global_table_model_load_and_id_scan(netbox_global_table: SimpleN
     assert list(case.harness.list_existing_ids(case.model_name)) == [case.unique_id]
 
 
-@pytest.mark.parametrize("omit_vrf", [False, True])
-def test_netbox_global_table_model_create(netbox_global_table: SimpleNamespace, *, omit_vrf: bool) -> None:
+def test_netbox_global_table_model_create(netbox_global_table: SimpleNamespace) -> None:
     case = netbox_global_table
-    ids = {case.attribute: case.value}
-    if not omit_vrf:
-        ids["vrf"] = None
+    ids = {case.attribute: case.value, "vrf": None}
     assert case.model(**ids).get_unique_id() == case.unique_id
 
     created = case.model.create(adapter=case.harness, ids=ids, attrs={})
@@ -1363,6 +1369,173 @@ def test_hydrated_netbox_global_table_peer_alias(netbox_global_table: SimpleName
     assert result == case.unique_id
     assert len(case.harness.client.get_calls) == 1
     assert _resolve_cached_sdk_peer(case.harness, kind=case.model_name, unique_id=result) is case.peer
+
+
+@pytest.mark.parametrize("relationship_loaded", [False, True])
+def test_unloaded_optional_identifier_is_hydrated(
+    netbox_global_table: SimpleNamespace, *, relationship_loaded: bool
+) -> None:
+    case = netbox_global_table
+    schema = case.harness.schema[case.model_name]
+    if not relationship_loaded:
+        # A response fetched through a generic kind may omit the concrete VRF field.
+        schema = schema.model_copy(update={"relationships": []})
+    shallow_peer = InfrahubNodeSync(
+        client=InfrahubClientSync(config=Config(api_token=None)),
+        schema=schema,
+        data={"id": "peer-id", case.attribute: {"value": case.value}},
+    )
+    vrf = _make_sdk_node("IpamVRF", "vrf-id", {"name": "blue"})
+    case.harness.schema["IpamVRF"].attributes = [AttributeSchemaAPI(name="name", kind=AttributeKind.TEXT)]
+    case.harness.IpamVRF = _FakeDeviceModel
+    case.harness.config.schema_mapping.append(
+        SchemaMappingModel(
+            name="IpamVRF",
+            mapping="IpamVRF",
+            identifiers=["name"],
+            fields=[SchemaMappingField(name="name", mapping="name")],
+        )
+    )
+    case.harness.client.store.set(key="blue", node=vrf)
+    hydrated_peer = _make_sdk_node(
+        case.model_name, "peer-id", {case.attribute: case.value}, {"vrf": ("IpamVRF", "vrf-id")}
+    )
+    case.harness.client.rehydrated_peer = hydrated_peer
+
+    result = case.harness._resolve_peer_unique_id(
+        parent_node=_make_node("InfraDevice", "parent-id", {}),
+        rel_name="prefix",
+        peer_node=shallow_peer,
+    )
+
+    assert result == f"{case.value}__blue"
+    assert case.harness.client.get_calls == [
+        {"id": "peer-id", "kind": case.model_name, "include": [case.attribute, "vrf"], "populate_store": False}
+    ]
+    assert _resolve_cached_sdk_peer(case.harness, kind=case.model_name, unique_id=result) is hydrated_peer
+    assert case.harness.client.store.get(kind=case.model_name, key=case.unique_id, raise_when_missing=False) is None
+
+
+@pytest.mark.parametrize("null_payload", [None, {"node": None}])
+def test_sdk_confirmed_null_optional_identifier(netbox_global_table: SimpleNamespace, null_payload: object) -> None:
+    case = netbox_global_table
+    peer = InfrahubNodeSync(
+        client=InfrahubClientSync(config=Config(api_token=None)),
+        schema=case.harness.schema[case.model_name],
+        data={"id": "peer-id", case.attribute: {"value": case.value}, "vrf": null_payload},
+    )
+
+    result = case.harness._resolve_peer_unique_id(
+        parent_node=_make_node("InfraDevice", "parent-id", {}),
+        rel_name="prefix",
+        peer_node=peer,
+    )
+
+    assert result == case.unique_id
+    assert not case.harness.client.get_calls
+    assert _resolve_cached_sdk_peer(case.harness, kind=case.model_name, unique_id=result) is peer
+
+
+def test_unloaded_optional_identifier_cannot_be_sdk_alias(netbox_global_table: SimpleNamespace) -> None:
+    case = netbox_global_table
+    peer = InfrahubNodeSync(
+        client=InfrahubClientSync(config=Config(api_token=None)),
+        schema=case.harness.schema[case.model_name],
+        data={"id": "peer-id", case.attribute: {"value": case.value}},
+    )
+    case.harness.client.store.set(key="peer-id", node=peer)
+
+    assert not case.harness._reconcile_peer_sdk_alias(
+        peer_kind=case.model_name,
+        peer_id="peer-id",
+        unique_id=case.unique_id,
+        identifiers=(case.attribute, "vrf"),
+    )
+
+    assert case.harness.client.store.get(kind=case.model_name, key=case.unique_id, raise_when_missing=False) is None
+
+
+@pytest.mark.parametrize("continue_on_error", [False, True])
+def test_skipped_optional_identifier_does_not_load_global_table_record(
+    netbox_global_table: SimpleNamespace,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    continue_on_error: bool,
+) -> None:
+    case = netbox_global_table
+    case.harness.continue_on_error = continue_on_error
+    case.peer.vrf.id = "vrf-id"
+    unresolved_vrf = _make_sdk_node("IpamVRF", "vrf-id", {"name": None})
+    case.harness.IpamVRF = _FakeDeviceModel
+    case.harness.schema["IpamVRF"].attributes = [
+        AttributeSchemaAPI(name="name", kind=AttributeKind.TEXT, optional=True)
+    ]
+    case.harness.config.schema_mapping.append(
+        SchemaMappingModel(
+            name="IpamVRF",
+            mapping="IpamVRF",
+            identifiers=["name"],
+            fields=[SchemaMappingField(name="name", mapping="name")],
+        )
+    )
+    case.harness.client.store.set(key="vrf-id", node=unresolved_vrf)
+    case.harness.client.rehydrated_peer = unresolved_vrf
+    case.harness.client.store.set_calls.clear()
+
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"):
+        if continue_on_error:
+            case.harness.model_loader(case.model_name, case.model)
+            assert f"Skipping {case.model_name}[peer-id]" in caplog.text
+        else:
+            with pytest.raises(PeerIdentifierError, match="name"):
+                case.harness.model_loader(case.model_name, case.model)
+
+    assert not case.harness._instances
+    assert not case.harness.client.store.set_calls
+    assert case.harness.client.store.get(kind=case.model_name, key=case.unique_id, raise_when_missing=False) is None
+
+
+def test_omitted_optional_identifier_is_not_a_confirmed_null(netbox_global_table: SimpleNamespace) -> None:
+    case = netbox_global_table
+    item = case.model(**{case.attribute: case.value})
+
+    with pytest.raises(ValidationError, match="vrf"):
+        item.validate_identifiers(case.harness.schema[case.model_name])
+    with pytest.raises(ValidationError, match="vrf"):
+        case.model.create(adapter=case.harness, ids={case.attribute: case.value}, attrs={})
+
+    case.create.assert_not_called()
+
+
+@pytest.mark.parametrize("continue_on_error", [False, True])
+def test_unloaded_optional_identifier_still_unknown_after_fetch(
+    netbox_global_table: SimpleNamespace, *, continue_on_error: bool
+) -> None:
+    case = netbox_global_table
+    peer = InfrahubNodeSync(
+        client=InfrahubClientSync(config=Config(api_token=None)),
+        schema=case.harness.schema[case.model_name],
+        data={"id": "peer-id", case.attribute: {"value": case.value}},
+    )
+    case.harness.client.rehydrated_peer = peer
+    case.harness.continue_on_error = continue_on_error
+
+    for _ in range(2):
+        if continue_on_error:
+            assert (
+                case.harness._resolve_peer_unique_id(
+                    parent_node=peer,
+                    rel_name="prefix",
+                    peer_node=peer,
+                )
+                is None
+            )
+        else:
+            with pytest.raises(PeerIdentifierError, match="vrf"):
+                case.harness._resolve_peer_unique_id(parent_node=peer, rel_name="prefix", peer_node=peer)
+
+    assert len(case.harness.client.get_calls) == 1
+    assert not case.harness.client.store.set_calls
 
 
 @pytest.mark.parametrize("omit_name", [False, True])
