@@ -19,6 +19,7 @@ import re
 import shutil
 import signal
 import subprocess  # noqa: S404 -- an interrupted run needs the process, not its finished output
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -773,6 +774,16 @@ STATE_FILE_NAME = ".instance"
 INTERRUPT_STEP_SECONDS = 180
 
 
+# Runs the entry point with the default `SIGINT` action, whatever pytest was started with.
+# A unit tier started as a background job runs with `SIGINT` ignored, and an ignored
+# signal survives `exec`; without this the child would never see the interrupt this
+# test sends it. A small launcher does it in the child, so no `preexec_fn` runs in
+# the forked child of a multithreaded pytest process.
+DEFAULT_SIGINT_LAUNCHER = (
+    "import os, signal, sys\nsignal.signal(signal.SIGINT, signal.SIG_DFL)\nos.execv(sys.argv[1], sys.argv[1:])\n"
+)
+
+
 @pytest.fixture
 def state_shim(shim: Path) -> Path:
     """The Docker stand-in directory, with a `grep` that can fail the state read."""
@@ -833,7 +844,7 @@ def test_an_interrupted_state_write_leaves_the_old_state_and_no_scratch_beside_i
     ready = tmp_path / "filtered"
     before = (initialized / STATE_FILE_NAME).read_bytes()
     process = subprocess.Popen(  # noqa: S603 -- the entry point under test, with a fixed argv
-        [str(initialized / ENTRY_POINT), "preflight"],
+        [sys.executable, "-c", DEFAULT_SIGINT_LAUNCHER, str(initialized / ENTRY_POINT), "preflight"],
         start_new_session=True,
         env={
             **os.environ,
