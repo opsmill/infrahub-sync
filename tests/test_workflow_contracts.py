@@ -1984,6 +1984,11 @@ def test_the_tier_decision_and_its_label_triggers_are_gone() -> None:
     assert not {"labeled", "unlabeled"} & set(declared.get("types") or ())
 
 
+# The guard reads pyproject.toml with tomllib and runs on Python 3.12; the uv stub
+# runs it on this interpreter, where a refusal on 3.10 would only mean a failed import.
+NEEDS_TOMLLIB = pytest.mark.skipif(sys.version_info < (3, 11), reason="the guard step runs on Python 3.12 (tomllib)")
+
+
 def _refuse_untaggable_publish(version: str, declared: str = "3.0.0a6") -> StepRun:
     """Run the PyPI job's version guard against a pyproject that declares `declared`."""
     _index, step = _step_running(
@@ -2007,12 +2012,14 @@ def test_the_version_guard_runs_before_anything_is_uploaded() -> None:
     assert guard < upload
 
 
+@NEEDS_TOMLLIB
 def test_the_version_guard_accepts_the_declared_version() -> None:
     run = _refuse_untaggable_publish("3.0.0a6")
 
     assert run.returncode == 0, run.output
 
 
+@NEEDS_TOMLLIB
 @pytest.mark.parametrize("version", ["", "3.0.0a5", "v3.0.0a6", "3.0.0a6+local"])
 def test_the_version_guard_refuses_a_version_the_image_cannot_carry(version: str) -> None:
     """An empty, mismatched, prefixed or local version would upload a package and then fail the image."""
@@ -2020,3 +2027,4 @@ def test_the_version_guard_refuses_a_version_the_image_cannot_carry(version: str
 
     assert run.returncode != 0
     assert "::error::" in run.output
+    assert "Traceback" not in run.output, run.output

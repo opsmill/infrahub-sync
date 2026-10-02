@@ -85,7 +85,8 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          if ! uv run --no-project --with packaging python -c '
+          # Python 3.12, the interpreter installed above: tomllib needs 3.11 or later.
+          if ! uv run --no-project --python 3.12 --with packaging python -c '
           import os, sys, tomllib
           from packaging.version import InvalidVersion, Version
           v = os.environ["VERSION"]
