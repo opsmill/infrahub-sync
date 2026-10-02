@@ -54,6 +54,9 @@ def _canonical(version: str) -> str:
     if str(parsed) != version:
         msg = f"'{version}' is not in canonical form; the release tag would be '{parsed}'."
         raise Exit(msg, code=1)
+    if parsed.epoch or parsed.local is not None:
+        msg = f"'{version}' carries an epoch or a local part, which a Docker image tag cannot hold."
+        raise Exit(msg, code=1)
     return version
 
 

@@ -60,12 +60,14 @@ jobs:
           from packaging.version import InvalidVersion, Version
           v = os.environ["VERSION"]
           try:
-              canonical = str(Version(v))
+              parsed = Version(v)
           except InvalidVersion:
-              canonical = None
-          sys.exit(0 if canonical == v else 1)
+              sys.exit(1)
+          # No epoch and no local part: Docker image tags allow neither ! nor +.
+          sys.exit(0 if str(parsed) == v and parsed.epoch == 0 and parsed.local is None else 1)
           '; then
-            echo "::error::Could not read a canonical PEP 440 version from pyproject.toml (got '${VERSION}')."
+            MSG="Could not read a canonical PEP 440 version an image can be tagged with"
+            echo "::error::${MSG} from pyproject.toml (got '${VERSION}')."
             exit 1
           fi
 

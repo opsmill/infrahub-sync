@@ -1514,7 +1514,9 @@ def test_the_newest_decision_feeds_the_release_and_runs_before_it() -> None:
 # The release pull request and the tag both refuse a version that is not canonical
 # PEP 440, the rule `tasks/release.py:_canonical` applies to the Compose pin.
 CANONICAL_VERSIONS = ("3.0.0", "3.0.0a6", "3.0.0b1", "3.0.0rc1", "3.0.0.dev1", "3.0.0.post1")
-NON_CANONICAL_VERSIONS = ("v3.0.0", "3.0.0-alpha6", "3.0.0A6", "3.0.0.a6", "", "not-a-version")
+# Canonical PEP 440 that a Docker tag cannot hold: `!` and `+` are outside the tag grammar.
+UNTAGGABLE_VERSIONS = ("1!3.0.0", "3.0.0+local", "3.0.0a6+build.1")
+NON_CANONICAL_VERSIONS = ("v3.0.0", "3.0.0-alpha6", "3.0.0A6", "3.0.0.a6", "", "not-a-version", *UNTAGGABLE_VERSIONS)
 RELEASE_PR_NUMBER = "1234"
 
 
@@ -1568,7 +1570,9 @@ def test_the_release_pull_request_strips_one_leading_v() -> None:
     assert run.outputs == {"version": "3.0.0a6"}
 
 
-@pytest.mark.parametrize("version", ["vv3.0.0", "3.0.0-alpha6", "3.0.0A6", "3.0.0.a6", "not-a-version"])
+@pytest.mark.parametrize(
+    "version", ["vv3.0.0", "3.0.0-alpha6", "3.0.0A6", "3.0.0.a6", "not-a-version", *UNTAGGABLE_VERSIONS]
+)
 def test_the_release_pull_request_refuses_a_non_canonical_version(version: str) -> None:
     run = _normalise_release_version(version)
 

@@ -112,18 +112,19 @@ jobs:
           VERSION="${RAW_VERSION#v}"
           # Canonical PEP 440 only (`3.0.0a6`, `3.0.0rc1`, `3.0.0.dev1`), the same
           # rule the Compose pin tasks apply: `3.0.0-alpha6` parses, but no tag or
-          # image would carry that spelling.
+          # image would carry that spelling. No epoch (`1!3.0.0`) and no local part
+          # (`3.0.0+local`): Docker image tags allow neither `!` nor `+`.
           if ! VERSION="${VERSION}" uv run --no-project --with packaging python -c '
           import os, sys
           from packaging.version import InvalidVersion, Version
           v = os.environ["VERSION"]
           try:
-              canonical = str(Version(v))
+              parsed = Version(v)
           except InvalidVersion:
-              canonical = None
-          sys.exit(0 if canonical == v else 1)
+              sys.exit(1)
+          sys.exit(0 if str(parsed) == v and parsed.epoch == 0 and parsed.local is None else 1)
           '; then
-            MSG="'${RAW_VERSION}' is not a canonical PEP 440 version"
+            MSG="'${RAW_VERSION}' is not a canonical PEP 440 version an image can be tagged with"
             MSG="${MSG} — refusing to prepare a release from it."
             echo "::error::${MSG}"
             exit 1

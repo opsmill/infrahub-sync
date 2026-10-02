@@ -103,9 +103,14 @@ def test_a_third_party_image_line_is_untouched(compose_file: Path) -> None:
     assert "# A comment that mentions ${VERSION:-1.0.0} must survive the rewrite." in text
 
 
-@pytest.mark.parametrize("version", ["", "not-a-version", "v3.0.0", "3.0.0-alpha6", "3.0.0A6"])
+@pytest.mark.parametrize(
+    "version", ["", "not-a-version", "v3.0.0", "3.0.0-alpha6", "3.0.0A6", "1!3.0.0", "3.0.0+local"]
+)
 def test_an_invalid_or_non_canonical_version_fails(compose_file: Path, version: str) -> None:
-    """`v3.0.0` and `3.0.0-alpha6` parse under PEP 440, but no image is tagged with either spelling."""
+    """`v3.0.0` and `3.0.0-alpha6` parse under PEP 440, but no image is tagged with either spelling.
+
+    `1!3.0.0` and `3.0.0+local` are canonical, but `!` and `+` are outside the Docker tag grammar.
+    """
     with pytest.raises(Exit) as raised:
         update_docker_compose(Context(), version=version, docker_file=str(compose_file))
 
