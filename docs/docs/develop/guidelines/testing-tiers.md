@@ -167,11 +167,14 @@ Three families need more detail than the tables give:
   which creates two schemas. It also adds a `postgresql` parameter to its redaction tests. Only a
   real server can make these checks.
 
-  Set `PRODUCT_STORE_TEST_POSTGRESQL_DSN` and install `psycopg` for both. The module-level
-  fixtures create one generated schema per test module for the session, each standalone or
-  redaction case creates its own, and every one drops only the schemas it created, and its scoped `search_path` deliberately
-  excludes `public`, so a DSN aimed at the wrong database cannot reach another schema's
-  tables:
+  Both kinds need two things. Set `PRODUCT_STORE_TEST_POSTGRESQL_DSN` to a connection string
+  for a PostgreSQL server you can write to, either a URL or `key=value` pairs. Install the
+  `psycopg` driver (`psycopg[binary]` works).
+
+  The tests do not touch existing tables. The module-level fixtures create one generated
+  schema per test module for the session. Each standalone or redaction case creates its own
+  schema. Every fixture drops only the schemas it created. Its scoped `search_path` excludes
+  `public`, so a DSN aimed at the wrong database cannot reach another schema's tables:
 
   ```bash
   PRODUCT_STORE_TEST_POSTGRESQL_DSN="postgresql://postgres:probe@127.0.0.1:55433/storeprobe" \
