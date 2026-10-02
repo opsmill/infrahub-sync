@@ -1,19 +1,27 @@
 ---
 name: from-cisco-aci
 
+# The configuration body of package.yml, kept identical for reference. Register
+# package.yml. For direct adapter use, CISCO_APIC_URL, CISCO_APIC_USERNAME,
+# CISCO_APIC_PASSWORD, CISCO_APIC_VERIFY, INFRAHUB_ADDRESS, and INFRAHUB_API_TOKEN
+# in the environment take precedence over the settings below.
 source:
   name: aci
   settings:
-    url: ${CISCO_APIC_URL}
-    username: ${CISCO_APIC_USERNAME}
-    password: ${CISCO_APIC_PASSWORD}
+    url: "https://apic.example.com"
+    username:
+      $credential: apic-username
+    password:
+      $credential: apic-password
     api_endpoint: "api"
-    verify: ${CISCO_APIC_VERIFY}
+    verify: true
 
 destination:
   name: infrahub
   settings:
     url: "http://localhost:8000"
+    token:
+      $credential: infrahub-token
 
 # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
 # Uncomment and edit only if you need to override the computed order:

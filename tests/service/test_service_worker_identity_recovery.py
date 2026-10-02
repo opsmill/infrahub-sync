@@ -73,6 +73,9 @@ async def worker(_prefect_server: None, request: pytest.FixtureRequest) -> Servi
 def prepared(worker: ServiceProcessWorker) -> ServiceProcessJobConfiguration:
     """Stamp a configuration the way a submission in flight would have."""
     configuration = worker.job_configuration()
+    # Admission is decided in `prepare_for_flow_run`, which this stamps around; the
+    # admission boundary itself is pinned in `test_service_worker_admission.py`.
+    configuration._admitted = True
     configuration._identity_generation = worker._identity_generation
     configuration.env = {"PREFECT__WORKER_ID": str(worker.backend_id)}
     return configuration
@@ -662,6 +665,8 @@ async def test_no_child_is_started_before_the_identity_is_validated(
         await worker.sync_with_backend()
         runner = stub_child_start(worker)
         foreign = worker.job_configuration()
+        # Admitted, so what refuses it below is the identity gate and nothing else.
+        foreign._admitted = True
         foreign._identity_generation = worker._identity_generation
         foreign.env = {"PREFECT__WORKER_ID": str(uuid4())}
 

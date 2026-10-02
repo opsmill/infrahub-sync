@@ -1,4 +1,5 @@
 import collections
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -78,7 +79,10 @@ class _FakeRecord(collections.UserDict):
     """Minimal pynetbox record stub: UserDict so dict(record) works."""
 
 
-def test_list_changed_since_uses_last_updated_filter() -> None:
+def test_list_changed_since_uses_last_updated_filter(tmp_path: Path) -> None:
+    """Pass the saved safe cursor unchanged to the last-updated filter."""
+    from infrahub_sync.cache.incremental import load_cursors, persist_cursors
+
     adapter = _make_adapter(
         [
             {
@@ -107,7 +111,15 @@ def test_list_changed_since_uses_last_updated_filter() -> None:
     fake_model.fields = None
     adapter.InfraDevice = fake_model  # ty: ignore[unresolved-attribute]
 
-    cursor = CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00Z")
+    # This tests saved-cursor pass-through, not the server's filter semantics.
+    path = tmp_path / "cursors.json"
+    persist_cursors(
+        path,
+        side="A",
+        cursors={"InfraDevice": CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00Z", safe=True)},
+    )
+    cursor = load_cursors(path, side="A")["InfraDevice"]
+    assert cursor.safe
     rows = list(adapter.list_changed_since("InfraDevice", cursor))
 
     fake_endpoint.filter.assert_called_once_with(last_updated__gte="2026-05-17T10:00:00Z")
@@ -175,3 +187,11 @@ def test_list_existing_ids_raises_for_unknown_model() -> None:
     )
     with pytest.raises(NotImplementedError):
         list(adapter.list_existing_ids("UnknownKind"))
+
+
+def test_timestamp_source_has_no_established_safe_bound() -> None:
+    """Require full extraction when NetBox supplies no safe bound."""
+    from infrahub_sync.cache.cursors import capture_safe_cursor
+
+    adapter = _make_adapter([{"name": "InfraDevice", "mapping": "dcim.devices"}])
+    assert capture_safe_cursor(adapter, "InfraDevice", CursorTier.TIMESTAMP) is None

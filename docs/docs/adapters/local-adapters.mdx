@@ -1,38 +1,24 @@
 ---
-title: Local Adapters
+title: Local adapters
 ---
 
 import ReferenceLink from "../../src/components/Card";
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-## V3 route
+## Registration limit
 
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure. The custom-adapter example package is `examples/custom_adapter/package.yml`, which is a shape reference and a source fixture rather than a package that runs register-to-apply as shipped.
+:::warning Custom adapters are not qualified for registered packages
 
-## Using local adapters
+In a registered package, `source.name` and `destination.name` must be names of adapters bundled with infrahub-sync, which are listed in [Choose an adapter](./choosing-an-adapter.mdx). Installing your adapter does not add its name. Registration refuses a package that names any other adapter, and the refusal does not name the cause. The package is not stored, so `configs validate` cannot report the cause either. Running a custom adapter from a registered package is not qualified in this release.
 
-:::warning Custom adapters cannot be registered at this release
-
-Installing your adapter is **not** sufficient to make a package naming it registrable. Registration resolves the package's `source.name` against a closed set of capability declarations, and only the adapters bundled with infrahub-sync have one. A package naming any other adapter is refused at registration, and no configuration or version row is created.
-
-The refusal you receive is the service's fixed envelope — HTTP `422`, code `configs-validation`, family `validation`, no `reason`, and the message `the configuration service refused the request`. The underlying cause is an internal finding, `missing-adapter` at `/configuration/source`, which the refusal does not expose — and because the package is never stored, `configs validate` cannot report it either. No public diagnostic names the cause; that missing diagnostic is part of the gap. The attempt still leaves durable evidence: its idempotency receipt is reserved and then released, and an audit event is recorded with outcome `unavailable`.
-
-An installed dotted import target or entry point does not change that outcome, because the refusal is about the missing capability declaration rather than about whether the class can be imported. The supported route today is to add the adapter to this repository together with its declaration — see [Adding an adapter](../develop/guides/adding-an-adapter.md), which records the reproduction and the exact refusing surface.
+To make a new adapter usable in a registered package, add it to this repository together with its capability declaration. See [Adding an adapter](../develop/guides/adding-an-adapter.md).
 
 :::
 
-The material below describes how adapter targets are resolved, and remains accurate for development work and for the bundled adapters.
+## Development work
 
-### Adapter identities a registered package may name
-
-1. **Built-ins**: Adapters that ship with infrahub-sync (`infrahub_sync.adapters.<name>`). These are the only ones with a capability declaration, so in practice they are the only ones a registered package can use today.
-2. **Dotted paths**: Python module paths (`myproj.adapters.foo:MyAdapter`). Accepted by the envelope as a target, but not sufficient on its own — see the warning above.
-3. **Python entry points**: Installed packages that register entry points. Same limitation.
-
-Filesystem paths, including `.py` targets, are refused in registered packages. The `adapters_path` configuration field is also refused.
-
-The destination must name a bundled adapter that supports the destination role.
+The sections below describe development work: loading an adapter from a local path, and writing an adapter class.
 
 ### Development plugin-loader behavior
 
@@ -59,9 +45,9 @@ class MyCustomAdapter(DiffSyncMixin, Adapter):
         pass
 ```
 
-For a more complete example, refer to `examples/custom_adapter/package.yml` and the repository's [Custom Adapter Example](https://github.com/opsmill/infrahub-sync/tree/main/examples/custom_adapter). Its repository-local adapter target is development material, not an installed identity that a deployed worker can register and run as-is; and as the warning above records, installing it elsewhere would not make it registrable either.
+For a more complete example, see the repository's [custom adapter example](https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples/custom_adapter). It is development material: its package names the `mockdb` adapter, which is not bundled, so registration refuses it.
 
-<ReferenceLink title="Custom Adapter Example" url="https://github.com/opsmill/infrahub-sync/tree/main/examples/custom_adapter" openInNewTab />
+<ReferenceLink title="Custom Adapter Example" url="https://github.com/opsmill/infrahub-sync/tree/feature/v3-develop/examples/custom_adapter" openInNewTab />
 
 ### Adding custom Jinja filters
 

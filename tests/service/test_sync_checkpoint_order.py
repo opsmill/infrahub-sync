@@ -124,8 +124,8 @@ class _Row:
 @pytest.fixture
 def stage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _SyncStage:
     """A registered sync whose plan is generated and applied under one guard hold."""
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "sync-destination-canary")
-    monkeypatch.setenv("NETBOX_TOKEN", "sync-source-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "sync-destination-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "sync-source-canary")
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
     inner = local_product_projection(tmp_path / "product")
     registered = inner.create_configuration(package())

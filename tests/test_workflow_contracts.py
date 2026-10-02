@@ -55,6 +55,7 @@ QUALIFIED_TREES = ("infrahub_sync/**", "deploy/compose/**", "tests/compose/**")
 PUBLISH_WORKFLOW = WORKFLOWS / "workflow-publish.yml"
 IMAGE_WORKFLOW = WORKFLOWS / "workflow-image.yml"
 CANDIDATE_WORKFLOW = WORKFLOWS / "workflow-candidate.yml"
+NIGHTLY_WORKFLOW = WORKFLOWS / "workflow-nightly-e2e.yml"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
 
 # What sends a built artifact somewhere this repository cannot take it back from:
@@ -138,6 +139,15 @@ DOWNLOAD_ACTION = "actions/download-artifact"
 # driver on the same kind of host, so every property of the job holds on both.
 CLEAN_HOST_ROUTES = (IMAGE_WORKFLOW, CANDIDATE_WORKFLOW)
 
+# The candidate route's own two jobs: one builds the tester packet from what the
+# candidate job retained -- the raw archive is gone from disk by the time
+# qualification finishes, so it can only be built from the upload -- and the
+# other rehearses the tester path from that one download, on a host that has
+# never seen this repository and never pulled the image either.
+PACKET_JOB = "packet"
+PACKET_REHEARSAL_JOB = "packet-rehearsal"
+PACKET_ARTIFACT = "infrahub-sync-candidate-packet"
+
 # The manual candidate route. The commit to build is an input rather than the
 # ref's tip: `workflow_dispatch` runs against a ref, so a branch that moved
 # between the merge and the dispatch would build different source.
@@ -156,6 +166,12 @@ BUILD_ACTIONS = ("docker/setup-qemu-action", "docker/setup-buildx-action", "astr
 CANDIDATE_WINDOW_NAME = "CANDIDATE_RETENTION_DAYS"
 CANDIDATE_WINDOW = "${{ env.CANDIDATE_RETENTION_DAYS }}"
 CANDIDATE_WINDOW_DAYS = 30
+# How far the granted window may drift from the requested one before the
+# read-back refuses it. `created_at` trails the start of the upload it
+# belongs to, so this covers an upload's own duration without being wide
+# enough to miss a real cap on retention.
+RETENTION_DRIFT_TOLERANCE_NAME = "RETENTION_DRIFT_TOLERANCE_SECONDS"
+RETENTION_DRIFT_TOLERANCE_SECONDS = 3600
 CANDIDATE_GROUPS = frozenset(
     {
         "infrahub-sync-candidate-image",
@@ -165,6 +181,7 @@ CANDIDATE_GROUPS = frozenset(
         "infrahub-sync-candidate-sboms",
         "infrahub-sync-qualification-kit",
         "infrahub-sync-qualification-record",
+        "infrahub-sync-candidate-packet",
     }
 )
 # Asking for a window is not being granted one, so the run reads its own
@@ -1138,7 +1155,7 @@ def test_release_task_changes_raise_the_full_qualification_tier() -> None:
     assert "tasks/release.py" in filter_patterns(ESCALATION_FILTER)
 
 
-def test_the_candidate_route_answers_no_event_and_is_the_only_manual_one() -> None:
+def test_the_candidate_route_answers_no_event_and_is_manual() -> None:
     """The inverse of the pull-request case: this route runs when a person names a commit.
 
     A trigger here would build and retain a candidate nobody asked for, from
@@ -1152,6 +1169,65 @@ def test_the_candidate_route_answers_no_event_and_is_the_only_manual_one() -> No
     assert CLEAN_HOST_JOB in jobs(CANDIDATE_WORKFLOW), (
         f"{CANDIDATE_WORKFLOW.name} holds no {CLEAN_HOST_JOB} job, so this route qualifies nothing"
     )
+
+
+def test_nightly_route_is_dispatch_only_and_requires_an_exact_merged_commit() -> None:
+    """A scheduled or pull-request run must not qualify a moving branch tip."""
+    assert triggers(NIGHTLY_WORKFLOW) == {"workflow_dispatch"}
+    assert NIGHTLY_WORKFLOW not in reachable_from_an_event()
+    declared = triggers_of(NIGHTLY_WORKFLOW)["workflow_dispatch"]["inputs"][SHA_INPUT]
+    assert declared["required"] is True
+    assert declared["type"] == "string"
+    steps = jobs(NIGHTLY_WORKFLOW)["end-to-end"]["steps"]
+    checkout = next(step for step in steps if str(step.get("uses", "")).startswith(CHECKOUT_ACTION))
+    assert checkout["with"] == {
+        "ref": f"${{{{ inputs.{SHA_INPUT} }}}}",
+        "fetch-depth": 0,
+        "persist-credentials": False,
+    }
+    guard_step = next(step for step in steps if step.get("id") == "sha_guard")
+    guard = guard_step["run"]
+    assert "${#expected} -ne 40" in guard
+    assert HEAD_READBACK in guard
+    assert ANCESTRY_CHECK in guard
+    assert "git fetch --no-tags --quiet origin feature/v3-develop" in guard
+    assert guard_step["env"]["NIGHTLY_SHA"] == f"${{{{ inputs.{SHA_INPUT} }}}}"
+
+
+def test_nightly_suites_report_independently_and_clean_up() -> None:
+    """Each selected suite retains evidence and later suites run after a failure."""
+    steps = jobs(NIGHTLY_WORKFLOW)["end-to-end"]["steps"]
+    by_id = {step["id"]: step for step in steps if "id" in step}
+    image_check = next(
+        index for index, step in enumerate(steps) if "nightly_e2e.py verify-images" in str(step.get("run", ""))
+    )
+    for name in ("integration", "preview", "saved-plan", "from-netbox"):
+        step = by_id[name]
+        assert image_check < steps.index(step)
+        assert step["continue-on-error"] is True
+        assert step["if"] == "always() && steps.images.outcome == 'success'"
+        assert f"nightly_e2e.py suite {name}" in step["run"]
+        assert any(
+            other.get("if") == f"always() && steps.{name}.outcome == 'failure'"
+            and other.get("continue-on-error") is True
+            and f"nightly_e2e.py logs {name}" in str(other.get("run", ""))
+            for other in steps
+        )
+    uploads = [step for step in steps if str(step.get("uses", "")).startswith(UPLOAD_ACTION)]
+    assert {step["with"]["path"] for step in uploads} == {
+        ".preview/nightly-e2e/*.xml",
+        ".preview/nightly-e2e/*-containers.log",
+    }
+    assert all(step["if"] == "always()" for step in uploads)
+    assert any(
+        "nightly_e2e.py summary" in str(step.get("run", ""))
+        and step.get("env", {}).get("NIGHTLY_SHA") == "${{ inputs.sha }}"
+        for step in steps
+    )
+    cleanups = [step for step in steps if "down --volumes" in str(step.get("run", ""))]
+    assert len(cleanups) == 2
+    assert all(step["if"] == "always()" for step in cleanups)
+    assert ".github/scripts/nightly_e2e.py" in filter_patterns("sync_all")
 
 
 def test_the_candidate_workflow_takes_the_commit_to_build_as_a_required_input() -> None:
@@ -1273,32 +1349,167 @@ def test_the_candidate_route_retains_every_group_for_exactly_the_window_it_names
     assert load(CANDIDATE_WORKFLOW)["env"][CANDIDATE_WINDOW_NAME] == CANDIDATE_WINDOW_DAYS
 
 
-def test_the_candidate_run_reads_back_the_window_the_service_actually_granted() -> None:
+def test_every_candidate_producing_job_reads_back_the_window_the_service_actually_granted() -> None:
     """Requesting 30 days is not being given 30 days, and the difference is only visible after upload.
 
-    Every group the workflow uploads is named in the read-back, derived from the
+    Every group the workflow uploads is named in a read-back, derived from the
     uploads themselves: a group added without being read back would be retained
-    on a promise instead of on the expiry the service returned.
+    on a promise instead of on the expiry the service returned. Read back inside
+    the job that made the upload, one script per job: the packet is a second
+    job's own retained bytes, built after the first job already reported what it
+    was granted, so its proof cannot live in that first script without naming an
+    artifact that does not exist yet when it runs.
     """
-    reading = [
-        step
-        for step in candidate_steps("candidate")
-        if all(marker in str(step.get("run", "")) for marker in RETENTION_READBACK)
+    by_job: dict[str, set[str]] = {}
+    for path, job, _step, declared in candidates():
+        if path == CANDIDATE_WORKFLOW:
+            by_job.setdefault(job, set()).add(str(declared["name"]))
+
+    assert by_job, f"{CANDIDATE_WORKFLOW.name} retains nothing to read back"
+    for job, names in by_job.items():
+        reading = [
+            step
+            for step in candidate_steps(job)
+            if all(marker in str(step.get("run", "")) for marker in RETENTION_READBACK)
+        ]
+
+        assert len(reading) == 1, f"{len(reading)} steps of {job!r} read the granted retention back"
+        script = str(reading[0]["run"])
+        for name in names:
+            assert name in script, f"{job!r}'s read-back never names {name}"
+        assert CANDIDATE_WINDOW_NAME in script, f"{job!r}'s read-back compares the expiry against no window"
+        assert re.search(r"exit\s+1", script), f"{job!r}'s read-back cannot fail a run whose bytes will not survive"
+        # How wide the tolerance is, and whether it is a tolerance at all, is
+        # proved by running this script in
+        # `tests/release/test_candidate_retention_readback.py`. Pinning the
+        # arithmetic here as text would fix the spelling of a bound rather than
+        # the bound, so what is asserted is only that the comparison is made in
+        # seconds against the declared window.
+        assert "86400" in script, f"{job!r}'s read-back does not compare against the window in seconds"
+
+
+def test_the_packet_job_builds_from_this_runs_own_uploads_and_installs_no_publication() -> None:
+    """The raw archive is gone by the time qualification finishes, so the packet can only come from a download.
+
+    `compose.reclaim` frees the disk the lifecycle needs before it runs, deleting
+    the exported archive from the candidate job's own filesystem. The image
+    artifact still holds it, because the upload ran before the reclaim. Building
+    the packet from anywhere but that download, and the bundle, identity and
+    qualification-record uploads beside it, would either fail on a missing file
+    or read a stale one a later re-run of the same job left behind.
+    """
+    steps = candidate_steps(PACKET_JOB)
+    downloaded = {
+        str((step.get("with") or {}).get("name", ""))
+        for step in steps
+        if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
+    }
+    building = [step for step in steps if "invoke release.packet" in str(step.get("run", ""))]
+
+    assert {
+        "infrahub-sync-candidate-image",
+        "infrahub-sync-candidate-identity",
+        "infrahub-sync-candidate-bundle",
+        "infrahub-sync-qualification-record",
+    } <= downloaded, f"{PACKET_JOB!r} downloads {sorted(downloaded)}, missing a recorded input `release.packet` reads"
+    assert len(building) == 1, f"{len(building)} steps of {PACKET_JOB!r} run `invoke release.packet`"
+
+
+def test_the_packet_job_downloads_only_this_runs_own_artifacts() -> None:
+    """Naming a `run-id` is the one edit that would package a candidate some other commit built."""
+    downloads = [
+        step for step in candidate_steps(PACKET_JOB) if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
     ]
 
-    assert len(reading) == 1, f"{len(reading)} steps read the granted retention back"
-    script = str(reading[0]["run"])
-    for path, _job, _step, declared in candidates():
-        if path == CANDIDATE_WORKFLOW:
-            assert str(declared["name"]) in script, f"the read-back never names {declared['name']}"
-    assert CANDIDATE_WINDOW_NAME in script, "the read-back compares the expiry against no window"
-    assert re.search(r"exit\s+1", script), "the read-back cannot fail a run whose bytes will not survive"
-    # How wide the tolerance is, and whether it is a tolerance at all, is proved
-    # by running this script in `tests/release/test_candidate_retention_readback.py`.
-    # Pinning the arithmetic here as text would fix the spelling of a bound
-    # rather than the bound, so what is asserted is only that the comparison is
-    # made in seconds against the declared window.
-    assert "86400" in script, "the read-back does not compare against the window in seconds"
+    assert downloads, f"{PACKET_JOB!r} downloads nothing, so it packages nothing"
+    for step in downloads:
+        assert "run-id" not in (step.get("with") or {}), f"{_step_name(step)!r} downloads from another run"
+
+
+def test_the_packet_job_checks_out_the_named_commit_with_the_required_profile() -> None:
+    """The packet job runs Invoke tasks, so it needs the same commit and profile the candidate job used."""
+    steps = candidate_steps(PACKET_JOB)
+    checkouts = [step for step in steps if str(step.get("uses", "")).startswith(CHECKOUT_ACTION)]
+    installs = [str(step.get("run", "")) for step in steps if "uv sync" in str(step.get("run", ""))]
+
+    assert len(checkouts) == 1, f"{len(checkouts)} steps of {PACKET_JOB!r} check something out"
+    declared = checkouts[0]["with"]
+    assert declared["ref"] == f"${{{{ inputs.{SHA_INPUT} }}}}", f"the checkout takes {declared.get('ref')!r}"
+    assert declared.get(PERSISTED_CREDENTIALS) is False, f"{PACKET_JOB!r} keeps the run's token in its checkout"
+    assert installs == ["uv sync --frozen --extra dev --extra prefect --extra service"]
+
+
+def test_the_packet_job_needs_clean_host_to_have_passed() -> None:
+    """A failed clean-host qualification must not still leave a 30-day tester packet behind.
+
+    `packet` also needs `candidate`, which `clean-host` itself needs, so this
+    does not change what commit is packaged -- only that the packaging waits
+    for clean-host's verdict before it runs.
+    """
+    needed = set(_needs(job_of(CANDIDATE_WORKFLOW, PACKET_JOB)))
+
+    assert CLEAN_HOST_JOB in needed, f"{PACKET_JOB!r} needs {sorted(needed)}, so clean-host failing does not stop it"
+
+
+def test_the_packet_rehearsal_job_needs_the_job_that_builds_the_packet() -> None:
+    """A literal job name is not evidence that the dependency still produces the packet."""
+    downloaded = {
+        str((step.get("with") or {}).get("name", ""))
+        for step in candidate_steps(PACKET_REHEARSAL_JOB)
+        if str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@")
+    }
+    producing = {
+        job
+        for path, job, _step, declared in candidates()
+        if path == CANDIDATE_WORKFLOW and str(declared.get("name", "")) in downloaded
+    }
+
+    assert downloaded == {PACKET_ARTIFACT}, (
+        f"{PACKET_REHEARSAL_JOB!r} downloads {sorted(downloaded)}, not the packet alone"
+    )
+    assert producing <= set(_needs(job_of(CANDIDATE_WORKFLOW, PACKET_REHEARSAL_JOB))), (
+        f"{PACKET_REHEARSAL_JOB!r} does not need {sorted(producing)}, which produces what it downloads"
+    )
+
+
+def test_the_packet_rehearsal_job_checks_nothing_out_and_installs_no_interpreter() -> None:
+    """The subject is the packet a tester receives, so nothing this repository built directly is present."""
+    job = job_of(CANDIDATE_WORKFLOW, PACKET_REHEARSAL_JOB)
+    rendered = yaml.safe_dump(job)
+
+    assert CHECKOUT_ACTION not in rendered
+    for action in INTERPRETER_ACTIONS:
+        assert action not in rendered, f"{PACKET_REHEARSAL_JOB!r} sets up an interpreter with {action}"
+    for step in job["steps"]:
+        for tool in HOST_TOOLS:
+            assert tool not in str(step.get("run", "")), f"{PACKET_REHEARSAL_JOB!r} runs {tool.strip()} on the host"
+
+
+def test_the_packet_rehearsal_verifies_both_checksums_the_image_labels_and_the_empty_registry() -> None:
+    """Every claim the packet's own README makes to a tester is exercised here.
+
+    The outer archive, the inner layout, the loaded image's identity, a `READY`
+    deployment, and an empty configuration registry -- the same five things
+    `docs/docs/develop/guides/building-a-tester-packet.md` tells a tester to
+    check, run from the one download this job takes.
+    """
+    steps = candidate_steps(PACKET_REHEARSAL_JOB)
+    script = "\n".join(str(step.get("run", "")) for step in steps)
+
+    assert script.count("sha256sum -c") == 2, "the rehearsal does not verify both the outer and inner checksums"
+    empty_check = "docker image ls -aq"
+    assert empty_check in script, "the rehearsal never checks that the Docker daemon starts out with no images"
+    assert script.index(empty_check) < script.index("docker load"), (
+        "the rehearsal checks the daemon is empty after loading the image, not before"
+    )
+    assert "docker load" in script, "the rehearsal never loads the image the packet ships"
+    assert "org.opencontainers.image.version" in script, "the rehearsal never reads the loaded image's version label"
+    assert "org.opencontainers.image.revision" in script, "the rehearsal never reads the loaded image's revision label"
+    assert "./infrahub-sync-compose init" in script
+    assert "./infrahub-sync-compose start" in script
+    assert "./infrahub-sync-compose status" in script
+    assert "configs list" in script, "the rehearsal never checks that the configuration registry is empty"
+    assert "./infrahub-sync-compose reset" in script, "the rehearsal never tears the deployment down"
 
 
 def test_the_candidate_route_reaches_no_publication_of_any_kind() -> None:
@@ -1357,6 +1568,7 @@ def test_every_upload_states_the_window_its_kind_of_artifact_is_kept_for() -> No
     assert load(CANDIDATE_WORKFLOW)["env"] == {
         CANDIDATE_WINDOW_NAME: CANDIDATE_WINDOW_DAYS,
         "DIAGNOSTIC_RETENTION_DAYS": WINDOWS["DIAGNOSTIC_RETENTION_DAYS"],
+        RETENTION_DRIFT_TOLERANCE_NAME: RETENTION_DRIFT_TOLERANCE_SECONDS,
     }
 
 
@@ -1794,7 +2006,7 @@ def test_the_label_arriving_or_leaving_re_runs_the_gate() -> None:
 def test_the_fast_tier_starts_beside_the_lint_it_used_to_wait_for() -> None:
     """Ninety seconds on the critical path of every run, for an ordering nothing needs.
 
-    Lint still blocks a merge as its own required check; what it no longer does
+    Lint still blocks a merge, through the required job; what it no longer does
     is hold the tests and the image gate behind it.
     """
     graph = develop_jobs()
@@ -1997,6 +2209,19 @@ def test_the_filter_runs_this_suite_when_a_declaration_it_reads_changes(declarat
     )
 
 
+def test_the_sync_filter_routes_the_examples_tree() -> None:
+    """Several unit tests read fixtures under `examples/**` at runtime.
+
+    A pull request that changes only a file there has to run the unit and
+    base-install jobs, or a break in an example fixture merges undetected.
+    """
+    probe = REPO_ROOT / "examples" / "probe.yml"
+
+    assert routed(probe, filter_patterns("sync_all")), (
+        f"unit tests read fixtures under {probe.parent.relative_to(REPO_ROOT)}, which sync_all does not name"
+    )
+
+
 def test_the_image_filter_routes_the_document_that_declares_it() -> None:
     """A selector that does not name itself can be re-aimed without facing the gate it aims.
 
@@ -2068,3 +2293,52 @@ def test_the_sdk_update_pull_request_targets_the_matrix_branch() -> None:
 
     assert create_pr["env"]["MATRIX_BRANCH"] == SDK_MATRIX_BRANCH
     assert '--base "${MATRIX_BRANCH}"' in create_pr["run"]
+
+
+@pytest.mark.parametrize("check", ["linter", "tests", "uv-checker"])
+def test_the_required_check_waits_for_and_refuses_a_failed_fast_check(check: str) -> None:
+    """The required check waits for each fast workflow and reads its result.
+
+    The fast checks keep running beside the tier, so they are not ancestors of
+    the image gate; the required job is the one place that waits for them, and
+    its script reads each result.
+    """
+    job = job_of(DEVELOP_CALLER, REQUIRED_JOB)
+    script = "\n".join(str(step.get("run", "")) for step in job["steps"])
+    results = " ".join(str(value) for step in job["steps"] for value in (step.get("env") or {}).values())
+
+    assert check in _needs(job), f"{REQUIRED_JOB} does not wait for {check}"
+    assert f"needs.{check}.result" in results, f"{REQUIRED_JOB} does not read the result of {check}"
+    assert check in script, f"{REQUIRED_JOB} does not check {check}"
+
+
+@pytest.mark.parametrize("check", ["linter", "tests", "uv-checker"])
+@pytest.mark.parametrize(
+    ("result", "exit_code"),
+    [("success", 0), ("skipped", 0), ("failure", 1), ("cancelled", 1)],
+)
+def test_the_required_check_script_refuses_a_failed_fast_check(check: str, result: str, exit_code: int) -> None:
+    """Run the required job's script with one fast check ending in each result.
+
+    Reading the script cannot tell a refusal from a permission, so it is executed
+    with every other result at `success` and judged by its exit code.
+    """
+    job = job_of(DEVELOP_CALLER, REQUIRED_JOB)
+    step = next(step for step in job["steps"] if "UV_CHECKER" in (step.get("env") or {}))
+    env = {name: str(value) for name, value in step["env"].items()}
+    env.update({"DECISION": "success", "QUALIFY": "true", "IMAGE": "success"})
+    env.update({"LINTER": "success", "TESTS": "success", "UV_CHECKER": "success"})
+    env[check.upper().replace("-", "_")] = result
+    bash = shutil.which("bash")
+    assert bash, "a POSIX shell is needed to run the gate the way the runner does"
+
+    with tempfile.TemporaryDirectory() as scratch:
+        completed = subprocess.run(  # noqa: S603
+            [bash, "-c", str(step["run"])],
+            env=env,
+            cwd=scratch,
+            capture_output=True,
+            check=False,
+            timeout=GUARD_TIMEOUT_SECONDS,
+        )
+    assert completed.returncode == exit_code, completed.stderr.decode()

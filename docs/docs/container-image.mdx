@@ -174,12 +174,20 @@ service is holding under another release.
 
 On a trusted run, `release.kit` writes a narrow `candidate-input.json` beside the
 bundle. It tells clean-host the bundle name and digest, the release tag and
-version, and the exact `linux/amd64` configuration digest to expect. The
+version, and the exact `linux/amd64` configuration digest to expect. It also
+records the image archive and example package checksums for the packet task. The
 `final-qualification` job writes the qualification record only after the
 Compose lifecycle result for that digest and clean-host have both passed.
 Running `release.qualify` anywhere else refuses until you supply an artifact
 record of your own, and retaining a candidate for approval belongs to a manual
 run against an exact merged commit.
+
+After qualification, restore the exported Linux amd64 image archive from the
+candidate image artifact and run `uv run invoke release.packet`. The task checks
+the image, bundle, and example package against their recorded SHA-256 values
+before writing a tester download. See
+[Building a private tester packet](develop/guides/building-a-tester-packet.md)
+for the input paths and packet layout.
 
 ## Clean-host qualification
 

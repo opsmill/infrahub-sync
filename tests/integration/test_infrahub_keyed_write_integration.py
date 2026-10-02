@@ -18,9 +18,13 @@ Five primary cases, on the smallest fixture that can carry them:
 5. an update whose payload omits a human-friendly-ID component still lands on the object its
    recorded id names.
 
-Two supporting cases run alongside them: a peer whose own key crosses a relationship is
-resolved through the nested filter (the read half), and the run is shown to write nothing
-outside the branch it owns.
+Four supporting cases run alongside them: a peer whose own key crosses a relationship is
+resolved through the nested filter (the read half), an explicit peer destination id resolves
+one node while an unknown id refuses the write, and the run is shown to write nothing outside
+the branch it owns.
+
+A computed display-name control writes twice using a separate writable uniqueness constraint
+and reads the destination independently to check that only one node persists.
 
 **Everything this module touches lives on one branch it creates and deletes.** The sibling
 modules load their throwaway schema onto `main`, which makes two concurrent runs — or a run
@@ -50,7 +54,8 @@ import pytest
 import requests
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
-from infrahub_sync.plan.errors import StaleDestinationIdError
+from infrahub_sync.plan.derive import warn_missing_convergence_key
+from infrahub_sync.plan.errors import DestinationIdentityCollisionError, PeerNotFoundError, StaleDestinationIdError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 
@@ -61,8 +66,10 @@ pytestmark = pytest.mark.integration
 
 SITE_KIND = "TestUnkeyedSite"
 DEVICE_KIND = "TestUnkeyedDevice"
+RACK_KIND = "TestUnkeyedRack"
 MOUNT_KIND = "TestUnkeyedMount"
 RENAMABLE_KIND = "TestUnkeyedRenamable"
+COMPUTED_KIND = "TestUnkeyedComputed"
 
 # `TestUnkeyedDevice`'s human-friendly ID crosses the `site` relationship. The SDK renders no
 # key at all for that shape — a peer supplied as a resolved node id renders as `{"id": ...}`
@@ -78,6 +85,13 @@ RENAMABLE_KIND = "TestUnkeyedRenamable"
 # and AD043's nested `{peer_kind, identity}` walk run against a real destination.
 _SCHEMA = {
     "version": "1.0",
+    "generics": [
+        {
+            "name": "UnkeyedHosting",
+            "namespace": "Test",
+            "attributes": [{"name": "name", "kind": "Text", "unique": True}],
+        }
+    ],
     "nodes": [
         {
             "name": "UnkeyedSite",
@@ -106,6 +120,16 @@ _SCHEMA = {
                     "kind": "Attribute",
                     "optional": False,
                 },
+            ],
+        },
+        {
+            "name": "UnkeyedRack",
+            "namespace": "Test",
+            "include_in_menu": False,
+            "inherit_from": ["TestUnkeyedHosting"],
+            "human_friendly_id": ["site__name__value", "name__value"],
+            "relationships": [
+                {"name": "site", "peer": SITE_KIND, "cardinality": "one", "kind": "Attribute", "optional": False}
             ],
         },
         {
@@ -138,6 +162,28 @@ _SCHEMA = {
                 },
             ],
         },
+    ],
+}
+
+_COMPUTED_SCHEMA = {
+    "version": "1.0",
+    "nodes": [
+        {
+            "name": "UnkeyedComputed",
+            "namespace": "Test",
+            "include_in_menu": False,
+            "human_friendly_id": ["display_name__value"],
+            "uniqueness_constraints": [["hostname__value"]],
+            "attributes": [
+                {"name": "hostname", "kind": "Text", "unique": True},
+                {
+                    "name": "display_name",
+                    "kind": "Text",
+                    "read_only": True,
+                    "computed_attribute": {"kind": "Jinja2", "jinja2_template": "{{ hostname__value }}"},
+                },
+            ],
+        }
     ],
 }
 
@@ -203,14 +249,38 @@ def _device_operation(device_name: str, site_name: str) -> PlannedOperation:
     )
 
 
-def _mount_operation(mount_name: str, device_name: str, site_name: str) -> PlannedOperation:
+def _rack_operation(rack_name: str, site_name: str) -> PlannedOperation:
+    """A rack create keyed by site and name, with the same name across sites."""
+    identity = canonical_identity(
+        {"name": rack_name, "site": {"peer_kind": SITE_KIND, "identity": {"name": site_name}}}, kind=RACK_KIND
+    )
+    return PlannedOperation(
+        operation_id=operation_id("create", RACK_KIND, identity),
+        action="create",
+        kind=RACK_KIND,
+        identity=identity,
+        tier=0,
+        payload={"name": rack_name},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": site_name}])
+        ],
+    )
+
+
+def _mount_operation(
+    mount_name: str, device_name: str, site_name: str, *, peer_id: str | None = None
+) -> PlannedOperation:
     """One planned create for the keyed consumer, referencing the crossing peer.
 
-    The reference carries the peer's identity as AD043 records it — a nested
-    `{peer_kind, identity}` pair, because the peer's own key crosses `site` — so resolving it
-    is what forces the nested filter spelling at the destination.
+    By default the reference carries the peer's nested identity as AD043 records it,
+    exercising the nested filter. A supplied destination id instead exercises the direct
+    peer lookup available to hand-built or future plans.
     """
-    peer_identity = {"name": device_name, "site": {"peer_kind": SITE_KIND, "identity": {"name": site_name}}}
+    peer_identity = (
+        {"id": peer_id}
+        if peer_id is not None
+        else {"name": device_name, "site": {"peer_kind": SITE_KIND, "identity": {"name": site_name}}}
+    )
     identity = canonical_identity({"name": mount_name}, kind=MOUNT_KIND)
     return PlannedOperation(
         operation_id=operation_id("create", MOUNT_KIND, identity),
@@ -288,7 +358,7 @@ def keyed_write_scope() -> Iterator[KeyedWriteScope]:
             allow_redirects=False,
         )
         _raise_for_status_without_redirect(schema_response)
-        _await_schema_kinds(client, branch, (SITE_KIND, DEVICE_KIND, MOUNT_KIND, RENAMABLE_KIND))
+        _await_schema_kinds(client, branch, (SITE_KIND, DEVICE_KIND, RACK_KIND, MOUNT_KIND, RENAMABLE_KIND))
 
         site_name = f"unkeyed-site-{suffix}"
         site = client.create(kind=SITE_KIND, branch=branch, data={"name": site_name})
@@ -422,6 +492,74 @@ def test_a_relationship_crossing_create_converges_instead_of_duplicating(
     assert len(matching) == 1, f"The re-apply duplicated {created_name!r} at the destination: {matching}"
 
 
+def test_rack_name_unique_outside_hfid_is_refused_before_apply(keyed_write_scope: KeyedWriteScope) -> None:
+    """The live server merges on an inherited unique name; the plan refuses first."""
+    scope = keyed_write_scope
+    second_site_name = f"second-{scope.site_name}"
+    second_site = scope.client.create(kind=SITE_KIND, branch=scope.branch, data={"name": second_site_name})
+    second_site.save()
+    first_site = next(
+        node
+        for node in scope.client.filters(kind=SITE_KIND, branch=scope.branch, populate_store=False)
+        if node.name.value == scope.site_name
+    )
+    rack_name = f"Comms closet {scope.site_name}"
+    first = scope.client.create(kind=RACK_KIND, branch=scope.branch, data={"name": rack_name, "site": first_site.id})
+    first.save(allow_upsert=True)
+    second = scope.client.create(kind=RACK_KIND, branch=scope.branch, data={"name": rack_name, "site": second_site.id})
+    second.save(allow_upsert=True)
+    assert second.id == first.id, "The second rack must merge into the first by its inherited unique name."
+    matching = [
+        node
+        for node in scope.client.filters(kind=RACK_KIND, branch=scope.branch, populate_store=False)
+        if node.name.value == rack_name
+    ]
+    assert [node.id for node in matching] == [first.id]
+
+    operations = [_rack_operation(rack_name, site) for site in (scope.site_name, second_site_name)]
+    with pytest.raises(DestinationIdentityCollisionError, match="unique attribute"):
+        warn_missing_convergence_key(destination=scope.adapter, operations=operations)
+    with pytest.raises(DestinationIdentityCollisionError, match="unique attribute"):
+        scope.adapter.validate_planned_payload_fields(operations)
+
+
+def test_a_computed_display_name_converges_on_a_writable_unique_hostname(keyed_write_scope: KeyedWriteScope) -> None:
+    """Two writes return one ID and an independent destination read finds one node."""
+    scope = keyed_write_scope
+    address, token = _env_or_skip()
+    response = requests.post(
+        f"{address}/api/schema/load?branch={scope.branch}",
+        headers={"X-INFRAHUB-KEY": token, "Content-Type": "application/json"},
+        json={"schemas": [_COMPUTED_SCHEMA]},
+        timeout=60,
+        allow_redirects=False,
+    )
+    _raise_for_status_without_redirect(response)
+    _await_schema_kinds(scope.client, scope.branch, (COMPUTED_KIND,))
+    scope.adapter.schema = scope.client.schema.all(branch=scope.branch, refresh=True)
+    hostname = f"computed-{scope.site_name}"
+    identity = canonical_identity({"hostname": hostname}, kind=COMPUTED_KIND)
+    operation = PlannedOperation(
+        operation_id=operation_id("create", COMPUTED_KIND, identity),
+        action="create",
+        kind=COMPUTED_KIND,
+        identity=identity,
+        tier=0,
+        payload={"hostname": hostname},
+    )
+
+    first = scope.adapter.apply_planned_operation(operation=operation, peers=scope.adapter.new_peer_resolver())
+    second = scope.adapter.apply_planned_operation(operation=operation, peers=scope.adapter.new_peer_resolver())
+    matching = [
+        node
+        for node in scope.client.filters(kind=COMPUTED_KIND, branch=scope.branch, populate_store=False)
+        if node.hostname.value == hostname
+    ]
+
+    assert first == second
+    assert [node.id for node in matching] == [first]
+
+
 def test_an_update_keyed_by_its_recorded_id_renames_in_place(keyed_write_scope: KeyedWriteScope) -> None:
     """The recorded id is the write key, and the object it names is the one that changes."""
     scope = keyed_write_scope
@@ -527,6 +665,47 @@ def test_a_keyed_consumer_resolves_a_crossing_peer_through_the_nested_filter(
     assert written.name.value == mount_name, "The keyed consumer was not written as planned."
     assert written.device.id is not None, "The consumer was written without the peer it referenced."
     assert scope.client.count(kind=MOUNT_KIND, branch=scope.branch) == 1
+
+
+def test_a_keyed_consumer_resolves_a_peer_by_destination_id(keyed_write_scope: KeyedWriteScope) -> None:
+    """An id-only peer reference resolves through Infrahub's ids filter."""
+    scope = keyed_write_scope
+    device = next(
+        node
+        for node in scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False)
+        if node.name.value == scope.device_name
+    )
+    mount_name = f"id-peer-{scope.branch.rsplit('-', maxsplit=1)[-1]}"
+
+    written_id = scope.adapter.apply_planned_operation(
+        operation=_mount_operation(mount_name, scope.device_name, scope.site_name, peer_id=device.id),
+        peers=scope.adapter.new_peer_resolver(),
+    )
+
+    written = scope.client.get(kind=MOUNT_KIND, id=written_id, branch=scope.branch, include=["device"])
+    assert written.name.value == mount_name
+    assert written.device.id == device.id
+
+
+def test_an_unknown_peer_destination_id_is_refused_before_write(keyed_write_scope: KeyedWriteScope) -> None:
+    """An id-only reference with no match cannot create a wrongly linked consumer."""
+    scope = keyed_write_scope
+    device = next(
+        node
+        for node in scope.client.filters(kind=DEVICE_KIND, branch=scope.branch, populate_store=False)
+        if node.name.value == scope.device_name
+    )
+    unknown_id = device.id[:-1] + ("0" if device.id[-1] != "0" else "1")
+    assert scope.client.filters(kind=DEVICE_KIND, ids=[unknown_id], branch=scope.branch, populate_store=False) == []
+    before = scope.client.count(kind=MOUNT_KIND, branch=scope.branch)
+
+    with pytest.raises(PeerNotFoundError):
+        scope.adapter.apply_planned_operation(
+            operation=_mount_operation("unknown-id-peer", scope.device_name, scope.site_name, peer_id=unknown_id),
+            peers=scope.adapter.new_peer_resolver(),
+        )
+
+    assert scope.client.count(kind=MOUNT_KIND, branch=scope.branch) == before
 
 
 def test_the_run_writes_nothing_outside_the_branch_it_owns(keyed_write_scope: KeyedWriteScope) -> None:

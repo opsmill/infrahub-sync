@@ -46,6 +46,7 @@ def test_a_valid_package_produces_no_findings() -> None:
 
 
 def test_independent_defects_each_become_one_finding() -> None:
+    """Independent defects each become one finding."""
     data = package_data()
     data["credentials"]["netbox-token"]["provider"] = "vault"
     data["configuration"]["source"]["settings"]["url"] = "demo.netbox.dev"
@@ -55,7 +56,7 @@ def test_independent_defects_each_become_one_finding() -> None:
     assert _triples(data) == [
         ("undeclared-setting", "/configuration/destination/settings/bogus_dest"),
         ("endpoint-not-absolute", "/configuration/source/settings/url"),
-        ("unknown-credential-reference", "/configuration/store/settings/password"),
+        ("unsupported-sync-store", "/configuration/store"),
         ("unknown-credential-provider", "/credentials/netbox-token"),
     ]
 
@@ -148,7 +149,7 @@ def _nested_under_a_refused_store_setting(data: dict[str, Any]) -> None:
         ),
         pytest.param(
             _nested_under_a_refused_store_setting,
-            ("inline-credential-value", "/configuration/store/settings/password"),
+            ("unsupported-sync-store", "/configuration/store"),
             id="inline-credential-value",
         ),
     ],
@@ -239,6 +240,21 @@ def test_two_defects_in_one_declaration_still_yield_two_findings() -> None:
     ]
 
 
+def test_an_environment_identifier_outside_the_credential_prefix_is_one_finding() -> None:
+    # A well-formed variable name is not enough: the worker's own infrastructure settings live
+    # in the same environment, so only the credential namespace is resolvable.
+    data = package_data()
+    data["credentials"]["worker-secret"] = {"provider": "env", "identifier": "AWS_SECRET_ACCESS_KEY"}
+
+    findings = collect_findings(package(data))
+
+    assert [(finding.code, finding.location) for finding in findings] == [
+        ("malformed-credential-reference", "/credentials/worker-secret"),
+    ]
+    assert "'INFRAHUB_SYNC_CREDENTIAL_' followed by a name" in findings[0].message
+    assert "AWS_SECRET_ACCESS_KEY" not in findings[0].message
+
+
 def test_a_reference_outside_the_declared_paths_is_still_reported_by_the_walk() -> None:
     data = package_data()
     data["configuration"]["schema_mapping"] = [
@@ -260,6 +276,7 @@ def test_a_missing_adapter_is_expressible_as_a_finding() -> None:
 def test_a_missing_adapter_suppresses_only_its_own_role() -> None:
     # Its settings cannot be judged against a surface that does not exist, so claiming a finding
     # about them would be inventing one. Everything else still runs.
+    """A missing adapter suppresses only its own role."""
     data = package_data()
     data["configuration"]["source"]["name"] = "NetBox"
     data["configuration"]["source"]["settings"]["bogus_source"] = 1
@@ -269,14 +286,13 @@ def test_a_missing_adapter_suppresses_only_its_own_role() -> None:
     assert _triples(data) == [
         ("undeclared-setting", "/configuration/destination/settings/bogus_dest"),
         ("missing-adapter", "/configuration/source"),
-        ("inline-credential-value", "/configuration/store/settings/password"),
+        ("unsupported-sync-store", "/configuration/store"),
     ]
 
 
 def test_an_undeclared_store_type_suppresses_only_its_own_settings() -> None:
-    # The same rule the missing adapter above obeys, at the other unevaluable surface. Whether
-    # a store setting is credential-bearing is exactly what an undeclared store type makes
-    # unknowable, so the walk has no surface to judge "url" against and must not claim one.
+    # Refusing the whole store owns its settings; unrelated adapter defects still report.
+    """Refuse an unknown store without suppressing unrelated findings."""
     data = package_data()
     data["configuration"]["store"] = {"type": "mystery", "settings": {"url": {"$credential": "netbox-token"}}}
     data["configuration"]["destination"]["settings"]["bogus_dest"] = 1
@@ -285,17 +301,16 @@ def test_an_undeclared_store_type_suppresses_only_its_own_settings() -> None:
     assert _triples(data) == [
         ("undeclared-setting", "/configuration/destination/settings/bogus_dest"),
         ("credential-path-not-declared", "/configuration/source/settings/verify_ssl"),
-        ("missing-store-capabilities", "/configuration/store"),
+        ("unsupported-sync-store", "/configuration/store"),
     ]
 
 
-def test_an_undeclared_store_type_carrying_nothing_is_still_silent() -> None:
-    # Measured shipped behaviour: an undeclared store type declaring no settings declares
-    # nothing unsafe, so it is not a defect and suppresses nothing.
+def test_an_undeclared_store_type_carrying_nothing_is_refused() -> None:
+    """An undeclared store type carrying nothing is refused."""
     data = package_data()
     data["configuration"]["store"] = {"type": "mystery", "settings": {}}
 
-    assert _triples(data) == []
+    assert _triples(data) == [("unsupported-sync-store", "/configuration/store")]
 
 
 def _narrow_type_uses(tree: ast.AST) -> list[str]:
@@ -728,7 +743,7 @@ def _over_cap_package_data(*, reversed_declaration: bool) -> dict[str, Any]:
     if reversed_declaration:
         names.reverse()
     for name in names:
-        data["credentials"][name] = {"provider": "vault", "identifier": "DECLARED_TOKEN"}
+        data["credentials"][name] = {"provider": "vault", "identifier": "INFRAHUB_SYNC_CREDENTIAL_DECLARED_TOKEN"}
     return data
 
 
@@ -812,7 +827,7 @@ FROZEN_CODES = frozenset(
         "inline-credential-value",
         "malformed-credential-reference",
         "missing-adapter",
-        "missing-store-capabilities",
+        "unsupported-sync-store",
         "setting-contains-credential-material",
         "setting-not-a-string",
         "undeclared-setting",
@@ -823,13 +838,19 @@ FROZEN_CODES = frozenset(
 
 
 def _declared_codes(tree: ast.AST) -> set[str]:
+    """Collect local finding codes and aliases of imported shared constants."""
     declared: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
         names = [target.id for target in node.targets if isinstance(target, ast.Name)]
-        if any(name.startswith("_CODE_") for name in names) and isinstance(node.value, ast.Constant):
-            declared.add(str(node.value.value))
+        if any(name.startswith("_CODE_") for name in names):
+            if isinstance(node.value, ast.Constant):
+                declared.add(str(node.value.value))
+            elif isinstance(node.value, ast.Name):
+                value = getattr(validation, node.value.id)
+                assert isinstance(value, str)
+                declared.add(value)
     return declared
 
 
@@ -847,6 +868,7 @@ def _kebab_literals(tree: ast.AST) -> set[str]:
 
 
 def test_the_core_can_emit_exactly_the_frozen_code_enumeration() -> None:
+    """Keep local and shared finding codes within the frozen public inventory."""
     # Collected from the implementation, not restated: a new check introduces a code here and
     # this test is what asks whether the envelope agreed to it.
     tree = ast.parse(Path(validation.__file__).read_text(encoding="utf-8"))
@@ -854,14 +876,16 @@ def test_the_core_can_emit_exactly_the_frozen_code_enumeration() -> None:
     assert _declared_codes(tree) == FROZEN_CODES
     # A code written as a bare literal rather than as a _CODE_ constant would slip past the
     # scan above; every finding code is kebab-case and nothing else in the module is.
-    assert _kebab_literals(tree) == FROZEN_CODES
+    assert _kebab_literals(tree) == FROZEN_CODES - {"unsupported-sync-store"}
+    # The store reason has one shared definition; its alias still belongs to the inventory.
+    assert validation._CODE_UNSUPPORTED_SYNC_STORE == "unsupported-sync-store"
 
 
 def _totality_package_data() -> dict[str, Any]:
     # A missing adapter makes its role unevaluable, so it goes on one role and every other
     # family is spread across the other role, the store, and the credential declarations.
     data = package_data()
-    data["credentials"]["bad-provider"] = {"provider": "vault", "identifier": "DECLARED_TOKEN"}
+    data["credentials"]["bad-provider"] = {"provider": "vault", "identifier": "INFRAHUB_SYNC_CREDENTIAL_DECLARED_TOKEN"}
     data["credentials"]["bad-identifier"] = {"provider": "env", "identifier": "NOT-VALID"}
     data["configuration"]["source"] = {
         "name": "genericrestapi",
@@ -892,11 +916,12 @@ def _totality_package_data() -> dict[str, Any]:
 def test_one_package_carrying_every_reachable_family_keeps_the_sort_total() -> None:
     # Nine of these codes appear more than once and are separated only by location, which is
     # the collision a per-family test cannot see.
+    """Order all reachable findings deterministically."""
     findings = collect_findings(package(_totality_package_data()))
 
     keys = [(finding.location, finding.severity, finding.code) for finding in findings]
     assert len(set(keys)) == len(keys)
-    assert len(keys) == 15
+    assert len(keys) == 12
     assert {finding.code for finding in findings} == {
         "credential-path-not-declared",
         "endpoint-not-absolute",
@@ -908,6 +933,7 @@ def test_one_package_carrying_every_reachable_family_keeps_the_sort_total() -> N
         "unknown-credential-provider",
         "unknown-credential-reference",
         # The adapter's own code, passed through rather than replaced.
+        "unsupported-sync-store",
         "unsafe-rest-request-endpoint",
     }
 
@@ -1080,13 +1106,6 @@ def _normalized_setting_collision() -> dict[str, Any]:
     return data
 
 
-def _normalized_store_collision() -> dict[str, Any]:
-    """Two undeclared store settings whose names differ only by a trailing space."""
-    data = package_data()
-    data["configuration"]["store"] = {"type": "redis", "settings": {"zz": 1, "zz ": 1}}
-    return data
-
-
 def _normalized_empty_component_collision() -> dict[str, Any]:
     """An empty declared key and a whitespace-only one, which normalize onto each other."""
     data = package_data()
@@ -1102,7 +1121,6 @@ def _normalized_empty_component_collision() -> dict[str, Any]:
     [
         pytest.param(_normalized_walk_collision, "credential-path-not-declared", id="walk"),
         pytest.param(_normalized_setting_collision, "undeclared-setting", id="adapter-setting"),
-        pytest.param(_normalized_store_collision, "undeclared-setting", id="store-setting"),
         pytest.param(_normalized_empty_component_collision, "credential-path-not-declared", id="empty-component"),
     ],
 )
@@ -1149,7 +1167,6 @@ def test_two_defects_at_one_normalized_pointer_keep_their_own_codes() -> None:
         pytest.param(_component_bound_collision, id="component-bound"),
         pytest.param(_normalized_walk_collision, id="normalized-walk"),
         pytest.param(_normalized_setting_collision, id="normalized-adapter-setting"),
-        pytest.param(_normalized_store_collision, id="normalized-store-setting"),
         pytest.param(_normalized_empty_component_collision, id="normalized-empty-component"),
     ],
 )

@@ -853,7 +853,9 @@ destination_compose() {
         echo "clean-host: $ROW: the destination fixture was reached before this run named a project for it" >&2
         return 1
     fi
-    docker compose --project-name "$FIXTURE_PROJECT" \
+    # The kit's development files publish on loopback. The proxy reaches this
+    # fixture at the runner's routable address, so the fixture alone is widened.
+    PREVIEW_INFRAHUB_BIND_ADDRESS=0.0.0.0 docker compose --project-name "$FIXTURE_PROJECT" \
         --env-file "$DESTINATION/preview.env" \
         --file "$DESTINATION/docker-compose.infrahub.yml" \
         --file "$DESTINATION/docker-compose.preview.yml" "$@"
@@ -1028,7 +1030,7 @@ configure_deployment() {
     # and this confirms that is the candidate this host loaded rather than
     # writing a fourth channel that could disagree with it.
     require_bundle_names_the_loaded_candidate
-    set_setting INFRAHUB_API_TOKEN "$DESTINATION_TOKEN"
+    set_setting INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN "$DESTINATION_TOKEN"
     point_configuration_at_destination "$PROXY_URL"
     # The checks reach the deployment through the product's own client, which is
     # the surface an operator has. Negative destination-state assertions are read
@@ -1050,6 +1052,7 @@ INFRAHUB_SYNC_WORK_POOL=$(sed -n 's/^INFRAHUB_SYNC_WORK_POOL=//p' "$BUNDLE/defau
 AWS_ACCESS_KEY_ID=$(setting INFRAHUB_SYNC_S3_ACCESS_KEY)
 AWS_SECRET_ACCESS_KEY=$(setting INFRAHUB_SYNC_S3_SECRET_KEY)
 PREFECT_API_URL=http://prefect-server:4200/api
+PREFECT_API_AUTH_STRING=$(setting INFRAHUB_SYNC_PREFECT_AUTH_STRING)
 INFRAHUB_DESTINATION_URL=$DESTINATION_URL
 INFRAHUB_DESTINATION_TOKEN=$DESTINATION_TOKEN
 INFRAHUB_ADDRESS=$DESTINATION_URL
@@ -1524,6 +1527,7 @@ row_alpha_replacement() {
 # `init` made them, and that no published artifact could already contain.
 SECRET_SETTINGS='INFRAHUB_SYNC_PRODUCT_PASSWORD
 INFRAHUB_SYNC_PREFECT_PASSWORD
+INFRAHUB_SYNC_PREFECT_AUTH_STRING
 INFRAHUB_SYNC_S3_ACCESS_KEY
 INFRAHUB_SYNC_S3_SECRET_KEY
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS'

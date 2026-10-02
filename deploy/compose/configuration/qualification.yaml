@@ -6,8 +6,10 @@
 # Both adapters are the bundled `infrahub` one, so a registered run resolves
 # them from installed code: nothing is generated, and no worker filesystem is
 # consulted. The token is a credential *reference* — the worker resolves
-# `INFRAHUB_API_TOKEN` from its own environment, so no secret value is declared
-# here, stored in PostgreSQL, or printed by any lifecycle command.
+# `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` from its own environment, so no
+# secret value is declared here, stored in PostgreSQL, or printed by any
+# lifecycle command. An `env` identifier must start with
+# `INFRAHUB_SYNC_CREDENTIAL_`.
 #
 # Edit `url` to name your own Infrahub before registering it, or register a
 # package file of your own instead:
@@ -52,4 +54,4 @@ configuration:
 credentials:
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN

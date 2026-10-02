@@ -1,4 +1,62 @@
+from collections.abc import Callable
+
+import pytest
+from invoke import Context, Result
+from invoke.runners import Local
+
 from tasks import linter
+from tasks.utils import ESCAPED_REPO_PATH
+
+
+def _record_runner_commands(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Capture the final command text handed to invoke's runner.
+
+    `Context.run` resolves any active `cd`/`prefix` wrapping before calling
+    `Runner.run` (see its docstring: "this method instantiates a `Runner`
+    subclass ... and calls its `run` method"). Patching that public seam
+    checks the command actually sent to the shell without depending on the
+    private mechanics `Context` uses internally to build it.
+    """
+    commands: list[str] = []
+
+    def fake_run(self: Local, command: str, **kwargs: object) -> Result:
+        del self, kwargs
+        commands.append(command)
+        return Result(exited=0)
+
+    monkeypatch.setattr(Local, "run", fake_run)
+    return commands
+
+
+def test_lint_yaml_runs_from_the_repository_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands = _record_runner_commands(monkeypatch)
+
+    linter.lint_yaml(Context())
+
+    assert commands == [f"cd {ESCAPED_REPO_PATH} && yamllint ."]
+
+
+@pytest.mark.parametrize(
+    ("task_func", "expected_command"),
+    [
+        (
+            linter.lint_ruff,
+            f"cd {ESCAPED_REPO_PATH} && ruff format --check --diff . &&ruff check --diff .",
+        ),
+        (
+            linter.format_ruff,
+            f"cd {ESCAPED_REPO_PATH} && ruff format . && ruff check --fix .",
+        ),
+    ],
+)
+def test_ruff_tasks_run_from_the_repository_root(
+    monkeypatch: pytest.MonkeyPatch, task_func: Callable[[Context], None], expected_command: str
+) -> None:
+    commands = _record_runner_commands(monkeypatch)
+
+    task_func(Context())
+
+    assert commands == [expected_command]
 
 
 def test_ty_check_command_excludes_service_on_python_310() -> None:
@@ -23,7 +81,8 @@ def test_pylint_command_checks_service_on_supported_python() -> None:
     assert linter._pylint_command(3, 13) == "pylint --output-format=json2 infrahub_sync/"
 
 
-def test_pylint_regression_locations_reports_only_regressed_codes() -> None:
+def test_pylint_regression_locations_reports_only_regressed_codes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(linter.PYLINT_BASELINE_MAX_COUNTS, "C0302", 1)
     report = {
         "messages": [
             {
@@ -41,28 +100,26 @@ def test_pylint_regression_locations_reports_only_regressed_codes() -> None:
     ]
 
 
-def test_pylint_baseline_accepts_current_or_lower_counts() -> None:
-    messages = [
-        {"messageId": message_id}
-        for message_id, maximum in linter.PYLINT_BASELINE_MAX_COUNTS.items()
-        for _ in range(maximum)
-    ]
-
-    assert linter._pylint_regressions({"messages": messages}) == []
-    assert linter._pylint_regressions({"messages": messages[:-1]}) == []
+def test_pylint_baseline_allows_no_diagnostics() -> None:
+    assert linter.PYLINT_BASELINE_MAX_COUNTS == {}
+    assert linter._pylint_regressions({"messages": []}) == []
 
 
-def test_pylint_baseline_rejects_new_codes_and_increased_counts() -> None:
-    messages = [
-        {"messageId": "C0302"},
-        {"messageId": "C0302"},
-        {"messageId": "E0401"},
-    ]
+def test_pylint_baseline_rejects_any_diagnostic() -> None:
+    messages = [{"messageId": "C0302"}, {"messageId": "C0302"}, {"messageId": "E0401"}]
 
     assert linter._pylint_regressions({"messages": messages}) == [
-        "C0302 increased from at most 1 to 2",
+        "new diagnostic code C0302 (2)",
         "new diagnostic code E0401 (1)",
     ]
+
+
+def test_pylint_baseline_allows_only_listed_counts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(linter.PYLINT_BASELINE_MAX_COUNTS, "C0302", 1)
+    messages = [{"messageId": "C0302"}, {"messageId": "C0302"}]
+
+    assert linter._pylint_regressions({"messages": messages[:1]}) == []
+    assert linter._pylint_regressions({"messages": messages}) == ["C0302 increased from at most 1 to 2"]
 
 
 def test_pylint_baseline_rejects_malformed_reports() -> None:

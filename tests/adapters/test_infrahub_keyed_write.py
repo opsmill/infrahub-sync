@@ -25,24 +25,41 @@ from infrahub_sdk.exceptions import GraphQLError
 from infrahub_sdk.schema.main import BranchSchema, NodeSchemaAPI
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerResolver
-from infrahub_sync.plan.errors import UnaccountedIdentityComponentError
+from infrahub_sync.plan.errors import (
+    DestinationIdentityCollisionError,
+    ReviewedPayloadFieldMissingError,
+    UnaccountedIdentityComponentError,
+    UnkeyedCreateRefusedError,
+)
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 from tests.adapters.test_infrahub_planned_write import (
+    APPLY_RUN_ID,
     DEVICE_KIND,
     KEYLESS_KIND,
     NODE_ID,
     ORPHAN_KIND,
     SCHEMAS,
+    SERVER_KIND,
     SITE_KIND,
+    TAG_KIND,
+    TEAM_KIND,
     RecordingClient,
     _text,
+    apply_run_dir,
+    engine_over,
     make_adapter,
+    make_node,
     make_operation,
+    rendered_related_id,
+    rendered_relationship_ids,
 )
+from tests.plan.artifact_fixtures import CONFIG_VERSION, write_artifact
+from tests.plan.ownership_fixtures import granted_ownership
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
 DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
 STALE_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169d0"
@@ -70,10 +87,138 @@ ALL_SCHEMAS: dict[str, NodeSchemaAPI] = {**SCHEMAS, CONSTRAINED_KIND: CONSTRAINE
 def keyed_adapter() -> tuple[RecordingClient, InfrahubAdapter, PeerResolver]:
     """A recording client and adapter that also know the constrained fixture kind."""
     client = RecordingClient()
-    client.schema.set_cache(BranchSchema(hash="fixture", nodes=dict(ALL_SCHEMAS)))
+    client.live_schema = BranchSchema(hash="fixture", nodes=dict(ALL_SCHEMAS))
+    client.schema.set_cache(client.live_schema)
     adapter = make_adapter(client)
     adapter.schema = dict(ALL_SCHEMAS)
     return client, adapter, PeerResolver(adapter)
+
+
+def test_saved_plan_collision_is_refused_before_any_mutation(tmp_path: Path) -> None:
+    """The whole-plan apply gate rejects two creates sharing a unique attribute."""
+    client, adapter, _peers = keyed_adapter()
+    operations = [
+        make_operation(
+            kind=DEVICE_KIND,
+            identity={"name": "Comms closet", "site": {"peer_kind": SITE_KIND, "identity": {"name": site}}},
+            payload={"name": "Comms closet"},
+            relationships=[
+                RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": site}])
+            ],
+        )
+        for site in ("site-a", "site-b")
+    ]
+
+    directory = apply_run_dir(tmp_path)
+    write_artifact(
+        directory,
+        [operation.model_dump(mode="json", exclude_none=True) for operation in operations],
+        run_id=APPLY_RUN_ID,
+        config_version=CONFIG_VERSION,
+    )
+
+    with pytest.raises(DestinationIdentityCollisionError, match=r"unique attribute.*name__value"):
+        engine_over(directory, adapter).apply_plan(ownership=granted_ownership(), config_version=CONFIG_VERSION)
+
+    assert client.mutation_names == []
+
+
+def _read_only_rule_adapter(*, writable_alternative: bool) -> tuple[RecordingClient, InfrahubAdapter, PeerResolver]:
+    """A rule kind whose displayed number is allocated by the destination."""
+    rule_id = _text("rule-id", "rule_id", optional=False).model_copy(update={"read_only": True})
+    schema = NodeSchemaAPI(
+        id="rule-schema",
+        name="Rule",
+        namespace="Test",
+        label="Rule",
+        default_filter="rule_id__value",
+        human_friendly_id=["rule_id__value"],
+        uniqueness_constraints=[["hostname__value"]] if writable_alternative else [],
+        attributes=[rule_id, _text("rule-hostname", "hostname", optional=False)],
+        relationships=[],
+    )
+    client = RecordingClient()
+    client.schema.set_cache(BranchSchema(hash="fixture", nodes={"TestRule": schema}))
+    adapter = make_adapter(client)
+    adapter.schema = {"TestRule": schema}
+    return client, adapter, PeerResolver(adapter)
+
+
+def test_server_allocated_rule_id_is_refused_at_the_write_boundary() -> None:
+    client, adapter, peers = _read_only_rule_adapter(writable_alternative=False)
+    operation = make_operation(kind="TestRule", identity={"hostname": "edge-1"}, payload={"hostname": "edge-1"})
+
+    with pytest.raises(UnkeyedCreateRefusedError, match="rule_id__value"):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.mutation_names == []
+
+
+def test_reviewed_read_only_rule_id_is_refused_at_the_write_boundary() -> None:
+    client, adapter, peers = _read_only_rule_adapter(writable_alternative=False)
+    operation = make_operation(kind="TestRule", identity={"rule_id": "999"}, payload={"rule_id": "999"})
+
+    with pytest.raises(ReviewedPayloadFieldMissingError, match="rule_id"):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.mutation_names == []
+
+
+def test_writable_rule_key_allows_repeated_writes_with_a_read_only_display_id() -> None:
+    class StatefulRuleClient(RecordingClient):
+        """Apply rendered upserts to an independent in-memory destination index."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.persisted: dict[str, str] = {}
+
+        def execute_graphql(self, *args: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401, ARG002
+            query = kwargs["query"]
+            match = re.search(r'hostname:\s*\{\s*value:\s*"([^"]+)"', query)
+            assert match is not None, "The actual SDK mutation must carry the writable key."
+            hostname = match.group(1)
+            node_id = self.persisted.setdefault(hostname, f"saved-node-{len(self.persisted) + 1}")
+            self.events.append(("mutation", ("TestRuleUpsert", query)))
+            return {"TestRuleUpsert": {"ok": True, "object": {"id": node_id}}}
+
+        def read_back(self, hostname: str) -> list[str]:
+            """Query the simulated destination by its persisted writable key."""
+            return [node_id for key, node_id in self.persisted.items() if key == hostname]
+
+    _client, adapter, peers = _read_only_rule_adapter(writable_alternative=True)
+    stateful_client = StatefulRuleClient()
+    stateful_client.schema.set_cache(BranchSchema(hash="fixture", nodes=dict(adapter.schema)))
+    adapter.client = stateful_client
+    operation = make_operation(kind="TestRule", identity={"hostname": "edge-1"}, payload={"hostname": "edge-1"})
+
+    first = adapter.apply_planned_operation(operation=operation, peers=peers)
+    second = adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert first == second
+    assert stateful_client.mutation_names == ["TestRuleUpsert", "TestRuleUpsert"]
+    assert stateful_client.read_back("edge-1") == [first]
+
+
+def test_read_only_hfid_relationship_accepts_a_complete_writable_constraint() -> None:
+    """A read-only display relationship does not block a selected writable key."""
+    schema = ALL_SCHEMAS[DEVICE_KIND].model_copy(
+        update={
+            "relationships": [
+                relationship.model_copy(update={"read_only": True})
+                for relationship in ALL_SCHEMAS[DEVICE_KIND].relationships
+            ],
+            "uniqueness_constraints": [["name__value"]],
+        }
+    )
+    client = RecordingClient()
+    client.schema.set_cache(BranchSchema(hash="fixture", nodes={DEVICE_KIND: schema}))
+    adapter = make_adapter(client)
+    adapter.schema = {DEVICE_KIND: schema}
+    operation = make_operation(kind=DEVICE_KIND, identity={"name": "device-a"}, payload={"name": "device-a"})
+
+    adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert client.mutation_names == [f"{DEVICE_KIND}Upsert"]
 
 
 def update_operation(
@@ -367,15 +512,16 @@ def test_a_no_hfid_kind_update_is_allowed_where_its_create_is_refused() -> None:
 # The two arms are different mechanisms and must stay so. Identity coverage answers "does
 # the operation even name every component", which is a question about the plan. AD051's
 # `_assert_identity_components_accounted_for` answers "does each named component arrive with
-# a value", which is a question about the assembled write — and it is the only check that
-# can say *which* component is missing. A guard that answered both would make AD051
-# unreachable and lose that diagnosis.
+# a value", which is a question about the assembled write. The peer-filter guard separately
+# names missing components before lookup. Direct values still need AD051's diagnosis.
 
 
-def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refused_by_ad051() -> None:
-    """The relationship-crossing value case: identity names `site`, the peer supplies no name."""
+@pytest.mark.parametrize("memo_seeded", [True, False], ids=["memo-hit", "memo-miss"])
+def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refused(*, memo_seeded: bool) -> None:
+    """Name the missing peer field before lookup so a loose match cannot bind a wrong peer."""
     client, adapter, peers = keyed_adapter()
-    peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
+    if memo_seeded:
+        peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
     operation = make_operation(
         kind=DEVICE_KIND,
         identity={"name": "device-a", "site": {"peer_kind": SITE_KIND, "identity": {"code": "site-a"}}},
@@ -388,7 +534,9 @@ def test_a_create_whose_nested_peer_identity_omits_the_component_value_is_refuse
     with pytest.raises(UnaccountedIdentityComponentError) as excinfo:
         adapter.apply_planned_operation(operation=operation, peers=peers)
 
-    assert "site__name__value" in str(excinfo.value), "AD051 names the component, which is why it is kept."
+    assert "relationship 'site'" in str(excinfo.value)
+    assert "name__value" in str(excinfo.value)
+    assert client.resolver_queries == [], "The refusal comes before any destination lookup."
     assert client.mutation_names == [], "A refused create attempts no destination mutation."
 
 
@@ -456,10 +604,12 @@ def test_an_update_whose_hfid_component_is_blank_still_reaches_the_recorded_id_w
     assert top_level_scalar_id(query) == DESTINATION_ID
 
 
-def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is_written() -> None:
-    """A crossing component the peer identity cannot supply: the recorded id keys the write."""
+@pytest.mark.parametrize("memo_seeded", [True, False], ids=["memo-hit", "memo-miss"])
+def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is_refused(*, memo_seeded: bool) -> None:
+    """A recorded parent id cannot protect a relationship resolved through a loose peer filter."""
     client, adapter, peers = keyed_adapter()
-    peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
+    if memo_seeded:
+        peers.remember(SITE_KIND, {"code": "site-a"}, "site-id-1")
     operation = update_operation(
         kind=DEVICE_KIND,
         identity={"name": "device-a", "site": {"peer_kind": SITE_KIND, "identity": {"code": "site-a"}}},
@@ -469,9 +619,126 @@ def test_an_update_of_a_relationship_crossing_kind_missing_its_peer_component_is
         ],
     )
 
-    assert adapter.apply_planned_operation(operation=operation, peers=peers) == NODE_ID
-    _name, query = client.mutations[0]
-    assert top_level_scalar_id(query) == DESTINATION_ID
+    with pytest.raises(UnaccountedIdentityComponentError, match="name__value"):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.resolver_queries == [], "The refusal comes before any destination lookup."
+    assert client.mutation_names == []
+
+
+def test_a_peer_kind_without_hfid_can_resolve_by_its_direct_identity() -> None:
+    """A schema without an HFID has no components for the peer guard to require."""
+    client, adapter, peers = keyed_adapter()
+    adapter.schema[SITE_KIND] = SCHEMAS[SITE_KIND].model_copy(update={"human_friendly_id": []})
+    client.filter_results = [[make_node(client, SITE_KIND, "site-id-1")]]
+    operation = make_operation(
+        kind=SERVER_KIND,
+        identity={"name": "server-a"},
+        payload={"name": "server-a"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"name": "site-a"}])
+        ],
+    )
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.resolver_queries[0]["name__value"] == "site-a"
+    assert rendered_related_id(client.mutations[0][1], "site") == "site-id-1"
+
+
+def test_a_peer_destination_id_is_a_complete_lookup_without_an_hfid() -> None:
+    """An explicit destination id identifies one peer even when its HFID is absent."""
+    client, adapter, peers = keyed_adapter()
+    client.filter_results = [[make_node(client, SITE_KIND, "site-id-1")]]
+    operation = make_operation(
+        kind=SERVER_KIND,
+        identity={"name": "server-a"},
+        payload={"name": "server-a"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind=SITE_KIND, cardinality="one", peers=[{"id": "site-id-1"}])
+        ],
+    )
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.resolver_queries[0]["ids"] == ["site-id-1"]
+    assert "name__value" not in client.resolver_queries[0]
+    assert rendered_related_id(client.mutations[0][1], "site") == "site-id-1"
+
+
+def test_a_complete_cardinality_many_peer_set_is_written() -> None:
+    """Checking every peer still permits a complete two-member relationship set."""
+    client, adapter, peers = keyed_adapter()
+    client.filter_results = [
+        [make_node(client, TAG_KIND, "tag-id-1")],
+        [make_node(client, TAG_KIND, "tag-id-2")],
+    ]
+    operation = make_operation(
+        kind=TEAM_KIND,
+        action="update",
+        identity={"name": "team-a"},
+        payload={"name": "team-a"},
+        relationships=[
+            RelationshipReference(
+                field="members", peer_kind=TAG_KIND, cardinality="many", peers=[{"name": "tag-a"}, {"name": "tag-b"}]
+            )
+        ],
+    )
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert len(client.resolver_queries) == 2
+    assert rendered_relationship_ids(client.mutations[0][1], "members") == ["tag-id-1", "tag-id-2"]
+
+
+def test_an_ambiguous_null_relationship_is_refused_without_a_peer_lookup() -> None:
+    """A null payload field could be a scalar lost to relationship schema drift."""
+    client, adapter, peers = keyed_adapter()
+    operation = update_operation(
+        kind=TEAM_KIND,
+        identity={"name": "team-a"},
+        payload={"name": "team-a", "owner": None},
+    )
+
+    with pytest.raises(ReviewedPayloadFieldMissingError, match="owner"):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.resolver_queries == []
+    assert client.mutations == []
+
+
+def test_an_update_with_an_unchanged_relationship_needs_no_peer_lookup() -> None:
+    """Only relationship writes need peer validation; the recorded id keys this update."""
+    client, adapter, peers = keyed_adapter()
+    operation = update_operation(
+        kind=SERVER_KIND,
+        identity={"name": "server-a"},
+        payload={"name": "server-a"},
+    )
+
+    adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.resolver_queries == []
+    assert top_level_scalar_id(client.mutations[0][1]) == DESTINATION_ID
+
+
+def test_a_relationship_peer_with_no_destination_schema_is_refused() -> None:
+    """An unknown peer kind cannot be checked or resolved, so no write is safe."""
+    client, adapter, peers = keyed_adapter()
+    operation = make_operation(
+        kind=SERVER_KIND,
+        identity={"name": "server-a"},
+        payload={"name": "server-a"},
+        relationships=[
+            RelationshipReference(field="site", peer_kind="TestMissing", cardinality="one", peers=[{"name": "x"}])
+        ],
+    )
+
+    with pytest.raises(ValueError, match="destination schema declares no kind 'TestMissing'"):
+        adapter.apply_planned_operation(operation=operation, peers=peers)
+
+    assert client.resolver_queries == []
+    assert client.mutations == []
 
 
 def test_the_same_blank_component_as_a_create_is_still_refused_by_ad051() -> None:

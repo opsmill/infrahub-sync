@@ -2,7 +2,7 @@
 title: Schema mapping reference
 ---
 
-The schema mapping section of a sync project's `config.yml` defines how data translates between the source system and the destination system. Worked examples for NetBox → Infrahub and Nautobot → Infrahub appear at the end.
+The schema mapping section of a sync project's `package.yml` defines how data translates between the source system and the destination system. Worked examples for NetBox → Infrahub and Nautobot → Infrahub appear at the end.
 
 For the full configuration schema (not just the mapping section), see [Sync instance configuration](./config.mdx).
 
@@ -104,7 +104,27 @@ When a destination field is a relationship to another model that is also being s
   reference: Device
 ```
 
-This says: the value of the source's `device.name` field should resolve to the `Device` object with that name in the destination. The referenced model must be synced before this one — see the `order` key in the project configuration.
+This says: the value of the source's `device.name` field should resolve to the `Device` object with that name in the destination. infrahub-sync computes a write order from `reference` fields so the referenced model is normally synced before this one, but a reference outside the kind's `identifiers` is optional and can be dropped to break a cycle, so that guarantee does not always hold; see [Automatic write order](config.mdx#automatic-write-order). You can override the computed order with the optional `order` key in the project configuration.
+
+### Generic reference limitations
+
+For an Infrahub destination, `reference` can name a generic kind. Planning looks up
+loaded peers under the generic's mapped concrete kinds. This supports a relationship
+with one peer, or several peers that all belong to one concrete kind.
+
+A relationship with several peers of different concrete kinds fails planning with
+`SourcePeerUnresolvedError` ("names peers of more than one kind"). One saved
+relationship reference cannot record multiple peer kinds.
+
+A missing peer also fails planning when the generic schema lists more than one
+possible concrete kind, even if only one is mapped. A same-name destination object
+of that mapped kind does not prove it is the intended peer. The destination-only
+literal identity exception requires one possible kind and a supported single-field
+destination key.
+
+Mapping both the generic and its concrete kinds can produce duplicate matches for
+one peer. Planning refuses these ambiguous matches; this case is tracked in
+[SYNC-216](https://opsmill.atlassian.net/browse/SYNC-216).
 
 ## Identifiers
 
@@ -129,6 +149,37 @@ identifiers: ["address", "ip_namespace"]
 All listed fields must be present and unique together. Each identifier field must also be mapped in the `fields` list.
 
 Pick the identifiers your destination actually uses, not the ones the source happens to have. Infrahub keys an address by address plus namespace, while NetBox groups addresses by VRF without requiring them to be unique inside one, so the shipped `examples/netbox_to_infrahub/` mapping turns each VRF name into an IP namespace and identifies on that. That separation lasts only while the VRF names differ: two VRFs sharing a name produce the same namespace record twice and the run fails while loading the source, and an address in a VRF named `default` collides with the same address in no VRF at all. To key the namespace on something NetBox cannot repeat, see [Key the namespace on the VRF ID instead of its name](#key-the-namespace-on-the-vrf-id-instead-of-its-name).
+
+### Destination key for Infrahub writes
+
+Infrahub must be able to find each planned object again by a key. The key is one of these,
+from the destination kind's Infrahub schema:
+
+- the human-friendly ID (`human_friendly_id`), or
+- one uniqueness constraint (`uniqueness_constraints`).
+
+For each mapped kind, choose one of these keys, list each of its fields in `identifiers`,
+and map each one in `fields`. Every field of the key must be writable. A value that
+Infrahub allocates or computes, such as a server-allocated ID, cannot be part of the key.
+
+Sync checks this against the destination schema before it extracts data. It refuses a
+kind with a partial key, a key field that is not mapped, or no key. The error contains
+`no complete writable destination convergence identity` and names the unusable fields.
+
+For example, if Infrahub allocates `rule_id` and also declares `hostname__value` as a
+uniqueness constraint, use `hostname` as the key:
+
+```yaml
+schema_mapping:
+  - name: TestRule
+    identifiers: ["hostname"]
+    fields:
+      - name: hostname
+        mapping: hostname
+```
+
+The read-only `rule_id` can stay in the destination schema. If a kind has no key that Sync
+can write, remove the kind from the package until the destination schema provides one.
 
 ## Filters
 
@@ -188,7 +239,9 @@ For cases where a field value needs to be transformed during the mapping — upp
       expression: "{{ name | upper }}"
 ```
 
-Adapters can also register custom Jinja filters via a `_add_custom_filters` class method on the adapter model. The ACI adapter, for example, includes an `aci_device_name` filter for resolving ACI node IDs to device names. See [Local Adapters](../adapters/local-adapters.mdx) for the implementation pattern, and [Sync instance configuration](./config.mdx) for the full `transforms` syntax.
+Transform expressions run in a Jinja2 sandbox. They can read the source object's fields, use Jinja filters, and call methods that return a new value, such as `split` or `replace`. They cannot call arbitrary Python methods or functions, change a value in place (for example with `append` or `update`), or access private attributes (names starting with `_`). An expression that tries fails the transform with an error naming the field. Registering a configuration package checks each expression's syntax, and a syntax error refuses the package.
+
+Adapters can also register custom Jinja filters via a `_add_custom_filters` class method on the adapter model. The ACI adapter, for example, includes an `aci_device_name` filter for resolving ACI node IDs to device names. See [Local adapters](../adapters/local-adapters.mdx) for the implementation pattern, and [Sync instance configuration](./config.mdx) for the full `transforms` syntax.
 
 ## Validating a mapping
 
@@ -199,25 +252,28 @@ infrahub-sync configs validate <config-id> <version>
 infrahub-sync diff --config-id <config-id> --version <version> --reason "review mapping"
 ```
 
-The diff prints every proposed create, update, and delete. Review it model by model:
-
-- Are the field values being mapped correctly?
-- Are references resolving to the right objects in the destination?
-- Are filters excluding the right objects?
-- Are there unexpected creates or deletes?
-
-The same run also saves a plan artifact you can review on its own, per operation and per kind:
+When the plan is ready, `diff` prints its summary: the operation counts by action and by
+kind. To see each operation, review the saved plan:
 
 ```shell
 infrahub-sync runs plan <run-id> --detail
+infrahub-sync runs plan <run-id> --detail --kind <destination-kind>
 ```
 
-A plan **records** deletes but `apply` never executes one — it applies the non-deletes, completes
-successfully, and reports how many deletes it skipped. Deletes are also only computed when the
-destination side ran a full extract; both review depths say which of the two happened. See
-[Create and review a plan](../running-a-sync#create-and-review-a-plan).
+Review it kind by kind:
 
-Adjust the mapping and re-run the diff until it matches expectations. Only then run the sync.
+- Are the field values mapped correctly?
+- Do references resolve to the right objects in the destination?
+- Do the filters exclude the right objects?
+- Are there unexpected creates or updates?
+
+A plan **records** deletes, but `apply` never executes one. It applies the other operations,
+completes, and reports how many deletes it skipped. Deletes are computed only when the
+destination side ran a full extract, and both review depths say which case applies. See
+[Review the plan](../running-a-sync.mdx#review-the-plan).
+
+To change the mapping, edit the package, register it with `configs version`, and create a
+new plan from the new version. Apply a plan only after its review matches your expectations.
 
 ---
 
@@ -286,7 +342,7 @@ The patterns below cover the most common NetBox → Infrahub mappings. Adapt the
 
 ### IP addresses with namespace and VRF references
 
-The namespace is what identifies the address; the VRF is kept as an ordinary relationship. `namespace_name` is produced by a transform that reads the source VRF name and falls back to Infrahub's built-in `default` namespace when there is no VRF — see the shipped `examples/netbox_to_infrahub/config.yml` for the exact expression.
+The namespace is what identifies the address; the VRF is kept as an ordinary relationship. `namespace_name` is produced by a transform that reads the source VRF name and falls back to Infrahub's built-in `default` namespace when there is no VRF — see the shipped `examples/netbox_to_infrahub/package.yml` for the exact expression.
 
 Because the namespace is keyed by that name, this mapping cannot carry two VRFs that share one. The namespace records come from the same VRF list, so the second one raises `ObjectAlreadyExists` and the run stops while loading the source — before a plan exists and before anything is written at the destination. It does not merge the two. A VRF named `default` is a different case: its objects share the built-in namespace with every object that has no VRF, and any prefix or address value repeated inside that shared namespace collides there. [Key the namespace on the VRF ID instead of its name](#key-the-namespace-on-the-vrf-id-instead-of-its-name) avoids both without touching NetBox. Adding either mapping to an Infrahub that already holds imported data does not move the objects a previous sync created; see [Migrate from NetBox or Nautobot](../migrating-from-netbox-or-nautobot.mdx) for how to handle that.
 
@@ -311,7 +367,7 @@ Because the namespace is keyed by that name, this mapping cannot carry two VRFs 
 
 ### Key the namespace on the VRF ID instead of its name
 
-A name-based namespace refuses a source that repeats a VRF name. NetBox IDs cannot repeat, so deriving the namespace from `id` keeps same-name VRFs apart without renaming anything in NetBox. These three entries are the whole recipe — they replace the `IpamNamespace`, `IpamPrefix` and `IpamIPAddress` entries of `examples/netbox_to_infrahub/config.yml`, and the scope note below says what they do and do not cover:
+A name-based namespace refuses a source that repeats a VRF name. NetBox IDs cannot repeat, so deriving the namespace from `id` keeps same-name VRFs apart without renaming anything in NetBox. These three entries replace the `IpamNamespace`, `IpamPrefix`, and `IpamIPAddress` entries and resolve namespace collisions for prefixes and addresses. They do not make the full example accept duplicate VRF names: its `IpamVRF` entry is still keyed on the name and needs its own unique name transform.
 
 ```yaml
 - name: IpamNamespace
@@ -400,7 +456,9 @@ Nautobot's API and model structure are similar to NetBox but with some differenc
 - Nautobot status fields are objects rather than strings — use `status.name` instead of `status.value`.
 - Custom fields and computed fields appear in different sections of the API response.
 
-Start from the `examples/nautobot_to_infrahub/` directory in the Infrahub Sync repository and adapt from there.
+Start from the `examples/nautobot-v1_to_infrahub/` (Nautobot 1.x) or `examples/nautobot-v2_to_infrahub/` (Nautobot 2.0 and later) directory in the Infrahub Sync repository and adapt from there.
+
+Neither example is a registrable package: each contains only `config.yml`, and registering it as is is refused. Wrap the configuration in a package envelope (`format_version`, `configuration`, and `credentials` with `$credential` references in place of inline secrets) before you register it. See [Configuration package](../configuration-package.mdx).
 
 ## Related
 

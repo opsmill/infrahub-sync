@@ -22,6 +22,7 @@ from tests.test_workflow_contracts import (
     CANDIDATE_WINDOW_NAME,
     CANDIDATE_WORKFLOW,
     CLEAN_HOST_JOB,
+    RETENTION_DRIFT_TOLERANCE_SECONDS,
     RUN_TITLE,
     candidates,
     jobs,
@@ -255,8 +256,12 @@ def test_the_guide_verifies_the_service_inventory_for_every_retained_group() -> 
     assert not missing, f"{GUIDE.name} never asks the service about {missing}"
     for field in TRANSPORT_FIELDS:
         assert field in script, f"{GUIDE.name} never reads {field} from the service"
-    assert f"-eq {CANDIDATE_WINDOW_DAYS}" in script, (
-        f"{GUIDE.name} does not check the granted window is exactly {CANDIDATE_WINDOW_DAYS} days"
+    assert f"{CANDIDATE_WINDOW_DAYS} * 86400" in script, (
+        f"{GUIDE.name} does not check the granted window against {CANDIDATE_WINDOW_DAYS} days in seconds"
+    )
+    assert f"-le {RETENTION_DRIFT_TOLERANCE_SECONDS}" in script, (
+        f"{GUIDE.name} does not allow the same {RETENTION_DRIFT_TOLERANCE_SECONDS}s drift tolerance the workflow's "
+        "own read-back does, so it truncates a fully granted window to a day short and tells the operator to stop"
     )
     assert "cannot appear in its own" in prose(body), (
         f"{GUIDE.name} does not explain why {SELF_EXCLUDED_GROUP} is verified separately"

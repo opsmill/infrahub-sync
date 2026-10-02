@@ -1,0 +1,1 @@
+Direct incremental extraction now requires source-guaranteed cursors and cached resource snapshots or falls back to full extraction, so changes made during a load are read on the next run and missing snapshots do not produce false delete proposals.

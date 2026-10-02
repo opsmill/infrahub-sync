@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from infrahub_sdk.schema.main import AttributeKind, NodeSchemaAPI
+from infrahub_sdk.schema.main import AttributeKind, GenericSchemaAPI, NodeSchemaAPI
 
 from infrahub_sync.configuration import capabilities as capabilities_module
 from infrahub_sync.configuration.capabilities import DestinationSchemaReadError
@@ -45,19 +45,83 @@ def test_the_snapshot_carries_the_kind_identity_paths(snapshot: dict[str, Any]) 
     assert snapshot["InfraDevice"]["uniqueness_constraints"] == [["name__value"]]
 
 
+def test_generic_concrete_peers_survive_the_validated_schema_snapshot() -> None:
+    generic = GenericSchemaAPI(name="Hosting", namespace="Location", used_by=["LocationFloor", "LocationRackUnit"])
+    raw = capabilities_module._build_schema_snapshot({generic.kind: generic})
+    normalized = normalize_destination_schema(raw)
+
+    assert normalized.generic_peers[generic.kind] == ("LocationFloor", "LocationRackUnit")
+
+
+def test_node_and_generic_entries_carry_the_key_sets_the_live_test_expects() -> None:
+    node = NodeSchemaAPI.model_validate(_NODE)
+    generic = GenericSchemaAPI(name="Hosting", namespace="Location", used_by=["LocationFloor", "LocationRackUnit"])
+    base_keys = {"human_friendly_id", "uniqueness_constraints", "attributes", "relationships"}
+
+    snapshot = capabilities_module._build_schema_snapshot({node.kind: node, generic.kind: generic})
+
+    assert set(snapshot[node.kind]) == base_keys
+    assert set(snapshot[generic.kind]) == base_keys | {"used_by"}
+    assert snapshot[generic.kind]["used_by"] == ["LocationFloor", "LocationRackUnit"]
+    for attribute in snapshot[node.kind]["attributes"].values():
+        assert set(attribute) == {"kind", "optional", "default_value", "unique", "read_only"}
+    for relationship in snapshot[node.kind]["relationships"].values():
+        assert set(relationship) == {"peer", "cardinality", "optional", "kind", "read_only"}
+
+
 def test_the_snapshot_carries_every_attribute_and_relationship_property(snapshot: dict[str, Any]) -> None:
     assert snapshot["InfraDevice"]["attributes"]["role"] == {
         "kind": "Dropdown",
         "optional": True,
         "default_value": "leaf",
         "unique": False,
+        "read_only": False,
     }
     assert snapshot["InfraDevice"]["relationships"]["interfaces"] == {
         "peer": "InfraInterface",
         "cardinality": "many",
         "optional": True,
         "kind": "Component",
+        "read_only": False,
     }
+
+
+@pytest.mark.parametrize(
+    ("computed_attribute", "read_only"),
+    [
+        ({"kind": "User"}, False),
+        ({"kind": "Jinja2", "jinja2_template": "{{ hostname.value }}"}, True),
+    ],
+)
+def test_computed_attribute_writability_is_captured_in_snapshot(
+    computed_attribute: dict[str, str], *, read_only: bool
+) -> None:
+    node = NodeSchemaAPI.model_validate(
+        {
+            **_NODE,
+            "attributes": [
+                {**_NODE["attributes"][0], "computed_attribute": computed_attribute},
+                _NODE["attributes"][1],
+            ],
+        }
+    )
+
+    snapshot = capabilities_module._build_schema_snapshot({node.kind: node})
+
+    assert snapshot["InfraDevice"]["attributes"]["name"]["read_only"] is read_only
+
+
+def test_read_only_relationship_is_captured_in_snapshot() -> None:
+    node = NodeSchemaAPI.model_validate(
+        {
+            **_NODE,
+            "relationships": [{**_NODE["relationships"][0], "read_only": True}, _NODE["relationships"][1]],
+        }
+    )
+
+    snapshot = capabilities_module._build_schema_snapshot({node.kind: node})
+
+    assert snapshot["InfraDevice"]["relationships"]["site"]["read_only"] is True
 
 
 def test_the_delivered_snapshot_normalizes_into_the_closed_domain(snapshot: dict[str, Any]) -> None:

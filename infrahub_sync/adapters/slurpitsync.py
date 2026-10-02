@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import logging
-from typing import Any
+import weakref
+from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING, Any, TypeVar
 
-import slurpit  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
+import httpx
+import slurpit  # ty: ignore[unresolved-import]  # declared as `slurpit-sdk` in the optional `slurpit` extra
 from diffsync import Adapter, DiffSyncModel
-from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -17,57 +20,110 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.adapters.utils import build_mapping, get_value
+from infrahub_sync.configuration.credentials import declared_settings
 
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
+READ_ONLY_SDK_MAPPINGS = frozenset({"device.get_devices", "site.get_sites"})
 
-# Create a new event loop for running async functions synchronously
-loop = asyncio.new_event_loop()
+if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
+
+async def _close_sdk_clients(client: slurpit.api) -> None:
+    """Close each per-API HTTP client owned by the Slurp'it SDK."""
+    clients = {
+        id(http_client): http_client
+        for api in vars(client).values()
+        if isinstance(http_client := getattr(api, "client", None), httpx.AsyncClient)
+    }
+    results = await asyncio.gather(*(http_client.aclose() for http_client in clients.values()), return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+
+
+def _close_resources(loop: asyncio.AbstractEventLoop, client: slurpit.api | None) -> None:
+    """Release SDK transports on their loop, then release the loop itself."""
+    if loop.is_closed():
+        return
+
+    def close_on_adapter_loop() -> None:
+        """Finish cleanup where the adapter loop can run independently."""
+        try:
+            if client is not None:
+                loop.run_until_complete(_close_sdk_clients(client))
+        finally:
+            loop.close()
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        close_on_adapter_loop()
+    else:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(close_on_adapter_loop).result()
 
 
 class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
     type = "Slurpitsync"
 
     def __init__(self, target: str, adapter: SyncAdapter, config: SyncConfig, *args, **kwargs) -> None:
+        """Initialize the adapter and its private event loop."""
         super().__init__(*args, **kwargs)
         self.target = target
-        self.client = self._create_slurpit_client(adapter=adapter)
+        self._loop = asyncio.new_event_loop()
+        try:
+            self.client = self._create_slurpit_client(adapter=adapter)
+        except BaseException:
+            self.close()
+            raise
+        self._finalizer = weakref.finalize(self, _close_resources, self._loop, self.client)
         self.config = config
         self.filtered_networks = []
         self.skipped = []
 
     def _create_slurpit_client(self, adapter: SyncAdapter) -> slurpit.api:
-        settings = adapter.settings or {}
-        # The registered setting surface is forwarded without establishing the optional
-        # client's accepted signature here. The local boundary is guarded by
-        # tests/configuration/test_adapter_setting_conformance.py.
-        client = slurpit.api(**settings)
+        """Create and check the configured Slurp'it client."""
+        # `slurpit.api` has a fixed signature, so the registered-context marker stays behind.
+        settings = declared_settings(adapter.settings or {})
+        verify = settings.pop("verify_ssl", True)
+        client = slurpit.api(verify=verify, **settings)
+        self.client = client
         try:
             self.run_async(client.device.get_devices())
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             msg = f"Unable to connect to Slurpit API: {e}"
-            raise ValueError(msg)
+            raise ValueError(msg) from e
         return client
 
-    def run_async(self, coroutine):
-        """Utility to run asynchronous coroutines synchronously"""
+    def run_async(self, coroutine: Coroutine[Any, Any, T]) -> T:
+        """Run an SDK coroutine on the loop shared by this adapter's client."""
+        return self._loop.run_until_complete(coroutine)
+
+    def load(self) -> None:
+        """Load Slurp'it models and release the SDK connection afterward."""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_closed():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            return loop.run_until_complete(coroutine)
-        except RuntimeError:
-            # If no event loop exists, create a new one
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            return loop.run_until_complete(coroutine)
+            super().load()
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        """Close SDK clients and the loop once, even for an unloaded adapter."""
+        finalizer = getattr(self, "_finalizer", None)
+        if finalizer is not None:
+            finalizer()
+        else:
+            _close_resources(self._loop, getattr(self, "client", None))
 
     def unique_vendors(self) -> list[dict[str, Any]]:
+        """Return each vendor found among Slurp'it devices."""
         devices = self.run_async(self.client.device.get_devices())
         vendors = {device.brand for device in devices}
         return [{"brand": item} for item in vendors]
 
     def unique_device_type(self) -> list[dict[str, Any]]:
+        """Return distinct device brand, type, and OS combinations."""
         devices = self.run_async(self.client.device.get_devices())
         device_types = {(device.brand, device.device_type, device.device_os) for device in devices}
         return [{"brand": item[0], "device_type": item[1], "device_os": item[2]} for item in device_types]
@@ -91,11 +147,15 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             network = entry.get("Network", "")
             mask = entry.get("Mask", "")
             if "/" in network:
-                entry["normalized_prefix"] = network
+                prefix = network
             elif mask:
-                entry["normalized_prefix"] = f"{network}/{mask}"
+                prefix = f"{network}/{mask}"
             else:
-                entry["normalized_prefix"] = network
+                prefix = network
+            # Use the network address so it matches the prefix computed for IP addresses.
+            with contextlib.suppress(ValueError):
+                prefix = str(ipaddress.ip_network(prefix, strict=False))
+            entry["normalized_prefix"] = prefix
             return entry
 
         def should_ignore(network) -> bool:
@@ -157,6 +217,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         return results
 
     def planning_results(self, planning_name):
+        """Fetch the rows for a planning slug."""
         plannings = self.run_async(self.client.planning.get_plannings())
         planning = next((plan.to_dict() for plan in plannings if plan.slug == planning_name), None)
         if not planning:
@@ -181,6 +242,9 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                 planning_name = element.mapping.split(".")[1]
                 nodes = self.planning_results(planning_name)
             elif "." in element.mapping:
+                if element.mapping not in READ_ONLY_SDK_MAPPINGS:
+                    msg = f"Unsupported Slurp'it SDK mapping: {element.mapping}"
+                    raise ValueError(msg)
                 app_name, resource_name = element.mapping.split(".")
                 slurpit_app = getattr(self.client, app_name)
                 slurpit_model = getattr(slurpit_app, resource_name)
@@ -200,7 +264,7 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
                     list_obj.append(node)
             total = len(list_obj)
 
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            if self.target == "source":
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)
@@ -243,15 +307,8 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
                 nodes = [item for item in all_nodes_for_reference]
-                if not nodes and all_nodes_for_reference:
-                    msg = (
-                        f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
-                        f" The available models are {self.store.get_all_model_names()}"
-                    )
-                    raise IndexError(msg)
                 if not field_is_list:
                     if node := obj.get(field.mapping):
-                        matching_nodes = []
                         # If node is a simple string/value, use it directly; otherwise build from nested object
                         if isinstance(node, (str, int)):
                             node_id = str(node)
@@ -281,18 +338,4 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
 
 
 class SlurpitsyncModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        """Create a Slurpit-side record from DiffSync ids/attrs (not yet implemented; delegates to the base)."""
-        # TODO: To implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        """Update a Slurpit-side record from DiffSync attrs (not yet implemented; delegates to the base)."""
-        # TODO: To implement
-        return super().update(attrs)
+    """DiffSync model for slurpitsync records."""

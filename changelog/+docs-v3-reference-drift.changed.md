@@ -1,0 +1,1 @@
+Correct several v3 reference pages that disagreed with the code: the Sync HTTP API's main request example now shows a registered `config_id`/`registry_version` plan request and lists the `/configs` routes, the direct Prefect deployment's docs are explicit that it only plans, and the configuration and Python API pages agree that `schema_mapping` is optional.

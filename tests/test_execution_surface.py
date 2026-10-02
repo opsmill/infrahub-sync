@@ -4,8 +4,6 @@ Part 1 — result schema, immutability, invariants, and secret redaction as rais
 by the remote composition (DBA-010, SC-008).
 Part 2 — validation refusals, tolerant configuration resolution, lock contention,
 and the plan lifecycle (DBA-006/007, SC-004).
-Part 3 — the confirmed serial-sync lifecycle and its idempotent second run
-(DBA-005's automated analog, DBA-010's sync-side result schema; SC-003, SC-008).
 """
 
 from __future__ import annotations
@@ -168,6 +166,7 @@ class _FakePotenda:
         load_error: BaseException | None = None,
         write_result: object = None,
     ) -> None:
+        """Store the fake engine state used by plan lifecycle tests."""
         self.run_dir = run_dir
         self.run_id = run_dir.name
         self.top_level = ["InfraDevice"]
@@ -179,7 +178,7 @@ class _FakePotenda:
         self.load_error = load_error
         self.write_result = write_result
         self.loaded = False
-        self.synced = False
+        self.plan_written = False
         self.diff_rows_materialized = 0
 
     def load_both_sides(self) -> None:
@@ -197,11 +196,10 @@ class _FakePotenda:
         return list(diff.rows)
 
     def write_plan(self, diff: _FakeDiff) -> object:
+        """Persist the fake diff and record that the plan was written."""
         write_plan(run_dir=self.run_dir, rows=list(diff.rows))
+        self.plan_written = True
         return self.write_result
-
-    def sync(self, diff: _FakeDiff | None = None) -> None:  # noqa: ARG002 — keyword name is part of the API
-        self.synced = True
 
 
 def _factory(
@@ -254,42 +252,6 @@ class _SpyFactory:
             write_result=self.write_result,
         )
         return self.engine
-
-
-class _ConvergingPotenda(_FakePotenda):
-    """A fake engine whose destination CONVERGES when it is synced.
-
-    `rows` is the shared pending-change list rather than a per-engine copy, and
-    `sync` drains it — so a second run built by the same factory sees an empty
-    diff. That is the fake analog of idempotent reconciliation: nothing about the
-    surface is special-cased, the destination simply no longer differs.
-    """
-
-    def sync(self, diff: _FakeDiff | None = None) -> None:
-        super().sync(diff)
-        self.rows.clear()
-
-
-class _ConvergingFactory:
-    """Builds `_ConvergingPotenda` engines over ONE shared destination state.
-
-    Each call gets its own run directory, as real run-id allocation does, so two
-    sequential runs leave two distinguishable `run.json` files.
-    """
-
-    def __init__(self, *, cache_root: Path, rows: list[dict[str, Any]]) -> None:
-        self.cache_root = cache_root
-        self.pending = list(rows)
-        self.calls: list[dict[str, object]] = []
-        self.engines: list[_ConvergingPotenda] = []
-
-    def __call__(self, **kwargs: object) -> Any:  # noqa: ANN401 — a fake engine, not a real Potenda
-        self.calls.append(kwargs)
-        run_dir = self.cache_root / f"20260731T120{len(self.calls)}-abcdef12"
-        run_dir.mkdir(parents=True, exist_ok=True)
-        engine = _ConvergingPotenda(run_dir=run_dir, rows=self.pending, factory_kwargs=kwargs)
-        self.engines.append(engine)
-        return engine
 
 
 def _spy_reads(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
@@ -551,6 +513,12 @@ def _instance(
             id="store-settings-password",
         ),
         pytest.param(
+            {},
+            {"PREFECT_API_AUTH_STRING": f"admin:{URL_USERINFO_CANARY}"},
+            f"admin:{URL_USERINFO_CANARY}",
+            id="prefect-api-auth-string-env",
+        ),
+        pytest.param(
             {"source_settings": {"token_env_vars": ["MY_ADAPTER_PASSPHRASE"]}},
             {"MY_ADAPTER_PASSPHRASE": URL_USERINFO_CANARY},
             URL_USERINFO_CANARY,
@@ -670,6 +638,26 @@ def test_overlapping_secret_values_leave_no_fragment_in_a_wrapped_failure(
         assert OVERLAP_PREFIX_CANARY not in surface
         assert OVERLAP_TAIL not in surface
     assert f"upstream rejected {REDACTED}" in message
+
+
+@pytest.mark.parametrize(
+    "secrets",
+    [
+        pytest.param((OVERLAP_PREFIX_CANARY, OVERLAP_FULL_CANARY), id="shorter-first"),
+        pytest.param((OVERLAP_FULL_CANARY, OVERLAP_PREFIX_CANARY), id="longer-first"),
+        pytest.param((OVERLAP_PREFIX_CANARY, "", OVERLAP_FULL_CANARY, OVERLAP_PREFIX_CANARY), id="empty-and-repeat"),
+    ],
+)
+def test_redact_masks_overlapping_secrets_in_any_supplied_order(secrets: tuple[str, ...]) -> None:
+    """A merged list need not arrive longest first; the primitive orders it itself."""
+    message = f"Bearer {OVERLAP_FULL_CANARY} then {OVERLAP_PREFIX_CANARY}"
+
+    assert redact(message, secrets) == f"Bearer {REDACTED} then {REDACTED}"
+
+
+def test_redact_ignores_an_empty_secret() -> None:
+    """Replacing the empty string would interleave the marker between every character."""
+    assert redact("within 60.0 seconds", ("",)) == "within 60.0 seconds"
 
 
 def test_redact_leaves_a_message_untouched_when_nothing_was_collected() -> None:
@@ -1372,6 +1360,16 @@ def test_a_result_invariant_violation_is_not_reported_as_a_credential_problem(
             ("PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_TOKEN"),
             id="generic-rest-api-wording",
         ),
+        pytest.param(
+            "Error initializing PeeringmanagerAdapter: Basic authentication requires both username and password!",
+            ("PEERING_MANAGER_USERNAME", "PEERING_MANAGER_PASSWORD"),
+            id="peering-manager-basic-auth",
+        ),
+        pytest.param(
+            "Error initializing GenericrestapiAdapter: Basic authentication requires both username and password!",
+            ("GENERICRESTAPI_URL", "GENERICRESTAPI_USERNAME", "GENERICRESTAPI_PASSWORD"),
+            id="generic-rest-basic-auth",
+        ),
     ],
 )
 def test_missing_credential_hint_names_the_failing_adapters_variables(
@@ -1511,6 +1509,7 @@ def test_successful_plan_writes_the_diff_lifecycle(
     cache_root: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Return the saved plan result after loading and writing a nonempty diff."""
     instance = resolve_sync_instance(SYNC_NAME, directory=config_dir)
     rows = [_plan_row("create", "core01"), _plan_row("create", "core02"), _plan_row("update", "edge01")]
     factory = _SpyFactory(cache_root=cache_root, rows=rows)
@@ -1540,7 +1539,7 @@ def test_successful_plan_writes_the_diff_lifecycle(
     assert factory.engine is not None
     assert factory.engine.force_full_extract is True
     assert factory.engine.loaded is True
-    assert factory.engine.synced is False
+    assert factory.engine.plan_written is True
 
 
 def test_empty_plan_reports_no_change(config_dir: str, cache_root: Path) -> None:
@@ -1893,18 +1892,3 @@ def test_composed_operation_skips_nested_core_lock(
 
     assert result.status == "planned"
     assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").mode == "sync"
-
-
-# --------------------------------------------------------------------------- #
-# Part 3 — the confirmed serial-sync lifecycle (DBA-005's automated analog)
-# --------------------------------------------------------------------------- #
-
-# The five devices of the qualified `custom_adapter` fixture, so the unit analog
-# and the live DBA-005 verification describe the same shape of change.
-FIXTURE_DEVICES = ("core01", "core02", "core03", "edge01", "edge02")
-TIMING_LOG_PREFIX = "Sync: Completed in"
-NO_DIFF_LOG = "No difference found. Nothing to sync"
-
-
-def _fixture_creates() -> list[dict[str, Any]]:
-    return [_plan_row("create", name) for name in FIXTURE_DEVICES]

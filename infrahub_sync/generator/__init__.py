@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import subprocess  # noqa: S404 -- fixed argv (sys.executable -m ruff), no shell, no user input
 import sys
 from typing import TYPE_CHECKING, Any, Protocol
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from infrahub_sync import SyncConfig
+
+logger = logging.getLogger(__name__)
 
 ATTRIBUTE_KIND_MAP = {
     "Text": "str",
@@ -39,11 +42,6 @@ def list_to_set(items: list[str]) -> str:
     return "(" + response + ")"
 
 
-def list_to_str(items: list[str]) -> str:
-    """Convert a list into a string separated with comma"""
-    return ", ".join(items)
-
-
 def has_node(config: SyncConfig, name: str) -> bool:
     return any(item.name == name for item in config.schema_mapping)
 
@@ -67,14 +65,37 @@ def get_identifiers(node: NodeSchema, config: SyncConfig) -> list[str] | None:
     if config_identifiers:
         return config_identifiers[0]
 
-    identifiers = [
-        attr.name for attr in node.attributes if attr.unique and has_field(config, name=node.kind, field=attr.name)
+    identifier_attributes = [
+        attr for attr in node.attributes if attr.unique and has_field(config, name=node.kind, field=attr.name)
     ]
+    identifiers = [attr.name for attr in identifier_attributes]
 
     if not identifiers:
         return None
 
     return identifiers
+
+
+def warn_optional_auto_selected_identifiers(node: NodeSchema, config: SyncConfig) -> None:
+    """Warn once when generation auto-selects optional identifier attributes."""
+    configured_identifiers = any(
+        item.identifiers for item in config.schema_mapping if item.name == node.kind and item.identifiers
+    )
+    if configured_identifiers:
+        return
+
+    optional_identifiers = [
+        attr.name
+        for attr in node.attributes
+        if attr.unique and attr.optional and has_field(config, name=node.kind, field=attr.name)
+    ]
+    if optional_identifiers:
+        logger.warning(
+            "Auto-selected optional attribute(s) %s as identifiers for %s; "
+            "configure identifiers explicitly for this node",
+            optional_identifiers,
+            node.kind,
+        )
 
 
 def get_attributes(node: NodeSchema, config: SyncConfig) -> list[str] | None:
@@ -96,23 +117,6 @@ def get_attributes(node: NodeSchema, config: SyncConfig) -> list[str] | None:
         return None
 
     return attributes
-
-
-def get_children(node: NodeSchema, config: SyncConfig) -> str | None:
-    # rel.peer.lower() might now work in all cases we should have a better function to convert that
-    children = {
-        rel.peer.lower(): rel.name
-        for rel in node.relationships
-        if rel.cardinality == "many"
-        and rel.kind == RelationshipKind.COMPONENT
-        and has_field(config, name=node.kind, field=rel.name)
-    }
-
-    if not children:
-        return None
-
-    children_list = [f'"{key}": "{value}"' for key, value in children.items()]
-    return "{" + ", ".join(children_list) + "}"
 
 
 class _AttributeLike(Protocol):
@@ -160,11 +164,19 @@ def get_relationship_type_annotation(item: _RelationshipLike) -> str:
     return annotation
 
 
-def has_children(node: NodeSchema, config: SyncConfig) -> bool:
-    return bool(get_children(config=config, node=node))
+def render_template(
+    template_file: Path,
+    output_dir: Path,
+    output_file: Path,
+    context: dict[str, Any],
+    *,
+    warn_optional_identifiers: bool = True,
+) -> None:
+    """Render one generator template, warning once per affected model render."""
+    if warn_optional_identifiers and template_file.name == "diffsync_models.j2":
+        for node in context["schema"].values():
+            warn_optional_auto_selected_identifiers(node=node, config=context["config"])
 
-
-def render_template(template_file: Path, output_dir: Path, output_file: Path, context: dict[str, Any]) -> None:
     template_loader = jinja2.PackageLoader("infrahub_sync", "generator/templates")
     template_env = jinja2.Environment(
         loader=template_loader,
@@ -172,12 +184,9 @@ def render_template(template_file: Path, output_dir: Path, output_file: Path, co
     # Add custom filters to Jinja2
     template_env.filters["get_identifiers"] = get_identifiers
     template_env.filters["get_attributes"] = get_attributes
-    template_env.filters["get_children"] = get_children
     template_env.filters["list_to_set"] = list_to_set
-    template_env.filters["list_to_str"] = list_to_str
     template_env.filters["has_node"] = has_node
     template_env.filters["has_field"] = has_field
-    template_env.filters["has_children"] = has_children
     template_env.filters["get_attribute_type_annotation"] = get_attribute_type_annotation
     template_env.filters["get_relationship_type_annotation"] = get_relationship_type_annotation
 

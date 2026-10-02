@@ -1,0 +1,1 @@
+`invoke netbox.seed --dataset demo` loads the official NetBox demo data, pinned to one commit and verified by SHA-256, into the local development NetBox, and `invoke netbox.demo-package` writes a copy of the `from-netbox` package that points at it.

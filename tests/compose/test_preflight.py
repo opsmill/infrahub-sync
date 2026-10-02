@@ -19,6 +19,7 @@ import re
 import shutil
 import signal
 import subprocess  # noqa: S404 -- an interrupted run needs the process, not its finished output
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -49,7 +50,7 @@ MINIMUM_COMPOSE = "2.17.3"
 # The source credentials the worker resolves. An operator sets these in the file
 # the bundle owns, so an exported shell value of the same name must not reach
 # Compose -- the same rule every other interpolated setting already follows.
-SOURCE_TOKEN_SETTINGS = ("NETBOX_TOKEN", "NAUTOBOT_TOKEN")
+SOURCE_TOKEN_SETTINGS = ("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN")
 
 DOCKER_SHIM = r"""#!/bin/sh
 # A Docker stand-in for the preflight suite. It answers exactly the questions the
@@ -68,7 +69,7 @@ if [ "$1" = "compose" ]; then
     done
     if [ "$sub" != "version" ] && [ "${SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT:-}" = "1" ]; then
         guarded="INFRAHUB_SYNC_IMAGE INFRAHUB_SYNC_INSTANCE INFRAHUB_SYNC_API_PORT"
-        guarded="$guarded NETBOX_TOKEN NAUTOBOT_TOKEN"
+        guarded="$guarded INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN"
         for name in $guarded; do
             eval "value=\${$name-}"
             if [ -n "$value" ]; then
@@ -295,6 +296,65 @@ def test_init_keeps_the_identity_and_credentials_it_already_generated(bundle: Pa
     run(bundle, shim, "init")
 
     assert ((bundle / ".instance").read_text(), (bundle / "operator.env").read_text()) == before
+
+
+PREFECT_CREDENTIAL = "INFRAHUB_SYNC_PREFECT_AUTH_STRING"
+
+
+def operator_values(bundle: Path, name: str) -> list[str]:
+    """Every value the operator file assigns to one setting, in file order."""
+    lines = (bundle / "operator.env").read_text(encoding="utf-8").splitlines()
+    return [line.partition("=")[2] for line in lines if line.startswith(f"{name}=")]
+
+
+def test_init_generates_a_prefect_api_credential(bundle: Path, shim: Path) -> None:
+    """The Prefect server refuses to start unauthenticated, so a fresh file carries its credential."""
+    run(bundle, shim, "init")
+
+    values = operator_values(bundle, PREFECT_CREDENTIAL)
+
+    assert len(values) == 1, "the operator file does not assign the Prefect API credential exactly once"
+    assert len(values[0]) >= 32, "the generated Prefect API credential is shorter than the others"
+    assert values[0] != operator_values(bundle, "INFRAHUB_SYNC_PREFECT_PASSWORD")[0]
+
+
+def test_init_adds_the_prefect_credential_to_a_file_written_before_it_existed(bundle: Path, shim: Path) -> None:
+    """The upgrade path: re-running `init` supplies the one missing setting and changes nothing else."""
+    run(bundle, shim, "init")
+    operator = bundle / "operator.env"
+    earlier = "".join(
+        line
+        for line in operator.read_text(encoding="utf-8").splitlines(keepends=True)
+        if PREFECT_CREDENTIAL not in line
+    )
+    operator.write_text(earlier, encoding="utf-8")
+    operator.chmod(0o600)
+
+    result = run(bundle, shim, "init")
+
+    assert result.returncode == 0, result.stderr
+    after = operator.read_text(encoding="utf-8")
+    assert after.startswith(earlier), "an existing setting was rewritten"
+    assert len(operator_values(bundle, PREFECT_CREDENTIAL)) == 1
+    assert operator.stat().st_mode & 0o777 == 0o600
+    assert PREFECT_CREDENTIAL in result.stdout
+    assert operator_values(bundle, PREFECT_CREDENTIAL)[0] not in result.unredacted()
+
+
+def test_init_leaves_an_empty_prefect_credential_for_preflight_to_name(bundle: Path, shim: Path) -> None:
+    """A line the operator emptied is theirs; `init` adds no second assignment beside it."""
+    run(bundle, shim, "init")
+    operator = bundle / "operator.env"
+    emptied = "".join(
+        f"{PREFECT_CREDENTIAL}=\n" if line.startswith(f"{PREFECT_CREDENTIAL}=") else line
+        for line in operator.read_text(encoding="utf-8").splitlines(keepends=True)
+    )
+    operator.write_text(emptied, encoding="utf-8")
+
+    result = run(bundle, shim, "init")
+
+    assert result.returncode == 0, result.stderr
+    assert operator.read_text(encoding="utf-8") == emptied
 
 
 def test_the_instance_state_file_holds_the_identity_and_the_image_and_nothing_else(bundle: Path, shim: Path) -> None:
@@ -710,6 +770,19 @@ exec "REAL_GREP" "$@"
 
 STATE_FILE_NAME = ".instance"
 
+# Each wait of the interruption test: for the marker, and for the exit after SIGINT.
+INTERRUPT_STEP_SECONDS = 180
+
+
+# Runs the entry point with the default `SIGINT` action, whatever pytest was started with.
+# A unit tier started as a background job runs with `SIGINT` ignored, and an ignored
+# signal survives `exec`; without this the child would never see the interrupt this
+# test sends it. A small launcher does it in the child, so no `preexec_fn` runs in
+# the forked child of a multithreaded pytest process.
+DEFAULT_SIGINT_LAUNCHER = (
+    "import os, signal, sys\nsignal.signal(signal.SIGINT, signal.SIG_DFL)\nos.execv(sys.argv[1], sys.argv[1:])\n"
+)
+
 
 @pytest.fixture
 def state_shim(shim: Path) -> Path:
@@ -771,7 +844,7 @@ def test_an_interrupted_state_write_leaves_the_old_state_and_no_scratch_beside_i
     ready = tmp_path / "filtered"
     before = (initialized / STATE_FILE_NAME).read_bytes()
     process = subprocess.Popen(  # noqa: S603 -- the entry point under test, with a fixed argv
-        [str(initialized / ENTRY_POINT), "preflight"],
+        [sys.executable, "-c", DEFAULT_SIGINT_LAUNCHER, str(initialized / ENTRY_POINT), "preflight"],
         start_new_session=True,
         env={
             **os.environ,
@@ -784,18 +857,33 @@ def test_an_interrupted_state_write_leaves_the_old_state_and_no_scratch_beside_i
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    reached = False
+    exited: int | None = None
     try:
-        deadline = time.monotonic() + 60
-        while time.monotonic() < deadline and not ready.is_file():
+        # The entry point runs a dozen stand-in subprocesses before the write, so a
+        # full unit run on a busy machine can be slow to get here. Stop early only
+        # when the process is gone, which no amount of waiting would change.
+        deadline = time.monotonic() + INTERRUPT_STEP_SECONDS
+        while time.monotonic() < deadline and process.poll() is None and not ready.is_file():
             time.sleep(0.2)
-        assert ready.is_file(), "the interrupted run never reached the state write"
-        os.killpg(os.getpgid(process.pid), signal.SIGINT)
-        process.wait(timeout=60)
+        reached = ready.is_file()
+        if reached:
+            os.killpg(os.getpgid(process.pid), signal.SIGINT)
+            try:
+                exited = process.wait(timeout=INTERRUPT_STEP_SECONDS)
+            except subprocess.TimeoutExpired:
+                exited = None
     finally:
         if process.poll() is None:
             process.kill()
-            process.wait(timeout=30)
+        process.wait(timeout=30)
+        stderr = process.stderr.read().decode(errors="replace") if process.stderr else ""
+        for stream in (process.stdout, process.stderr):
+            if stream:
+                stream.close()
 
+    assert reached, f"the run never reached the state write (exit {process.returncode}); stderr: {stderr}"
+    assert exited is not None, f"the run did not exit within {INTERRUPT_STEP_SECONDS}s of SIGINT; stderr: {stderr}"
     assert (initialized / STATE_FILE_NAME).read_bytes() == before
     assert scratch_files(initialized) == [], "an interrupted write left a scratch state file behind"
 
@@ -923,7 +1011,8 @@ def test_an_ambient_source_token_cannot_reach_compose(initialized: Path, shim: P
     """
     settings = initialized / "operator.env"
     settings.write_text(
-        settings.read_text(encoding="utf-8") + "NETBOX_TOKEN=preflight-declared-netbox-token-9c2f41\n",
+        settings.read_text(encoding="utf-8")
+        + "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=preflight-declared-netbox-token-9c2f41\n",
         encoding="utf-8",
     )
     argv_log = tmp_path / "compose-argv.log"
@@ -935,8 +1024,8 @@ def test_an_ambient_source_token_cannot_reach_compose(initialized: Path, shim: P
         environment={
             "SHIM_REQUIRE_CLEAN_COMPOSE_ENVIRONMENT": "1",
             "SHIM_ARGV_LOG": str(argv_log),
-            "NETBOX_TOKEN": "preflight-ambient-netbox-token-must-lose",
-            "NAUTOBOT_TOKEN": "preflight-ambient-nautobot-token-must-lose",
+            "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": "preflight-ambient-netbox-token-must-lose",
+            "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN": "preflight-ambient-nautobot-token-must-lose",
         },
     )
 
@@ -1053,6 +1142,7 @@ def test_preflight_needs_no_declared_configuration_at_all(initialized: Path, shi
     [
         "INFRAHUB_SYNC_PRODUCT_PASSWORD",
         "INFRAHUB_SYNC_PREFECT_PASSWORD",
+        "INFRAHUB_SYNC_PREFECT_AUTH_STRING",
         "INFRAHUB_SYNC_S3_ACCESS_KEY",
         "INFRAHUB_SYNC_S3_SECRET_KEY",
         "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",

@@ -4,9 +4,9 @@ title: "Guidelines"
 
 ## Guidelines
 
-Prescriptive rules — how adapter code should be written. Guidelines say what you must and
-must not do; for how the system works see [Knowledge](../knowledge/index.md), and for
-step-by-step procedures see [Guides](../guides/index.md).
+Rules for writing and testing Infrahub Sync code, including adapter rules, repository-wide
+testing, and secret redaction. For how the system works, see
+[Knowledge](../knowledge/index.md); for step-by-step procedures, see [Developer guides](../guides/index.md).
 
 ### Adapters
 
@@ -17,8 +17,11 @@ step-by-step procedures see [Guides](../guides/index.md).
 
 ### Repository-wide
 
-- [Testing](testing.md) — what makes a test worth having: mutation kill as the acceptance
-  criterion, asserting a negative, and reviewing a remediation over its own diff.
+- [Testing](testing.md) — what makes a test worth having: breaking the code under test must
+  break the test (killing the mutation), an import-absence claim (such as "this optional
+  dependency was never imported") must be asserted in a fresh process rather than checked
+  against the current one's `sys.modules`, and a security- or boundary-relevant fix needs its
+  own review pass over its diff, not just a green suite.
 - [Testing tiers](testing-tiers.md) — which command runs which tier, what each one needs
   before it proves anything, what it writes, and why a skipped check is not a pass.
 - [Secret redaction](secret-redaction.md) — rules for any failure path that crosses a
@@ -27,7 +30,7 @@ step-by-step procedures see [Guides](../guides/index.md).
 ### Related
 
 - [Knowledge](../knowledge/index.md) — the architecture these rules apply to.
-- [Repository tour](../knowledge/repository-tour.md) — where the code these rules govern lives.
-- [Adding an adapter](../guides/adding-an-adapter.md) — the procedure that applies them.
+- [Repository tour](../knowledge/repository-tour.md) — where to find the code for each part of the system.
+- [Adding an adapter](../guides/adding-an-adapter.md) — the procedure for implementing and testing a new adapter.
 - [Decision records](../adr-index.mdx) — the decisions behind these rules.
 - [Constitution](../constitution.md) — the principles these rules serve.

@@ -1,0 +1,1 @@
+Run the CI `yaml-lint` and `documentation` jobs through uv so they use the locked `dev` extra instead of pip-installed tools, and widen `.gitignore` to cover `__pycache__/`, `*.py[cod]` and `.vscode/`.

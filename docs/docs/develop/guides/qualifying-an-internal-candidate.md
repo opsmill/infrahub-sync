@@ -4,12 +4,13 @@ title: "Qualifying an internal candidate"
 
 ## Qualifying an internal candidate
 
-This developer procedure tells a teammate how to obtain an unpublished pre-release
-Infrahub Sync candidate from a GitHub Actions run and qualify it on their own host.
-The artifacts it names are unpublished pre-release bytes; there is no registry, package
-index, or tagged release behind them yet.
+This procedure is for maintainers. It explains how to take an unpublished Infrahub Sync
+pre-release candidate from a GitHub Actions run and qualify it on your own host. The
+artifacts are unpublished pre-release files; no registry, package index, or tagged release
+contains them.
 
-Written for someone who did not build this.
+To install a candidate as a tester, follow [Install Infrahub Sync](../../installation.mdx)
+instead.
 
 ### What the host needs
 
@@ -40,9 +41,9 @@ mkdir -p "$WORK"
 cd "$WORK"
 ```
 
-Two things are being tested at once. One is the candidate. The other is this
-page: you are the first person to follow it, so record where it was wrong.
-[What to record](#what-to-record) is the last section.
+You test two things: the candidate, and this page. Note every place where this page is
+wrong or incomplete. [What to record](#what-to-record) lists everything to report, and
+[The digests](#reference-the-digests) explains the digests that the steps compare.
 
 ### 1. Choose a run, and separate the two commits it refers to
 
@@ -105,17 +106,24 @@ gh run view "$RUN" --repo "$REPO" --json conclusion,jobs \
   --jq '{conclusion, jobs: [.jobs[] | {name, conclusion}]}'
 ```
 
-The run must be `success` and **both** jobs must have succeeded. The `candidate`
-job builds and retains the bytes; the `clean-host` job is what qualified them on
-a host with no checkout. A run whose `clean-host` job failed, was skipped, or is
-still going has uploads but no qualification — retained artifacts alone are not
-a result.
+The run must be `success`, and all four jobs must have succeeded:
+
+- `candidate` builds and retains the files.
+- `clean-host` qualifies them on a host with no checkout.
+- `packet` and `packet-rehearsal` build and rehearse the Linux amd64 tester packet, a
+  separate artifact described in [Building a private tester packet](building-a-tester-packet.md).
+
+A run whose `clean-host` job failed, was skipped, or is still running has uploads but no
+qualification. This procedure does not open the packet, but step 2 requires the packet
+artifact among the eight it checks. A failed `packet` job therefore means that the run is not
+an acceptable candidate.
 
 ### 2. Check what the service is holding, before downloading any of it
 
-The run retains seven artifact groups. Read the service's own inventory first:
+The run retains eight artifact groups. Read the service's own inventory first:
 it is the only place the identifiers and the granted expiry exist, and the
-qualification record cannot contain its own.
+qualification record cannot contain its own — or the packet's, built after the
+record already existed.
 
 ```bash
 gh api --paginate "repos/$REPO/actions/runs/$RUN/artifacts" \
@@ -124,9 +132,15 @@ gh api --paginate "repos/$REPO/actions/runs/$RUN/artifacts" \
 cat "$INVENTORY"
 ```
 
-Check that all seven are present, none has expired, and each was granted exactly
-30 days. Asking for a window is not being given one, so this reads what the
-service actually returned:
+Check that all eight are present, none has expired, and each was granted the
+full 30-day window, within the same one-hour drift tolerance the workflow's own
+read-back allows (`RETENTION_DRIFT_TOLERANCE_SECONDS` in
+`workflow-candidate.yml`) — `created_at` trails the start of the upload it
+belongs to, so a window compared against it always looks a little short.
+Truncating to whole days before comparing would hide that shortfall behind a
+day boundary instead of measuring it, so this compares in seconds. Asking for a
+window is not being given one, so this reads what the service actually
+returned:
 
 ```bash
 for name in \
@@ -136,7 +150,8 @@ for name in \
   infrahub-sync-candidate-bundle \
   infrahub-sync-candidate-sboms \
   infrahub-sync-qualification-kit \
-  infrahub-sync-qualification-record
+  infrahub-sync-qualification-record \
+  infrahub-sync-candidate-packet
 do
   entry=$(awk -F'\t' -v n="$name" '$1 == n {print; exit}' "$INVENTORY")
   if [ -z "$entry" ]; then
@@ -146,21 +161,25 @@ do
   created=$(printf '%s' "$entry" | cut -f4)
   expires=$(printf '%s' "$entry" | cut -f5)
   expired=$(printf '%s' "$entry" | cut -f6)
-  granted=$(( ( $(date -u -d "$expires" +%s) - $(date -u -d "$created" +%s) ) / 86400 ))
-  if [ "$granted" -eq 30 ] && [ "$expired" = "false" ]; then
-    printf 'OK       %-42s granted %sd, expires %s\n' "$name" "$granted" "$expires"
+  granted=$(( $(date -u -d "$expires" +%s) - $(date -u -d "$created" +%s) ))
+  drift=$(( granted - 30 * 86400 ))
+  if [ "$drift" -lt 0 ]; then
+    drift=$(( -drift ))
+  fi
+  if [ "$drift" -le 3600 ] && [ "$expired" = "false" ]; then
+    printf 'OK       %-42s granted %ss, expires %s\n' "$name" "$granted" "$expires"
   else
-    printf 'WRONG    %-42s granted %sd, expired=%s\n' "$name" "$granted" "$expired"
+    printf 'WRONG    %-42s granted %ss, expired=%s\n' "$name" "$granted" "$expired"
   fi
 done
 ```
 
-Anything other than seven `OK` lines means this run is not an acceptable
+Anything other than eight `OK` lines means this run is not an acceptable
 candidate. Record what you saw and stop.
 
 ### 3. Download what the host needs
 
-Four of the seven are what a host runs:
+Four of the eight are what a host runs:
 
 ```bash
 cd "$WORK"
@@ -171,11 +190,12 @@ gh run download "$RUN" --repo "$REPO" --name infrahub-sync-qualification-record 
 gh run download "$RUN" --repo "$REPO" --name infrahub-sync-candidate-identity   --dir identity
 ```
 
-The other three — `infrahub-sync-candidate-distributions`,
-`infrahub-sync-candidate-sboms`, and `infrahub-sync-qualification-kit` — are the
-wheel and source distribution, the bills of materials and scan reports, and the
-gate's own driver. You do not need them to run the candidate, but they are part
-of the inventory you just checked.
+The other four — `infrahub-sync-candidate-distributions`,
+`infrahub-sync-candidate-sboms`, `infrahub-sync-qualification-kit`, and
+`infrahub-sync-candidate-packet` — are the wheel and source distribution, the
+bills of materials and scan reports, the gate's own driver, and the tester
+packet built from what you are about to qualify by hand. You do not need them
+to run the candidate, but they are part of the inventory you checked in step 2.
 
 `infrahub-sync-candidate-image` keeps the build's directory layout, so the
 archive you want is `image/archives/image-linux-amd64.tar`.
@@ -196,15 +216,10 @@ test "$BUILT_FROM" = "$CANDIDATE_SHA" \
 
 If that fails, stop. You are holding bytes from another commit.
 
-#### Three digests, and they are not the same thing
+#### Then the service transport digests
 
-Confusing them is the easiest way to believe a check passed that did not.
-
-| Digest | Names | Read from | Checked with |
-| --- | --- | --- | --- |
-| Service transport digest | the artifact as the Actions service stores it | `$INVENTORY`, and `.artifacts[].digest` in the record | the comparison below |
-| Bundle file digest | the bundle archive's own bytes | `.bundle.sha256` in the record | `sha256sum` |
-| Image configuration digest | the loaded image's configuration | `.image.platforms["linux/amd64"].config` in the record | `docker image inspect` |
+Steps 4 and 5 compare three different digests. They are not interchangeable;
+[The digests](#reference-the-digests) explains each one.
 
 Compare the six the record stores against what the service holds. The record's
 digests may or may not carry a `sha256:` prefix depending on which side wrote
@@ -273,13 +288,17 @@ That block exits nonzero when they disagree, and the failure is what stops you:
 an image loaded from bytes the record cannot account for qualifies nothing. Do
 not go on to step 5 until it succeeds.
 
-That covers six groups. The seventh — the qualification record itself — cannot
-appear in its own `artifacts` map, because a document cannot carry the digest of
-the upload that contains it. Take its identifiers from the service and record
-them by hand:
+That covers six groups. The other two are absent from the record for different
+reasons. The qualification record itself cannot appear in its own `artifacts`
+map, because a document cannot carry the digest of the upload that contains it.
+The tester packet is absent because a separate job builds it after this record
+already exists — from the raw archive `candidate` retained, since
+`compose.reclaim` had already deleted it from that job's own disk. Take both
+sets of identifiers from the service and record them by hand:
 
 ```bash
-awk -F'\t' '$1 == "infrahub-sync-qualification-record" {printf "record artifact id %s digest %s\n", $2, $3}' \
+awk -F'\t' '$1 == "infrahub-sync-qualification-record" {printf "record artifact id %s digest %s\n", $2, $3}
+            $1 == "infrahub-sync-candidate-packet"       {printf "packet artifact id %s digest %s\n", $2, $3}' \
   "$INVENTORY"
 ```
 
@@ -340,7 +359,7 @@ cd "$WORK/${BUNDLE_NAME%.tar.gz}"
 with generated passwords. There is no image to set: the archive shipped
 `image.bind`, and `init` copied the index reference from it into `.instance`.
 
-Confirm the record names the image you just loaded. `image.bind` holds no
+Confirm the record names the image you loaded in step 5. `image.bind` holds no
 credential, so it can be read out loud:
 
 ```bash
@@ -374,7 +393,7 @@ token:
 credentials:
   infrahub-token:
     provider: env
-    identifier: INFRAHUB_API_TOKEN
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
 
 Nothing loads that file. Step 8 registers it explicitly, and a registered version
@@ -440,7 +459,7 @@ reads a credential out of a file or puts one on a command line.
 ```
 
 That answers with nothing: the registry is empty. Give the deployment the
-Infrahub credential the package references: uncomment `INFRAHUB_API_TOKEN` in
+Infrahub credential the package references: uncomment `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` in
 `operator.env` and set it to your token with an editor, so no value reaches a
 terminal or a scrollback buffer. Then start again, so the services that resolve
 it are recreated — `restart` would replace the processes inside containers
@@ -536,9 +555,8 @@ curl -sS --config "$WORK/api.curlrc" "$INFRAHUB_SYNC_API_URL/runs/$RUN_ID/artifa
 ```
 
 Each entry has an `artifact_id`, a `digest`, and a `size`. Fetch one and check
-what arrived against the digest the list gave you — this is a fourth, separate
-digest, over the deployment's own artifact, and has nothing to do with the three
-in step 4:
+what arrived against the digest the list gave you. This is the deployment artifact digest
+in [The digests](#reference-the-digests), separate from the three in step 4:
 
 ```bash
 ARTIFACT=<an artifact_id from the list>
@@ -626,8 +644,8 @@ Remove the curl configuration step 9 wrote, which holds the API token:
 rm -f "$WORK/api.curlrc"
 ```
 
-Reset the deployment when you are finished. This alpha promises no in-place
-state migration and no backup or restore, so a reset is also how it is replaced:
+Reset the deployment when you are finished. The 3.0.0 alpha candidates do not support
+in-place state migration, backup, or restore, so a reset is also how a deployment is replaced:
 `reset`, then `init` for a new identity, then `start`. That start is a cold
 bootstrap and prior run history, retained plans, and artifacts do not survive it.
 
@@ -641,14 +659,26 @@ When it lapses, the remedy is a new dispatch of `workflow-candidate.yml` at the
 The new run will almost certainly have a different workflow revision, and that
 is expected: `head_sha` moves, the candidate commit does not.
 
-Nothing else carries over. The new run produces new artifacts with new service
-IDs and new transport digests, so every identifier you recorded belongs to the
-old run. You accept the new bytes exactly as you accepted these, from step 1,
-including the seven-group inventory and the granted 30 days.
+The new run reuses nothing from the old run. It produces new artifacts with new
+service IDs and new transport digests, so every identifier you recorded belongs to
+the old run. You accept the new bytes exactly as you accepted these, from step 1,
+including the eight-group inventory and the granted 30 days.
+
+### Reference: the digests
+
+The steps compare four different digests. Each is computed over something different, so they are
+not the same thing, and using one where another is meant can make a failed check look like a pass.
+
+| Digest | Names | Read from | Checked with |
+| --- | --- | --- | --- |
+| Service transport digest | the artifact as the Actions service stores it | `$INVENTORY`, and `.artifacts[].digest` in the record | the comparison in step 4 |
+| Bundle file digest | the bundle archive's own bytes | `.bundle.sha256` in the record | `sha256sum`, step 4 |
+| Image configuration digest | the loaded image's configuration | `.image.platforms["linux/amd64"].config` in the record | `docker image inspect`, step 5 |
+| Deployment artifact digest | one artifact of a run, stored by the deployment | the run's artifact list from the Sync API | `sha256sum`, step 9 |
 
 ### What to record
 
-Report all of this, whether or not it went well.
+Report all of this, whether or not the qualification passed.
 
 **Provenance, both commits:**
 
@@ -658,14 +688,15 @@ Report all of this, whether or not it went well.
 - the `revision` and `version` from `identity.json`, and that the revision
   equalled the candidate commit.
 
-**Transport acceptance, all seven groups:**
+**Transport acceptance, all eight groups:**
 
-- for each of the seven: the service artifact ID, the transport digest, and the
+- for each of the eight: the service artifact ID, the transport digest, and the
   granted window in days;
-- that all seven were present, unexpired, and granted exactly 30 days;
+- that all eight were present, unexpired, and granted exactly 30 days;
 - that the six identifiers in `qualification.json` matched the service
-  inventory, and the qualification record's own ID and digest, recorded by hand
-  because it cannot contain them.
+  inventory, and the qualification record's own ID and digest, and the tester
+  packet's own ID and digest, both recorded by hand because neither can appear
+  in that record.
 
 **The three other digests, kept separate:**
 
@@ -680,12 +711,9 @@ Report all of this, whether or not it went well.
 - the run ID of the plan you read, its checksum, and the apply that bound it;
 - what you observed at the destination afterwards.
 
-**And the part that matters most:**
+**Problems with this page:**
 
 - every step where this page was wrong, incomplete, or assumed something you had
   to work out yourself;
 - anything you had to install, configure, or work around that it does not
   mention.
-
-This page has to work for someone who did not build the system, and you are the
-evidence for whether it does.

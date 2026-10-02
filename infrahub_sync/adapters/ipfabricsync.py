@@ -6,7 +6,6 @@ import os
 from typing import Any, ClassVar
 
 from diffsync import Adapter, DiffSyncModel
-from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -16,11 +15,13 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.adapters.utils import build_mapping
+from infrahub_sync.configuration.credentials import declared_settings, is_registered_context
 
 logger = logging.getLogger(__name__)
 
 try:
-    from ipfabric import IPFClient  # ty: ignore[unresolved-import]  # optional dep, see pyproject extras
+    # declared in the `ipfabric` extra, not the base install or the default `service` image
+    from ipfabric import IPFClient  # ty: ignore[unresolved-import]
 except ImportError:
     logger.exception("Failed to import ipfabric")
     raise
@@ -43,26 +44,34 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
         self.config = config
 
     def _create_ipfabric_client(self, adapter: SyncAdapter) -> IPFClient:
-        settings = adapter.settings or {}
+        registered = is_registered_context(adapter.settings or {})
+        settings = declared_settings(adapter.settings or {})
 
-        base_url = settings.get("base_url", None)
-        if not base_url:
-            base_url = os.environ.get("IPF_URL", None)
-            settings["base_url"] = base_url
+        if registered:
+            if not settings.get("base_url") or not settings.get("auth"):
+                msg = "Both base_url and auth must be declared in the registered package settings."
+                raise ValueError(msg)
+        else:
+            if not settings.get("base_url"):
+                settings["base_url"] = os.environ.get("IPF_URL", None)
+            if not settings.get("auth"):
+                settings["auth"] = os.environ.get("IPF_TOKEN", None)
+            if not settings["base_url"] or not settings["auth"]:
+                msg = "Both url and auth must be specified! Please specify in the config or using `IPF_URL` and `IPF_TOKEN` environment variables."
+                raise ValueError(msg)
 
-        auth = settings.get("auth", None)
-        if not auth:
-            auth = os.environ.get("IPF_TOKEN", None)
-            settings["auth"] = auth
-
-        if not base_url or not auth:
-            msg = "Both url and auth must be specified! Please specify in the config or using `IPF_URL` and `IPF_TOKEN` environment variables."
-            raise ValueError(msg)
-
-        # Registered settings, including verify_ssl, reach the optional client here. The
-        # local boundary is guarded by tests/configuration/test_adapter_setting_conformance.py;
-        # the optional client's accepted signature is not established here.
-        return IPFClient(**settings)
+        # Registered settings reach the optional client here. `IPFClient` takes `verify`,
+        # not the `verify_ssl` name used by this adapter's registered settings, so rename it;
+        # `IPFClient`'s own default for `verify` is `None`, so passing it unset is harmless.
+        verify_ssl = settings.pop("verify_ssl", None)
+        sdk_defaults: dict[str, object] = {}
+        if registered:
+            # `IPFClient` reads `IPF_*` variables and a `.env` file for every field left
+            # unset, so a registered run sets the ones that decide trust and data: TLS is
+            # verified unless declared otherwise, and the snapshot is the SDK default.
+            verify_ssl = True if verify_ssl is None else verify_ssl
+            sdk_defaults = {"snapshot_id": "$last"}
+        return IPFClient(verify=verify_ssl, **sdk_defaults, **settings)
 
     def model_loader(self, model_name: str, model: type[IpfabricsyncModel]) -> None:
         """
@@ -80,7 +89,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             table = self.client.fetch_all(element.mapping, filters=ipf_filters.get(element.mapping))
 
             total = len(table)
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            if self.target == "source":
                 # Filter records
                 filtered_objs = model.filter_records(records=table, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)
@@ -96,6 +105,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                 self.update_or_add_model_instance(item)
 
     def ipfabric_dict_to_diffsync(self, obj: dict, mapping: SchemaMappingModel, model: type[IpfabricsyncModel]) -> dict:  # pylint: disable=too-many-branches
+        """Convert an IP Fabric dict to a DiffSync-ready payload."""
         data: dict[str, Any] = {"local_id": str(obj["id"])}
 
         for field in mapping.fields:  # pylint: disable=too-many-nested-blocks
@@ -134,16 +144,8 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
 
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
-
                 nodes = [item for item in all_nodes_for_reference]
-                if not nodes and all_nodes_for_reference:
-                    msg = (
-                        f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
-                        f" The available models are {self.store.get_all_model_names()}"
-                    )
-                    raise IndexError(msg)
                 if not field_is_list and (node := obj[field.mapping]):
-                    matching_nodes = []
                     node_id = build_mapping(adapter=self, reference=field.reference, obj=obj, field=field)
                     matching_nodes = [item for item in nodes if str(item) == node_id]
                     if len(matching_nodes) == 0:
@@ -155,16 +157,4 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
 
 
 class IpfabricsyncModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        # TODO: To Implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        # TODO: To Implement
-        return super().update(attrs=attrs)
+    """DiffSync model for ipfabricsync records."""

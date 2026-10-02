@@ -1,0 +1,173 @@
+---
+# ---------------------------------------------------------------------------
+# This schema is a starting point for building with Infrahub, not a finished production model.
+# Adapting it for your environment typically requires architectural review, see
+# docs.infrahub.app, or reach out to OpsMill for help.
+# ---------------------------------------------------------------------------
+version: "1.0"
+
+generics:
+  # Placeholder generics defined here so that inheritance can be declared in the base schema.
+  # Extensions cannot add inheritance to existing nodes, so these stubs let extensions override
+  # them without requiring users to modify their schema manually.
+  - name: VLANGroupScope
+    namespace: Ipam
+    description: >-
+      Mixin for objects that can scope a VLAN group (e.g. Region, Site). The reverse
+      relationship is added by extensions/vlan.
+    label: VLAN Group Scope
+    include_in_menu: false
+
+  - name: PrefixScope
+    namespace: Ipam
+    description: Mixin for objects that can scope IP prefixes (e.g. Region, Site).
+    label: Prefix Scope
+    include_in_menu: false
+    relationships:
+      - name: prefixes
+        peer: IpamPrefix
+        kind: Generic
+        cardinality: many
+        optional: true
+        identifier: prefix__prefix_scope
+        order_weight: 1550
+
+nodes:
+  - name: Prefix
+    namespace: Ipam
+    description: IPv4 or IPv6 network (with mask)
+    label: Prefix
+    icon: mdi:ip-network
+    include_in_menu: false
+    inherit_from:
+      - BuiltinIPPrefix
+    human_friendly_id:
+      - ip_namespace__name__value
+      - prefix__value
+    order_by:
+      - prefix__value
+    display_label: prefix__value
+    uniqueness_constraints:
+      - [prefix__value, ip_namespace]
+    attributes:
+      - name: status
+        kind: Dropdown
+        default_value: active
+        choices:
+          - name: active
+            label: Active
+            color: "#00d25b"
+          - name: reserved
+            label: Reserved
+            color: "#4d90fe"
+          - name: deprecated
+            label: Deprecated
+            color: "#e04040"
+        optional: false
+        order_weight: 1200
+      - name: description
+        kind: Text
+        optional: true
+        order_weight: 1100
+      - name: role
+        kind: Dropdown
+        choices:
+          - name: management
+            label: Management
+            description: Out-of-band management network.
+            color: "#AEC6CF"
+          - name: link
+            label: Link
+            description: Point-to-point links between devices.
+            color: "#FDFD96"
+          - name: customer
+            label: Customer
+            description: Prefixes assigned to customers.
+            color: "#77DD77"
+          - name: backbone
+            label: Backbone
+            description: Core network infrastructure prefixes.
+            color: "#9678B6"
+        optional: true
+        order_weight: 1300
+    relationships:
+      - name: scope
+        peer: IpamPrefixScope
+        kind: Attribute
+        cardinality: one
+        optional: true
+        identifier: prefix__prefix_scope
+        order_weight: 1500
+
+  - name: IPAddress
+    namespace: Ipam
+    description: IP Address
+    label: IP Address
+    icon: mdi:ip
+    include_in_menu: false
+    inherit_from:
+      - BuiltinIPAddress
+    human_friendly_id:
+      - ip_namespace__name__value
+      - address__value
+    order_by:
+      - address__value
+    display_label: address__value
+    uniqueness_constraints:
+      - [address__value, ip_namespace]
+    attributes:
+      - name: description
+        kind: Text
+        optional: true
+        order_weight: 1100
+      - name: status
+        kind: Dropdown
+        default_value: active
+        choices:
+          - name: active
+            label: Active
+            color: "#00d25b"
+          - name: reserved
+            label: Reserved
+            color: "#4d90fe"
+          - name: deprecated
+            label: Deprecated
+            color: "#e04040"
+        optional: false
+        order_weight: 1200
+      - name: role
+        kind: Dropdown
+        choices:
+          - name: loopback
+            label: Loopback
+            color: "#B0A8B9"
+          - name: secondary
+            label: Secondary
+            color: "#AEC6CF"
+          - name: anycast
+            label: Anycast
+            color: "#FDFD96"
+        optional: true
+        order_weight: 1300
+      - name: fqdn
+        kind: Text
+        label: FQDN
+        regex: (?=^.{1,253}$)(^(((?!-)[a-zA-Z0-9-]{1,63}(?<!-))|((?!-)[a-zA-Z0-9-]{1,63}(?<!-)\.)+[a-zA-Z]{2,63})$)
+        optional: true
+        order_weight: 1400
+    relationships:
+      - name: primary_of
+        peer: DcimGenericDevice
+        label: Primary Address Of
+        kind: Attribute
+        cardinality: many
+        optional: true
+        identifier: device__primary_address
+        order_weight: 1500
+      - name: interface
+        peer: InterfaceLayer3
+        kind: Attribute
+        cardinality: one
+        optional: true
+        identifier: ip_address__interface
+        order_weight: 1600

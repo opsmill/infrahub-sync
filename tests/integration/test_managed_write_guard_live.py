@@ -202,7 +202,9 @@ def _register_configuration(api: httpx.Client, live_stack: LiveStack, name: str)
                 }
             ],
         },
-        "credentials": {"infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"}},
+        "credentials": {
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
+        },
     }
     registered = api.post(
         "/configs",

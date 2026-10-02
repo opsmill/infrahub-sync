@@ -149,8 +149,8 @@ def _prepare(  # noqa: PLR0913, PLR0915 - one harness knob per collaborator a ca
     engine: Any = None,  # noqa: ANN401 - the double receives the engine's own keyword mapping.
 ) -> _ManagedStage:
     """Wire one bound managed run whose guard, schema read, and engine are observable."""
-    monkeypatch.setenv("NETBOX_TOKEN", "managed-netbox-canary")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "managed-infrahub-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "managed-netbox-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "managed-infrahub-canary")
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     events: list[str] = []
     projection = local_product_projection(tmp_path / "product")

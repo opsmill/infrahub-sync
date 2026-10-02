@@ -40,13 +40,14 @@ from infrahub_sync.service.models import (
 )
 from infrahub_sync.service.orchestration import Observation, Submission
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
-from tests.product_store.postgresql_isolation import isolated_schema_fixture
+from tests.configuration.validation_packages import package
+from tests.product_store.postgresql_isolation import postgresql_schema_fixture
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
     from pathlib import Path
 
-    from tests.product_store.postgresql_isolation import IsolatedSchema
+    from infrahub_sync.product_store.models import ConfigurationVersion
 
 # Run IDs and receipt identities stay namespaced to one test session, so a case reads
 # only the rows it wrote even when several sessions share one server.
@@ -55,10 +56,7 @@ _CONFLICT_CODE = "run-execution-conflict"
 _STARTED_AT = datetime(2026, 9, 3, 9, tzinfo=timezone.utc)
 
 
-@pytest.fixture(name="_postgresql_schema", scope="session")
-def postgresql_schema_fixture() -> Iterator[IsolatedSchema]:
-    """Hold one generated schema for this module's cases, and drop only that schema."""
-    yield from isolated_schema_fixture("the admission race's PostgreSQL parameter")
+_postgresql_schema = postgresql_schema_fixture("the admission race's PostgreSQL parameter")
 
 
 @pytest.fixture(params=("sqlite", pytest.param("postgresql", marks=pytest.mark.integration)))
@@ -85,14 +83,15 @@ def _rid(name: str) -> str:
     return f"{name}-{_SESSION}"
 
 
-def _run(run_id: str) -> ProductRun:
+def _run(run_id: str, version: ConfigurationVersion) -> ProductRun:
+    """Build an accepted run bound to a really registered configuration version."""
     return ProductRun(
         run_id=run_id,
         operation="plan",
-        configuration_reference="config-001@1",
-        config_id="config-001",
-        registry_version=1,
-        package_checksum="a" * 64,
+        configuration_reference=f"{version.config_id}@{version.registry_version}",
+        config_id=version.config_id,
+        registry_version=version.registry_version,
+        package_checksum=version.package_checksum,
         actor="operator@example.com",
         started_at=_STARTED_AT,
         phase="accepted",
@@ -206,10 +205,11 @@ def test_a_concurrent_apply_and_verify_admit_exactly_one_of_them(projection: Pro
     way that round went.
     """
     principal = Principal(actor="operator@example.com", administrator=True)
+    version = projection.create_configuration(package())
 
     for round_number in range(_RACE_ROUNDS):
         run_id = _rid(f"apply-versus-verify-race-{round_number}")
-        projection.create_run(_run(run_id))
+        projection.create_run(_run(run_id, version))
         outcomes, submissions = _race_one_round(projection, principal, run_id, round_number)
 
         assert sorted(outcomes.values()) == [202, 409], f"round {round_number}: {outcomes}"

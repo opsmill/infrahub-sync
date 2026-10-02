@@ -12,6 +12,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
+
 from .auth import Principal, PrincipalResolver
 from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
 from .config_routes import ConfigurationAPIError, ConfigurationRoutes, configuration_router
@@ -114,10 +116,15 @@ def create_app(
 
     @application.exception_handler(ConfigurationAPIError)
     async def configuration_error(_request: Request, exc: ConfigurationAPIError) -> JSONResponse:  # noqa: RUF029
+        """Return a safe configuration refusal with its structured reason."""
         envelope = ConfigErrorEnvelope(
             error=ConfigErrorDetail(
                 code=f"configs-{exc.family}",
-                message="the configuration service refused the request",
+                message=(
+                    UNSUPPORTED_STORE_MESSAGE
+                    if exc.reason == UNSUPPORTED_STORE_REASON
+                    else "the configuration service refused the request"
+                ),
                 status=exc.status,
                 family=exc.family,
                 reason=exc.reason,

@@ -107,8 +107,8 @@ def _package(*, undeclared: str, credential_path: str) -> dict[str, Any]:
                 },
             },
             "credentials": {
-                "netbox-token": {"provider": "env", "identifier": "NETBOX_TOKEN"},
-                "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"},
+                "netbox-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"},
+                "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
             },
         }
     )
@@ -293,8 +293,8 @@ def _validate(
 @pytest.fixture
 def environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Every canary in place before `build_app` collects them."""
-    monkeypatch.setenv("NETBOX_TOKEN", "netbox-token-value-0003")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "infrahub-token-value-0004")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "netbox-token-value-0003")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "infrahub-token-value-0004")
     monkeypatch.setenv("SYNC_SHORT_TOKEN", SHORT_SECRET)
     monkeypatch.setenv("SYNC_BOUND_TOKEN", BOUND_SECRET)
     monkeypatch.setenv("SYNC_LONG_TOKEN", LONG_SECRET)

@@ -4,9 +4,11 @@ title: IP Fabric adapter
 
 import ReferenceLink from "../../src/components/Card";
 
-## V3 route
+## Use this adapter
 
-Prepare a [configuration package](../configuration-package.mdx) and register it. Then create and review a plan before applying the reviewed plan or running a confirmed sync; [Run a sync](../running-a-sync.mdx) has the canonical procedure.
+In a [configuration package](../configuration-package.mdx), name `ipfabricsync` as the source. Then register the package, create and review a plan, and apply the plan, as described in [Run a sync](../running-a-sync.mdx).
+
+On a Compose deployment, from source or from a release package, the worker receives only the Infrahub, NetBox, and Nautobot tokens, so this adapter's credentials cannot reach it in this release. See [Credentials on a Compose deployment](./choosing-an-adapter.mdx#credentials-on-a-compose-deployment).
 
 ## What is IP Fabric?
 
@@ -20,8 +22,17 @@ Dependencies and dependents are calculated for each network element, allowing an
 
 ## Requirements
 
-This Adapter uses [IP Fabric SDK](https://pypi.org/project/ipfabric).
-You will need to install it beforehand.
+This Adapter uses the [IP Fabric SDK](https://pypi.org/project/ipfabric), distributed as `ipfabric` on PyPI.
+To use this adapter, build a custom Sync image that also installs the `ipfabric` extra, for example
+by changing the image's `uv sync` step to `--extra service --extra ipfabric`.
+
+`ipfabric` is declared in its own `ipfabric` package extra, not in the `service` extra the default
+Sync image installs, because every current `ipfabric` release depends unconditionally on `niquests`,
+whose `urllib3-future` dependency ships a `.pth` hook that replaces the real `urllib3` package in
+`site-packages` at interpreter start — for every process in the image, not just this adapter. That
+would silently move every other requests-based adapter (`pynetbox`, `pynautobot`, `slurpit-sdk`, the
+generic REST adapter) onto `urllib3-future` too. Confirm that `urllib3-future` replacing `urllib3`
+for the whole image is acceptable for your deployment before adding the `ipfabric` extra.
 
 ## Sync directions supported
 
@@ -30,9 +41,7 @@ You will need to install it beforehand.
 :::info
 
 Currently, the IP Fabric adapter supports only **one-way synchronization** from IP Fabric to Infrahub.
-Syncing data back into IP Fabric is not yet supported.
-
-Although IP Fabric data cannot be edited, additional information such as **`Device Attributes`** and **`Site Separation`** rules can be updated from Infrahub data.
+Syncing data back into IP Fabric is not supported; no operation in this adapter writes to IP Fabric.
 
 :::
 
@@ -45,46 +54,47 @@ This schema follows best practices for Infrahub, **but it does not map the IP Fa
 
 ### Installing the example schema
 
-To install the example schema into Infrahub, follow these steps:
+Download the schema, then load it into the destination Infrahub as described in [Load an example schema into Infrahub](./choosing-an-adapter.mdx#load-an-example-schema-into-infrahub):
 
 ```bash
-mkdir ipfabric-sync
-cd ipfabric-sync
 curl -o schema.yml https://raw.githubusercontent.com/opsmill/infrahub/refs/heads/stable/models/examples/ipfabric/ipfabric.yml
-infrahubctl schema load schema.yml
 ```
 
 ## Configuration
 
-`infrahub-sync` allows defining what gets synchronized from a source to a destination. The shipped `config.yml` is a legacy mapping input that matches the example schema; wrap it in a V3 configuration-package envelope before registration.
-
-<ReferenceLink title="config.yml" url="https://github.com/opsmill/infrahub-sync/blob/main/examples/ipfabric_to_infrahub/config.yml" openInNewTab />
-
-To download the example `config.yml`
-
-```bash
-curl https://raw.githubusercontent.com/opsmill/infrahub-sync/refs/heads/main/examples/ipfabric_to_infrahub/config.yml > config.yml
-```
+The repository contains a mapping example that matches the example schema: [`examples/ipfabric_to_infrahub/config.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/ipfabric_to_infrahub/config.yml). It is a `config.yml` file, not a package, and registration refuses it as it is. To use it, convert it as described in [Convert a config.yml file](../configuration-package.mdx#convert-a-configyml-file).
 
 ### Configuration parameters
 
-The `source.name` is set to `ipfabricsync`, instructing `infrahub-sync` to use the IP Fabric adapter.
-
-The settings dictionary is passed directly to the IP Fabric Python SDK for authentication and connection details.
-Some of these parameters can be found in the [IP Fabric SDK Docs](https://docs.ipfabric.io/latest/integrations/python/#environment-variables).
-
-Below is a snippet from the example config.yml file:
+Set `source.name` to `ipfabricsync`. The adapter passes `base_url`, `auth`, and `verify_ssl` to the IP Fabric Python SDK. See the [IP Fabric SDK documentation](https://docs.ipfabric.io/latest/integrations/python/#environment-variables). In a registered package, `auth` is a `$credential` reference:
 
 ```yaml
----
-name: from-ipfabric
-source:
-  name: ipfabricsync
-  settings:
-    base_url: "https://<IPFABRIC-ENDPOINT>"
-    auth: "<TOKEN>"
-    verify_ssl: true # Default value
+format_version: 1
+configuration:
+  name: from-ipfabric
+  source:
+    name: ipfabricsync
+    settings:
+      base_url: "https://ipfabric.example.com"
+      auth:
+        $credential: ipfabric-token
+      verify_ssl: true # Default value
+  destination:
+    name: infrahub
+    settings:
+      url: "https://infrahub.example.com"
+      token:
+        $credential: infrahub-token
+credentials:
+  ipfabric-token:
+    provider: env
+    identifier: INFRAHUB_SYNC_CREDENTIAL_IPF_TOKEN
+  infrahub-token:
+    provider: env
+    identifier: INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 ```
+
+A registered package must declare both `base_url` and `auth`; the adapter refuses to start without them. When `verify_ssl` is not declared, TLS is verified, and the adapter reads the latest snapshot. `IPF_VERIFY` and `IPF_SNAPSHOT` in the worker environment do not change either. For direct adapter use without a registered package, the adapter reads `IPF_URL` or `IPF_TOKEN` from the environment when `base_url` or `auth` is not declared.
 
 ### Schema mapping
 

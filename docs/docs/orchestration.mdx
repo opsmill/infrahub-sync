@@ -2,7 +2,7 @@
 title: Schedule sync runs
 ---
 
-Infrahub Sync runs as a single CLI command. Schedule it with whatever tooling already runs scheduled jobs in your environment — cron, CI, Prefect, Dagster, or a homegrown runner.
+The V3 CLI submits a run to a deployed Sync service and waits for its result. This release has no built-in scheduler, so schedule that CLI command with cron, CI, or a workflow tool.
 
 ## Common orchestration options
 
@@ -36,15 +36,21 @@ Define the sync as a scheduled workflow in your CI system. CI provides run histo
 
 ### Prefect
 
-Infrahub Sync provides two Prefect-backed execution surfaces:
+Prefect runs underneath both packaged execution surfaces — the Sync API and worker that the
+Compose deployment runs, and the direct deployment below — rather than being something you
+choose instead of Compose:
 
-- Install the `prefect` extra to serve one direct deployment for plan and confirmed sync
-  requests through Prefect's API. Sync output is forwarded into the flow-run log. See the
+- Install the `prefect` extra to serve one direct deployment that accepts read-only plan
+  requests through Prefect's API, without the rest of the Sync service; it refuses
+  `operation="sync"`. Use the Sync API for confirmed sync or reviewed-plan apply. Sync output
+  is forwarded into the flow-run log. This is a lighter-weight alternative to a full Compose
+  deployment when you only need to trigger plan requests through Prefect. See the
   [Prefect remote run reference](./reference/prefect-remote-run.mdx) and
   `examples/prefect_remote_run/README.md` in the repository.
-- Install the `service` extra when an automation client needs a Sync-owned authenticated
-  HTTP API, durable records and artifacts, reviewed-plan apply, idempotency, cancellation,
-  and worker execution. See the
+- Install the `service` extra to run the Sync-owned authenticated HTTP API, durable records
+  and artifacts, reviewed-plan apply, idempotency, cancellation, and worker execution — the
+  same surface the [Compose deployment](./compose-deployment.mdx) runs its `sync-api` and
+  `sync-worker` services from. See the
   [Sync HTTP API reference](./reference/sync-http-api.mdx).
 
 **When this works well:**
@@ -54,8 +60,8 @@ Infrahub Sync provides two Prefect-backed execution surfaces:
 - You want centralized observability across many sync projects.
 
 **Trade-offs:** Prefect itself has to be operated. If you do not already run it, this adds
-operational surface area. The direct deployment runs and observes one plan or confirmed
-sync; it does not add scheduling, retry, queue, or overlap policy.
+operational surface area. The direct deployment runs and observes one plan; it does not add
+scheduling, retry, queue, or overlap policy.
 
 Use the Sync API for the supported worker-backed run lifecycle. For schedules, retry
 policies, triggers, or composing several syncs into a larger workflow, configure Prefect
@@ -67,7 +73,7 @@ Any workflow engine that can run a CLI command works the same way as Prefect. Pi
 
 ### Event-driven execution
 
-Some sync use cases are better triggered by an event than by a schedule. For example: "when a device is created in Infrahub, sync its details from the inventory system." For event-driven patterns, Infrahub's trigger event system can call `infrahub-sync` directly instead of running on a fixed cadence.
+Some sync use cases are better started by an event than by a schedule. For example: "when a device is created in Infrahub, sync its details from the inventory system." An event handler that you run, such as a service that receives an Infrahub webhook, can start the run with the CLI or the [Sync HTTP API](./reference/sync-http-api.mdx).
 
 Event-driven sync is the exception, not the rule. Most data movement is well-served by a recurring schedule. Use event-driven patterns when the data volume is small, the freshness requirement is high, or the source system is itself event-driven.
 
@@ -80,32 +86,40 @@ Match the cadence to the rate at which source data changes and your tolerance fo
 - **Daily** — appropriate for slower-moving data or for syncs where the next run can absorb a missed one.
 - **On demand** — for migrations, audits, or one-off seeding rather than steady-state operation.
 
-Each sync run calculates a fresh diff and applies only deltas, so running more often does not multiply work. The constraint is the time the sync takes, not the work it does.
+Each run reads the source and the destination in full, then writes only the differences. A shorter cadence repeats that read more often, so check that each run finishes before the next one starts.
 
 ## Observability and failure handling
 
 Whatever scheduling tool you use, plan for these operational concerns:
 
-- **Logging.** Infrahub Sync emits lifecycle and adapter records through Python logging.
-  Forward them to the logging system used by the scheduler. Public Python API lifecycle
-  records include structured run, operation, stage, and outcome attributes.
+- **Logging.** Adapter and lifecycle logs come from the Sync worker that runs the request
+  (`./infrahub-sync-compose logs sync-worker` on a Compose deployment); the CLI itself reports
+  the run ID, the final state, and the exit code. Forward the worker's logs to the logging
+  system used by the scheduler.
 - **Failure detection.** The CLI returns a non-zero exit code on failure. Wire the scheduling tool to catch this and alert the appropriate channel.
 - **Failure recovery.** Inspect the run record and destination after a failed write, then
   calculate a fresh plan. A failed operation can have written part of its change, unless the
-  run records that it wrote nothing; follow the
-  [run recovery guidance](./running-a-sync.mdx).
+  run records that it wrote nothing; follow
+  [When the outcome of a write is uncertain](./compose-deployment.mdx#when-the-outcome-of-a-write-is-uncertain).
 - **Run isolation.** Avoid overlapping runs of the same sync project. Set the cadence longer than the run time, or have the scheduler skip a run if the previous one is still active.
-- **Sync project versioning.** Store sync project directories in version control. Tag or release configuration changes the same way you handle infrastructure code.
+- **Sync project versioning.** Keep the configuration package files in version control and register each change as a new version.
 
 ## Running Infrahub Sync in a container
 
-To run Infrahub Sync from any orchestrator while keeping a single Python environment under your control, package it as a container. Build the image with `infrahub-sync` installed and the sync project directory included, set the sync command as the entrypoint, and pass credentials via environment variables.
+To run the CLI from an orchestrator in a container, use the Infrahub Sync image (or the
+Compose bundle's `sync-cli` service) with `INFRAHUB_SYNC_API_URL` and
+`INFRAHUB_SYNC_API_TOKEN` set. Register the configuration package with the service, and put
+source and destination credentials in the deployment's `operator.env`, where the worker
+resolves them — see [Container image](./container-image.mdx) and
+[Compose deployment](./compose-deployment.mdx). The Compose bundle gives the source
+credentials (for example `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`)
+only to the `sync-worker` service. `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` goes to
+`sync-worker` and `sync-api`, which reads the destination schema when it validates a
+package. `sync-cli` receives only the Sync API URL and token.
 
-Infrahub Sync does not ship a reference container image — examples in the [OpsMill GitHub repository](https://github.com/opsmill/infrahub-sync) show common patterns to adapt.
+## What this release does not include
 
-## What's not in Infrahub Sync (and what to use instead)
-
-- **Built-in scheduler.** Use one of the options above.
+- **Built-in scheduler.** This release has no scheduler. Use one of the options above.
 - **Sync history dashboard.** The scheduling tool typically provides this — CI run history, Prefect UI, or aggregated logs.
 - **Built-in retry policies.** Configure retries in the scheduling tool. Treat write
   retries according to the [documented recovery and convergence boundaries](./running-a-sync.mdx).

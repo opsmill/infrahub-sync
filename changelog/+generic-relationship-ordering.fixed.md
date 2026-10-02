@@ -1,0 +1,1 @@
+For Infrahub destinations, automatic order now loads mapped concrete peers before a kind that references their generic; runs with neither the generic nor any peer mapped or with a resulting identity cycle fail before loading, and saved plans that reference generics must be recreated after upgrading.

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import pytest
@@ -17,12 +19,12 @@ from infrahub_sync.execution import RunResult
 from infrahub_sync.plan.config_version import resolve_config_version
 from infrahub_sync.plan.models import PlannedOperation
 from infrahub_sync.plan.writer import write_plan_artifact
-from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
+from infrahub_sync.product_store import PrefectExecutionLink, ProductProjection, ProductRun, local_product_projection
 from infrahub_sync.runtime_schema import RuntimeModelPlan, RuntimeSideModels
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.flow import service_sync_run
 from tests.configuration.validation_packages import package
-from tests.plan.artifact_fixtures import operation_record
+from tests.plan.artifact_fixtures import manifest_path, operation_record, write_artifact
 from tests.service.execution_fixtures import (
     append_execution,
     bind_granting_guard,
@@ -41,8 +43,8 @@ def _registered_apply(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, manifest_binding: tuple[str, int, str] | Literal["exact"] | None
 ) -> tuple[str, tuple[str, int, str], str, list[str]]:
     """Prepare one bound run and a manifest, with a destination-call sentinel."""
-    monkeypatch.setenv("NETBOX_TOKEN", "registered-netbox-canary")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "registered-infrahub-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "registered-netbox-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "registered-infrahub-canary")
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     projection = local_product_projection(tmp_path / "product")
     registered = projection.create_configuration(package())
@@ -152,19 +154,118 @@ def test_bound_apply_accepts_an_exact_manifest_binding(tmp_path: Path, monkeypat
     assert calls == ["execute-run"]
 
 
+@pytest.mark.parametrize(
+    ("manifest_state", "expected_action", "wrong_action"),
+    [
+        pytest.param(
+            "unsupported",
+            "apply it with the version that wrote it",
+            "artifact is incomplete",
+            id="unsupported",
+        ),
+        pytest.param("malformed", "rebuild the plan artifact", "apply it with the version", id="malformed"),
+        pytest.param("missing-version", "rebuild the plan artifact", "apply it with the version", id="missing-version"),
+        pytest.param("absent", "rebuild the plan artifact", "apply it with the version", id="absent-manifest"),
+    ],
+)
+def test_registered_apply_reports_verifier_recovery_before_destination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    manifest_state: str,
+    expected_action: str,
+    wrong_action: str,
+) -> None:
+    """The managed precheck carries the format gate's specific, safe recovery action."""
+    run_id = "managed-plan-recovery"
+    run_directory = tmp_path / "managed-plan" / run_id
+    write_artifact(run_directory, run_id=run_id)
+    path = manifest_path(run_directory)
+    if manifest_state == "absent":
+        path.unlink()
+    else:
+        mapping = json.loads(path.read_bytes())
+        if manifest_state == "unsupported":
+            mapping["format_version"] = 99
+        elif manifest_state == "malformed":
+            mapping["format_version"] = "private-token-canary"
+        else:
+            del mapping["format_version"]
+        path.write_text(json.dumps(mapping), encoding="utf-8")
+    before = path.read_bytes() if path.exists() else None
+    monkeypatch.setattr(service_flow, "resolve_config_version", lambda _instance: "fixture-version")
+
+    with pytest.raises(ValueError, match="registered saved plan verification failed") as error:
+        service_flow._verify_registered_apply(
+            instance=SimpleNamespace(name="managed-plan"),
+            run_id=run_id,
+            binding=None,
+            expected_checksum=None,
+            base_directory=tmp_path,
+        )
+
+    message = str(error.value)
+    assert "format_version:" in message
+    assert expected_action in message
+    assert wrong_action not in message
+    assert "private-token-canary" not in message
+    assert isinstance(error.value, service_flow.RegisteredPlanVerificationError)
+    assert error.value.recovery_action == ("compatible_version" if manifest_state == "unsupported" else "rebuild")
+    assert (path.read_bytes() if path.exists() else None) == before
+
+
+@pytest.mark.parametrize(
+    ("declared_version", "expected_action"),
+    [
+        pytest.param(99, "compatible_version", id="unsupported"),
+        pytest.param("private-token-canary", "rebuild", id="malformed"),
+    ],
+)
+def test_registered_apply_stores_only_the_fixed_recovery_signal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    declared_version: int | str,
+    expected_action: str,
+) -> None:
+    """A refused managed apply preserves a safe CLI hint without storing manifest text."""
+    run_id, binding, checksum, calls = _registered_apply(tmp_path, monkeypatch, manifest_binding="exact")
+    projection = service_flow._runtime()[1]
+    rehydrate = service_flow.rehydrate_plan_checkpoint
+
+    def damaged_checkpoint(product: ProductProjection, selected_run_id: str, *, destination: Path) -> Path:
+        directory = rehydrate(product, selected_run_id, destination=destination)
+        path = manifest_path(directory)
+        mapping = json.loads(path.read_bytes())
+        mapping["format_version"] = declared_version
+        path.write_text(json.dumps(mapping), encoding="utf-8")
+        return directory
+
+    monkeypatch.setattr(service_flow, "rehydrate_plan_checkpoint", damaged_checkpoint)
+
+    with pytest.raises(RuntimeError, match="registered saved plan verification failed"):
+        service_sync_run.fn(run_id, "apply", *binding, expected_checksum=checksum, confirm_writes=True)
+
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.phase == "apply-failed"
+    assert stored.results["apply_failure"]["error_type"] == "RegisteredPlanVerificationError"
+    assert stored.results["apply_failure"]["recovery_action"] == expected_action
+    assert "private-token-canary" not in json.dumps(stored.results["apply_failure"])
+    assert calls == []
+
+
 def test_a_registered_saved_apply_runs_without_the_source_credential(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """AR10: applying a reviewed plan needs destination credentials only.
 
     The plan was computed where the source was reachable; this apply runs on a host that
-    holds `INFRAHUB_API_TOKEN` and no `NETBOX_TOKEN` at all. `execute_run` is the real
+    holds the destination credential and no source credential at all. `execute_run` is the real
     one, so the reviewed operation reaches the destination the apply seam constructed —
     and `import_adapter` refuses every side, which is what proves the source adapter is
     neither imported nor constructed on the way there.
     """
-    monkeypatch.setenv("NETBOX_TOKEN", "plan-host-netbox-canary")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", INFRAHUB_CANARY)
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "plan-host-netbox-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", INFRAHUB_CANARY)
     monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "runs"))
     monkeypatch.setenv("PREFECT__WORKER_ID", WORKER_ID)
 
@@ -253,7 +354,7 @@ def test_a_registered_saved_apply_runs_without_the_source_credential(
         ),
     )
     # The apply host itself: the destination credential resolves, the source one does not exist.
-    monkeypatch.delenv("NETBOX_TOKEN")
+    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN")
 
     result = service_sync_run.fn(
         run_id, "apply", *binding, expected_checksum=manifest.plan_checksum, confirm_writes=True

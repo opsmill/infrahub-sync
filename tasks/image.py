@@ -723,7 +723,7 @@ def _import_platform(context: Context, record: dict, platform: str) -> str:
     the digest recorded from the OCI layout is what makes every later check —
     smoke, the lifecycle matrix — a statement about the artifact the index names.
     """
-    archive = _export_platform(context, record, platform)
+    archive = transferable_archive(context, record, platform)
     reference = local_reference(platform)
     print(f" - [{NAMESPACE}] Loading {platform} as {reference}")
     _run(context, ("docker", "image", "load", "--input", str(archive)), hide=True)
@@ -766,7 +766,7 @@ def sbom(context: Context, platform: str = "") -> None:
     record = read_digests()
     identity = recorded_identity(record)
     for name in _requested_platforms(record, platform):
-        archive = _export_platform(context, record, name)
+        archive = transferable_archive(context, record, name)
         # The scanner reads the exported archive and writes nothing: its output
         # comes back on stdout and this task owns the file, so the bill of
         # materials describes the candidate's own bytes rather than a rebuild.

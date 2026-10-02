@@ -5,39 +5,73 @@ import operator
 import re
 from typing import TYPE_CHECKING, Any, ClassVar, Union
 
+import pydantic
+from diffsync.enum import DiffSyncFlags
+from jinja2 import StrictUndefined, Undefined
+from jinja2.exceptions import SecurityError
+from jinja2.nativetypes import NativeCodeGenerator, NativeTemplate, native_concat
+from jinja2.sandbox import ImmutableSandboxedEnvironment
+from netutils.ip import is_ip_within as netutils_is_ip_within
+
+from infrahub_sync.adapters.utils import get_value
 from infrahub_sync.cache.cursors import CursorTier
+from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable, Mapping
+
+    from diffsync.store import BaseStore
 
     from infrahub_sync.cache.cursors import CursorState
     from infrahub_sync.runtime_schema import RuntimeModelPlan
 
-import pydantic
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from diffsync.store import BaseStore
-from diffsync.enum import DiffSyncFlags
-from jinja2 import StrictUndefined
-from jinja2.nativetypes import NativeEnvironment
-from netutils.ip import is_ip_within as netutils_is_ip_within
-from packaging import version
-
-from infrahub_sync.adapters.utils import get_value
-
 logger = logging.getLogger(__name__)
 
-# Pydantic v1/v2 compatibility shim — runtime branch picks the right decorator + kwargs.
-if version.parse(pydantic.__version__) >= version.parse("2.0.0"):
-    from pydantic import field_validator as validator_decorator
 
-    validator_kwargs: dict[str, Any] = {"mode": "before"}
-else:
-    from pydantic import validator as validator_decorator  # ty: ignore[deprecated]
+class SandboxedNativeEnvironment(ImmutableSandboxedEnvironment):
+    """Jinja2 sandbox that returns native Python types, for schema_mapping transforms.
 
-    validator_kwargs = {"pre": True, "allow_reuse": True}
+    Transform expressions come from registered configuration packages and render inside the
+    Sync worker, so they must not reach private attributes, unsafe callables or mutating
+    methods. The immutable sandbox refuses those with ``SecurityError``; the native code
+    generator and concat keep the result's type (``list``, ``dict``, ``bool``, ``int``).
+    """
+
+    code_generator_class = NativeCodeGenerator
+    concat = staticmethod(native_concat)
+
+
+class SandboxedNativeTemplate(NativeTemplate):
+    """Template bound to ``SandboxedNativeEnvironment``; its render concatenates natively."""
+
+    environment_class = SandboxedNativeEnvironment
+
+
+SandboxedNativeEnvironment.template_class = SandboxedNativeTemplate
+
+
+def _raise_if_undefined(value: Any) -> None:
+    """Raise the error an Undefined carries when a rendered value is, or contains, one."""
+    if isinstance(value, Undefined):
+        # Jinja's own trigger for the error an Undefined was built with (UndefinedError or SecurityError).
+        value._fail_with_undefined_error()  # pylint: disable=protected-access
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            _raise_if_undefined(key)
+            _raise_if_undefined(nested)
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        for nested in value:
+            _raise_if_undefined(nested)
+
+
+def new_transform_environment() -> SandboxedNativeEnvironment:
+    """Build the environment every schema_mapping transform expression renders in."""
+    return SandboxedNativeEnvironment(
+        undefined=StrictUndefined,  # fail fast on missing keys
+        autoescape=False,
+        trim_blocks=True,
+        lstrip_blocks=True,
+    )
 
 
 class SchemaMappingFilter(pydantic.BaseModel):
@@ -95,7 +129,7 @@ class SyncConfig(pydantic.BaseModel):
     diffsync_flags: list[Union[str, DiffSyncFlags]] | None = []
     incremental: IncrementalConfig | None = None
 
-    @validator_decorator("diffsync_flags", **validator_kwargs)  # ty: ignore[no-matching-overload]
+    @pydantic.field_validator("diffsync_flags", mode="before")
     def convert_str_to_enum(cls, v):  # pylint: disable=no-self-argument  # a pydantic validator: `cls` is correct
         if not isinstance(v, list):
             msg = "diffsync_flags must be provided as a list"
@@ -105,9 +139,9 @@ class SyncConfig(pydantic.BaseModel):
             if isinstance(item, str):
                 try:
                     new_flags.append(DiffSyncFlags[item])
-                except KeyError:
+                except KeyError as exc:
                     msg = f"Invalid DiffSyncFlags value: {item}"
-                    raise ValueError(msg)
+                    raise ValueError(msg) from exc
             else:
                 new_flags.append(item)
         return new_flags
@@ -121,7 +155,9 @@ class SyncConfig(pydantic.BaseModel):
         order, _tiers = self.compute_order_and_tiers()
         return order
 
-    def compute_order_and_tiers(self) -> tuple[list[str], list[set[str]] | None]:
+    def compute_order_and_tiers(
+        self, generic_peers: Mapping[str, tuple[str, ...]] | None = None
+    ) -> tuple[list[str], list[set[str]] | None]:
         """Return `(flat_order, tiers)` from a single topological pass.
 
         `tiers` is `None` when an explicit `order` is configured. Callers that
@@ -132,10 +168,7 @@ class SyncConfig(pydantic.BaseModel):
         """
         if self.order:
             return list(self.order), None
-        # Imported here to avoid a circular import at module load.
-        from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
-
-        tiers, dropped = compute_tiers(self.schema_mapping)
+        tiers, dropped = compute_tiers(self.schema_mapping, generic_peers)
         for idx, tier in enumerate(tiers):
             logger.info("tier %d (%d): %s", idx, len(tier), sorted(tier))
         if dropped:
@@ -154,6 +187,10 @@ class SyncInstance(SyncConfig):
     # tells engine assembly to use installed resolution and bind in-memory classes rather
     # than the legacy generated-wrapper path.
     _runtime_models: RuntimeModelPlan | None = pydantic.PrivateAttr(default=None)
+    # Generic-to-concrete peers read from the destination adapter's live schema on a direct
+    # run, which has no `_runtime_models`. Plan derivation uses it so it expands a generic
+    # reference the same way ordering does.
+    _direct_generic_peers: Mapping[str, tuple[str, ...]] | None = pydantic.PrivateAttr(default=None)
 
 
 def resolve_effective_diffsync_flags(
@@ -196,8 +233,6 @@ def requested_destination_write_operations(
     requested = {"update"}
     if not effective & DiffSyncFlags.SKIP_UNMATCHED_SRC:
         requested.add("create")
-    if not effective & DiffSyncFlags.SKIP_UNMATCHED_DST:
-        requested.add("delete")
     return frozenset(requested)
 
 
@@ -248,17 +283,17 @@ class DiffSyncMixin:
             else:
                 self.model_loader(model_name=item, model=getattr(self, item))
 
-    def model_loader(self, model_name: str, model):
+    def model_loader(self, model_name: str, model):  # pylint: disable=unused-argument  # abstract hook
         raise NotImplementedError
 
-    def cursor_tier_for(self, model_name: str) -> CursorTier:  # noqa: ARG002
+    def cursor_tier_for(self, model_name: str) -> CursorTier:  # noqa: ARG002  # pylint: disable=unused-argument
         """Strongest cursor tier the adapter supports for this model.
 
         Default = NONE (always full extract). Override per adapter.
         """
         return CursorTier.NONE
 
-    def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterable[dict]:
+    def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterable[dict]:  # pylint: disable=unused-argument  # abstract hook
         """Yield raw upstream records changed since `cursor`.
 
         Adapters that override `cursor_tier_for` to a non-NONE tier MUST
@@ -271,7 +306,7 @@ class DiffSyncMixin:
         )
         raise NotImplementedError(msg)
 
-    def list_existing_ids(self, model_name: str) -> Iterable[str]:
+    def list_existing_ids(self, model_name: str) -> Iterable[str]:  # pylint: disable=unused-argument  # abstract hook
         """Yield current `unique_id` strings for `model_name` in the source
         of truth. Used for delete detection between incremental runs.
         """
@@ -282,6 +317,28 @@ class DiffSyncMixin:
 class DiffSyncModelMixin:
     # Set on generated subclasses (see generator/templates/diffsync_models.j2).
     local_id: str | None = None
+
+    def _get_unvalidated_unique_id(self) -> str:
+        """Return the DiffSync identifier for diagnostic string conversion."""
+        return super().get_unique_id()  # ty: ignore[unresolved-attribute] -- cooperative DiffSync mixin
+
+    def get_unique_id(self) -> str:
+        """Return the DiffSync identifier, refusing nullable identifier values."""
+        model_kind = getattr(self, "_modelname", type(self).__name__)
+        for identifier in getattr(self, "_identifiers", ()):
+            if getattr(self, identifier, None) is None:
+                msg = f"{model_kind} identifier field {identifier!r} cannot be None"
+                raise ValueError(msg)
+        return self._get_unvalidated_unique_id()
+
+    def __str__(self) -> str:
+        """Return a diagnostic string even when an identifier is incomplete."""
+        return self._get_unvalidated_unique_id()
+
+    def __repr__(self) -> str:
+        """Return a diagnostic representation even when an identifier is incomplete."""
+        model_kind = getattr(self, "_modelname", type(self).__name__)
+        return f'{model_kind} "{self._get_unvalidated_unique_id()}"'
 
     @classmethod
     def apply_filter(cls, field_value: Any, operation: str, value: Any) -> bool:
@@ -315,16 +372,12 @@ class DiffSyncModelMixin:
     def apply_transform(cls, item: dict[str, Any], transform_expr: str, field: str) -> None:
         """Apply a transformation expression using Jinja2 to a specified field in the item.
 
-        Uses Jinja's NativeEnvironment so expressions return native Python types
-        (list/dict/bool/int/str) instead of always strings.
+        Renders in ``SandboxedNativeEnvironment`` so expressions return native Python types
+        (list/dict/bool/int/str) instead of always strings, and cannot reach private
+        attributes, unsafe callables or mutating methods.
         """
         try:
-            native_env = NativeEnvironment(
-                undefined=StrictUndefined,  # fail fast on missing keys
-                autoescape=False,
-                trim_blocks=True,
-                lstrip_blocks=True,
-            )
+            native_env = new_transform_environment()
 
             # Allow subclasses to add custom filters
             add_custom_filters: Callable[..., None] | None = getattr(cls, "_add_custom_filters", None)
@@ -337,11 +390,18 @@ class DiffSyncModelMixin:
             # Render with the item as context → returns a native Python value
             transformed_value = template.render(**item)
 
+            # Native rendering returns a lone expression's value without str(), so a missing
+            # key or a refused attribute comes back as an Undefined instead of raising.
+            _raise_if_undefined(transformed_value)
+
             # Always assign the result, even if it's an empty list/dict/False/0.
             # Only skip if the result is literally None (meaning "don't set").
             if transformed_value is not None:
                 item[field] = transformed_value
 
+        except SecurityError as exc:
+            msg = f"Failed to transform '{field}' with '{transform_expr}': not allowed in the transform sandbox: {exc}"
+            raise ValueError(msg) from exc
         except Exception as exc:
             msg = f"Failed to transform '{field}' with '{transform_expr}': {exc}"
             raise ValueError(msg) from exc
@@ -384,21 +444,10 @@ class DiffSyncModelMixin:
         return transformed_records
 
     @classmethod
-    def get_resource_name(cls, schema_mapping: list[SchemaMappingModel]) -> str:
-        """Get the resource name from the schema mapping."""
-        for element in schema_mapping:
-            if element.name == cls.__name__:
-                if element.mapping is None:
-                    msg = f"Resource mapping is unset for class {cls.__name__}"
-                    raise ValueError(msg)
-                return element.mapping
-        msg = f"Resource name not found for class {cls.__name__}"
-        raise ValueError(msg)
-
-    @classmethod
     def is_list(cls, name):
-        # Pydantic v2 exposes `model_fields`; v1 uses `__fields__`. Try both.
-        fields = getattr(cls, "model_fields", None) or getattr(cls, "__fields__", None) or {}
+        # The declared default decides, not the annotation: a list-typed field
+        # left unset is not a list here.
+        fields = getattr(cls, "model_fields", None) or {}
         field = fields.get(name)
         if not field:
             msg = f"Unable to find the field {name} under {cls}"

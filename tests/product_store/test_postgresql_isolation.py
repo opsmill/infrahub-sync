@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from typing_extensions import Self
 
+from tests.product_store import postgresql_isolation
 from tests.product_store.postgresql_isolation import (
     SCHEMA_NAME_PREFIX,
     IsolatedSchema,
@@ -121,6 +122,40 @@ def test_the_scoped_dsn_accepts_a_uri_endpoint() -> None:
     scoped = schema_scoped_dsn("postgresql://probe:probe@127.0.0.1:55432/probe", "gen_schema")
 
     assert "options=-csearch_path=gen_schema" in scoped
+
+
+def test_the_shared_fixture_body_creates_before_yielding_and_drops_at_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The three wrapper modules share this body; it must create, yield, then drop in order."""
+
+    class _FakeSchema:
+        def __init__(self) -> None:
+            """Start with no recorded calls."""
+            self.calls: list[str] = []
+
+        def create(self) -> None:
+            """Record that the schema was created."""
+            self.calls.append("create")
+
+        def drop(self) -> None:
+            """Record that the schema was dropped."""
+            self.calls.append("drop")
+
+    fake = _FakeSchema()
+    monkeypatch.setattr(postgresql_isolation, "dsn_or_skip", lambda requirement: "dsn")  # noqa: ARG005
+    monkeypatch.setattr(postgresql_isolation, "isolated_schema", lambda dsn: fake)  # noqa: ARG005
+
+    generator = postgresql_isolation.isolated_schema_fixture("some requirement")
+    yielded = next(generator)
+
+    assert yielded is fake
+    assert fake.calls == ["create"]
+
+    with pytest.raises(StopIteration):
+        next(generator)
+
+    assert fake.calls == ["create", "drop"]
 
 
 def test_each_generated_schema_name_is_namespaced_and_unique() -> None:

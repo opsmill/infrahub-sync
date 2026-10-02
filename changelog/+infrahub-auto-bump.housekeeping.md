@@ -1,0 +1,1 @@
+Add the `update-infrahub.yml` workflow, which moves the pinned Infrahub release and its image index digest together across the development stack, the preview, and the tests that assert the pin, then opens a pull request.

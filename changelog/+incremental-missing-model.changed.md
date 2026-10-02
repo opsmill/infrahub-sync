@@ -1,0 +1,1 @@
+Direct incremental callers now receive `ValueError` before resource queries when a mapped model is missing on an eligible warm load, instead of silently skipping the kind; current v3 product entry points do not reach this guard.

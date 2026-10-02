@@ -179,10 +179,11 @@ CONTRACT_ENVIRONMENT: dict[str, str] = {
     "INFRAHUB_SYNC_PREFECT_DATABASE_URL": "postgresql+asyncpg://prefect:contract@postgres:5432/prefect",
     "INFRAHUB_SYNC_PRODUCT_PASSWORD": "contract-product-password",
     "INFRAHUB_SYNC_PREFECT_PASSWORD": "contract-prefect-password",
+    "INFRAHUB_SYNC_PREFECT_AUTH_STRING": "contract-prefect-auth-string",
     "INFRAHUB_SYNC_S3_ACCESS_KEY": "contract-access-key",
     "INFRAHUB_SYNC_S3_SECRET_KEY": "contract-secret-key",
     "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": '{"contract": {"token": "contract-token-0123456789"}}',
-    "INFRAHUB_API_TOKEN": "contract-destination-token",
+    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": "contract-destination-token",
 }
 
 
@@ -194,6 +195,7 @@ def compose(  # noqa: PLR0913 -- the bundle, its overrides, and its inputs vary 
     files: Sequence[Path] = (COMPOSE_FILE,),
     env_files: Sequence[Path] = (DEFAULTS_FILE,),
     timeout: int = 600,
+    inherit_environment: bool = True,
 ) -> Captured:
     """Run one fixed-argv `docker compose` command against the bundle.
 
@@ -209,11 +211,16 @@ def compose(  # noqa: PLR0913 -- the bundle, its overrides, and its inputs vary 
         command += ["--env-file", str(env_file)]
     for path in files:
         command += ["--file", str(path)]
+    base_environment = (
+        os.environ
+        if inherit_environment
+        else {name: os.environ[name] for name in ("PATH", "HOME", "DOCKER_CONFIG") if name in os.environ}
+    )
     return capture(
         [*command, *argv],
         timeout=timeout,
         cwd=BUNDLE,
-        env={**os.environ, **(environment or {})},
+        env={**base_environment, **(environment or {})},
     )
 
 
@@ -379,11 +386,15 @@ def _infrahub_environment() -> dict[str, str]:
         **values,
         "COMPOSE_PROJECT_NAME": FIXTURE_PROJECT,
         "PREVIEW_INFRAHUB_PORT": FIXTURE_INFRAHUB_PORT,
+        # The development stack publishes on loopback, which the bundle's worker
+        # cannot reach: on Linux its host route is the Docker bridge gateway. This
+        # session-scoped fixture is removed afterwards, so it is widened here alone.
+        "PREVIEW_INFRAHUB_BIND_ADDRESS": "0.0.0.0",  # noqa: S104 - test fixture, see above.
     }
 
 
 @pytest.fixture(scope="session")
-def infrahub_fixture(docker_daemon: None) -> Iterator[dict[str, str]]:
+def infrahub_fixture(sync_image: str) -> Iterator[dict[str, str]]:
     """One pinned Infrahub 1.10.6, seeded with the smoke schema, device, and branch.
 
     Test infrastructure, never a service of the release bundle: it is started
@@ -391,8 +402,11 @@ def infrahub_fixture(docker_daemon: None) -> Iterator[dict[str, str]]:
     removed with its volumes afterwards. Only `infrahub-server`, `task-worker`
     and their dependency closure are started; the development stack's own
     `sync-*` services are not part of what this fixture provides.
+
+    Depends on `sync_image`, which carries the daemon prerequisite with it: the
+    image prerequisite has to pass before anything here is started.
     """
-    del docker_daemon
+    del sync_image
     from tasks.preview import COMPOSE_FILES, ENV_FILE, SCHEMA_FILE, ensure_smoke_branch
 
     values = _infrahub_environment()
@@ -452,7 +466,10 @@ def canaries() -> dict[str, str]:
     """
     from tests.compose.lifecycle import canary
 
-    planted = {kind: canary(kind) for kind in ("administrator", "product", "prefect", "object_store", "principal")}
+    planted = {
+        kind: canary(kind)
+        for kind in ("administrator", "product", "prefect", "prefect_auth", "object_store", "principal")
+    }
     # Registered at the boundary, so no retained Compose or Docker stream can
     # render one. The sweeps still search the raw streams for these values.
     SECRETS.register(*planted.values())

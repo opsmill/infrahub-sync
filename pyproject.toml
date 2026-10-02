@@ -1,6 +1,6 @@
 [project]
 name = "infrahub-sync"
-version = "3.0.0a4"
+version = "3.0.0a5"
 description = "Infrahub-Sync is a versatile Python package that synchronizes data between a source and a destination system"
 authors = [{ name = "OpsMill", email = "info@opsmill.com" }]
 readme = "README.md"
@@ -49,7 +49,7 @@ dependencies = [
     "pyarrow>=23.0.1,<24",
     "fsspec>=2024.6",
     "filelock>=3.13",
-    "jinja2>=3.0.2",
+    "jinja2>=3.1.6",
     "typer>=0.23.1",
     "pydantic>=2.10.2,<3",
     "packaging>=22.0",
@@ -87,6 +87,12 @@ service = [
     # `ariadne_codegen`. The base install stays free of it.
     "infrahub-sdk[ctl]>=1.17,<2; python_version >= '3.11'",
     "prefect==3.8.1; python_version >= '3.11'",
+    # prefect already resolves this transitively; declaring it directly is what lets
+    # `infrahub_sync/adapters/prometheus.py` import `prometheus_client.parser`
+    # outside a Prefect-bearing resolution too. The floor is where
+    # `parser.text_string_to_metric_families` has long been stable (verified
+    # against 0.26.0, the version currently resolved).
+    "prometheus-client>=0.20,<1; python_version >= '3.11'",
     "psycopg[binary]>=3.2,<4; python_version >= '3.11'",
     # The SDKs the bundled NetBox and Nautobot source adapters import at module
     # top. pynetbox 7.6 is where NetBox's v2 (`nbt_`) tokens are supported;
@@ -96,6 +102,33 @@ service = [
     "pynautobot>=2.5,<3; python_version >= '3.11'",
     "pynetbox>=7.6,<8; python_version >= '3.11'",
     "uvicorn>=0.34,<1; python_version >= '3.11'",
+]
+# The SDK the bundled IP Fabric source adapter imports at module top, kept out of
+# `service` (and so out of the default Sync image) because every current release —
+# down to 7.5.2, well below this floor — depends unconditionally on `niquests`,
+# which in turn requires `urllib3-future`. `urllib3-future` ships a `.pth` hook that
+# replaces the real `urllib3` package in `site-packages` at interpreter start, for
+# every process in the image, not just this adapter — moving every other
+# requests-based adapter (`pynetbox`, `pynautobot`, the generic REST
+# adapter) onto it too. No niquests-free release exists to declare instead (checked
+# 7.5.2 through 8.1.0b0 on PyPI). A custom image that needs the IP Fabric adapter
+# installs this extra explicitly; see `docs/docs/adapters/ipfabric.mdx`.
+ipfabric = [
+    # 8.0.1 (verified here) accepts `base_url` and `auth` as `IPFClient`
+    # pydantic-settings fields; the upper bound holds to the current major, since a
+    # future one is not verified. `IPFClient`'s field is `verify`, not `verify_ssl`;
+    # the adapter renames it before construction, so a configured `verify_ssl`
+    # setting is honored, not silently dropped.
+    "ipfabric>=8.0,<9; python_version >= '3.11'",
+]
+# The Slurp'it adapter uses the async SDK API. Version 0.9.52 is the first
+# inspected release with async device/planning/site calls, Planning.slug,
+# search_plannings(limit=...), and api(verify=...); 0.9.47 lacks verify.
+# The 0.9 line requires httpx<0.28. Keep it separate from service so the
+# default image retains its current httpx. These extras need separate uv
+# resolutions because the SDK's httpx<0.28 would lower service's httpx.
+slurpit = [
+    "slurpit-sdk>=0.9.52,<0.10; python_version >= '3.11'",
 ]
 dev = [
     "yamllint>=1.37.1",
@@ -112,11 +145,15 @@ dev = [
     "pytest>=9.0.2,<10",
     "pytest-cov>=7,<8",
     "pytest-xdist>=3.8",
+    "pytest-timeout>=2.3",
     "ty==0.0.32",
     "types-python-slugify>=8.0.2.20240310",
     "towncrier>=24.8,<27",
     "rumdl>=0.1.68",
 ]
+
+[tool.uv]
+conflicts = [[{ extra = "service" }, { extra = "slurpit" }]]
 
 [build-system]
 requires = ["hatchling"]
@@ -199,11 +236,12 @@ testpaths = [
     "tests"
 ]
 markers = [
-    "integration: tests that require a running Infrahub instance. Skipped by default; opt in with -m integration and INFRAHUB_ADDRESS + INFRAHUB_API_TOKEN set. The remote-run test additionally needs a live Prefect server (PREFECT_API_URL) and a separately started served deployment (`python -m infrahub_sync.orchestration.serve`, from the repository root).",
+    "integration: tests that require a running Infrahub instance. Skipped by default; opt in with -m integration. Each family skips when its settings are missing; see docs/docs/develop/guidelines/testing-tiers.md#integration. The remote-run test additionally needs a live Prefect server (PREFECT_API_URL) and a separately started served deployment (`python -m infrahub_sync.orchestration.serve`, from the repository root).",
     "preview: end-to-end smoke tests against a running preview environment (`invoke preview.up`). Opt in with -m preview; each test skips when the environment is not reachable.",
     "docker: container-image tests that run the built image through a Docker daemon. Opt in with -m docker; they are driven by `invoke image.smoke`, which exports the built image from the retained layout, loads it, and names it to them.",
     "builder: warm-builder freshness tests that run two real image builds through a Docker daemon. Opt in with -m builder; they are driven by `invoke image.freshness`, which names the shared buildx builder to them.",
     "compose: Compose bundle lifecycle tests that run a real deployment through a Docker daemon. Opt in with -m compose; they are driven by `invoke compose.lifecycle`, which names the already-built image to them. They share one session-scoped stack and run single-process.",
+    "timeout: bounds a test's wall-clock runtime via pytest-timeout; the test fails instead of hanging past the given number of seconds.",
 ]
 filterwarnings = [
     "ignore:Module already imported so cannot be rewritten",
@@ -211,6 +249,7 @@ filterwarnings = [
     "ignore:Deprecated call to",
 ]
 addopts = "-vs --cov-report term-missing --cov-report xml --dist loadscope"
+strict_markers = true
 
 [tool.ruff]
 line-length = 120
@@ -277,6 +316,18 @@ max-complexity = 33
     "T201",  # `print` found
 ]
 
+# NetBox dataset tooling includes scripts invoked by path and reusable modules
+# imported by Invoke tasks and tests. Endpoint progress is logged during seeding.
+# Fixed tier payloads and relationship dispatch need flat literal data and branches,
+# so the usual complexity and magic-value limits do not fit these modules.
+"development/netbox/datasets/*.py" = [
+    "INP001",  # File is part of an implicit namespace package
+    "PLR0912",  # Too many branches
+    "PLR0914",  # Too many local variables
+    "PLR0915",  # Too many statements
+    "PLR2004",  # Magic value used in comparison
+]
+
 "examples/**.py" = [
     "FIX002",    # Line contains TODO, consider resolving the issue
     "PLR0904",  # Too many public methods
@@ -304,74 +355,37 @@ max-complexity = 33
     "ANN201", # Missing return type annotation for public function
     "ANN202", # Missing return type annotation for private function
     "ANN204", # Missing return type annotation for special method
-    "ANN205", # Missing return type annotation for staticmethod
     "ANN206", # Missing return type annotation for classmethod
     "ANN401", # Dynamically typed expressions (typing.Any) are disallowed
-    "ASYNC230", # Async functions should not open files with blocking methods like `open`
-    "ASYNC251", # Async functions should not call `time.sleep`
-    "B007",     # Loop control variable not used within loop body
     "B008",     # Do not perform function call `Depends` in argument defaults;
-    "B009",     # [*] Do not call `getattr` with a constant attribute value. It is not any safer than normal property access.
-    "B010",     # [*] Do not call `setattr` with a constant attribute value. It is not any safer than normal property access.
     "B904",     # Within an `except` clause, raise exceptions with `raise ... from err` or `raise ... from None` to distinguish them from errors in exception handling
-    "C403",     # Unnecessary `list` comprehension (rewrite as a `set` comprehension)
-    "C409",     # Unnecessary `list` literal passed to `tuple()` (rewrite as a `tuple` literal)
-    "C414",     # Unnecessary `list` call within `sorted()`
     "FBT001",   # Boolean-typed positional argument in function definition
     "FBT002",   # Boolean default positional argument in function definition
     "FIX002",    # Line contains TODO, consider resolving the issue
-    "N801",     # Class name should use CapWords convention
-    "N802",     # Function name should be lowercase
     "N805",     # First argument of a method should be named self
-    "N806",     # Variable in function should be lowercase
-    "N812",     # Lowercase imported as non-lowercase
     "PERF203",  # `try`-`except` within a loop incurs performance overhead
     "PERF401",  # Use a list comprehension to create a transformed list
-    "PERF402",  # Use `list` or `list.copy` to create a copy of a list
-    "PERF403",  # Use a dictionary comprehension instead of a for-loop
     "PLC0415",  # `import` should be at the top-level of a file
-    "PLC2701",  # Private name import from external module
     "PLR0904",  # Too many public methods
     "PLR0912",  # Too many branches
     "PLR0913",  # Too many arguments in function definition
     "PLR0914",  # Too many local variables
     "PLR0915",  # Too many statements
-    "PLR0916",  # Too many Boolean expressions
     "PLR0917",  # Too many positional arguments
     "PLR1702",  # Too many nested blocks
     "PLR2004",  # Magic value used in comparison this could possibly be fine in the tests folders
     "PLR6201",  # Use a `set` literal when testing for membership
     "PLR6301",  # Method could be a function, class method, or static method
-    "PLW0603",  # Using the global statement to update `SETTINGS` is discouraged
-    "PLW1508",  # Invalid type for environment variable default; expected `str` or `None`
     "PLW3201",  # Bad or misspelled dunder method name `__init_subclass_with_meta__`
-    "PTH100",   # `os.path.abspath()` should be replaced by `Path.resolve()`
-    "PTH102",   # `os.mkdir()` should be replaced by `Path.mkdir()`
-    "PTH103",   # `os.makedirs()` should be replaced by `Path.mkdir(parents=True)`
-    "PTH107",   # `os.remove()` should be replaced by `Path.unlink()`
-    "PTH108",   # `os.unlink()` should be replaced by `Path.unlink()`
-    "PTH109",   # `os.getcwd()` should be replaced by `Path.cwd()`
-    "PTH110",   # `os.path.exists()` should be replaced by `Path.exists()`
-    "PTH112",   # `os.path.isdir()` should be replaced by `Path.is_dir()`
-    "PTH113",   # `os.path.isfile()` should be replaced by `Path.is_file()`
-    "PTH117",   # `os.path.isabs()` should be replaced by `Path.is_absolute()`
-    "PTH118",   # `os.path.join()` should be replaced by `Path` with `/` operator
     "RET503",   # Missing explicit `return` at the end of function able to return non-`None` value
     "RET504",   # Unnecessary assignment before `return` statement
     "S101",     # Use of `assert` detected
     "S105",     # Possible hardcoded password assigned to: "REGEX_PASSWORD"
-    "S108",     # Probable insecure usage of temporary file or directory
-    "S202",     # Uses of `tarfile.extractall()`
-    "S311",     # Standard pseudo-random generators are not suitable for cryptographic purposes
     "S701",     # By default, jinja2 sets `autoescape` to `False`. Consider using `autoescape=True`
     "SLF001",   # Private member accessed
     "TD002",    # Missing author in TODO
     "TD003",    # Missing issue link on the line following this TODO
     "UP007",    # Use X | Y for type annotations
-    "UP012",    # Unnecessary call to encode as UTF-8
-    "UP018",    # Unnecessary {literal_type} call (rewrite as a literal)
-    "UP031",    # Use format specifiers instead of percent format
-    "UP034",    # Avoid extraneous parentheses
 ]
 
 "infrahub_sync/adapters/**.py" = [

@@ -17,6 +17,7 @@ from .errors import (
     RuntimeSchemaError,
     UnsupportedDestinationProfileError,
     UnsupportedSchemaSemanticsError,
+    UnwritableConvergenceIdentityError,
 )
 from .models import ATTRIBUTE_TYPE_DOMAIN, build_runtime_models, mapped_attribute_kinds
 from .projection import (
@@ -50,6 +51,7 @@ __all__ = [
     "RuntimeSideModels",
     "UnsupportedDestinationProfileError",
     "UnsupportedSchemaSemanticsError",
+    "UnwritableConvergenceIdentityError",
     "bind_runtime_models",
     "build_runtime_model_plan",
     "build_runtime_models",

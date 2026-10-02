@@ -1,12 +1,12 @@
 ---
-title: "Guides"
+title: "Developer guides"
 ---
 
-## Guides
+## Developer guides
 
-Step-by-step procedures for adapter tasks. Guides walk you through doing something; for the
-rules that constrain the work see [Guidelines](../guidelines/index.md), and for how the
-system works see [Knowledge](../knowledge/index.md).
+Step-by-step procedures for adapter development, local service development, and release
+qualification. For coding and testing rules, see [Guidelines](../guidelines/index.md); for
+how the system works, see [Knowledge](../knowledge/index.md).
 
 ### Adapters
 
@@ -20,16 +20,24 @@ system works see [Knowledge](../knowledge/index.md).
 
 - [Local development stack](../../development-stack.mdx) — starting the disposable stack, the
   service development loop, and the destructive reset.
+- [NetBox benchmark tiers](netbox-benchmark-tiers.md) — seeding, dumping, restoring, and changing
+  the S, M, and L NetBox tiers.
 
 ### Releases
 
+- [Building a private tester packet](building-a-tester-packet.md) — how to assemble the
+  archive handed to a Linux amd64 tester (the qualified image, the Compose deployment
+  bundle, and an example configuration) and how the packet task checks the three input
+  files against the checksums recorded in `candidate-input.json` during the build step,
+  then checks the qualified image configuration and the bundle and release identity
+  against `qualification.json` from the qualification step.
 - [Qualifying an internal candidate](qualifying-an-internal-candidate.md) — how a teammate
   obtains a pre-release candidate from its Actions run and qualifies it on their own host.
 
 ### Related
 
-- [Adapter knowledge](../knowledge/index.md) — the architecture behind these steps.
-- [Repository tour](../knowledge/repository-tour.md) — where the modules these steps touch live.
-- [Adapter guidelines](../guidelines/index.md) — the rules each step must satisfy.
+- [Knowledge](../knowledge/index.md) — how the sync engine, service, and adapters work.
+- [Repository tour](../knowledge/repository-tour.md) — where to find the code for each part of the system.
+- [Guidelines](../guidelines/index.md) — adapter rules, repository-wide testing, and secret redaction.
 - [Testing tiers](../guidelines/testing-tiers.md) — which test command to run after a step.
 - [Constitution](../constitution.md) — the principles these guides serve.

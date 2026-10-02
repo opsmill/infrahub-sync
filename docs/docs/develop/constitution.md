@@ -6,21 +6,21 @@ title: Project constitution
 
 `infrahub-sync` synchronizes data between infrastructure sources and destinations
 (Infrahub, NetBox, Nautobot, ACI, Prometheus, and others) through per-system adapters
-and a core sync engine. Because every `sync` writes to a live system of record, the
-principles below put safety, reproducibility, and connector consistency ahead of speed.
+and a core sync engine. Because `sync` and `apply` can write to a live system of record,
+the principles below put safety, reproducibility, and connector consistency ahead of speed.
 
 ### Core principles
 
 <!-- vale Infrahub.sentence-case = NO -->
 
-#### I. Read-Only / Dry-Run by Default
+#### I. Read-only and dry-run by default
 
 The non-mutating path is the default path, and applying changes is always a deliberate act.
 
 - `configs` inspection, `runs plan`, and `diff` are non-applying and MUST stay safe to run
   at any time, against any environment, without approval.
-- `sync` mutates a destination system and MUST require explicit user instruction,
-  confirmed target servers, and human approval. It MUST NOT run as an implicit side
+- `sync` and `apply` mutate a destination system and MUST require explicit user instruction,
+  confirmed target servers, and human approval. They MUST NOT run as an implicit side
   effect of another command.
 - A `diff` SHOULD precede a `sync`: surface what would change before changing it.
 - New mutating behavior MUST ship behind explicit flags, never as implicit defaults.
@@ -29,7 +29,7 @@ The non-mutating path is the default path, and applying changes is always a deli
 default path — and every destructive action a reviewed choice — is what prevents an accidental
 command from rewriting production data.
 
-#### II. Sync Idempotency & Safety
+#### II. Sync idempotency and safety
 
 A sync reconciles a source into a destination, and reconciliation MUST be safe to re-run.
 
@@ -45,7 +45,7 @@ A sync reconciles a source into a destination, and reconciliation MUST be safe t
 error handling are what prevent duplicate objects, silent data loss, and corruption of the
 destination system of record.
 
-#### III. Adapter Symmetry & Pattern Consistency
+#### III. Adapter symmetry and pattern consistency
 
 Adapters are the primary extension point; every connector MUST honor the same contract.
 
@@ -62,7 +62,7 @@ Adapters are the primary extension point; every connector MUST honor the same co
 reviewable against a known shape, and guarantee a read-only pathway exists before any
 write path is exposed.
 
-#### IV. Type Safety & Explicit Contracts
+#### IV. Type safety and explicit contracts
 
 The type system enforces correctness at the boundaries where data crosses systems.
 
@@ -78,40 +78,40 @@ The type system enforces correctness at the boundaries where data crosses system
 shapes, missing data, unhandled API errors — before they reach a live system, and they keep
 adapters self-documenting.
 
-#### V. Test Discipline
+#### V. Test discipline
 
 Features and fixes ship with tests at the right level, written alongside the change — not deferred.
 
 - Add unit tests for `utils` and adapter edge cases: timeouts, 401/403, empty pages, pagination.
 - Prefer parametrized tests over loops for configuration parsing and adapter variants.
 - Mark network/integration tests opt-in (for example, `-m integration`); they MAY require running servers.
-- Tests MUST be atomic and single-purpose. Run `uv run pytest -q`.
+- Tests MUST be atomic and single-purpose. Run `uv run invoke tests.tests-unit`.
 
 **Rationale:** Adapters touch many external APIs with brittle edge cases. Tests at the
 boundary are the cheapest place to catch auth, pagination, and empty-response bugs — long
 before a sync hits production.
 
-#### VI. Security, Secrets & Input Boundaries
+#### VI. Security, secrets, and input boundaries
 
 Security is enforced at the boundary, and secrets never leak.
 
 - Credentials MUST come from environment variables or a secret manager — never committed,
   printed, or logged.
 - Never print or guess secrets; tracebacks and structured logs MUST NOT contain credentials.
-- Example configurations MUST be authentic but sanitized — no real tokens, internal hostnames as
-  placeholders.
+- Example configurations MUST be authentic but sanitized. They MUST NOT contain real tokens or
+  internal hostnames; use placeholder values instead.
 - Treat external input (API responses) defensively and validate it; error messages MUST NOT
   leak internal details.
 
 **Rationale:** `infrahub-sync` holds credentials for multiple systems of record. A single
 leaked token or logged secret is a cross-system breach, so secret hygiene is non-negotiable.
 
-#### VII. Simplicity & Maintainability
+#### VII. Simplicity and maintainability
 
 Prefer the simplest solution that works and matches the patterns already in the codebase.
 
-- YAGNI: build what the task needs, not speculative abstraction. A new abstraction needs
-  at least two real callers.
+- Build only what the current task needs. Do not add an abstraction for a possible future
+  need; a new abstraction needs at least two real callers.
 - New dependencies MUST be justified.
 - Generated code (the Python the internal generator produces from YAML configurations) MUST be
   regenerated from its YAML source, never hand-edited.
@@ -123,22 +123,23 @@ reversible.
 
 <!-- vale Infrahub.sentence-case = YES -->
 
-### Security & performance standards
+### Security and performance standards
 
 #### Security requirements
 
 - Credentials only via environment variables or a secret manager; no secrets in code, logs,
   tracebacks, or example configurations.
-- Default to read-only; the mutating `sync` requires explicit approval and confirmed targets.
+- Default to read-only; the mutating `sync` and `apply` commands require explicit approval and
+  confirmed targets.
 - Handle authentication failures (401/403) and authorization boundaries explicitly.
 
-#### Performance & reliability standards
+#### Performance and reliability standards
 
 - Respect pagination and rate limits on every adapter; avoid unbounded fetches.
 - Handle timeouts and transient network errors with clear, retryable behavior.
 - Log object counts and endpoints for observability — never secrets.
 
-### Development workflow & quality gates
+### Development workflow and quality gates
 
 #### Code quality gates
 
@@ -201,4 +202,4 @@ This constitution is the authoritative reference for development standards in th
   sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
-**Version**: 1.0.1 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-09-16
+**Version**: 1.0.2 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-09-29

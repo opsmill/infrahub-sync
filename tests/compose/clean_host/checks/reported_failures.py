@@ -37,7 +37,7 @@ import os
 from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
-from kit import deployment, refuse
+from kit import deployment, prefect_headers, refuse
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -138,6 +138,7 @@ def fetch_logs(flow_run_id: str, offset: int, limit: int) -> Any:  # noqa: ANN40
             "limit": limit,
             "offset": offset,
         },
+        headers=prefect_headers(),
         timeout=HTTP_TIMEOUT_SECONDS,
     )
     if answered.status_code != httpx.codes.OK:
@@ -177,7 +178,7 @@ def prefect_evidence(flow_run_id: str) -> dict[str, Any]:
     The flow run whole, then every log entry. A console shows both, and a failing
     task's log is the one place a worker's own rendering of its inputs appears.
     """
-    state = httpx.get(f"{PREFECT}/flow_runs/{flow_run_id}", timeout=HTTP_TIMEOUT_SECONDS)
+    state = httpx.get(f"{PREFECT}/flow_runs/{flow_run_id}", headers=prefect_headers(), timeout=HTTP_TIMEOUT_SECONDS)
     if state.status_code != httpx.codes.OK:
         refuse(f"the deployment's Prefect server did not answer for flow run {flow_run_id}")
     return {"flow_run_id": flow_run_id, "flow_run": state.json(), "logs": collected_logs(flow_run_id)}

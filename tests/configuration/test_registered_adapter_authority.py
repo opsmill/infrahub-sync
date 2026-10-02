@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
+import inspect
 import sys
 import types
 from collections.abc import Mapping
@@ -11,8 +13,25 @@ from typing import Any, cast
 
 import pytest
 
-from infrahub_sync import SyncAdapter, SyncInstance
+from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
 from infrahub_sync.utils import PlanApplier, get_potenda_from_instance
+
+_REGISTERED_CONTEXT = "_infrahub_sync_registered_context"
+
+
+def _slurpit_api_signature(
+    url: object, *, api_key: object = None, verify: object = True, auto_pagination: object = True, debug: object = False
+) -> None:
+    """Mirror ``slurpit.api.__init__`` of the pinned ``slurpit-sdk``: no ``**kwargs``.
+
+    The adapter passes keywords only, so the optional parameters are keyword-only here.
+    """
+
+
+def _strict_slurpit_api(**kwargs: object) -> object:
+    """Refuse a keyword the real Slurp'it SDK would refuse, then build a stub client."""
+    inspect.signature(_slurpit_api_signature).bind(**kwargs)
+    return types.SimpleNamespace()
 
 
 @dataclass(frozen=True)
@@ -104,9 +123,16 @@ ROWS = (
     AdapterRow(
         "genericrestapi",
         {"url": "https://registered-generic", "token": "registered-token"},
-        {"URL": "https://ambient-generic", "TOKEN": "ambient-token"},
+        {"GENERICRESTAPI_URL": "https://ambient-generic", "GENERICRESTAPI_TOKEN": "ambient-token"},
         {"url": "https://registered-generic", "token": "registered-token"},
         {"url": "https://ambient-generic", "token": "ambient-token"},
+    ),
+    AdapterRow(
+        "slurpitsync",
+        {"url": "https://registered-slurpit", "api_key": "registered-token"},
+        {},
+        {"url": "https://registered-slurpit", "token": "registered-token"},
+        {"url": "https://registered-slurpit", "token": "registered-token"},
     ),
 )
 
@@ -125,6 +151,8 @@ def _install_optional_sdk_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     prometheus_client = types.ModuleType("prometheus_client")
     prometheus_parser = cast("Any", types.ModuleType("prometheus_client.parser"))
     prometheus_parser.text_string_to_metric_families = lambda _text: ()
+    slurpit = cast("Any", types.ModuleType("slurpit"))
+    slurpit.api = _strict_slurpit_api
     for name, module in {
         "pynetbox": pynetbox,
         "pynautobot": pynautobot,
@@ -133,24 +161,27 @@ def _install_optional_sdk_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
         "ipfabric": ipfabric,
         "prometheus_client": prometheus_client,
         "prometheus_client.parser": prometheus_parser,
+        "slurpit": slurpit,
     }.items():
         monkeypatch.setitem(sys.modules, name, module)
 
 
 def _adapter_module(monkeypatch: pytest.MonkeyPatch, row: AdapterRow) -> types.ModuleType:
+    """Load the adapter module with isolated test dependencies."""
     _install_optional_sdk_stubs(monkeypatch)
-    module_name = f"infrahub_sync.adapters.{row.name}"
-    # Record the pre-test entry, or its absence, so teardown restores the real module or
-    # drops the stub-bound one. `monkeypatch.delitem` records nothing when the key is
-    # absent, which is the normal state here, and would leave the stub-bound module cached.
-    # The re-import also rebinds the parent package attribute, which `sys.modules` alone
-    # does not cover: an attribute walk would still reach the stub-bound module.
-    monkeypatch.setitem(sys.modules, module_name, types.ModuleType(module_name))
-    monkeypatch.setattr(
-        importlib.import_module("infrahub_sync.adapters"), row.name, types.ModuleType(module_name), raising=False
-    )
-    del sys.modules[module_name]
-    return importlib.import_module(module_name)
+    package = importlib.import_module("infrahub_sync.adapters")
+    module_names = [row.name]
+    if row.name in {"genericrestapi", "peeringmanager"}:
+        # Fresh REST imports also bind these modules on the parent package.
+        module_names = list(dict.fromkeys(("rest_api_client", "genericrestapi", row.name)))
+    for name in module_names:
+        module_name = f"infrahub_sync.adapters.{name}"
+        # Record both the prior sys.modules entry and package attribute. delitem
+        # alone records nothing when the module was absent before this test.
+        monkeypatch.setitem(sys.modules, module_name, types.ModuleType(module_name))
+        monkeypatch.setattr(package, name, types.ModuleType(module_name), raising=False)
+        monkeypatch.delitem(sys.modules, module_name)
+    return importlib.import_module(f"infrahub_sync.adapters.{row.name}")
 
 
 def _class_name(row: AdapterRow) -> str:
@@ -169,6 +200,7 @@ def _instance(row: AdapterRow, settings: Mapping[str, object]) -> SyncInstance:
 def _capture_client(
     monkeypatch: pytest.MonkeyPatch, row: AdapterRow, module: types.ModuleType
 ) -> list[dict[str, object]]:
+    """Capture the client constructed by the adapter."""
     observed: list[dict[str, object]] = []
     dynamic_module = cast("Any", module)
 
@@ -199,6 +231,21 @@ def _capture_client(
         monkeypatch.setattr(dynamic_module, "PrometheusScrapeClient", capture)
     elif row.name == "ipfabricsync":
         monkeypatch.setattr(dynamic_module, "IPFClient", capture)
+    elif row.name == "slurpitsync":
+
+        def make_slurpit_client(**kwargs: object) -> object:
+            """Create the stub Slurp'it SDK client, refusing keywords the real SDK refuses."""
+            inspect.signature(_slurpit_api_signature).bind(**kwargs)
+            observed.append(kwargs)
+
+            async def get_devices() -> list[object]:  # matches the current async SDK
+                """Return stub devices from the async SDK client."""
+                await asyncio.sleep(0)
+                return []
+
+            return types.SimpleNamespace(device=types.SimpleNamespace(get_devices=get_devices))
+
+        monkeypatch.setattr(dynamic_module.slurpit, "api", make_slurpit_client)
     else:
         monkeypatch.setattr(importlib.import_module("infrahub_sync.adapters.genericrestapi"), "RestApiClient", capture)
     return observed
@@ -222,8 +269,9 @@ def _observed(row: AdapterRow, kwargs: dict[str, Any]) -> dict[str, object]:
             "password": kwargs["password"],
             "token": kwargs["api_token"],
         }
-    if row.name == "ipfabricsync":
-        return {"url": kwargs["base_url"], "token": kwargs["auth"]}
+    if row.name in {"ipfabricsync", "slurpitsync"}:
+        url_key, token_key = {"ipfabricsync": ("base_url", "auth"), "slurpitsync": ("url", "api_key")}[row.name]
+        return {"url": kwargs[url_key], "token": kwargs[token_key]}
     return {"url": str(kwargs["base_url"]).removesuffix("/api/v0").removesuffix("/api"), "token": kwargs["api_token"]}
 
 
@@ -334,8 +382,7 @@ def test_peeringmanager_defaults_reach_genericrestapi_without_overriding_registe
     assert [_observed(row, call) for call in observed] == [row.expected, row.expected]
     for adapter in (instance.source, instance.destination):
         assert adapter.settings is not None
-        assert adapter.settings["url_env_vars"] == ["PEERING_MANAGER_ADDRESS", "PEERING_MANAGER_URL"]
-        assert adapter.settings["token_env_vars"] == ["PEERING_MANAGER_TOKEN"]
+        assert adapter.settings == {**row.settings, "_infrahub_sync_registered_context": True}
 
 
 @pytest.mark.parametrize("adapter_name", ["genericrestapi", "peeringmanager"])
@@ -378,3 +425,208 @@ def test_registered_basic_auth_wins_over_ambient_at_every_genericrestapi_seam(
     assert [_basic_observed(call) for call in observed] == (
         [expected, expected] if construction == "normal" else [expected]
     )
+
+
+@pytest.mark.parametrize("adapter_name", ["genericrestapi", "peeringmanager"])
+@pytest.mark.parametrize("auth_method", ["token", "basic"])
+@pytest.mark.parametrize("environment", ["declared", "namespaced", "alias", "bare"])
+def test_rest_adapter_uses_only_its_namespaced_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    adapter_name: str,
+    auth_method: str,
+    environment: str,
+) -> None:
+    """Declared values survive bare ambient names; namespaced values take precedence."""
+    environment_prefix = "GENERICRESTAPI" if adapter_name == "genericrestapi" else "PEERING_MANAGER"
+    url_name = "GENERICRESTAPI_URL" if adapter_name == "genericrestapi" else "PEERING_MANAGER_ADDRESS"
+    row = next(candidate for candidate in ROWS if candidate.name == adapter_name)
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    settings = {
+        "url": "https://declared-rest",
+        "auth_method": auth_method,
+        "token": "declared-token",
+        "username": "declared-user",
+        "password": "declared-password",
+    }
+    declared = SyncAdapter(name=adapter_name, settings=settings)
+    caller_settings = declared.settings
+    config = SyncConfig(name="rest-environment", source=declared, destination=SyncAdapter(name="infrahub"))
+    for name in ("URL", "ADDRESS", "TOKEN", "USERNAME", "PASSWORD"):
+        monkeypatch.delenv(name, raising=False)
+    for name in (
+        f"{environment_prefix}_URL",
+        f"{environment_prefix}_ADDRESS",
+        f"{environment_prefix}_TOKEN",
+        f"{environment_prefix}_USERNAME",
+        f"{environment_prefix}_PASSWORD",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    if environment == "bare":
+        for name in ("URL", "ADDRESS", "TOKEN", "USERNAME", "PASSWORD"):
+            monkeypatch.setenv(name, "https://bare-rest" if name in {"URL", "ADDRESS"} else f"bare-{name.lower()}")
+    elif environment in {"namespaced", "alias"}:
+        selected_url_name = (
+            f"{environment_prefix}_ADDRESS" if adapter_name == "genericrestapi" else "PEERING_MANAGER_URL"
+        )
+        monkeypatch.setenv(url_name if environment == "namespaced" else selected_url_name, "https://namespaced-rest")
+        for name in ("TOKEN", "USERNAME", "PASSWORD"):
+            value = "namespaced-user" if name == "USERNAME" else f"namespaced-{name.lower()}"
+            monkeypatch.setenv(f"{environment_prefix}_{name}", value)
+
+    constructed = getattr(module, _class_name(row))(target="source", adapter=declared, config=config)
+
+    assert len(observed) == 1
+    assert observed[0]["base_url"] == (
+        "https://namespaced-rest" if environment in {"namespaced", "alias"} else "https://declared-rest"
+    ) + ("/api" if adapter_name == "peeringmanager" else "/api/v0")
+    credential_prefix = "namespaced" if environment in {"namespaced", "alias"} else "declared"
+    if auth_method == "token":
+        assert observed[0]["api_token"] == f"{credential_prefix}-token"
+    else:
+        assert observed[0]["username"] == f"{credential_prefix}-user"
+        assert observed[0]["password"] == f"{credential_prefix}-password"
+    assert declared.settings is caller_settings
+    assert caller_settings == settings
+    if adapter_name == "peeringmanager":
+        assert constructed.settings is not caller_settings
+        assert constructed.settings["username_env_vars"] == ["PEERING_MANAGER_USERNAME"]
+        assert constructed.settings["password_env_vars"] == ["PEERING_MANAGER_PASSWORD"]
+
+
+@pytest.mark.parametrize("adapter_name", ["genericrestapi", "peeringmanager"])
+def test_rest_adapter_import_restores_indirect_modules(adapter_name: str) -> None:
+    """Fresh REST imports leave no cached modules or package attributes behind."""
+    package = importlib.import_module("infrahub_sync.adapters")
+    names = ("rest_api_client", "genericrestapi", "peeringmanager")
+    missing = object()
+    before_modules = {name: sys.modules.get(f"infrahub_sync.adapters.{name}", missing) for name in names}
+    before_attributes = {name: getattr(package, name, missing) for name in names}
+    with pytest.MonkeyPatch.context() as import_patch:
+        test_rest_adapter_uses_only_its_namespaced_environment(import_patch, adapter_name, "basic", "bare")
+    for name in names:
+        assert sys.modules.get(f"infrahub_sync.adapters.{name}", missing) is before_modules[name]
+        assert getattr(package, name, missing) is before_attributes[name]
+
+
+@pytest.mark.parametrize("environment", ["declared", "namespaced"])
+def test_ipfabric_resolves_into_local_settings_without_mutating_caller(
+    monkeypatch: pytest.MonkeyPatch, environment: str
+) -> None:
+    """Environment fallback reaches IP Fabric without writing into SyncAdapter settings."""
+    row = ROWS[5]
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    settings: dict[str, Any] = {"verify_ssl": False}
+    if environment == "declared":
+        settings.update({"base_url": "https://declared-ipfabric", "auth": "declared-token"})
+    declared = SyncAdapter(name="ipfabricsync", settings=settings)
+    caller_settings = declared.settings
+    config = SyncConfig(name="ipfabric-environment", source=declared, destination=SyncAdapter(name="infrahub"))
+    monkeypatch.setenv("IPF_URL", "https://namespaced-ipfabric")
+    monkeypatch.setenv("IPF_TOKEN", "namespaced-token")
+
+    getattr(module, _class_name(row))(target="source", adapter=declared, config=config)
+
+    assert observed == [
+        {
+            "verify": False,
+            "base_url": "https://declared-ipfabric" if environment == "declared" else "https://namespaced-ipfabric",
+            "auth": "declared-token" if environment == "declared" else "namespaced-token",
+        }
+    ]
+    assert declared.settings is caller_settings
+    assert caller_settings == settings
+
+
+def _construct(monkeypatch: pytest.MonkeyPatch, tmp_path: object, row: AdapterRow, instance: SyncInstance) -> None:
+    """Construct both sides of ``instance`` through the real engine seam."""
+    _patch_engine(monkeypatch, tmp_path)
+    module = sys.modules[f"infrahub_sync.adapters.{row.name}"]
+    monkeypatch.setattr("infrahub_sync.utils.import_adapter", lambda **_kwargs: getattr(module, _class_name(row)))
+    get_potenda_from_instance(instance, run_id=f"ambient-{row.name}")
+
+
+def test_registered_ipfabric_never_falls_back_to_ambient_url_or_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """A registered package that declares no IP Fabric URL or token is refused, not completed."""
+    row = next(candidate for candidate in ROWS if candidate.name == "ipfabricsync")
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    for name, value in row.ambient.items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match="registered package"):
+        _construct(monkeypatch, tmp_path, row, _instance(row, {"verify_ssl": True, _REGISTERED_CONTEXT: True}))
+    assert observed == []
+
+
+def test_registered_ipfabric_pins_the_sdk_settings_it_would_read_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """``IPFClient`` reads ``IPF_*`` variables for unset fields, so a registered run sets them."""
+    row = next(candidate for candidate in ROWS if candidate.name == "ipfabricsync")
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    monkeypatch.setenv("IPF_VERIFY", "false")
+    monkeypatch.setenv("IPF_SNAPSHOT", "ambient-snapshot")
+
+    _construct(monkeypatch, tmp_path, row, _instance(row, {**row.settings, _REGISTERED_CONTEXT: True}))
+
+    expected = {**row.settings, "verify": True, "snapshot_id": "$last"}
+    assert observed == [expected, expected]
+
+
+def test_registered_aci_tls_verification_ignores_the_worker_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    """``CISCO_APIC_VERIFY`` cannot turn off a registered package's TLS verification."""
+    row = next(candidate for candidate in ROWS if candidate.name == "aci")
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    monkeypatch.setenv("CISCO_APIC_VERIFY", "false")
+
+    _construct(monkeypatch, tmp_path, row, _instance(row, {**row.settings, "verify": True, _REGISTERED_CONTEXT: True}))
+    _construct(monkeypatch, tmp_path, row, _instance(row, {**row.settings, _REGISTERED_CONTEXT: True}))
+
+    assert [call["verify"] for call in observed] == [True, True, True, True]
+
+
+def test_direct_aci_keeps_the_environment_first_tls_setting(monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
+    """Direct adapter use keeps its documented ``CISCO_APIC_VERIFY`` precedence."""
+    row = next(candidate for candidate in ROWS if candidate.name == "aci")
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    monkeypatch.setenv("CISCO_APIC_VERIFY", "false")
+
+    _construct(monkeypatch, tmp_path, row, _instance(row, {**row.settings, "verify": True}))
+
+    assert [call["verify"] for call in observed] == [False, False]
+
+
+@pytest.mark.parametrize("execution", ["registered", "direct"])
+def test_infrahub_sdk_config_takes_authority_only_from_a_registered_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object, execution: str
+) -> None:
+    """The SDK's ``INFRAHUB_*`` settings cannot add credentials or disable TLS on a registered run."""
+    from infrahub_sdk import Config
+
+    row = next(candidate for candidate in ROWS if candidate.name == "infrahub")
+    module = _adapter_module(monkeypatch, row)
+    observed = _capture_client(monkeypatch, row, module)
+    monkeypatch.setattr(cast("Any", module), "Config", Config)
+    monkeypatch.setenv("INFRAHUB_USERNAME", "ambient-user")
+    monkeypatch.setenv("INFRAHUB_PASSWORD", "ambient-password")
+    monkeypatch.setenv("INFRAHUB_TLS_INSECURE", "true")
+    registered = execution == "registered"
+    settings: dict[str, object] = dict(row.settings)
+    if registered:
+        settings[_REGISTERED_CONTEXT] = True
+
+    _construct(monkeypatch, tmp_path, row, _instance(row, settings))
+
+    configs = [cast("Config", call["config"]) for call in observed]
+    assert [config.api_token for config in configs] == ["registered-token", "registered-token"]
+    assert [(config.username, config.password) for config in configs] == [(None, None), (None, None)]
+    assert [config.tls_insecure for config in configs] == [not registered, not registered]

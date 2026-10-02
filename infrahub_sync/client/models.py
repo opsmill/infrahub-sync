@@ -350,6 +350,7 @@ class PlanResource(_ResourceModel):
     # The consumed destination-schema semantics a registered plan was computed against, so a
     # reviewer reads the binding the apply will compare. `None` for an unregistered plan.
     schema_fingerprint: str | None = None
+    destination_branch: str | None = None
 
 
 class ResultsResource(_ResourceModel):

@@ -36,13 +36,11 @@ from infrahub_sync.product_store import (
     ProductRun,
 )
 from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, SQLiteRunStore
-from tests.product_store.postgresql_isolation import isolated_schema_fixture
+from tests.product_store.postgresql_isolation import postgresql_schema_fixture
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
-
-    from tests.product_store.postgresql_isolation import IsolatedSchema
 
 # Run IDs and receipt identities stay namespaced to one test session, so a case reads
 # only the rows it wrote even when several sessions share one server.
@@ -52,14 +50,7 @@ _WORKER_ID = "5f2d3a0e-2f2c-4a55-9d3f-9a2a1c6f4b71"
 _STARTED_AT = datetime(2026, 9, 3, 9, tzinfo=timezone.utc)
 
 
-@pytest.fixture(name="_postgresql_schema", scope="session")
-def postgresql_schema_fixture() -> Iterator[IsolatedSchema]:
-    """Hold one generated schema for this module's cases, and drop only that schema.
-
-    V3 is unreleased and its development databases are recreated rather than migrated, so
-    the clean schema this module asserts is the one a fresh server bootstraps.
-    """
-    yield from isolated_schema_fixture("the admission contract's PostgreSQL parameter")
+_postgresql_schema = postgresql_schema_fixture("the admission contract's PostgreSQL parameter")
 
 
 @pytest.fixture(params=("sqlite", pytest.param("postgresql", marks=pytest.mark.integration)))

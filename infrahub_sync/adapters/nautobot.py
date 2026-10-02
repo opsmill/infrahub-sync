@@ -8,7 +8,6 @@ import pynautobot  # ty: ignore[unresolved-import]  # optional dep, absent on th
 import pynautobot.core.query  # ty: ignore[unresolved-import]  # optional dep, absent on the Python 3.10 profile
 from diffsync import Adapter, DiffSyncModel
 from pydantic import ValidationError
-from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -148,7 +147,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         run `filter_records` itself (e.g. to log a filtered count) so records
         aren't filtered twice.
         """
-        if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+        if self.target == "source":
             filtered = (
                 raw_records if already_filtered else model.filter_records(records=raw_records, schema_mapping=element)
             )
@@ -225,7 +224,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
             raw_records = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
             total = len(raw_records)
             resource_name = element.mapping.split(".")[-1]
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            if self.target == "source":
                 filtered = model.filter_records(records=raw_records, schema_mapping=element)
                 # Mirror the NetBox adapter's filtered/total log so operators see
                 # the same detail regardless of source system.
@@ -276,12 +275,6 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
                 nodes = [item for item in all_nodes_for_reference]
-                if not nodes and all_nodes_for_reference:
-                    msg = (
-                        f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
-                        f" The available models are {self.store.get_all_model_names()}"
-                    )
-                    raise IndexError(msg)
                 if not field_is_list:
                     if node := get_value(obj, field.mapping):
                         matching_nodes = []
@@ -301,10 +294,6 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                         if not node:
                             continue
                         node_id = node.get("id", None)
-                        if not node_id and isinstance(node, tuple):
-                            node_id = node[1] if node[0] == "id" else None
-                            if not node_id:
-                                continue
                         matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                         if len(matching_nodes) == 0:
                             # TODO: If the peer is a Node we are filtering, we could end up not finding it
@@ -317,16 +306,4 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
 
 
 class NautobotModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        # TODO: To implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        # TODO: To implement
-        return super().update(attrs=attrs)
+    """DiffSync model for nautobot records."""

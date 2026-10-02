@@ -250,8 +250,8 @@ def test_a_class_valued_entry_point_reaches_a_runtime_model_plan(
     module = _plugin_module(with_model=True)
     _publish(monkeypatch, module, value=module.PluginAdapter)
     monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", lambda _package, _branch: snapshot)
-    monkeypatch.setenv("NETBOX_TOKEN", "entry-point-canary")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "entry-point-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "entry-point-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "entry-point-canary")
     content = package_data()
     content["configuration"]["schema_mapping"] = [
         {"name": "BuiltinTag", "mapping": "extras.tags", "fields": [{"name": "name", "mapping": "name"}]}

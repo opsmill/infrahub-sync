@@ -5,14 +5,15 @@ title: Sync instance configuration
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-A configuration package defines the source, destination, and resources for a sync.
-Write the package as YAML or JSON and register it with `infrahub-sync configs register`.
-For a complete package, see `examples/netbox_to_infrahub/package.yml`.
-The service worker resolves the registered configuration and loads installed or
-pre-rendered adapter classes. Run commands select the package by the immutable
-configuration ID and registry version returned during registration.
+The `configuration` object of a [configuration package](../configuration-package.mdx)
+defines the source, the destination, and the mappings of one sync. A package also has an
+optional `format_version` (only `1`, the default) and an optional `credentials` block. For
+a complete package, see `examples/netbox_to_infrahub/package.yml`.
 
-The following settings can be defined:
+Write the package as YAML or JSON and register it with `infrahub-sync configs register`.
+Run commands then select it by its configuration ID and registry version. The service
+worker resolves the registered configuration and loads installed or pre-rendered adapter
+classes. It reads the registered content, not the file.
 
 ## Configuration fields
 
@@ -21,18 +22,46 @@ Describes the overall synchronization configuration.
 | Property | Type | Description | Mandatory |
 | -------- | ---- | ----------- | --------- |
 | `name` | string | Unique identifier for the sync instance. | Yes |
-| `store` | `SyncStore` | Configuration for the optional storage mechanism. | No |
 | `source` | `SyncAdapter` | Configuration for the source adapter. | Yes |
 | `destination` | `SyncAdapter` | Configuration for the destination adapter. | Yes |
 | `order` | List of strings | Order in which objects should be synchronized. Optional — when omitted, infrahub-sync auto-computes tiers from schema_mapping. | No |
-| `schema_mapping` | List of `SchemaMappingModel` | Defines how data is mapped from source to destination. | Yes |
-| `diffsync_flags` | List of `DiffSyncFlags` | Instruct Infrahub Sync how to handle some specific situation without changing the data  | No |
+| `schema_mapping` | List of `SchemaMappingModel` | Defines how data is mapped from source to destination. | No; a package without mappings registers but synchronizes nothing. |
+| `diffsync_flags` | List of DiffSync flag names | Changes which operations a plan contains. `SKIP_UNMATCHED_SRC` removes creates. `SKIP_UNMATCHED_DST` is always in effect. No flag makes apply execute a delete. See [Creates, updates, and deletes](../creating-a-sync-project.mdx#creates-updates-and-deletes). | No |
 
 ### Automatic write order
 
-`order:` is now optional. When it is omitted, infrahub-sync derives a
-write-order graph from the `reference:` entries in each `schema_mapping`
-field and groups kinds into **tiers**:
+`order:` is optional. Omit it and infrahub-sync computes a write order for
+you from the `reference:` entries in `schema_mapping`, so a kind is normally
+written after the kinds it references. A self-reference (a kind referencing
+itself) adds no ordering edge, and a reference outside the kind's
+`identifiers` is optional. When cycles prevent ordering, infrahub-sync discovers
+cycles by visiting kinds in `schema_mapping` order and sorting only each kind's
+references, then drops all optional edges in those discovered cycles in one pass.
+It repeats this until
+ordering succeeds or only identity-reference cycles remain, which cause an error.
+Each dropped edge is logged at WARNING level, and its kind may be written before
+the referenced kind. For every adapter, this stabilizes tiers for cyclic
+configurations that previously varied between runs. Keep `order:` only to override
+the computed order for an adapter quirk.
+
+For an Infrahub destination, a `reference:` to a generic kind waits for every
+mapped concrete kind in that generic's live schema `used_by` list. The generic
+itself is not added as work when it has no mapping. If neither the generic nor
+any of its concrete peer kinds is mapped, the run reports a configuration error
+before loading records. Map the generic or concrete peer kinds, or provide an
+explicit `order:` list.
+Expansion can expose an identity-reference cycle that previously went unnoticed;
+resolve the cycle in your mapping or provide an explicit `order:`. Saved plans that
+reference an Infrahub generic must be created and reviewed again after upgrading,
+because the plan's schema fingerprint now includes its mapped concrete peers.
+
+For every adapter, a dependency required by an identity field stays required even
+when an optional field references the same peer. This applies to concrete references
+and expanded generic references. Cycle breaking preserves that dependency and
+refuses cycles made entirely of identity dependencies.
+
+Internally, infrahub-sync derives a write-order graph from the `reference:`
+entries in each `schema_mapping` field and groups kinds into **tiers**:
 
 - Tier 0: kinds with no outgoing references.
 - Tier N: kinds whose references all live in tiers `0..N-1`.
@@ -40,7 +69,8 @@ field and groups kinds into **tiers**:
 The flattened tier order replaces the manual `order:` list, and every planned operation
 records the tier its kind belongs to. A plan stores its operations ordered by
 `(tier, operation_id)` and an apply executes them in exactly that order, so a kind is
-written after the kinds it references.
+written after the kinds it references — except an optional reference dropped to
+break a cycle, as described above.
 
 If you must override the computed order because it does not match an adapter quirk, keep
 the `order:` list. It always wins: no tiers are computed, and each operation's recorded
@@ -48,14 +78,12 @@ tier is the kind's position in the list you gave. The ordering is the same eithe
 the reviewed operation sequence is what an apply consumes, and there is no separate
 serial or parallel execution mode to choose.
 
-### Sync store
+### Sync data storage
 
-Optional configuration for a storage mechanism used for stateful synchronization.
-
-| Property | Type | Description | Mandatory |
-| -------- | ---- | ----------- | --------- |
-| type | string | Type of the store (for example    `redis`). | Yes |
-| settings | Dictionary | Connection details and other settings for the store. | No |
+V3 keeps sync data in memory during a run. It does not support a configured store,
+including Redis. Remove any `store` block before registering a configuration package.
+Removing the block from your local files does not change a version you already
+registered: register a new version, then run that version.
 
 <!-- vale off -->
 ### Source and Destination
@@ -65,8 +93,32 @@ Configuration for source and destination adapters.
 
 | Property | Type | Description | Mandatory |
 | -------- | ---- | ----------- | --------- |
-| name | string | Identifier for the adapter. | Yes |
-| settings | Dictionary | Adapter-specific settings like `url` and `token`. If not provided, values will be loaded from environment variables. | No |
+| name | string | Name of a bundled adapter. See [Choose an adapter](../adapters/choosing-an-adapter.mdx). | Yes |
+| settings | Dictionary | Adapter-specific settings such as `url` and `token`. A credential-bearing setting holds a `$credential` reference to the package's `credentials` block, never a literal value; see [Credentials](../configuration-package.mdx#credentials). | No |
+
+#### Settings in a registered package
+
+A registered run uses the settings declared in the package:
+
+- The worker connects to the declared `url` of each adapter. Environment URL variables such
+  as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not replace it. The destination schema read uses
+  the same declared URL.
+- Each `$credential` reference resolves when a run starts, from the environment variable that
+  its `credentials` entry names in the worker environment.
+- To change a URL or another setting, edit the package and register a new version with
+  `configs version`. Then run the new version.
+
+Adapter environment variables such as `CISCO_APIC_VERIFY`, `IPF_URL`, or `IPF_TOKEN` do
+not change the address, credentials, or TLS verification of a registered run. A setting
+the package does not declare, including an adapter declared with `settings: null`, stays
+unset, and TLS verification stays on. Transport settings that a package cannot declare
+still come from the worker. For example, the IP Fabric SDK reads `IPF_CERT`, `IPF_PROXY`,
+and `IPF_TIMEOUT`, and a `.env` file in the worker's working directory.
+
+Direct adapter use without a registered package is different. The
+[Prefect remote run](./prefect-remote-run.mdx) and Python callers that load a `config.yml`
+directory let each adapter read its environment variables, such as `NETBOX_URL`, before the
+declared settings. Each adapter page lists its variables.
 
 <!-- vale off -->
 

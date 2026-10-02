@@ -9,7 +9,6 @@ from diffsync import Adapter, DiffSyncModel
 from prometheus_client.parser import (
     text_string_to_metric_families,
 )
-from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -492,7 +491,7 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
 
                     obj["lookup"] = _mk_lookup(obj)
 
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            if self.target == "source":
                 filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
                 logger.info(
@@ -551,16 +550,4 @@ class PrometheusAdapter(DiffSyncMixin, Adapter):
 
 
 class PrometheusModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        # TODO: To implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        # TODO: To implement
-        return super().update(attrs)
+    """DiffSync model for prometheus records."""

@@ -26,17 +26,23 @@ register-to-apply flow was **not** replayed against a live service for this revi
 The end-to-end procedure for connecting a new system to infrahub-sync as a source or a
 destination. This is the canonical procedure; `AGENTS.md` links here.
 
-### What this guide teaches, and what it does not
+### Before you start: the service runs only bundled adapters
 
-The supported V3 route is **an adapter that ships in this repository**. A package names its
-adapter by a short configuration name, and the service resolves that name against a closed
-registry of capability declarations. Adding an adapter therefore means adding two things
-together: the connector, and its entry in that registry.
+The registered Sync service runs only adapters that ship in this repository. A package names
+its adapter by a short configuration name, such as `netbox`, and the service looks that name
+up in a fixed set of capability declarations. A package that names any other adapter is
+refused at registration, and nothing is stored. Installing the adapter where the worker can
+import it does not change this.
 
-Writing a connector that lives outside the distribution is a different situation with a real
-limit at this revision. [The current boundary](#the-current-boundary-for-adapters-outside-the-distribution)
-below records exactly what refuses it and why. Read that section before you start if your
-adapter is not going to live in this repository.
+Adding an adapter therefore means adding two things together: the connector under
+`infrahub_sync/adapters/`, and its capability declaration. This guide teaches that route.
+
+The worked example in Step 1, `examples/custom_adapter/`, shows the shape of an adapter. Its
+`package.yml` is refused at registration like any other package that names an adapter outside
+the repository. Loading an adapter from a file path is development-only behavior; see
+[Local adapters](../../adapters/local-adapters.mdx).
+[The current boundary](#the-current-boundary-for-adapters-outside-the-distribution) below
+records the evidence for this limit.
 
 ### When to add an adapter
 
@@ -107,9 +113,7 @@ class MysystemAdapter(DiffSyncMixin, Adapter):
     def model_loader(self, model_name, model): ...
 
 class MysystemModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(cls, adapter, ids, attrs): ...
-    def update(self, attrs): ...
+    pass
 ```
 
 Follow [Writing an adapter](../guidelines/writing-an-adapter.md): mixin first, `structlog`,
@@ -137,14 +141,10 @@ Write the `obj_to_diffsync` helper to walk `element.fields` — `static`, plain 
 `examples/custom_adapter/custom_adapter_src/custom_adapter.py` has a complete version,
 including the single and list reference cases.
 
-#### Step 4: Implement write methods (destination only)
+#### Step 4: Keep model writes inherited
 
-If the adapter can be a destination, implement `create`, `update` and `delete` on the model to
-mutate the target system. A source-only adapter leaves these deferring to the base.
-
-These are the DiffSync-level write methods. Note that at this revision they are not what the
-registered route calls: the service composes `sync` as plan, verify and apply, and the apply
-leg goes through the planned-write surface instead — see Step 5.
+Models inherit `create`, `update` and `delete` from DiffSync. V3 does not call these methods.
+For a destination that can write, implement the adapter-level planned-write surface in Step 5.
 
 #### Step 5: Implement the planned-write surface (optional, destination only)
 
@@ -177,23 +177,20 @@ refused in the pre-write verification gate — **before any write reaches the de
 with an error naming the adapter class:
 
 ```text
-The destination adapter 'MysystemAdapter' cannot apply a saved plan. Use `infrahub-sync sync`
-for this destination, or apply against a destination whose adapter implements the
-planned-write surface.
+The destination adapter 'MysystemAdapter' cannot apply a saved plan. Use `infrahub-sync diff`
+to review changes without writing, or choose a destination whose adapter implements the
+planned-write surface before running `sync` or `apply`.
 ```
 
-**That refusal's advice is stale at this revision. Do not follow it.** Registered V3 `sync` is
-not an independent compare-and-write path: the service composes it as plan, then verify, then
-apply, under one configuration guard, and `execute_run` refuses `operation="sync"` outright for
-exactly that reason. The composed apply leg runs the same
-`isinstance(destination, PlannedWriteDestination)` check, so a destination lacking the surface
-is refused by `sync` and by saved-plan `apply` alike. Reaching for `sync` does not work around
-the missing surface.
+Registered V3 `sync` runs plan, verify and apply under one configuration guard. The apply
+leg runs the same `isinstance(destination, PlannedWriteDestination)` check as saved-plan `apply`.
+A destination lacking the surface is refused by both commands.
 
-What does still work is everything that does not write: `diff` and plan review
-(`runs plan RUN_ID`) are unaffected. `infrahub` is the only one of the nine adapters shipped in
-this repository that implements the surface today; the other eight can be planned and reviewed
-against, and refused at the write gate.
+For registered runs, only Infrahub currently provides destination schema discovery, so a run
+naming any other destination is refused before it can create a plan
+(`infrahub_sync/runtime_schema/worker.py`). `infrahub` is also the only one of the nine adapters
+shipped in this repository that implements the planned-write surface. Adding another writable
+destination requires both schema discovery and the planned-write surface.
 
 The gate is an `isinstance` check against the protocol, which verifies that both members are
 **present** and not that their signatures match. Get a signature wrong and the refusal will not
@@ -217,8 +214,8 @@ If you do implement it, the method must:
   in each `operation.relationships` entry; it returns one node id per identity, and
   cardinality is your concern, not its.
 - **Decline a `delete` rather than executing one** — raise `SkippedDeleteOperation`
-  (`infrahub_sync.plan.errors`) and touch nothing. Applying deletes is not supported and
-  remains outside the planned-write contract. In practice your method will not see one:
+  (`infrahub_sync.plan.errors`) and touch nothing. V3 apply records deletes and does not
+  execute them, so deletes are outside the planned-write contract. In practice your method will not see one:
   the engine recognizes a `delete` in its
   own apply loop, records its identifier and never dispatches it to the write surface. Raise
   it anyway — it is the defensive half of the contract, for any caller that is not the
@@ -466,13 +463,20 @@ delete and failure behavior.
 
 ### The current boundary for adapters outside the distribution
 
-**At this revision, an adapter installed outside the distribution has no admitted execution
-path.** A package naming it is refused at registration, and no configuration or version row is
-created. This is a confirmed product limitation, recorded here so you do not discover it after
-writing a connector. It is not a configuration mistake you can work around.
+**At this revision, an adapter installed outside the distribution has no qualified execution
+path.** A package whose `source.name` or `destination.name` is not a bundled adapter is refused at
+registration, and no configuration or version row is created. One narrower route is admitted but
+not qualified: a package whose `source.name` is a bundled adapter may set `source.adapter` to the
+import path of an adapter class in an installed distribution, and the worker then runs that class
+as the source (`infrahub_sync/configuration/models.py`, `_require_strict_model`; test
+`test_an_installed_dotted_source_with_an_infrahub_destination_may_execute`). The destination may not
+name one. This is recorded here so you do not discover the boundary after writing a connector.
 
 What the evidence shows, reproduced read-only and in-process against the shipped
-`examples/custom_adapter/package.yml` at revision `61b6a1b9dccae637b522084f563858dfcd5e31a9`:
+`examples/custom_adapter/package.yml` at revision `61b6a1b9dccae637b522084f563858dfcd5e31a9`.
+Points 1 to 3 were checked again at `d9ef147c569a42ec4471bba78ec270c343cdfa28`: the mapping
+still has the same nine keys, and `validate_package_credentials` still refuses the package
+with the same message.
 
 1. `BUILTIN_ADAPTER_CAPABILITIES` in
    [`infrahub_sync/configuration/capabilities.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/configuration/capabilities.py)
@@ -482,7 +486,9 @@ What the evidence shows, reproduced read-only and in-process against the shipped
 2. Validation resolves capabilities from the package's **`source.name`** — the short
    configuration name — and never from `source.adapter`. So an installed dotted import target
    or entry point does not make the package admissible on its own; the missing piece is the
-   capability declaration, and only a bundled adapter has one.
+   capability declaration, and only a bundled adapter has one. When `source.name` is bundled,
+   the capabilities checked are that bundled adapter's, not those of the class `source.adapter`
+   names.
 
 3. The refusal is produced in `_accumulate` in
    [`infrahub_sync/configuration/validation.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/configuration/validation.py),

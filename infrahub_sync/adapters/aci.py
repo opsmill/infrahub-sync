@@ -13,7 +13,6 @@ import urllib3
 from diffsync import Adapter, DiffSyncModel
 from requests import Response
 from requests.adapters import HTTPAdapter
-from typing_extensions import Self
 from urllib3.util.retry import Retry
 
 from infrahub_sync import (
@@ -23,7 +22,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
-from infrahub_sync.configuration.credentials import select_runtime_credential
+from infrahub_sync.configuration.credentials import is_registered_context, select_runtime_credential
 
 from .utils import get_value
 
@@ -205,14 +204,21 @@ class AciAdapter(DiffSyncMixin, Adapter):
         AciModel.set_device_mapping(self.device_mapping)
 
     def _create_aci_client(self, adapter: SyncAdapter) -> AciApiClient:
+        """Build the ACI client with environment-first settings and safe TLS defaults."""
         settings = adapter.settings or {}
         url = select_runtime_credential(settings, "url", ("CISCO_APIC_URL",))
         username = select_runtime_credential(settings, "username", ("CISCO_APIC_USERNAME",))
         password = select_runtime_credential(settings, "password", ("CISCO_APIC_PASSWORD",))
-        # Prefer explicit env var for verify; allow boolean or string values
-        verify_raw = os.environ.get("CISCO_APIC_VERIFY")
-        if verify_raw is None:
+        # Direct use prefers an explicit env var for verify; allow boolean or string values.
+        # An empty env value falls through to the declared setting. This is env-first,
+        # matching select_runtime_credential and this function's own url/username/password
+        # reads. A registered package's declared setting is never overridden.
+        verify_raw = None if is_registered_context(settings) else os.environ.get("CISCO_APIC_VERIFY")
+        if not verify_raw:
             verify_raw = settings.get("verify", True)
+            if verify_raw is None:
+                # A declared `verify: null` is "unset", not "disabled"; keep the secure default.
+                verify_raw = True
         verify = verify_raw.lower() not in ("0", "false", "no") if isinstance(verify_raw, str) else bool(verify_raw)
         api_endpoint = settings.get("api_endpoint", "api")  # Default endpoint, change if necessary
 
@@ -264,9 +270,7 @@ class AciAdapter(DiffSyncMixin, Adapter):
             logger.debug(json.dumps(objs, indent=2))
             total = len(objs)
             # Always apply filters and transforms for the source adapter
-            # Check if this is the source adapter by comparing source name with adapter type
-            is_source_adapter = self.config.source.name.lower() == "aci"
-            if is_source_adapter:
+            if self.target == "source":
                 # Filter records
                 filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
@@ -308,13 +312,6 @@ class AciAdapter(DiffSyncMixin, Adapter):
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
                 nodes = list(all_nodes_for_reference)
 
-                if not nodes and all_nodes_for_reference:
-                    msg = (
-                        f"Unable to get '{field.mapping}' with '{field.reference}' reference from store. "
-                        f"The available models are {self.store.get_all_model_names()}"
-                    )
-                    raise ValueError(msg)
-
                 if field_is_list:
                     data[field.name] = self._process_list_field(obj, field, nodes)
                 else:
@@ -329,7 +326,7 @@ class AciAdapter(DiffSyncMixin, Adapter):
         for node in nodes_in_obj:
             if not node:
                 continue
-            node_id = str(node) if node else ""
+            node_id = str(node)
             matching_nodes = [item for item in nodes if item.local_id == node_id]
             if not matching_nodes:
                 msg = f"Unable to locate the node {field.reference} {node_id}"
@@ -450,17 +447,3 @@ class AciModel(DiffSyncModelMixin, DiffSyncModel):
             return cls._device_mapping.get(str(node_id), node_id)
 
         native_env.filters["aci_device_name"] = aci_device_name
-
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        # TODO: To implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        # TODO: To implement
-        return super().update(attrs)

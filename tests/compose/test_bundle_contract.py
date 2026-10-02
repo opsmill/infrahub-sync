@@ -41,11 +41,19 @@ if TYPE_CHECKING:
 # which is the OCI configuration digest a build recorded, or a published
 # repository pinned to a manifest digest. A tag matches neither.
 IMMUTABLE_REFERENCE = re.compile(r"^(?:sha256:[0-9a-f]{64}|[^\s]+@sha256:[0-9a-f]{64})$")
+TAGGED_INDEX_REFERENCE = re.compile(r"^(?:[^\s/@]+/)*[^/\s@:]+:[^/\s@:]+@sha256:[0-9a-f]{64}$")
+MINIO_IMAGE = (
+    "cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba"
+)
+DEVELOPMENT_COMPOSE = Path(__file__).resolve().parents[2] / "development"
+DESTINATION_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.infrahub.yml"
+PREVIEW_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.preview.yml"
+PREVIEW_ENV = DEVELOPMENT_COMPOSE / "preview.env"
 
-# The two services that keep data, and therefore the only two allowed to hold a
-# named volume.
+# The two durable volumes and the services allowed to mount them. The short-lived
+# owner repair shares the object store's volume before the server starts.
 PERSISTENT_VOLUMES = {"postgres-data", "object-store-data"}
-PERSISTENT_SERVICES = {"postgres", "object-store"}
+PERSISTENT_SERVICES = {"postgres", "object-store-init", "object-store"}
 
 # The test-only override, and the host route it adds -- in the form Compose
 # resolves it to, since the file writes `name:value` and the model renders
@@ -60,13 +68,13 @@ ROUTED_SERVICES = {"sync-worker"}
 # and only the worker runs one, so the worker is the only service that may be
 # given either. Naming them here rather than deriving them from the file keeps
 # this a statement of the contract instead of a restatement of the YAML.
-SOURCE_TOKEN_SETTINGS = ("NETBOX_TOKEN", "NAUTOBOT_TOKEN")
+SOURCE_TOKEN_SETTINGS = ("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN")
 SOURCE_TOKEN_RECEIVERS = {"sync-worker"}
 
 # The destination credential, and the two services that resolve one. The API
 # resolves it for the destination schema reads it serves; the worker resolves it
 # for a run. Nothing else has a destination to reach.
-DESTINATION_CREDENTIAL = "INFRAHUB_API_TOKEN"
+DESTINATION_CREDENTIAL = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
 DESTINATION_CREDENTIAL_RECEIVERS = {"sync-api", "sync-worker"}
 
 # The opt-in client, and the profile that is the only way to resolve it.
@@ -76,6 +84,15 @@ CLI_SERVICE = "sync-cli"
 # would be a service carrying a credential for the service that dispatches it.
 CLIENT_CREDENTIAL = "INFRAHUB_SYNC_API_TOKEN"
 CLIENT_CREDENTIAL_RECEIVERS = {CLI_SERVICE}
+
+# The Prefect API credential: the operator setting `init` generates, the server
+# setting that turns authentication on, and the client setting every Prefect
+# caller presents. The bootstrap job applies the deployment, the API submits and
+# observes runs, and the worker polls for them; nothing else calls Prefect.
+PREFECT_CREDENTIAL_SETTING = "INFRAHUB_SYNC_PREFECT_AUTH_STRING"
+PREFECT_SERVER_CREDENTIAL = "PREFECT_SERVER_API_AUTH_STRING"
+PREFECT_CLIENT_CREDENTIAL = "PREFECT_API_AUTH_STRING"
+PREFECT_CREDENTIAL_RECEIVERS = {"sync-bootstrap", "sync-api", "sync-worker"}
 
 
 def services(model: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -132,7 +149,7 @@ def test_a_sync_service_runs_read_only_over_the_image_declared_scratch(model: di
 
 
 def test_only_postgresql_and_the_object_store_keep_a_named_volume(model: dict[str, Any]) -> None:
-    """Every other writable path disappears with its container, by construction."""
+    """The one-shot owner repair shares only the object store's durable volume."""
     declared = set(model.get("volumes") or {})
     holders = {
         name
@@ -202,8 +219,89 @@ def test_prefect_telemetry_is_off(model: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The Prefect API credential
+# ---------------------------------------------------------------------------
+
+
+def test_the_prefect_server_requires_the_generated_credential(
+    compose_version: str, contract_environment: dict[str, str]
+) -> None:
+    """A caller that can create a deployment in the pool decides what the worker runs.
+
+    So the server is never started without authentication: the credential is the
+    operator's generated setting, and nothing else can stand in for it. Read from
+    raw output and compared privately, because the credential is redacted by name.
+    """
+    del compose_version
+    environment = service(resolve_privately(contract_environment), "prefect-server")["environment"]
+
+    requires_it = environment.get(PREFECT_SERVER_CREDENTIAL) == contract_environment[PREFECT_CREDENTIAL_SETTING]
+    assert requires_it, f"prefect-server does not require {PREFECT_CREDENTIAL_SETTING}"
+
+
+def test_every_prefect_client_presents_that_credential_and_nothing_else_holds_it(
+    compose_version: str, contract_environment: dict[str, str]
+) -> None:
+    """The three Sync processes that call Prefect carry it; the CLI and the jobs do not."""
+    del compose_version
+    resolved = resolve_privately(contract_environment)
+    holders = {
+        name
+        for name, definition in services(resolved).items()
+        if PREFECT_CLIENT_CREDENTIAL in (definition.get("environment") or {})
+    }
+
+    assert holders == PREFECT_CREDENTIAL_RECEIVERS, f"{PREFECT_CLIENT_CREDENTIAL} is given to {sorted(holders)}"
+    for name in sorted(holders):
+        presented = service(resolved, name)["environment"][PREFECT_CLIENT_CREDENTIAL]
+        same = presented == contract_environment[PREFECT_CREDENTIAL_SETTING]
+        assert same, f"{name} presents another credential"
+
+
+def test_the_cli_service_is_not_given_the_prefect_credential(cli_model: dict[str, Any]) -> None:
+    """The operator's client reaches the Sync API alone, so it has no Prefect access to hold."""
+    environment = service(cli_model, CLI_SERVICE).get("environment") or {}
+
+    assert PREFECT_CLIENT_CREDENTIAL not in environment
+
+
+def test_the_bundle_refuses_to_resolve_without_the_prefect_credential(
+    compose_version: str, contract_environment: dict[str, str]
+) -> None:
+    """An empty credential would start an unauthenticated server, so it is not a default."""
+    del compose_version
+    without = {key: value for key, value in contract_environment.items() if key != PREFECT_CREDENTIAL_SETTING}
+    result = compose(["config"], environment={**without, PREFECT_CREDENTIAL_SETTING: ""})
+
+    assert result.returncode != 0
+    assert "Prefect API credential" in result.stderr
+
+
+# ---------------------------------------------------------------------------
 # Immutable image identity
 # ---------------------------------------------------------------------------
+
+
+def test_object_store_uses_the_pinned_minio_build_and_migrates_existing_data(model: dict[str, Any]) -> None:
+    """Ownership repair completes before the server starts without root privileges."""
+    init = service(model, "object-store-init")
+    object_store = service(model, "object-store")
+
+    assert init["image"] == MINIO_IMAGE
+    assert init["user"] == "0"
+    assert init["entrypoint"] == ["/bin/sh", "-ec"]
+    assert 'if [ "$$(stat -c %u:%g /data)" != "65532:65532" ]; then' in init["command"][0]
+    assert "chown -R 65532:65532 /data" in init["command"][0]
+    assert init["restart"] == "no"
+    assert init["network_mode"] == "none"
+    assert init["read_only"] is True
+    assert init["cap_drop"] == ["ALL"]
+    assert init["cap_add"] == ["CHOWN"]
+    assert {mount["source"] for mount in init["volumes"]} == {"object-store-data"}
+    assert object_store["image"] == MINIO_IMAGE
+    assert object_store["user"] == "65532:65532"
+    assert object_store["command"] == ["server", "/data"]
+    assert object_store["depends_on"]["object-store-init"]["condition"] == "service_completed_successfully"
 
 
 def test_every_image_the_bundle_runs_is_named_by_digest(model: dict[str, Any]) -> None:
@@ -219,6 +317,151 @@ def test_every_image_the_bundle_runs_is_named_by_digest(model: dict[str, Any]) -
     )
 
     assert mutable == [], f"these services are not pinned to a digest: {mutable}"
+
+
+@pytest.mark.parametrize("files", [(DESTINATION_COMPOSE,), (DESTINATION_COMPOSE, PREVIEW_COMPOSE)])
+@pytest.mark.parametrize("env_files", [(), (PREVIEW_ENV,)])
+def test_destination_and_preview_default_images_are_tagged_indexes(
+    compose_version: str, files: tuple[Path, ...], env_files: tuple[Path, ...]
+) -> None:
+    """Compose's resolved defaults must retain readable tags and immutable digests."""
+    del compose_version
+    result = compose(["config", "--format", "json"], files=files, env_files=env_files, inherit_environment=False)
+    assert result.returncode == 0, result.stderr
+    configured = json.loads(result.stdout)
+    mutable = sorted(
+        f"{name}: {definition['image']}"
+        for name, definition in services(configured).items()
+        if not TAGGED_INDEX_REFERENCE.fullmatch(str(definition["image"]))
+    )
+    assert mutable == [], f"destination or preview images lack tag and digest: {mutable}"
+
+
+def test_preview_env_tags_match_compose_pin_defaults(compose_version: str) -> None:
+    """Shipped preview tags and digests stay aligned with the Compose defaults."""
+    del compose_version
+    models = []
+    for env_files in ((), (PREVIEW_ENV,)):
+        result = compose(
+            ["config", "--format", "json"],
+            files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
+            env_files=env_files,
+            inherit_environment=False,
+        )
+        assert result.returncode == 0, result.stderr
+        models.append(services(json.loads(result.stdout)))
+    defaults, shipped = models
+    for name in ("task-manager", "infrahub-server", "task-worker", "sync-prefect"):
+        assert shipped[name]["image"] == defaults[name]["image"], name
+
+
+def test_tagged_index_reference_requires_a_tag_after_the_last_slash() -> None:
+    """A registry port cannot masquerade as an image tag."""
+    digest = "sha256:" + "a" * 64
+    assert TAGGED_INDEX_REFERENCE.fullmatch(f"registry:5000/image:tag@{digest}")
+    assert not TAGGED_INDEX_REFERENCE.fullmatch(f"registry:5000/image@{digest}")
+
+
+def test_image_overrides_keep_their_matching_digests(compose_version: str) -> None:
+    """Custom Infrahub and Prefect tags can be paired with their own index digests."""
+    del compose_version
+    infrahub_digest = "@sha256:" + "a" * 64
+    prefect_digest = "@sha256:" + "b" * 64
+    result = compose(
+        ["config", "--format", "json"],
+        files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
+        env_files=(PREVIEW_ENV,),
+        inherit_environment=False,
+        environment={
+            "MESSAGE_QUEUE_DOCKER_IMAGE": "example.invalid/rabbitmq:custom",
+            "INFRAHUB_DOCKER_IMAGE": "example.invalid/infrahub",
+            "VERSION": "custom",
+            "INFRAHUB_DOCKER_IMAGE_DIGEST": infrahub_digest,
+            "PREVIEW_PREFECT_IMAGE_TAG": "custom",
+            "PREVIEW_PREFECT_IMAGE_DIGEST": prefect_digest,
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    configured = services(json.loads(result.stdout))
+    assert configured["message-queue"]["image"] == "example.invalid/rabbitmq:custom"
+    for name in ("task-manager", "infrahub-server", "task-worker"):
+        assert configured[name]["image"] == f"example.invalid/infrahub:custom{infrahub_digest}"
+    assert configured["sync-prefect"]["image"] == f"prefecthq/prefect:custom{prefect_digest}"
+
+
+def test_local_image_override_can_drop_the_digest(compose_version: str) -> None:
+    """An empty digest keeps the preexisting local image override usable."""
+    del compose_version
+    result = compose(
+        ["config", "--format", "json"],
+        files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
+        env_files=(PREVIEW_ENV,),
+        inherit_environment=False,
+        environment={
+            "INFRAHUB_DOCKER_IMAGE": "local-infrahub",
+            "VERSION": "custom",
+            "INFRAHUB_DOCKER_IMAGE_DIGEST": "",
+            "PREVIEW_PREFECT_IMAGE_TAG": "custom",
+            "PREVIEW_PREFECT_IMAGE_DIGEST": "",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    configured = services(json.loads(result.stdout))
+    for name in ("task-manager", "infrahub-server", "task-worker"):
+        assert configured[name]["image"] == "local-infrahub:custom"
+    assert configured["sync-prefect"]["image"] == "prefecthq/prefect:custom"
+
+
+@pytest.mark.parametrize("digest_override", [{}, {"INFRAHUB_DOCKER_IMAGE_DIGEST": ""}])
+def test_direct_compose_local_image_override_drops_the_digest(
+    compose_version: str, digest_override: dict[str, str]
+) -> None:
+    """An image-name override cannot retain the shipped digest without an env file."""
+    del compose_version
+    result = compose(
+        ["config", "--format", "json"],
+        files=(DESTINATION_COMPOSE,),
+        inherit_environment=False,
+        environment={"INFRAHUB_DOCKER_IMAGE": "local-infrahub", **digest_override},
+    )
+    assert result.returncode == 0, result.stderr
+    configured = services(json.loads(result.stdout))
+    for name in ("task-manager", "infrahub-server", "task-worker"):
+        assert configured[name]["image"] == "local-infrahub:1.10.6"
+
+
+def test_direct_compose_digest_override_replaces_the_shipped_digest(compose_version: str) -> None:
+    """A digest-only override must resolve to one valid image reference."""
+    del compose_version
+    digest = "@sha256:" + "a" * 64
+    result = compose(
+        ["config", "--format", "json"],
+        files=(DESTINATION_COMPOSE,),
+        inherit_environment=False,
+        environment={"INFRAHUB_DOCKER_IMAGE_DIGEST": digest},
+    )
+    assert result.returncode == 0, result.stderr
+    configured = services(json.loads(result.stdout))
+    expected = f"registry.opsmill.io/opsmill/infrahub:1.10.6{digest}"
+    for name in ("task-manager", "infrahub-server", "task-worker"):
+        assert configured[name]["image"] == expected
+        assert TAGGED_INDEX_REFERENCE.fullmatch(configured[name]["image"])
+
+
+def test_standalone_version_override_drops_the_shipped_digest(compose_version: str) -> None:
+    """Direct Compose use must not pair a new tag with the shipped digest."""
+    del compose_version
+    result = compose(
+        ["config", "--format", "json"],
+        files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
+        inherit_environment=False,
+        environment={"VERSION": "custom", "PREVIEW_PREFECT_IMAGE_TAG": "custom"},
+    )
+    assert result.returncode == 0, result.stderr
+    configured = services(json.loads(result.stdout))
+    for name in ("task-manager", "infrahub-server", "task-worker"):
+        assert configured[name]["image"] == "registry.opsmill.io/opsmill/infrahub:custom"
+    assert configured["sync-prefect"]["image"] == "prefecthq/prefect:custom"
 
 
 def test_a_tag_only_sync_image_still_resolves_to_the_tag_it_was_given(

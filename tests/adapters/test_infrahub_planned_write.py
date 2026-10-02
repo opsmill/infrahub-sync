@@ -28,6 +28,7 @@ import pytest
 from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.exceptions import AuthenticationError, GraphQLError, ServerNotResponsiveError
 from infrahub_sdk.node import InfrahubNodeSync
+from infrahub_sdk.node.attribute import Attribute
 from infrahub_sdk.schema import NodeSchemaAPI
 from infrahub_sdk.schema.main import (
     AttributeKind,
@@ -42,7 +43,6 @@ from infrahub_sync.adapters.infrahub import (
     InfrahubAdapter,
     InfrahubModel,
     PeerResolver,
-    update_node,
 )
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
@@ -51,6 +51,7 @@ from infrahub_sync.plan.errors import (
     PeerAmbiguousError,
     PeerNotFoundError,
     PlanVerificationError,
+    ReviewedPayloadFieldMissingError,
     UnkeyedCreateRefusedError,
 )
 from infrahub_sync.plan.identity import canonical_identity, operation_id
@@ -264,7 +265,11 @@ class RecordingClient(InfrahubClientSync):
 
     def __init__(self) -> None:
         super().__init__(config=Config(address="http://localhost:8000", api_token="token"))  # noqa: S106
-        self.schema.set_cache(BranchSchema(hash="fixture", nodes=dict(SCHEMAS)))
+        self.live_schema = BranchSchema(hash="fixture", nodes=dict(SCHEMAS))
+        self.schema_responses: list[BranchSchema] = []
+        self.schema_fetches = 0
+        self.schema.set_cache(self.live_schema)
+        self.schema._fetch = self._fetch_schema  # ty: ignore[invalid-assignment]
         self.events: list[tuple[str, Any]] = []
         # Destination peer sets answered by the relationship re-read, per (kind, relationship).
         self.existing_peers: dict[tuple[str, str], list[str]] = {}
@@ -279,6 +284,12 @@ class RecordingClient(InfrahubClientSync):
         # Raised instead of answering the resolver's destination query, so the resolver's own
         # transport and auth edges are reachable offline and separately from the write's.
         self.filter_error: Exception | None = None
+
+    def _fetch_schema(self, branch: str, namespaces: list[str] | None = None) -> BranchSchema:
+        """Return the current test schema when apply refreshes the SDK cache."""
+        _ = branch, namespaces
+        self.schema_fetches += 1
+        return self.schema_responses.pop(0) if self.schema_responses else self.live_schema
 
     # -- the transport edge ------------------------------------------------------------
 
@@ -484,15 +495,11 @@ def issued_reads(client: RecordingClient) -> list[dict[str, Any]]:
 
 @pytest.fixture(autouse=True)
 def _forbid_live_sync_update() -> Iterator[None]:
-    """`InfrahubModel.update` is never reached by the planned-write path (FR-013).
+    """Saved-plan apply must not dispatch through the inherited model update."""
 
-    That method opens with `client.get(id=self.local_id, …)` and `local_id` is populated only
-    by a destination load, which FR-012 forbids a saved-plan apply from performing — so a
-    planned update routed through it would key the read on `None`.
-    """
-
-    def forbidden(self: InfrahubModel, attrs: dict) -> None:  # noqa: ARG001
-        msg = "InfrahubModel.update was reached on the planned-write path; it needs a destination load (FR-012)."
+    def forbidden(*_args: object, **_kwargs: object) -> None:
+        """Fail if saved-plan apply reaches the model's in-memory update method."""
+        msg = "InfrahubModel.update was reached during saved-plan apply."
         raise AssertionError(msg)
 
     with patch.object(InfrahubModel, "update", forbidden):
@@ -554,59 +561,363 @@ def test_no_unmapped_destination_field_is_written() -> None:
     )
 
 
-def test_a_create_omits_a_null_optional_cardinality_one_relationship() -> None:
-    """A scalar null is data, while a create's null optional to-one is absence."""
-    client = RecordingClient()
-    adapter = make_adapter(client)
-    operation = make_operation(
-        kind=TEAM_KIND,
-        identity={"name": "team-a"},
-        payload={"name": "team-a", "description": None, "owner": None},
+def _site_schema_without_description() -> BranchSchema:
+    """A live schema after the reviewed optional direct field was removed."""
+    site = SITE_SCHEMA.model_copy(update={"attributes": [SITE_SCHEMA.attributes[0], SITE_SCHEMA.attributes[2]]})
+    return BranchSchema(hash="without-description", nodes={**SCHEMAS, SITE_KIND: site})
+
+
+def _site_schema_with_relationship_instead_of_description() -> BranchSchema:
+    """A live schema that reused a reviewed scalar name for a relationship."""
+    site = SITE_SCHEMA.model_copy(
+        update={
+            "attributes": [SITE_SCHEMA.attributes[0], SITE_SCHEMA.attributes[2]],
+            "relationships": [
+                RelationshipSchemaAPI(
+                    id="site-description-peer",
+                    name="description",
+                    peer=TAG_KIND,
+                    cardinality=RelationshipCardinality.ONE,
+                    kind=RelationshipKind.ATTRIBUTE,
+                    optional=True,
+                    identifier="site__description",
+                )
+            ],
+        }
     )
+    return BranchSchema(hash="description-as-relationship", nodes={**SCHEMAS, SITE_KIND: site})
 
-    with record_payload_create(client) as calls:
-        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
 
-    _, query = client.mutations[0]
-    assert calls[0]["data"] == {"name": "team-a", "description": None}, (
-        "Filtering must preserve a nullable ordinary scalar while omitting the null optional relationship."
+def _site_schema_with_read_only_description() -> BranchSchema:
+    """A live schema where the reviewed scalar can no longer be written."""
+    description = SITE_SCHEMA.attributes[1].model_copy(update={"read_only": True})
+    site = SITE_SCHEMA.model_copy(
+        update={"attributes": [SITE_SCHEMA.attributes[0], description, SITE_SCHEMA.attributes[2]]}
     )
-    assert "owner" not in query, f"A null optional to-one relationship must be omitted. Rendered:\n{query}"
-    assert 'id: "None"' not in query, f"A null relationship must never become the string id `None`. Rendered:\n{query}"
+    return BranchSchema(hash="read-only-description", nodes={**SCHEMAS, SITE_KIND: site})
 
 
-def test_an_update_warns_that_a_null_optional_cardinality_one_relationship_is_a_no_op(
-    captured_logs: pytest.LogCaptureFixture,
+def test_direct_apply_refuses_the_entire_plan_before_any_write_when_a_reviewed_field_is_removed(
+    tmp_path: Path,
 ) -> None:
-    """The v1 plan cannot distinguish an absent optional peer from an intended clear."""
+    """A later operation's missing field must stop the first operation too."""
+    directory = apply_run_dir(tmp_path)
+    first = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
+    second = operation_record(
+        kind=SITE_KIND,
+        identity={"name": "site-b"},
+        payload={"name": "site-b", "description": "reviewed"},
+    )
+    write_artifact(directory, [first, second], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    client.live_schema = _site_schema_without_description()
+
+    state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "failed"
+    assert isinstance(outcome, ReviewedPayloadFieldMissingError)
+    assert SITE_KIND in str(outcome)
+    assert "description" in str(outcome)
+    assert "no destination write was attempted" in str(outcome)
+    assert "Create a new plan" in str(outcome)
+    assert client.mutations == []
+
+
+@pytest.mark.parametrize(
+    "drifted_schema",
+    [_site_schema_with_relationship_instead_of_description(), _site_schema_with_read_only_description()],
+    ids=["scalar-became-relationship", "scalar-became-read-only"],
+)
+def test_direct_apply_refuses_unwritable_reviewed_field_before_any_write(
+    tmp_path: Path, drifted_schema: BranchSchema
+) -> None:
+    """A later field that is no longer a writable scalar stops the whole plan."""
+    directory = apply_run_dir(tmp_path)
+    first = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
+    second = operation_record(
+        kind=SITE_KIND,
+        identity={"name": "site-b"},
+        payload={"name": "site-b", "description": "reviewed"},
+    )
+    write_artifact(directory, [first, second], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    client.live_schema = drifted_schema
+
+    state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "failed"
+    assert isinstance(outcome, ReviewedPayloadFieldMissingError)
+    assert SITE_KIND in str(outcome)
+    assert "description" in str(outcome)
+    assert "Create a new plan" in str(outcome)
+    assert client.mutations == []
+
+
+def test_null_scalar_changed_to_relationship_refuses_whole_plan_and_operation(tmp_path: Path) -> None:
+    """A reviewed null remains a direct field even if its name becomes a relationship."""
+    directory = apply_run_dir(tmp_path)
+    first = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
+    second = operation_record(
+        kind=SITE_KIND,
+        identity={"name": "site-b"},
+        payload={"name": "site-b", "description": None},
+    )
+    write_artifact(directory, [first, second], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    client.live_schema = _site_schema_with_relationship_instead_of_description()
+    adapter = make_adapter(client)
+
+    state, outcome = apply_and_record_state(engine_over(directory, adapter))
+
+    assert state == "failed"
+    assert isinstance(outcome, ReviewedPayloadFieldMissingError)
+    assert "description" in str(outcome)
+    assert client.mutations == []
+
+    operation = make_operation(
+        kind=SITE_KIND,
+        identity={"name": "site-b"},
+        payload={"name": "site-b", "description": None},
+    )
+    with pytest.raises(ReviewedPayloadFieldMissingError, match="description"):
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+    assert client.mutations == []
+
+
+def test_preflight_schema_transport_failure_names_the_run_without_a_write(tmp_path: Path) -> None:
+    """A failed schema refresh reports the run and leaves the destination untouched."""
+    directory = apply_run_dir(tmp_path)
+    operation = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
+    write_artifact(directory, [operation], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    failure = ServerNotResponsiveError(url="http://localhost:8000/graphql/main", timeout=10)
+
+    with patch.object(client.schema, "_fetch", side_effect=failure):
+        state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "failed"
+    assert isinstance(outcome, PlanVerificationError)
+    assert APPLY_RUN_ID in str(outcome)
+    assert "destination timeout" in str(outcome)
+    assert "Nothing was written" in str(outcome)
+    assert outcome.__cause__ is failure
+    assert client.mutations == []
+
+
+def test_operation_boundary_schema_drift_keeps_an_accurate_partial_record(tmp_path: Path) -> None:
+    """A cached schema change after preflight stops the affected operation."""
+    directory = apply_run_dir(tmp_path)
+    first = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
+    second = operation_record(
+        kind=SITE_KIND,
+        identity={"name": "site-b"},
+        payload={"name": "site-b", "description": "reviewed"},
+    )
+    write_artifact(directory, [first, second], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    execute = client.execute_graphql
+
+    def change_cached_schema_after_first_write(*args: Any, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+        response = execute(*args, **kwargs)
+        client.schema.set_cache(_site_schema_without_description())
+        return response
+
+    with patch.object(client, "execute_graphql", change_cached_schema_after_first_write):
+        state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "failed"
+    assert isinstance(outcome, OperationApplyFailedError)
+    assert isinstance(outcome.__cause__, ReviewedPayloadFieldMissingError)
+    assert SITE_KIND in str(outcome)
+    assert "description" in str(outcome)
+    assert "Create a new plan" in str(outcome)
+    assert outcome.apply_record.applied_operations == (first["operation_id"],)
+    assert outcome.apply_record.failed_operation == second["operation_id"]
+    assert outcome.apply_record.failed_operation_wrote is False
+    assert len(client.mutations) == 1
+    assert client.schema_fetches == 1
+
+
+def test_operation_refuses_a_kind_removed_from_the_cached_schema() -> None:
+    """A removed kind reports its reviewed fields before any mutation."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    client.schema.set_cache(
+        BranchSchema(hash="without-site", nodes={k: v for k, v in SCHEMAS.items() if k != SITE_KIND})
+    )
+    operation = make_operation(kind=SITE_KIND, identity={"name": "site-a"}, payload={"name": "site-a"})
+
+    with pytest.raises(ReviewedPayloadFieldMissingError) as caught:
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert SITE_KIND in str(caught.value)
+    assert "name" in str(caught.value)
+    assert "No write was made" in str(caught.value)
+    assert client.mutations == []
+
+
+def test_sdk_payload_omission_refuses_the_operation_before_the_mutation() -> None:
+    """A renderer regression cannot silently discard a reviewed scalar field."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    operation = make_operation(
+        kind=SITE_KIND,
+        identity={"name": "site-a"},
+        payload={"name": "site-a", "description": "reviewed"},
+    )
+    render = client.schema.generate_payload_create
+
+    def omit_description(**kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+        payload = render(**kwargs)
+        payload.pop("description")
+        return payload
+
+    with (
+        patch.object(client.schema, "generate_payload_create", omit_description),
+        pytest.raises(ReviewedPayloadFieldMissingError) as caught,
+    ):
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert SITE_KIND in str(caught.value)
+    assert "description" in str(caught.value)
+    assert "No write was made" in str(caught.value)
+    assert client.mutations == []
+
+
+def test_sdk_node_input_omission_refuses_the_operation_before_the_mutation() -> None:
+    """A field present in the SDK payload must also reach the node mutation input."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    operation = make_operation(
+        kind=SITE_KIND,
+        identity={"name": "site-a"},
+        payload={"name": "site-a", "description": "reviewed"},
+    )
+    drifted_site = _site_schema_without_description().nodes[SITE_KIND]
+
+    def create_with_drifted_node(*, kind: str, data: dict[str, Any]) -> InfrahubNodeSync:
+        assert kind == SITE_KIND
+        return InfrahubNodeSync(client=client, schema=drifted_site, data=data)
+
+    with (
+        patch.object(client, "create", side_effect=create_with_drifted_node),
+        pytest.raises(ReviewedPayloadFieldMissingError) as caught,
+    ):
+        adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert SITE_KIND in str(caught.value)
+    assert "description" in str(caught.value)
+    assert "SDK mutation" in str(caught.value)
+    assert client.mutations == []
+
+
+@pytest.mark.parametrize("action", ["create", "update"])
+def test_null_direct_scalar_is_written_and_read_back(action: str) -> None:
+    """A reviewed null is sent explicitly and remains null in the SDK's saved node."""
+    client = RecordingClient()
+    adapter = make_adapter(client)
+    operation = make_operation(
+        kind=SITE_KIND,
+        action=action,
+        identity={"name": "site-a"},
+        payload={"name": "site-a", "description": None},
+    )
+
+    node_id = adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
+
+    assert len(client.mutations) == 1
+    assert re.search(r"description:\s*\{\s*value:\s*null", client.mutations[0][1])
+    saved_node = client.store.get(key=node_id, kind=SITE_KIND)
+    assert isinstance(saved_node, InfrahubNodeSync)
+    assert isinstance(saved_node.description, Attribute)
+    assert saved_node.description.value is None
+
+
+def test_null_direct_scalar_on_later_operation_does_not_fail_apply(tmp_path: Path) -> None:
+    """A null scalar in a later operation cannot leave a partial apply record."""
+    directory = apply_run_dir(tmp_path)
+    first = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
+    second = operation_record(
+        kind=SITE_KIND,
+        identity={"name": "site-b"},
+        payload={"name": "site-b", "description": None},
+    )
+    write_artifact(directory, [first, second], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+
+    state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "applied"
+    assert isinstance(outcome, ApplyRecord)
+    assert outcome.applied_operations == (first["operation_id"], second["operation_id"])
+    assert len(client.mutations) == 2
+    assert re.search(r"description:\s*\{\s*value:\s*null", client.mutations[1][1])
+
+
+def test_sdk_omission_in_later_operation_refuses_plan_before_any_write(tmp_path: Path) -> None:
+    """Preflight renders all reviewed direct values before dispatching the first write."""
+    directory = apply_run_dir(tmp_path)
+    first = operation_record(kind=SITE_KIND, identity={"name": "site-a"})
+    second = operation_record(
+        kind=SITE_KIND,
+        identity={"name": "site-b"},
+        payload={"name": "site-b", "description": "reviewed"},
+    )
+    write_artifact(directory, [first, second], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+    render = client.schema.generate_payload_create
+
+    def omit_description(**kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+        payload = render(**kwargs)
+        payload.pop("description", None)
+        return payload
+
+    with patch.object(client.schema, "generate_payload_create", omit_description):
+        state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "failed"
+    assert isinstance(outcome, ReviewedPayloadFieldMissingError)
+    assert SITE_KIND in str(outcome)
+    assert "description" in str(outcome)
+    assert client.mutations == []
+
+
+def test_direct_apply_writes_every_reviewed_field_without_drift(tmp_path: Path) -> None:
+    """The checked no-drift path still writes the optional field and records success."""
+    directory = apply_run_dir(tmp_path)
+    operation = operation_record(
+        kind=SITE_KIND,
+        identity={"name": "site-a"},
+        payload={"name": "site-a", "description": "reviewed"},
+    )
+    write_artifact(directory, [operation], run_id=APPLY_RUN_ID, source_snapshot=[])
+    client = RecordingClient()
+
+    state, outcome = apply_and_record_state(engine_over(directory, make_adapter(client)))
+
+    assert state == "applied"
+    assert isinstance(outcome, ApplyRecord)
+    assert outcome.applied_operations == (operation["operation_id"],)
+    assert len(client.mutations) == 1
+    assert re.search(r'description:\s*\{\s*value:\s*"reviewed"', client.mutations[0][1])
+    assert client.schema_fetches == 1
+
+
+@pytest.mark.parametrize("action", ["create", "update"])
+def test_ambiguous_null_optional_relationship_is_refused(action: str) -> None:
+    """A payload null cannot be assumed to be a relationship after schema drift."""
     client = RecordingClient()
     adapter = make_adapter(client)
     operation = make_operation(
         kind=TEAM_KIND,
-        action="update",
+        action=action,
         identity={"name": "team-a"},
         payload={"name": "team-a", "description": None, "owner": None},
     )
 
-    with record_payload_create(client) as calls:
+    with pytest.raises(ReviewedPayloadFieldMissingError, match="owner"):
         adapter.apply_planned_operation(operation=operation, peers=PeerResolver(adapter))
-
-    assert calls[0]["data"] == {"name": "team-a", "description": None}, (
-        "The ambiguous relationship null must be a no-op without dropping a nullable scalar null."
-    )
-    assert client.mutation_names == [f"{TEAM_KIND}Upsert"], "The ordinary update must still be applied."
-    _, query = client.mutations[0]
-    assert "owner" not in query
-    assert 'id: "None"' not in query
-    warnings = [record for record in captured_logs.records if "cannot distinguish" in record.getMessage()]
-    assert len(warnings) == 1
-    warning = warnings[0]
-    assert warning.levelno >= logging.WARNING
-    message = warning.getMessage()
-    assert operation.operation_id in message
-    assert TEAM_KIND in message
-    assert "owner" in message
-    assert "not cleared" in message
+    assert client.mutations == []
 
 
 def test_a_null_mandatory_cardinality_one_relationship_is_refused_before_any_write() -> None:
@@ -633,7 +944,7 @@ def test_a_null_mandatory_cardinality_one_relationship_is_refused_before_any_wri
 
 
 def test_generate_payload_create_receives_the_source_owner_and_protection_arguments() -> None:
-    """FR-013: lineage parity with the live `sync` create path."""
+    """FR-013: the planned create passes the source, owner, and protection arguments to payload generation."""
     client = RecordingClient()
     adapter = make_adapter(client, source="source-account-1", owner="owner-account-1")
 
@@ -920,35 +1231,25 @@ def test_a_reference_only_identity_is_refused_before_querying_not_silently_bound
     assert "identifiers" in next_action, f"The next action must point at the identity that derived no filter: {message}"
 
 
-def test_a_partial_filter_warns_once_per_kind_naming_the_dropped_components(
+def test_a_direct_resolve_on_a_partial_identity_filters_on_the_components_it_has(
     captured_logs: pytest.LogCaptureFixture,
 ) -> None:
-    """Silently skipped HFID components are disclosed at apply time, per kind."""
+    """The resolver alone still builds a filter from the components supplied; it no longer warns.
+
+    Planned apply refuses a partial peer key before lookup (`_refuse_partial_key_peer_filter`),
+    so this covers only the direct-resolver path.
+    """
     client = RecordingClient()
-    client.filter_results = [
-        [make_node(client, DEVICE_KIND, "device-id-1")],
-        [make_node(client, DEVICE_KIND, "device-id-2")],
-    ]
-    adapter = make_adapter(client)
-    resolver = PeerResolver(adapter)
+    client.filter_results = [[make_node(client, DEVICE_KIND, "device-id-1")]]
+    resolver = PeerResolver(make_adapter(client))
 
-    first = resolver.resolve(peer_kind=DEVICE_KIND, identity={"name": "device-a"}, referring_operation_id="op_0002")
-    second = resolver.resolve(peer_kind=DEVICE_KIND, identity={"name": "device-b"}, referring_operation_id="op_0003")
+    resolved = resolver.resolve(peer_kind=DEVICE_KIND, identity={"name": "device-a"}, referring_operation_id="op_0002")
 
-    assert (first, second) == ("device-id-1", "device-id-2"), "Partial filters warn; they do not refuse."
-    assert len(client.resolver_queries) == 2, "Both resolutions must still query the destination."
-    assert all("name__value" in query and "site__name__value" not in query for query in client.resolver_queries)
-
-    warnings = [record for record in captured_logs.records if "PARTIAL filter" in record.getMessage()]
-    assert len(warnings) == 1, f"One warning per kind per apply, got {[record.getMessage() for record in warnings]}."
-    record = warnings[0]
-    assert record.levelno >= logging.WARNING, (
-        f"The report is pinned to WARNING because --quiet floors the logger there; it was emitted at "
-        f"{record.levelname}."
-    )
-    message = record.getMessage()
-    assert DEVICE_KIND in message, "The warning must name the destination kind."
-    assert "site__name__value" in message, "The warning must name the dropped component."
+    assert resolved == "device-id-1"
+    assert len(client.resolver_queries) == 1
+    assert "name__value" in client.resolver_queries[0]
+    assert "site__name__value" not in client.resolver_queries[0]
+    assert not [record for record in captured_logs.records if "PARTIAL filter" in record.getMessage()]
 
 
 # ---------------------------------------------------------------------------------------
@@ -987,39 +1288,6 @@ def test_a_multi_match_peer_refuses_naming_the_match_count() -> None:
     assert "site-a" in message, "The refusal must name the peer identity."
     assert "2 objects" in message, "The refusal must name the match count."
     assert not client.mutations, "The operation must not be dispatched."
-
-
-def test_the_live_sync_write_path_still_warns_and_continues_on_an_unresolvable_peer(
-    captured_logs: pytest.LogCaptureFixture,
-) -> None:
-    """AD048: the refusal is scoped to the planned-write resolver and has not leaked out."""
-    client = RecordingClient()
-    node = InfrahubNodeSync(client=client, schema=DEVICE_SCHEMA, data={"id": "device-1", "name": {"value": "device-a"}})
-
-    returned = update_node(
-        node=node,
-        attrs={"name": "device-a", "site": "a-key-no-store-holds"},
-        client=client,
-        node_schema=DEVICE_SCHEMA,
-    )
-
-    assert returned is node, "The live path returns the node it was given rather than raising."
-    warnings = [record for record in captured_logs.records if "Ignored" in record.getMessage()]
-    assert warnings, "The live path warns about the peer it could not resolve."
-    assert not client.mutations, "`update_node` itself issues no write; its caller saves."
-
-
-def test_the_live_sync_write_path_still_drops_an_unresolvable_cardinality_many_peer() -> None:
-    """AD048: the cardinality-many arm of the live path is unchanged too."""
-    client = RecordingClient()
-    client.existing_peers[TEAM_KIND, "members"] = []
-    node = InfrahubNodeSync(
-        client=client, schema=TEAM_SCHEMA, data={"id": "team-1", "name": {"value": "team-a"}, "members": []}
-    )
-
-    update_node(node=node, attrs={"members": ["a-key-no-store-holds"]}, client=client, node_schema=TEAM_SCHEMA)
-
-    assert not client.mutations, "Nothing is written and nothing is raised."
 
 
 # ---------------------------------------------------------------------------------------
@@ -1434,7 +1702,7 @@ def test_a_destination_missing_only_the_resolver_factory_is_refused_before_any_w
     assert "DestinationWithoutThePeerResolverFactory" in message, (
         "The refusal names the adapter it refused, which is why the verifier receives a name (AD058)."
     )
-    assert "infrahub-sync sync" in message
+    assert "infrahub-sync diff" in message
     assert destination.dispatched == [], "Refused before any write, not part-way through one."
 
 

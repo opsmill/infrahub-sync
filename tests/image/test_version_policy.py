@@ -29,6 +29,7 @@ LOCK = REPO_ROOT / "uv.lock"
 RUNTIME_BASE_TAG = "python:3.13-slim-bookworm"
 RUNTIME_PYTHON_FLOOR = Version("3.13.14")
 PCRE2_SECURITY_RELEASE = "10.42-1+deb12u1"
+OPENSSL_SECURITY_RELEASE = "3.0.22-1~deb12u1"
 
 PYARROW_FIX = Version("23.0.1")
 
@@ -73,11 +74,24 @@ def test_the_runtime_base_names_the_supported_python_series() -> None:
     assert base.startswith(f"{RUNTIME_BASE_TAG}@sha256:"), base
 
 
+def base_stage_install_step() -> str:
+    """Return the base stage's `apt-get install` step, so a pin is only accepted there."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    base_stage = dockerfile.split("FROM base AS build", 1)[0]
+    found = re.search(r"apt-get install.*?(?=\n\n)", base_stage, re.DOTALL)
+    assert found is not None, f"no apt-get install step in the base stage of {DOCKERFILE}"
+    return found.group(0)
+
+
 def test_the_runtime_installs_the_pcre2_security_release() -> None:
     """The pinned base predates CVE-2026-86145's Debian security update."""
-    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    assert f"libpcre2-8-0={PCRE2_SECURITY_RELEASE}" in base_stage_install_step()
 
-    assert f"libpcre2-8-0={PCRE2_SECURITY_RELEASE}" in dockerfile
+
+@pytest.mark.parametrize("package", ["libssl3", "openssl"])
+def test_the_runtime_installs_the_openssl_security_release(package: str) -> None:
+    """The pinned base predates the Debian security update for CVE-2026-75803 and three related findings."""
+    assert f"{package}={OPENSSL_SECURITY_RELEASE}" in base_stage_install_step()
 
 
 @pytest.mark.parametrize(("package", "accepted"), sorted(FIX_RANGES.items()))

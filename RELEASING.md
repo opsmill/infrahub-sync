@@ -43,7 +43,7 @@ The bump labels live in `.github/version-drafter.yml`. Apply them manually:
 | Contains `chore` | `ci/skip-changelog` |
 | Contains `deprecat` | `type/deprecated` |
 
-Every pull request into `main` must also carry a news fragment under `changelog/` — `changelog-check.yml` enforces this. See the Changelog section of [AGENTS.md](AGENTS.md).
+Every pull request into `main` must also carry a news fragment under `changelog/`. `changelog-check.yml` holds that check, but its pull request trigger is disabled while the towncrier rollout is reconsidered, so reviewers check for the fragment. See the Changelog section of [AGENTS.md](AGENTS.md).
 
 ### Step 2: Merge to main
 
@@ -194,7 +194,7 @@ Ensure PRs have appropriate labels before merging. If labels are missing, the ve
 
 | Workflow | Type | Purpose |
 |----------|------|---------|
-| `changelog-check.yml` | PR into `main` | Requires a news fragment on every pull request |
+| `changelog-check.yml` | Manual dispatch (pull request trigger disabled) | Requires a news fragment on every pull request |
 | `trigger-push-stable.yml` | Dispatched on `main` | Resolves the version, bumps `pyproject.toml`, assembles the changelog, opens the release pull request |
 | `release-publish.yml` | Push to `main` | Tags and publishes the GitHub Release when a `release/*` pull request lands |
 | `trigger-release.yml` | GitHub Release published | Invokes the publish workflow |

@@ -139,11 +139,12 @@ filter. Each `SchemaMappingFilter` has a `field` (dot-notation path), an `operat
 ### Transforms
 
 Transforms rewrite a field with a Jinja2 expression after filtering. Each
-`SchemaMappingTransform` names a `field` and an `expression`. Expressions run in a Jinja2
-`NativeEnvironment`, so the result keeps its native Python type (`list`, `dict`, `bool`,
-`int`, `str`) instead of being stringified, and `StrictUndefined` makes a missing key fail
-fast rather than silently producing an empty string. The whole record is available as
-template context:
+`SchemaMappingTransform` names a `field` and an `expression`. Expressions run in
+`SandboxedNativeEnvironment` (`infrahub_sync/__init__.py`): a Jinja2
+`ImmutableSandboxedEnvironment` with native rendering, so the result keeps its native Python
+type (`list`, `dict`, `bool`, `int`, `str`) instead of being stringified, and
+`StrictUndefined` makes a missing key fail rather than silently producing an empty string.
+The whole record is available as template context:
 
 ```yaml
 transforms:
@@ -152,6 +153,16 @@ transforms:
   - field: tags
     expression: "{{ tags + ['synced'] }}"
 ```
+
+Expressions come from registered configuration packages and render inside the Sync worker,
+so the sandbox is the control that keeps them from running arbitrary code there. It refuses
+private and underscore-prefixed attributes, unsafe callables, and methods that change a
+value in place, such as `list.append` or `dict.update`; build a new value instead, as the
+`tags` example does. A refused access raises `SecurityError`, which `apply_transform`
+reports as `ValueError("Failed to transform ...")`, the same failure a missing key produces.
+Admission parses each expression for syntax only; filter names are bound at render time.
+Filters an adapter registers through `_add_custom_filters` are ordinary Python and are not
+sandboxed, so keep them free of side effects.
 
 ### See also
 

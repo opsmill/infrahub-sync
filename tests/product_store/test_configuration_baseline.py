@@ -29,13 +29,11 @@ from infrahub_sync.product_store import (
     ProductRun,
 )
 from infrahub_sync.product_store.store import FileArtifactStore, PostgreSQLRunStore, SQLiteRunStore
-from tests.product_store.postgresql_isolation import isolated_schema_fixture
+from tests.product_store.postgresql_isolation import postgresql_schema_fixture
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
-
-    from tests.product_store.postgresql_isolation import IsolatedSchema
 
 _SESSION = uuid4().hex[:10]
 _WORKER_ID = "2b7c9d41-6e0a-4f18-8c53-1d4e7a9b0c62"
@@ -45,10 +43,7 @@ _TerminalState = Literal["completed", "failed", "interrupted"]
 _TerminalOutcome = Literal["succeeded", "failed", "ambiguous"]
 
 
-@pytest.fixture(name="_postgresql_schema", scope="session")
-def postgresql_schema_fixture() -> Iterator[IsolatedSchema]:
-    """Hold one generated schema for this module's cases, and drop only that schema."""
-    yield from isolated_schema_fixture("the baseline contract's PostgreSQL parameter")
+_postgresql_schema = postgresql_schema_fixture("the baseline contract's PostgreSQL parameter")
 
 
 @pytest.fixture(params=("sqlite", pytest.param("postgresql", marks=pytest.mark.integration)))

@@ -34,12 +34,16 @@ from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 from diffsync import Adapter
+from infrahub_sdk.schema.main import GenericSchemaAPI
 
 from infrahub_sync import (
     SchemaMappingField,
+    SchemaMappingFilter,
     SchemaMappingModel,
+    SchemaMappingTransform,
     SyncAdapter,
     SyncConfig,
+    utils,
 )
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, InfrahubModel
 
@@ -93,6 +97,45 @@ class InfraTag(InfrahubModel):
     _attributes = ()
 
     name: str
+
+
+class LocationBuilding(InfrahubModel):
+    """Building loaded before its floor."""
+
+    _modelname = "LocationBuilding"
+    _identifiers = ("name",)
+    _attributes = ()
+    name: str
+
+
+class LocationFloor(InfrahubModel):
+    """Floor that hosts a device and a rack unit."""
+
+    _modelname = "LocationFloor"
+    _identifiers = ("name",)
+    _attributes = ("parent",)
+    name: str
+    parent: str | None = None
+
+
+class LocationRackUnit(InfrahubModel):
+    """Rack unit at a deeper dependency tier."""
+
+    _modelname = "LocationRackUnit"
+    _identifiers = ("name",)
+    _attributes = ("parent",)
+    name: str
+    parent: str | None = None
+
+
+class DcimDevice(InfrahubModel):
+    """Device referencing either concrete kind through one generic."""
+
+    _modelname = "DcimDevice"
+    _identifiers = ("name",)
+    _attributes = ("location",)
+    name: str
+    location: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +346,102 @@ def _config(entries: dict[str, list[str]]) -> SyncConfig:
     )
 
 
+def _config_with_filter_and_transform(*, source_name: str) -> SyncConfig:
+    """Config for ``LocationSite`` carrying a filter and a transform, with the
+    given source adapter name (``"infrahub"`` for a same-type pair, anything
+    else for a heterogeneous one)."""
+
+    return SyncConfig(
+        name="test",
+        source=SyncAdapter(name=source_name, adapter="x:x"),
+        destination=SyncAdapter(name="infrahub", adapter="x:x"),
+        order=["LocationSite"],
+        schema_mapping=[
+            SchemaMappingModel(
+                name="LocationSite",
+                mapping="LocationSite",
+                identifiers=["name"],
+                filters=[SchemaMappingFilter(field="description", operation="==", value="east")],
+                transforms=[SchemaMappingTransform(field="description", expression="{{ description.upper() }}")],
+                fields=[
+                    SchemaMappingField(name="name", mapping="name"),
+                    SchemaMappingField(name="description", mapping="description"),
+                ],
+            )
+        ],
+    )
+
+
+def _two_site_client() -> StrictClient:
+    """Two ``LocationSite`` rows: one the filter keeps, one it would drop."""
+
+    return StrictClient(
+        rows={
+            "LocationSite": [
+                _Row("id-1", {"name": "dc-east", "description": "east"}),
+                _Row("id-2", {"name": "dc-west", "description": "west"}),
+            ]
+        }
+    )
+
+
 _ModelT = TypeVar("_ModelT", bound=InfrahubModel)
+
+
+def _loaded_names(adapter: _Harness, model: type[LocationSite]) -> list[str]:
+    """Names of every loaded ``LocationSite``, narrowed from the store."""
+
+    return [item.name for item in adapter.get_all(model) if isinstance(item, LocationSite)]
+
+
+def test_model_loader_applies_filter_and_transform_for_the_source_role() -> None:
+    """The logical source runs configured filters and transforms."""
+
+    client = _two_site_client()
+    adapter = _Harness(config=_config_with_filter_and_transform(source_name="infrahub"), client=client)
+    adapter.target = "source"
+
+    adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    loaded_names = _loaded_names(adapter, LocationSite)
+    assert loaded_names == ["dc-east"]
+    assert _loaded(adapter, LocationSite, "dc-east").description == "EAST"
+
+
+def test_model_loader_skips_filter_and_transform_for_the_destination_role_same_adapter_type() -> None:
+    """A same-type destination (Infrahub-to-Infrahub) loads its raw mapped state.
+
+    Before the fix, the predicate compared ``config.source.name`` to the
+    adapter's own type, which is true for both sides of an Infrahub-to-Infrahub
+    sync. That let the destination run the source's filters and transforms too,
+    corrupting the DiffSync comparison.
+    """
+
+    client = _two_site_client()
+    adapter = _Harness(config=_config_with_filter_and_transform(source_name="infrahub"), client=client)
+    adapter.target = "destination"
+
+    adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    loaded_names = sorted(_loaded_names(adapter, LocationSite))
+    assert loaded_names == ["dc-east", "dc-west"]
+    assert _loaded(adapter, LocationSite, "dc-east").description == "east"
+    assert _loaded(adapter, LocationSite, "dc-west").description == "west"
+
+
+def test_model_loader_skips_filter_and_transform_for_a_heterogeneous_destination() -> None:
+    """A heterogeneous pair (e.g. NetBox source, Infrahub destination) keeps its
+    current behavior: the Infrahub destination still loads its raw mapped state."""
+
+    client = _two_site_client()
+    adapter = _Harness(config=_config_with_filter_and_transform(source_name="netbox"), client=client)
+    adapter.target = "destination"
+
+    adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    loaded_names = sorted(_loaded_names(adapter, LocationSite))
+    assert loaded_names == ["dc-east", "dc-west"]
+    assert _loaded(adapter, LocationSite, "dc-east").description == "east"
 
 
 def _loaded(adapter: _Harness, model: type[_ModelT], unique_id: str) -> _ModelT:
@@ -320,6 +458,72 @@ def _include_for(client: StrictClient, kind: str) -> list[str] | None:
     calls = [call for call in client.all_calls if call["kind"] == kind]
     assert len(calls) == 1, f"expected one all() call for {kind}, got {len(calls)}"
     return calls[0]["include"]
+
+
+def test_auto_order_loads_both_generic_peer_kinds_before_devices() -> None:
+    """The adapter resolves both generic peers from the store in computed tier order."""
+    models = (LocationBuilding, LocationFloor, LocationRackUnit, DcimDevice)
+    config = SyncConfig(
+        name="generic-peers",
+        source=SyncAdapter(name="infrahub"),
+        destination=SyncAdapter(name="infrahub"),
+        schema_mapping=[
+            SchemaMappingModel(
+                name=model._modelname,
+                identifiers=["name"],
+                fields=[
+                    SchemaMappingField(name="name", mapping="name"),
+                    *(
+                        [SchemaMappingField(name="parent", reference="LocationBuilding")]
+                        if model is LocationFloor
+                        else [SchemaMappingField(name="parent", reference="LocationFloor")]
+                        if model is LocationRackUnit
+                        else [SchemaMappingField(name="location", reference="LocationHosting")]
+                        if model is DcimDevice
+                        else []
+                    ),
+                ],
+            )
+            for model in models
+        ],
+    )
+    client = StrictClient(
+        rows={
+            "LocationBuilding": [_Row("building-id", {"name": "building-a"})],
+            "LocationFloor": [_Row("floor-id", {"name": "floor-a"}, {"parent": "building-id"})],
+            "LocationRackUnit": [_Row("rack-id", {"name": "rack-a"}, {"parent": "floor-id"})],
+            "DcimDevice": [
+                _Row("device-floor-id", {"name": "device-floor"}, {"location": "floor-id"}),
+                _Row("device-rack-id", {"name": "device-rack"}, {"location": "rack-id"}),
+            ],
+        },
+        rel_schemas={
+            "LocationFloor": [FakeRelSchema(name="parent", peer="LocationBuilding")],
+            "LocationRackUnit": [FakeRelSchema(name="parent", peer="LocationFloor")],
+            "DcimDevice": [FakeRelSchema(name="location", peer="LocationHosting")],
+        },
+    )
+    client.schemas["LocationHosting"] = GenericSchemaAPI(  # ty: ignore[invalid-assignment]
+        name="Hosting", namespace="Location", used_by=["LocationFloor", "LocationRackUnit"]
+    )
+    adapter = _Harness(config=config, client=client)
+    for model in models:
+        setattr(adapter, model._modelname, model)
+
+    order, tiers = config.compute_order_and_tiers(utils._generic_peers_for_order(adapter, None))
+    assert order == ["LocationBuilding", "LocationFloor", "LocationRackUnit", "DcimDevice"]
+    assert tiers == [
+        {"LocationBuilding"},
+        {"LocationFloor"},
+        {"LocationRackUnit"},
+        {"DcimDevice"},
+    ]
+    for kind in order:
+        model = next(model for model in models if model._modelname == kind)
+        adapter.model_loader(model_name=kind, model=model)
+
+    assert _loaded(adapter, DcimDevice, "device-floor").location == "floor-a"
+    assert _loaded(adapter, DcimDevice, "device-rack").location == "rack-a"
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,1 @@
+Schema mapping transform expressions now render in a Jinja2 sandbox that refuses private attributes, unsafe callables and in-place changes, and registering a configuration package rejects a transform expression with invalid syntax.

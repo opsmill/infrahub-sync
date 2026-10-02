@@ -70,9 +70,10 @@ jobs:
   uv-checker:
     uses: ./.github/workflows/workflow-uv-check.yml
 
-  # No `needs` on the lint calls above. Lint still blocks a merge as its own
-  # required check; holding these behind it only put its ninety seconds on the
-  # critical path of every run, including every run that was going to pass.
+  # No `needs` on the lint calls above. Holding the tests behind them would put
+  # their ninety seconds on the critical path of every run, including every run
+  # that was going to pass. They still block a merge: `qualification-required`
+  # below waits for them and refuses a head where any of them failed.
   tests:
     uses: ./.github/workflows/workflow-tests.yml
 
@@ -103,10 +104,13 @@ jobs:
   # What branch protection requires by name. It cannot require the image gate
   # itself: a skipped job satisfies a required check, so a pull request that
   # never raised its tier would merge on the strength of a gate that did not
-  # run. This job always runs and refuses exactly that head.
+  # run. This job always runs and refuses exactly that head. It is also the
+  # only required check, so it waits for the lint, unit-test, and lock-file
+  # calls too: without them in `needs`, a head that failed any of them could
+  # merge once the full tier passed.
   qualification-required:
     name: "Full qualification"
-    needs: ["qualification", "image"]
+    needs: ["qualification", "image", "linter", "tests", "uv-checker"]
     # Not `success()`: the whole point is to report on a call that was skipped.
     if: ${{ always() }}
     runs-on: "ubuntu-22.04"
@@ -117,6 +121,9 @@ jobs:
           DECISION: ${{ needs.qualification.result }}
           QUALIFY: ${{ needs.qualification.outputs.qualify }}
           IMAGE: ${{ needs.image.result }}
+          LINTER: ${{ needs.linter.result }}
+          TESTS: ${{ needs.tests.result }}
+          UV_CHECKER: ${{ needs.uv-checker.result }}
         run: |
           set -euo pipefail
           if [ "${DECISION}" != "success" ]; then
@@ -137,4 +144,12 @@ jobs:
             echo "the full qualification tier ended in ${IMAGE}" >&2
             exit 1
           fi
+          # The same rule for the three fast checks: a call that ended
+          # `skipped` is accepted. A failure or a cancellation blocks.
+          for check in "linter:${LINTER}" "tests:${TESTS}" "uv-checker:${UV_CHECKER}"; do
+            if [ "${check#*:}" != "success" ] && [ "${check#*:}" != "skipped" ]; then
+              echo "the ${check%%:*} check ended in ${check#*:}" >&2
+              exit 1
+            fi
+          done
           echo "the full qualification tier covered this head (image gate: ${IMAGE})"

@@ -6,13 +6,13 @@ import logging
 from typing import TYPE_CHECKING
 
 import fsspec
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Iterator
     from datetime import datetime
     from pathlib import Path
-import pyarrow as pa
-import pyarrow.parquet as pq
 
 logger = logging.getLogger(__name__)
 

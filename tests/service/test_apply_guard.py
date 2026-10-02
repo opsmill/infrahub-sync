@@ -669,6 +669,22 @@ def test_explicitly_supplied_secret_values_are_redacted_from_a_guard_failure() -
     assert supplied not in _reachable_text(caught.value)
 
 
+def test_a_supplied_secret_extending_an_environment_secret_leaves_no_fragment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The environment values merge ahead of the supplied ones, so the shorter one comes first."""
+    shared = "guard-shared-canary"
+    supplied = f"{shared}-pg-password"
+    monkeypatch.setenv("GUARD_SHARED_SECRET_KEY", shared)
+    session = _FakeSession()
+    session.failures["pg_advisory_lock"] = psycopg.OperationalError(f"auth failed password={supplied}")
+
+    with pytest.raises(ApplyGuardUnavailableError) as caught:
+        _Hold(session, secrets=(supplied,)).run()
+
+    assert "-pg-password" not in _reachable_text(caught.value)
+
+
 @pytest.mark.parametrize(
     ("dsn", "expected"),
     [

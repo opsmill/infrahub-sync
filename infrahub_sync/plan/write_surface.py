@@ -24,9 +24,9 @@ if TYPE_CHECKING:
 class PlannedWriteDestination(Protocol):
     """A destination a saved plan can be applied through (FR-013, FR-014, FR-023, AD086).
 
-    A destination that is not one of these is refused in the pre-write gate, named, and
-    directed at `sync` — see the module docstring for what that refusal does and does not
-    verify.
+    A destination that is not one of these is refused in the pre-write gate and named.
+    The operator can review a diff or choose a destination with planned-write support.
+    See the module docstring for what that refusal does and does not verify.
     """
 
     def new_peer_resolver(self) -> PeerResolver:

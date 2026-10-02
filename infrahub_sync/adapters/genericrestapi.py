@@ -4,7 +4,6 @@ import logging
 from typing import Any
 
 from diffsync import Adapter, DiffSyncModel
-from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -56,17 +55,17 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
         - Configurable timeouts and SSL verification
         """
         # Get URL from multiple possible sources
-        url_env_vars = settings.get("url_env_vars", ["URL", "ADDRESS"])
+        url_env_vars = settings.get("url_env_vars", ["GENERICRESTAPI_URL", "GENERICRESTAPI_ADDRESS"])
         url = select_runtime_credential(settings, "url", tuple(url_env_vars))
 
         # Get settings with defaults
         api_endpoint = settings.get("api_endpoint", "/api/v0")
         auth_method = settings.get("auth_method", "token")
-        token_env_vars = settings.get("token_env_vars", ["TOKEN"])
+        token_env_vars = settings.get("token_env_vars", ["GENERICRESTAPI_TOKEN"])
         api_token = select_runtime_credential(settings, "token", tuple(token_env_vars))
-        username_env_vars = settings.get("username_env_vars", ["USERNAME"])
+        username_env_vars = settings.get("username_env_vars", ["GENERICRESTAPI_USERNAME"])
         username = select_runtime_credential(settings, "username", tuple(username_env_vars))
-        password_env_vars = settings.get("password_env_vars", ["PASSWORD"])
+        password_env_vars = settings.get("password_env_vars", ["GENERICRESTAPI_PASSWORD"])
         password = select_runtime_credential(settings, "password", tuple(password_env_vars))
 
         # Other configuration
@@ -129,8 +128,7 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
                 raise ValueError(msg) from exc
 
             total = len(objs)
-            adapter_type_title = (self.type or "").title()
-            if self.config.source.name.title() == adapter_type_title:
+            if self.target == "source":
                 # Filter records
                 filtered_objs = model.filter_records(records=objs, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, resource_name)
@@ -210,16 +208,9 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
                 nodes = [item for item in all_nodes_for_reference]
-                if not nodes and all_nodes_for_reference:
-                    msg = (
-                        f"Unable to get '{field.mapping}' with '{field.reference}' reference from store."
-                        f" The available models are {self.store.get_all_model_names()}"
-                    )
-                    raise IndexError(msg)
                 if not field_is_list:
                     if node := get_value(obj, field.mapping):
                         if isinstance(node, dict):
-                            matching_nodes = []
                             node_id = node.get("id", None)
                             matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                             if len(matching_nodes) == 0:
@@ -237,10 +228,6 @@ class GenericrestapiAdapter(DiffSyncMixin, Adapter):
                         if not node:
                             continue
                         node_id = node.get("id", None)
-                        if not node_id and isinstance(node, tuple):
-                            node_id = node[1] if node[0] == "id" else None
-                            if not node_id:
-                                continue
                         matching_nodes = [item for item in nodes if item.local_id == str(node_id)]  # ty: ignore[unresolved-attribute]
                         if len(matching_nodes) == 0:
                             msg = f"Unable to locate the node {field.reference} {node_id}"
@@ -255,17 +242,3 @@ class GenericrestapiModel(DiffSyncModelMixin, DiffSyncModel):
     """
     A generic model class for REST API adapters.
     """
-
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        # TODO: To implement
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        # TODO: To implement
-        return super().update(attrs=attrs)

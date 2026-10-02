@@ -20,8 +20,8 @@ ConfigurationValidator = Callable[[ConfigurationPackage, AdapterRole], Sequence[
 # The destination-schema accessor contract: (package, branch) -> one JSON-native schema
 # snapshot, mapping each kind name to its ordered "human_friendly_id" and
 # "uniqueness_constraints" component paths, its attributes
-# (name -> {"kind", "optional", "default_value", "unique"}), and its relationships
-# (name -> {"peer", "cardinality", "optional", "kind"}). Raises DestinationSchemaReadError
+# (name -> {"kind", "optional", "default_value", "unique", "read_only"}), and its relationships
+# (name -> {"peer", "cardinality", "optional", "kind", "read_only"}). Raises DestinationSchemaReadError
 # and nothing else for a read that fails; performs I/O only when called, never at import.
 DestinationSchemaAccessor = Callable[[ConfigurationPackage, str], Mapping[str, Any]]
 _SCHEMA_READ_REASON = re.compile(r"^[a-z]{1,32}$")
@@ -187,14 +187,19 @@ def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tup
     """
     # Imported here, not at module load, for the same reason as the client imports below.
     # pylint: disable-next=import-outside-toplevel
-    from .credentials import CredentialConfigurationError, resolve_reference
+    from .credentials import CredentialConfigurationError, pin_infrahub_sdk_authority, resolve_reference
 
     settings = package.configuration.destination.settings or {}
     url = settings.get("url")
     if not isinstance(url, str) or not url:
         msg = "destination setting 'url' is required to read the destination schema"
         raise DestinationSchemaReadError(msg, reason="unconfigured")
-    sdk_config: dict[str, Any] = {"timeout": 60, "default_branch": branch}
+    sdk_config: dict[str, Any] = {
+        "address": url,
+        "timeout": 60,
+        "default_branch": branch,
+        "default_branch_from_git": False,
+    }
     token = settings.get("token")
     if isinstance(token, Mapping):
         reference_name = token.get("$credential")
@@ -207,7 +212,9 @@ def _resolved_client_settings(package: ConfigurationPackage, branch: str) -> tup
     verify_ssl = settings.get("verify_ssl")
     if verify_ssl is not None:
         sdk_config["tls_insecure"] = not verify_ssl
-    return url, sdk_config
+    # The SDK fills every field left out from `INFRAHUB_*`, which would hand the worker's
+    # own token to the declared URL when the package declares none.
+    return url, pin_infrahub_sdk_authority(sdk_config)
 
 
 def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str) -> Mapping[str, Any]:
@@ -307,6 +314,8 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
     component paths and, per member, every property that can change a constructed
     runtime model or a planned write. Nothing else from the response crosses.
     """
+    from infrahub_sdk.schema.main import GenericSchemaAPI  # pylint: disable=import-outside-toplevel
+
     if not isinstance(schema, Mapping):
         raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
     snapshot: dict[str, Any] = {}
@@ -326,17 +335,22 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
                 getattr(node, "relationships", None), claimed=claimed, shape=_relationship_shape
             ),
         }
+        if isinstance(node, GenericSchemaAPI):
+            snapshot[kind]["used_by"] = _string_path(node.used_by)
     _require_usable_snapshot(snapshot)
     return snapshot
 
 
 def _attribute_shape(attribute: Any) -> dict[str, Any]:
     """The attribute properties that can change a runtime model or a planned write."""
+    computed = getattr(attribute, "computed_attribute", None)
     return {
         "kind": _member_text(attribute.kind),
         "optional": _exact_bool(attribute.optional),
         "default_value": _json_native_default(attribute.default_value),
         "unique": _exact_bool(attribute.unique),
+        "read_only": _exact_bool(getattr(attribute, "read_only", False))
+        or (computed is not None and getattr(computed, "kind", None) != "User"),
     }
 
 
@@ -347,6 +361,7 @@ def _relationship_shape(relationship: Any) -> dict[str, Any]:
         "cardinality": _member_text(relationship.cardinality),
         "optional": _exact_bool(relationship.optional),
         "kind": _member_text(relationship.kind),
+        "read_only": _exact_bool(getattr(relationship, "read_only", False)),
     }
 
 
@@ -539,7 +554,6 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
             roles=_BOTH,
             allowed_settings=_GENERIC_REST_SETTINGS,
             credential_setting_paths=("token", "username", "password"),
-            supported_destination_write_operations=frozenset({"update"}),
             validator=_validate_relative_rest_mapping_endpoints,
         ),
         "prometheus": AdapterConfigurationCapabilities(

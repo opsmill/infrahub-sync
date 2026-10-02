@@ -32,10 +32,10 @@ Or see the [uv installation guide](https://docs.astral.sh/uv/getting-started/ins
 ### Install dependencies
 
 ```bash
-uv sync --group dev
+uv sync --extra dev
 ```
 
-This installs all runtime and development dependencies defined in `pyproject.toml`.
+This installs the runtime dependencies and the `dev` optional extra defined in `pyproject.toml`.
 
 ### Verify your setup
 
@@ -64,8 +64,7 @@ Before committing any changes, run the following commands in order:
 
 ```bash
 uv run invoke format    # Format code with ruff
-uv run invoke lint      # Lint code with ruff and pylint
-uv run mypy infrahub_sync/ --ignore-missing-imports
+uv run invoke lint      # Lint with ruff, pylint, yamllint, and the ty type checker
 ```
 
 ### Validate the CLI
@@ -91,7 +90,7 @@ uv run pytest -q
 - Python 3.10–3.13 compatible
 - Type hints on new or changed code
 - Ruff-formatted and lint-clean
-- Mypy-checked (do not increase existing error count)
+- Clean under the `ty` type checker (`uv run ty check .`)
 - Public functions and classes require documentation strings
 - Raise specific exceptions; avoid broad `except Exception:`
 

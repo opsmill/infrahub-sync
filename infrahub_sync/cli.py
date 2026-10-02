@@ -36,6 +36,7 @@ from infrahub_sync.client import (
     TransportError,
     ValidationReportResource,
 )
+from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -52,6 +53,25 @@ VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": l
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
+# Characters a terminal acts on instead of printing: C0 and C1 controls (ESC, CR, and
+# newline among them), DEL, and the bidirectional overrides and isolates that reorder
+# the text after them. Zero-width characters, direction marks, and the line and
+# paragraph separators are included too, since they hide or break up what a reviewer
+# reads. Each is rendered as a visible escape so a value from a source or the server
+# cannot move the cursor, erase a line, or show a forged one.
+_DISPLAY_ESCAPES = {
+    code: f"\\x{code:02x}" if code <= 0xFF else f"\\u{code:04x}"
+    for code in (
+        *range(0x20),
+        *range(0x7F, 0xA0),
+        0x061C,
+        *range(0x200B, 0x2010),
+        *range(0x2028, 0x202F),
+        0x2060,
+        *range(0x2066, 0x206A),
+        0xFEFF,
+    )
+} | {ord("\t"): "\\t", ord("\n"): "\\n", ord("\r"): "\\r"}
 
 app = typer.Typer(help="Synchronize registered configurations through the Sync API.")
 configs_app = typer.Typer(help="Register and inspect configuration packages.")
@@ -121,6 +141,14 @@ def _client(ctx: typer.Context) -> SyncClient:
     return client
 
 
+def _display(value: object) -> str:
+    """Render a value for a terminal with its control characters made visible.
+
+    Only the display changes: the saved plan and every JSON rendering keep the real value.
+    """
+    return str(value).translate(_DISPLAY_ESCAPES)
+
+
 def _echo_fields(fields: tuple[tuple[str, object], ...], *, err: bool = False) -> None:
     for name, value in fields:
         if value is None:
@@ -131,10 +159,11 @@ def _echo_fields(fields: tuple[tuple[str, object], ...], *, err: bool = False) -
             rendered = str(value).lower()
         else:
             rendered = str(value)
-        typer.echo(f"{name}: {rendered}", err=err)
+        typer.echo(f"{name}: {_display(rendered)}", err=err)
 
 
 def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object], ...]]:
+    """Render bounded error fields and the fixed store-refusal guidance."""
     if isinstance(error, ClientInputError):
         result = "client-input", (("argument", error.argument),)
     elif isinstance(error, CompatibilityError):
@@ -193,6 +222,10 @@ def _error_fields(error: SyncClientError) -> tuple[str, tuple[tuple[str, object]
         result = "transport", (("operation", error.operation),)
     else:
         result = "sync-client", ()
+    if (isinstance(error, ConfigsAPIError) and error.reason == UNSUPPORTED_STORE_REASON) or (
+        isinstance(error, APIError) and error.code == UNSUPPORTED_STORE_REASON
+    ):
+        result = (result[0], (*result[1], ("message", UNSUPPORTED_STORE_MESSAGE)))
     return result
 
 
@@ -285,8 +318,10 @@ def _echo_validation(resource: ValidationReportResource) -> None:
     )
     for finding in resource.findings:
         typer.echo(
-            "finding: "
-            f"code={finding.code} severity={finding.severity} location={finding.location} message={finding.message}"
+            _display(
+                "finding: "
+                f"code={finding.code} severity={finding.severity} location={finding.location} message={finding.message}"
+            )
         )
 
 
@@ -464,7 +499,7 @@ def _operation_request(
 
 
 def _echo_counts(name: str, counts: Mapping[str, int]) -> None:
-    typer.echo(f"{name}: " + ", ".join(f"{key}={value}" for key, value in counts.items()))
+    typer.echo(_display(f"{name}: " + ", ".join(f"{key}={value}" for key, value in counts.items())))
 
 
 def _delete_disclosure(plan: PlanResource) -> None:
@@ -483,13 +518,16 @@ def _identity_text(identity: Mapping[str, Any]) -> str:
 
 def _operation_detail(operation: PlanOperationResource) -> None:
     marker = " (not executed)" if operation.action == "delete" else ""
+    # Identity values come from the source, so they are escaped before a reviewer reads them.
     typer.echo(
-        f"{operation.operation_id} {operation.action} {operation.kind} {_identity_text(operation.identity)}{marker}"
+        _display(
+            f"{operation.operation_id} {operation.action} {operation.kind} {_identity_text(operation.identity)}{marker}"
+        )
     )
     # Only an update carries one, and it is what the apply will key that write by, so a
     # reviewer sees which destination object the operation names before approving it.
     if operation.destination_id is not None:
-        typer.echo(f"  destination id: {operation.destination_id}")
+        typer.echo(f"  destination id: {_display(operation.destination_id)}")
     payload = operation.payload
     if payload is not None:
         typer.echo(f"  payload: {json.dumps(payload, sort_keys=True, separators=(',', ':'))}")
@@ -512,19 +550,30 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
         ("checksum_ok", plan.checksum_ok),
         ("checksum_source", "Sync API saved plan"),
         ("operations", plan.summary.total),
+        ("destination_branch", plan.destination_branch),
         ("delete_operations_computed", plan.summary.delete_operations_computed),
     ]
     if plan.schema_fingerprint is not None:
         fields.append(("schema_fingerprint", plan.schema_fingerprint))
     _echo_fields(tuple(fields))
     for note in plan.verification_notes:
-        typer.echo(f"verification_note: {note}")
+        typer.echo(f"verification_note: {_display(note)}")
     _echo_counts("by_action", plan.summary.by_action)
     _echo_counts("by_kind", plan.summary.by_kind)
     _delete_disclosure(plan)
     if detail:
         for operation in operations:
             _operation_detail(operation)
+
+
+def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
+    """Report a saved branch without changing the completed write's outcome."""
+    try:
+        plan = client.get_plan(run_id)
+    except SyncClientError:
+        typer.echo("destination_branch: <unavailable> (saved plan could not be read)")
+        return
+    _echo_fields((("destination_branch", plan.destination_branch),))
 
 
 def _admit_run(
@@ -566,6 +615,7 @@ def _admit_run(
 @app.command("diff")
 def diff_cmd(
     ctx: typer.Context,
+    *,
     config_id: str = typer.Option(..., "--config-id", help="Registered configuration identity."),
     version: int = typer.Option(..., "--version", help="Registered configuration version."),
     reason: str = typer.Option(..., "--reason", help="Audit reason for the plan."),
@@ -596,6 +646,7 @@ def diff_cmd(
 @app.command("sync")
 def sync_cmd(
     ctx: typer.Context,
+    *,
     config_id: str = typer.Option(..., "--config-id", help="Registered configuration identity."),
     version: int = typer.Option(..., "--version", help="Registered configuration version."),
     reason: str = typer.Option(..., "--reason", help="Audit reason for the synchronization."),
@@ -607,7 +658,7 @@ def sync_cmd(
 ) -> None:
     """Create a confirmed synchronization run."""
     with _client_errors():
-        _client_value, completed = _admit_run(
+        client, completed = _admit_run(
             ctx,
             operation="sync",
             config_id=config_id,
@@ -621,11 +672,13 @@ def sync_cmd(
         )
         if wait:
             _echo_run(completed)
+            _echo_completed_destination_branch(client, completed.run.run_id)
 
 
 @app.command("apply")
 def apply_cmd(
     ctx: typer.Context,
+    *,
     run_id: str = typer.Argument(..., help="Service-issued run ID whose plan was reviewed."),
     expected_checksum: str = typer.Option(..., "--expected-checksum", help="Checksum printed by `runs plan`."),
     reason: str = typer.Option(..., "--reason", help="Audit reason for the apply."),
@@ -680,9 +733,22 @@ def apply_cmd(
                     typer.echo(f"{stage} failed: {error_type}", err=True)
                     if error_type == "PlanSchemaChangedError":
                         typer.echo("hint: create and review a new plan before applying again", err=True)
+                    elif error_type == "RegisteredPlanVerificationError":
+                        recovery_action = failure.get("recovery_action")
+                        if recovery_action == "rebuild":
+                            typer.echo(
+                                "hint: re-run diff for this sync, review the new plan, then apply that run", err=True
+                            )
+                        elif recovery_action == "compatible_version":
+                            typer.echo(
+                                "hint: re-run diff with this version and review the new plan, "
+                                "or apply the reviewed plan with the version that wrote it",
+                                err=True,
+                            )
             raise
         if wait:
             _echo_run(completed)
+            _echo_completed_destination_branch(client, completed.run.run_id)
 
 
 @runs_app.command("show")

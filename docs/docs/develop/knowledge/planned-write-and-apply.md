@@ -6,16 +6,15 @@ title: "Planned writes and apply"
 
 <!-- Extracted from dev/specs/archive/001-plan-artifact-saved-apply on 2026-07-28 -->
 
-> Part of: Develop > Knowledge | Related: [The saved plan artifact](plan-artifact.md), [Adapter anatomy](adapter-anatomy.md), [ADR 0002](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0002-planned-write-destination-protocol.md)
+> Part of: Develop > Knowledge | Related: [The saved plan artifact](plan-artifact.md), [The shared execution surface](execution-surface.md), [ADR 0002](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0002-planned-write-destination-protocol.md)
 
-Applying a [saved plan artifact](plan-artifact.md) is a different write path from `sync`. A `sync` walks
-a live comparison result and calls each destination model's `create` / `update` / `delete`; an apply
-walks stored operations and never computes a diff, never extracts either side, and never reads the
-destination the way `sync` does. This page describes what a destination adapter must offer for that to
-work, how peers are resolved without a comparison store, and what the write does about relationships and
-deletes.
+V3 writes through [saved-plan apply](plan-artifact.md). The CLI `sync` command requests a plan,
+verification, and apply through the Sync API. Apply walks stored operations without recomputing a diff
+or extracting either side. This page describes the destination adapter surface, peer resolution without
+a comparison store, relationship writes, and delete handling.
 
-`sync` is untouched by all of this. Everything below is new code on the planned-write path.
+[ADR 0014](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0014-v3-writes-through-saved-plan-apply.md)
+records why the direct DiffSync write path was removed.
 
 ### The write surface
 
@@ -44,7 +43,8 @@ second implementer.
 
 The pre-write gate is `isinstance(destination, PlannedWriteDestination)`, run inside the same gate as
 the artifact verification checks rather than as a per-operation surprise. A destination that is not one
-is refused **before any write**, named, and directed at `sync`.
+is refused **before any write** and named. The operator can review a diff without writing or
+choose a destination whose adapter implements the planned-write surface.
 
 **What that check does and does not verify.** An `isinstance` check against a `runtime_checkable`
 Protocol verifies **member presence only, never signatures**, so against a duck-typed destination it is
@@ -91,7 +91,7 @@ its recorded id — the server is told exactly which object to write — so it m
 fail to resolve a component and still land on the object it means.
 
 Creates and updates both route through the same convergent upsert. Neither routes through
-`InfrahubModel.update`, whose `local_id` keying needs a destination load an apply must not perform.
+a destination load, which apply must not perform.
 
 An update is keyed by the destination `id` recorded for it at plan time; a create carries none and is
 matched by the server on the human-friendly-ID components in its payload, which is why step 4 proves
@@ -175,14 +175,56 @@ warning about it, and refuses with `UnkeyedCreateRefusedError` when it cannot:
   fully covered by the identity — the destination refuses the duplicate there (transport 200,
   `extensions.http_status` 422) — and refused otherwise, because it would duplicate on every write.
 
-Several creates projecting onto **one** destination human-friendly ID are refused as
-`DestinationIdentityCollisionError`: the sync tells them apart and the destination does not, so
-applying them would converge them onto one object each and lose the rest at exit 0. Updates are
-excluded from that count, since an id-keyed write cannot converge onto another operation's object.
+The selected key must also be writable. A read-only, server-allocated attribute such as
+`rule_id` cannot recreate the source value during a create, even when it appears in the
+human-friendly ID. Validation names the unusable components before extraction, and the
+destination checks again before mutation. Map and select every component of an independent
+writable uniqueness constraint to use a computed or read-only display ID safely. Registered
+apply compares the bound schema fingerprint, including attribute writability, before writing.
+This changes the fingerprint for existing saved plans, so review and save a new plan after
+upgrading before you apply it.
 
-The write surface applies the same rule, from the same function, before `client.create` — so a create
-refused at plan time and the same create arriving in a hand-built artifact are refused for the same
-reason, and neither attempts a mutation.
+Several creates sharing a destination human-friendly ID, a unique attribute (including an
+inherited one), or a uniqueness constraint are refused as `DestinationIdentityCollisionError`.
+The error names the colliding rule. Applying those creates could converge distinct source
+objects onto one destination object. A unique attribute inherited from the same generic also
+refuses matching creates of different kinds. Updates are excluded, since each is keyed by its
+recorded destination id. The saved-plan apply gate checks these create-versus-create rules
+before its first write.
+
+Planning also compares each create's human-friendly ID against every loaded source record
+of that kind. This includes unchanged records restored from the previous run's cache and
+records represented by updates. A single create is refused if a distinct source identity
+projects onto the same destination match key, including paths through nested peer identities.
+The error names the kind, source identity fields, destination match key, and fields the
+destination cannot distinguish. Alternative uniqueness constraints do not replace the
+human-friendly ID used to match a create. An update-only plan continues to use recorded
+destination ids.
+
+The refusal identifies the other record by its source-store identifier when its identity
+contains only names. For identities with other fields it reports an opaque source identity
+fingerprint instead, withholding their values. These are source record identifiers,
+not create operation ids for unchanged records or updates.
+
+A source record with no value for a match component cannot prove a collision; planning
+warns and skips that record in the population comparison. An unchanged record whose
+identity peer cannot be resolved in the source store also warns and is skipped.
+Planned operations still require resolved peers. The separate checks for an
+under-keyed create still apply. Infrahub creates require the cached destination schema,
+and identity checks run even when no plan artifact directory was supplied. Direct Python
+callers planning for Infrahub must supply the parsed configuration; otherwise planning
+raises `PlanVerificationError`. Other destinations skip artifact derivation when no
+artifact directory or run id is supplied. The product run factory supplies all three.
+
+The write surface repeats the under-keyed-create checks before `client.create`.
+Apply also repeats the create-versus-create collision checks, but it does not load the
+source population or repeat the create-versus-update comparison. Those comparisons run
+only during planning; a hand-built artifact does not receive them at apply time.
+
+The population comparison adds work proportional to the loaded records of each kind
+that has a create and a human-friendly ID. It resolves each record's identity and stores
+its projected match key for comparison, so its time and temporary memory grow with the
+population being checked.
 
 Explicit `hfid` rendering is deliberately **not** reintroduced: `save(allow_upsert=True)` strips it on
 1.23.2 and the server matches on complete components anyway, so rendering it would assert a key the
@@ -235,9 +277,9 @@ dropped operation does, and unlike a skipped delete it is not a designed limitat
 kind whose HFID does not cover its plan identity, the documented fallback is to resolve the reference
 component's own peer first and filter on `<rel>__ids`.
 
-These two refusals belong to **this resolver only**. The live `sync` path's existing warn-and-continue on
-an unresolvable peer, and the SDK's bare `IndexError` on a multi-match, are unchanged, and a test asserts
-they still hold.
+These two refusals belong to **this resolver only**. Destination loading resolves peer nodes
+from the SDK store. If the store misses or holds an incomplete node, it can call `client.get`
+to fetch the peer.
 
 Dependency-tier ordering guarantees a peer is written before anything referring to it, but only for
 references the dependency graph carries. Three cases it cannot express — a self-reference, a reference
@@ -397,15 +439,19 @@ destination refusal is the more expensive mistake — the run records what was w
 
 ### Deletes are recorded, never executed
 
-Deletes are derived by set difference and recorded as first-class operations, then never executed —
-executing them is not supported. An apply over a delete-bearing plan completes
+Deletes are derived by set difference and recorded as first-class operations. V3 apply does not
+execute them. An apply over a delete-bearing plan completes
 **`applied`**, with `summary["skipped_delete_count"]`, `summary["skipped_delete_operations"]` in stored
 order, and one warning naming the count. `applied_operations ∪ skipped_delete_operations` equals the
 plan's full identifier set on any completed apply, which is what keeps the applied set knowable against
 the reviewed set as a recorded value rather than an inference.
 
-Because the engine's fallback flag set hides destination-only objects from the comparison, a
-delete-bearing plan is the **ordinary** case, not an exception. See
+No `diffsync_flags` value changes this. `resolve_effective_diffsync_flags` in
+`infrahub_sync/__init__.py` always adds `SKIP_UNMATCHED_DST`, so the comparison never turns a
+destination-only object into a delete. The plan derives deletes separately, in `derive_deletes`
+(`infrahub_sync/plan/derive.py`), and only when the destination side was extracted in full; the
+manifest records that choice as `delete_operations_computed`. Every current entry point extracts
+in full, so a delete-bearing plan is the **ordinary** case, not an exception. See
 [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md).
 
 ### A note on logging
@@ -423,4 +469,4 @@ read unambiguously, and it is **not** guidance either way.
 - [ADR 0012](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0012-the-convergent-upsert-is-the-replace-set-write.md) — one upsert is the
   whole write, and what pins its replace semantics.
 - [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md) — the delete contract.
-- [Adapter anatomy](adapter-anatomy.md) — the `sync`-path contract this sits beside.
+- [The shared execution surface](execution-surface.md) — how plan and apply enter the engine.

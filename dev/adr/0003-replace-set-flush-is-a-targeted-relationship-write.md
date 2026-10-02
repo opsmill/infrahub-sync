@@ -10,6 +10,8 @@ removed. The body below is unchanged; it is the record of why the earlier forms 
 `dev/specs/archive/001-plan-artifact-saved-apply/contracts/destination-write-surface.md`
 (AD054, AD065, AD075, AD085, AD088)
 
+> V3 now writes only through saved-plan apply. See [ADR 0014](0014-v3-writes-through-saved-plan-apply.md).
+
 ## Context
 
 A planned write must make cardinality-many relationships a replace-set: the destination ends holding

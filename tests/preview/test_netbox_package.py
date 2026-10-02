@@ -125,8 +125,8 @@ def test_the_shipped_netbox_package_registers_through_every_interface(  # noqa: 
     assert package["configuration"]["source"]["settings"]["token"] == {"$credential": "netbox-token"}
     assert package["configuration"]["destination"]["settings"]["token"] == {"$credential": "infrahub-token"}
     assert package["credentials"] == {
-        "netbox-token": {"provider": "env", "identifier": "NETBOX_TOKEN"},
-        "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"},
+        "netbox-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"},
+        "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
     }
 
     artifacts: dict[str, object] = {}

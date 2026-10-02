@@ -1,0 +1,1 @@
+The V3 documentation presents two ways to run V3, from source and from a release package, and follows each through a first sync. The installation, configuration, run, adapter, reference, operations, and developer pages are corrected against the current behavior.

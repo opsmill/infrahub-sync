@@ -70,6 +70,10 @@ class _StubAdapter(Adapter):
     def cursor_tier_for(self, _model_name: str) -> CursorTier:  # noqa: PLR6301
         return CursorTier.TIMESTAMP
 
+    def safe_cursor_before_load(self, _model_name: str) -> CursorState:  # noqa: PLR6301
+        """Provide the synthetic source's guaranteed pre-query bound."""
+        return CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00+00:00", safe=True)
+
     def list_changed_since(self, _model_name: str, cursor: CursorState) -> list[dict]:
         self.calls.append(("delta", cursor))
         return list(self.deltas)
@@ -137,7 +141,7 @@ def write_prior_run(
         )
     (prev_run / "run.json").write_text(json.dumps({"status": "applied"}))
     (prev_run / "schema-sub-hash.txt").write_text("HASHFIXED")
-    cursors = {side: {"InfraDevice": "TIMESTAMP:2026-05-17T10:00:00Z"} for side in sides}
+    cursors = {side: {"InfraDevice": "safe-v1:TIMESTAMP:2026-05-17T10:00:00Z"} for side in sides}
     (prev_run / "cursors.json").write_text(json.dumps(cursors))
     return prev_run
 
@@ -189,10 +193,15 @@ def test_a_warm_destination_load_rebuilds_models_carrying_their_local_id(tmp_pat
     assert ("full_load", None) not in destination.calls, "A usable snapshot must not force a full extract."
 
 
-def test_a_pre_change_snapshot_without_the_column_forces_a_full_destination_extract(
+def test_a_snapshot_missing_the_column_despite_a_safe_cursor_forces_a_full_destination_extract(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A snapshot from before this change cannot key updates, so it is a cache miss."""
+    """A destination snapshot with no `local_id` column cannot key updates, so it is a cache miss.
+
+    A genuine pre-change run saved an unqualified cursor, which the safe-cursor gate already
+    rejects. This fixture is the other case: a snapshot that lost the column (damaged or
+    hand-edited) while its cursor is safe, so the gate accepts it and only this check applies.
+    """
     potenda, _source, destination = make_potenda(tmp_path)
     potenda._schema_subhash = "HASHFIXED"
     write_prior_run(tmp_path, [{"name": "device-a", "description": "first"}], source_ids=["device-a"])

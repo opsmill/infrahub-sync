@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import ipaddress
 import logging
 from collections.abc import Mapping
@@ -13,11 +12,8 @@ from infrahub_sdk import (
     InfrahubClientSync,
 )
 from infrahub_sdk.exceptions import GraphQLError, NodeNotFoundError
-from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
-from infrahub_sdk.utils import compare_lists
 from pydantic import ValidationError
-from typing_extensions import Self
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -26,19 +22,29 @@ from infrahub_sync import (
     SyncConfig,
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier
-from infrahub_sync.configuration.credentials import select_runtime_credential
+from infrahub_sync.configuration.credentials import (
+    is_registered_context,
+    pin_infrahub_sdk_authority,
+    select_runtime_credential,
+)
 from infrahub_sync.generator import has_field
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.errors import (
     NullRelationshipValueError,
     PeerAmbiguousError,
     PeerNotFoundError,
+    ReviewedPayloadFieldMissingError,
     SkippedDeleteOperation,
     StaleDestinationIdError,
     UnaccountedIdentityComponentError,
+    UnkeyedCreateRefusedError,
 )
 from infrahub_sync.plan.identity import canonical_identity
-from infrahub_sync.plan.keying import is_usable_component_value, refuse_unkeyed_create_coverage
+from infrahub_sync.plan.keying import (
+    is_usable_component_value,
+    refuse_unkeyed_create_coverage,
+    writable_convergence_reason,
+)
 from infrahub_sync.plan.models import DestinationBindingRecord
 
 logger = logging.getLogger(__name__)
@@ -198,114 +204,6 @@ def _refuse_stale_destination_id(exc: GraphQLError, *, operation: PlannedOperati
     raise StaleDestinationIdError(msg) from exc
 
 
-def _relationship_input_data(peer_id: str | None, source: str | None, owner: str | None) -> dict[str, Any]:
-    """Build cardinality-many relationship input with optional attribution."""
-    data: dict[str, Any] = {"id": peer_id}
-    if source:
-        data["source"] = source
-    if owner:
-        data["owner"] = owner
-    return data
-
-
-def update_node(
-    node: InfrahubNodeSync,
-    attrs: Mapping[str, Any],
-    client: InfrahubClientSync,
-    node_schema: MainSchemaTypesAPI,
-    source: str | None = None,
-    owner: str | None = None,
-) -> InfrahubNodeSync:
-    """
-    Update the given node using the provided attributes and relationship values.
-
-    For relationship attributes, the function uses `resolve_peer_node` or `resolve_peer_nodes`
-    to update one-to-one and one-to-many relationships, respectively.
-
-    Args:
-        node: The node to update.
-        attrs: The attributes and relationships to update.
-        client: The client that owns `node`, used for schema and store lookups.
-        node_schema: The schema of `node`, read once by the caller.
-        source: Optional source ID to set on updated attributes and relationships.
-        owner: Optional owner ID to set on updated attributes and relationships.
-    """
-    schemas: Mapping[str, MainSchemaTypesAPI] = client.schema.all(branch=node.get_branch())
-    for attr_name, attr_value in attrs.items():
-        if attr_name in node_schema.attribute_names:
-            attr = getattr(node, attr_name)
-            attr.value = attr_value
-            if source:
-                attr.source = NodeProperty(data=source)
-            if owner:
-                attr.owner = NodeProperty(data=owner)
-
-        if attr_name in node_schema.relationship_names:
-            for rel_schema in node_schema.relationships:
-                peer_schema = schemas.get(rel_schema.peer)
-                if attr_name != rel_schema.name or peer_schema is None:
-                    continue
-
-                if rel_schema.cardinality == "one":
-                    if attr_value:
-                        peer_node = resolve_peer_node(
-                            key=attr_value,
-                            rel_schema=rel_schema,
-                            peer_schema=peer_schema,
-                            store=client.store,
-                            client=client,
-                            fallback=False,
-                            schemas=schemas,
-                        )
-                        if not peer_node:
-                            logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
-                            continue
-                        # Keep the peer object so the SDK can detect resource pools
-                        # and generate a ``from_pool`` allocation when required.
-                        setattr(node, attr_name, peer_node)
-                        relationship: RelatedNodeSync = getattr(node, attr_name)
-                        # The SDK renders ``from_pool`` before relationship properties,
-                        # so source and owner do not reach resource-pool allocations.
-                        if source:
-                            relationship.source = source
-                        if owner:
-                            relationship.owner = owner
-                    else:
-                        # TODO: delete the old relationship data ?
-                        pass
-
-                elif rel_schema.cardinality == "many":
-                    attr_manager: RelationshipManagerSync = getattr(node, attr_name)
-                    existing_peer_ids = attr_manager.peer_ids
-                    new_peer_ids = []
-
-                    for value in list(attr_value):
-                        peer_node = resolve_peer_node(
-                            key=value,
-                            rel_schema=rel_schema,
-                            peer_schema=peer_schema,
-                            store=client.store,
-                            client=client,
-                            fallback=False,
-                            schemas=schemas,
-                        )
-                        if peer_node:
-                            new_peer_ids.append(peer_node.id)
-
-                    _, existing_only, new_only = compare_lists(existing_peer_ids, new_peer_ids)
-
-                    if not attr_manager.initialized:
-                        attr_manager.fetch()
-
-                    for existing_id in existing_only:
-                        attr_manager.remove(existing_id)
-
-                    for new_id in new_only:
-                        attr_manager.add(_relationship_input_data(new_id, source, owner))
-
-    return node
-
-
 # An Infrahub schema component path — a human-friendly-ID or uniqueness-constraint entry —
 # is written as `name__value` for a direct attribute and `site__name__value` for one that
 # crosses a relationship. A **schema path** is split on this separator; a **data value**
@@ -390,12 +288,12 @@ def _identity_path_value(identity: Mapping[str, Any], segments: Sequence[str]) -
 
 
 def _operation_peer_identity(operation: PlannedOperation, field: str) -> Mapping[str, Any] | None:
-    """The nested peer identity the operation records for `field` (AD043, AD051).
+    """Find the peer identity for a single relationship used by a destination key.
 
-    Read from the operation's own **identity** first, where an identity-bearing reference
-    is recorded as a `{"peer_kind", "identity"}` pair, and otherwise from the relationship
-    reference of that name, whose `peers` hold those identities directly. A
-    cardinality-many reference names no single peer, so it supplies no component.
+    A planned identity may carry a nested peer reference, while a hand-built operation
+    may supply it only in its relationship reference. Check both so a relationship
+    component is accepted only when its peer identity supplies the value to be written.
+    A cardinality-many reference supplies no key component, so it yields no identity here.
     """
     if field in operation.identity:
         nested = _nested_peer_identity(operation.identity[field])
@@ -448,6 +346,44 @@ def _hfid_component_accounted_for(
     return resolved is not _UNRESOLVED and is_usable_component_value(resolved)
 
 
+def _refuse_partial_key_peer_filter(operation: PlannedOperation, schemas: Mapping[str, MainSchemaTypesAPI]) -> None:
+    """Refuse partial peer keys before lookup, since one loose match can bind the wrong peer."""
+    for reference in operation.relationships or ():
+        if not reference.peers:
+            continue
+        peer_schema = schemas.get(reference.peer_kind)
+        if peer_schema is None:
+            msg = (
+                f"The destination schema declares no kind {reference.peer_kind!r}, so no peer of that kind "
+                "can be resolved. The plan was derived against a configuration or schema this "
+                "destination does not carry"
+            )
+            raise ValueError(msg)
+        if not isinstance(peer_schema, NodeSchemaAPI):
+            msg = f"Expected NodeSchemaAPI for {reference.peer_kind}, got {type(peer_schema).__name__}"
+            raise TypeError(msg)
+        for peer in reference.peers:
+            # A destination id identifies the peer directly; its HFID need not be present.
+            if isinstance(peer.get("id"), str) and peer["id"].strip():
+                continue
+            missing = []
+            for component in _hfid_components(peer_schema):
+                value = _identity_path_value(peer, _component_segments(component))
+                if (
+                    value is _UNRESOLVED
+                    or not is_usable_component_value(value)
+                    or isinstance(value, (Mapping, list, tuple))
+                ):
+                    missing.append(component)
+            if missing:
+                msg = (
+                    f"Operation {operation.operation_id!r} cannot resolve relationship {reference.field!r} "
+                    f"through a partial {reference.peer_kind!r} peer filter; missing: {', '.join(missing)}. "
+                    "No destination write was attempted."
+                )
+                raise UnaccountedIdentityComponentError(msg)
+
+
 class PeerResolver:
     """Resolve a plan's peer identities to destination node ids, for one apply (FR-014).
 
@@ -471,9 +407,6 @@ class PeerResolver:
         # The canonical identity is unhashable, so the memo key carries its canonical JSON
         # encoding — the same normalization the operation identifier hashes (FR-028.3).
         self._memo: dict[tuple[str, bytes], str] = {}
-        # Kinds whose partial filter has been warned about, once per kind per apply: the
-        # resolver lives for exactly one apply, so the set does too.
-        self._partial_filter_reported: set[str] = set()
 
     @staticmethod
     def _key(kind: str, identity: Mapping[str, Any]) -> tuple[str, bytes]:
@@ -511,24 +444,26 @@ class PeerResolver:
     def _filter_kwargs(self, *, peer_kind: str, identity: Mapping[str, Any]) -> dict[str, Any]:
         """Build the destination query's filter kwargs from the peer kind's HFID (PD-004).
 
+        An explicit destination id is already a complete peer key and takes precedence.
         An `<attr>__value` path takes its value from the identity's scalar under `<attr>`;
         an `<rel>__<attr>__value` path takes its value from the nested
         `{peer_kind, identity}` pair the identity records under `<rel>`, read at
         `identity[<attr>]` and recursing for deeper nesting (AD043). The **schema path** is
         split; the **data value** never is.
 
-        Two degraded cases, and neither is silent — a too-loose query can match **exactly
-        one** node and bind it wrongly, so `_query`'s zero- and multi-match refusals are not
-        a defense against degradation:
+        A component whose value the identity does not supply is skipped here, which would leave
+        a too-loose query that can match **exactly one** wrong node and bind it. Planned apply
+        never reaches that case: `apply_planned_operation` calls
+        `_refuse_partial_key_peer_filter` before `resolve`, and that raises
+        `UnaccountedIdentityComponentError` naming the missing components, so every peer
+        filter built for a planned write carries a complete peer key: the kind's full
+        human-friendly ID, or only the destination id when the plan records one (that id
+        bypasses the HFID check). The skip
+        stays only so a direct caller of this resolver still gets a filter. The `<rel>__ids`
+        fallback (resolve the reference component's own peer first, then filter
+        `<rel>__ids=[<id>]`) is not implemented by planned apply.
 
-        - a component whose value the identity does not supply is **skipped**, and the skip
-          is disclosed by a per-kind apply-time warning naming the dropped components. The
-          specified remedy for a kind whose HFID does not cover its plan identity is the
-          `<rel>__ids` fallback — resolve the reference component's own peer first,
-          recursively through this same resolver, then filter `<rel>__ids=[<id>]` — which
-          planned apply does not implement; FR-024 already warns at plan time about exactly
-          this condition, and this is its apply-time counterpart;
-        - a kind that declares no usable HFID component at all falls back to the identity's
+        A kind that declares no usable HFID component at all falls back to the identity's
           own direct scalars as `<attr>__value` filters, which is the only thing the apply
           holds for it. When even those yield nothing, the returned mapping is empty and
           `_query` refuses before querying: an unfiltered query lists every node of the
@@ -557,14 +492,14 @@ class PeerResolver:
                 "destination does not carry"
             )
             raise ValueError(msg)
+        if isinstance(identity.get("id"), str) and identity["id"].strip():
+            return {"ids": [identity["id"]]}
         components = _hfid_components(node_schema)
 
         kwargs: dict[str, Any] = {}
-        dropped: list[str] = []
         for component in components:
             value = _identity_path_value(identity, _component_segments(component))
             if value is _UNRESOLVED or isinstance(value, (Mapping, list, tuple)):
-                dropped.append(component)
                 continue
             kwargs[_filter_kwarg_name(component)] = value
 
@@ -574,27 +509,14 @@ class PeerResolver:
                     continue
                 kwargs[_filter_kwarg_name(name)] = value
 
-        if kwargs and dropped and peer_kind not in self._partial_filter_reported:
-            self._partial_filter_reported.add(peer_kind)
-            logger.warning(
-                "Planned apply: resolving %s peers on a PARTIAL filter. The plan identity supplies no "
-                "value for human-friendly-ID component(s) %s, so they were dropped and the destination "
-                "is queried on %s — a strict subset of the kind's convergence key, which can match a "
-                "single wrong node and bind it. Re-plan so the identity supplies the dropped "
-                "component(s) (FR-024's plan-time warning names the same condition).",
-                peer_kind,
-                ", ".join(dropped),
-                sorted(kwargs),
-            )
         return kwargs
 
     def _query(self, *, peer_kind: str, identity: Mapping[str, Any], referring_operation_id: str) -> str:
         """Query the destination for one peer, refusing on zero and on more than one.
 
-        The refusals belong to **this** resolver only (AD048). The live `sync` write path's
-        warn-and-continue on an unresolvable peer, and the SDK's bare `IndexError` on a
-        multi-match, are existing behavior on an existing path and are left exactly as they
-        are.
+        The refusals belong to **this** resolver only (AD048). Destination loading
+        resolves peers from the SDK store, with a `client.get` fallback when the
+        store misses or holds an incomplete node.
 
         An **empty** filter set is refused before the query is issued: an
         unfiltered `client.filters(kind=...)` lists every node of the kind, and with exactly
@@ -650,63 +572,6 @@ class PeerResolver:
         raise PeerAmbiguousError(msg)
 
 
-def diffsync_to_infrahub(
-    ids: Mapping[Any, Any],
-    attrs: Mapping[Any, Any],
-    store: NodeStoreSync,
-    node_schema: NodeSchemaAPI,
-    schemas: Mapping[str, MainSchemaTypesAPI],
-) -> dict[Any, Any]:
-    """
-    Convert DiffSync IDs and attributes into a format suitable for Infrahub.
-
-    Resolves relationship fields using peer node lookup logic.
-    """
-    data: dict[Any, Any] = copy.deepcopy(dict(ids))
-    data.update(dict(attrs))
-
-    for key in list(data.keys()):
-        if key in node_schema.relationship_names:
-            for rel_schema in node_schema.relationships:
-                peer_schema = schemas.get(rel_schema.peer)
-                if key != rel_schema.name or peer_schema is None:
-                    continue
-
-                if rel_schema.cardinality == "one":
-                    if data[key] is None:
-                        del data[key]
-                        continue
-                    peer_node = resolve_peer_node(
-                        key=data[key],
-                        rel_schema=rel_schema,
-                        peer_schema=peer_schema,
-                        store=store,
-                    )
-                    if not peer_node:
-                        logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, data[key])
-                        continue
-                    data[key] = peer_node.id
-
-                elif rel_schema.cardinality == "many":
-                    if data[key] is None:
-                        del data[key]
-                        continue
-                    new_values = []
-                    for value in list(data[key]):
-                        peer_node = resolve_peer_node(
-                            key=value,
-                            rel_schema=rel_schema,
-                            peer_schema=peer_schema,
-                            store=store,
-                        )
-                        if not peer_node:
-                            logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, value)
-                            continue
-                        new_values.append(peer_node.id)
-                    data[key] = new_values
-    return data
-
-
 class PeerIdentifierError(ValueError):
     """Raised when an Infrahub peer node is missing a value required to build its DiffSync identifier.
 
@@ -742,7 +607,11 @@ class PeerIdentifierError(ValueError):
             f"required identifiers={list(identifiers)}, present keys={list(present_keys)}. "
             "Likely cause: schema_mapping does not declare a 'fields:' entry for the missing "
             "key, or the peer record was not loaded with that field populated. "
-            "Re-run with --continue-on-error to skip these peers."
+            f"To fix it, either populate the missing key on the {peer_kind} peer record in "
+            "Infrahub and run the diff or sync command again, or add the key to the "
+            f"'fields:' entry for {peer_kind} in the schema_mapping, create a new "
+            "configuration version with 'infrahub-sync configs version', and run the "
+            "command with the new --version. A registered version cannot be edited."
         )
         super().__init__(msg)
 
@@ -822,17 +691,22 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             msg = "Both url and token must be specified!"
             raise ValueError(msg)
 
-        # The effective destination identity a plan of this adapter is bound to — the
-        # resolved URL and branch, never the token. The branch falls
-        # back to "main" because that is the SDK's `default_branch` when none is set, so
-        # the record names the branch actually written to.
-        self.destination_binding = DestinationBindingRecord(url=infrahub_url, branch=infrahub_branch or "main")
+        # One branch for the SDK default, explicit schema read, and saved-plan binding.
+        infrahub_branch = infrahub_branch or "main"
+        self.destination_binding = DestinationBindingRecord(url=infrahub_url, branch=infrahub_branch)
 
-        sdk_config: dict[str, Any] = {"timeout": 60, "api_token": infrahub_token}
-        if infrahub_branch:
-            sdk_config["default_branch"] = infrahub_branch
+        sdk_config: dict[str, Any] = {
+            "address": infrahub_url,
+            "timeout": 60,
+            "api_token": infrahub_token,
+            "default_branch": infrahub_branch,
+            "default_branch_from_git": False,
+        }
         if verify_ssl is not None:
             sdk_config["tls_insecure"] = not verify_ssl
+        if is_registered_context(settings):
+            # Direct use keeps the SDK's `INFRAHUB_*` fallbacks; a registered package does not.
+            sdk_config = pin_infrahub_sdk_authority(sdk_config)
 
         self.client = InfrahubClientSync(address=infrahub_url, config=Config(**sdk_config))
 
@@ -949,7 +823,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # Extract the list of dicts for filtering and transforming
             list_obj = [pair[1] for pair in node_dict_pairs]
 
-            if self.config.source.name.title() == self.type.title():  # ty: ignore[unresolved-attribute]
+            if self.target == "source":
                 # Filter records
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, model_name)
@@ -1233,6 +1107,88 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         """
         return PeerResolver(self)
 
+    def validate_planned_payload_fields(self, operations: Sequence[PlannedOperation]) -> None:
+        """Check every reviewed direct field and SDK input before the first write."""
+        from infrahub_sync.plan.keying import refuse_destination_identity_collisions
+
+        if not any(operation.action != "delete" for operation in operations):
+            return
+        schemas = self.client.schema.all(refresh=True)
+        missing_by_kind: dict[str, set[str]] = {}
+        for operation in operations:
+            if operation.action == "delete":
+                continue
+            schema = schemas.get(operation.kind)
+            if isinstance(schema, NodeSchemaAPI):
+                missing = self._unwritable_reviewed_fields(operation=operation, node_schema=schema)
+                if not missing:
+                    missing = self._omitted_rendered_fields(operation=operation, node_schema=schema)
+            else:
+                missing = set(operation.payload or {})
+            if missing:
+                missing_by_kind.setdefault(operation.kind, set()).update(missing)
+        if missing_by_kind:
+            details = "; ".join(
+                f"{kind!r}: {', '.join(repr(field) for field in sorted(fields))}"
+                for kind, fields in sorted(missing_by_kind.items())
+            )
+            msg = (
+                f"The live destination schema cannot represent reviewed direct payload field(s) for "
+                f"destination kind(s) {details}. The whole plan was refused before its first write; "
+                "no destination write was attempted."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
+        refuse_destination_identity_collisions(schema=schemas, operations=operations)
+
+    @staticmethod
+    def _reviewed_direct_fields(*, operation: PlannedOperation, node_schema: NodeSchemaAPI) -> set[str]:
+        """Return direct payload fields, including nulls whose names became relationships.
+
+        Derived plans put relationships in ``operation.relationships``. The legacy
+        mandatory null relationship check remains at the operation boundary.
+        """
+        payload = operation.payload or {}
+        mandatory_null_relationships = {
+            relationship.name
+            for relationship in node_schema.relationships
+            if relationship.cardinality == "one"
+            and not relationship.optional
+            and relationship.name in payload
+            and payload[relationship.name] is None
+        }
+        return set(payload) - mandatory_null_relationships
+
+    @classmethod
+    def _unwritable_reviewed_fields(cls, *, operation: PlannedOperation, node_schema: NodeSchemaAPI) -> set[str]:
+        """Find direct fields that are absent or read-only in the current schema."""
+        writable = {attribute.name for attribute in node_schema.attributes if not attribute.read_only}
+        return cls._reviewed_direct_fields(operation=operation, node_schema=node_schema) - writable
+
+    def _omitted_rendered_fields(self, *, operation: PlannedOperation, node_schema: NodeSchemaAPI) -> set[str]:
+        """Find reviewed direct values the SDK would leave out of its mutation input."""
+        payload = operation.payload or {}
+        data = self.client.schema.generate_payload_create(schema=node_schema, data=payload)
+        node = self.client.create(kind=operation.kind, data=data)
+        if operation.action == "update":
+            node.id = operation.destination_id
+        self._set_reviewed_null_attributes(node=node, operation=operation, node_schema=node_schema)
+        rendered_data = node._generate_input_data(exclude_hfid=True)["data"]["data"]
+        return {
+            field
+            for field in self._reviewed_direct_fields(operation=operation, node_schema=node_schema)
+            if field not in rendered_data
+        }
+
+    @staticmethod
+    def _set_reviewed_null_attributes(
+        *, node: InfrahubNodeSync, operation: PlannedOperation, node_schema: NodeSchemaAPI
+    ) -> None:
+        """Mark reviewed null attributes as writes in the SDK mutation input."""
+        payload = operation.payload or {}
+        for attribute in node_schema.attributes:
+            if attribute.name in payload and payload[attribute.name] is None:
+                getattr(node, attribute.name).value = None
+
     def apply_planned_operation(self, *, operation: PlannedOperation, peers: PeerResolver) -> str:
         """Execute one planned operation convergently. Returns the destination node id.
 
@@ -1248,20 +1204,14 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
         A `create` and an `update` both route through the same convergent upsert —
         `client.create(...)` then `save(allow_upsert=True)` — and neither routes through
-        `InfrahubModel.update`, whose `local_id` keying needs the destination load FR-012
-        forbids. The payload is authoritative for the mapped fields it carries and touches no
+        a destination load, which saved-plan apply does not perform. The payload is
+        authoritative for the mapped fields it carries and touches no
         unmapped destination field.
 
-        How the write is keyed depends on the action, and neither way reads the SDK's
-        private pre-save render (AD066/AD067, retired). An **update** carries the
-        destination `id` recorded for it at plan time, set on the node before `save`. A
-        **create** has no id and is keyed by the destination kind's human-friendly-ID
-        components in its payload, which the server matches on — so its completeness is
-        proven here, before the mutation, by the per-component diagnostic below.
-
-        The private render was retired because it stopped agreeing with the wire: on SDK
-        1.23.2 it reports an `hfid` for a kind whose issued mutation carries no key at all,
-        so a gate reading it passes writes that are unkeyed where it matters.
+        An **update** carries the destination `id` recorded at plan time. A **create**
+        is keyed by the destination kind's human-friendly-ID components in its payload,
+        which the server matches on. Each create is checked before mutation so a missing
+        component cannot become an unkeyed write.
 
         That upsert is the **only** destination write the operation makes. It carries every
         cardinality-many relationship as the plan's peer list, and `peers: []` means empty the
@@ -1274,6 +1224,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         Raises:
             SkippedDeleteOperation: the operation is a recorded delete (a designed
                 limitation, not a failure), and no skip is recorded — see above.
+            ReviewedPayloadFieldMissingError: the live schema or SDK mutation would omit
+                a reviewed direct payload field, so no write is made for this operation.
             UnaccountedIdentityComponentError: a human-friendly-ID component of the
                 destination kind is not accounted for by the payload and the operation.
             StaleDestinationIdError: an update's recorded destination id matches no object
@@ -1292,21 +1244,36 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             )
             raise SkippedDeleteOperation(msg)
 
-        node_schema = self.client.schema.get(kind=operation.kind)
+        # Preflight refreshed this cache once for the whole plan. Reuse the schema that
+        # the SDK will render with; a fresh full-branch download per operation is costly
+        # and cannot prevent a server-side schema change between this check and save.
+        node_schema = self.client.schema.all().get(operation.kind)
+        if node_schema is None and operation.payload:
+            fields = ", ".join(repr(field) for field in sorted(operation.payload))
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
+                f"would omit reviewed direct payload field(s) {fields} because the live schema "
+                "no longer declares the kind. No write was made for this operation."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
         if not isinstance(node_schema, NodeSchemaAPI):
             msg = f"Expected NodeSchemaAPI for {operation.kind}, got {type(node_schema).__name__}"
             raise TypeError(msg)
 
         # The payload is `keys` union `source_attrs`, so it already carries the identity
-        # components the convergent write keys on (AD042). No plan format distinguishes an
-        # absent optional to-one relationship from an intended clear. Keep create's
-        # established omission behavior; on update, disclose that the null is a no-op rather
-        # than silently claiming convergence. Derivation drops a null cardinality-one peer
-        # before the operation is recorded and warns there (S7), so this arm is reached only
-        # by a hand-built artifact that carries one — which is why it is kept rather than
-        # removed. A mandatory null is invalid and must stop here before the SDK can render
-        # it as a relationship id.
+        # components the convergent write keys on (AD042). Derived plans put relationships
+        # in `operation.relationships`; a null payload field is reviewed as an attribute.
+        # Keep the legacy mandatory null relationship error for hand-built artifacts.
         payload = operation.payload or {}
+        missing_fields = self._unwritable_reviewed_fields(operation=operation, node_schema=node_schema)
+        if missing_fields:
+            fields = ", ".join(repr(field) for field in sorted(missing_fields))
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
+                f"would omit reviewed direct payload field(s) {fields} because the live schema "
+                "does not declare them as writable attributes. No write was made for this operation."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
         null_to_one_relationships = [
             relationship
             for relationship in node_schema.relationships
@@ -1324,26 +1291,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             )
             raise NullRelationshipValueError(msg)
 
-        optional_null_fields = sorted(
-            relationship.name for relationship in null_to_one_relationships if relationship.optional
-        )
-        if operation.action == "update" and optional_null_fields:
-            logger.warning(
-                "Planned update %s for destination kind %s carries null for optional cardinality-one "
-                "relationship field(s) %s. The plan format cannot distinguish an absent relationship "
-                "from an intended clear, so the field is omitted and the destination relationship is "
-                "not cleared. Clear it directly at the destination if the clear was intended.",
-                operation.operation_id,
-                operation.kind,
-                ", ".join(optional_null_fields),
-            )
-        omitted_null_relationships = set(optional_null_fields)
-        data: dict[str, Any] = {
-            field: value
-            for field, value in payload.items()
-            if value is not None or field not in omitted_null_relationships
-        }
+        data: dict[str, Any] = dict(payload)
         references = list(operation.relationships or ())
+        _refuse_partial_key_peer_filter(operation, self.schema)
         for reference in references:
             peer_ids = [
                 peers.resolve(
@@ -1362,8 +1312,23 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # first, from the same function plan derivation uses; then AD051 for values,
             # because it is the check that can name the missing component. Both run before
             # `client.create` and read the cached schema and the operation alone.
-            refuse_unkeyed_create_coverage(operation, node=node_schema)
-            self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
+            reason = writable_convergence_reason(
+                node=node_schema,
+                identity_fields=operation.identity,
+                mapped_fields=data,
+                schemas=self.schema,
+                identity=operation.identity,
+                check_values=_has_unwritable_hfid_component(node_schema),
+            )
+            if reason:
+                msg = (
+                    f"Operation {operation.operation_id!r} for destination kind {operation.kind!r}: {reason}. "
+                    "No destination write was attempted."
+                )
+                raise UnkeyedCreateRefusedError(msg)
+            refuse_unkeyed_create_coverage(operation, node=node_schema, schemas=self.schema)
+            if not _has_unwritable_hfid_component(node_schema):
+                self._assert_identity_components_accounted_for(node_schema=node_schema, data=data, operation=operation)
 
         source_id = self.source_node.id if self.source_node else None
         owner_id = self.owner_node.id if self.owner_node else None
@@ -1378,6 +1343,23 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             # a keyed update of that exact object. Putting `id` into `data` instead would
             # render it as the attribute-shaped `id: {}` and key nothing.
             node.id = operation.destination_id
+        self._set_reviewed_null_attributes(node=node, operation=operation, node_schema=node_schema)
+        # generate_payload_create retains unknown keys as empty dictionaries. The node
+        # drops them while building the input to the mutation, so check that final input.
+        rendered_data = node._generate_input_data(exclude_hfid=True)["data"]["data"]
+        missing_fields = {
+            field
+            for field in self._reviewed_direct_fields(operation=operation, node_schema=node_schema)
+            if field not in rendered_data
+        }
+        if missing_fields:
+            fields = ", ".join(repr(field) for field in sorted(missing_fields))
+            msg = (
+                f"Operation {operation.operation_id!r} for destination kind {operation.kind!r} "
+                f"would omit reviewed direct payload field(s) {fields} from the SDK mutation. "
+                "No write was made for this operation."
+            )
+            raise ReviewedPayloadFieldMissingError(msg)
         try:
             node.save(allow_upsert=True)
         except GraphQLError as exc:
@@ -1429,54 +1411,19 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         raise UnaccountedIdentityComponentError(msg)
 
 
+def _has_unwritable_hfid_component(node_schema: NodeSchemaAPI) -> bool:
+    """Whether an HFID member is omitted or computed by the destination."""
+    hfid = set(node_schema.human_friendly_id or ())
+    return any(
+        f"{attribute.name}__value" in hfid
+        and (getattr(attribute, "read_only", False) or getattr(attribute, "computed_attribute", None) is not None)
+        for attribute in node_schema.attributes
+    ) or any(
+        getattr(relationship, "read_only", False)
+        and any(component == relationship.name or component.startswith(f"{relationship.name}__") for component in hfid)
+        for relationship in node_schema.relationships
+    )
+
+
 class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
-    @classmethod
-    def create(
-        cls,
-        adapter: Adapter,
-        ids: dict[Any, Any],
-        attrs: dict[Any, Any],
-    ) -> Self | None:
-        if not isinstance(adapter, InfrahubAdapter):
-            msg = f"{cls.__name__}.create expected an InfrahubAdapter, got {type(adapter).__name__}"
-            raise TypeError(msg)
-        node_schema = adapter.client.schema.get(kind=cls.__name__)
-        # client.schema.get() returns the wider MainSchemaTypesAPI; diffsync_to_infrahub needs NodeSchemaAPI.
-        if not isinstance(node_schema, NodeSchemaAPI):
-            msg = f"Expected NodeSchemaAPI for {cls.__name__}, got {type(node_schema).__name__}"
-            raise TypeError(msg)
-        data = diffsync_to_infrahub(
-            ids=ids, attrs=attrs, node_schema=node_schema, store=adapter.client.store, schemas=adapter.schema
-        )
-        unique_id = cls(**ids, **attrs).get_unique_id()
-        source_id = adapter.source_node.id if adapter.source_node else None
-        owner_id = adapter.owner_node.id if adapter.owner_node else None
-        create_data = adapter.client.schema.generate_payload_create(
-            schema=node_schema, data=data, source=source_id, owner=owner_id, is_protected=True
-        )
-        node = adapter.client.create(kind=cls.__name__, data=create_data)
-        node.save(allow_upsert=True)
-        adapter.client.store.set(key=unique_id, node=node)
-
-        return super().create(adapter=adapter, ids=ids, attrs=attrs)
-
-    def update(self, attrs: dict) -> Self | None:
-        adapter = self.adapter
-        if not isinstance(adapter, InfrahubAdapter):
-            msg = f"{self.__class__.__name__}.update expected an InfrahubAdapter, got {type(adapter).__name__}"
-            raise TypeError(msg)
-        node = adapter.client.get(id=self.local_id, kind=self.__class__.__name__)
-        source_id = adapter.source_node.id if adapter.source_node else None
-        owner_id = adapter.owner_node.id if adapter.owner_node else None
-        node_schema = adapter.schema[node.get_kind()]
-        node = update_node(
-            node=node,
-            attrs=attrs,
-            client=adapter.client,
-            node_schema=node_schema,
-            source=source_id,
-            owner=owner_id,
-        )
-        node.save(allow_upsert=True)
-
-        return super().update(attrs=attrs)
+    """DiffSync model for Infrahub records loaded during planning."""

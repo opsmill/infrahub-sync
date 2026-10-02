@@ -60,8 +60,9 @@ def smoke_package(infrahub_url: str) -> dict[str, Any]:
 
     Both adapters are the bundled `infrahub` one, so the registered worker resolves them
     through the installed loader with nothing generated and nothing on the filesystem. The
-    token is a credential *reference* — the worker resolves `INFRAHUB_API_TOKEN` from its
-    own environment, so no secret value is ever posted or recorded.
+    token is a credential *reference* — the worker resolves
+    `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` from its own environment, so no secret
+    value is ever posted or recorded.
     """
     return {
         "format_version": 1,
@@ -90,7 +91,9 @@ def smoke_package(infrahub_url: str) -> dict[str, Any]:
                 }
             ],
         },
-        "credentials": {"infrahub-token": {"provider": "env", "identifier": "INFRAHUB_API_TOKEN"}},
+        "credentials": {
+            "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
+        },
     }
 
 

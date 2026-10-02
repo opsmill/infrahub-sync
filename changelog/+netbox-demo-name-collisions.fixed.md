@@ -1,0 +1,1 @@
+The NetBox example now qualifies VLAN names by group and rack names by site, and skips patch panels whose names contain `PP:` and their interfaces, so the official demo dataset imports with distinct racks.

@@ -9,12 +9,13 @@ from typing import TYPE_CHECKING, Any, Union, cast
 import yaml
 from diffsync.store.local import LocalStore
 from diffsync.store.redis import RedisStore
-from infrahub_sdk import Config
 
 from infrahub_sync import SyncAdapter, SyncConfig, SyncInstance
+from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.cache.paths import run_dir as stored_run_dir
 from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.generator import render_template
+from infrahub_sync.generic_peers import generic_peers_for_destination as _generic_peers_for_order
 from infrahub_sync.plan.errors import PlanVerificationError
 from infrahub_sync.plan.reader import read_plan_artifact_bytes
 from infrahub_sync.plan.verify import destination_binding_failure
@@ -59,7 +60,7 @@ def render_adapter(
         ("diffsync_adapter.j2", "sync_adapter.py"),
     )
     rendered_files = []
-    for adapter in [sync_instance.source, sync_instance.destination]:
+    for adapter_index, adapter in enumerate([sync_instance.source, sync_instance.destination]):
         output_dir_path = Path(sync_instance.directory, adapter.name)
         if not output_dir_path.is_dir():
             output_dir_path.mkdir(exist_ok=True)
@@ -74,6 +75,7 @@ def render_adapter(
                 output_dir=output_dir_path,
                 output_file=Path(item[1]),
                 context={"schema": schema, "adapter": adapter, "config": sync_instance},
+                warn_optional_identifiers=adapter_index == 0,
             )
             output_file_path = output_dir_path / item[1]
             rendered_files.append((item[0], output_file_path))
@@ -197,7 +199,7 @@ def _adapter_classes(
     raise ImportError(msg)
 
 
-def get_potenda_from_instance(
+def get_potenda_from_instance(  # pylint: disable=too-many-positional-arguments  # public API; callers may pass positionally
     sync_instance: SyncInstance,
     branch: str | None = None,
     show_progress: bool | None = None,
@@ -267,9 +269,7 @@ def get_potenda_from_instance(
 
     # Single topological pass yields both the flat order and the tier layout
     # (tiers is None when an explicit `order` is configured).
-    top_level, tiers = sync_instance.compute_order_and_tiers()
-
-    from infrahub_sync.cache.paths import generate_run_id
+    top_level, tiers = sync_instance.compute_order_and_tiers(_generic_peers_for_order(dst, runtime_models))
 
     rid = run_id or generate_run_id()
     rdir = stored_run_dir(sync_instance.name, rid, base_directory=base_directory)
@@ -285,7 +285,10 @@ def get_potenda_from_instance(
     # `sync_instance._cached_schema` for test seams.
     subhash = ""
     try:
+        # pylint: disable-next=import-outside-toplevel  # deferred so a failed import degrades to no subhash
         from infrahub_sync.cache import compute_schema_subhash
+
+        # pylint: disable-next=import-outside-toplevel  # same deferred import as above
         from infrahub_sync.cache.sidecars import SchemaHashFile
 
         schema = getattr(dst, "schema", None) or getattr(sync_instance, "_cached_schema", None)
@@ -406,7 +409,7 @@ class PlanApplier:
         if runtime_models is not None:
             bind_runtime_models(destination, runtime_models.destination.models)
 
-        top_level, tiers = sync_instance.compute_order_and_tiers()
+        top_level, tiers = sync_instance.compute_order_and_tiers(_generic_peers_for_order(destination, runtime_models))
 
         # Located, never created: the run being applied already exists, and an apply that
         # allocated directories could manufacture the very run whose absence it should report.
@@ -495,19 +498,3 @@ class PlanApplier:
             f"Nothing was written."
         )
         raise PlanVerificationError(msg, next_action=failure.next_action)
-
-
-def get_infrahub_config(settings: dict[str, str | None], branch: str | None) -> Config:
-    """Creates and returns a Config object for infrahub if settings are valid.
-
-    Args:
-        settings (Dict[str, Optional[str]]): The settings dictionary containing `url`, `token`, and `branch`.
-        branch (Optional[str]): The default branch to use if none is provided in settings.
-
-    Returns:
-        Optional[Config]: A Config instance if `token` is available, otherwise None.
-    """
-    infrahub_token = settings.get("token") or None
-    infrahub_branch = settings.get("branch") or branch or "main"
-
-    return Config(default_branch=infrahub_branch, api_token=infrahub_token)

@@ -1,5 +1,8 @@
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
+
+import pytest
 
 from infrahub_sync.cache.cursors import CursorTier
 
@@ -49,8 +52,10 @@ def test_cursor_tier_is_none_for_unknown_kinds() -> None:
     assert adapter.cursor_tier_for("MissingFromSchema") is CursorTier.NONE
 
 
-def test_list_changed_since_uses_updated_at_filter() -> None:
+def test_list_changed_since_uses_updated_at_filter(tmp_path: Path) -> None:
+    """Pass the saved safe cursor unchanged to the updated-at filter."""
     from infrahub_sync.cache.cursors import CursorState
+    from infrahub_sync.cache.incremental import load_cursors, persist_cursors
 
     adapter = _make_adapter(["InfraDevice"])
     fake_node = MagicMock()
@@ -59,20 +64,27 @@ def test_list_changed_since_uses_updated_at_filter() -> None:
     # Stub infrahub_node_to_diffsync to bypass complex node→dict logic.
     adapter.infrahub_node_to_diffsync = MagicMock(return_value={"local_id": "1", "name": "leaf1"})  # ty: ignore[invalid-assignment]
 
-    cursor = CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00Z")
+    # This tests saved-cursor pass-through, not the server's filter semantics.
+    path = tmp_path / "cursors.json"
+    persist_cursors(
+        path,
+        side="A",
+        cursors={"InfraDevice": CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T09:59:59Z", safe=True)},
+    )
+    cursor = load_cursors(path, side="A")["InfraDevice"]
+    assert cursor.safe
     rows = list(adapter.list_changed_since("InfraDevice", cursor))
 
     adapter.client.filters.assert_called_once_with(  # ty: ignore[unresolved-attribute]
         kind="InfraDevice",
         populate_store=True,
         prefetch_relationships=True,
-        node_metadata__updated_at__after="2026-05-17T10:00:00Z",
+        node_metadata__updated_at__after="2026-05-17T09:59:59Z",
     )
     assert rows == [{"local_id": "1", "name": "leaf1"}]
 
 
 def test_list_changed_since_raises_for_unknown_model() -> None:
-    import pytest
 
     from infrahub_sync.cache.cursors import CursorState
 
@@ -121,7 +133,6 @@ def test_list_existing_ids_yields_unique_ids() -> None:
 
 
 def test_list_existing_ids_raises_for_unknown_model() -> None:
-    import pytest
 
     adapter = _make_adapter(["InfraDevice"])
     with pytest.raises(NotImplementedError):
@@ -151,3 +162,11 @@ def test_model_loader_requests_identifiers_and_mapped_attributes() -> None:
         include=["device", "name", "description"],
         populate_store=True,
     )
+
+
+def test_timestamp_source_has_no_established_safe_bound() -> None:
+    """Require full extraction when Infrahub supplies no safe bound."""
+    from infrahub_sync.cache.cursors import capture_safe_cursor
+
+    adapter = _make_adapter(["InfraDevice"])
+    assert capture_safe_cursor(adapter, "InfraDevice", CursorTier.TIMESTAMP) is None

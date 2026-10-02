@@ -61,7 +61,16 @@ START_TIMEOUT_SECONDS = 900
 BUSY_OBSERVATION_SECONDS = 30
 
 # Every service the bundle declares, used to bound what `logs` may print.
-SERVICES = ("postgres", "db-bootstrap", "object-store", "prefect-server", "sync-bootstrap", "sync-api", "sync-worker")
+SERVICES = (
+    "postgres",
+    "db-bootstrap",
+    "object-store-init",
+    "object-store",
+    "prefect-server",
+    "sync-bootstrap",
+    "sync-api",
+    "sync-worker",
+)
 
 # The settings `init` generates. Their values reach real processes, so the log
 # sweep looks for them rather than for a string planted only to be found.
@@ -208,7 +217,7 @@ def started(
         settings.read_text(encoding="utf-8")
         # Appended, not substituted: `init` leaves the destination credential a
         # commented optional entry, because a start needs none.
-        + f"INFRAHUB_API_TOKEN={infrahub_fixture['token']}\n"
+        + f"INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN={infrahub_fixture['token']}\n"
         f"INFRAHUB_SYNC_IMAGE_PULL_POLICY=never\nINFRAHUB_SYNC_API_PORT={API_PORT}\n"
         f"INFRAHUB_SYNC_PREFECT_PORT={PREFECT_PORT}\n",
         encoding="utf-8",
@@ -540,7 +549,8 @@ def unstarted(started: Deployment, sync_image: str, tmp_path: Path) -> Iterator[
     assert created.returncode == 0, created.stderr
     settings = bundle / "operator.env"
     settings.write_text(
-        settings.read_text(encoding="utf-8") + f"INFRAHUB_API_TOKEN={setting(started.bundle, 'INFRAHUB_API_TOKEN')}\n"
+        settings.read_text(encoding="utf-8")
+        + f"INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN={setting(started.bundle, 'INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN')}\n"
         f"INFRAHUB_SYNC_IMAGE_PULL_POLICY=never\nINFRAHUB_SYNC_API_PORT={SPARE_API_PORT}\n"
         f"INFRAHUB_SYNC_PREFECT_PORT={SPARE_PREFECT_PORT}\n",
         encoding="utf-8",

@@ -1,0 +1,1 @@
+The CLI now shows control characters and bidirectional text overrides in source- and server-provided values as visible escapes such as `\x1b`, so a value cannot rewrite the plan or other output a reviewer reads in the terminal.

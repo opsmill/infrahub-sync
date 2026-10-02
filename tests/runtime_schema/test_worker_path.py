@@ -27,6 +27,7 @@ from infrahub_sync.runtime_schema import (
     RuntimeModelScope,
     RuntimeModelScopeError,
     UnsupportedDestinationProfileError,
+    UnwritableConvergenceIdentityError,
     build_runtime_model_plan,
 )
 from infrahub_sync.runtime_schema import worker as worker_module
@@ -113,18 +114,29 @@ def _spy(monkeypatch: pytest.MonkeyPatch) -> _SnapshotSpy:
 
 @pytest.fixture(name="credentials", autouse=True)
 def _credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NETBOX_TOKEN", "netbox-worker-canary")
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "infrahub-worker-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "netbox-worker-canary")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "infrahub-worker-canary")
 
 
 @pytest.fixture(name="netbox_driver", autouse=True)
 def _netbox_driver(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Make the NetBox adapter importable without its optional driver installed."""
+    import infrahub_sync.adapters as adapters_package
+
     driver = cast("Any", types.ModuleType("pynetbox"))
     driver.api = lambda *_args, **_kwargs: types.SimpleNamespace()
     monkeypatch.setitem(sys.modules, "pynetbox", driver)
+    previous = sys.modules.pop("infrahub_sync.adapters.netbox", None)
+    missing = object()
+    previous_attribute = vars(adapters_package).get("netbox", missing)
     yield
     sys.modules.pop("infrahub_sync.adapters.netbox", None)
+    if previous is not None:
+        sys.modules["infrahub_sync.adapters.netbox"] = previous
+    if previous_attribute is missing:
+        vars(adapters_package).pop("netbox", None)
+    else:
+        vars(adapters_package)["netbox"] = previous_attribute
 
 
 def _instance(package: ConfigurationPackage, tmp_path: Path) -> SyncInstance:
@@ -159,6 +171,17 @@ def test_the_plan_carries_fresh_model_classes_for_both_sides(spy: _SnapshotSpy, 
     assert spy.branches == ["main"]
 
 
+def test_registered_plan_refuses_a_server_allocated_only_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    snapshot["BuiltinTag"]["attributes"]["name"]["read_only"] = True
+    monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", _SnapshotSpy(snapshot))
+
+    with pytest.raises(UnwritableConvergenceIdentityError, match="name__value"):
+        _plan(_package(), tmp_path)
+
+
 def test_registered_composition_attaches_the_plan_to_the_runtime_instance(spy: _SnapshotSpy, tmp_path: Path) -> None:
     package = _package()
     binding = ("cfg-runtime-models", 1, package.checksum())
@@ -176,6 +199,40 @@ def test_registered_composition_attaches_the_plan_to_the_runtime_instance(spy: _
     assert name == package.configuration.name
     assert instance._runtime_models is not None
     assert set(instance._runtime_models.destination.models) == {"BuiltinTag", "LocationSite"}
+    assert spy.branches == ["main"]
+
+
+def test_registered_composition_carries_generic_peers_into_ordering(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    snapshot["BuiltinLabel"] = {
+        "used_by": ["BuiltinTag", "UnmappedKind"],
+        "human_friendly_id": [],
+        "uniqueness_constraints": [],
+        "attributes": {},
+        "relationships": {},
+    }
+    snapshot["LocationSite"]["relationships"]["tags"]["peer"] = "BuiltinLabel"
+    spy = _SnapshotSpy(snapshot)
+    monkeypatch.setattr(worker_module, "read_destination_schema_snapshot", spy)
+    content = _package_content()
+    content["configuration"]["schema_mapping"][1]["fields"][1]["reference"] = "BuiltinLabel"
+    package = parse_configuration_package(content)
+    binding = ("cfg-generic-order", 1, package.checksum())
+
+    _, instance, _ = service_flow._worker_execution_context(
+        "run-generic-order",
+        binding,
+        config_directory=str(tmp_path),
+        projection=cast("ProductProjection", _StubProjection(package, binding)),
+        run_branch=None,
+        stage="plan",
+    )
+
+    assert instance._runtime_models is not None
+    assert instance._runtime_models.generic_peers == {"BuiltinLabel": ("BuiltinTag", "UnmappedKind")}
+    assert instance.compute_order_and_tiers(instance._runtime_models.generic_peers)[0] == ["BuiltinTag", "LocationSite"]
     assert spy.branches == ["main"]
 
 
@@ -206,7 +263,18 @@ def test_a_legacy_unregistered_run_builds_no_runtime_models(spy: _SnapshotSpy, t
 def test_a_registered_stage_reaches_execution_with_its_models_bound(
     spy: _SnapshotSpy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    package = _package()
+    spy.snapshot = copy.deepcopy(_SNAPSHOT)
+    spy.snapshot["BuiltinLabel"] = {
+        "used_by": ["BuiltinTag", "UnmappedKind"],
+        "human_friendly_id": [],
+        "uniqueness_constraints": [],
+        "attributes": {},
+        "relationships": {},
+    }
+    spy.snapshot["LocationSite"]["relationships"]["tags"]["peer"] = "BuiltinLabel"
+    content = _package_content()
+    content["configuration"]["schema_mapping"][1]["fields"][1]["reference"] = "BuiltinLabel"
+    package = parse_configuration_package(content)
     binding = ("cfg-runtime-models", 1, package.checksum())
     projection = _StubProjection(package, binding)
     seen: list[SyncInstance] = []
@@ -250,6 +318,8 @@ def test_a_registered_stage_reaches_execution_with_its_models_bound(
     # Plan, verify and apply legs share the one instance the single schema read built.
     assert len({id(instance) for instance in seen}) == 1
     assert seen[0]._runtime_models is not None
+    assert seen[0]._runtime_models.generic_peers == {"BuiltinLabel": ("BuiltinTag", "UnmappedKind")}
+    assert seen[0].compute_order_and_tiers(seen[0]._runtime_models.generic_peers)[0] == ["BuiltinTag", "LocationSite"]
     assert spy.branches == ["main"]
 
 

@@ -40,6 +40,10 @@ x-sync-storage: &sync-storage
   AWS_SECRET_ACCESS_KEY: "${INFRAHUB_SYNC_S3_SECRET_KEY:?the object-store secret key is required}"
   INFRAHUB_SYNC_SERVICE_WORK_POOL: "${INFRAHUB_SYNC_WORK_POOL}"
   PREFECT_API_URL: "http://prefect-server:4200/api"
+  # The Prefect server refuses every API call without this value, because a
+  # caller that can create a deployment in the work pool decides what the worker
+  # runs. Each Sync process presents it; the CLI service is not given it.
+  PREFECT_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
 
 services:
   postgres:
@@ -88,12 +92,38 @@ services:
       - "./bootstrap/databases.sh:/usr/local/bin/databases.sh:ro"
     entrypoint: ["/bin/sh", "/usr/local/bin/databases.sh"]
 
-  object-store:
+  # The former image wrote as root. Repair its volume once in a short-lived
+  # service so the long-running server never needs root, even during startup.
+  object-store-init:
     image: >-
-      quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+      cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
+    labels: *instance-labels
+    restart: "no"
+    user: "0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        if [ "$$(stat -c %u:%g /data)" != "65532:65532" ]; then
+          chown -R 65532:65532 /data;
+        fi
+    network_mode: "none"
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN"]
+    volumes:
+      - "object-store-data:/data"
+
+  object-store:
+    # Temporary Chainguard build while a maintained S3 store is selected; the old MinIO image requires authentication.
+    image: >-
+      cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
     labels: *instance-labels
     restart: unless-stopped
+    user: "65532:65532"
     command: ["server", "/data"]
+    depends_on:
+      object-store-init:
+        condition: service_completed_successfully
     environment:
       MINIO_ROOT_USER: "${INFRAHUB_SYNC_S3_ACCESS_KEY:?the object-store access key is required}"
       MINIO_ROOT_PASSWORD: "${INFRAHUB_SYNC_S3_SECRET_KEY:?the object-store secret key is required}"
@@ -103,7 +133,13 @@ services:
     volumes:
       - "object-store-data:/data"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:9000/minio/health/live"]
+      test:
+        - "CMD"
+        - "wget"
+        - "--quiet"
+        - "--tries=1"
+        - "--output-document=/dev/null"
+        - "http://localhost:9000/minio/health/live"
       interval: 5s
       timeout: 5s
       retries: 30
@@ -126,6 +162,10 @@ services:
       PREFECT_SERVER_API_PORT: "4200"
       PREFECT_SERVER_UI_API_URL: "http://${INFRAHUB_SYNC_BIND_ADDRESS}:${INFRAHUB_SYNC_PREFECT_PORT}/api"
       PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+      # Basic authentication on the whole API, the UI's calls included: the UI
+      # asks for this value once and sends it with each request. Prefect leaves
+      # only the health and readiness probes open, which the check below uses.
+      PREFECT_SERVER_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
     ports:
       - "${INFRAHUB_SYNC_BIND_ADDRESS}:${INFRAHUB_SYNC_PREFECT_PORT}:4200"
     healthcheck:
@@ -185,7 +225,7 @@ services:
       # Optional, and empty when unset: a deployment starts before any package is
       # registered, so there is no destination to hold a credential for yet. A
       # run that selects an absent value fails that run, not this start.
-      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
     read_only: true
     tmpfs: *sync-scratch
     ports:
@@ -228,7 +268,7 @@ services:
       # paused worker at that thirty-second floor instead of Prefect's ninety.
       PREFECT_WORKER_HEARTBEAT_SECONDS: "${PREFECT_WORKER_HEARTBEAT_SECONDS}"
       # Optional for the same reason as on the API above.
-      INFRAHUB_API_TOKEN: "${INFRAHUB_API_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
       # The source credentials the bundled NetBox and Nautobot adapters resolve,
       # and the only service given either: a run is what consumes one, and the
       # worker is what runs one. Optional rather than required, because a
@@ -236,8 +276,8 @@ services:
       # token nothing selects has no reason to exist here. When a registered
       # package does select one, the resolver refuses an absent or empty value
       # by name, so an unset token fails that run rather than this container.
-      NETBOX_TOKEN: "${NETBOX_TOKEN:-}"
-      NAUTOBOT_TOKEN: "${NAUTOBOT_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN:-}"
     read_only: true
     tmpfs: *sync-scratch
 

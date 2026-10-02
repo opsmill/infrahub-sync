@@ -646,12 +646,13 @@ def generated_credentials() -> set[str]:
 GENERATED_CREDENTIALS = {
     "product": "INFRAHUB_SYNC_PRODUCT_PASSWORD",
     "prefect": "INFRAHUB_SYNC_PREFECT_PASSWORD",
+    "prefect_auth": "INFRAHUB_SYNC_PREFECT_AUTH_STRING",
     "access": "INFRAHUB_SYNC_S3_ACCESS_KEY",
     "secret": "INFRAHUB_SYNC_S3_SECRET_KEY",
     "principal": "bearer_token",
     "ADMIN_SECRET": "admin_password",
 }
-SECRET_SETTINGS_IN_BUNDLE = ("product", "prefect", "access", "secret")
+SECRET_SETTINGS_IN_BUNDLE = ("product", "prefect", "prefect_auth", "access", "secret")
 
 
 def test_the_sweep_looks_for_every_credential_the_bundle_generates() -> None:
@@ -2205,9 +2206,12 @@ def test_the_targeted_node_is_matched_by_kind_and_refused_unless_there_is_exactl
     """
     source = code_of(CHECKS / "schema_change.py")
 
-    matcher = "f\"{node['namespace']}{node['name']}\" == SMOKE_KIND"
+    # Compared as syntax trees: how ast.unparse quotes an f-string differs between
+    # CPython releases, so a text match on the rendered source is not portable.
+    matcher = ast.dump(ast.parse("f\"{node['namespace']}{node['name']}\" == SMOKE_KIND", mode="eval").body)
+    comparisons = [ast.dump(node) for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Compare)]
 
-    assert matcher in source, "the node is not matched by the kind Infrahub composes"
+    assert matcher in comparisons, "the node is not matched by the kind Infrahub composes"
     assert "if len(declared) != 1:" in source, "a document declaring none or several is accepted"
 
 

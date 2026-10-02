@@ -10,6 +10,7 @@ this module carries the schema-path mirror of the core's exact-set and reachabil
 from __future__ import annotations
 
 import ast
+import copy
 import re
 from collections.abc import ItemsView, Iterator, Mapping
 from dataclasses import replace
@@ -142,6 +143,36 @@ def _codes_and_locations(findings: tuple[Any, ...]) -> list[tuple[str, str]]:
     return [(finding.code, finding.location) for finding in findings]
 
 
+def test_schema_validation_names_a_read_only_selected_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    snapshot["InfraDevice"]["attributes"]["name"]["read_only"] = True
+    _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(snapshot)))
+    content = _mapping_package_data(fields=[{"name": "name", "mapping": "name"}])
+    content["configuration"]["schema_mapping"][0]["identifiers"] = ["name"]
+
+    findings = collect_destination_schema_findings(package(content)).findings
+
+    assert any(
+        finding.code == "destination-schema-mismatch" and "name__value" in finding.message for finding in findings
+    )
+
+
+def test_schema_validation_refuses_a_kind_with_no_selected_or_declared_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    snapshot["InfraDevice"]["human_friendly_id"] = []
+    snapshot["InfraDevice"]["uniqueness_constraints"] = []
+    snapshot["InfraDevice"]["attributes"]["name"]["unique"] = False
+    _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(snapshot)))
+    content = _mapping_package_data(fields=[{"name": "name", "mapping": "name"}])
+
+    findings = collect_destination_schema_findings(package(content)).findings
+
+    assert any(
+        finding.code == "destination-schema-mismatch" and "no declared destination key" in finding.message
+        for finding in findings
+    )
+
+
 # --- The accessor seam (registration-time invariant) ---------------------------------
 
 
@@ -213,6 +244,44 @@ def test_the_schema_read_consumes_the_resolved_branch(monkeypatch: pytest.Monkey
     assert accessor.calls == ["staging"]
 
 
+def test_schema_client_ignores_ambient_git_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The schema accessor's SDK default agrees with its explicit schema argument."""
+    from infrahub_sdk import Config
+
+    monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH", "ambient")
+    monkeypatch.setenv("INFRAHUB_DEFAULT_BRANCH_FROM_GIT", "true")
+    monkeypatch.setenv("INFRAHUB_ADDRESS", "invalid-ambient-address")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
+    content = package_data()
+    _, settings = capabilities_module._resolved_client_settings(package(content), "review")
+
+    config = Config(**settings)
+    assert config.default_branch_from_git is False
+    assert config.default_infrahub_branch == "review"
+
+
+def test_schema_client_never_takes_authority_from_the_worker_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A package declaring no token or TLS setting gets neither from ``INFRAHUB_*`` variables."""
+    from infrahub_sdk import Config
+
+    monkeypatch.setenv("INFRAHUB_API_TOKEN", "ambient-token")
+    monkeypatch.setenv("INFRAHUB_USERNAME", "ambient-user")
+    monkeypatch.setenv("INFRAHUB_PASSWORD", "ambient-password")
+    monkeypatch.setenv("INFRAHUB_TLS_INSECURE", "true")
+    monkeypatch.setenv("INFRAHUB_ADDRESS", "https://ambient-infrahub.example")
+    content = package_data()
+    del content["configuration"]["destination"]["settings"]["token"]
+    del content["credentials"]["infrahub-token"]
+    url, settings = capabilities_module._resolved_client_settings(package(content), "main")
+
+    config = Config(**settings)
+    assert config.address == url
+    assert config.api_token is None
+    assert config.username is None
+    assert config.password is None
+    assert config.tls_insecure is False
+
+
 # --- AR3: the four error fixtures against an injected snapshot ------------------------
 
 
@@ -236,7 +305,8 @@ def test_an_unknown_field_is_an_error_finding(monkeypatch: pytest.MonkeyPatch) -
     result = collect_destination_schema_findings(package(data))
 
     assert _codes_and_locations(result.findings) == [
-        ("destination-schema-mismatch", "/configuration/schema_mapping/0/fields/0/name")
+        ("destination-schema-mismatch", "/configuration/schema_mapping/0/fields/0/name"),
+        ("destination-schema-mismatch", "/configuration/schema_mapping/0/identifiers"),
     ]
 
 
@@ -274,7 +344,10 @@ def test_a_wrong_relationship_cardinality_is_an_error_finding(
 
     result = collect_destination_schema_findings(package(_mapping_package_data([field])))
 
-    assert _codes_and_locations(result.findings) == [("destination-schema-mismatch", location)]
+    assert _codes_and_locations(result.findings) == [
+        ("destination-schema-mismatch", location),
+        ("destination-schema-mismatch", "/configuration/schema_mapping/0/identifiers"),
+    ]
 
 
 def test_a_conforming_mapping_yields_no_findings_and_a_fingerprint(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,8 +374,8 @@ def test_a_conforming_mapping_yields_no_findings_and_a_fingerprint(monkeypatch: 
 
 def test_an_explicit_request_against_a_non_declaring_destination_is_an_error_finding() -> None:
     # peeringmanager is a real destination that does not declare schema validation, and it
-    # declares update as its only write operation, so the shipped infrahub_to_peering-manager
-    # shape — creates requested, update-only declared — reports both defects (AR5 fixture).
+    # declares no write operation, so the shipped infrahub_to_peering-manager
+    # shape — creates requested, none declared — reports both defects (AR5 fixture).
     data = package_data()
     data["configuration"]["destination"]["name"] = "peeringmanager"
 
@@ -315,7 +388,7 @@ def test_an_explicit_request_against_a_non_declaring_destination_is_an_error_fin
     assert result.schema_fingerprint is None
 
 
-def test_an_update_only_request_against_an_update_only_destination_is_clean() -> None:
+def test_an_update_only_request_against_peeringmanager_is_refused_as_an_unsupported_write() -> None:
     # SKIP_UNMATCHED_SRC removes create, and delete is never requested under the supported
     # live-sync profile even though SKIP_UNMATCHED_DST is not configured (SYNC-78).
     data = package_data()
@@ -324,7 +397,10 @@ def test_an_update_only_request_against_an_update_only_destination_is_clean() ->
 
     result = collect_destination_schema_findings(package(data))
 
-    assert [finding.code for finding in result.findings] == ["destination-schema-validation-unsupported"]
+    assert [finding.code for finding in result.findings] == [
+        "destination-schema-validation-unsupported",
+        "unsupported-destination-write",
+    ]
 
 
 def test_an_unknown_destination_adapter_adds_no_schema_findings() -> None:
@@ -409,6 +485,7 @@ def test_schema_findings_arrive_in_the_stable_sort_order(monkeypatch: pytest.Mon
 
     assert _codes_and_locations(result.findings) == [
         ("destination-schema-mismatch", "/configuration/schema_mapping/0/fields/0/name"),
+        ("destination-schema-mismatch", "/configuration/schema_mapping/0/identifiers"),
         ("destination-schema-mismatch", "/configuration/schema_mapping/1/name"),
     ]
 
@@ -546,7 +623,7 @@ def _mock_schema_read_failure(monkeypatch: pytest.MonkeyPatch, exception: Except
     _inject(monkeypatch, _live_read_table())
     # The declared token reference must resolve, or the credentials arm reports before
     # the mocked client is ever constructed.
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
     def _fake_client(address: str, config: object) -> _FakeClient:
         del address, config
@@ -636,7 +713,7 @@ def test_an_unusable_declared_client_configuration_lands_as_a_typed_finding(
     monkeypatch: pytest.MonkeyPatch, exception: Exception
 ) -> None:
     _inject(monkeypatch, _live_read_table())
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
     def _refusing_config(**kwargs: object) -> object:
         del kwargs
@@ -651,7 +728,7 @@ def test_an_unresolvable_declared_token_lands_as_a_typed_finding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _inject(monkeypatch, _live_read_table())
-    monkeypatch.delenv("INFRAHUB_API_TOKEN", raising=False)
+    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", raising=False)
 
     _read_failure_and_write_findings("credentials")
 
@@ -660,7 +737,7 @@ def test_a_missing_declared_url_lands_as_a_typed_finding(monkeypatch: pytest.Mon
     _inject(monkeypatch, _live_read_table())
     data = package_data()
     del data["configuration"]["destination"]["settings"]["url"]
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
     result = collect_destination_schema_findings(package(data))
 
@@ -691,7 +768,7 @@ class _ReturningClient:
 
 def _mock_schema_read_response(monkeypatch: pytest.MonkeyPatch, response: object) -> None:
     _inject(monkeypatch, _live_read_table())
-    monkeypatch.setenv("INFRAHUB_API_TOKEN", "test-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", "test-token")
 
     def _fake_client(address: str, config: object) -> _ReturningClient:
         del address, config

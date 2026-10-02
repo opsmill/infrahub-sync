@@ -43,6 +43,7 @@ REQUIRED_SETTINGS='INFRAHUB_SYNC_DATABASE_URL
 INFRAHUB_SYNC_PREFECT_DATABASE_URL
 INFRAHUB_SYNC_PRODUCT_PASSWORD
 INFRAHUB_SYNC_PREFECT_PASSWORD
+INFRAHUB_SYNC_PREFECT_AUTH_STRING
 INFRAHUB_SYNC_S3_ACCESS_KEY
 INFRAHUB_SYNC_S3_SECRET_KEY
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS'
@@ -51,16 +52,19 @@ INFRAHUB_SYNC_SERVICE_BEARER_TOKENS'
 # exported shell value otherwise outranks every --env-file, which would let the
 # command validate one image, identity, path, or port and execute another.
 # Keep this closed set equal to the ${...} names in compose.yaml.
-COMPOSE_SETTINGS='INFRAHUB_API_TOKEN
-INFRAHUB_SYNC_API_PORT
+COMPOSE_SETTINGS='INFRAHUB_SYNC_API_PORT
 INFRAHUB_SYNC_API_TOKEN
 INFRAHUB_SYNC_BIND_ADDRESS
+INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
+INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN
+INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN
 INFRAHUB_SYNC_DATABASE_URL
 INFRAHUB_SYNC_IMAGE
 INFRAHUB_SYNC_IMAGE_PULL_POLICY
 INFRAHUB_SYNC_INSTANCE
 INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD_FILE
 INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE
+INFRAHUB_SYNC_PREFECT_AUTH_STRING
 INFRAHUB_SYNC_PREFECT_DATABASE
 INFRAHUB_SYNC_PREFECT_DATABASE_URL
 INFRAHUB_SYNC_PREFECT_PASSWORD
@@ -77,8 +81,6 @@ INFRAHUB_SYNC_S3_REGION
 INFRAHUB_SYNC_S3_SECRET_KEY
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS
 INFRAHUB_SYNC_WORK_POOL
-NAUTOBOT_TOKEN
-NETBOX_TOKEN
 PREFECT_WORKER_HEARTBEAT_SECONDS
 PREFECT_WORKER_QUERY_SECONDS'
 
@@ -604,11 +606,23 @@ command_init() {
         report "generated the PostgreSQL administrator password in $ADMIN_SECRET"
     fi
     if [ -f "$OPERATOR" ]; then
-        report "$OPERATOR already exists and was left unchanged"
+        # A file written before the Prefect API required a credential has no
+        # line for it. That one setting is appended, generated like every other;
+        # nothing already in the file is read into a message or rewritten. A line
+        # that is present but empty is the operator's, and preflight names it.
+        if grep -q '^INFRAHUB_SYNC_PREFECT_AUTH_STRING=' "$OPERATOR"; then
+            report "$OPERATOR already exists and was left unchanged"
+            return
+        fi
+        prefect_auth=$(random_value 24)
+        printf '\n# The credential every Sync process presents to the Prefect API, and the\n# value the Prefect UI asks for.\nINFRAHUB_SYNC_PREFECT_AUTH_STRING=%s\n' \
+            "$prefect_auth" >> "$OPERATOR"
+        report "added a generated INFRAHUB_SYNC_PREFECT_AUTH_STRING to $OPERATOR; everything else was left unchanged"
         return
     fi
     product=$(random_value 24)
     prefect=$(random_value 24)
+    prefect_auth=$(random_value 24)
     access=$(random_value 12)
     secret=$(random_value 24)
     # One value, written to the two settings that name it: the API principal the
@@ -630,14 +644,20 @@ command_init() {
 # that resolve them, and a run that selects a missing value fails that run.
 # Start again after changing any of these: a container reads its environment
 # once, and \`restart\` keeps the environment its container already has.
-#INFRAHUB_API_TOKEN=
-#NETBOX_TOKEN=
-#NAUTOBOT_TOKEN=
+# A package's \`env\` credential identifiers must start with INFRAHUB_SYNC_CREDENTIAL_;
+# these are the three this bundle passes to its services.
+#INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=
+#INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=
+#INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN=
 
 INFRAHUB_SYNC_PRODUCT_PASSWORD=$product
 INFRAHUB_SYNC_PREFECT_PASSWORD=$prefect
 INFRAHUB_SYNC_DATABASE_URL=postgresql://infrahub_sync:$product@postgres:5432/infrahub_sync
 INFRAHUB_SYNC_PREFECT_DATABASE_URL=postgresql+asyncpg://prefect:$prefect@postgres:5432/prefect
+
+# The credential every Sync process presents to the Prefect API, and the value
+# the Prefect UI asks for.
+INFRAHUB_SYNC_PREFECT_AUTH_STRING=$prefect_auth
 
 INFRAHUB_SYNC_S3_ACCESS_KEY=$access
 INFRAHUB_SYNC_S3_SECRET_KEY=$secret

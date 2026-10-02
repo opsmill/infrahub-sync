@@ -4,49 +4,58 @@ title: "Knowledge"
 
 ## Knowledge
 
-How infrahub-sync works — descriptive reference, loaded on demand. These documents
-explain the moving parts so you can reason about a change before making it. For
-prescriptive rules see [Guidelines](../guidelines/index.md); for step-by-step procedures
-see [Guides](../guides/index.md).
+Understand the service components, execution stages and Python modules before changing
+infrahub-sync. A **registered run** is one the Sync HTTP API creates against a
+configuration package registered in PostgreSQL, as opposed to a legacy run resolved from a
+local configuration directory; see [Sync architecture](sync-architecture.md) for the
+lifecycle. Start there, or with the repository tour for a module to edit. For development
+rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
+[Developer guides](../guides/index.md).
 
 ### Orientation
 
-- [Repository tour](repository-tour.md) — where each concern lives: the command-line client,
-  configuration admission, the service and its worker, plans, product storage, adapters, the
-  cache, the engine, and the material that is development-only or historical.
+- [Sync architecture](sync-architecture.md) — service components, the registered-run
+  lifecycle, durable records and deployment limits.
+- [Repository tour](repository-tour.md) — the modules for CLI requests, service execution,
+  plans, storage and adapters, with a trace from the HTTP client to worker operations.
 
 ### Adapters
 
-- [Sync architecture](sync-architecture.md) — how a sync runs end to end: the DiffSync
-  core, source and destination adapters, the Potenda engine, and the code-generation path.
 - [Adapter anatomy](adapter-anatomy.md) — the two classes every adapter provides, the
-  `DiffSyncMixin` / `DiffSyncModelMixin` contract, and what you implement versus what you
-  get for free.
+  `DiffSyncMixin` (the adapter base an adapter's source and destination classes implement) /
+  `DiffSyncModelMixin` (the model base their record types implement) contract, and what you
+  implement versus what you get for free.
 - [Schema mapping](schema-mapping.md) — how `config.yml` maps source resources to
   destination models: fields, identifiers, references, filters, and transforms.
-- [Incremental sync and cache](incremental-and-cache.md) — cursors, tiers, plans, and
-  row-count guardrails, and what an adapter implements to participate.
+- [Incremental sync and cache](incremental-and-cache.md) — cursors (per-adapter bookmarks of
+  what was already read), the cursor tiers an adapter declares for each model, plans, and
+  row-count guardrails (a comparison that would refuse a per-resource count drop
+  against a previous baseline; no product path calls it today), and what an adapter
+  implements to participate.
 
 ### Plans and applying them
 
 - [The saved plan artifact](plan-artifact.md) — the manifest and operations a run records
-  before it writes: layout, canonical encoding, operation identifiers, the checksum, and how
-  a stored plan is read and verified.
-- [Planned writes and apply](planned-write-and-apply.md) — the second write path: the
-  destination write surface and what its type does and does not enforce, apply-time peer
-  resolution, replace-set semantics, and how deletes are recorded but not executed.
-- [The configuration write guard](apply-guard.md) — the PostgreSQL session advisory lock
-  that serializes one configuration's writes across processes: its direct-connection
-  requirement, key derivation, deadline bounds, ownership proof, and failure sanitizing.
+  before it writes: layout, canonical encoding (the exact byte serialization a plan's
+  checksum is computed over), operation identifiers, the checksum, and how a stored plan is
+  read and verified.
+- [Planned writes and apply](planned-write-and-apply.md) — the destination write surface for saved
+  operations, apply-time peer resolution (matching a planned reference to the destination
+  object it names before writing), replace-set semantics, and why recorded deletes
+  are not executed.
+- [The configuration write guard](apply-guard.md) — the PostgreSQL session advisory lock (a
+  database-held mutual-exclusion lock, not a table row) that serializes one configuration's
+  writes across processes: its direct-connection requirement, key derivation, deadline
+  bounds, ownership proof, and failure sanitizing.
 
-### Running a sync from something other than the CLI
+### Configuration and execution {#running-a-sync-from-something-other-than-the-cli}
 
 - [Configuration foundation](configuration-foundation.md) — declared package identity,
   runtime credential references, and the connection-free adapter capability declaration.
-- [The shared execution surface](execution-surface.md) — the typed entry point to one run:
-  `RunResult`, the failure classes, the pipeline lock, and the plan fingerprint.
-- [Prefect orchestration](orchestration-prefect.md) — the packaged flow and serve
-  entrypoint, the log bridge, the remote API surface, and Prefect's traps.
+- [The shared execution surface](execution-surface.md) — service and direct Python
+  callers, plan/verify/apply inputs and return types, failure handling and filesystem locks.
+- [Prefect orchestration](orchestration-prefect.md) — registered service execution and
+  direct read-only planning, with their inputs, results and optional dependencies.
 
 ### Repository workflow
 
@@ -57,7 +66,7 @@ see [Guides](../guides/index.md).
 
 ### Related
 
-- [Adapter guidelines](../guidelines/index.md) — rules that apply to this code.
-- [Adapter guides](../guides/index.md) — adding and testing an adapter.
+- [Guidelines](../guidelines/index.md) — rules that apply to this code.
+- [Developer guides](../guides/index.md) — step-by-step procedures for adapters, the development environment, and release candidates.
 - [Decision records](../adr-index.mdx) — why the architecture is shaped the way it is.
 - [Constitution](../constitution.md) — project principles these documents serve.

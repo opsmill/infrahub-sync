@@ -1,0 +1,1 @@
+The Infrahub node-to-DiffSync integration test now waits, with a 90-second limit, for the throwaway schema to be served before it creates the probe node, so it no longer fails when the create runs before the schema is available.

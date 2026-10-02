@@ -119,3 +119,18 @@ def isolated_schema_fixture(requirement: str) -> Iterator[IsolatedSchema]:
         yield schema
     finally:
         schema.drop()
+
+
+def postgresql_schema_fixture(requirement: str) -> Callable[..., Iterator[IsolatedSchema]]:
+    """Build the session fixture a module uses as its `_postgresql_schema`.
+
+    `requirement` is the human-readable text that names the caller's PostgreSQL
+    parameter in the skip message when ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` is unset.
+    """
+
+    @pytest.fixture(name="_postgresql_schema", scope="session")
+    def _fixture() -> Iterator[IsolatedSchema]:
+        """Hold one generated schema for this module's cases, and drop only that schema."""
+        yield from isolated_schema_fixture(requirement)
+
+    return _fixture

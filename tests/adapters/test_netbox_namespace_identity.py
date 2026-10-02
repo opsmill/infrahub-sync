@@ -189,7 +189,7 @@ def _adapter(schema_mapping: list[dict[str, Any]], sources: dict[str, list[dict[
 
     configuration = _configuration(schema_mapping)
     adapter = NetboxAdapter(
-        target="test",
+        target="source",
         adapter=SyncAdapter(name="netbox", settings={"url": "https://example.invalid", "token": "x"}),
         config=configuration,
     )
