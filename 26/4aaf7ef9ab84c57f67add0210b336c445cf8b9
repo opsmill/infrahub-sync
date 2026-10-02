@@ -1,0 +1,392 @@
+tests/adapters/test_nautobot_incremental.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 2,73-76,88-96,433-440
+examples/netbox_to_infrahub/config.yml
+  s_e87e829f9360b6::t_e79e34b2e4332f 56-57
+docs/docs/use-with-an-ai-agent.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 122-123,161-162
+tests/dev_stack/test_compose_valid.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 30-34
+tests/test_workflow_contracts.py
+  s_e87e829f9360b6::t_a516f4389b1c88 776
+  s_e87e829f9360b6::t_fd09c3ff342e84 1834-1841,1847-1848,1869-1870,1873,1886-1895
+  s_e87e829f9360b6::t_0e795a1ef82406 1896-1897
+.github/workflows/workflow-tests.yml
+  s_e87e829f9360b6::t_e79e34b2e4332f 84-127
+infrahub_sync/plan/reference_candidates.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 1-73
+changelog/+sandbox-mapping-transforms.security.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+infrahub_sync/__init__.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 10-13,31-76,190-193,375-377,380,393-396,402-404
+.github/workflows/workflow-linter.yml
+  s_e87e829f9360b6::t_e79e34b2e4332f 52-55,57,59,177-180,182,184
+pyproject.toml
+  s_e87e829f9360b6::t_e79e34b2e4332f 52
+infrahub_sync/utils.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 18
+changelog/+safe-incremental-watermarks.fixed.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+.github/workflows/update-infrahub.yml
+  s_e87e829f9360b6::t_e79e34b2e4332f 1-99
+docs/docs/develop/knowledge/orchestration-prefect.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 27-42
+tests/compose/lifecycle.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 362,367,467-469,498,516-519,529-530,533
+docs/docs/adapters/ipfabric.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 91,94,97
+.gitignore
+  s_e87e829f9360b6::t_e79e34b2e4332f 5-6,10
+tests/product_store/test_contract.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 6,12,24-25,58,98-101,563-564,694,708-739,752,893-895,2635,2672,2699,2751,2929,2977,3007,3121,3131-3132,3140,3149-3150,3158-3331,3431-3435,3474,3568,3779,3802,3969,3991,4027-4028,4652-4758
+  s_e87e829f9360b6::t_9dbd061f3e30bc 4759-4760
+docs/docs/configuration-package.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 55,60-61
+tests/cache/test_detached_store_delta.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 1-60
+infrahub_sync/service/config_routes.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 21,92,100-101
+tests/dev_stack/test_loopback_publication.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 1-126
+infrahub_sync/configuration/credentials.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 16,26-30,34-68,73,172,182-186
+  s_e87e829f9360b6::t_f2574b7ecda3ee 187
+changelog/+redaction-escaped-forms.security.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+examples/netbox_to_infrahub/package.yml
+  s_e87e829f9360b6::t_e79e34b2e4332f 56-57,731,734
+tests/plan/test_source_identity_collision.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 85-89,219,279
+docs/docs/reference/prefect-remote-run.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 66-68
+docs/docs/reference/schema-mapping.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 109-128,242
+  s_e87e829f9360b6::t_0ef66ce83b5719 243
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 64-65,75,77,168,205-206
+  s_e87e829f9360b6::t_65b1813ae42ddd 74,76,135,148,169
+infrahub_sync/service/service.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 18,159-174,215-217,219,230-232,234-235,255,306,748-753,761,771-772
+tests/runtime_schema/test_dotted_provenance.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 197-198
+infrahub_sync/adapters/slurpitsync.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 4,23,88-89,150,152,154-158
+changelog/+sandbox-getpid-test.changed.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+infrahub_sync/cli.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 39,56-74,144-151,162,166,225-228,321-324,502,521,523-525,530,560
+infrahub_sync/configuration/runtime.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 10,45-47,68-76
+infrahub_sync/plan/derive.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 31-32,78,213
+docs/docs/running-a-sync.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 173-177
+tests/cli/test_client_commands.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 676-784,961-981
+changelog/+persist-incremental-overlap.fixed.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+changelog/+registered-sdk-settings.fixed.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+changelog/+registered-run-ambient-env.security.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+tests/adapters/test_netbox_incremental.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 2,82-85,114-122,190-197
+changelog/+plan-detail-escapes.security.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+docs/docs/reference/incremental-extraction.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 46,49
+examples/slurpit_to_infrahub/package.yml
+  s_e87e829f9360b6::t_e79e34b2e4332f 23-24,218,221
+docs/docs/reference/durable-product-records.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 67,69,72
+tests/configuration/test_parse_diagnostics.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 39,183,213,1093,1112,1197-1233
+infrahub_sync/service/worker.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 22,26-27,40-42,53-56,84-141,143,146,157-162,171-174,382-386
+changelog/+plan-generic-reference.fixed.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+tests/cache/test_incremental_engine.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 40-43,80,89,122,147,155-156,174-175
+.vale/styles/spelling-exceptions.txt
+  s_e87e829f9360b6::t_e79e34b2e4332f 11,126
+.github/workflows/trigger-pr-develop.yml
+  s_e87e829f9360b6::t_143cd7e16c2f9f 100-103,106,112,141
+  s_e87e829f9360b6::t_e79e34b2e4332f 68-71,116-118,135-140
+tests/cache/test_incremental_helpers.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 95,104,124-125
+changelog/+refuse-v3-sync-store.changed.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+tests/configuration/test_runtime.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 13,33,42-73
+tests/compose/test_bootstrap_idempotence.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 51-52,54-55
+docs/docs/adapters/choosing-an-adapter.mdx
+  s_e87e829f9360b6::t_65b1813ae42ddd 42
+docs/docs/v2-to-v3.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 45-48
+tests/integration/isolated_worker_program.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 26
+tests/integration/test_isolated_worker_handoff_integration.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 133-134
+.github/scripts/update_infrahub.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 1-147
+tests/preview/test_netbox_package.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 128-129
+infrahub_sync/configuration/capabilities.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 190,215-217
+tests/configuration/test_validation_compatibility.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 3-4,22,121-122,127,132,137,142,322
+tests/configuration/test_validation_core.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 49,59,152,243-257,279,289,294-295,304,308-309,313,746,830,841,847-853,871,879-881,888,919,924,936
+changelog/+require-fast-checks-for-merge.fixed.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+docs/docs/reference/config.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 81,83-86,111-116
+tests/compose/test_source_credentials.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 97,105,115-117,165,236,250,282,302,334-335,388-389,428,444,605,624
+changelog/+infrahub-auto-bump.housekeeping.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+tests/adapters/test_aci_verify_precedence.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 6,9,13-14,76-169
+docs/docs/adapters/infrahub.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 59,62,89,92,111
+  s_e87e829f9360b6::t_65b1813ae42ddd 120,233
+tests/integration/test_infrahub_node_to_diffsync_integration.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 108-114,116,119-121,135-143,146
+tests/compose/redaction.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 81-83
+tests/cache/test_safe_watermarks.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 1-642
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 168,200-201,293,295,300-301,330,481-483,487-488
+tests/compose/test_configuration_free_startup.py
+  s_e87e829f9360b6::t_bcfa99d0f3c465 184
+  s_e87e829f9360b6::t_e79e34b2e4332f 132
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 53-54,64,66,161,197-198
+  s_e87e829f9360b6::t_65b1813ae42ddd 63,65,124,137,162
+development/docker-compose.preview.yml
+  s_e87e829f9360b6::t_e79e34b2e4332f 7-8,24,39,58-60,62,79
+docs/docs/develop/knowledge/schema-mapping.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 142-147,157-165
+  s_e87e829f9360b6::t_154a8304afc44d 166
+tests/runtime_schema/test_entry_point_resolution.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 253-254
+changelog/+ci-uv-tooling.housekeeping.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+docs/docs/adapters/peeringdb.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 54,57
+tests/product_store/test_validate_destination_schema.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 302
+docs/docs/creating-a-sync-project.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 63,66,88
+docker-compose.yml
+  s_e87e829f9360b6::t_e79e34b2e4332f 55-58,170-173,234,275,283-284
+development/docker-compose.infrahub.yml
+  s_e87e829f9360b6::t_e79e34b2e4332f 222,250-251,317
+docs/docs/compose-deployment.mdx
+  s_e87e829f9360b6::t_fe8e2bb4345cec 206,212,435,446
+  s_e87e829f9360b6::t_4626b299ef54fc 87,106-107,134,143-145,339-359
+  s_e87e829f9360b6::t_e79e34b2e4332f 197,200-204,207-211,213,227-228,242,246
+  s_e87e829f9360b6::t_e92ac4e45986e9 205,360
+tests/integration/test_managed_write_guard_live.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 205-207
+infrahub_sync/configuration/models.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 14,37,71,93,341-353
+  s_e87e829f9360b6::t_acb3907eacf03b 354
+examples/netbox_to_infrahub/README.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 20-21
+tests/configuration/test_contracts.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 14,51,80-81,108,635,655-658,671-686,792,925,1593-1594,1955,1967,1973,1985,1989-1990,2003,2009,2020,2047-2061,2063,2065,2074-2108,2111,2118-2120,2133,2221-2224,2444,2452
+docs/docs/adapters/librenms.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 54,57
+docs/docs/adapters/genericrestapi.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 61,64
+infrahub_sync/adapters/infrahub.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 25-29,703-705
+changelog/+prefect-access-boundary.security.md
+  s_e87e829f9360b6::t_ff0816a14626b2 3
+  s_e87e829f9360b6::t_e79e34b2e4332f 1-2,4-5
+docs/docs/adapters/aci.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 54,57,60,65,168
+changelog/+aci-verify-precedence-tests.housekeeping.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+docs/docs/adapters/netbox.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 57,60
+infrahub_sync/adapters/aci.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 25,212-216
+infrahub_sync/generic_peers.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 1-23
+README.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 102-103,106
+changelog/+product-store-postgresql-ci.changed.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+tests/cache/test_destination_local_id_snapshot.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 73-76,144,196,199-204
+tests/runtime_schema/test_registered_execution.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 197-198
+docs/docs/adapters/observium.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 56,59,62
+docs/docs/reference/sync-http-api.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 140
+.github/scripts/nightly_e2e.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 57-58
+docs/docs/adapters/slurpit.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 105,108,112-113,117,119,154-155
+docs/docs/develop/guidelines/testing-tiers.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 20-21,122,162-170,172-175,182-188,191-198,201-222,229,296,306,334-336,340
+tasks/tests.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 1-3,5,8,38-71
+docs/docs/develop/knowledge/incremental-and-cache.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 24,36,38-39,48,74-137
+tests/adapters/test_slurpit_model_loading.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 449-486
+infrahub_sync/product_store/store.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 25,2946,3489-3499,3501-3505,3509,3513,3516,3535-3574,3576-3577
+docs/docs/development-stack.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 136-137,161-171,367-371
+  s_e87e829f9360b6::t_0bd5a615dfe35a 372
+tests/compose/test_compose_contract.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 93,99,110-118,332-388
+  s_e87e829f9360b6::t_78e8dfbcc5fb08 389-390
+infrahub_sync/configuration/validation.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 25,28,43,71,286-301,608-610,612-619,692
+changelog/+slurpit-host-bit-prefix.fixed.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+docs/docs/develop/knowledge/quality-gates.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 119-127
+docs/docs/adapters/device42.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 55,58,61
+tests/integration/test_destination_schema_live_read.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 36-41,53-55
+infrahub_sync/configuration/storage.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 1-15
+infrahub_sync/product_store/configs.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 53-55,94-97,100,356-364,369-371,385-386,400,402,405,699,708-721,897
+changelog/+incremental-fallback-delete-proposals.changed.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+infrahub_sync/service/app.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 15-16,119,123-127
+development/preview.env
+  s_e87e829f9360b6::t_e79e34b2e4332f 37-42
+tests/configuration/validation_packages.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 24-25
+tests/compose/test_container_cli.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 45-46
+tests/preview/test_service_api.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 63-65,94-96
+changelog/+incremental-missing-model.changed.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+docs/docs/adapters/nautobot.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 102,105
+infrahub_sync/execution.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 29,52,132-135,140,455,468-485,487-504,1169,1180-1181
+  s_e87e829f9360b6::t_95cbc5a0c8b89c 1182
+tests/configuration/test_schema_validation.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 254,263-284,626,716,731,740,771
+tests/cache/test_cursors.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 7,31-60
+changelog/+credential-env-prefix.security.md
+  s_e87e829f9360b6::t_ff0816a14626b2 1
+docs/docs/orchestration.mdx
+  s_e87e829f9360b6::t_65b1813ae42ddd 114,118
+  s_e87e829f9360b6::t_e79e34b2e4332f 115-117
+tests/plan/test_generic_reference_fallback.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 1-207
+docs/docs/adapters/peering-manager.mdx
+  s_e87e829f9360b6::t_e79e34b2e4332f 81,84
+tests/compose/conftest.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 156,160,386-389,466-469
+tests/configuration/test_registered_adapter_authority.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 7,19-35,155,237-238,540-632
+development/docker-compose.dev.yml
+  s_e87e829f9360b6::t_e79e34b2e4332f 20-22,157,183-185
+changelog/+await-graphql-probe-mutation.changed.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+infrahub_sync/service/flow.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 25-29,729-730
+tasks/preview.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 163-165,167-174,176,198-200
+changelog/+jinja-sandbox-floor.security.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+docs/docs/develop/guidelines/secret-redaction.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 138-144,156-164
+  s_e87e829f9360b6::t_c8ef7f238d9fb8 165
+infrahub_sync/cache/cursors.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 16,36,42-75
+infrahub_sync/cache/incremental.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 21-22,113-118,120,141-142,146-157,211-225
+changelog/+urllib3-advisories.security.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 1
+examples/aci_to_infrahub/package.yml
+  s_e87e829f9360b6::t_e79e34b2e4332f 135,138,141
+docs/docs/develop/knowledge/configuration-foundation.md
+  s_e87e829f9360b6::t_e79e34b2e4332f 31,34-40,42-43,130-134
+infrahub_sync/adapters/ipfabricsync.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 18,47-61,67-74
+infrahub_sync/potenda/__init__.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 9,22,80,259,281-286,294,364,372,375,408,410,413,418-423,434-436,439-441,443-444,447,451-460,462,465,473,482-490,492-495,497,499-505,508-509,667-670,980-983,989-993
+tests/adapters/test_infrahub_incremental.py
+  s_e87e829f9360b6::t_e79e34b2e4332f 1,5-6,55-56,58,67-75,82,165-172
+tests/runtime_schema/test_worker_path.py
+  s_e87e829f9360b6::t_222f3bb4e1c8df 117-118
+tests/service/test_apply_checkpoint_order.py
+  s_e87e829f9360b6::t_f0dec9abd6a119 155-156
+tests/service/test_apply_guard.py
+  s_e87e829f9360b6::t_9c7e2a37a15790 672-687
+tests/service/test_apply_versus_verify_race.py
+  s_e87e829f9360b6::t_5fb59790c53771 43,50-51,86-87,91-94,208,212
+tests/service/test_artifact_confidentiality.py
+  s_e87e829f9360b6::t_8e4b6096a89dc6 82
+tests/service/test_http_api.py
+  s_e87e829f9360b6::t_f2ae70f8f6b426 110
+tests/service/test_managed_write_guard.py
+  s_e87e829f9360b6::t_8f9245cb003582 152-153
+tests/service/test_registered_plan_apply.py
+  s_e87e829f9360b6::t_03c745ebfc429b 46-47,262,267-268,357
+tests/service/test_registered_schema_guard.py
+  s_e87e829f9360b6::t_0ebe7c17a663eb 166-167
+tests/service/test_service_worker.py
+  s_e87e829f9360b6::t_021f3bebd544f6 28,40-41,77-90,136-138
+tests/service/test_service_worker_admission.py
+  s_e87e829f9360b6::t_da70be890e18b2 1-386
+tests/service/test_service_worker_identity_recovery.py
+  s_e87e829f9360b6::t_4835400d791f5e 76-78,668-669
+tests/service/test_sync_checkpoint_order.py
+  s_e87e829f9360b6::t_3a9a34a0e33039 127-128
+tests/service/test_sync_store_policy.py
+  s_e87e829f9360b6::t_fee36fbd4c7e1a 1-264
+tests/service/test_validation_secret_containment.py
+  s_e87e829f9360b6::t_e9ca8424c7e02e 110-111,296-297
+tests/service/test_worker_configuration_directory.py
+  s_e87e829f9360b6::t_772f1c21e76b18 95-96
+tests/test_execution_surface.py
+  s_e87e829f9360b6::t_a37e2a617c7f7b 515-520,643-662
+tests/test_potenda_plan_artifact.py
+  s_e87e829f9360b6::t_b47468e971f13d 444-447,834,837,839-840,851-852,855-877,879-882,1320,1322-1325,1524-1613
+tests/test_redis_store_compat.py
+  s_e87e829f9360b6::t_81290a6282a7a0 11-12
+tests/test_schema_mapping_transforms.py
+  s_e87e829f9360b6::t_475159c4473de9 1-194
+tests/test_sync_store_policy.py
+  s_e87e829f9360b6::t_39fc65f5ed9efb 1-112
+tests/test_update_infrahub.py
+  s_e87e829f9360b6::t_f919a1541d8581 1-102
+uv.lock
+  s_e87e829f9360b6::t_d54acfadace649 1269
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "264aaf7ef9ab84c57f67add0210b336c445cf8b9",
+  "prompts": {},
+  "sessions": {
+    "s_e87e829f9360b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "11928a3e-529f-47b9-b31d-1cc6ccbdc7b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
