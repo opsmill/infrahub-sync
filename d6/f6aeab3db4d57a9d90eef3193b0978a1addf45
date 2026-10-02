@@ -1,0 +1,21 @@
+pyproject.toml
+  s_e87e829f9360b6::t_0e39f4dbe3e5c1 241
+tests/image/test_image_ref_fixture.py
+  s_e87e829f9360b6::t_0e39f4dbe3e5c1 18,30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "d6f6aeab3db4d57a9d90eef3193b0978a1addf45",
+  "prompts": {},
+  "sessions": {
+    "s_e87e829f9360b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "11928a3e-529f-47b9-b31d-1cc6ccbdc7b4",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
