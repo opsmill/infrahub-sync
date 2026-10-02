@@ -9,7 +9,7 @@ import re
 import sqlite3
 import subprocess  # noqa: S404 - fixed local interpreter probes restart durability.
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
@@ -54,7 +54,7 @@ from infrahub_sync.product_store.store import (
     SQLiteRunStore,
     _RelationalRunStore,
 )
-from tests.product_store.postgresql_isolation import isolated_schema
+from tests.product_store.postgresql_isolation import IsolatedSchema, dsn_or_skip, isolated_schema
 
 # This intentionally mirrors infrahub_sync/product_store/__init__.py's __all__, hand-maintained
 # so a change to the module's exports has to touch this list too.
@@ -702,6 +702,38 @@ def provider(request, tmp_path: Path) -> ProductProjection:
         PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
         S3ArtifactStore(fake_s3, bucket="product-artifacts", prefix="contract"),
     )
+
+
+@pytest.fixture(params=("local", "postgresql-emulated", pytest.param("postgresql", marks=pytest.mark.integration)))
+def redaction_provider(request, tmp_path: Path) -> Iterator[ProductProjection]:
+    """The ``provider`` profiles plus a real PostgreSQL server, for the redaction boundary.
+
+    The ``postgresql`` parameter needs ``PRODUCT_STORE_TEST_POSTGRESQL_DSN`` and runs each case
+    in its own generated schema, dropped afterwards.
+    """
+    if request.param == "local":
+        yield ProductProjection(SQLiteRunStore(tmp_path / "local.sqlite3"), FileArtifactStore(tmp_path / "objects"))
+        return
+    if request.param == "postgresql-emulated":
+        yield ProductProjection(
+            PostgreSQLRunStore(_connect(tmp_path / "postgres-emulator.sqlite3")),
+            S3ArtifactStore(_FakeS3(), bucket="product-artifacts", prefix="contract"),
+        )
+        return
+    schema = isolated_schema(dsn_or_skip("the redaction contract's PostgreSQL parameter"))
+    schema.create()
+    # pylint: disable-next=import-outside-toplevel,import-error
+    import psycopg  # ty: ignore[unresolved-import] - TODO: optional service dependency
+
+    from infrahub_sync.service.storage import PsycopgConnectionFactory
+
+    try:
+        yield ProductProjection(
+            PostgreSQLRunStore(lambda: PsycopgConnectionFactory(psycopg.connect)(schema.dsn)),
+            FileArtifactStore(tmp_path / "objects"),
+        )
+    finally:
+        schema.drop()
 
 
 def test_zero_link_run_round_trip(provider: ProductProjection) -> None:
@@ -3085,7 +3117,7 @@ def test_non_mapping_manifest_is_reported_as_invalid(manifest: bytes) -> None:
     assert product_store_store._validate_publication(reference, manifest, data).reason == "manifest-invalid"
 
 
-def test_redaction_precedes_every_relational_and_artifact_write(provider: ProductProjection) -> None:
+def test_redaction_precedes_every_relational_and_artifact_write(redaction_provider: ProductProjection) -> None:
     secret = "canary-secret-649"  # noqa: S105 - deliberate persistence-boundary canary.
     record = _run().model_copy(
         update={
@@ -3095,8 +3127,8 @@ def test_redaction_precedes_every_relational_and_artifact_write(provider: Produc
             "summary": {"nested": [secret]},
         }
     )
-    provider.create_run(record, secrets=(secret,))
-    provider.publish_artifact(
+    redaction_provider.create_run(record, secrets=(secret,))
+    redaction_provider.publish_artifact(
         "run-001",
         artifact_id="result",
         kind="result",
@@ -3104,7 +3136,7 @@ def test_redaction_precedes_every_relational_and_artifact_write(provider: Produc
         data=f'{{"credential":"{secret}"}}'.encode(),
         secrets=(secret,),
     )
-    provider.finish_run(
+    redaction_provider.finish_run(
         "run-001",
         phase="applied",
         outcome="succeeded",
@@ -3113,8 +3145,8 @@ def test_redaction_precedes_every_relational_and_artifact_write(provider: Produc
         secrets=(secret,),
     )
 
-    loaded = provider.lookup_run("run-001").value
-    artifact = provider.lookup_artifact("run-001", "result").value
+    loaded = redaction_provider.lookup_run("run-001").value
+    artifact = redaction_provider.lookup_artifact("run-001", "result").value
     assert loaded is not None
     assert secret not in loaded.model_dump_json()
     assert artifact is not None
@@ -3146,11 +3178,11 @@ class _ReviewCanary(BaseModel):
     ],
 )
 def test_a_public_json_artifact_is_redacted_whatever_escaping_its_serializer_used(
-    serialize: Callable[[str], bytes], provider: ProductProjection
+    serialize: Callable[[str], bytes], redaction_provider: ProductProjection
 ) -> None:
-    provider.create_run(_run())
+    redaction_provider.create_run(_run())
 
-    reference = provider.publish_artifact(
+    reference = redaction_provider.publish_artifact(
         "run-001",
         artifact_id="plan-review",
         kind="saved-plan-review",
@@ -3159,7 +3191,7 @@ def test_a_public_json_artifact_is_redacted_whatever_escaping_its_serializer_use
         secrets=(_ESCAPED_SECRET,),
     )
 
-    artifact = provider.lookup_artifact("run-001", "plan-review").value
+    artifact = redaction_provider.lookup_artifact("run-001", "plan-review").value
     assert artifact is not None
     forms = {
         _ESCAPED_SECRET,
@@ -3172,12 +3204,14 @@ def test_a_public_json_artifact_is_redacted_whatever_escaping_its_serializer_use
     assert reference.size == len(artifact)
 
 
-def test_a_public_json_artifact_is_redacted_inside_json_text_held_by_a_field(provider: ProductProjection) -> None:
+def test_a_public_json_artifact_is_redacted_inside_json_text_held_by_a_field(
+    redaction_provider: ProductProjection,
+) -> None:
     """A field that stores a serialized document holds the secret JSON-escaped once more."""
-    provider.create_run(_run())
+    redaction_provider.create_run(_run())
     nested = json.dumps({"pw": _ESCAPED_SECRET})
 
-    provider.publish_artifact(
+    redaction_provider.publish_artifact(
         "run-001",
         artifact_id="plan-review",
         kind="saved-plan-review",
@@ -3186,17 +3220,19 @@ def test_a_public_json_artifact_is_redacted_inside_json_text_held_by_a_field(pro
         secrets=(_ESCAPED_SECRET,),
     )
 
-    artifact = provider.lookup_artifact("run-001", "plan-review").value
+    artifact = redaction_provider.lookup_artifact("run-001", "plan-review").value
     assert artifact is not None
     config = json.loads(artifact)["operations"][0]["payload"]["config"]
     assert json.loads(config) == {"pw": "***"}
 
 
-def test_a_public_text_artifact_is_redacted_in_its_raw_and_json_escaped_forms(provider: ProductProjection) -> None:
-    provider.create_run(_run())
+def test_a_public_text_artifact_is_redacted_in_its_raw_and_json_escaped_forms(
+    redaction_provider: ProductProjection,
+) -> None:
+    redaction_provider.create_run(_run())
     escaped = json.dumps(_ESCAPED_SECRET)[1:-1]
 
-    provider.publish_artifact(
+    redaction_provider.publish_artifact(
         "run-001",
         artifact_id="log",
         kind="log",
@@ -3205,15 +3241,17 @@ def test_a_public_text_artifact_is_redacted_in_its_raw_and_json_escaped_forms(pr
         secrets=(_ESCAPED_SECRET,),
     )
 
-    assert provider.lookup_artifact("run-001", "log").value == b"raw *** quoted ***"
+    assert redaction_provider.lookup_artifact("run-001", "log").value == b"raw *** quoted ***"
 
 
-def test_a_public_json_artifact_stays_valid_json_when_a_secret_is_a_number(provider: ProductProjection) -> None:
+def test_a_public_json_artifact_stays_valid_json_when_a_secret_is_a_number(
+    redaction_provider: ProductProjection,
+) -> None:
     """Rewriting digits inside a number leaves bytes the plan reader cannot parse."""
     secret = "86427531"  # noqa: S105 - deliberate persistence-boundary canary.
-    provider.create_run(_run())
+    redaction_provider.create_run(_run())
 
-    provider.publish_artifact(
+    redaction_provider.publish_artifact(
         "run-001",
         artifact_id="plan-review",
         kind="saved-plan-review",
@@ -3222,19 +3260,19 @@ def test_a_public_json_artifact_stays_valid_json_when_a_secret_is_a_number(provi
         secrets=(secret,),
     )
 
-    artifact = provider.lookup_artifact("run-001", "plan-review").value
+    artifact = redaction_provider.lookup_artifact("run-001", "plan-review").value
     assert artifact is not None
     assert json.loads(artifact) == {"vlan": 7, "asn": "***", "serial": "1***"}
 
 
 def test_a_public_json_artifact_masks_a_number_written_without_the_exponent_sign(
-    provider: ProductProjection,
+    redaction_provider: ProductProjection,
 ) -> None:
     """Pydantic writes 1e100 where json.dumps writes 1e+100; the decoded pass still sees the secret."""
     secret = "1e+100"  # noqa: S105 - deliberate persistence-boundary canary.
-    provider.create_run(_run())
+    redaction_provider.create_run(_run())
 
-    provider.publish_artifact(
+    redaction_provider.publish_artifact(
         "run-001",
         artifact_id="plan-review",
         kind="saved-plan-review",
@@ -3243,18 +3281,20 @@ def test_a_public_json_artifact_masks_a_number_written_without_the_exponent_sign
         secrets=(secret,),
     )
 
-    artifact = provider.lookup_artifact("run-001", "plan-review").value
+    artifact = redaction_provider.lookup_artifact("run-001", "plan-review").value
     assert artifact is not None
     assert json.loads(artifact) == {"operations": [{"payload": {"x": "***"}}]}
 
 
-def test_a_public_json_artifact_whose_keys_collapse_under_redaction_is_refused(provider: ProductProjection) -> None:
+def test_a_public_json_artifact_whose_keys_collapse_under_redaction_is_refused(
+    redaction_provider: ProductProjection,
+) -> None:
     """Two keys that redact to the same text would publish a document with a duplicate key."""
     secret = "collapse-canary-5521"  # noqa: S105 - deliberate persistence-boundary canary.
-    provider.create_run(_run())
+    redaction_provider.create_run(_run())
 
     with pytest.raises(ValueError, match="collapse multiple mapping keys"):
-        provider.publish_artifact(
+        redaction_provider.publish_artifact(
             "run-001",
             artifact_id="plan-review",
             kind="saved-plan-review",
@@ -3263,15 +3303,17 @@ def test_a_public_json_artifact_whose_keys_collapse_under_redaction_is_refused(p
             secrets=(secret,),
         )
 
-    assert provider.lookup_artifact("run-001", "plan-review").value is None
+    assert redaction_provider.lookup_artifact("run-001", "plan-review").value is None
 
 
-def test_a_public_json_artifact_without_secrets_is_published_byte_for_byte(provider: ProductProjection) -> None:
+def test_a_public_json_artifact_without_secrets_is_published_byte_for_byte(
+    redaction_provider: ProductProjection,
+) -> None:
     """With nothing to redact, the bytes are stored as given, spacing included."""
     data = b'{ "operations" : [ { "note" : "nothing to hide" } ] }'
-    provider.create_run(_run())
+    redaction_provider.create_run(_run())
 
-    provider.publish_artifact(
+    redaction_provider.publish_artifact(
         "run-001",
         artifact_id="plan-review",
         kind="saved-plan-review",
@@ -3280,7 +3322,7 @@ def test_a_public_json_artifact_without_secrets_is_published_byte_for_byte(provi
         secrets=(),
     )
 
-    assert provider.lookup_artifact("run-001", "plan-review").value == data
+    assert redaction_provider.lookup_artifact("run-001", "plan-review").value == data
 
 
 def test_concurrent_result_merges_retain_every_stage_on_sqlite_and_emulated_postgresql(
@@ -4606,12 +4648,30 @@ def test_postgresql_run_store_initializes_against_a_real_server() -> None:
         schema.drop()
 
 
+# The pre-migration shape of the two tables that carry their own column migrations.
+_LEGACY_RECEIPT_AND_EXECUTION_DDL = [
+    "CREATE TABLE mutation_receipts ("
+    "receipt_id TEXT PRIMARY KEY, actor TEXT NOT NULL, key_digest TEXT NOT NULL, "
+    "operation TEXT NOT NULL, target_run_id TEXT, request_fingerprint TEXT NOT NULL, "
+    "reason TEXT NOT NULL, run_id TEXT NOT NULL, prefect_key TEXT NOT NULL, "
+    "state TEXT NOT NULL, response_status INTEGER, response_body TEXT, flow_run_id TEXT, "
+    "created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (actor, key_digest))",
+    "CREATE TABLE prefect_executions ("
+    "run_id TEXT NOT NULL, flow_run_id TEXT NOT NULL, deployment_id TEXT, purpose TEXT NOT NULL, "
+    "attempt INTEGER NOT NULL, last_observed_state TEXT, last_observed_at TEXT, "
+    "position INTEGER NOT NULL, mutation_receipt_id TEXT UNIQUE, "
+    "PRIMARY KEY (run_id, flow_run_id), FOREIGN KEY (run_id) REFERENCES product_runs(run_id), "
+    "FOREIGN KEY (mutation_receipt_id) REFERENCES mutation_receipts(receipt_id))",
+]
+
+
 @pytest.mark.integration
 def test_postgresql_migration_ignores_same_named_tables_in_a_sibling_schema() -> None:
     """A sibling schema's migrated ``product_runs`` must not suppress the target's column migration.
 
-    Column introspection that omits ``table_schema`` sees the sibling's binding columns, decides
-    nothing is missing, and leaves the target's legacy ``product_runs`` without them.
+    Column introspection that omits ``table_schema`` sees the sibling's migrated columns, decides
+    nothing is missing, and leaves the target's legacy ``product_runs``, ``mutation_receipts`` and
+    ``prefect_executions`` without them.
     """
     endpoint = _reachable_postgresql_dsn()
     if endpoint is None:
@@ -4656,19 +4716,38 @@ def test_postgresql_migration_ignores_same_named_tables_in_a_sibling_schema() ->
         assert binding_columns <= columns_of(sibling.name, sibling.dsn)
         assert guards <= constraints_of(sibling.name, sibling.dsn)
 
-        # The target holds the legacy parent tables only: same table names, no binding columns.
-        registry_tables = ("configurations", "configuration_versions")
+        # The target holds the legacy tables only: same table names, none of the later columns.
+        # The two tables with their own migrations get their legacy shape, not the current one.
+        migrated_elsewhere = ("configurations", "configuration_versions", "mutation_receipts", "prefect_executions")
+        liveness = {column for column, _ in product_store_store._PREFECT_EXECUTION_LIVENESS_COLUMNS}
         with psycopg.connect(target.dsn) as admin:
             for statement in product_store_store._SCHEMA.split(";"):
-                if statement.strip() and not any(table in statement for table in registry_tables):
+                if statement.strip() and not any(table in statement for table in migrated_elsewhere):
                     admin.execute(statement)
+            for statement in _LEGACY_RECEIPT_AND_EXECUTION_DDL:
+                admin.execute(statement)
             admin.commit()
+
+        def legacy_columns_of(table: str, schema: IsolatedSchema) -> set[str]:
+            with psycopg.connect(schema.dsn) as admin:
+                rows = admin.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = %s AND table_schema = %s",
+                    (table, schema.name),
+                ).fetchall()
+            return {row[0] for row in rows}
+
         assert not binding_columns & columns_of(target.name, target.dsn)
         assert not guards & constraints_of(target.name, target.dsn)
+        assert not {"resource_kind", "resource_id"} & legacy_columns_of("mutation_receipts", target)
+        assert not liveness & legacy_columns_of("prefect_executions", target)
+        assert {"resource_kind", "resource_id"} <= legacy_columns_of("mutation_receipts", sibling)
+        assert liveness <= legacy_columns_of("prefect_executions", sibling)
 
         PostgreSQLRunStore(lambda: PsycopgConnectionFactory(psycopg.connect)(target.dsn))
 
         assert binding_columns <= columns_of(target.name, target.dsn)
+        assert {"resource_kind", "resource_id"} <= legacy_columns_of("mutation_receipts", target)
+        assert liveness <= legacy_columns_of("prefect_executions", target)
         # A same-named constraint in the sibling must not satisfy the existence checks.
         assert guards <= constraints_of(target.name, target.dsn)
     finally:

@@ -39,7 +39,7 @@ def tests_integration(context: Context) -> None:
 
 @task
 def tests_product_store_postgresql(context: Context) -> None:
-    """Run the product store's PostgreSQL integration tests and fail if any is skipped.
+    """Run the product store's and the admission race's PostgreSQL integration tests and fail if any is skipped.
 
     Requires ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``. Plain ``pytest -m integration`` skips these
     tests when the driver or server is missing; this task turns every skip, an unset DSN, and an
@@ -52,7 +52,8 @@ def tests_product_store_postgresql(context: Context) -> None:
         report = Path(directory) / "junit.xml"
         with context.cd(MAIN_DIRECTORY):
             result = context.run(
-                f"pytest -m integration tests/product_store -p no:cacheprovider -q --no-cov -rs --junitxml={shlex.quote(str(report))}",
+                "pytest -m integration tests/product_store tests/service/test_apply_versus_verify_race.py "
+                f"-p no:cacheprovider -q --no-cov -rs --junitxml={shlex.quote(str(report))}",
                 warn=True,
                 pty=True,
             )

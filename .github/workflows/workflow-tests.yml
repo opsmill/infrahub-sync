@@ -82,8 +82,8 @@ jobs:
         run: uv run invoke tests.tests-unit
 
   # The unit tier above excludes `integration`, so nothing there touches a real
-  # PostgreSQL server. This job runs only the product store's integration tests
-  # against a service container, and `tests-product-store-postgresql` fails on
+  # PostgreSQL server. This job runs only the product store's and the admission
+  # race's integration tests against a service container, and `tests-product-store-postgresql` fails on
   # any skip, an unset DSN, or an empty selection, so a missing server or driver
   # cannot pass as green.
   product-store-postgresql:
@@ -94,7 +94,7 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
         env:
           POSTGRES_PASSWORD: probe
           POSTGRES_DB: probe

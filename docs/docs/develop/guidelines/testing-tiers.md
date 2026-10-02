@@ -161,12 +161,15 @@ Three families need more detail than the tables give:
   [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/service/test_apply_versus_verify_race.py)
   — parametrize their contracts over SQLite and PostgreSQL, and only the `postgresql`
   parameter carries the `integration` mark. Alongside them,
-  [`test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_contract.py) contributes one standalone
-  marked test, `test_postgresql_run_store_initializes_against_a_real_server`, which is not
-  parametrized: it is a schema-bootstrap check that only a real server can make.
+  [`test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_contract.py) contributes two standalone
+  marked tests that are not parametrized: `test_postgresql_run_store_initializes_against_a_real_server`,
+  a schema-bootstrap check, and `test_postgresql_migration_ignores_same_named_tables_in_a_sibling_schema`,
+  which creates two schemas. It also adds a `postgresql` parameter to its redaction tests. Only a
+  real server can make these checks.
 
-  Set `PRODUCT_STORE_TEST_POSTGRESQL_DSN` and install `psycopg` for both. Each creates one
-  generated schema and drops only that schema, and its scoped `search_path` deliberately
+  Set `PRODUCT_STORE_TEST_POSTGRESQL_DSN` and install `psycopg` for both. The module-level
+  fixtures create one generated schema per test module for the session, each standalone or
+  redaction case creates its own, and every one drops only the schemas it created, and its scoped `search_path` deliberately
   excludes `public`, so a DSN aimed at the wrong database cannot reach another schema's
   tables:
 
@@ -176,7 +179,8 @@ Three families need more detail than the tables give:
   ```
 
   Pull-request CI runs the `product-store-postgresql` job in `workflow-tests.yml`, which
-  starts a `postgres:18-alpine` service container and runs only `tests/product_store`.
+  starts the same pinned `postgres:16-alpine` image the Compose bundle ships and runs only
+  `tests/product_store` and `tests/service/test_apply_versus_verify_race.py`.
   The job uses `invoke tests.tests-product-store-postgresql`, which fails when the DSN is
   unset, when any test skips (a missing `psycopg` or an unreachable server skips rather
   than fails under plain `pytest -m integration`), or when no test is selected. To run the
@@ -184,9 +188,11 @@ Three families need more detail than the tables give:
 
   ```bash
   docker run -d --name product-store-pg -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=probe \
-    -p 127.0.0.1:55439:5432 postgres:18-alpine || exit 1
-  timeout 60 bash -c 'until docker exec product-store-pg pg_isready -U postgres -d probe; do sleep 2; done' \
-    || { echo "PostgreSQL did not become ready"; docker rm -f -v product-store-pg; exit 1; }
+    -p 127.0.0.1:55439:5432 postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+  for i in $(seq 30); do
+    docker exec product-store-pg pg_isready -U postgres -d probe && break
+    sleep 2
+  done
   export PRODUCT_STORE_TEST_POSTGRESQL_DSN="host=127.0.0.1 port=55439 user=postgres password=probe dbname=probe"
   uv run invoke tests.tests-product-store-postgresql
   ```
@@ -197,13 +203,14 @@ Three families need more detail than the tables give:
 
   Real PostgreSQL also backs three other checks: the opt-in `integration` selection above, the
   nightly end-to-end workflow, and the Compose lifecycle qualification, which starts `sync-api`
-  on PostgreSQL. The pull-request job is the only one of these that runs on every pull request
-  and fails when the product store tests cannot run.
+  on PostgreSQL. The pull-request job is the only one of these that runs on pull requests and fails
+  when the product store tests cannot run. It runs when a pull request changes files that
+  trigger the `sync_all` filter, not on every pull request.
 
   In `tests/product_store/test_contract.py`, the `postgresql-emulated` profile and the
   `..._on_sqlite_and_emulated_postgresql` tests run against SQLite through a
   `%s`-translating adapter. They check the store's PostgreSQL code paths, not a PostgreSQL
-  server; only the `integration`-marked cases above use a real one.
+  server; the real-server cases are the `integration`-marked ones listed above.
 
 V3 refuses configured sync stores, including Redis. The remaining Redis compatibility
 checks are unit tests and need no Redis server:
