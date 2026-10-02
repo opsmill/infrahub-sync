@@ -313,6 +313,35 @@ def test_the_example_env_sets_every_required_credential(variable: str) -> None:
     assert f"\n{variable}=" in example, variable
 
 
+def env_generators() -> list[tuple[str, str]]:
+    """Return every documented script that writes `.env`, with the page it is on."""
+    pattern = re.compile(r'^cat > "\$env_file" <<EOF\n(.*?)^EOF\nmv -f "\$env_file" \.env$', re.MULTILINE | re.DOTALL)
+    return [
+        (path.name, match.group(1))
+        for path in (PAGE, QUICKSTART)
+        for match in pattern.finditer(path.read_text(encoding="utf-8"))
+    ]
+
+
+def test_each_page_generates_env_through_a_private_file() -> None:
+    """`umask` does not tighten an existing `.env`; a new 0600 file renamed over it does."""
+    pages = sorted(name for name, _script in env_generators())
+
+    assert pages == sorted([PAGE.name, QUICKSTART.name])
+    for path in (PAGE, QUICKSTART):
+        assert "cat > .env" not in path.read_text(encoding="utf-8"), path.name
+
+
+@pytest.mark.parametrize("variable", sorted(required_compose_variables()))
+def test_every_env_generator_sets_every_required_credential(variable: str) -> None:
+    """A generated `.env` missing one credential stops Compose before anything starts."""
+    generators = env_generators()
+    assert generators, "no `.env` generator found on either page"
+    missing = [name for name, script in generators if f"\n{variable}=" not in f"\n{script}"]
+
+    assert missing == [], f"{variable} is not generated on {missing}"
+
+
 @pytest.mark.parametrize("variable", sorted(compose_variables()))
 def test_the_page_documents_every_variable_the_compose_file_reads(variable: str) -> None:
     """A setting the file reads but the page never names is one an operator cannot find."""

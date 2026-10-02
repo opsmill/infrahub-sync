@@ -54,23 +54,26 @@ directory.
 
 ## Write the credentials
 
-The file needs six credentials, and defaults none of them. This generates random
+The file needs seven credentials, and defaults none of them. This generates random
 values for each, and gives the bundled CLI the same token as the one principal
 the API accepts:
 
 ```sh
 rand() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
 principal=$(rand 24)
-umask 077
-cat > .env <<EOF
+# mktemp creates the file readable by you alone, whatever an existing .env allowed.
+env_file=$(mktemp .env.XXXXXX)
+cat > "$env_file" <<EOF
 INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD=$(rand 24)
 INFRAHUB_SYNC_PRODUCT_PASSWORD=$(rand 24)
 INFRAHUB_SYNC_PREFECT_PASSWORD=$(rand 24)
+INFRAHUB_SYNC_PREFECT_AUTH_STRING=$(rand 24)
 INFRAHUB_SYNC_S3_ACCESS_KEY=$(rand 12)
 INFRAHUB_SYNC_S3_SECRET_KEY=$(rand 24)
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}
 INFRAHUB_SYNC_API_TOKEN=$principal
 EOF
+mv -f "$env_file" .env
 docker compose config --quiet
 ```
 
