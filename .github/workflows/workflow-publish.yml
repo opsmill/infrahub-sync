@@ -73,7 +73,7 @@ jobs:
           version: "latest"
 
       - name: "Set up Python"
-        run: uv python install 3.12
+        run: uv python install 3.13
 
       # Before anything is uploaded: PyPI goes first and the image second, so a
       # version the image step cannot tag would leave a package with no image.
@@ -85,8 +85,8 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          # Python 3.12, the interpreter installed above: tomllib needs 3.11 or later.
-          if ! uv run --no-project --python 3.12 --with packaging python -c '
+          # Python 3.13, the interpreter installed above: tomllib needs 3.11 or later.
+          if ! uv run --no-project --python 3.13 --with packaging python -c '
           import os, sys, tomllib
           from packaging.version import InvalidVersion, Version
           v = os.environ["VERSION"]

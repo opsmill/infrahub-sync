@@ -1984,9 +1984,9 @@ def test_the_tier_decision_and_its_label_triggers_are_gone() -> None:
     assert not {"labeled", "unlabeled"} & set(declared.get("types") or ())
 
 
-# The guard reads pyproject.toml with tomllib and runs on Python 3.12; the uv stub
+# The guard reads pyproject.toml with tomllib and runs on Python 3.13; the uv stub
 # runs it on this interpreter, where a refusal on 3.10 would only mean a failed import.
-NEEDS_TOMLLIB = pytest.mark.skipif(sys.version_info < (3, 11), reason="the guard step runs on Python 3.12 (tomllib)")
+NEEDS_TOMLLIB = pytest.mark.skipif(sys.version_info < (3, 11), reason="the guard step runs on Python 3.13 (tomllib)")
 
 
 def _refuse_untaggable_publish(version: str, declared: str = "3.0.0a6") -> StepRun:
