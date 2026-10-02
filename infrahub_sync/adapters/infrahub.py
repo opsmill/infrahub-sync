@@ -16,7 +16,7 @@ from infrahub_sdk.exceptions import NodeNotFoundError
 from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
 from infrahub_sdk.utils import compare_lists
-from pydantic import ValidationError
+from pydantic import ValidationError, model_validator
 from typing_extensions import Self
 
 from infrahub_sync import (
@@ -814,6 +814,21 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
 
 class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
+    @model_validator(mode="after")
+    def validate_identifiers(self) -> Self:
+        """Reject null identifiers before a loaded model can build its identity."""
+        identifiers = tuple(self._identifiers)
+        missing = _unresolved_peer_identifiers(
+            {identifier: getattr(self, identifier, None) for identifier in identifiers}, identifiers
+        )
+        if missing:
+            msg = (
+                f"Cannot build {self.get_type()} identity: missing or null identifier key(s) {list(missing)}. "
+                "Ensure the identifier fields are populated."
+            )
+            raise ValueError(msg)
+        return self
+
     @classmethod
     def create(
         cls,

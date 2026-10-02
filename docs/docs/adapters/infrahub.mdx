@@ -214,6 +214,10 @@ uv run infrahub-sync generate --name from-netbox --directory examples/
 
 ### Relationship resolution failures
 
+Every field used as an Infrahub model identifier must have a non-null value, even if the schema declares it optional. A loaded record with a null identifier raises a validation error before its identity is built. During a full load, `--continue-on-error` logs a warning and skips that record. Incremental loads also reject invalid records, but their validation errors stop the run.
+
+When a relationship peer lacks an identifier, the adapter fetches its identifier fields once by ID. If an identifier is still missing or null, the run raises `PeerIdentifierError`. With `--continue-on-error`, it logs a warning and skips the relationship.
+
 - Ensure referenced objects are synced before objects that reference them (check `order` in configuration)
 - Verify the unique identifier used in references matches the target object's identifier
 - Check logs for "Unable to find ... in the Store" messages

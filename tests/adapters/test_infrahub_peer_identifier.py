@@ -24,7 +24,13 @@ from infrahub_sdk.exceptions import NodeNotFoundError
 from pydantic import ValidationError
 
 from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncConfig
-from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError, PeerSdkAliasError, resolve_peer_node
+from infrahub_sync.adapters.infrahub import (
+    InfrahubAdapter,
+    InfrahubModel,
+    PeerIdentifierError,
+    PeerSdkAliasError,
+    resolve_peer_node,
+)
 
 
 class _KindedNode(Protocol):
@@ -121,6 +127,18 @@ class _FakeLagModel(_FakePeerModel):
 
 class _FakeDeviceModel(_FakePeerModel):
     _identifiers = ("name",)
+
+
+class _NullableLagModel(InfrahubModel):
+    """Match generated models whose Infrahub identifier fields are optional."""
+
+    _modelname = "InterfaceLag"
+    _identifiers = ("device", "name")
+    _attributes = ("description",)
+    device: str | None = None
+    name: str | None = None
+    description: str | None = None
+    local_id: str | None = None
 
 
 class _InvalidPeerModel(_FakePeerModel):
@@ -312,6 +330,57 @@ def _resolve_cached_sdk_peer(harness: InfrahubAdapter, *, kind: str, unique_id: 
         store=harness.client.store,
         fallback=False,
     )
+
+
+@pytest.mark.parametrize("identifier", ["device", "name"])
+@pytest.mark.parametrize("omit_identifier", [False, True])
+def test_loaded_model_rejects_null_identifiers(identifier: str, *, omit_identifier: bool) -> None:
+    data: dict[str, str | None] = {"device": "router-1", "name": "lag-1"}
+    if omit_identifier:
+        del data[identifier]
+    else:
+        data[identifier] = None
+
+    with pytest.raises(ValidationError, match=f"missing or null identifier key.*{identifier}"):
+        _NullableLagModel.model_validate(data)
+
+
+def test_loaded_model_accepts_null_non_identifier_attribute() -> None:
+    item = _NullableLagModel(device="router-1", name="lag-1", description=None)
+
+    assert item.get_unique_id() == "router-1__lag-1"
+    assert item.description is None
+
+
+@pytest.mark.parametrize("continue_on_error", [False, True])
+@pytest.mark.parametrize("source_name", ["infrahub", "source"])
+def test_model_loader_rejects_null_attribute_identifier(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    continue_on_error: bool,
+    source_name: str,
+) -> None:
+    peer = _make_sdk_node("InterfaceLag", "peer-id", {"name": None}, {"device": ("InfraDevice", "device-id")})
+    harness = _RelationshipHarness(rehydrated_peer=peer)
+    harness.schema["InterfaceLag"].attributes[0].optional = True
+    harness.config.source.name = source_name
+    harness.continue_on_error = continue_on_error
+    _seed_relationship_stores(harness, peer=peer, peer_key="peer-id")
+    monkeypatch.setattr(harness.client, "all", lambda **_kwargs: [peer], raising=False)
+    harness.client.store.set_calls.clear()
+
+    with caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"):
+        if continue_on_error:
+            harness.model_loader("InterfaceLag", _NullableLagModel)
+            assert "Skipping InterfaceLag[peer-id]" in caplog.text
+        else:
+            with pytest.raises(ValidationError, match=r"missing or null identifier key.*name"):
+                harness.model_loader("InterfaceLag", _NullableLagModel)
+
+    assert not harness._instances
+    assert not harness.client.store.set_calls
+    assert harness.client.store.get(kind="InterfaceLag", key="router-1__None", raise_when_missing=False) is None
 
 
 def test_missing_identifier_raises_with_rich_context() -> None:
