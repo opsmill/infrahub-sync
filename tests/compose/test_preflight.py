@@ -19,6 +19,7 @@ import re
 import shutil
 import signal
 import subprocess  # noqa: S404 -- an interrupted run needs the process, not its finished output
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -773,14 +774,14 @@ STATE_FILE_NAME = ".instance"
 INTERRUPT_STEP_SECONDS = 180
 
 
-def default_sigint() -> None:
-    """Give the child the default `SIGINT` action, whatever pytest was started with.
-
-    A unit tier started as a background job runs with `SIGINT` ignored, and an
-    ignored signal survives `exec`. Without this the child would never see the
-    interrupt this test sends it.
-    """
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
+# Runs the entry point with the default `SIGINT` action, whatever pytest was started with.
+# A unit tier started as a background job runs with `SIGINT` ignored, and an ignored
+# signal survives `exec`; without this the child would never see the interrupt this
+# test sends it. A small launcher does it in the child, so no `preexec_fn` runs in
+# the forked child of a multithreaded pytest process.
+DEFAULT_SIGINT_LAUNCHER = (
+    "import os, signal, sys\nsignal.signal(signal.SIGINT, signal.SIG_DFL)\nos.execv(sys.argv[1], sys.argv[1:])\n"
+)
 
 
 @pytest.fixture
@@ -843,9 +844,8 @@ def test_an_interrupted_state_write_leaves_the_old_state_and_no_scratch_beside_i
     ready = tmp_path / "filtered"
     before = (initialized / STATE_FILE_NAME).read_bytes()
     process = subprocess.Popen(  # noqa: S603 -- the entry point under test, with a fixed argv
-        [str(initialized / ENTRY_POINT), "preflight"],
+        [sys.executable, "-c", DEFAULT_SIGINT_LAUNCHER, str(initialized / ENTRY_POINT), "preflight"],
         start_new_session=True,
-        preexec_fn=default_sigint,  # noqa: PLW1509 -- one signal call, no threads started by this test
         env={
             **os.environ,
             "PATH": f"{state_shim}{os.pathsep}{os.environ['PATH']}",
