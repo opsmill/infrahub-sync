@@ -171,7 +171,8 @@ jobs:
       - name: Smoke-test the loaded image
         if: steps.check.outputs.skip == 'false'
         env:
-          INFRAHUB_SYNC_IMAGE_REF: infrahub-sync:smoke
+          INFRAHUB_SYNC_DOCKER_IMAGE: infrahub-sync
+          VERSION: smoke
         run: uv run pytest -m docker tests/image/test_image_artifact.py
 
       - name: Login to Harbor

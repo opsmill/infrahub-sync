@@ -27,8 +27,9 @@ import pytest
 
 from tasks import preview
 from tests.compose import conftest
-from tests.compose.conftest import FIXTURE_INFRAHUB_PORT, FIXTURE_PROJECT, IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV
+from tests.compose.conftest import FIXTURE_INFRAHUB_PORT, FIXTURE_PROJECT
 from tests.compose.redaction import Captured
+from tests.docker_image import IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

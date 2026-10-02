@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.compose.conftest import CONTRACT_ENVIRONMENT, IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV, compose
+from tests.compose.conftest import CONTRACT_ENVIRONMENT, compose
 from tests.compose.redaction import SECRETS, Captured
+from tests.docker_image import IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV, image_settings
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -55,7 +55,7 @@ def _container_environment() -> dict[str, str]:
     The two source tokens are planted for the same reason — a comparison against
     values nobody supplied would pass on a file that leaked both.
     """
-    image = {name: os.environ.get(name, "").strip() for name in (IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV)}
+    image = image_settings()
     if not all(image.values()):
         pytest.skip(f"{IMAGE_REPOSITORY_ENV} and {IMAGE_VERSION_ENV} name no built image to run")
     SECRETS.register(CLIENT_CREDENTIAL, *SOURCE_TOKENS.values())

@@ -28,6 +28,12 @@ from uuid import uuid4
 import pytest
 
 from tests.compose.redaction import SECRETS, Captured, capture
+from tests.docker_image import (
+    IMAGE_REPOSITORY_ENV,
+    IMAGE_VERSION_ENV,
+    image_reference,
+    missing_image_settings,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator, Mapping, Sequence
@@ -40,13 +46,6 @@ COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 # Turns a skipped Compose test into a failure, so a run that skipped everything
 # cannot pass as green. The nightly `compose-suite` job passes it.
 ZERO_SKIP_OPTION = "--compose-zero-skip"
-
-# The two settings that choose the Sync image, and the default repository the file
-# names. The suite reads the image under test from the first two, by those names,
-# so the command that runs it is the command an operator would use to pick a tag.
-IMAGE_REPOSITORY_ENV = "INFRAHUB_SYNC_DOCKER_IMAGE"
-IMAGE_VERSION_ENV = "VERSION"
-DEFAULT_IMAGE_REPOSITORY = "registry.opsmill.io/opsmill/infrahub-sync"
 
 # The project label Compose writes on everything it creates. It is what tells one
 # deployment's containers and volumes from another's.
@@ -345,12 +344,11 @@ def image_under_test() -> str:
     A failure, not a skip: a compose run with no image named has tested nothing,
     and reporting that as skipped would let it pass as green.
     """
-    repository = os.environ.get(IMAGE_REPOSITORY_ENV, "").strip()
-    version = os.environ.get(IMAGE_VERSION_ENV, "").strip()
-    missing = [name for name, value in ((IMAGE_REPOSITORY_ENV, repository), (IMAGE_VERSION_ENV, version)) if not value]
-    if missing:
+    reference = image_reference()
+    if reference is None:
+        missing = missing_image_settings()
         pytest.fail(f"{' and '.join(missing)} unset: the compose suite needs the image under test; {IMAGE_USAGE}")
-    return f"{repository}:{version}"
+    return reference
 
 
 @pytest.fixture(scope="session")

@@ -31,7 +31,7 @@ Both addresses reach the same Harbor project. Pushes must use the `HARBOR_HOST` 
 
 1. **`build`**: a matrix with linux/amd64 on `ubuntu-24.04` and linux/arm64 on
    `ubuntu-24.04-arm`. Each leg builds and loads its image, then runs
-   `pytest -m docker tests/image/test_image_artifact.py` with `INFRAHUB_SYNC_IMAGE_REF` set. The
+   `pytest -m docker tests/image/test_image_artifact.py` with `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION` set. The
    smoke test checks the CLI, `GET /version` from the default API command, the runtime
    identity, the OCI labels, and that no injected secret reaches the logs. The image's
    `revision` label must equal the commit built from `ref`. With `publish` set, the leg then

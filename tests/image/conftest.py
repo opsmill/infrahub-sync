@@ -1,9 +1,9 @@
 """Fixtures for the container-image smoke suite.
 
 The Docker-backed tests run against an image that is already built and loaded,
-named to them through `INFRAHUB_SYNC_IMAGE_REF`; the reusable image workflow
-loads each platform under `infrahub-sync:smoke` and runs this suite before it
-pushes anything. They never build one themselves: a test that builds its own
+named by `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION` like the root
+`docker-compose.yml` names it; the reusable image workflow loads each platform
+under `infrahub-sync:smoke` and runs this suite before it pushes anything. They never build one themselves: a test that builds its own
 subject cannot prove anything about the image that ships.
 """
 
@@ -19,10 +19,10 @@ from uuid import uuid4
 
 import pytest
 
+from tests.docker_image import image_reference, missing_image_settings
+
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
-
-IMAGE_REFERENCE_ENV = "INFRAHUB_SYNC_IMAGE_REF"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -87,24 +87,22 @@ def external_image_references(dockerfile: str) -> list[str]:
     return [reference for reference in references if reference not in stages]
 
 
-def _require(name: str, description: str) -> str:
-    """Return the setting `name`, skipping locally but failing on a CI runner when it is unset.
+def require_image_ref() -> str:
+    """Return the loaded image reference under test, skipping locally but failing on CI when unset.
 
     On GitHub Actions a missing image would turn every smoke test into a skip, and
     an all-skipped suite reports green without having checked anything.
     """
-    value = os.environ.get(name)
-    if not value:
-        message = f"{name} is unset; build and load an image, then name it here ({description})"
+    reference = image_reference()
+    if reference is None:
+        message = (
+            f"{' and '.join(missing_image_settings())} unset; build and load an image, "
+            "then name it with INFRAHUB_SYNC_DOCKER_IMAGE and VERSION"
+        )
         if os.environ.get("GITHUB_ACTIONS"):
             pytest.fail(message)
         pytest.skip(message)
-    return value
-
-
-def require_image_ref() -> str:
-    """Return the loaded image reference under test, or skip (fail on CI) when it is unset."""
-    return _require(IMAGE_REFERENCE_ENV, "it names the loaded image")
+    return reference
 
 
 @pytest.fixture(scope="session")

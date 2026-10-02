@@ -261,7 +261,7 @@ def required_compose_variables() -> set[str]:
 
 def test_the_compose_file_has_required_credentials_to_document() -> None:
     """Guards the credential checks below against a pattern that matches nothing."""
-    assert len(required_compose_variables()) == 6, required_compose_variables()
+    assert len(required_compose_variables()) == 7, required_compose_variables()
 
 
 @pytest.mark.parametrize("command", WRAPPER_COMMANDS)

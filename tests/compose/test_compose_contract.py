@@ -23,9 +23,6 @@ import pytest
 from tests.compose.conftest import (
     COMPOSE_FILE,
     CONTRACT_ENVIRONMENT,
-    DEFAULT_IMAGE_REPOSITORY,
-    IMAGE_REPOSITORY_ENV,
-    IMAGE_VERSION_ENV,
     SCRATCH_OPTIONS,
     SYNC_SCRATCH_ROOTS,
     SYNC_SERVICES,
@@ -35,6 +32,7 @@ from tests.compose.conftest import (
     resolve_privately,
     service,
 )
+from tests.docker_image import DEFAULT_IMAGE_REPOSITORY, IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

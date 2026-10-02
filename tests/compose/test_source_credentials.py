@@ -38,8 +38,9 @@ import requests
 from infrahub_sync.configuration import collect_findings, parse_configuration_package
 from infrahub_sync.configuration.credentials import CredentialConfigurationError, select_runtime_credential
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
-from tests.compose.conftest import CONTRACT_ENVIRONMENT, IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV, compose
+from tests.compose.conftest import CONTRACT_ENVIRONMENT, compose
 from tests.compose.redaction import SECRETS
+from tests.docker_image import IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV, image_settings
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -514,7 +515,7 @@ def container_environment() -> dict[str, str]:
     it to Compose in the process environment here would make the test pass
     whether or not `.env` loading works at all.
     """
-    image = {name: os.environ.get(name, "").strip() for name in (IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV)}
+    image = image_settings()
     if not all(image.values()):
         pytest.skip(f"{IMAGE_REPOSITORY_ENV} and {IMAGE_VERSION_ENV} name no built image to run")
     return {**CONTRACT_ENVIRONMENT, **image}

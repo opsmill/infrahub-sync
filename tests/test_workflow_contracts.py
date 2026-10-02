@@ -1011,7 +1011,8 @@ def test_the_smoke_test_runs_against_the_loaded_image() -> None:
     smoke = [step for step in docker_image_build_steps() if SMOKE_COMMAND in str(step.get("run", ""))]
 
     assert len(smoke) == 1
-    assert smoke[0]["env"]["INFRAHUB_SYNC_IMAGE_REF"] == SMOKE_IMAGE
+    repository, _, tag = SMOKE_IMAGE.partition(":")
+    assert smoke[0]["env"] == {"INFRAHUB_SYNC_DOCKER_IMAGE": repository, "VERSION": tag}
 
 
 def test_the_smoke_test_comes_before_any_login_or_push() -> None:

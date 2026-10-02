@@ -74,7 +74,7 @@ preview and integration suites against whatever environment your shell happens t
 | Unit | `uv run invoke tests.tests-unit` | The installed extras, plus the `docker compose` CLI on your PATH | Nothing outside `tmp_path` |
 | Integration | `uv run invoke tests.tests-integration` | Varies by family — see below; no single set of variables covers the tier | Varies by family: read-only, temporary local state, or a disposable live target — see below |
 | Preview smoke | `uv run invoke preview.smoke` | The preview stack, started with `preview.up` | Seeds and writes to the disposable stack |
-| Image smoke | `uv run pytest -m docker tests/image/test_image_artifact.py` | A locally built image named in `INFRAHUB_SYNC_IMAGE_REF`, and a Docker daemon | Throwaway containers it starts and removes |
+| Image smoke | `uv run pytest -m docker tests/image/test_image_artifact.py` | A locally built image named by `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, and a Docker daemon | Throwaway containers it starts and removes |
 | Compose (opt-in) | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose` | A Docker daemon and a locally built `infrahub-sync:compose-test` image | A real container stack it brings up and tears down |
 
 #### Integration
@@ -509,7 +509,7 @@ itself.
 
 ```bash
 docker build -t infrahub-sync:smoke .
-INFRAHUB_SYNC_IMAGE_REF=infrahub-sync:smoke uv run pytest -m docker tests/image/test_image_artifact.py
+INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=smoke uv run pytest -m docker tests/image/test_image_artifact.py
 ```
 
 This is what the image check runs on a pull request, once per platform, on a native
@@ -518,7 +518,7 @@ the API answers `GET /version`, and that the image carries its OCI labels. The r
 case compares the label to the commit checked out, so a local build without labels fails that
 case. Pass the same `--label` values CI passes to reproduce it in full.
 
-The tests skip when `INFRAHUB_SYNC_IMAGE_REF` is unset, so confirm they ran before treating a
+The tests skip when `INFRAHUB_SYNC_DOCKER_IMAGE` or `VERSION` is unset, so confirm they ran before treating a
 green result as evidence.
 
 #### Compose (opt-in)
