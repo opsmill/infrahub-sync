@@ -34,6 +34,7 @@ from prefect.workers.process import ProcessWorker
 
 from infrahub_sync.service.orchestration import SERVICE_DEFINITION
 from infrahub_sync.service.worker import ServiceFlowRunRefusedError, ServiceProcessWorker, service_worker_name
+from tests.service.prefect_launch import LaunchRecorder
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -88,14 +89,10 @@ class _Client:
         return SimpleNamespace(id=flow_id, name=self.flows[flow_id], labels={})
 
 
-class _Runner:
-    def __init__(self) -> None:
-        self.starts: list[dict[str, Any]] = []
-
-    async def execute_flow_run(self, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401 - pinned Prefect runner shape.
-        self.starts.append(kwargs)
-        kwargs["task_status"].started(42)
-        return SimpleNamespace(returncode=0, pid=42)
+@pytest.fixture(autouse=True)
+def _recorded_launches(monkeypatch: pytest.MonkeyPatch) -> LaunchRecorder:
+    """Keep every child unspawned in this module; a start is recorded instead."""
+    return LaunchRecorder().install(monkeypatch)
 
 
 class _TaskStatus:
@@ -114,14 +111,13 @@ async def _worker(
     *,
     flows: dict[UUID, str] | None = None,
     base_job_template: dict[str, Any] | None = None,
-) -> tuple[ServiceProcessWorker, _Runner]:
+) -> tuple[ServiceProcessWorker, LaunchRecorder]:
     worker = ServiceProcessWorker(work_pool_name=POOL_NAME, name="service-a")
     worker._client = cast("Any", _Client(deployment, flows or {SERVICE_FLOW_ID: SERVICE_DEFINITION.flow_name}))
     template = ProcessWorker.get_default_base_job_template() if base_job_template is None else base_job_template
     worker._work_pool = cast("WorkPool", SimpleNamespace(id=POOL_ID, name=POOL_NAME, base_job_template=template))
     await worker._refresh_worker_identity()
-    runner = _Runner()
-    worker._runner = cast("Any", runner)
+    runner = LaunchRecorder.installed()
     worker._emit_flow_run_submitted_event = cast("Any", lambda _configuration: None)  # type: ignore[method-assign]
     worker._give_worker_labels_to_flow_run = cast("Any", AsyncMock())  # type: ignore[method-assign]
     worker._propose_submitting_state = cast("Any", AsyncMock())  # type: ignore[method-assign]
@@ -155,10 +151,10 @@ async def _submit(worker: ServiceProcessWorker, flow_run: FlowRun) -> tuple[obje
     return result, status
 
 
-def _refused(worker: ServiceProcessWorker, runner: _Runner, result: object, status: _TaskStatus) -> str:
+def _refused(worker: ServiceProcessWorker, runner: LaunchRecorder, result: object, status: _TaskStatus) -> str:
     """Assert a refusal before any start, and return the crash message it recorded."""
     assert isinstance(result, ServiceFlowRunRefusedError)
-    assert runner.starts == [], "a refused flow run reached the child start"
+    assert runner.starters == [], "a refused flow run reached the child start"
     assert len(status.values) == 1
     assert isinstance(status.values[0], ServiceFlowRunRefusedError)
     crashed = cast("AsyncMock", worker._propose_crashed_state)
@@ -176,7 +172,7 @@ async def test_the_service_deployment_as_applied_is_started() -> None:
     result, _status = await _submit(worker, _flow_run())
 
     assert not isinstance(result, Exception)
-    assert len(runner.starts) == 1
+    assert len(runner.starters) == 1
     cast("AsyncMock", worker._propose_crashed_state).assert_not_awaited()
 
 
@@ -294,7 +290,7 @@ async def test_a_configuration_that_skipped_admission_is_not_started() -> None:
     with pytest.raises(ServiceFlowRunRefusedError):
         await worker.run(_flow_run(), configuration)
 
-    assert runner.starts == []
+    assert runner.starters == []
 
 
 # ---------------------------------------------------------------------------
@@ -366,14 +362,13 @@ async def test_a_real_server_run_of_a_foreign_deployment_is_crashed_and_never_st
         foreign_run = await client.create_flow_run_from_deployment(foreign)
 
     worker = ServiceProcessWorker(work_pool_name=pool, name=service_worker_name(), create_pool_if_not_found=False)
-    runner = _Runner()
+    runner = LaunchRecorder.installed()
     async with worker:
         await worker.sync_with_backend()
         assert worker.backend_id is not None, "the real server did not issue an identity"
-        worker._runner = cast("Any", runner)
         await worker.get_and_submit_flow_runs()
 
-    started = {start["flow_run_id"] for start in runner.starts}
+    started = {flow_run.id for flow_run in runner.flow_runs}
     assert started == {admitted.id}, "only the service deployment, as applied, may reach a child start"
     async with get_client() as client:
         for refused in (overridden, foreign_run):

@@ -23,7 +23,7 @@ on PyPI is the V2 line and does not include this profile:
 uv sync --extra dev --extra prefect --extra service
 ```
 
-The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.1, Psycopg, and Boto3. It also installs
+The profile directly installs FastAPI, HTTPX, Uvicorn, Prefect 3.8.6, Psycopg, and Boto3. It also installs
 the client libraries of the bundled NetBox and Nautobot adapters, `prometheus-client`, and `infrahubctl`. The OpsMill
 Prefect Extras integration ships with the package itself as a vendored copy of upstream
 commit `97465e75137f6121d0377cd637383cfb3530d734`. The base installation does not import
@@ -101,7 +101,7 @@ python -m infrahub_sync.service.worker \
 
 Each invocation generates a new UUID-suffixed worker name. After its Prefect heartbeat,
 the worker reads the exact Worker record for that name and work pool and records the
-server-issued UUID as its Prefect backend identity. Prefect 3.8.1 passes that identity
+server-issued UUID as its Prefect backend identity. Prefect 3.8.6 passes that identity
 to each `ProcessJobConfiguration` and injects `PREFECT__WORKER_ID` into that worker's
 flow-run child. The deployment stores no worker identity.
 
