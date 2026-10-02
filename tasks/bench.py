@@ -62,6 +62,7 @@ ROOT = netbox.REPO_ROOT
 STATE = netbox.STATE_DIR / "bench"
 RESULTS = netbox.STATE_DIR / "benchmarks" / "results.jsonl"
 INFRAHUB_VERSION = "1.11.3"
+INFRAHUB_IMAGE = "registry.opsmill.io/opsmill/infrahub"
 log = structlog.get_logger()
 
 
@@ -94,6 +95,7 @@ class CellStack:
         self.netbox_env = netbox.load_netbox_env()
         self.preview_env = preview.load_preview_env() | {
             "VERSION": INFRAHUB_VERSION,
+            "INFRAHUB_DOCKER_IMAGE": INFRAHUB_IMAGE,
             "INFRAHUB_DOCKER_IMAGE_DIGEST": "",
             "COMPOSE_PROJECT_NAME": "infrahub-sync-benchmark",
         }
@@ -140,13 +142,42 @@ class CellStack:
             ],
             cwd=ROOT,
             env=env,
+            timeout=self.remaining(),
         )
+
+    def destination_identity(self) -> tuple[str, str, str | None]:
+        """Verify the running server version and record its immutable Docker image identity."""
+        import docker  # noqa: PLC0415 -- manual benchmark boundary
+        from infrahub_sdk import InfrahubClientSync  # noqa: PLC0415
+
+        client = InfrahubClientSync(address=self.infrahub_url, config={"api_token": self.infrahub_token})
+        version = client.get_version()
+        if version != INFRAHUB_VERSION:
+            msg = "running Infrahub version differs from the benchmark pin"
+            raise BenchmarkError(msg)
+        with contextlib.closing(docker.from_env(timeout=5)) as engine:
+            containers = engine.containers.list(
+                filters={
+                    "label": [
+                        "com.docker.compose.project=" + self.preview_env["COMPOSE_PROJECT_NAME"],
+                        "com.docker.compose.service=infrahub-server",
+                    ]
+                }
+            )
+            if len(containers) != 1:
+                msg = "expected exactly one benchmark Infrahub server"
+                raise BenchmarkError(msg)
+            image = containers[0].image
+            digest = next(
+                (value for value in image.attrs.get("RepoDigests", []) if value.startswith(INFRAHUB_IMAGE + "@")), None
+            )
+            return version, image.id, digest
 
     def start_sync(self) -> None:
         """Build the current checkout and start the existing API/worker tasks quietly."""
         # The existing dev task owns its fixed project. Refuse another caller's stack.
         if netbox.dev_worker_containers(self.context):
-            msg = "the development Sync stack is already in use; stop it before benchmarking"
+            msg = "the development Sync stack has existing containers; run invoke destroy before benchmarking (removes volumes)"
             raise BenchmarkError(msg)
         env = {
             "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": netbox.netbox_token(self.netbox_env),
@@ -372,7 +403,8 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0915 -- one record per repe
         directory, version, commit = (
             ROOT,
             toml.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"],
-            output(["git", "rev-parse", "HEAD"], cwd=ROOT),
+            output(["git", "rev-parse", "HEAD"], cwd=ROOT)
+            + ("-dirty" if output(["git", "status", "--porcelain"], cwd=ROOT) else ""),
         )
         for repetition in range(1, repetitions + 1):
             record = ResultRecord(
@@ -393,6 +425,9 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0915 -- one record per repe
                     record.version, record.commit = version + " (" + v2_ref + ")", commit
                     shutil.rmtree(directory / ".infrahub-sync-cache" / "from-netbox", ignore_errors=True)
                 stack.reset(tier)
+                record.infrahub_version, record.infrahub_image_id, record.infrahub_image_digest = (
+                    stack.destination_identity()
+                )
                 mapping = mapped_kinds(stack.package(worker=False)["configuration"])
                 if line == "v2":
                     prepare_v2(stack, directory)
@@ -447,9 +482,21 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0915 -- one record per repe
                 validate_result(tier, scenario, record.infrahub_counts, record.actions, mapping, expected)
                 record.status = "ok"
             except (TimeoutError, RunWaitTimeoutError):
-                record.status, record.error = "timed_out", "cell exceeded its time limit"
+                try:
+                    stack.remaining()
+                except TimeoutError:
+                    record.status, record.error = "timed_out", "cell exceeded its time limit"
+                else:
+                    record.error = (
+                        "benchmark command timed out before the six-hour cell limit; provider output suppressed"
+                    )
             except Exception as exc:  # noqa: BLE001 -- suppress all provider causes at the result/output boundary
-                record.error = (
+                if isinstance(exc, BenchmarkError):
+                    try:
+                        stack.remaining()
+                    except TimeoutError:
+                        record.status, record.error = "timed_out", "cell exceeded its time limit"
+                record.error = record.error or (
                     str(exc)
                     if isinstance(exc, BenchmarkError)
                     else "cell failed during setup, sync, measurement, or validation; provider output suppressed"

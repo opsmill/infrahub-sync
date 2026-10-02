@@ -13,6 +13,7 @@ def release_environment(directory: Path) -> dict[str, str]:
     """Keep inherited Python settings from selecting the caller's checkout or environment."""
     removed = {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT"}
     environment = {name: value for name, value in os.environ.items() if name not in removed}
+    environment["INFRAHUB_SYNC_CACHE_DIR"] = str(directory / ".infrahub-sync-cache")
     environment["UV_PROJECT_ENVIRONMENT"] = str(directory / ".venv")
     return environment
 

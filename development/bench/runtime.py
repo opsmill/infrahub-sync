@@ -43,8 +43,11 @@ class QuietContext(Context):
         try:
             return super().run(command, **kwargs)
         except CommandTimedOut:
-            msg = "benchmark command exceeded its time limit"
-            raise TimeoutError(msg) from None
+            if self.deadline is not None and time.monotonic() >= self.deadline:
+                msg = "cell exceeded the six-hour limit"
+                raise TimeoutError(msg) from None
+            msg = "benchmark setup command exceeded its command time limit; provider output suppressed"
+            raise BenchmarkError(msg) from None
         except UnexpectedExit as exc:
             msg = f"benchmark setup command failed (exit {exc.result.exited}); provider output suppressed"
             raise BenchmarkError(msg) from None
@@ -55,8 +58,8 @@ def output(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None, tim
     try:
         result = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603
     except subprocess.TimeoutExpired:
-        msg = "benchmark command exceeded its time limit"
-        raise TimeoutError(msg) from None
+        msg = "benchmark setup command exceeded its command time limit; provider output suppressed"
+        raise BenchmarkError(msg) from None
     if result.returncode:
         msg = f"benchmark command {Path(argv[0]).name} failed (exit {result.returncode}); provider output suppressed"
         raise BenchmarkError(msg)

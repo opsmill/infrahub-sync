@@ -29,12 +29,21 @@ database files private.
 
 ### Run one cell
 
-Stop the local development Sync stack before a benchmark. The runner builds the Sync
+Remove the local development Sync stack before a benchmark:
+
+```bash
+uv run invoke destroy
+```
+
+This command removes the development containers and their volumes. Stopped worker
+containers also block the runner. The benchmark requires exclusive ownership of the
+fixed development stack; it does not reuse an existing API or worker. The runner builds the Sync
 image from this checkout and uses the existing start tasks for its API and worker. It
 requires `INFRAHUB_SYNC_API_TOKEN` in your environment, matching the local stack's API
 principal. It creates an isolated destination stack from the preview Compose files, pinned to
 Infrahub 1.11.3. It uses the preview connection settings and local NetBox settings,
-including personal overrides. Keep the preview stack stopped so its ports are available.
+including personal connection overrides. The runner enforces the OpsMill image repository
+and version, ignoring preview image overrides. Keep the preview stack stopped so its ports are available.
 
 ```bash
 uv run invoke bench.run --line v3 --tier S --scenario cold --repetitions 3
@@ -84,9 +93,14 @@ Each measured repetition appends one JSON object to the git-ignored
 `.netbox/benchmarks/results.jsonl`. The fields include:
 
 - `line`, `version`, `commit`, `tier`, `scenario`, `variant`, and `repetition` identify
-  the input and installed line. `infrahub_version` records the destination pin.
+  the input and installed line. A v3 commit ending in `-dirty` identifies a checkout
+  with uncommitted changes. `infrahub_version` is read from the running server and
+  checked against 1.11.3. `infrahub_image_id` records its immutable Docker image ID;
+  `infrahub_image_digest` records the OpsMill repository digest when available.
+  These identity fields remain null if setup fails before verification.
 - `status` is `ok`, `failed`, or `timed_out`. `wall_seconds` is valid only for `ok`.
-  It measures submission/process start through a finished sync, excluding preparation,
+  Only reaching the six-hour cell limit produces `timed_out`; earlier setup command
+  timeouts produce `failed` with a separate error. It measures submission/process start through a finished sync, excluding preparation,
   validation, and cleanup.
 - v3 `plan_seconds` and `apply_seconds` split the recorded run interval at the published
   plan-review artifact timestamp. These intervals include queue/load and verification or
@@ -106,8 +120,12 @@ per-kind applied actions against `.netbox/changes/<tier>.expected.json`, transla
 prefix VRF moves into deletes and creates. v3 checks its saved plan against the
 apply summary and excludes deletions disclosed as not executed. The current v3 engine
 does not execute planned deletes, so a changed cell requiring deletes remains invalid;
-the runner does not change this behavior. v2 parses complete per-kind summaries or successful per-object action
-status lines from a finished sync, then otherwise records count
+the runner does not change this behavior. All current v3 changed cells require deletes
+and therefore fail. A warm v3 plan can contain a default IP namespace deletion that is
+not dispatched; the runner records it in `skipped_deletes` and checks zero executed actions.
+v2 parses complete per-kind summaries or successful per-object action
+status lines from a finished sync. For a parallel no-op, all mapped tier logs and the
+completed release footer establish zero writes. The runner otherwise records count
 deltas. Deltas cannot prove updates or offsetting writes, so a warm or changed cell
 without a complete summary remains invalid. A failed or timed-out result clears all
 reported timings.

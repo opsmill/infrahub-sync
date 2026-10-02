@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 from collections import Counter, defaultdict
@@ -112,7 +113,7 @@ def parse_v2_summary(output: str, kinds: set[str]) -> Actions | None:
     text = re.sub(r"\x1b\[[0-9;]*m", "", output)
     for line in text.splitlines():
         for kind in kinds:
-            if kind not in line:
+            if not re.search(rf"(?<!\w){re.escape(kind)}(?!\w)", line):
                 continue
             counts = {}
             for action in ACTION_NAMES:
@@ -135,7 +136,10 @@ def _parse_v2_status_lines(text: str, kinds: set[str]) -> Actions | None:
     if not re.search(r"INFO\s*\|\s*infrahub_sync.cli\s*\|\s*Sync run \S+ at ", text):
         return None
     beginning, completed = text.count("Beginning sync"), text.count("Sync complete")
-    if beginning != completed or (not beginning and "No difference found. Nothing to sync" not in text):
+    tiered_zero = _finished_v2_tiers(text, kinds)
+    if beginning != completed or (
+        not beginning and "No difference found. Nothing to sync" not in text and not tiered_zero
+    ):
         return None
     logged: Actions = {action: {} for action in ACTION_NAMES}
     for line in text.splitlines():
@@ -147,9 +151,36 @@ def _parse_v2_status_lines(text: str, kinds: set[str]) -> Actions | None:
                 return None
             bucket = logged[action[1]]
             bucket[kind[1]] = bucket.get(kind[1], 0) + 1
-    if beginning and not any(logged.values()):
+    if bool(beginning) != bool(any(logged.values())):
         return None
     return logged
+
+
+def _finished_v2_tiers(text: str, kinds: set[str]) -> bool:
+    """Establish a no-write tiered sync from all mapped tiers and the release footer."""
+    footer = re.search(r"INFO\s*\|\s*infrahub_sync.cli\s*\|\s*Sync run \S+ at ", text)
+    if footer is None:
+        return False
+    tiers = list(
+        re.finditer(
+            r"INFO\s*\|\s*infrahub_sync.potenda\s*\|\s*Sync tier (\d+) \((\d+)\): (\[[^\n]+\])",
+            text,
+        )
+    )
+    covered: set[str] = set()
+    for index, tier in enumerate(tiers):
+        if int(tier[1]) != index or tier.end() > footer.start():
+            return False
+        try:
+            members = ast.literal_eval(tier[3])
+        except (SyntaxError, ValueError):
+            return False
+        if not isinstance(members, list) or not all(isinstance(kind, str) for kind in members):
+            return False
+        if len(members) != int(tier[2]):
+            return False
+        covered.update(members)
+    return bool(tiers) and kinds <= covered
 
 
 def stage_seconds(started: datetime, planned: datetime, finished: datetime) -> tuple[float, float]:
@@ -184,7 +215,9 @@ class ResultRecord:
     action_evidence: str | None = None
     error: str | None = None
     run_id: str | None = None
-    infrahub_version: str = "1.11.3"
+    infrahub_version: str | None = None
+    infrahub_image_id: str | None = None
+    infrahub_image_digest: str | None = None
 
     def append(self, path: Path) -> None:
         """Append exactly one JSON line, clearing times on every invalid result."""
@@ -203,6 +236,8 @@ class ResultRecord:
 
 def medians(path: Path) -> list[dict[str, Any]]:
     """Compare valid medians without pooling versions, commits, or v2 variants."""
+    if not path.exists():
+        return []
     cells: dict[tuple[str, str], dict[tuple[str, str, str, str], list[float]]] = defaultdict(lambda: defaultdict(list))
     for line in path.read_text(encoding="utf-8").splitlines():
         record = json.loads(line)

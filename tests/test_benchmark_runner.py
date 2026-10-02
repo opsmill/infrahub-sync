@@ -23,7 +23,7 @@ from development.bench.records import (
     stage_seconds,
     validate_result,
 )
-from development.bench.runtime import BenchmarkError, docker_memory_mib, measured_process
+from development.bench.runtime import BenchmarkError, docker_memory_mib, measured_process, output
 from development.netbox.datasets.change_netbox import expected_text, plan_changes
 from tasks import bench
 
@@ -196,8 +196,18 @@ def test_timeout_kills_v2_process_session(tmp_path) -> None:
 
 def test_failure_output_never_exposes_token(tmp_path, capsys) -> None:
     with pytest.raises(BenchmarkError) as exc:
-        measured_process([sys.executable, "-c", "print('secret-token'); raise SystemExit(1)"], tmp_path, {}, timeout=5)
-    assert "secret-token" not in str(exc.value) + capsys.readouterr().out + capsys.readouterr().err
+        measured_process(
+            [
+                sys.executable,
+                "-c",
+                "import sys; print('secret-token'); print('secret-token', file=sys.stderr); sys.exit(1)",
+            ],
+            tmp_path,
+            {},
+            timeout=5,
+        )
+    captured = capsys.readouterr()
+    assert "secret-token" not in str(exc.value) + captured.out + captured.err
 
 
 @pytest.mark.parametrize(
@@ -218,8 +228,9 @@ def test_medians_exclude_invalid_samples(tmp_path) -> None:
     assert medians(target)[0]["v2_seconds"] is None
 
 
+@pytest.mark.parametrize("line", ["v2", "v3"])
 @pytest.mark.parametrize("scenario", ["cold", "warm", "changed"])
-def test_runner_repeats_from_fresh_state_and_cleans_up(monkeypatch, tmp_path, mapping, scenario) -> None:
+def test_runner_repeats_from_fresh_state_and_cleans_up(monkeypatch, tmp_path, mapping, scenario, line) -> None:
     events = []
     counts = expected_counts("S", mapping)
     expected = {
@@ -234,6 +245,10 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(monkeypatch, tmp_path, ma
         @staticmethod
         def reset(tier) -> None:
             events.append(("reset", tier))
+
+        @staticmethod
+        def destination_identity() -> tuple[str, str, str]:
+            return "1.11.3", "sha256:image", "image@sha256:digest"
 
         @staticmethod
         def start_sync() -> None:
@@ -300,14 +315,41 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(monkeypatch, tmp_path, ma
     monkeypatch.setenv("INFRAHUB_SYNC_API_TOKEN", "test-api-token")
     monkeypatch.setattr(bench, "SyncClient", Client)
     monkeypatch.setattr(bench, "v3_sync", sync)
+    monkeypatch.setattr(bench, "v2_environment", lambda _ref: (tmp_path, "2.0.1", "release-sha"))
+    monkeypatch.setattr(bench, "prepare_v2", lambda *_args: None)
+
+    def legacy_sync(_stack, _directory, _variant, _timeout):
+        measured = scenario if events.count(("sync", "cold")) > events.count(("close",)) else "cold"
+        if scenario == "cold":
+            measured = "cold"
+        events.append(("sync", measured))
+        actions = expected if measured == "changed" else {action: {} for action in ("create", "update", "delete")}
+        if measured == "warm":
+            # Release 2.0.1 parallel no-op: all tier logs and footer, without DiffSync boundaries.
+            text = parallel_warm_output(set(counts))
+        else:
+            text = "\n".join(
+                f"{kind} create={actions['create'].get(kind, 0)} update={actions['update'].get(kind, 0)} delete={actions['delete'].get(kind, 0)}"
+                for kind in counts
+            )
+        return text, 1, 2
+
+    monkeypatch.setattr(bench, "v2_sync", legacy_sync)
     monkeypatch.setattr(bench, "expected_actions", lambda *_args: expected)
     monkeypatch.setattr(bench.netbox, "STATE_DIR", tmp_path)
     monkeypatch.setattr(bench.netbox, "change", lambda *_args, **_kwargs: events.append(("change",)))
-    bench.run_cell.body(None, scenario=scenario, repetitions=2)
+    bench.run_cell.body(
+        None,
+        line=line,
+        v2_ref="2.0.1",
+        variant="parallel" if line == "v2" else "full",
+        scenario=scenario,
+        repetitions=2,
+    )
     rows = [json.loads(line) for line in bench.RESULTS.read_text(encoding="utf-8").splitlines()]
-    status = "failed" if scenario == "changed" else "ok"
+    status = "failed" if scenario == "changed" and line == "v3" else "ok"
     assert [row["status"] for row in rows] == [status, status]
-    if scenario == "changed":
+    if status == "failed":
         assert all(row["wall_seconds"] is None for row in rows)
         assert all("does not execute planned deletes" in row["error"] for row in rows)
     assert events.count(("reset", "S")) == events.count(("close",)) == 2
@@ -499,6 +541,7 @@ def test_v2_mapping_is_preserved_and_environment_targets_the_disposable_stacks(t
     stack = bench.CellStack()
     monkeypatch.setenv("NETBOX_ADDRESS", "unrelated-source")
     monkeypatch.setenv("INFRAHUB_ADDRESS", "unrelated-destination")
+    monkeypatch.setenv("INFRAHUB_SYNC_CACHE_DIR", str(tmp_path / "caller-cache"))
     for name in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT"):
         monkeypatch.setenv(name, "caller-environment")
     directory, env = bench.v2_inputs(stack, tmp_path)
@@ -511,6 +554,7 @@ def test_v2_mapping_is_preserved_and_environment_targets_the_disposable_stacks(t
     assert env["INFRAHUB_ADDRESS"] == stack.infrahub_url
     assert not {"PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"} & env.keys()
     assert env["UV_PROJECT_ENVIRONMENT"] == str(tmp_path / ".venv")
+    assert env["INFRAHUB_SYNC_CACHE_DIR"] == str(tmp_path / ".infrahub-sync-cache")
 
 
 @pytest.mark.parametrize("fails", [False, True])
@@ -536,3 +580,146 @@ def test_v2_generation_removes_the_private_credential_on_every_exit(tmp_path, mo
     else:
         bench.prepare_v2(stack, tmp_path)
     assert (configuration / "config.yml").read_text() == original
+
+
+def parallel_warm_output(kinds: set[str]) -> str:
+    """Model the release logger format with successive tiers and its successful CLI footer."""
+    ordered = sorted(kinds)
+    return (
+        "\n".join(
+            f"2026-10-02 00:00:00 | INFO | infrahub_sync.potenda | Sync tier {index} ({len(members)}): {members!r}"
+            for index, members in enumerate((ordered[::2], ordered[1::2]))
+        )
+        + "\n2026-10-02 00:00:01 | INFO | infrahub_sync.cli | Sync run run-id at directory\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "damage", ["none", "footer", "tier", "incomplete-sync", "failed-action", "footer-before-tiers"]
+)
+def test_release_parallel_warm_requires_finished_complete_tiers(damage) -> None:
+    kinds = {"DcimDevice", "DcimDeviceType", "IpamVLAN", "IpamVLANGroup"}
+    text = parallel_warm_output(kinds)
+    if damage == "footer":
+        text = text.rsplit("\n", 2)[0]
+    elif damage == "tier":
+        text = text.split("\n", 1)[1]
+    elif damage == "incomplete-sync":
+        text = "Beginning sync\n" + text
+    elif damage == "failed-action":
+        text = "Unable to update action=update model=DcimDevice status=failure\n" + text
+    elif damage == "footer-before-tiers":
+        lines = text.splitlines()
+        text = "\n".join([lines[-1], *lines[:-1]])
+    assert parse_v2_summary(text, kinds) == ({"create": {}, "update": {}, "delete": {}} if damage == "none" else None)
+
+
+def test_complete_summary_distinguishes_overlapping_kind_names() -> None:
+    text = (
+        "DcimDevice create=40 update=0 delete=0\n"
+        "DcimDeviceType create=4 update=0 delete=0\n"
+        "IpamVLAN create=12 update=0 delete=0\n"
+        "IpamVLANGroup create=2 update=0 delete=0\n"
+    )
+    assert parse_v2_summary(text, {"DcimDevice", "DcimDeviceType", "IpamVLAN", "IpamVLANGroup"}) == {
+        "create": {"DcimDevice": 40, "DcimDeviceType": 4, "IpamVLAN": 12, "IpamVLANGroup": 2},
+        "update": {},
+        "delete": {},
+    }
+    assert parse_v2_summary("DcimDeviceType create=4 update=0 delete=0", {"DcimDevice"}) is None
+
+
+def test_setup_command_timeout_is_a_safe_failure(tmp_path, capsys) -> None:
+    with pytest.raises(BenchmarkError, match="setup command exceeded its command time limit") as exc:
+        output(
+            [sys.executable, "-c", "import sys,time; print('secret-token', file=sys.stderr); time.sleep(60)"],
+            cwd=tmp_path,
+            timeout=0.1,
+        )
+    captured = capsys.readouterr()
+    assert "secret-token" not in str(exc.value) + captured.out + captured.err
+
+
+def test_missing_api_token_fails_before_dump_validation(monkeypatch) -> None:
+    monkeypatch.delenv("INFRAHUB_SYNC_API_TOKEN", raising=False)
+    monkeypatch.setattr(bench.netbox, "verify_tier_dump", lambda _tier: pytest.fail("dump must not be read"))
+    with pytest.raises(ValueError, match="set INFRAHUB_SYNC_API_TOKEN"):
+        bench.cell_options("v3", "S", "cold", "full", 1, "")
+
+
+def test_report_before_any_results(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setattr(bench, "RESULTS", tmp_path / "missing.jsonl")
+    bench.report(Context())
+    assert "Valid benchmark medians" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("version", ["1.11.3", "1.10.6"])
+def test_destination_identity_checks_server_and_records_image(monkeypatch, version) -> None:
+    import docker
+    from infrahub_sdk import InfrahubClientSync
+
+    monkeypatch.setenv("INFRAHUB_DOCKER_IMAGE", "local/unverified-infrahub")
+    stack = bench.CellStack()
+    assert stack.preview_env["INFRAHUB_DOCKER_IMAGE"] == bench.INFRAHUB_IMAGE
+    assert stack.preview_env["VERSION"] == "1.11.3"
+    image = SimpleNamespace(id="sha256:image", attrs={"RepoDigests": [bench.INFRAHUB_IMAGE + "@sha256:digest"]})
+    filters = []
+    engine = SimpleNamespace(
+        containers=SimpleNamespace(list=lambda **kwargs: filters.append(kwargs) or [SimpleNamespace(image=image)]),
+        close=lambda: None,
+    )
+    monkeypatch.setattr(docker, "from_env", lambda **_kwargs: engine)
+    monkeypatch.setattr(InfrahubClientSync, "get_version", lambda _self: version)
+    if version == "1.11.3":
+        assert stack.destination_identity() == (version, "sha256:image", bench.INFRAHUB_IMAGE + "@sha256:digest")
+        assert "com.docker.compose.project=infrahub-sync-benchmark" in filters[0]["filters"]["label"]
+    else:
+        with pytest.raises(BenchmarkError, match="version differs"):
+            stack.destination_identity()
+
+
+@pytest.mark.parametrize("timeout", ["setup", "command", "deadline"])
+def test_runner_distinguishes_setup_timeout_from_cell_deadline(monkeypatch, tmp_path, timeout) -> None:
+    from development.bench.runtime import QuietContext
+
+    events = []
+
+    class Stack:
+        @staticmethod
+        def reset(_tier: str) -> None:
+            if timeout != "setup":
+                raise TimeoutError
+            msg = "benchmark setup command exceeded its command time limit; provider output suppressed"
+            raise BenchmarkError(msg)
+
+        @staticmethod
+        def remaining() -> int:
+            if timeout == "deadline":
+                raise TimeoutError
+            return 10
+
+        @staticmethod
+        def close() -> None:
+            events.append("closed")
+
+    monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
+    monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
+    monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
+    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "output", lambda argv, **_kwargs: "abc" if "rev-parse" in argv else " M tasks/bench.py")
+    bench.run_cell.body(QuietContext())
+    row = json.loads(bench.RESULTS.read_text())
+    assert row["status"] == ("timed_out" if timeout == "deadline" else "failed")
+    assert row["commit"] == "abc-dirty"
+    assert row["infrahub_version"] is None
+    assert row["wall_seconds"] is None
+    assert events == ["closed"]
+
+
+def test_stopped_development_worker_requires_destroy(monkeypatch) -> None:
+    stack = bench.CellStack()
+    monkeypatch.setattr(bench.netbox, "dev_worker_containers", lambda _context: ["stopped-worker"])
+    monkeypatch.setattr(bench.dev, "build", lambda _context: pytest.fail("must not build over existing stack"))
+    with pytest.raises(BenchmarkError, match=r"invoke destroy.*removes volumes"):
+        stack.start_sync()
+    assert stack.started_sync is False
