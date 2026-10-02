@@ -437,6 +437,12 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # We will keep a copy of the schema
         self.schema: MutableMapping[str, MainSchemaTypesAPI] = self.client.schema.all(branch=infrahub_branch)
 
+    def add(self, obj: DiffSyncModel) -> None:
+        """Validate Infrahub identities before full or incremental store insertion."""
+        if isinstance(obj, InfrahubModel):
+            obj.validate_identifiers(self.schema[obj.get_type()])
+        super().add(obj)
+
     def cursor_tier_for(self, model_name: str) -> CursorTier:
         """TIMESTAMP for any kind present in the live Infrahub schema.
 
@@ -496,7 +502,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         )
         for node in nodes:
             payload = self.infrahub_node_to_diffsync(node=node)
-            yield model_cls(**payload).get_unique_id()
+            item = model_cls(**payload)
+            item.validate_identifiers(self.schema[model_name])
+            yield item.get_unique_id()
 
     def model_loader(self, model_name: str, model: type[InfrahubModel]) -> None:
         """
@@ -532,7 +540,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 original_node: InfrahubNodeSync = next(node for node, obj in node_dict_pairs if obj == transformed_obj)
                 try:
                     item = model(**transformed_obj)
-                    item.validate_attribute_identifiers(self.schema[model_name])
+                    item.validate_identifiers(self.schema[model_name])
                 except ValidationError as exc:
                     if not self.continue_on_error:
                         raise
@@ -832,17 +840,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
 
 
 class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
-    def validate_attribute_identifiers(self, node_schema: MainSchemaTypesAPI) -> None:
-        """Reject null attribute identifiers using the loaded Infrahub schema."""
-        attributes = {attribute.name for attribute in node_schema.attributes}
-        missing = tuple(
-            identifier
-            for identifier in self._identifiers
-            if identifier in attributes and getattr(self, identifier, None) is None
+    def validate_identifiers(self, node_schema: MainSchemaTypesAPI) -> None:
+        """Require identifier values except for optional single-peer relationships."""
+        identifiers = tuple(self._identifiers)
+        missing = _unresolved_peer_identifiers(
+            {identifier: getattr(self, identifier, None) for identifier in identifiers}, identifiers, node_schema
         )
         if missing:
             error = ValueError(
-                f"Cannot build {self.get_type()} identity: null attribute identifier key(s) {list(missing)}"
+                f"Cannot build {self.get_type()} identity: missing or null identifier key(s) {list(missing)}"
             )
             raise ValidationError.from_exception_data(
                 self.get_type(),
@@ -868,7 +874,7 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
             ids=ids, attrs=attrs, node_schema=node_schema, store=adapter.client.store, schemas=adapter.schema
         )
         item = cls(**ids, **attrs)
-        item.validate_attribute_identifiers(node_schema)
+        item.validate_identifiers(node_schema)
         unique_id = item.get_unique_id()
         source_id = adapter.source_node.id if adapter.source_node else None
         owner_id = adapter.owner_node.id if adapter.owner_node else None

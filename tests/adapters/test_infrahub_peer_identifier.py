@@ -338,9 +338,9 @@ def _resolve_cached_sdk_peer(harness: InfrahubAdapter, *, kind: str, unique_id: 
     )
 
 
+@pytest.mark.parametrize("identifier", ["device", "name"])
 @pytest.mark.parametrize("omit_identifier", [False, True])
-def test_loaded_model_rejects_null_attribute_identifier(*, omit_identifier: bool) -> None:
-    identifier = "name"
+def test_loaded_model_rejects_null_identifiers(identifier: str, *, omit_identifier: bool) -> None:
     data: dict[str, str | None] = {"device": "router-1", "name": "lag-1"}
     if omit_identifier:
         del data[identifier]
@@ -348,8 +348,8 @@ def test_loaded_model_rejects_null_attribute_identifier(*, omit_identifier: bool
         data[identifier] = None
 
     harness = _RelationshipHarness(rehydrated_peer=None)
-    with pytest.raises(ValidationError, match=f"null attribute identifier key.*{identifier}"):
-        _NullableLagModel.model_validate(data).validate_attribute_identifiers(harness.schema["InterfaceLag"])
+    with pytest.raises(ValidationError, match=f"missing or null identifier key.*{identifier}"):
+        _NullableLagModel.model_validate(data).validate_identifiers(harness.schema["InterfaceLag"])
 
 
 def test_loaded_model_accepts_null_non_identifier_attribute() -> None:
@@ -361,14 +361,21 @@ def test_loaded_model_accepts_null_non_identifier_attribute() -> None:
 
 @pytest.mark.parametrize("continue_on_error", [False, True])
 @pytest.mark.parametrize("source_name", ["infrahub", "source"])
-def test_model_loader_rejects_null_attribute_identifier(
+@pytest.mark.parametrize("identifier", ["name", "device"])
+def test_model_loader_rejects_null_identifier(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     *,
     continue_on_error: bool,
     source_name: str,
+    identifier: str,
 ) -> None:
-    peer = _make_sdk_node("InterfaceLag", "peer-id", {"name": None}, {"device": ("InfraDevice", "device-id")})
+    peer = _make_sdk_node(
+        "InterfaceLag",
+        "peer-id",
+        {"name": None if identifier == "name" else "lag-1"},
+        {"device": ("InfraDevice", "device-id" if identifier == "name" else None)},
+    )
     harness = _RelationshipHarness(rehydrated_peer=peer)
     harness.schema["InterfaceLag"].attributes[0].optional = True
     harness.config.source.name = source_name
@@ -382,12 +389,13 @@ def test_model_loader_rejects_null_attribute_identifier(
             harness.model_loader("InterfaceLag", _NullableLagModel)
             assert "Skipping InterfaceLag[peer-id]" in caplog.text
         else:
-            with pytest.raises(ValidationError, match=r"null attribute identifier key.*name"):
+            with pytest.raises(ValidationError, match=rf"missing or null identifier key.*{identifier}"):
                 harness.model_loader("InterfaceLag", _NullableLagModel)
 
     assert not harness._instances
     assert not harness.client.store.set_calls
-    assert harness.client.store.get(kind="InterfaceLag", key="router-1__None", raise_when_missing=False) is None
+    identity = "router-1__None" if identifier == "name" else "None__lag-1"
+    assert harness.client.store.get(kind="InterfaceLag", key=identity, raise_when_missing=False) is None
 
 
 def test_missing_identifier_raises_with_rich_context() -> None:
@@ -1378,7 +1386,49 @@ def test_create_rejects_null_attribute_identifier_before_write(
     if not omit_name:
         ids["name"] = None
 
-    with pytest.raises(ValidationError, match=r"null attribute identifier key.*name"):
+    with pytest.raises(ValidationError, match=r"missing or null identifier key.*name"):
         _NullableLagModel.create(adapter=harness, ids=ids, attrs={})
 
     create.assert_not_called()
+
+
+@pytest.mark.parametrize("identifier", ["device", "name"])
+def test_id_scan_rejects_null_identifier(monkeypatch: pytest.MonkeyPatch, identifier: str) -> None:
+    harness = _RelationshipHarness(rehydrated_peer=None)
+    monkeypatch.setattr(harness, "InterfaceLag", _NullableLagModel)
+    data: dict[str, str | None] = {"device": "router-1", "name": "lag-1"}
+    data[identifier] = None
+    monkeypatch.setattr(harness.client, "all", lambda **_kwargs: [object()], raising=False)
+    monkeypatch.setattr(harness, "infrahub_node_to_diffsync", lambda **_kwargs: data)
+
+    with pytest.raises(ValidationError, match=rf"missing or null identifier key.*{identifier}"):
+        list(harness.list_existing_ids("InterfaceLag"))
+
+
+@pytest.mark.parametrize("identifier", ["device", "name"])
+def test_store_insert_rejects_null_identifier(identifier: str) -> None:
+    from diffsync import Adapter
+
+    harness = _RelationshipHarness(rehydrated_peer=None)
+    harness.store = Adapter().store
+    data: dict[str, str | None] = {"device": "router-1", "name": "lag-1"}
+    data[identifier] = None
+
+    with pytest.raises(ValidationError, match=rf"missing or null identifier key.*{identifier}"):
+        harness.add(_NullableLagModel.model_validate(data))
+
+    assert not harness.store.get_all(model="InterfaceLag")
+
+
+def test_store_insert_accepts_netbox_global_table_identity(netbox_global_table: SimpleNamespace) -> None:
+    from diffsync import Adapter
+
+    case = netbox_global_table
+    adapter = InfrahubAdapter.__new__(InfrahubAdapter)
+    Adapter.__init__(adapter)  # noqa: PLC2801 -- initialize the store without a remote client
+    adapter.schema = case.harness.schema
+    item = case.model(**{case.attribute: case.value, "vrf": None})
+
+    adapter.add(item)
+
+    assert adapter.get(case.model, case.unique_id) is item

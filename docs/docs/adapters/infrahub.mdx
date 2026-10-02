@@ -214,7 +214,7 @@ uv run infrahub-sync generate --name from-netbox --directory examples/
 
 ### Relationship resolution failures
 
-Every attribute used as an Infrahub model identifier must have a non-null value, even if the schema declares it optional. Full loads and creates reject a null attribute identifier before its identity is built. During a full load, `--continue-on-error` logs a warning and skips that record. Optional single-peer relationship identifiers may be null, as with a prefix or IP address in the global routing table without a VRF.
+Every attribute used as an Infrahub model identifier must have a non-null value, even if the schema declares it optional. Full loads, creates, ID scans, and incremental store inserts reject a null attribute identifier or required relationship identifier before storing its identity. During a full load, `--continue-on-error` logs a warning and skips that record. Validation errors stop creates, ID scans, and incremental loads. Optional single-peer relationship identifiers may be null, as with a prefix or IP address in the global routing table without a VRF.
 
 When a relationship peer lacks an identifier, the adapter fetches its identifier fields once by ID. If an attribute identifier is still missing or null, or a required relationship identifier is missing, the run raises `PeerIdentifierError`. With `--continue-on-error`, it logs a warning and skips the relationship.
 
