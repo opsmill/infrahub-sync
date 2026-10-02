@@ -148,7 +148,7 @@ services:
       retries: 30
 
   prefect-server:
-    image: "prefecthq/prefect:3.8.1-python3.12@sha256:2d647011130f4bb36ee07b8386921890f1da44a9b7fbf81cfa86a555b92f151e"
+    image: "prefecthq/prefect:3.8.6-python3.13@sha256:dec8d5b095e93bba1f3d7ebd7cfff13b61209b961382d92be88584c23de5d97a"
     restart: unless-stopped
     command: ["prefect", "server", "start", "--host", "0.0.0.0", "--port", "4200"]
     depends_on:

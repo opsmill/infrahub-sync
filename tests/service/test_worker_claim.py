@@ -23,6 +23,7 @@ from prefect.workers.process import ProcessJobConfiguration, ProcessWorker
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
 from tests.service.execution_fixtures import append_execution
+from tests.service.prefect_launch import LaunchRecorder
 
 if TYPE_CHECKING:
     from prefect.client.schemas.objects import FlowRun
@@ -35,7 +36,7 @@ POOL_NAME = "service-pool"
 
 
 class _PrefectWorkerClient:
-    """Synchronous Prefect 3.8.1 worker-registry seam used immediately before claim."""
+    """Synchronous Prefect 3.8.6 worker-registry seam used immediately before claim."""
 
     def __init__(self, worker_id: str = WORKER_ID) -> None:
         self.worker_id = worker_id
@@ -110,9 +111,11 @@ def _projection(tmp_path: Path, *, submitted_at: datetime | None = None, migrate
     return projection
 
 
-def test_prefect_381_process_configuration_preserves_worker_attribution_environment() -> None:
+def test_prefect_386_process_configuration_preserves_worker_attribution_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Pin the server UUID from job preparation through the process child environment."""
-    assert prefect_version == "3.8.1"
+    assert prefect_version == "3.8.6"
     flow_run = SimpleNamespace(
         id=UUID(FLOW_ID),
         name="service-run",
@@ -122,29 +125,13 @@ def test_prefect_381_process_configuration_preserves_worker_attribution_environm
     configuration = ProcessJobConfiguration(command="python -m prefect.engine", env={})
     typed_flow_run = cast("FlowRun", flow_run)
     configuration.prepare_for_flow_run(typed_flow_run, worker_id=UUID(WORKER_ID))
-    child_environments: list[dict[str, str | None]] = []
-
-    class Runner:
-        async def execute_flow_run(  # noqa: PLR0913, PLR6301 - minimal pinned worker runner.
-            self,
-            *,
-            flow_run_id: UUID,  # noqa: ARG002 - signature pins the worker seam.
-            command: str | None,  # noqa: ARG002 - signature pins the worker seam.
-            cwd: object,  # noqa: ARG002 - signature pins the worker seam.
-            env: dict[str, str | None],
-            stream_output: bool,  # noqa: ARG002 - signature pins the worker seam.
-            task_status: object,  # noqa: ARG002 - signature pins the worker seam.
-        ) -> SimpleNamespace:
-            child_environments.append(env)
-            return SimpleNamespace(returncode=0, pid=42)
-
+    launches = LaunchRecorder().install(monkeypatch)
     worker = object.__new__(ProcessWorker)
-    worker._runner = Runner()
 
     result = asyncio.run(worker.run(typed_flow_run, configuration))
 
     assert result.status_code == 0
-    assert child_environments[0]["PREFECT__WORKER_ID"] == WORKER_ID
+    assert launches.child_environments[0]["PREFECT__WORKER_ID"] == WORKER_ID
 
 
 def test_worker_claims_canonical_prefect_execution_before_runtime_work(
