@@ -79,9 +79,12 @@ The `ref` input picks the commit that gets built. The two can differ.
 A run is named after its inputs, for example
 `Image 0123abcd… (publish=true)`, so you can find it in the run list. A
 newer build-only run for the same `ref` cancels a build-only run still in
-progress. Publishing runs use a separate concurrency group and are never
-cancelled, so one can't stop between pushing a tag and signing it; a second
-publishing run for the same `ref` waits for the first.
+progress. Publishing runs use a separate concurrency group, and a publishing
+run in progress is never cancelled, so it can't stop between pushing a tag and
+signing it. A second publishing run for the same `ref` waits for the first, but
+GitHub keeps only one waiting run per group: a third one replaces the second
+before it starts. Dispatch one publishing run per `ref` at a time, and check the
+run list if you dispatch more.
 
 A dispatch with `publish` set to `true` fails before it builds anything when
 `tags` is empty, or when the repository has no `HARBOR_HOST` variable.

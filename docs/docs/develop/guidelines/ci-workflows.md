@@ -49,7 +49,9 @@ a passing run would otherwise hide.
   `cancel-in-progress: ${{ !inputs.publish }}` and put publishing runs in their own group, for
   example by ending the group with `${{ inputs.publish && 'publish' || 'build' }}`. A run that
   arrives with `cancel-in-progress: true` cancels every run in progress in its group, so a
-  shared group lets a build-only run cancel a publishing one.
+  shared group lets a build-only run cancel a publishing one. This protects the run in
+  progress only: GitHub keeps one waiting run per group, so a newer one still replaces a
+  publishing run that has not started.
 
 ### Testing workflows
 

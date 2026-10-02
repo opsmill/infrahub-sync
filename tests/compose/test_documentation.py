@@ -315,7 +315,10 @@ def test_the_example_env_sets_every_required_credential(variable: str) -> None:
 
 def env_generators() -> list[tuple[str, str]]:
     """Return every documented script that writes `.env`, with the page it is on."""
-    pattern = re.compile(r'^cat > "\$env_file" <<EOF\n(.*?)^EOF\nmv -f "\$env_file" \.env$', re.MULTILINE | re.DOTALL)
+    pattern = re.compile(
+        r'^env_file=\$\(mktemp \.env\.XXXXXX\)\ncat > "\$env_file" <<EOF\n(.*?)^EOF\nmv -f "\$env_file" \.env$',
+        re.MULTILINE | re.DOTALL,
+    )
     return [
         (path.name, match.group(1))
         for path in (PAGE, QUICKSTART)
@@ -324,7 +327,10 @@ def env_generators() -> list[tuple[str, str]]:
 
 
 def test_each_page_generates_env_through_a_private_file() -> None:
-    """`umask` does not tighten an existing `.env`; a new 0600 file renamed over it does."""
+    """`umask` does not tighten an existing `.env`; a new 0600 file renamed over it does.
+
+    The file is created by `mktemp`, which makes it private, immediately before it is written.
+    """
     pages = sorted(name for name, _script in env_generators())
 
     assert pages == sorted([PAGE.name, QUICKSTART.name])
