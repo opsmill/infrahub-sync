@@ -1,1 +1,1 @@
-Record a live measurement of the identifier and attribute selection in Infrahub bulk loads, which shows the union costs about 47% more response bytes and saves no requests in dependency order, and keep it.
+Record a live measurement of the identifier and attribute selection in Infrahub bulk loads, on the NetBox import and a synthetic scale probe, which shows the union costs more response bytes, saves peer fetches on the NetBox data, and stays in place.
