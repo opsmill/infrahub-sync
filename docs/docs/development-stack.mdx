@@ -182,8 +182,7 @@ every host-side address and browser URL below. See
    then answers on that address only, so the tasks and the host processes use
    `http://<gateway>:8080`, and you open the UI there instead of `localhost`.
 
-   The output includes the `config_id: <value>` field, for example
-   `config_id: edge-sync`. Use that value in place of `<config-id>` in the commands
+   The output includes a `config_id: <value>` field. Use that value in place of `<config-id>` in the commands
    below. If you change the package later, register
    the change with `configs version <config-id> <package>`. Registering changed content
    with `configs register` creates a new configuration ID at version 1.
