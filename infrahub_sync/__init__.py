@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import operator
 import re
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, ClassVar, Union
 
 import pydantic
@@ -389,6 +390,11 @@ class DiffSyncModelMixin:
 
             # Render with the item as context → returns a native Python value
             transformed_value = template.render(**item)
+
+            # Filters such as map and select return a lazy generator. Consume it here so a
+            # missing key raises inside this method and the field holds a list, not a generator.
+            if isinstance(transformed_value, Iterator):
+                transformed_value = list(transformed_value)
 
             # Native rendering returns a lone expression's value without str(), so a missing
             # key or a refused attribute comes back as an Undefined instead of raising.
