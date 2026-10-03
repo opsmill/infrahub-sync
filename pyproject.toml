@@ -308,6 +308,18 @@ max-complexity = 33
 
 [tool.ruff.lint.per-file-ignores]
 
+# The identifier prefetch study is a one-off measurement script run by path. It reads
+# the SDK's private `_post` and the models' private field lists on purpose, reports to
+# standard output, and passes the same run settings through its helpers.
+"development/identifier_prefetch_study.py" = [
+    "INP001",  # Run by path, not imported
+    "T201",  # Reports to the terminal
+    "SLF001",  # Wraps the SDK's `_post` and reads `_attributes` to measure the real request
+    "PLR0913",  # Run settings travel together
+    "PLR0917",  # Run settings travel together
+    "ANN401",  # Schema mappings are SDK-typed dynamically
+]
+
 # The clean-host checks are scripts a container runs, not modules this repository
 # imports. They are mounted flat at one path and executed by name, so that path is
 # their import root and their standard output is how they report to the driver.

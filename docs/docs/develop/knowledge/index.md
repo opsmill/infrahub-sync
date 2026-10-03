@@ -63,6 +63,8 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
   the inherited pylint baseline, and how to measure a no-regression claim.
 - [Testing tiers](../guidelines/testing-tiers.md) — which test command covers which tier, what
   each one needs, and what a skip means.
+- [Identifier prefetch measurement](identifier-prefetch-measurement.md) — what requesting
+  identifiers during an Infrahub bulk load costs, measured against a live Infrahub.
 
 ### Related
 
