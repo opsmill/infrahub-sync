@@ -360,8 +360,22 @@ def test_update_node_relationship_many_no_attribution_when_unset(patch_resolve_p
     assert manager.added == [{"id": "t1-uid"}]
 
 
-def test_update_node_fetches_many_relationship_before_reconciling_peers(patch_resolve_peer: None) -> None:  # noqa: ARG001
-    """SYNC-38: existing peers must be fetched before current and desired IDs are compared."""
+@pytest.mark.parametrize(
+    ("desired_ids", "expected_ids", "removed_ids", "added_ids"),
+    [
+        (["a-uid", "c-uid"], ["a-uid", "c-uid"], ["b-uid"], ["c-uid"]),
+        ([], [], ["a-uid", "b-uid"], []),
+    ],
+    ids=["replace-peer", "clear-all-peers"],
+)
+def test_update_node_fetches_many_relationship_before_reconciling_peers(
+    patch_resolve_peer: None,  # noqa: ARG001
+    desired_ids: list[str],
+    expected_ids: list[str],
+    removed_ids: list[str],
+    added_ids: list[str],
+) -> None:
+    """Fetch remote peers before replacing or clearing a relationship."""
     rel = FakeRelSchema(name="tags", peer="BuiltinTag", cardinality="many")
     schema = FakeSchema(relationships=[rel], relationship_names=["tags"])
     manager = LazyFakeRelManager(remote_ids=["a-uid", "b-uid"])
@@ -371,12 +385,12 @@ def test_update_node_fetches_many_relationship_before_reconciling_peers(patch_re
         many_managers={"tags": manager},
     )
 
-    _run_update(node, {"tags": ["a-uid", "c-uid"]}, source=SOURCE_ID, owner=OWNER_ID)
+    _run_update(node, {"tags": desired_ids}, source=SOURCE_ID, owner=OWNER_ID)
 
     assert manager.fetch_count == 1
-    assert manager.peer_ids == ["a-uid", "c-uid"]
-    assert manager.removed == ["b-uid"]
-    assert manager.added == [{"id": "c-uid", "source": SOURCE_ID, "owner": OWNER_ID}]
+    assert manager.peer_ids == expected_ids
+    assert manager.removed == removed_ids
+    assert manager.added == [{"id": peer_id, "source": SOURCE_ID, "owner": OWNER_ID} for peer_id in added_ids]
 
 
 def test_update_node_keeps_many_peers_when_desired_peer_is_unresolved(
