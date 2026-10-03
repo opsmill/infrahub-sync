@@ -54,7 +54,7 @@ SandboxedNativeEnvironment.template_class = SandboxedNativeTemplate
 def _reject_lazy_key(key: Any) -> None:
     """Refuse a dictionary key that is, or holds, a lazy iterator: it cannot be consumed into a hashable key."""
     if isinstance(key, Iterator):
-        msg = "a dictionary key is a lazy iterator; convert it with the list or join filter"
+        msg = "a dictionary key is a lazy iterator; convert it to a hashable value, such as with the join filter"
         raise TypeError(msg)
     if isinstance(key, (tuple, frozenset)):
         for nested in key:
