@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sys
 import unicodedata
@@ -45,7 +46,7 @@ from infrahub_sync.client import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from infrahub_sync.client.models import TerminalOutcome, TerminalState
 
@@ -179,6 +180,20 @@ def client() -> MagicMock:
     injected.get_plan.return_value = _plan()
     injected.get_run.return_value = _run()
     return injected
+
+
+@pytest.fixture(autouse=True)
+def _restore_package_logging() -> Iterator[None]:
+    """Undo the logger level and handler that `main` installs on every CLI invocation."""
+    package_logger = logging.getLogger("infrahub_sync")
+    level = package_logger.level
+    handlers = list(package_logger.handlers)
+    yield
+    package_logger.setLevel(level)
+    for handler in list(package_logger.handlers):
+        if handler not in handlers:
+            package_logger.removeHandler(handler)
+            handler.close()
 
 
 def _invoke(client: MagicMock, *args: str):  # type: ignore[no-untyped-def]
