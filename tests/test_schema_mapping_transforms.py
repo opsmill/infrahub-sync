@@ -85,6 +85,30 @@ def test_transform_refuses_a_lazy_filter_result_with_a_missing_key(expression: s
     assert "result" not in item
 
 
+@pytest.mark.parametrize(
+    "expression",
+    ["{{ items | map('map', attribute='missing') }}", "{{ items | map('selectattr', 'missing') }}"],
+)
+def test_transform_refuses_a_composed_lazy_filter_result_with_a_missing_key(expression: str) -> None:
+    item: dict[str, Any] = {"items": [[{}]]}
+
+    with pytest.raises(ValueError, match=r"Failed to transform 'result'.*no attribute 'missing'"):
+        DiffSyncModelMixin.apply_transform(item=item, transform_expr=expression, field="result")
+
+    assert "result" not in item
+
+
+def test_transform_stores_a_composed_lazy_filter_result_as_nested_lists() -> None:
+    item: dict[str, Any] = {"items": [[{"vid": 10}], [{"vid": 20}]]}
+
+    DiffSyncModelMixin.apply_transform(
+        item=item, transform_expr="{{ items | map('map', attribute='vid') }}", field="result"
+    )
+
+    assert item["result"] == [[10], [20]]
+    assert type(item["result"][0]) is list
+
+
 def test_transform_keeps_model_custom_filters() -> None:
     item: dict[str, Any] = {"name": "eth0"}
 

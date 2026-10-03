@@ -51,6 +51,19 @@ class SandboxedNativeTemplate(NativeTemplate):
 SandboxedNativeEnvironment.template_class = SandboxedNativeTemplate
 
 
+def _materialize_lazy(value: Any) -> Any:
+    """Consume lazy iterators, at any depth, into lists; keep list/tuple/dict container types."""
+    if isinstance(value, Iterator):
+        return [_materialize_lazy(nested) for nested in value]
+    if isinstance(value, dict):
+        return {key: _materialize_lazy(nested) for key, nested in value.items()}
+    if isinstance(value, list):
+        return [_materialize_lazy(nested) for nested in value]
+    if isinstance(value, tuple):
+        return tuple(_materialize_lazy(nested) for nested in value)
+    return value
+
+
 def _raise_if_undefined(value: Any) -> None:
     """Raise the error an Undefined carries when a rendered value is, or contains, one."""
     if isinstance(value, Undefined):
@@ -391,10 +404,10 @@ class DiffSyncModelMixin:
             # Render with the item as context → returns a native Python value
             transformed_value = template.render(**item)
 
-            # Filters such as map and select return a lazy generator. Consume it here so a
-            # missing key raises inside this method and the field holds a list, not a generator.
-            if isinstance(transformed_value, Iterator):
-                transformed_value = list(transformed_value)
+            # Filters such as map and select return a lazy generator, possibly nested inside
+            # other results. Consume them here so a missing key raises inside this method and
+            # the field holds lists, not generators.
+            transformed_value = _materialize_lazy(transformed_value)
 
             # Native rendering returns a lone expression's value without str(), so a missing
             # key or a refused attribute comes back as an Undefined instead of raising.
