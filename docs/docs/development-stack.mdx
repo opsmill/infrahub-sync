@@ -165,8 +165,9 @@ every host-side address and browser URL below. See
    `http://host.docker.internal:8080`. With `--dev-stack`, the task reads
    `PREVIEW_INFRAHUB_PORT` from the preview settings and writes that port in the
    destination, so a port you set earlier gives `http://host.docker.internal:<port>`.
-   Those are the addresses the worker container uses. Your host uses
-   `http://localhost:<port>` for the same Infrahub. Inside the worker container, `localhost` is the
+   With loopback publication, those are the addresses the worker container uses. Your host uses
+   `http://localhost:<port>` for the same Infrahub. If you use the Linux gateway binding described
+   below, both addresses use that gateway and the chosen port. Inside the worker container, `localhost` is the
    container itself. The worker uses the URLs in the registered package; environment
    variables such as `INFRAHUB_ADDRESS` do not change them.
 
@@ -181,7 +182,7 @@ every host-side address and browser URL below. See
    then answers on that address only, so the tasks and the host processes use
    `http://<gateway>:8080`, and you open the UI there instead of `localhost`.
 
-   The output has one `config_id: <value>` line, for example
+   The output includes the `config_id: <value>` field, for example
    `config_id: edge-sync`. Use that value in place of `<config-id>` in the commands
    below. If you change the package later, register
    the change with `configs version <config-id> <package>`. Registering changed content
