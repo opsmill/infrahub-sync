@@ -214,6 +214,12 @@ uv run infrahub-sync generate --name from-netbox --directory examples/
 
 ### Relationship resolution failures
 
+Every attribute used as an Infrahub model identifier must have a non-null value, even if the schema declares it optional. Full loads, creates, ID scans, and incremental store inserts reject a null attribute identifier or required relationship identifier before storing its identity. Optional single-peer relationship identifiers may be explicitly null, as with a prefix or IP address in the global routing table without a VRF. An omitted identifier is unresolved; a model's default `None` does not confirm a null relationship.
+
+With `--continue-on-error`, full loading skips model-construction and identifier validation errors with a warning. Incremental paths that consume cached or changed records skip identifier validation errors during store insertion. Model-construction errors in those paths occur before insertion and stop the run. Resources that fall back to full loading use the full-load skip behavior. Validation errors stop creates and ID scans.
+
+When a relationship peer lacks an identifier, the adapter fetches its identifier fields once by ID. A null optional relationship is accepted only when the SDK response explicitly includes that null; an unloaded relationship triggers the fetch. If an attribute identifier is still missing or null, or a relationship identifier remains unresolved, the run raises `PeerIdentifierError`. With `--continue-on-error`, it logs a warning and skips the relationship. During full loading and incremental store insertion, a parent whose identifier relationship was skipped also fails validation and is skipped. ID scans stop on that validation error.
+
 - Ensure referenced objects are synced before objects that reference them (check `order` in configuration)
 - Verify the unique identifier used in references matches the target object's identifier
 - Check logs for "Unable to find ... in the Store" messages
