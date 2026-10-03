@@ -1,1 +1,1 @@
-The CLI now prints every Unicode control, format, line-separator and paragraph-separator character in source values as a visible escape, including soft hyphen, invisible math operators and tag characters that previously reached the terminal unescaped.
+The CLI now prints every Unicode control, format, line-separator and paragraph-separator character in source values as a visible escape (tab, newline and carriage return as `\t`, `\n` and `\r`), including soft hyphen, invisible math operators and tag characters that previously reached the terminal unescaped.

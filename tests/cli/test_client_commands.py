@@ -787,14 +787,21 @@ def test_display_escapes_invisible_format_characters(code: int, expected: str) -
 
 
 def test_display_escapes_every_control_and_format_code_point() -> None:
+    """Check every code point against an independently spelled expected escape."""
     readable = {"\t": "\\t", "\n": "\\n", "\r": "\\r"}
     for code in range(sys.maxunicode + 1):
         character = chr(code)
         rendered = _display(character)
         if unicodedata.category(character) in {"Cc", "Cf", "Zl", "Zp"}:
-            assert rendered == readable.get(character, rendered), hex(code)
-            assert rendered.isascii(), hex(code)
-            assert rendered != character, hex(code)
+            if character in readable:
+                expected = readable[character]
+            elif code <= 0xFF:
+                expected = "\\x" + format(code, "02x")
+            elif code <= 0xFFFF:
+                expected = "\\u" + format(code, "04x")
+            else:
+                expected = "\\U" + format(code, "08x")
+            assert rendered == expected, hex(code)
         else:
             assert rendered == character, hex(code)
 

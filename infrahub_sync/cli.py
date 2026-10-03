@@ -148,7 +148,10 @@ def _display(value: object) -> str:
 
     Only the display changes: the saved plan and every JSON rendering keep the real value.
     """
-    return "".join(map(_escape_character, str(value)))
+    text = str(value)
+    if text.isascii() and text.isprintable():
+        return text
+    return "".join(map(_escape_character, text))
 
 
 def _echo_fields(fields: tuple[tuple[str, object], ...], *, err: bool = False) -> None:
