@@ -11,7 +11,7 @@ import pytest
 from jinja2.exceptions import SecurityError
 from jinja2.sandbox import unsafe
 
-from infrahub_sync import DiffSyncModelMixin
+from infrahub_sync import DiffSyncModelMixin, _materialize_lazy  # noqa: PLC2701
 
 if TYPE_CHECKING:
     from jinja2 import Environment
@@ -112,6 +112,13 @@ def test_transform_refuses_a_lazy_filter_result_used_as_a_dictionary_key(express
         DiffSyncModelMixin.apply_transform(item=item, transform_expr=expression, field="result")
 
     assert item["result"] == "kept"
+
+
+@pytest.mark.parametrize("container", [set, frozenset])
+def test_materialize_lazy_refuses_a_lazy_iterator_inside_a_set(container: type) -> None:
+    """A lazy iterator held by a set cannot be consumed into a member, so it is refused."""
+    with pytest.raises(TypeError, match="lazy iterator"):
+        _materialize_lazy(container({iter([1])}))
 
 
 def test_transform_stores_a_composed_lazy_filter_result_as_nested_lists() -> None:

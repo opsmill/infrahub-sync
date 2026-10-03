@@ -62,7 +62,7 @@ def _reject_lazy_key(key: Any) -> None:
 
 
 def _materialize_lazy(value: Any) -> Any:
-    """Consume lazy iterators, at any depth, into lists; keep list/tuple/dict container types."""
+    """Consume lazy iterators, at any depth, into lists; keep list/tuple/dict container types; refuse them in sets."""
     if isinstance(value, Iterator):
         return [_materialize_lazy(nested) for nested in value]
     if isinstance(value, dict):
@@ -73,6 +73,9 @@ def _materialize_lazy(value: Any) -> Any:
         return [_materialize_lazy(nested) for nested in value]
     if isinstance(value, tuple):
         return tuple(_materialize_lazy(nested) for nested in value)
+    if isinstance(value, (set, frozenset)):
+        for member in value:
+            _reject_lazy_key(member)
     return value
 
 
