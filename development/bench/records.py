@@ -218,6 +218,8 @@ class ResultRecord:
     infrahub_version: str | None = None
     infrahub_image_id: str | None = None
     infrahub_image_digest: str | None = None
+    harness_commit: str | None = None
+    mapping_sha256: str | None = None
 
     def append(self, path: Path) -> None:
         """Append exactly one JSON line, clearing times on every invalid result."""
@@ -235,17 +237,20 @@ class ResultRecord:
 
 
 def medians(path: Path) -> list[dict[str, Any]]:
-    """Compare valid medians without pooling versions, commits, or v2 variants."""
+    """Compare valid medians only within the same harness and mapping identity."""
     if not path.exists():
         return []
-    cells: dict[tuple[str, str], dict[tuple[str, str, str, str], list[float]]] = defaultdict(lambda: defaultdict(list))
+    cells: dict[tuple[str, str, str, str], dict[tuple[str, str, str, str], list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
     for line in path.read_text(encoding="utf-8").splitlines():
         record = json.loads(line)
         if record["status"] == "ok" and record["wall_seconds"] is not None:
             identity = record["line"], record["version"], record["commit"], record["variant"]
-            cells[record["tier"], record["scenario"]][identity].append(record["wall_seconds"])
+            provenance = record.get("harness_commit") or "", record.get("mapping_sha256") or ""
+            cells[(record["tier"], record["scenario"], *provenance)][identity].append(record["wall_seconds"])
     rows = []
-    for (tier, scenario), identities in sorted(cells.items()):
+    for (tier, scenario, harness_commit, mapping_sha256), identities in sorted(cells.items()):
         v2 = [identity for identity in identities if identity[0] == "v2"] or [None]
         v3 = [identity for identity in identities if identity[0] == "v3"] or [None]
         for left in v2:
@@ -254,6 +259,8 @@ def medians(path: Path) -> list[dict[str, Any]]:
                     {
                         "tier": tier,
                         "scenario": scenario,
+                        "harness_commit": harness_commit or None,
+                        "mapping_sha256": mapping_sha256 or None,
                         "variant": left[3] if left else "full",
                         "v2_version": f"{left[1]}@{left[2]}" if left else None,
                         "v3_version": f"{right[1]}@{right[2]}" if right else None,

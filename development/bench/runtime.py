@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import platform
 import signal
@@ -33,13 +34,14 @@ class QuietContext(Context):
 
     def run(self, command: str, **kwargs: object):  # noqa: ANN201 -- Invoke has a dynamic Result/Promise API
         kwargs.update(hide=True, pty=False, echo=False)
-        timeout = self.config.run.get("timeout", LIMIT_SECONDS)
+        requested = kwargs.get("timeout", LIMIT_SECONDS)
+        timeout = min(requested, LIMIT_SECONDS) if isinstance(requested, (int, float)) else LIMIT_SECONDS
         if self.deadline is not None:
             timeout = min(timeout, self.deadline - time.monotonic())
             if timeout <= 0:
                 msg = "cell exceeded the six-hour limit"
                 raise TimeoutError(msg)
-        kwargs.setdefault("timeout", timeout)
+        kwargs["timeout"] = timeout
         try:
             return super().run(command, **kwargs)
         except CommandTimedOut:
@@ -145,23 +147,30 @@ class MemorySampler:
 
 
 def measured_process(argv: list[str], cwd: Path, env: dict[str, str], timeout: float) -> tuple[str, float, float]:
-    """Measure a v2 process, killing its entire session on timeout and suppressing its output."""
+    """Measure a v2 process, killing and reaping its session on every abnormal exit."""
     started = time.monotonic()
     with tempfile.TemporaryFile(mode="w+b") as captured:
         process = subprocess.Popen(  # noqa: S603 -- validated argv, never a shell
             argv, cwd=cwd, env=env, stdout=captured, stderr=subprocess.STDOUT, start_new_session=True
         )
-        with MemorySampler(lambda: process_rss(process.pid)) as sampler:
-            try:
-                code = process.wait(timeout=timeout)
-                wall = time.monotonic() - started
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+        completed = False
+        try:
+            with MemorySampler(lambda: process_rss(process.pid)) as sampler:
+                try:
+                    code = process.wait(timeout=timeout)
+                    wall = time.monotonic() - started
+                except subprocess.TimeoutExpired:
+                    msg = "sync exceeded the six-hour cell limit"
+                    raise TimeoutError(msg) from None
+            if code:
+                msg = "v2 sync failed; the unchanged current mapping may be incompatible with this release"
+                raise BenchmarkError(msg)
+            captured.seek(0)
+            result = captured.read().decode("utf-8", errors="replace"), wall, sampler.result()
+            completed = True
+            return result
+        finally:
+            if not completed:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
-                msg = "sync exceeded the six-hour cell limit"
-                raise TimeoutError(msg) from None
-        if code:
-            msg = "v2 sync failed; the unchanged current mapping may be incompatible with this release"
-            raise BenchmarkError(msg)
-        captured.seek(0)
-        return captured.read().decode("utf-8", errors="replace"), wall, sampler.result()

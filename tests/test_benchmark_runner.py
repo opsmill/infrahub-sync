@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import shlex
+import signal
+import subprocess  # noqa: S404 -- real benchmark subprocess regression
 import sys
+import time
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, cast
@@ -106,6 +113,8 @@ def test_jsonl_contract_and_invalid_times(tmp_path, status) -> None:
         "netbox_counts",
         "infrahub_counts",
         "machine",
+        "harness_commit",
+        "mapping_sha256",
     } <= rows[0].keys()
     assert rows[0]["wall_seconds"] == (3 if status == "ok" else None)
     assert rows[0]["plan_seconds"] == (1 if status == "ok" else None)
@@ -230,7 +239,9 @@ def test_medians_exclude_invalid_samples(tmp_path) -> None:
 
 @pytest.mark.parametrize("line", ["v2", "v3"])
 @pytest.mark.parametrize("scenario", ["cold", "warm", "changed"])
-def test_runner_repeats_from_fresh_state_and_cleans_up(monkeypatch, tmp_path, mapping, scenario, line) -> None:
+def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0915 -- complete runner protocol
+    monkeypatch, tmp_path, mapping, scenario, line
+) -> None:
     events = []
     counts = expected_counts("S", mapping)
     expected = {
@@ -317,6 +328,7 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(monkeypatch, tmp_path, ma
     monkeypatch.setattr(bench, "v3_sync", sync)
     monkeypatch.setattr(bench, "v2_environment", lambda _ref: (tmp_path, "2.0.1", "release-sha"))
     monkeypatch.setattr(bench, "prepare_v2", lambda *_args: None)
+    monkeypatch.setattr(bench, "output", lambda argv, **_kwargs: "harness-sha" if "rev-parse" in argv else "")
 
     def legacy_sync(_stack, _directory, _variant, _timeout):
         measured = scenario if events.count(("sync", "cold")) > events.count(("close",)) else "cold"
@@ -349,6 +361,15 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(monkeypatch, tmp_path, ma
     rows = [json.loads(line) for line in bench.RESULTS.read_text(encoding="utf-8").splitlines()]
     status = "failed" if scenario == "changed" and line == "v3" else "ok"
     assert [row["status"] for row in rows] == [status, status]
+    assert all(row["harness_commit"] == "harness-sha" for row in rows)
+    assert all(row["commit"] == ("release-sha" if line == "v2" else "harness-sha") for row in rows)
+    import hashlib
+
+    configuration = yaml.safe_load(bench.netbox.SHIPPED_PACKAGE.read_text())["configuration"]
+    expected_hash = hashlib.sha256(
+        json.dumps(configuration["schema_mapping"], sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert all(row["mapping_sha256"] == expected_hash for row in rows)
     if status == "failed":
         assert all(row["wall_seconds"] is None for row in rows)
         assert all("does not execute planned deletes" in row["error"] for row in rows)
@@ -501,6 +522,7 @@ def test_v2_flags_are_only_sent_to_the_isolated_release(tmp_path, variant) -> No
 def test_destination_start_includes_the_schema_task_worker(monkeypatch) -> None:
     commands = []
     stack = bench.CellStack()
+    monkeypatch.setattr(bench.netbox, "dev_worker_containers", lambda _context: [])
     monkeypatch.setattr(bench.netbox, "restore", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(stack, "compose", commands.append)
     monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "")
@@ -723,3 +745,191 @@ def test_stopped_development_worker_requires_destroy(monkeypatch) -> None:
     with pytest.raises(BenchmarkError, match=r"invoke destroy.*removes volumes"):
         stack.start_sync()
     assert stack.started_sync is False
+
+
+@pytest.mark.parametrize("phase", ["compose", "after-compose", "cleanup"])
+def test_real_invoke_enforces_deadline_through_stack_lifecycle(monkeypatch, phase) -> None:
+    stack = bench.CellStack()
+    command = "exec " + shlex.join([sys.executable, "-c", "import time; time.sleep(5)"])
+    monkeypatch.setattr(
+        bench.preview,
+        "_compose",
+        lambda context, _arguments, _env: context.run(command if phase == "compose" else "true"),
+    )
+    stack.context.deadline = time.monotonic() + 0.2
+    started = time.monotonic()
+
+    def run_phase():
+        if phase == "cleanup":
+            stack.started_netbox = True
+
+            def down(context):
+                context.deadline = time.monotonic() + 0.2
+                context.run(command)
+
+            monkeypatch.setattr(bench.netbox, "down", down)
+            stack.close()
+        else:
+            stack.compose("up")
+            stack.context.run(command)
+
+    with pytest.raises(TimeoutError):
+        run_phase()
+    assert time.monotonic() - started < 3
+    assert "timeout" not in stack.context.config.run
+
+
+def test_quiet_context_shorter_command_timeout_is_safe(capsys) -> None:
+    from development.bench.runtime import QuietContext
+
+    context = QuietContext()
+    context.deadline = time.monotonic() + 10
+    with pytest.raises(BenchmarkError, match="command time limit") as exc:
+        context.run("printf secret-token; sleep 5", timeout=0.2)
+    captured = capsys.readouterr()
+    assert "secret-token" not in str(exc.value) + captured.out + captured.err
+
+
+@pytest.mark.parametrize("line", ["v2", "v3"])
+@pytest.mark.parametrize("worker", ["running-worker", "stopped-worker"])
+def test_runner_rejects_existing_worker_before_mutation(monkeypatch, tmp_path, line, worker) -> None:
+    monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
+    monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
+    monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
+    monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "harness-sha")
+    monkeypatch.setattr(bench, "v2_environment", lambda _ref: (tmp_path, "2.0.1", "release-sha"))
+    monkeypatch.setattr(bench.netbox, "dev_worker_containers", lambda _context: [worker])
+
+    def destructive(*_args: object, **_kwargs: object):
+        pytest.fail("rejected cell must not mutate or remove existing stacks")
+
+    monkeypatch.setattr(bench.netbox, "restore", destructive)
+    monkeypatch.setattr(bench.netbox, "down", destructive)
+    monkeypatch.setattr(bench.preview, "_compose", destructive)
+    monkeypatch.setattr(bench.dev, "build", destructive)
+    monkeypatch.setattr(bench.dev, "destroy", destructive)
+    bench.run_cell.body(Context(), line=line, v2_ref="2.0.1")
+    row = json.loads(bench.RESULTS.read_text())
+    assert row["status"] == "failed"
+    assert "invoke destroy" in row["error"]
+
+
+@pytest.mark.parametrize("failure", ["source", "destination"])
+def test_partial_setup_cleans_only_acquired_stacks(monkeypatch, failure) -> None:
+    stack = bench.CellStack()
+    events = []
+    monkeypatch.setattr(bench.netbox, "dev_worker_containers", lambda _context: [])
+
+    def restore(*_args: object, **_kwargs: object):
+        if failure == "source":
+            msg = "restore failed"
+            raise BenchmarkError(msg)
+
+    def compose(_context, _arguments, _env):
+        events.append("destination")
+        if len(events) == 1:
+            msg = "compose failed"
+            raise BenchmarkError(msg)
+
+    monkeypatch.setattr(bench.netbox, "restore", restore)
+    monkeypatch.setattr(bench.preview, "_compose", compose)
+    monkeypatch.setattr(bench.netbox, "down", lambda _context: events.append("source"))
+    monkeypatch.setattr(bench.dev, "destroy", lambda _context: pytest.fail("unacquired Sync stack"))
+    with pytest.raises(BenchmarkError):
+        stack.reset("S")
+    stack.close()
+    assert events == (["source"] if failure == "source" else ["destination", "destination", "source"])
+
+
+@pytest.fixture
+def default_sigint_handler() -> Iterator[None]:
+    """Isolate the interrupt probe from signal handlers installed by other tests."""
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+@pytest.mark.usefixtures("default_sigint_handler")
+def test_interrupted_v2_sync_kills_session_and_reaps_process(monkeypatch, tmp_path) -> None:
+    from development.bench import runtime
+
+    child_pid = tmp_path / "child.pid"
+    child_code = "import time; time.sleep(60)"
+    code = (
+        "import subprocess,sys,time; from pathlib import Path; "
+        f"child=subprocess.Popen([sys.executable,'-c',{child_code!r}]); "
+        f"Path({str(child_pid)!r}).write_text(str(child.pid)); time.sleep(60)"
+    )
+    original_popen = subprocess.Popen
+    processes = []
+
+    def popen(*args: Any, **kwargs: Any):  # noqa: ANN401 -- forward the real Popen protocol
+        process = original_popen(*args, **kwargs)
+        processes.append(process)
+        original_wait = process.wait
+        interrupted = False
+
+        def wait(*args: Any, **kwargs: Any):  # noqa: ANN401 -- forward the real wait protocol
+            nonlocal interrupted
+            if not interrupted:
+                interrupted = True
+                deadline = time.monotonic() + 5
+                while not child_pid.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                assert child_pid.exists(), "sync must spawn its descendant before cancellation"
+                signal.raise_signal(signal.SIGINT)
+            return original_wait(*args, **kwargs)
+
+        monkeypatch.setattr(process, "wait", wait)
+        return process
+
+    monkeypatch.setattr(runtime.subprocess, "Popen", popen)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            measured_process([sys.executable, "-c", code], tmp_path, dict(os.environ), 10)
+        process = processes[0]
+        assert process.returncode == -signal.SIGKILL
+        assert not (runtime.Path("/proc") / str(process.pid)).exists()
+        pid = int(child_pid.read_text())
+        deadline = time.monotonic() + 3
+        stat = runtime.Path(f"/proc/{pid}/stat")
+        while stat.exists() and stat.read_text().split()[2] != "Z" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not stat.exists() or stat.read_text().split()[2] == "Z"
+    finally:
+        for process in processes:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+
+
+@pytest.mark.parametrize("different", ["harness", "mapping"])
+def test_report_never_pools_or_pairs_different_provenance(tmp_path, different) -> None:
+    path = tmp_path / "results.jsonl"
+    for line, harness, mapping_hash, seconds in [
+        ("v2", "a", "map-a", 2),
+        ("v2", "b" if different == "harness" else "a", "map-b" if different == "mapping" else "map-a", 20),
+        ("v3", "a", "map-a", 1),
+    ]:
+        ResultRecord(
+            line,
+            "release",
+            "same-sha",
+            "S",
+            "cold",
+            "full",
+            1,
+            status="ok",
+            wall_seconds=seconds,
+            peak_rss_mb=1,
+            harness_commit=harness,
+            mapping_sha256=mapping_hash,
+        ).append(path)
+    rows = medians(path)
+    assert len(rows) == 2
+    assert rows[0]["v2_seconds"] == 2
+    assert rows[0]["v3_seconds"] == 1
+    assert rows[1]["v2_seconds"] == 20
+    assert rows[1]["v3_seconds"] is None

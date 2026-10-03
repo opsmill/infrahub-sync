@@ -9,7 +9,7 @@ title: "Run a NetBox benchmark cell"
 The manual benchmark compares v2 and v3 against the same local NetBox tier and a fresh
 Infrahub 1.11.3 destination. It runs outside CI. Tier L contains 87,815 mapped source
 objects; seeding and benchmark runs can take hours. Each repetition has a six-hour
-limit for preparation and sync. A timeout or validation failure produces an invalid result with no valid time.
+limit for preparation and sync. Cleanup has a separate five-minute limit. A timeout or validation failure produces an invalid result with no valid time.
 
 ### Prepare the tier
 
@@ -37,7 +37,8 @@ uv run invoke destroy
 
 This command removes the development containers and their volumes. Stopped worker
 containers also block the runner. The benchmark requires exclusive ownership of the
-fixed development stack; it does not reuse an existing API or worker. The runner builds the Sync
+fixed development stack; it checks for existing workers before restoring NetBox or
+rebuilding Infrahub. It does not reuse an existing API or worker. The runner builds the Sync
 image from this checkout and uses the existing start tasks for its API and worker. It
 requires `INFRAHUB_SYNC_API_TOKEN` in your environment, matching the local stack's API
 principal. It creates an isolated destination stack from the preview Compose files, pinned to
@@ -93,15 +94,17 @@ Each measured repetition appends one JSON object to the git-ignored
 `.netbox/benchmarks/results.jsonl`. The fields include:
 
 - `line`, `version`, `commit`, `tier`, `scenario`, `variant`, and `repetition` identify
-  the input and installed line. A v3 commit ending in `-dirty` identifies a checkout
-  with uncommitted changes. `infrahub_version` is read from the running server and
+  the input and installed line. A current checkout identity ending in `-dirty` indicates
+  uncommitted changes. `harness_commit` records the current checkout for both lines,
+  separately from the installed release commit. `mapping_sha256` hashes the canonical
+  mapping entries, including uncommitted edits. `infrahub_version` is read from the running server and
   checked against 1.11.3. `infrahub_image_id` records its immutable Docker image ID;
   `infrahub_image_digest` records the OpsMill repository digest when available.
-  These identity fields remain null if setup fails before verification.
+  The Infrahub identity fields remain null if setup fails before verification.
 - `status` is `ok`, `failed`, or `timed_out`. `wall_seconds` is valid only for `ok`.
-  Only reaching the six-hour cell limit produces `timed_out`; earlier setup command
-  timeouts produce `failed` with a separate error. It measures submission/process start through a finished sync, excluding preparation,
-  validation, and cleanup.
+  `wall_seconds` measures submission/process start through a finished sync, excluding
+  preparation, validation, and cleanup. Only reaching the six-hour cell limit produces
+  `timed_out`; earlier setup command timeouts produce `failed` with a separate error.
 - v3 `plan_seconds` and `apply_seconds` split the recorded run interval at the published
   plan-review artifact timestamp. These intervals include queue/load and verification or
   checkpoint overhead; they are not CPU timings of the diff and write loops.
@@ -135,5 +138,7 @@ uv run invoke bench.report
 ```
 
 The table compares medians from valid samples only. It keeps versions, commits, and v2
-variants separate; a missing valid line appears as an empty comparison cell. An invalid
+variants separate. It pools repetitions and pairs lines only when `harness_commit` and
+`mapping_sha256` both match. Older records without provenance remain in a separate
+unknown group. A missing valid line appears as an empty comparison cell. An invalid
 result is evidence of a failed benchmark cell, never a performance measurement.

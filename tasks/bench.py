@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -105,6 +106,8 @@ class CellStack:
         self.deadline = time.monotonic() + LIMIT_SECONDS
         self.context.deadline = self.deadline
         self.started_sync = False
+        self.started_netbox = False
+        self.started_destination = False
 
     def remaining(self) -> float:
         """Enforce one six-hour envelope for preparation, baseline, and measured sync."""
@@ -116,13 +119,15 @@ class CellStack:
 
     def compose(self, arguments: str) -> None:
         """Use the existing preview files for the isolated pinned destination."""
-        self.context.config.run.timeout = self.remaining()
         preview._compose(self.context, arguments, self.preview_env)  # noqa: SLF001 -- reuse the existing stack lifecycle
 
     def reset(self, tier: str) -> None:
         """Restore NetBox and recreate an empty pinned destination before each repetition."""
+        self.require_exclusive_sync()
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.started_netbox = True
             netbox.restore(self.context, tier=tier)
+            self.started_destination = True
             self.compose("down --volumes --remove-orphans")
             services = yaml.safe_load((preview.DEV_DIR / "docker-compose.infrahub.yml").read_text(encoding="utf-8"))[
                 "services"
@@ -173,12 +178,16 @@ class CellStack:
             )
             return version, image.id, digest
 
-    def start_sync(self) -> None:
-        """Build the current checkout and start the existing API/worker tasks quietly."""
+    def require_exclusive_sync(self) -> None:
+        """Refuse an existing worker before changing either disposable database."""
         # The existing dev task owns its fixed project. Refuse another caller's stack.
         if netbox.dev_worker_containers(self.context):
             msg = "the development Sync stack has existing containers; run invoke destroy before benchmarking (removes volumes)"
             raise BenchmarkError(msg)
+
+    def start_sync(self) -> None:
+        """Build the current checkout and start the existing API/worker tasks quietly."""
+        self.require_exclusive_sync()
         env = {
             "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN": netbox.netbox_token(self.netbox_env),
             "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": self.infrahub_token,
@@ -244,12 +253,17 @@ class CellStack:
         """Remove stacks and volumes created by this cell, including the disposable source."""
         self.deadline = time.monotonic() + 300
         self.context.deadline = self.deadline
-        self.context.config.run.timeout = 300
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            if self.started_sync:
-                dev.destroy(self.context)
-            self.compose("down --volumes --remove-orphans")
-            netbox.down(self.context)
+            try:
+                if self.started_sync:
+                    dev.destroy(self.context)
+            finally:
+                try:
+                    if self.started_destination:
+                        self.compose("down --volumes --remove-orphans")
+                finally:
+                    if self.started_netbox:
+                        netbox.down(self.context)
 
 
 def v2_environment(ref: str) -> tuple[Path, str, str]:
@@ -380,7 +394,7 @@ def v3_sync(stack: CellStack, registered: tuple[str, int], record: ResultRecord,
 
 
 @task(name="run")
-def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0915 -- one record per repetition
+def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record per repetition
     _context: Context,
     line: str = "v3",
     tier: str = "S",
@@ -406,23 +420,30 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0915 -- one record per repe
             output(["git", "rev-parse", "HEAD"], cwd=ROOT)
             + ("-dirty" if output(["git", "status", "--porcelain"], cwd=ROOT) else ""),
         )
+        harness_commit = commit
+        configuration = yaml.safe_load(netbox.SHIPPED_PACKAGE.read_text(encoding="utf-8"))["configuration"]
+        mapping_sha256 = hashlib.sha256(
+            json.dumps(configuration["schema_mapping"], sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
         for repetition in range(1, repetitions + 1):
             record = ResultRecord(
                 line,
                 v2_ref if line == "v2" else version,
-                commit,
+                harness_commit,
                 tier,
                 scenario,
                 variant,
                 repetition,
                 machine=machine_info(),
+                harness_commit=harness_commit,
+                mapping_sha256=mapping_sha256,
             )
             stack = CellStack()
             mapping = None
             try:
                 if line == "v2":
-                    directory, version, commit = v2_environment(v2_ref)
-                    record.version, record.commit = version + " (" + v2_ref + ")", commit
+                    directory, version, release_commit = v2_environment(v2_ref)
+                    record.version, record.commit = version + " (" + v2_ref + ")", release_commit
                     shutil.rmtree(directory / ".infrahub-sync-cache" / "from-netbox", ignore_errors=True)
                 stack.reset(tier)
                 record.infrahub_version, record.infrahub_image_id, record.infrahub_image_digest = (
@@ -533,6 +554,8 @@ def report(_context: Context) -> None:
     for label in (
         "Tier",
         "Scenario",
+        "Harness commit",
+        "Mapping SHA256",
         "v2 variant",
         "v2 version/commit",
         "v2 seconds",
@@ -544,6 +567,8 @@ def report(_context: Context) -> None:
         table.add_row(
             row["tier"],
             row["scenario"],
+            row["harness_commit"] or "unknown",
+            row["mapping_sha256"] or "unknown",
             row["variant"],
             row["v2_version"] or "",
             f"{row['v2_seconds']:.3f}" if row["v2_seconds"] is not None else "",
