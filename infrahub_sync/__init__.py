@@ -51,11 +51,23 @@ class SandboxedNativeTemplate(NativeTemplate):
 SandboxedNativeEnvironment.template_class = SandboxedNativeTemplate
 
 
+def _reject_lazy_key(key: Any) -> None:
+    """Refuse a dictionary key that is, or holds, a lazy iterator: it cannot be consumed into a hashable key."""
+    if isinstance(key, Iterator):
+        msg = "a dictionary key is a lazy iterator; convert it with the list or join filter"
+        raise TypeError(msg)
+    if isinstance(key, (tuple, frozenset)):
+        for nested in key:
+            _reject_lazy_key(nested)
+
+
 def _materialize_lazy(value: Any) -> Any:
     """Consume lazy iterators, at any depth, into lists; keep list/tuple/dict container types."""
     if isinstance(value, Iterator):
         return [_materialize_lazy(nested) for nested in value]
     if isinstance(value, dict):
+        for key in value:
+            _reject_lazy_key(key)
         return {key: _materialize_lazy(nested) for key, nested in value.items()}
     if isinstance(value, list):
         return [_materialize_lazy(nested) for nested in value]

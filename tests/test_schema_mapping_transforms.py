@@ -98,6 +98,22 @@ def test_transform_refuses_a_composed_lazy_filter_result_with_a_missing_key(expr
     assert "result" not in item
 
 
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "{{ {(items | map(attribute='missing')): 'value'} }}",
+        "{{ {(items | selectattr('missing')): 'value'} }}",
+    ],
+)
+def test_transform_refuses_a_lazy_filter_result_used_as_a_dictionary_key(expression: str) -> None:
+    item: dict[str, Any] = {"items": [{}], "result": "kept"}
+
+    with pytest.raises(ValueError, match=r"Failed to transform 'result'.*lazy iterator"):
+        DiffSyncModelMixin.apply_transform(item=item, transform_expr=expression, field="result")
+
+    assert item["result"] == "kept"
+
+
 def test_transform_stores_a_composed_lazy_filter_result_as_nested_lists() -> None:
     item: dict[str, Any] = {"items": [[{"vid": 10}], [{"vid": 20}]]}
 
