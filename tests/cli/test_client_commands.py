@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import sys
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -12,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from typer.testing import CliRunner
 
-from infrahub_sync.cli import app
+from infrahub_sync.cli import _display, app  # noqa: PLC2701 - the renderer under test is private.
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
@@ -736,6 +738,54 @@ def test_runs_plan_detail_keeps_ordinary_non_ascii_values_unchanged(client: Magi
 
     assert result.exit_code == 0, result.output
     assert "op-create create Device name=Zürich-東京 Łódź" in result.output.splitlines()
+
+
+def test_runs_plan_detail_escapes_invisible_format_characters_in_source_values(client: MagicMock) -> None:
+    plan = _plan()
+    operation = plan.operations[0].model_copy(update={"identity": {"name": "a\u00adb\U000e0041c"}})
+    client.get_plan.return_value = plan.model_copy(update={"operations": (operation, plan.operations[1])})
+
+    result = _invoke(client, "runs", "plan", "service-run-1", "--detail")
+
+    assert result.exit_code == 0, result.output
+    assert "op-create create Device name=a\\xadb\\U000e0041c" in result.output.split("\n")
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (0x00AD, "\\xad"),
+        (0x180E, "\\u180e"),
+        (0x2061, "\\u2061"),
+        (0x2064, "\\u2064"),
+        (0x206A, "\\u206a"),
+        (0x206F, "\\u206f"),
+        (0xFFF9, "\\ufff9"),
+        (0xFFFB, "\\ufffb"),
+        (0xE0001, "\\U000e0001"),
+        (0xE0041, "\\U000e0041"),
+        (0xE007F, "\\U000e007f"),
+    ],
+)
+def test_display_escapes_invisible_format_characters(code: int, expected: str) -> None:
+    assert _display(chr(code)) == expected
+
+
+def test_display_escapes_every_control_and_format_code_point() -> None:
+    readable = {"\t": "\\t", "\n": "\\n", "\r": "\\r"}
+    for code in range(sys.maxunicode + 1):
+        character = chr(code)
+        rendered = _display(character)
+        if unicodedata.category(character) in {"Cc", "Cf", "Zl", "Zp"}:
+            assert rendered == readable.get(character, rendered), hex(code)
+            assert rendered.isascii(), hex(code)
+            assert rendered != character, hex(code)
+        else:
+            assert rendered == character, hex(code)
+
+
+def test_display_keeps_ordinary_non_ascii_text() -> None:
+    assert _display("Zürich-東京 Łódź") == "Zürich-東京 Łódź"
 
 
 def test_diff_summary_escapes_terminal_controls_in_the_saved_plan(client: MagicMock) -> None:
