@@ -295,7 +295,9 @@ def test_run_creation_refuses_legacy_credential_identifiers_before_reservation(
     assert "register a new version with prefixed identifiers" in error["message"]
     finding = credential_namespace_finding("netbox-token", legacy_package.credentials["netbox-token"])
     assert finding is not None
-    assert error["message"] == f"{finding.message}; register a new version with prefixed identifiers"
+    assert error["message"] == (
+        f"{finding.message}; register a new version with prefixed identifiers and recreate saved plans against it"
+    )
     assert "legacy-credential-value-canary" not in response.text
     if identifier != "INFRAHUB_SYNC_CREDENTIAL_":
         assert identifier not in response.text
@@ -424,6 +426,7 @@ def test_saved_plan_refuses_legacy_source_credential_before_reservation(
     assert "credential reference 'legacy-source'" in error["message"]
     assert "must start with 'INFRAHUB_SYNC_CREDENTIAL_' followed by a name" in error["message"]
     assert "register a new version with prefixed identifiers" in error["message"]
+    assert "recreate saved plans against it" in error["message"]
     assert "LEGACY_SOURCE_TOKEN" not in response.text
     assert "legacy-source-value-canary" not in response.text
     assert projection.lookup_mutation("owner", sha256(RAW_KEY.encode()).hexdigest()).value is None

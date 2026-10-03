@@ -239,7 +239,8 @@ class RunService:
                 raise self._error(
                     422,
                     finding.code,
-                    f"{finding.message}; register a new version with prefixed identifiers",
+                    f"{finding.message}; register a new version with prefixed identifiers "
+                    "and recreate saved plans against it",
                 )
         return package.configuration.name, stored.package_checksum
 
