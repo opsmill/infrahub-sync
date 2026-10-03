@@ -15,12 +15,8 @@ from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
-from infrahub_sync.configuration.credentials import (
-    _ENV_CREDENTIAL_IDENTIFIER,
-    ENV_CREDENTIAL_PREFIX,
-    _rendered_component,
-)
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
+from infrahub_sync.configuration.validation import credential_namespace_finding
 from infrahub_sync.execution import collect_secret_values, redact, sanitize_exception_chain
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
@@ -239,15 +235,11 @@ class RunService:
         if package.configuration.store is not None:
             raise self._error(422, UNSUPPORTED_STORE_REASON, UNSUPPORTED_STORE_MESSAGE)
         for name, reference in package.credentials.items():
-            if reference.provider == "env" and _ENV_CREDENTIAL_IDENTIFIER.fullmatch(reference.identifier) is None:
-                # Inspect declarations only: credential values belong to the worker.
-                # Omit the identifier in case a value was pasted in its place.
+            if (finding := credential_namespace_finding(name, reference, secrets=self._secrets)) is not None:
                 raise self._error(
                     422,
-                    "malformed-credential-reference",
-                    f"credential reference {_rendered_component(name, self._secrets)!r} names an "
-                    f"environment identifier that must start with {ENV_CREDENTIAL_PREFIX!r} followed by a name; "
-                    "register a new version with prefixed identifiers",
+                    finding.code,
+                    f"{finding.message}; register a new version with prefixed identifiers",
                 )
         return package.configuration.name, stored.package_checksum
 
