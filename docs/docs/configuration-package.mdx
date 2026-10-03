@@ -63,6 +63,12 @@ set it in `operator.env` and run `./infrahub-sync-compose start`; see
 [Reading from NetBox or Nautobot](./compose-deployment.mdx#reading-from-netbox-or-nautobot).
 Registration refuses a package that contains a literal credential value.
 
+Run creation also checks this rule for previously registered versions. An invalid `env`
+identifier returns HTTP 422 with error code `malformed-credential-reference` before a run
+is created or submitted. Register a new version with identifiers that start with
+`INFRAHUB_SYNC_CREDENTIAL_` followed by a nonempty name. The API checks declarations
+without resolving credential values.
+
 ## Connection settings
 
 The worker connects to the URLs declared in the registered package. Environment variables

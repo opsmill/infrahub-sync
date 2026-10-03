@@ -246,6 +246,90 @@ def test_admission_reads_registered_binding_before_allocating_run(
     assert len(orchestration.submissions) == 1
 
 
+@pytest.mark.parametrize("operation", ["plan", "sync"])
+@pytest.mark.parametrize("identifier", ["NETBOX_TOKEN", "INFRAHUB_SYNC_CREDENTIAL_", "credential-value-canary"])
+def test_run_creation_refuses_legacy_credential_identifiers_before_reservation(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+    identifier: str,
+) -> None:
+    """Refuse legacy declarations through HTTP without creating or submitting a run."""
+    client, projection, orchestration = service_api
+    content = _registered_package().model_dump(mode="json")
+    content["credentials"] = {"netbox-token": {"provider": "env", "identifier": identifier}}
+    for role in ("source", "destination"):
+        content["configuration"][role]["settings"]["token"] = {"$credential": "netbox-token"}
+    legacy_package = ConfigurationPackage.model_validate(content)
+    with monkeypatch.context() as before_policy:
+        before_policy.setattr("infrahub_sync.product_store.store.validate_package_credentials", lambda _package: None)
+        version = projection.create_configuration(legacy_package)
+    monkeypatch.setenv("NETBOX_TOKEN", "legacy-credential-value-canary")
+    monkeypatch.setattr("infrahub_sync.service.service.generate_run_id", lambda: "refused-credential-run")
+    monkeypatch.setattr(
+        "infrahub_sync.configuration.credentials.EnvironmentCredentialProvider.resolve",
+        lambda *_args: pytest.fail("API admission resolved a credential"),
+    )
+
+    response = client.post(
+        "/runs",
+        headers=AUTH,
+        json={
+            "operation": operation,
+            "config_id": version.config_id,
+            "registry_version": version.registry_version,
+            "reason": "review legacy inventory",
+            "confirm_writes": True,
+        },
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "malformed-credential-reference"
+    assert "credential reference 'netbox-token'" in error["message"]
+    assert "must start with 'INFRAHUB_SYNC_CREDENTIAL_' followed by a name" in error["message"]
+    assert "register a new version with prefixed identifiers" in error["message"]
+    assert "legacy-credential-value-canary" not in response.text
+    if identifier != "INFRAHUB_SYNC_CREDENTIAL_":
+        assert identifier not in response.text
+    assert projection.lookup_run("refused-credential-run").value is None
+    assert projection.lookup_mutation("owner", sha256(RAW_KEY.encode()).hexdigest()).value is None
+    assert orchestration.submissions == []
+    assert projection.lookup_configuration_version(version.config_id, version.registry_version).value == version
+
+
+@pytest.mark.parametrize("operation", ["plan", "sync"])
+def test_run_creation_accepts_prefixed_credentials_without_api_host_values(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    """The API accepts valid declarations without resolving worker credentials."""
+    client, projection, orchestration = service_api
+    monkeypatch.delenv("INFRAHUB_SYNC_CREDENTIAL_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "infrahub_sync.configuration.credentials.EnvironmentCredentialProvider.resolve",
+        lambda *_args: pytest.fail("API admission resolved a credential"),
+    )
+    version = client.app.state.run_binding
+
+    response = client.post(
+        "/runs",
+        headers=AUTH,
+        json={
+            "operation": operation,
+            "config_id": version.config_id,
+            "registry_version": version.registry_version,
+            "reason": "review inventory",
+            "confirm_writes": True,
+        },
+    )
+
+    assert response.status_code == 202
+    assert projection.lookup_run(response.json()["run"]["run_id"]).value is not None
+    assert len(orchestration.submissions) == 1
+
+
 def _plan_document(run_id: str, *, checksum: str = "a" * 64) -> PlanResource:
     """The review document a worker publishes, before it reaches the artifact store."""
     return PlanResource(
