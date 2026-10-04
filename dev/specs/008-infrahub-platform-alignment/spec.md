@@ -33,7 +33,8 @@ database server for now. Drop Sync's own Prefect server, PostgreSQL and object s
 - Q: How is a configuration validated before merge? → A: On demand through the Sync API against
   any branch; merging is not blocked, and a run refuses invalid content with the findings.
 - Q: Who installs and upgrades the Sync schema extension? → A: The operator, with Infrahub's
-  usual tools, as an install and upgrade step; Sync only checks the loaded version.
+  usual tools, as an install and upgrade step; Sync only checks at startup that the loaded
+  extension has the kinds, attributes, relationships and generics it needs.
 
 - Q: Where do run records live in this release? → A: Run state stays in Sync's PostgreSQL
   database as the authority; each run is mirrored to an Infrahub `SyncRun` node for visibility and
@@ -45,9 +46,9 @@ database server for now. Drop Sync's own Prefect server, PostgreSQL and object s
 ### User Story 1 - Run Sync on the Infrahub deployment I already have (Priority: P1)
 
 An operator who already runs Infrahub adds Sync to that deployment. Sync's runs execute on
-Infrahub's task manager, and each run appears in Infrahub's task views with its state and logs,
-linked to the configuration it ran. The operator does not install or operate a second
-orchestration server, a second database server or an object store for Sync.
+Infrahub's task manager, and each run appears in Infrahub's task views with its state and logs.
+The operator does not install or operate a second orchestration server, a second database
+server or an object store for Sync.
 
 **Why this priority**: It removes most of the components an operator has to run, and it ends the
 drift between Sync's orchestration version and Infrahub's. Every later story builds on it.
@@ -62,8 +63,8 @@ deployment adds only Sync's own services.
    uses Infrahub's task manager and the existing database server, and adds no orchestration
    server, database server or object store of its own.
 2. **Given** a registered configuration, **When** a plan run starts, **Then** the run appears in
-   Infrahub's task list within seconds, with its state, logs, the target branch and a link to
-   the configuration.
+   Infrahub's task list within seconds, with its state, logs, the target branch and its
+   operation.
 3. **Given** Infrahub restarts its task manager during startup, **When** it recreates its own
    work pools, **Then** Sync's work pool and deployment survive and later runs still execute.
 4. **Given** an Infrahub release whose orchestration version Sync does not support, **When**
@@ -107,6 +108,8 @@ checksum.
    merged or versioned.
 7. **Given** invalid content merged to the default branch, **When** a run starts, **Then** the
    run is refused with the findings and no version is created.
+8. **Given** a configuration stored in Infrahub, **When** a run starts, **Then** the run appears in
+   the Tasks tab of that configuration and of its `SyncRun`, linked to both.
 
 ---
 
@@ -143,8 +146,8 @@ plan files, and apply it by checksum; confirm the apply used the stored plan wit
   files) stay on the default branch and never appear in that branch's diff.
 - A configuration with past runs is deleted: its runs and plan files stay readable until
   retention removes them.
-- The Sync schema extension is missing or not the version the running Sync requires: Sync refuses to start
-  and says which schema version it needs.
+- The Sync schema extension is missing, or lacks a kind, attribute, relationship or generic the running
+  Sync requires: Sync refuses to start, lists what is missing and names the schema file to load.
 - Large plans: a plan for 88,000 objects (about 3 MB of plan files) is stored and served
   without truncation.
 - An apply request is retried after a network failure: the write happens at most once.
@@ -168,8 +171,11 @@ plan files, and apply it by checksum; confirm the apply used the stored plan wit
   by a Sync schema extension, on Infrahub's default branch. Run records MUST be mirrored there as
   well; in this release Sync's PostgreSQL database stays the authority for run state. The operator loads and
   upgrades the extension with Infrahub's usual tools as an install and upgrade step. Sync MUST
-  NOT need schema-admin rights; it MUST check the loaded extension version at startup and refuse
-  to start, naming the required version, when it is missing or does not match.
+  NOT need schema-admin rights. Infrahub exposes no version of a loaded extension, so at startup
+  Sync MUST check that every kind it reads or writes exists on the default branch with the
+  attributes, relationships and inherited generics it relies on, and MUST refuse to start, listing
+  what is missing and the schema file shipped with that Sync release, when any of them is missing
+  (research R10).
 - **FR-006**: Changing a configuration MUST go through Infrahub's normal data workflow (branches,
   proposed changes, permissions, history). Versions MUST be created when a run starts: if the
   configuration's current content on the default branch matches an existing version, the run

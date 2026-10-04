@@ -10,7 +10,7 @@
 
 The V3 deployment ran its own Prefect server and its own PostgreSQL server next to Infrahub,
 which already ships both: its task manager is a Prefect server, backed by the `task-manager-db`
-PostgreSQL server. Sync pinned Prefect 3.8.1 while Infrahub 1.11.3 and later ship 3.8.6, so the
+PostgreSQL server. Sync pinned Prefect 3.8.1 while Infrahub 1.11.3 and 1.11.4 ship 3.8.6, so the
 two Prefect installations on one site drifted apart, and operators ran and upgraded two Prefect
 servers and two PostgreSQL servers for one product. The owner set Infrahub's task manager as the
 reference Sync must stay aligned with. Infrahub's task manager has no API credential setting
@@ -22,7 +22,9 @@ Sync runs its flows on Infrahub's task manager and keeps its own database on Inf
 task-manager PostgreSQL server.
 
 - **Prefect version.** Pinned exactly to the version the newest supported Infrahub ships:
-  3.8.6, so Infrahub 1.11.3 or later. A CI check fails when the two drift.
+  3.8.6, which Infrahub 1.11.3 and 1.11.4 ship. Infrahub 1.11.3 is the minimum release; a later
+  release is supported only while it ships the pinned Prefect version, because the API and the
+  worker refuse to start against any other version. A CI check fails when the two drift.
 - **Pool and deployment.** Sync keeps its own work pool `infrahub-sync`, its own worker and its
   own deployment. It does not run on Infrahub's `infrahub-worker` pool.
 - **Database.** Sync's bootstrap creates the `infrahub_sync` database and its owner role on

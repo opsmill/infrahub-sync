@@ -18,6 +18,7 @@ from infrahub_sync.service.prefect_server import (
     PrefectServerCheckError,
     PrefectServerNotConfiguredError,
     PrefectServerRefusedCredentialError,
+    PrefectServerRejectedCheckError,
     PrefectServerUnavailableError,
     PrefectStartupRefusedError,
     PrefectVersionMismatchError,
@@ -251,3 +252,28 @@ async def test_a_refused_credential_stops_the_api_rather_than_being_tolerated(
         await api_startup_check()
 
     assert "hunter2" not in str(caught.value)
+
+
+@pytest.mark.parametrize("status", [400, 404, 405, 422])
+async def test_a_client_error_from_the_version_route_stops_the_api(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    """A 4xx is an answer, so the URL points at something that is not the task manager API."""
+    request = httpx.Request("GET", CREDENTIAL_URL)
+    answer = httpx.HTTPStatusError("rejected", request=request, response=httpx.Response(status, request=request))
+    _serve_client(monkeypatch, answer)
+
+    with pytest.raises(PrefectServerRejectedCheckError) as caught:
+        await api_startup_check()
+
+    assert str(status) in str(caught.value)
+    assert "hunter2" not in str(caught.value)
+
+
+@pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
+async def test_a_retryable_or_server_error_is_still_unavailable(status: int) -> None:
+    request = httpx.Request("GET", CREDENTIAL_URL)
+    answer = httpx.HTTPStatusError("away", request=request, response=httpx.Response(status, request=request))
+
+    with pytest.raises(PrefectServerUnavailableError):
+        await require_prefect_server_version(_VersionClient(answer))

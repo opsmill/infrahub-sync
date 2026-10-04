@@ -47,7 +47,7 @@ class PrefectServerCheckError(RuntimeError):
 
 
 class PrefectServerUnavailableError(PrefectServerCheckError):
-    """The Prefect server is not configured, or did not answer its version route with a version."""
+    """The Prefect server is not configured, unreachable, answered a server error, or gave no version."""
 
     def __init__(self, message: str = _UNAVAILABLE) -> None:
         super().__init__(message)
@@ -65,6 +65,17 @@ class PrefectServerRefusedCredentialError(PrefectServerCheckError):
 
     def __init__(self) -> None:
         super().__init__("the Prefect server refused the configured credential (INFRAHUB_SYNC_PREFECT_AUTH_STRING)")
+
+
+class PrefectServerRejectedCheckError(PrefectServerCheckError):
+    """The server answered the version route with a client error other than a credential refusal."""
+
+    def __init__(self, status_code: int) -> None:
+        super().__init__(
+            f"the Prefect server answered its version route with HTTP {status_code}; "
+            "check that PREFECT_API_URL points at Infrahub's task manager API"
+        )
+        self.status_code = status_code
 
 
 class PrefectVersionMismatchError(PrefectServerCheckError):
@@ -101,8 +112,13 @@ async def require_prefect_server_version(client: _VersionClient) -> str:
     except httpx.HTTPStatusError as error:
         # A server that answers and refuses the credential is configured wrongly,
         # not briefly away: that is never tolerated.
-        if error.response.status_code in {401, 403}:
+        status_code = error.response.status_code
+        if status_code in {401, 403}:
             raise PrefectServerRefusedCredentialError from None
+        # Any other 4xx is an answer, not an outage: the route does not exist at this
+        # URL (404) or the request was rejected. Only 408 and 429 can pass on retry.
+        if 400 <= status_code < 500 and status_code not in {408, 429}:
+            raise PrefectServerRejectedCheckError(status_code) from None
         raise PrefectServerUnavailableError from None
     # `api_version` decodes the body as JSON: a proxy or login page answering 200
     # raises ValueError, not an HTTP error.
@@ -159,12 +175,13 @@ async def check_prefect_server(environ: Mapping[str, str] | None = None) -> str:
 
 
 async def api_startup_check() -> None:
-    """The API's startup check: refuse a wrong version or no URL; tolerate an unreachable server.
+    """The API's startup check: refuse a wrong version, no URL, a refused credential or a 4xx answer.
 
-    The API answers clients and reports worker liveness on its own, so a task manager
-    that is briefly down is not a reason to stop it: runs are refused at submission
-    and the status reports the missing worker. A server of another version, or none
-    configured at all, is never a supported state, so both still stop the API.
+    Only an unreachable task manager is tolerated. The API answers clients and reports
+    worker liveness on its own, so a task manager that is briefly down is not a reason
+    to stop it: runs are refused at submission and the status reports the missing
+    worker. A server of another version, or none configured at all, is never a
+    supported state, so both still stop the API.
     """
     try:
         await check_prefect_server()

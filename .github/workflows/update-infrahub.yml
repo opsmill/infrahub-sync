@@ -67,6 +67,7 @@ jobs:
           commit-message: "chore: update Infrahub to version ${{ env.INFRAHUB_VERSION }}"
           files: |
             development/docker-compose.infrahub.yml
+            development/docker-compose.dev.yml
             development/preview.env
             development/docker-compose.preview.yml
             tests/compose/conftest.py

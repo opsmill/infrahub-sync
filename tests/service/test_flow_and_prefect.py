@@ -936,6 +936,7 @@ async def test_prefect_extras_executor_receives_opaque_key_unchanged() -> None:
     assert submission.flow_run_id == str(client.flow_run.id)
     assert client.keys == ["opaque-prefect-key"]
     assert client.parameters == [parameters]
+    assert client.tags == [["infrahub-sync", "service", "infrahub.app", "infrahub.app/workflow-type/sync-plan"]]
 
 
 class _ReadTransportFailureClient:

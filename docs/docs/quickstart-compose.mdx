@@ -58,9 +58,13 @@ directory.
 ## Write the credentials
 
 The file needs five credentials, and defaults none of them. This generates random
-values for Sync's own, reuses the task-manager database password Infrahub was
-started with (`postgres` unless you changed it), and gives the bundled CLI the same
-token as the one principal the API accepts:
+values for Sync's own credentials, takes the task-manager database password from the
+`INFRAHUB_TASKMANAGER_DB_PASSWORD` variable of your shell and falls back to
+`postgres`, Infrahub's default, and gives the bundled CLI the same token as the one
+principal the API accepts. If you started Infrahub with another password, for
+example from Infrahub's own `.env`, export `INFRAHUB_TASKMANAGER_DB_PASSWORD` with
+that value before you run it; otherwise `db-bootstrap` cannot authenticate against
+`task-manager-db`.
 
 ```sh
 rand() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }

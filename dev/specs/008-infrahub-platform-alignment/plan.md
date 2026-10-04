@@ -8,11 +8,14 @@
 
 Sync stops running its own Prefect server, product PostgreSQL and object store. It runs on
 Infrahub's task manager on Infrahub's Prefect version, with flow runs tagged so they appear in
-Infrahub's task views. Configurations, versions, runs and approvals become Infrahub nodes of a
-`Sync` schema extension, and plan files and internal bundles become `CoreFileObject` nodes. Only
-the write lock and the duplicate-protection records stay in PostgreSQL, in a database on
-Infrahub's task-manager-db server. The Sync HTTP API stays the entry point and authorizes callers
-with their Infrahub token and permissions. Research: [research.md](research.md).
+Infrahub's task views. Configurations, versions and approvals become Infrahub nodes of a `Sync`
+schema extension, and plan files and internal bundles become `CoreFileObject` nodes. Run state
+stays in the PostgreSQL database `infrahub_sync` on Infrahub's task-manager-db server, which keeps
+the `product_runs`, `mutation_receipts`, `write_admissions`, `prefect_executions`,
+`configuration_baselines` and `audit_events` tables and the advisory write lock (research R8);
+each run is mirrored to a `SyncRun` node so it appears in Infrahub's task views. The Sync HTTP
+API stays the entry point and authorizes callers with their Infrahub token and permissions.
+Research: [research.md](research.md).
 
 ## Technical Context
 
@@ -22,8 +25,8 @@ with their Infrahub token and permissions. Research: [research.md](research.md).
 FastAPI, psycopg. `boto3` leaves the `service` extra. Vendored `opsmill_prefect_extras` unchanged.
 
 **Storage**: Infrahub nodes and Infrahub file storage for records and files; PostgreSQL database
-`infrahub_sync` on Infrahub's task-manager-db server for receipts, admissions, executions and
-advisory locks.
+`infrahub_sync` on Infrahub's task-manager-db server for run state, receipts, admissions,
+executions, baselines, audit events and advisory locks.
 
 **Testing**: pytest unit tier (`uv run invoke tests.tests-unit`); integration tier against a local
 Infrahub 1.11.3 or 1.11.4 (Prefect 3.8.6) with its task manager (`-m integration`); compose lifecycle tests.
@@ -79,7 +82,8 @@ dev/specs/008-infrahub-platform-alignment/
 
 ```text
 schema/
-└── sync.yml                         # NEW: Sync schema extension the operator loads
+├── sync.yml                         # NEW: Sync schema extension the operator loads
+└── sync-permissions.yml             # NEW: service-account grants and per-action denies (research R13; tasks Phase 7, follow-up PR after US3)
 
 infrahub_sync/
 ├── platform/                        # NEW: Infrahub-side record and file access
@@ -93,14 +97,14 @@ infrahub_sync/
 │   ├── app.py                       # auth dependency; config write routes removed
 │   ├── config_routes.py             # read routes from Infrahub; branch validation route
 │   ├── service.py                   # run creation with lazy versions (R9); approvals
-│   ├── flow.py                      # records and baselines to Infrahub; checkpoints via files.py
+│   ├── flow.py                      # mirrors run state to SyncRun; baselines stay in PostgreSQL (R8); checkpoints via files.py
 │   ├── checkpoints.py               # publish/rehydrate through files.py
 │   ├── orchestration.py             # per-run infrahub.app tags (R4)
 │   ├── bootstrap.py                 # pool/deployment on Infrahub's task manager; lock DB; no bucket
 │   ├── storage.py                   # lock-DB connection only; Boto3S3Client removed
 │   └── apply_guard.py               # unchanged; DSN now the lock DB
 ├── product_store/
-│   ├── store.py                     # SHRINK: receipts, admissions, executions only
+│   ├── store.py                     # drops configurations and configuration_versions; keeps every run table (R8)
 │   ├── configs.py                   # REPLACED by platform/records.py
 │   └── bundle.py                    # unchanged
 ├── client/{client.py,models.py}     # optional version, Infrahub token, validate-on-branch

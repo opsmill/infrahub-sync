@@ -22,19 +22,28 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Any
 
 import boto3
+import httpx
 from botocore.exceptions import BotoCoreError, ClientError
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.actions import WorkPoolCreate
 from prefect.exceptions import ObjectNotFound
+from prefect.settings import get_current_settings
 from prefect.workers.process import ProcessWorker
 
 from .deploy import WORK_POOL_ENV
 from .deploy import main as apply_deployment
 from .orchestration import SERVICE_DEFINITION
-from .prefect_server import PrefectServerCheckError, check_prefect_server
+from .prefect_server import (
+    PrefectServerCheckError,
+    PrefectServerNotConfiguredError,
+    PrefectServerUnavailableError,
+    log_prefect_auth_mode,
+    require_prefect_server_version,
+)
 from .storage import (
     S3_BUCKET_ENV,
     S3_ENDPOINT_ENV,
@@ -63,6 +72,7 @@ WORK_POOL_CONFLICT = "work-pool-conflict"
 DEPLOYMENT_FAILED = "deployment-failed"
 PRODUCT_STORE_UNAVAILABLE = "product-store-unavailable"
 PREFECT_SERVER_UNSUPPORTED = "prefect-server-unsupported"
+PREFECT_SERVER_UNAVAILABLE = "prefect-server-unavailable"
 DEPLOYMENT_OWNED_ELSEWHERE = "deployment-owned-by-another-pool"
 SETTING_MISSING = "required-setting-missing"
 
@@ -162,9 +172,42 @@ async def _converge_pool(name: str) -> bool:
         return await converge_work_pool(client, name)
 
 
+# The task manager belongs to Infrahub's Compose project, so no `depends_on` can
+# wait for it to answer. Wait here, bounded, as `db-bootstrap` does for PostgreSQL.
+_SERVER_WAIT_ATTEMPTS = 60
+_SERVER_WAIT_SECONDS = 2.0
+
+
+async def _read_prefect_server_version() -> str:
+    """The version check alone, without the access-mode log `check_prefect_server` would repeat each attempt."""
+    if not get_current_settings().api.url:
+        raise PrefectServerNotConfiguredError
+    try:
+        async with get_client() as client:
+            return await require_prefect_server_version(client)
+    except (httpx.InvalidURL, ValueError):
+        raise PrefectServerUnavailableError from None
+
+
 def _check_prefect_server() -> None:
-    """Own one event loop for the Prefect server's version check."""
-    asyncio.run(check_prefect_server())
+    """Own one event loop per attempt at the Prefect server's version check, waiting for a server still starting.
+
+    Only an unreachable server is retried. An unset URL and a version mismatch are
+    configuration, and no amount of waiting changes either.
+    """
+    log_prefect_auth_mode()
+    for attempt in range(1, _SERVER_WAIT_ATTEMPTS + 1):
+        try:
+            asyncio.run(_read_prefect_server_version())
+        except PrefectServerNotConfiguredError:
+            raise
+        except PrefectServerUnavailableError:
+            if attempt == _SERVER_WAIT_ATTEMPTS:
+                raise
+            logger.info("the task manager is not answering yet (attempt %d of %d)", attempt, _SERVER_WAIT_ATTEMPTS)
+            time.sleep(_SERVER_WAIT_SECONDS)
+        else:
+            return
 
 
 def _converge() -> None:
@@ -175,9 +218,13 @@ def _converge() -> None:
     and a loop already running here would leave the second unable to start one.
     """
     # Before anything is written to the task manager: Infrahub's Prefect server is
-    # not Sync's, and a server of another version gets no pool or deployment.
+    # not Sync's, and a server of another version gets no pool or deployment. A
+    # server that never answered is named as such, not as unsupported.
     try:
         _check_prefect_server()
+    except PrefectServerUnavailableError as error:
+        logger.error("%s", error)  # noqa: TRY400 - the check's message is secret-safe by construction.
+        raise BootstrapError(PREFECT_SERVER_UNAVAILABLE) from None
     except PrefectServerCheckError as error:
         logger.error("%s", error)  # noqa: TRY400 - the check's message is secret-safe by construction.
         raise BootstrapError(PREFECT_SERVER_UNSUPPORTED) from None

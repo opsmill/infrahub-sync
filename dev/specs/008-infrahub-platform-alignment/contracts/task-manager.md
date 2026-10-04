@@ -2,7 +2,8 @@
 
 ## Version
 
-- `prefect==3.8.6`, equal to the version locked by Infrahub 1.11.3 and later (research R1).
+- `prefect==3.8.6`, equal to the version locked by Infrahub 1.11.3 and 1.11.4, the supported
+  releases today; a later Prefect in Infrahub needs a Sync release (research R1, R11).
 - Sync refuses to start when the task manager reports another server version, naming both
   (FR-002). The server version is read from the Prefect API `/version` route.
 
@@ -40,5 +41,5 @@ infrahub.app/node/<SyncConfiguration node id>
 ## Lock database (FR-014)
 
 `INFRAHUB_SYNC_DATABASE_URL` points to database `infrahub_sync` on Infrahub's task-manager-db
-server. A bootstrap step creates the database and its three tables if missing; it never touches
-the `prefect` database.
+server. A bootstrap step creates the database if missing and converges the product-store schema
+(`product_store/store.py`); it never touches the `prefect` database.

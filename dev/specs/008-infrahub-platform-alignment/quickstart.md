@@ -10,8 +10,9 @@ Entities: [data-model.md](data-model.md).
 1. Infrahub running, with an admin account to load the schema and set permissions.
 2. The Sync schema extension loaded by the operator:
    `infrahubctl schema load schema/sync.yml` (path set in the plan).
-3. Two Infrahub accounts with API tokens: `planner` (`create` on `SyncRun`) and `approver`
-   (`create` on `SyncRun` and `SyncApproval`), plus the Sync service account.
+3. Two Infrahub accounts with API tokens: `planner` (`create` on `SyncRun`, and `view` on
+   `SyncConfiguration` with decision `allow_all`, because Scenario 3 validates on a branch) and
+   `approver` (`create` on `SyncRun` and `SyncApproval`), plus the Sync service account.
 4. Sync API and worker started with `PREFECT_API_URL` pointing at Infrahub's task manager and
    `INFRAHUB_SYNC_DATABASE_URL` pointing at database `infrahub_sync` on task-manager-db.
 
@@ -26,8 +27,10 @@ Entities: [data-model.md](data-model.md).
 
 1. In Infrahub, create a `SyncConfiguration` named `netbox-demo` with a package document.
 2. `infrahub-sync diff --config-id netbox-demo --reason "first plan"` with the `planner` token.
-3. Expected within 10 seconds: the run appears in Infrahub's task list and in the Tasks tab of
-   both the `netbox-demo` configuration and the new `SyncRun`, with its logs.
+3. Expected within 10 seconds (US1): the run appears in Infrahub's task list with its logs, its
+   branch and the `infrahub.app/workflow-type/sync-plan` tag.
+4. Expected once US2 adds the node tags: the run also appears in the Tasks tab of both the
+   `netbox-demo` configuration and the new `SyncRun`.
 
 ## Scenario 3: versions are created at run start (US2)
 
@@ -53,8 +56,9 @@ Entities: [data-model.md](data-model.md).
 ## Scenario 5: write safety (SC-004)
 
 Restart the task manager during 20 applies against the same configuration. Expected: no two
-applies overlap (lock database), and no apply writes twice after its request is retried with the
-same idempotency key.
+writes to the same configuration overlap (the write guard in the lock database serializes them;
+the apply runs themselves may overlap), and no apply writes twice after its request is retried
+with the same idempotency key.
 
 ### Result, 2026-10-03: pass
 

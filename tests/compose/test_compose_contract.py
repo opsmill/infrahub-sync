@@ -317,7 +317,7 @@ def test_the_bootstrap_script_binds_every_value_as_a_variable(model: dict[str, A
     assert "is owned by another role" in content, "an existing database owned by another role is refused"
     assert "ALTER ROLE %I WITH LOGIN PASSWORD %L" in content, "the role password follows the operator's setting"
     assert "REVOKE CONNECT ON DATABASE %I FROM PUBLIC" in content
-    assert "PREFECT" not in content, "the bootstrap script must never touch the task manager's own database"
+    assert "prefect" not in content.lower(), "the bootstrap script must never touch the task manager's own database"
 
 
 def test_the_file_declares_no_secret_file(cli_model: dict[str, Any]) -> None:

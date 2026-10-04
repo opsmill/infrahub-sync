@@ -14,7 +14,9 @@ contract lists what changes; routes not listed keep their current shape.
 
 ## Configurations
 
-Configurations are created and edited in Infrahub. These routes are removed:
+Configurations are created and edited in Infrahub. A Sync connected to Infrahub answers these
+routes with `410 configurations-in-infrahub` and points the caller to Infrahub; a Sync without
+Infrahub still accepts them (tasks T037, T039):
 
 - `POST /configs`
 - `POST /configs/{config_id}/versions`
@@ -65,7 +67,7 @@ caller's own runs.
 
 | Command | Change |
 |---|---|
-| `configs register`, `configs version` | Removed. The error message points to Infrahub |
+| `configs register`, `configs version` | Refused by a Sync connected to Infrahub with a message that points to Infrahub; a Sync without Infrahub still accepts them (task T040) |
 | `configs validate <config-id> [--branch B]` | Validates the current document on a branch; `<version>` becomes `--version N` |
 | `diff`, `sync` | `--version` becomes optional |
 | global | `INFRAHUB_SYNC_TOKEN` replaces the Sync bearer token; `INFRAHUB_SYNC_API_TOKEN` is read when it is unset. No command-line flag: a token on the command line shows in process listings |

@@ -31,6 +31,11 @@ from infrahub_sync.service.bootstrap import (
     converge_bucket,
     converge_work_pool,
 )
+from infrahub_sync.service.prefect_server import (
+    PrefectServerNotConfiguredError,
+    PrefectServerUnavailableError,
+    PrefectVersionMismatchError,
+)
 from tests.configuration.validation_packages import package_data
 
 if TYPE_CHECKING:
@@ -366,8 +371,6 @@ def test_a_task_manager_of_another_prefect_version_gets_no_pool_or_deployment(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The version check runs before anything is written to Infrahub's task manager."""
-    from infrahub_sync.service.prefect_server import PrefectVersionMismatchError
-
     monkeypatch.setattr(bootstrap, "_required", lambda _name: "present")
     monkeypatch.setattr(bootstrap.boto3, "client", lambda *_arguments, **_settings: _Bucket())
     monkeypatch.setattr(bootstrap, "converge_bucket", lambda *_arguments: False)
@@ -386,6 +389,108 @@ def test_a_task_manager_of_another_prefect_version_gets_no_pool_or_deployment(
     assert result == 1
     assert "prefect-server-unsupported" in caplog.text
     assert "3.7.5" in caplog.text
+
+
+class _TaskManager:
+    """A task manager whose version route answers each attempt from a script.
+
+    Each answer is a version string or the exception the check would raise; once the
+    script runs out, the last answer repeats, so one entry stands for a server that
+    never changes its mind.
+    """
+
+    def __init__(self, *answers: str | Exception) -> None:
+        self._answers = answers
+        self.attempts = 0
+
+    async def version(self) -> str:
+        self.attempts += 1
+        answer = self._answers[min(self.attempts, len(self._answers)) - 1]
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+def _bootstrap_waiting_on(task_manager: _TaskManager, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Drive the real wait against a scripted task manager, without sleeping, and record every write."""
+    steps: list[str] = []
+
+    async def converge_pool(_name: str) -> bool:  # noqa: RUF029 - stands in for the coroutine `asyncio.run` drives
+        steps.append("work-pool")
+        return True
+
+    def deploy() -> int:
+        steps.append("deployment")
+        return 0
+
+    monkeypatch.setattr(bootstrap, "_required", lambda _name: "present")
+    monkeypatch.setattr(bootstrap.boto3, "client", lambda *_arguments, **_settings: _Bucket())
+    monkeypatch.setattr(bootstrap, "converge_bucket", lambda *_arguments: False)
+    monkeypatch.setattr(bootstrap, "log_prefect_auth_mode", lambda: None)
+    monkeypatch.setattr(bootstrap, "_read_prefect_server_version", task_manager.version)
+    monkeypatch.setattr(bootstrap.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(bootstrap, "_converge_pool", converge_pool)
+    monkeypatch.setattr(bootstrap, "apply_deployment", deploy)
+    monkeypatch.setattr(bootstrap, "service_product_projection", lambda: steps.append("product-schema"))
+    return steps
+
+
+def test_a_task_manager_still_starting_is_waited_for_and_then_converged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """No `depends_on` can wait for Infrahub's task manager, so a server not answering yet is asked again."""
+    task_manager = _TaskManager(PrefectServerUnavailableError(), PrefectServerUnavailableError(), "3.8.6")
+    steps = _bootstrap_waiting_on(task_manager, monkeypatch)
+
+    with caplog.at_level("INFO"):
+        result = bootstrap.main()
+
+    assert result == 0
+    assert task_manager.attempts == 3
+    assert steps == ["work-pool", "deployment", "product-schema"]
+    assert "attempt 2 of" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("answer", "family"),
+    [
+        (PrefectVersionMismatchError("3.7.5", "3.8.6"), "prefect-server-unsupported"),
+        (PrefectServerNotConfiguredError(), "prefect-server-unavailable"),
+    ],
+    ids=["another-version", "no-url"],
+)
+def test_a_misconfigured_task_manager_is_refused_on_the_first_attempt(
+    answer: Exception, family: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Another Prefect version or an unset URL is configuration, and waiting changes neither."""
+    task_manager = _TaskManager(answer)
+    steps = _bootstrap_waiting_on(task_manager, monkeypatch)
+
+    with caplog.at_level("ERROR"):
+        result = bootstrap.main()
+
+    assert result == 1
+    assert task_manager.attempts == 1
+    assert steps == []
+    assert family in caplog.text
+
+
+def test_a_task_manager_that_never_answers_is_refused_as_unavailable(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """After the bounded wait the family names the cause: the server never answered, not an unsupported one."""
+    task_manager = _TaskManager(PrefectServerUnavailableError())
+    steps = _bootstrap_waiting_on(task_manager, monkeypatch)
+    monkeypatch.setattr(bootstrap, "_SERVER_WAIT_ATTEMPTS", 3)
+
+    with caplog.at_level("ERROR"):
+        result = bootstrap.main()
+
+    assert result == 1
+    assert task_manager.attempts == 3
+    assert steps == []
+    assert "prefect-server-unavailable" in caplog.text
+    assert "prefect-server-unsupported" not in caplog.text
 
 
 class _Deployments:
