@@ -9,7 +9,7 @@ a shared or internet-facing instance.
 | Stack | Start it with | What runs | Sync API | Use it to |
 | --- | --- | --- | --- | --- |
 | [Run from source](#run-from-source) | `uv run invoke start` | The whole Sync service in containers, from an image built from your checkout | `http://127.0.0.1:8030` | Try V3, test a fix, run a first sync, or run V3 on a Mac |
-| [Preview stack](#the-preview-stack) | `uv run invoke preview.up` | Infrahub, Prefect, PostgreSQL, and MinIO in containers; the Sync API and worker as processes on your host | `http://127.0.0.1:8010` | Change `infrahub_sync/service/` and run the smoke suite |
+| [Preview stack](#the-preview-stack) | `uv run invoke preview.up` | Infrahub, its task manager, and MinIO in containers; the Sync API and worker as processes on your host | `http://127.0.0.1:8010` | Change `infrahub_sync/service/` and run the smoke suite |
 
 Both stacks need Docker, [uv](https://docs.astral.sh/uv/), and Python 3.11 to 3.13.
 Install the development environment once:
@@ -25,8 +25,10 @@ installed: it comes with the `service` extra.
 ## Run from source
 
 Run from source builds the Sync service image from your checkout, for your host's own
-architecture, and starts the Sync API, the worker, Prefect, PostgreSQL, and object
-storage. It runs on any platform Docker supports, including Apple Silicon. A source
+architecture, and starts the Sync API, the worker, object storage, and its own Infrahub
+task manager, from the Infrahub image the preview pins. Like a deployment, it runs on
+Infrahub's task manager; it gets its own because one task manager holds one Sync
+deployment. It runs on any platform Docker supports, including Apple Silicon. A source
 build has passed the pull request checks, but not the release checks that each
 published image passes; see [Install Infrahub Sync](./installation.mdx#two-ways-to-run-v3).
 
@@ -61,8 +63,8 @@ first whenever you test a new revision.
 | Service | Address |
 | --- | --- |
 | Sync API | `http://127.0.0.1:8030`, bearer token `infrahub-sync-dev-token` |
-| Prefect UI | `http://127.0.0.1:4230` |
-| PostgreSQL | `127.0.0.1:5440` |
+| Prefect UI (the stack's own Infrahub task manager) | `http://127.0.0.1:4230` |
+| PostgreSQL (the task manager's server, database `infrahub_sync`) | `127.0.0.1:5440` |
 
 Check the service:
 
@@ -85,9 +87,8 @@ This path imports the official NetBox demo data from a local NetBox into a local
 Infrahub branch. It takes about 30 minutes, most of it the apply. Run every command
 from the repository root.
 
-1. Start a local Infrahub. `preview.up` also starts a second Prefect, PostgreSQL,
-   object store, and Sync API on port 8010. This path uses only its Infrahub, on
-   `http://localhost:8080`.
+1. Start a local Infrahub. `preview.up` also starts an object store and a Sync API on
+   port 8010. This path uses only its Infrahub, on `http://localhost:8080`.
 
     ```bash
     uv run invoke preview.up
@@ -216,9 +217,11 @@ Use the addresses the worker container can reach, as in step 6.
 
 ## The preview stack
 
-The preview stack runs Infrahub, PostgreSQL and MinIO for the service's own records and
-artifacts, and a dedicated Prefect server in containers. The Sync HTTP API and its Prefect
-worker run on your host, from your checkout. Use it to work on the service code itself.
+The preview stack runs Infrahub, with its task manager, and MinIO for the service's
+artifacts, in containers. Sync runs on Infrahub's task manager and keeps its records in an
+`infrahub_sync` database on the task manager's PostgreSQL server, as a deployment does. The
+Sync HTTP API and its Prefect worker run on your host, from your checkout. Use it to work on
+the service code itself.
 
 **Verified 2026-09-16 against source revision
 [`61b6a1b9dccae637b522084f563858dfcd5e31a9`](https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9).** The commands, ports,
@@ -359,9 +362,9 @@ Removes everything the stack created. The `.preview/` directory keeps its logs.
 | Service | Address | Runs as |
 | --- | --- | --- |
 | Infrahub | `http://localhost:8080` | Container |
-| Prefect | `http://localhost:4210` | Container |
+| Prefect (Infrahub's task manager) | `http://localhost:4210` | Container |
 | Sync HTTP API | `http://127.0.0.1:8010` | Host process |
-| PostgreSQL | `127.0.0.1:5439` | Container |
+| PostgreSQL (Infrahub's task-manager server) | `127.0.0.1:5439` | Container |
 | MinIO | `http://127.0.0.1:9010` | Container |
 
 Every container port is published on `127.0.0.1` only, so nothing in the stack, with
@@ -394,12 +397,13 @@ They reach only the disposable local containers this stack creates. Do not reuse
 a deployment, and mint your own tokens in `development/preview.local.env` if you need
 different ones.
 
-When updating an Infrahub or Prefect image in the preview, change its tag and
-matching `@sha256:` digest together in `development/preview.env`. Inspect the
+When updating the Infrahub image in the preview, change its tag and
+matching `@sha256:` digest together in `development/preview.env`, or run
+`uv run python .github/scripts/update_infrahub.py <version>`, which moves both. Inspect the
 tag with `docker buildx imagetools inspect name:tag`, copy the top-level index
 digest, and check that it includes both linux/amd64 and linux/arm64. Compose
 would still pull the old image after a tag-only change, so the preview tasks
-refuse one, including a Prefect tag exported in the shell. The shipped
+refuse one. The shipped
 `preview.env` value takes precedence over an unrelated shell `VERSION`. An
 Infrahub image-name-only override in `development/preview.local.env` or the
 shell drops the shipped digest so a local build can run. To use a registry mirror, set its digest

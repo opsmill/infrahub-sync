@@ -1,7 +1,7 @@
 # Preview environment
 
 One command from a fresh clone to a complete, testable Infrahub Sync v3 stack:
-a disposable Infrahub instance, a dedicated Prefect server, the Sync HTTP API,
+a disposable Infrahub instance whose task manager Sync runs on, the Sync HTTP API,
 and a Prefect worker running the service deployment.
 
 `preview.up` starts that stack and stops there. It writes nothing to Infrahub
@@ -59,13 +59,13 @@ The preview exists to gather feedback on the two new v3 interfaces:
 | File | Role |
 | --- | --- |
 | `docker-compose.infrahub.yml` | Based on the official Infrahub compose file at `https://infrahub.opsmill.io/<VERSION>`, with image digests added. When refreshing from upstream, restore and verify every image pin before using the file. |
-| `docker-compose.preview.yml` | Preview overrides: collision-free host ports and the dedicated `sync-prefect` service pinned to the repository's Prefect version. |
+| `docker-compose.preview.yml` | Preview overrides: collision-free host ports, Infrahub's task manager and its PostgreSQL server published on loopback for Sync, and Sync's database bootstrap. |
 | `preview.env` | Shipped defaults — ports, paired image tags and digests, and local-only tokens. Change a tag and its digest together; a tag-only change still pulls the prior image. Nothing here is a secret; never point these values at a shared or internet-facing instance. |
 | `preview.local.env` | Your personal overrides (gitignored). Tokens you mint while testing belong here, not in `preview.env`. |
 
 The preview tasks also read image overrides exported in the shell, except for
 the generic `VERSION` variable; use `preview.local.env` to change the Infrahub
-version. Changing an Infrahub or Prefect tag requires a matching digest;
+version. Changing the Infrahub tag requires a matching digest;
 changing only the Infrahub image name drops the shipped digest so a local build
 can run. For a registry mirror, set its digest explicitly, even if it matches
 the shipped digest. With direct Docker Compose, a digest-only override keeps

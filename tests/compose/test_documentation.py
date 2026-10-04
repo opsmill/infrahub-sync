@@ -261,7 +261,7 @@ def required_compose_variables() -> set[str]:
 
 def test_the_compose_file_has_required_credentials_to_document() -> None:
     """Guards the credential checks below against a pattern that matches nothing."""
-    assert len(required_compose_variables()) == 7, required_compose_variables()
+    assert len(required_compose_variables()) == 5, required_compose_variables()
 
 
 @pytest.mark.parametrize("command", WRAPPER_COMMANDS)
@@ -276,10 +276,11 @@ def test_the_page_maps_every_removed_wrapper_command(command: str) -> None:
 
 
 def test_the_reset_equivalent_warns_that_it_deletes_the_data() -> None:
-    """`down --volumes` asks for no confirmation, so the row itself has to say what it destroys."""
+    """Dropping the database asks for no confirmation, so the row itself has to say what it destroys."""
     row = next(line for line in section(page(), "Wrapper equivalents").splitlines() if line.startswith("| `reset` |"))
 
-    assert "down --volumes" in row, row
+    assert "docker compose down" in row, row
+    assert "database" in row, row
     assert "deletes" in row, row
 
 

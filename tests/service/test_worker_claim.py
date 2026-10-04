@@ -7,7 +7,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import UUID
 
 import httpx
@@ -18,6 +18,7 @@ pytest.importorskip("prefect")
 
 from prefect import __version__ as prefect_version
 from prefect.client.schemas.objects import WorkerStatus
+from prefect.workers import process as process_module
 from prefect.workers.process import ProcessJobConfiguration, ProcessWorker
 
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
@@ -35,7 +36,7 @@ POOL_NAME = "service-pool"
 
 
 class _PrefectWorkerClient:
-    """Synchronous Prefect 3.8.1 worker-registry seam used immediately before claim."""
+    """Synchronous Prefect 3.8.6 worker-registry seam used immediately before claim."""
 
     def __init__(self, worker_id: str = WORKER_ID) -> None:
         self.worker_id = worker_id
@@ -110,9 +111,16 @@ def _projection(tmp_path: Path, *, submitted_at: datetime | None = None, migrate
     return projection
 
 
-def test_prefect_381_process_configuration_preserves_worker_attribution_environment() -> None:
-    """Pin the server UUID from job preparation through the process child environment."""
-    assert prefect_version == "3.8.1"
+def test_prefect_386_process_configuration_preserves_worker_attribution_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin the server UUID from job preparation through the engine command's environment.
+
+    Prefect 3.8.6 starts a configured command through `EngineCommandStarter` inside a
+    `FlowRunExecutorContext`; both are replaced so no client or process is created,
+    and the starter records the environment the child would receive.
+    """
+    assert prefect_version == "3.8.6"
     flow_run = SimpleNamespace(
         id=UUID(FLOW_ID),
         name="service-run",
@@ -123,27 +131,40 @@ def test_prefect_381_process_configuration_preserves_worker_attribution_environm
     typed_flow_run = cast("FlowRun", flow_run)
     configuration.prepare_for_flow_run(typed_flow_run, worker_id=UUID(WORKER_ID))
     child_environments: list[dict[str, str | None]] = []
+    commands: list[str | None] = []
 
-    class Runner:
-        async def execute_flow_run(  # noqa: PLR0913, PLR6301 - minimal pinned worker runner.
-            self,
-            *,
-            flow_run_id: UUID,  # noqa: ARG002 - signature pins the worker seam.
-            command: str | None,  # noqa: ARG002 - signature pins the worker seam.
-            cwd: object,  # noqa: ARG002 - signature pins the worker seam.
-            env: dict[str, str | None],
-            stream_output: bool,  # noqa: ARG002 - signature pins the worker seam.
-            task_status: object,  # noqa: ARG002 - signature pins the worker seam.
-        ) -> SimpleNamespace:
-            child_environments.append(env)
-            return SimpleNamespace(returncode=0, pid=42)
+    class Starter:
+        def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401 - Prefect's starter keywords.
+            child_environments.append(kwargs["env"])
+            commands.append(kwargs["command"])
 
+    class Executor:
+        async def submit(self, *, task_status: Any) -> SimpleNamespace:  # noqa: ANN401, PLR6301
+            handle = SimpleNamespace(pid=42)
+            task_status.started(handle)
+            return SimpleNamespace(status_code=0, handle=handle)
+
+    class Context:
+        control_channel = None
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        def create_executor(self, _flow_run: object, starter: object, **_kwargs: object) -> Executor:  # noqa: PLR6301
+            assert isinstance(starter, Starter), "a configured command must not use the workspace supervisor"
+            return Executor()
+
+    monkeypatch.setattr(process_module, "EngineCommandStarter", Starter)
+    monkeypatch.setattr(process_module, "FlowRunExecutorContext", Context)
     worker = object.__new__(ProcessWorker)
-    worker._runner = Runner()
 
     result = asyncio.run(worker.run(typed_flow_run, configuration))
 
     assert result.status_code == 0
+    assert commands == ["python -m prefect.engine"]
     assert child_environments[0]["PREFECT__WORKER_ID"] == WORKER_ID
 
 

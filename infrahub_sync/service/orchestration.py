@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from math import isfinite
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Final, Protocol, cast
 from uuid import UUID
 
 import httpx
@@ -24,6 +25,11 @@ from prefect.client.schemas.responses import (
 )
 from prefect.exceptions import ObjectNotFound
 from prefect.states import Cancelling
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
+
+logger = logging.getLogger(__name__)
 
 SERVICE_FLOW_NAME = "infrahub-sync-service"
 SERVICE_DEPLOYMENT_NAME = "run"
@@ -49,6 +55,23 @@ SERVICE_DEFINITION = WorkflowDefinition(
     entrypoint=_SERVICE_FLOW_ENTRYPOINT,
     tags=("infrahub-sync", "service"),
 )
+
+
+# Infrahub's task views list a flow run only when it carries this namespace tag,
+# and can narrow the list by a branch tag (Infrahub
+# `task_manager/flow_run/filters.py`). The values follow Infrahub's own
+# `WorkflowTag` formats so its task views read Sync runs like its own.
+INFRAHUB_TAG_NAMESPACE: Final = "infrahub.app"
+
+
+def run_tags(stage: str | None, branch: str | None) -> tuple[str, ...]:
+    """Return the Infrahub task-view tags for one submitted stage."""
+    tags: tuple[str, ...] = (INFRAHUB_TAG_NAMESPACE,)
+    if stage:
+        tags += (f"{INFRAHUB_TAG_NAMESPACE}/workflow-type/sync-{stage}",)
+    if branch:
+        tags += (f"{INFRAHUB_TAG_NAMESPACE}/branch/{branch}",)
+    return tags
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +150,14 @@ class ServiceOrchestration(Protocol):
     async def cancel(self, flow_run_id: str) -> CancellationResult: ...
 
 
+class _TaggingClient(Protocol):
+    """The Prefect client methods that read and tag an accepted flow run."""
+
+    async def read_flow_run(self, flow_run_id: UUID) -> Any: ...
+
+    async def update_flow_run(self, flow_run_id: UUID, *, tags: Iterable[str]) -> httpx.Response: ...
+
+
 class _PoolClient(Protocol):
     """Pinned Prefect client methods used only by the service liveness adapter."""
 
@@ -144,7 +175,35 @@ class PrefectOrchestration:
 
     async def submit(self, parameters: dict[str, object], *, idempotency_key: str) -> Submission:
         handle = await self._executor.submit(SERVICE_DEFINITION, parameters, idempotency_key=idempotency_key)
+        await self._tag(handle.id, parameters)
         return Submission(flow_run_id=handle.id, state=await handle.status())
+
+    async def _tag(self, flow_run_id: str, parameters: Mapping[str, object]) -> None:
+        """Add the Infrahub task-view tags to the accepted flow run.
+
+        The vendored executor creates the flow run with the deployment's tags only,
+        so the per-run tags are added once Prefect has accepted it. Prefect replaces a
+        run's tag list on update, so the run's current tags are read and kept. Any
+        failure here leaves the run unlisted in Infrahub, never unsubmitted: Prefect
+        has accepted the run, it will execute, and the submission is reported as such.
+        """
+        stage = parameters.get("stage")
+        branch = parameters.get("branch")
+        wanted = run_tags(stage if isinstance(stage, str) else None, branch if isinstance(branch, str) else None)
+        client = cast("_TaggingClient", self._client)
+        try:
+            run_id = UUID(flow_run_id)
+            current = (await client.read_flow_run(run_id)).tags or []
+            tags = list(dict.fromkeys([*current, *SERVICE_DEFINITION.tags, *wanted]))
+            await client.update_flow_run(run_id, tags=tags)
+        except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            response = getattr(error, "response", None)
+            logger.warning(
+                "flow run %s was accepted but not tagged for Infrahub's task views (%s, status=%s); it still runs",
+                flow_run_id,
+                type(error).__name__,
+                getattr(response, "status_code", None),
+            )
 
     async def observe(self, flow_run_id: str) -> Observation:
         try:

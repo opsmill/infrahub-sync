@@ -1,32 +1,53 @@
 ---
 # Preview overrides for the Infrahub compose file based on
-# https://infrahub.opsmill.io/1.10.6. The destination file includes local image
+# https://infrahub.opsmill.io/1.11.4. The destination file includes local image
 # digest pins; do not replace it from upstream without restoring those pins.
 #
 # This file remaps host ports so the preview never collides with another local
-# Infrahub stack, publishes every one it keeps on loopback only, drops host port
-# publications the preview does not need, and
-# adds a dedicated Prefect server for Infrahub Sync's service execution path —
-# separate from Infrahub's internal task-manager, and pinned to the same Prefect
-# version as the `service` extra (prefect==3.8.1).
+# Infrahub stack, publishes every one it keeps on loopback only, and drops host
+# port publications the preview does not need.
+#
+# Infrahub Sync runs on Infrahub's own task manager, as it does in a deployment:
+# the task manager and its PostgreSQL server are published on loopback for the
+# Sync API and worker the preview starts on the host, `sync-db-bootstrap`
+# creates Sync's `infrahub_sync` database on that server, and `sync-storage-ready`
+# holds `up --wait` until that job and the object store's bucket job have
+# succeeded.
 # Refresh pins with `docker buildx imagetools inspect name:tag`: use the top-level
-# index Digest and check for linux/amd64 and linux/arm64 manifests. When changing
-# PREVIEW_PREFECT_IMAGE_TAG in the preview, set PREVIEW_PREFECT_IMAGE_DIGEST to its matching
-# @sha256 digest. An empty digest is for an intentionally unpinned local image.
+# index Digest and check for linux/amd64 and linux/arm64 manifests.
 services:
-  sync-postgres:
-    image: "postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"  # yamllint disable-line rule:line-length
+  task-manager:
     environment:
-      POSTGRES_DB: infrahub_sync
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      # The Prefect UI calls the API at this address from the browser; without it the
+      # UI on the remapped port calls 127.0.0.1:4200, another stack's port.
+      PREFECT_SERVER_UI_API_URL: "http://localhost:${PREVIEW_PREFECT_PORT:-4210}/api"
+    ports:
+      - "127.0.0.1:${PREVIEW_PREFECT_PORT:-4210}:4200"
+
+  task-manager-db:
     ports:
       - "127.0.0.1:${PREVIEW_STORAGE_POSTGRES_PORT:-5439}:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d infrahub_sync"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+
+  # Sync's product database on the task manager's PostgreSQL server. Safe to
+  # repeat; it never touches Infrahub's own `prefect` database.
+  sync-db-bootstrap:
+    image: "${POSTGRES_DOCKER_IMAGE:-postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873}"  # yamllint disable-line rule:line-length
+    restart: "no"
+    depends_on:
+      task-manager-db:
+        condition: service_healthy
+    environment:
+      PGHOST: task-manager-db
+      PGUSER: "${INFRAHUB_TASKMANAGER_DB_USER:-postgres}"
+      PGPASSWORD: "${INFRAHUB_TASKMANAGER_DB_PASSWORD:-postgres}"
+      PGDATABASE: "${INFRAHUB_TASKMANAGER_DB_DATABASE:-prefect}"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - >-
+        psql --quiet --tuples-only --no-align
+        --command "SELECT 1 FROM pg_database WHERE datname = 'infrahub_sync'" | grep -qx 1
+        || createdb infrahub_sync
 
   sync-minio:
     # Temporary Chainguard build while a maintained S3 store is selected; the old MinIO image requires authentication.
@@ -54,6 +75,23 @@ services:
       ${PREVIEW_MINIO_ACCESS_KEY:-minioadmin} ${PREVIEW_MINIO_SECRET_KEY:-minioadmin}
       && mc mb --ignore-existing preview/${PREVIEW_S3_BUCKET:-infrahub-sync-preview}"
 
+  # Compose's `up --wait` waits a one-shot job for its successful completion only
+  # when a service depends on it that way; any other one-shot job is waited for as
+  # running, so its normal exit fails `up --wait`. The host API and worker need the
+  # database and bucket jobs, and this idle service stands in for them: it starts
+  # only once both have succeeded, so `up --wait` fails, naming the job, when either
+  # fails.
+  sync-storage-ready:
+    image: "${POSTGRES_DOCKER_IMAGE:-postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873}"  # yamllint disable-line rule:line-length
+    init: true
+    entrypoint: ["tail", "-f", "/dev/null"]
+    network_mode: "none"
+    depends_on:
+      sync-db-bootstrap:
+        condition: service_completed_successfully
+      sync-minio-bootstrap:
+        condition: service_completed_successfully
+
   infrahub-server:
     # Loopback unless PREVIEW_INFRAHUB_BIND_ADDRESS names another address. A Sync
     # worker in a container on Linux reaches this port through the Docker bridge
@@ -66,26 +104,3 @@ services:
 
   database:
     ports: !reset []
-
-  sync-prefect:
-    image: "prefecthq/prefect:${PREVIEW_PREFECT_IMAGE_TAG:-3.8.1-python3.12@sha256:2d647011130f4bb36ee07b8386921890f1da44a9b7fbf81cfa86a555b92f151e}${PREVIEW_PREFECT_IMAGE_DIGEST-}"  # yamllint disable-line rule:line-length
-    command: prefect server start --host 0.0.0.0 --port 4200
-    depends_on:
-      sync-minio-bootstrap:
-        condition: service_completed_successfully
-    environment:
-      PREFECT_SERVER_UI_API_URL: "http://localhost:${PREVIEW_PREFECT_PORT:-4210}/api"
-    ports:
-      - "127.0.0.1:${PREVIEW_PREFECT_PORT:-4210}:4200"
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - >-
-          import urllib.request;
-          urllib.request.urlopen('http://localhost:4200/api/health', timeout=5)
-      interval: 5s
-      timeout: 10s
-      retries: 20
-      start_period: 20s

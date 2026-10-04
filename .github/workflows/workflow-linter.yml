@@ -129,6 +129,28 @@ jobs:
       - name: "Linting: rumdl"
         run: "uv run rumdl check ."
 
+  # Sync runs on Infrahub's task manager, so its Prefect pin must equal the one
+  # Infrahub's latest release ships. Runs on every change: an Infrahub release,
+  # not a change here, is what usually breaks it.
+  prefect-alignment:
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 5
+    steps:
+      - name: "Check out repository code"
+        uses: "actions/checkout@v7"
+      - name: "Install uv"
+        uses: "astral-sh/setup-uv@v7"
+        with:
+          version: "latest"
+      # The check reads pyproject files with tomllib (Python 3.11+); unpinned, uv
+      # would pick the runner's system Python 3.10.
+      - name: "Install dependencies"
+        run: uv sync --python 3.13 --frozen --extra dev
+      - name: "Compare the Prefect pin with Infrahub's latest release"
+        env:
+          GH_TOKEN: "${{ github.token }}"
+        run: "uv run invoke prefect-alignment.prefect-alignment"
+
   action-lint:
     if: needs.files-changed.outputs.github_workflows == 'true'
     needs: ["files-changed"]

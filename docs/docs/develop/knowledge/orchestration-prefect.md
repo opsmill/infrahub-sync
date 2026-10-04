@@ -32,13 +32,18 @@ module entrypoint, no pull steps, no job variables on the deployment or the flow
 process pool's default job template, and the default child command with no working
 directory. A refusal raises `ServiceFlowRunRefusedError` while the configuration is
 prepared, which Prefect records as a `Crashed` state before any process starts; its
-reason is fixed text and echoes no server value. The admitted child then loads the
-deployment from the server again, so the check bounds what a run can execute only while
-no one else can write to the deployment; that is what the API authentication below
-provides. Anything the service applies to its own
-deployment later, such as job variables, has to be admitted here in the same change. The
-Compose bundle also turns on Prefect's API basic authentication, so reaching the Prefect
-API is not enough to create a deployment in the pool.
+reason is fixed text and echoes no server value. Nothing after admission reads the
+deployment again: Prefect 3.8.6 starts a run that has no configured command through a
+workspace supervisor, which copies code from the deployment's storage and can relaunch the
+child through `uv run`, so the worker configures the child command itself and starts every
+admitted run with Prefect's direct engine starter. It pins the child to the installed
+service flow with `PREFECT__FLOW_ENTRYPOINT`, and resolves the flow for Prefect's crash and
+cancellation hooks from that entrypoint too, so a deployment rewritten between admission and
+start changes nothing about what runs. Anything the service applies to its own deployment
+later, such as job variables, has to be admitted here in the same change. The task manager
+has no credential setting of its own; Sync presents `INFRAHUB_SYNC_PREFECT_AUTH_STRING` when
+the operator sets one, and otherwise network isolation is what keeps others from writing to
+the pool.
 
 The service uses the vendored OpsMill Prefect Extras package for deployment catalogue
 validation, deployment convergence and submission idempotency. The API retains product
@@ -196,15 +201,19 @@ parameter therefore never reaches the flow body.
   on Prefect 3.5.0. The module omits `from __future__ import annotations`, and a test
   checks that the operation annotation resolves to `Literal["plan", "sync"]`.
   The tests also check refusal of an invalid operation during parameter validation on
-  Prefect 3.8.1.
+  Prefect 3.8.6.
 - **`PREFECT_LOCAL_STORAGE_PATH` does not follow `PREFECT_HOME`.** Redirecting
   `PREFECT_HOME` isolates the database but not persisted run results. Test isolation — and
   any operator who wants one directory — needs both variables set.
 - **`dataclasses.asdict()` cannot copy a `MappingProxyType` field** — construct the return
   dictionary explicitly, as shown above.
-- **Pinning the version is not optional here.** The extra pins `prefect==3.8.1` exactly,
+- **Pinning the version is not optional here.** The extras pin `prefect==3.8.6` exactly,
   because the base dependency set and Prefect's transitive `redis` requirement interact —
-  see [ADR 8](https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md).
+  see [ADR 8](https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md) —
+  and because the service runs on Infrahub's task manager, whose Prefect version is the
+  reference. The pin must equal the one Infrahub's latest release ships:
+  `uv run invoke prefect-alignment.prefect-alignment` checks it in CI, and the API and the
+  worker refuse to start against a task manager running another version.
 
 ### Optional imports
 

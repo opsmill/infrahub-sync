@@ -22,7 +22,7 @@ from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.product_store.configs import ValidationReport
 from infrahub_sync.service import serve
 from infrahub_sync.service.app import create_app
-from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
+from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver, Principal
 from infrahub_sync.service.config_routes import ConfigurationAPIError, ConfigurationRoutes
 from infrahub_sync.service.orchestration import CancellationResult, Observation, PoolStatus, Submission
 from infrahub_sync.service.serve import build_app
@@ -1081,7 +1081,7 @@ def test_create_app_keeps_run_and_configuration_dependencies_separate(tmp_path: 
     class Resolver:
         @staticmethod
         def resolve(_token: str) -> object:
-            return type("Principal", (), {"administrator": True})()
+            return Principal(actor="administrator", administrator=True)
 
     runs = Runs()
     config_service = ConfigService()
@@ -1120,8 +1120,8 @@ def test_build_app_binds_one_projection_and_passes_configuration_dependency(
         assert product_projection is projection_dependency
         return route_dependency
 
-    def application(run: object, resolver: object, routes: object, reconciler: object) -> object:
-        del reconciler
+    def application(run: object, resolver: object, routes: object, reconciler: object, startup_check: object) -> object:
+        del reconciler, startup_check
         received.extend((run, resolver, routes))
         return object()
 
@@ -1160,8 +1160,10 @@ def test_build_app_composes_one_service_projection_for_runs_and_configurations(
         received.append("routes")
         return object()
 
-    def app_factory(run_service: object, resolver: object, routes: object, reconciler: object) -> object:
-        del run_service, resolver, routes, reconciler
+    def app_factory(
+        run_service: object, resolver: object, routes: object, reconciler: object, startup_check: object
+    ) -> object:
+        del run_service, resolver, routes, reconciler, startup_check
         received.append("app")
         return object()
 
@@ -1188,7 +1190,9 @@ def test_build_app_uses_the_prefect_worker_query_setting_for_liveness_policy(
     class Resolver:
         secret_values: tuple[str, ...] = ()
 
-    def app_factory(_service: object, _resolver: object, _routes: object, reconciler: RunLivenessReconciler) -> object:
+    def app_factory(
+        _service: object, _resolver: object, _routes: object, reconciler: RunLivenessReconciler, _check: object
+    ) -> object:
         captured.append(reconciler)
         return object()
 

@@ -871,6 +871,7 @@ class _RemoteFlowRun:
     def __init__(self, run_id: UUID) -> None:
         self.id = run_id
         self.state = Pending()
+        self.tags = ["infrahub-sync", "service"]
 
 
 class _RemoteClient:
@@ -879,6 +880,11 @@ class _RemoteClient:
         self.flow_run = _RemoteFlowRun(uuid4())
         self.keys: list[str | None] = []
         self.parameters: list[dict[str, Any]] = []
+        self.tags: list[list[str]] = []
+
+    async def update_flow_run(self, flow_run_id: UUID, *, tags: list[str]):
+        assert flow_run_id == self.flow_run.id
+        self.tags.append(tags)
 
     async def read_deployment_by_name(self, name: str):
         assert name == SERVICE_DEFINITION.key

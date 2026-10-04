@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import tempfile
+import warnings
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -18,12 +20,21 @@ import anyio
 import httpx
 from prefect.client.schemas.objects import Worker, WorkerStatus
 from prefect.exceptions import ObjectNotFound
+from prefect.flows import load_flow_from_entrypoint
 from prefect.logging.loggers import PrefectLogAdapter
+
+# Prefect 3.8.6's own process-start parts, pinned with Prefect (see `_start_child`).
+from prefect.runner._flow_run_executor import (  # noqa: PLC2701 - deliberate, version-pinned
+    FlowRunExecutionResult,
+    FlowRunExecutorContext,
+)
+from prefect.runner._starter_engine import EngineCommandStarter  # noqa: PLC2701 - deliberate, version-pinned
 from prefect.utilities.processutils import command_to_string, get_sys_executable
 from prefect.workers.process import ProcessJobConfiguration, ProcessWorker, ProcessWorkerResult
 from pydantic import PrivateAttr
 
 from .orchestration import SERVICE_DEFINITION
+from .prefect_server import WORKER_SERVICE, refuse_start_unless_prefect_ready
 
 if TYPE_CHECKING:
     import logging
@@ -38,8 +49,15 @@ _IDENTITY_ERROR = "service worker identity is unavailable"
 _WORKER_NAME_PREFIX = "infrahub-sync-service"
 _WORKER_PAGE_SIZE = 200
 _NOT_ADMITTED = "flow run was not admitted as the service deployment"
-# What Prefect 3.8.1's process job configuration resolves an unset command to.
+# The one command a service child runs: what Prefect's process job configuration
+# resolves an unset command to. The service sets it explicitly (see
+# `ServiceProcessJobConfiguration.prepare_for_flow_run`).
 _SERVICE_CHILD_COMMAND = command_to_string([get_sys_executable(), "-m", "prefect.engine"])
+# The installed service flow, which every admitted child and hook loads.
+_SERVICE_ENTRYPOINT: str = SERVICE_DEFINITION.entrypoint or ""
+if not _SERVICE_ENTRYPOINT:
+    _NO_ENTRYPOINT = "the service deployment declares no entrypoint"
+    raise RuntimeError(_NO_ENTRYPOINT)
 _SUBMISSION_IDENTITY: ContextVar[tuple[bool, int | None]] = ContextVar(
     "service_worker_submission_identity",
     default=(False, None),
@@ -57,6 +75,11 @@ class ServiceFlowRunRefusedError(RuntimeError):
 def service_worker_name() -> str:
     """Return a process-unique Prefect worker name for the supported entrypoint."""
     return f"{_WORKER_NAME_PREFIX}-{uuid4()}"
+
+
+async def _installed_service_flow(_flow_run: FlowRun) -> Any:  # noqa: RUF029 - Prefect's async resolver contract
+    """Resolve the service flow from the installed package, never from the deployment record."""
+    return load_flow_from_entrypoint(_SERVICE_ENTRYPOINT, use_placeholder_flow=False)
 
 
 def _canonical_uuid(value: object) -> UUID | None:
@@ -135,6 +158,12 @@ def _admission_refusal(
             configuration.command == _SERVICE_CHILD_COMMAND and configuration.working_dir is None,
             "resolved child command is not the service default",
         ),
+        # Prefect 3.8.6 runs an unconfigured command through its workspace
+        # supervisor, which reads the deployment again, can pull storage, extends
+        # PYTHONPATH, and can switch to another launcher. Only a configured
+        # command is started exactly as admitted here.
+        # Prefect's private flag, pinned with Prefect 3.8.6; a rename refuses rather than raises.
+        (getattr(configuration, "_command_configured", False), "child command is not configured explicitly"),
     )
     return next((reason for held, reason in checks if not held), None)
 
@@ -159,7 +188,14 @@ class ServiceProcessJobConfiguration(ProcessJobConfiguration):
         Raising here reaches Prefect's submission handler before the run is labelled
         or proposed Submitting, and that handler records the refusal as a Crashed
         state. Nothing has started by then.
+
+        The service command is set before Prefect prepares the configuration, so
+        Prefect records it as configured and starts it as given rather than through
+        its workspace supervisor. A pool or run that sets another command is still
+        refused below.
         """
+        if self.command is None:
+            self.command = _SERVICE_CHILD_COMMAND
         super().prepare_for_flow_run(
             flow_run,
             deployment,
@@ -171,6 +207,11 @@ class ServiceProcessJobConfiguration(ProcessJobConfiguration):
         refusal = _admission_refusal(self, flow_run, deployment, flow, work_pool)
         if refusal is not None:
             raise ServiceFlowRunRefusedError(refusal)
+        # The child loads the installed service flow, never the deployment record:
+        # Prefect's engine otherwise reads the deployment again and runs its pull
+        # steps, which anyone who can write to the task manager can change after
+        # admission.
+        self.env["PREFECT__FLOW_ENTRYPOINT"] = _SERVICE_ENTRYPOINT
         self._admitted = True
         bound, generation = _SUBMISSION_IDENTITY.get()
         self._identity_generation = generation if bound else None
@@ -396,9 +437,56 @@ class ServiceProcessWorker(ProcessWorker):
         lease = _IdentityLeaseTaskStatus(effective_status, self._identity_lock)
         try:
             self._validate_child_identity(configuration)
-            return await super().run(flow_run, configuration, task_status=lease)
+            return await self._start_child(flow_run, configuration, lease)
         finally:
             lease.release()
+
+    async def _start_child(
+        self,
+        flow_run: FlowRun,
+        configuration: ProcessJobConfiguration,
+        task_status: TaskStatus[int],
+    ) -> ProcessWorkerResult:
+        """Start the admitted child; tests replace this to observe what would start.
+
+        Prefect 3.8.6's `ProcessWorker.run` for a configured command, with one change:
+        the crash and cancellation hooks that run in this parent resolve the installed
+        service flow. Prefect's own resolver reads the deployment record again and runs
+        its pull steps in this process, and that record is server data anyone who can
+        write to the task manager can change after admission.
+        """
+        with tempfile.TemporaryDirectory(suffix="prefect") as working_dir, warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            async with FlowRunExecutorContext() as context:
+                starter = EngineCommandStarter(
+                    command=configuration.command,
+                    cwd=Path(working_dir),
+                    env=configuration.env,
+                    stream_output=configuration.stream_output,
+                    control_channel=context.control_channel,
+                )
+                executor = context.create_executor(
+                    flow_run,
+                    starter,
+                    resolve_flow=_installed_service_flow,
+                    propose_submitting=False,
+                )
+                execution: FlowRunExecutionResult | None = None
+
+                async def execute(*, task_status: Any = anyio.TASK_STATUS_IGNORED) -> None:
+                    nonlocal execution
+                    execution = await executor.submit(task_status=task_status)
+
+                async with anyio.create_task_group() as task_group:
+                    handle = await task_group.start(execute)
+                    if handle.pid is None:
+                        msg = "flow run process has no PID"
+                        raise RuntimeError(msg)
+                    task_status.started(handle.pid)
+        if execution is None or execution.status_code is None:
+            msg = "failed to start the flow run process"
+            raise RuntimeError(msg)
+        return ProcessWorkerResult(status_code=execution.status_code, identifier=str(execution.handle.pid))
 
     async def _read_worker_records(self) -> list[Worker]:
         records: list[Worker] = []
@@ -453,6 +541,7 @@ def neutral_working_directory() -> Iterator[Path]:
 def main(argv: Sequence[str] | None = None) -> int:
     """Start one fail-closed service process worker."""
     pool = _pool_argument(argv)
+    refuse_start_unless_prefect_ready(WORKER_SERVICE)
     # Entered before the worker exists, so nothing this parent imports later -- the
     # runner, its crash hooks, or an adapter -- can resolve out of a source tree.
     with neutral_working_directory():

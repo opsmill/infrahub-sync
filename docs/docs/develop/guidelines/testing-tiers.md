@@ -235,7 +235,7 @@ from the `netbox.seed` output; do not commit them.
    ```bash
    uv run invoke preview.up
    for database in apply_guard_test product_store_test storage_test; do
-     docker exec infrahub-sync-preview-sync-postgres-1 createdb -U postgres "$database"
+     docker exec infrahub-sync-preview-task-manager-db-1 createdb -U postgres "$database"
    done
    ```
 

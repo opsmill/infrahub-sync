@@ -21,6 +21,11 @@
 # host route. A package's `env` credential identifiers must start with
 # INFRAHUB_SYNC_CREDENTIAL_, and these three are the ones this stack passes.
 #
+# Infrahub's task manager: this stack runs its own, from the same pinned Infrahub
+# image the preview uses, with its own PostgreSQL server. Sync allows one
+# deployment per task manager (the service's Prefect deployment name is fixed),
+# so the dev stack never shares the preview's.
+#
 # Source: the local NetBox (`uv run invoke netbox.up` or `netbox.seed`) publishes
 # on the host's loopback address only, which no container can reach. The Invoke
 # tasks connect sync-worker to NetBox's own network instead, where it reads
@@ -36,7 +41,7 @@ x-sync-build: &sync-build
 x-sync-image: &sync-image "infrahub-sync:dev"
 
 x-sync-env: &sync-env
-  INFRAHUB_SYNC_DATABASE_URL: "postgresql://postgres:devpassword@postgres:5432/infrahub_sync"
+  INFRAHUB_SYNC_DATABASE_URL: "postgresql://postgres:devpassword@task-manager-db:5432/infrahub_sync"
   INFRAHUB_SYNC_S3_BUCKET: "infrahub-sync"
   INFRAHUB_SYNC_S3_PREFIX: "infrahub-sync"
   INFRAHUB_SYNC_S3_ENDPOINT_URL: "http://object-store:9000"
@@ -44,37 +49,23 @@ x-sync-env: &sync-env
   AWS_ACCESS_KEY_ID: "devaccesskey"
   AWS_SECRET_ACCESS_KEY: "devsecretkey"
   INFRAHUB_SYNC_SERVICE_WORK_POOL: "infrahub-sync"
-  PREFECT_API_URL: "http://prefect-server:4200/api"
+  PREFECT_API_URL: "http://task-manager:4200/api"
 
 services:
-  postgres:
-    image: "postgres:16-alpine"
+  # Infrahub's task manager, as Infrahub's own Compose file runs it: Infrahub's
+  # Prefect server app from the pinned Infrahub image, on its own PostgreSQL.
+  task-manager-db:
+    image: "postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"  # yamllint disable-line rule:line-length
     environment:
       POSTGRES_USER: "postgres"
       POSTGRES_PASSWORD: "devpassword"
-      POSTGRES_DB: "postgres"
+      POSTGRES_DB: "prefect"
     ports:
       - "127.0.0.1:5440:5432"
     volumes:
-      - "postgres-data:/var/lib/postgresql/data"
-    # The two databases the stack needs, from the `init-databases` config below. The
-    # entrypoint runs this only when it initializes the data directory, so a volume
-    # that predates a new database in that file never gains it; the healthcheck turns
-    # that into a failed start rather than a puzzling one downstream.
-    configs:
-      - source: init-databases
-        target: /docker-entrypoint-initdb.d/10-databases.sql
-    # Reads the catalog over TCP, rather than pinging. The entrypoint runs the init
-    # file against a server that listens on the socket alone, so a socket ping reports
-    # healthy while the databases may not exist and no dependent can connect yet.
+      - "task-manager-db-data:/var/lib/postgresql/18/docker"
     healthcheck:
-      test:
-        - "CMD-SHELL"
-        - >-
-          PGPASSWORD="$$POSTGRES_PASSWORD" psql --host 127.0.0.1 --username "$$POSTGRES_USER"
-          --dbname postgres --tuples-only --no-align
-          --command "SELECT count(*) = 2 FROM pg_database WHERE datname IN ('infrahub_sync', 'prefect')"
-          | grep -qx t
+      test: ["CMD-SHELL", "pg_isready -q -d prefect -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -97,30 +88,44 @@ services:
       timeout: 5s
       retries: 30
 
-  prefect-server:
-    image: "prefecthq/prefect:3.8.1-python3.12"
-    command: ["prefect", "server", "start", "--host", "0.0.0.0", "--port", "4200"]
+  task-manager:
+    image: "registry.opsmill.io/opsmill/infrahub:1.11.4@sha256:68e9697b9209305538e6fc4ecefc8f36a0e5a3f17e0b8eb8f35235416cc3aecf"  # yamllint disable-line rule:line-length
+    command: ["uvicorn", "--host", "0.0.0.0", "--port", "4200", "--factory", "infrahub.prefect_server.app:create_infrahub_prefect"]  # yamllint disable-line rule:line-length
     depends_on:
-      postgres:
+      task-manager-db:
         condition: service_healthy
     environment:
-      PREFECT_SERVER_DATABASE_CONNECTION_URL: "postgresql+asyncpg://postgres:devpassword@postgres:5432/prefect"
-      PREFECT_SERVER_API_HOST: "0.0.0.0"
-      PREFECT_SERVER_API_PORT: "4200"
-      PREFECT_SERVER_UI_API_URL: "http://127.0.0.1:4230/api"
-      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+      PREFECT_API_DATABASE_CONNECTION_URL: "postgresql+asyncpg://postgres:devpassword@task-manager-db:5432/prefect"
+      PREFECT_UI_API_URL: "http://127.0.0.1:4230/api"
     ports:
       - "127.0.0.1:4230:4200"
     healthcheck:
-      test:
-        - "CMD"
-        - "python"
-        - "-c"
-        - "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health', timeout=5)"
+      test: ["CMD-SHELL", "curl -s -f -o /dev/null http://localhost:4200/api/health || exit 1"]
       interval: 5s
-      timeout: 10s
+      timeout: 5s
       retries: 30
       start_period: 20s
+
+  # Sync's product database on the task manager's PostgreSQL server. Safe to
+  # repeat; it never touches the task manager's own `prefect` database.
+  db-bootstrap:
+    image: "postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873"  # yamllint disable-line rule:line-length
+    restart: "no"
+    depends_on:
+      task-manager-db:
+        condition: service_healthy
+    environment:
+      PGHOST: "task-manager-db"
+      PGUSER: "postgres"
+      PGPASSWORD: "devpassword"
+      PGDATABASE: "postgres"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - >-
+        psql --quiet --tuples-only --no-align
+        --command "SELECT 1 FROM pg_database WHERE datname = 'infrahub_sync'" | grep -qx 1
+        || createdb infrahub_sync
 
   # Converges the product schema, the artifact bucket, the work pool, and the
   # installed deployment. Registers no configuration. Safe to repeat, which is
@@ -130,11 +135,11 @@ services:
     build: *sync-build
     command: ["python", "-m", "infrahub_sync.service.bootstrap"]
     depends_on:
-      postgres:
-        condition: service_healthy
+      db-bootstrap:
+        condition: service_completed_successfully
       object-store:
         condition: service_healthy
-      prefect-server:
+      task-manager:
         condition: service_healthy
     environment:
       <<: *sync-env
@@ -189,15 +194,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-configs:
-  # Read once, when Postgres initializes an empty data directory. Adding a database
-  # here does not reach a volume that already exists: `docker compose down --volumes`
-  # does.
-  init-databases:
-    content: |
-      CREATE DATABASE infrahub_sync;
-      CREATE DATABASE prefect;
-
 volumes:
-  postgres-data:
+  task-manager-db-data:
   object-store-data:

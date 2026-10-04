@@ -47,14 +47,23 @@ client = boto3.client(
 print(json.dumps(sorted(bucket["Name"] for bucket in client.list_buckets()["Buckets"])))
 """
 
+# Infrahub's task manager also holds Infrahub's own pools and deployments, so the
+# probe keeps Sync's: its work pool, and the deployments of the service flow.
 PREFECT = """
 import base64, json, os, httpx
 PREFECT_AUTH = {"Authorization": "Basic " + base64.b64encode(os.environ["PREFECT_API_AUTH_STRING"].encode()).decode()}
-base = "http://prefect-server:4200/api"
+base = "http://task-manager:4200/api"
+pool = os.environ["INFRAHUB_SYNC_SERVICE_WORK_POOL"]
 pools = httpx.post(f"{base}/work_pools/filter", json={}, headers=PREFECT_AUTH, timeout=30).json()
-deployments = httpx.post(f"{base}/deployments/filter", json={}, headers=PREFECT_AUTH, timeout=30).json()
+flows = httpx.post(
+    f"{base}/flows/filter", json={"flows": {"name": {"any_": ["infrahub-sync-service"]}}}, headers=PREFECT_AUTH, timeout=30
+).json()
+flow_ids = [flow["id"] for flow in flows]
+deployments = httpx.post(
+    f"{base}/deployments/filter", json={"flows": {"id": {"any_": flow_ids}}}, headers=PREFECT_AUTH, timeout=30
+).json() if flow_ids else []
 print(json.dumps({
-    "pools": sorted((pool["name"], pool["type"]) for pool in pools),
+    "pools": sorted((entry["name"], entry["type"]) for entry in pools if entry["name"] == pool),
     "deployments": sorted(deployment["name"] for deployment in deployments),
 }))
 """
@@ -106,13 +115,14 @@ def converged(deployment: Deployment) -> dict[str, Any]:
     }
 
 
-def test_the_first_bootstrap_created_the_two_databases_and_their_owner_roles(
-    converged: dict[str, Any],
+def test_the_first_bootstrap_created_the_product_database_and_its_owner_role(
+    deployment: Deployment, converged: dict[str, Any]
 ) -> None:
-    """Separate owners and separate databases, so neither service can reach the other's."""
+    """Sync's own database and owner, beside the task manager's untouched `prefect` database."""
     state = converged["databases"]
-    assert {"infrahub_sync", "prefect"} <= set(state["databases"]), state
-    assert {"infrahub_sync", "prefect"} <= set(state["roles"]), state
+    product = deployment.setting("INFRAHUB_SYNC_PRODUCT_DATABASE")
+    assert {product, "prefect"} <= set(state["databases"]), state
+    assert deployment.setting("INFRAHUB_SYNC_PRODUCT_ROLE") in state["roles"], state
 
 
 def test_the_first_bootstrap_created_the_bucket_the_pool_and_the_deployment(

@@ -4,9 +4,12 @@ title: Start a Compose deployment
 
 Start Infrahub Sync from a release in three steps: fetch `docker-compose.yml`,
 write a `.env` beside it, and start it. The deployment includes the Sync API,
-worker, Prefect, PostgreSQL, and object storage. You can start it before you have
-supplied a source, destination, configuration, or source credentials. This page
-ends when a worker reports `ready` and you choose a source tutorial.
+worker, and object storage, and runs next to an Infrahub that ships Prefect 3.8.6
+(1.11.3 or 1.11.4), started with Docker Compose on the same host: Sync uses
+Infrahub's task manager and keeps its own database on the task manager's PostgreSQL
+server. You can start it before you have supplied a source, destination,
+configuration, or source credentials. This page ends when a worker reports `ready`
+and you choose a source tutorial.
 
 ## Before you start
 
@@ -32,7 +35,7 @@ in before the first start, as described in
 docker login registry.opsmill.io
 ```
 
-Ports 8000 and 4200 on `127.0.0.1` must be available. Docker needs registry
+Port 8000 on `127.0.0.1` must be available, and Infrahub must be running. Docker needs registry
 access to pull the service images, and enough space for the images and the
 persistent deployment data.
 
@@ -54,9 +57,10 @@ directory.
 
 ## Write the credentials
 
-The file needs seven credentials, and defaults none of them. This generates random
-values for each, and gives the bundled CLI the same token as the one principal
-the API accepts:
+The file needs five credentials, and defaults none of them. This generates random
+values for Sync's own, reuses the task-manager database password Infrahub was
+started with (`postgres` unless you changed it), and gives the bundled CLI the same
+token as the one principal the API accepts:
 
 ```sh
 rand() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
@@ -64,10 +68,8 @@ principal=$(rand 24)
 # mktemp creates the file readable by you alone, whatever an existing .env allowed.
 env_file=$(mktemp .env.XXXXXX)
 cat > "$env_file" <<EOF
-INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD=$(rand 24)
+INFRAHUB_TASKMANAGER_DB_PASSWORD=${INFRAHUB_TASKMANAGER_DB_PASSWORD:-postgres}
 INFRAHUB_SYNC_PRODUCT_PASSWORD=$(rand 24)
-INFRAHUB_SYNC_PREFECT_PASSWORD=$(rand 24)
-INFRAHUB_SYNC_PREFECT_AUTH_STRING=$(rand 24)
 INFRAHUB_SYNC_S3_ACCESS_KEY=$(rand 12)
 INFRAHUB_SYNC_S3_SECRET_KEY=$(rand 24)
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}

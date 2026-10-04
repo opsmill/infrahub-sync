@@ -30,7 +30,6 @@ FIXTURE_OVERRIDE = Path(__file__).resolve().parent / "fixture-override.yaml"
 # below are deliberately not the file's own defaults: a developer's stack must
 # be able to keep running while this suite has one of its own.
 API_PORT = 8061
-PREFECT_PORT = 4261
 
 # The deployment's own PostgreSQL image, reused as a probe so no fourth external
 # image has to be pinned for a two-command question.
@@ -92,7 +91,7 @@ class Deployment:
         compose_file: Path = COMPOSE_FILE,
         destination: str = "",
         api_port: int = API_PORT,
-        prefect_port: int = PREFECT_PORT,
+        task_manager_database_container: str = "",
     ) -> None:
         self.instance = instance
         self.project = f"infrahub-sync-{instance}"
@@ -101,7 +100,9 @@ class Deployment:
         # Each deployment publishes on its own loopback ports, so more than one
         # can be up at a time and no probe can reach the wrong one.
         self.api_port = api_port
-        self.prefect_port = prefect_port
+        # The Infrahub fixture's PostgreSQL server, where this deployment's product
+        # database lives: `docker compose down` cannot reach it, so the reset drops it.
+        self.task_manager_database_container = task_manager_database_container
         self.environment_file = environment_file
         self._files = (compose_file, *overrides)
 
@@ -160,21 +161,48 @@ class Deployment:
         """
         return self.compose(["logs", "--no-color", "--tail", str(tail), *services])
 
-    def down(self, *, volumes: bool = False) -> Captured:
-        """Remove this deployment, and its data when asked."""
+    def down(self, *, data: bool = False) -> Captured:
+        """Remove this deployment, and its data when asked.
+
+        With its data, as the documented reset does: the containers and the object
+        store's volume, then the product database and its role on the task manager's
+        PostgreSQL server, which `docker compose down` cannot reach.
+        """
         argv = ["down", "--remove-orphans"]
-        if volumes:
+        if data:
             argv.append("--volumes")
-        return self.compose(argv)
+        removed = self.compose(argv)
+        if data and removed.returncode == 0 and self.task_manager_database_container:
+            database = self.setting("INFRAHUB_SYNC_PRODUCT_DATABASE")
+            role = self.setting("INFRAHUB_SYNC_PRODUCT_ROLE")
+            dropped = docker(
+                [
+                    "exec",
+                    self.task_manager_database_container,
+                    "psql",
+                    "-U",
+                    "postgres",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-c",
+                    f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)',
+                    "-c",
+                    f'DROP ROLE IF EXISTS "{role}"',
+                ]
+            )
+            assert dropped.returncode == 0, dropped.output
+        return removed
 
     def status(self) -> str:
         """Return READY, DEGRADED or STOPPED, the way the removed `status` command decided it.
 
         The same three questions, asked with plain Compose and Docker commands:
         whether any container of the project runs (`docker compose ps`); whether
-        the three dependencies with real probes report healthy; and whether the
-        Sync API reports a live worker, asked over the deployment's own network.
-        Container state alone never makes a deployment READY.
+        the one dependency with a real probe, the object store, reports healthy;
+        and whether the Sync API reports a live worker, asked over the deployment's
+        own network. PostgreSQL and the Prefect server are Infrahub's task-manager
+        services now, and the worker state answers for them. Container state alone
+        never makes a deployment READY.
         """
         running = self.compose(["ps", "--quiet"])
         assert running.returncode == 0, running.stderr
@@ -195,14 +223,11 @@ class Deployment:
     def api(self) -> str:
         return f"http://127.0.0.1:{self.api_port}"
 
-    @property
-    def prefect(self) -> str:
-        return f"http://127.0.0.1:{self.prefect_port}"
 
-
-# The dependencies whose health is an answer from the service -- a PostgreSQL
-# readiness check and two HTTP endpoints -- rather than the fact a container is up.
-STATUS_DEPENDENCIES = ("postgres", "object-store", "prefect-server")
+# The dependency whose health is an answer from the service -- the object store's
+# HTTP endpoint -- rather than the fact a container is up. The PostgreSQL server
+# and the Prefect server are Infrahub's task-manager services, not this file's.
+STATUS_DEPENDENCIES = ("object-store",)
 # The worker state the Sync API reports, asked from inside the deployment so the
 # answer does not depend on how the host maps container ports onto loopback.
 STATUS = "import httpx; print(httpx.get('http://sync-api:8000/status', timeout=5).json()['worker']['state'])"
@@ -338,8 +363,9 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
     image: str,
     destination_token: str,
     canaries: Mapping[str, str],
+    instance: str,
+    infrahub_network: str,
     api_port: int = API_PORT,
-    prefect_port: int = PREFECT_PORT,
 ) -> Path:
     """Write the `.env` one deployment runs on, and return it.
 
@@ -355,10 +381,17 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
         "INFRAHUB_SYNC_DOCKER_IMAGE": repository,
         "VERSION": version,
         "INFRAHUB_SYNC_API_PORT": str(api_port),
-        "INFRAHUB_SYNC_PREFECT_PORT": str(prefect_port),
-        "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD": canaries["administrator"],
+        # The Infrahub fixture's network and task-manager database server. Its
+        # administrator password is the administrator canary.
+        "INFRAHUB_NETWORK": infrahub_network,
+        "INFRAHUB_TASKMANAGER_DB_PASSWORD": canaries["administrator"],
+        # One product database and role per deployment on that shared server, so a
+        # module's deployment never starts against another's records.
+        "INFRAHUB_SYNC_PRODUCT_DATABASE": f"sync_{instance}",
+        "INFRAHUB_SYNC_PRODUCT_ROLE": f"sync_{instance}",
         "INFRAHUB_SYNC_PRODUCT_PASSWORD": canaries["product"],
-        "INFRAHUB_SYNC_PREFECT_PASSWORD": canaries["prefect"],
+        # Infrahub's task manager accepts it unchecked; presenting it keeps the
+        # leak sweep covering the credential every Prefect caller would send.
         "INFRAHUB_SYNC_PREFECT_AUTH_STRING": canaries["prefect_auth"],
         "INFRAHUB_SYNC_S3_ACCESS_KEY": "compose-suite-access-key",
         "INFRAHUB_SYNC_S3_SECRET_KEY": canaries["object_store"],
@@ -515,7 +548,7 @@ client = boto3.client(
 listing = client.list_objects_v2(Bucket=os.environ["INFRAHUB_SYNC_S3_BUCKET"])
 PREFECT_AUTH = {"Authorization": "Basic " + base64.b64encode(os.environ["PREFECT_API_AUTH_STRING"].encode()).decode()}
 deployments = httpx.post(
-    "http://prefect-server:4200/api/deployments/filter", json={}, headers=PREFECT_AUTH, timeout=30
+    "http://task-manager:4200/api/deployments/filter", json={}, headers=PREFECT_AUTH, timeout=30
 ).json()
 print(json.dumps({
     "configuration_versions": sorted(versions),
@@ -528,9 +561,9 @@ print(json.dumps({
 WORKERS = """
 import base64, json, os, httpx
 PREFECT_AUTH = {"Authorization": "Basic " + base64.b64encode(os.environ["PREFECT_API_AUTH_STRING"].encode()).decode()}
-pool = "infrahub-sync"
+pool = os.environ["INFRAHUB_SYNC_SERVICE_WORK_POOL"]
 records = httpx.post(
-    f"http://prefect-server:4200/api/work_pools/{pool}/workers/filter", json={}, headers=PREFECT_AUTH, timeout=30
+    f"http://task-manager:4200/api/work_pools/{pool}/workers/filter", json={}, headers=PREFECT_AUTH, timeout=30
 ).json()
 print(json.dumps(sorted((record["name"], record["status"]) for record in records)))
 """

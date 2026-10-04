@@ -16,12 +16,19 @@
 # pin in step with the package version. Every other image carries its digest, so a re-pointed
 # tag cannot change what this file runs.
 #
+# Sync runs next to an Infrahub deployment that ships the Prefect version this
+# release requires (Infrahub 1.11.3 and 1.11.4 ship Prefect 3.8.6), and uses two of its
+# services: the task manager, which is Infrahub's Prefect server, and the task
+# manager's PostgreSQL server, where Sync keeps its own `infrahub_sync` database.
+# This file joins Infrahub's Compose network, named by INFRAHUB_NETWORK.
+#
 # Two properties this file exists to hold:
 #
 #   * the API and the worker share no mount, no writable volume, and no scratch
 #     directory. Run state crosses between them through PostgreSQL and the
 #     object store, never through a filesystem.
-#   * only PostgreSQL and the object store keep data across a restart. Every
+#   * only the object store keeps data across a restart here; Sync's database
+#     lives on the task manager's PostgreSQL server, outside this file. Every
 #     other writable path is tmpfs and disappears with its container.
 #
 # Nothing here defaults a credential. The connection strings are built from the
@@ -43,7 +50,7 @@ x-sync-storage: &sync-storage
   INFRAHUB_SYNC_DATABASE_URL: "${INFRAHUB_SYNC_DATABASE_URL:-postgresql://\
     ${INFRAHUB_SYNC_PRODUCT_ROLE:-infrahub_sync}:\
     ${INFRAHUB_SYNC_PRODUCT_PASSWORD:?INFRAHUB_SYNC_PRODUCT_PASSWORD is required}\
-    @postgres:5432/${INFRAHUB_SYNC_PRODUCT_DATABASE:-infrahub_sync}}"
+    @${INFRAHUB_TASKMANAGER_DB_HOST:-task-manager-db}:5432/${INFRAHUB_SYNC_PRODUCT_DATABASE:-infrahub_sync}}"
   INFRAHUB_SYNC_S3_BUCKET: "${INFRAHUB_SYNC_S3_BUCKET:-infrahub-sync}"
   INFRAHUB_SYNC_S3_PREFIX: "${INFRAHUB_SYNC_S3_PREFIX:-infrahub-sync}"
   INFRAHUB_SYNC_S3_ENDPOINT_URL: "http://object-store:9000"
@@ -51,47 +58,33 @@ x-sync-storage: &sync-storage
   AWS_ACCESS_KEY_ID: "${INFRAHUB_SYNC_S3_ACCESS_KEY:?INFRAHUB_SYNC_S3_ACCESS_KEY is required}"
   AWS_SECRET_ACCESS_KEY: "${INFRAHUB_SYNC_S3_SECRET_KEY:?INFRAHUB_SYNC_S3_SECRET_KEY is required}"
   INFRAHUB_SYNC_SERVICE_WORK_POOL: "${INFRAHUB_SYNC_WORK_POOL:-infrahub-sync}"
-  PREFECT_API_URL: "http://prefect-server:4200/api"
-  # The Prefect server refuses every API call without this value, because a
-  # caller that can create a deployment in the work pool decides what the worker
-  # runs. Each Sync process presents it; the CLI service is not given it.
-  PREFECT_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
+  # Infrahub's task manager, under the address and port settings Infrahub's own
+  # Compose file uses.
+  PREFECT_API_URL: "http://${INFRAHUB_WORKFLOW_ADDRESS:-task-manager}:${INFRAHUB_WORKFLOW_PORT:-4200}/api"
+  # Optional, because Infrahub's task manager offers no API credential setting.
+  # When the task manager is put behind one, each Sync process presents it; when
+  # it is not, the task manager is protected by network isolation alone, and the
+  # API and the worker say so at startup. The CLI service is never given it.
+  PREFECT_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:-}"
 
 services:
-  postgres:
-    image: "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: "${INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE:-postgres}"
-      POSTGRES_PASSWORD: "${INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD:?INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD is required}"
-      POSTGRES_DB: "${INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE:-postgres}"
-    volumes:
-      - "postgres-data:/var/lib/postgresql/data"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-
-  # Separate owner roles and separate databases, created before anything
-  # connects as an owner. Run twice it observes both and changes nothing.
+  # Sync's owner role and database on the task manager's PostgreSQL server,
+  # created as that server's administrator before anything connects as the
+  # owner. Run twice it observes both and changes nothing. It never touches the
+  # task manager's own `prefect` database.
   db-bootstrap:
     image: "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
     restart: "no"
-    depends_on:
-      postgres:
-        condition: service_healthy
+    networks: ["default", "infrahub"]
     environment:
-      PGHOST: "postgres"
-      PGUSER: "${INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE:-postgres}"
-      PGDATABASE: "${INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE:-postgres}"
-      PGPASSWORD: "${INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD:?INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD is required}"
+      PGHOST: "${INFRAHUB_TASKMANAGER_DB_HOST:-task-manager-db}"
+      PGUSER: "${INFRAHUB_TASKMANAGER_DB_USER:-postgres}"
+      # The maintenance database every PostgreSQL server has, whatever the role is called.
+      PGDATABASE: "postgres"
+      PGPASSWORD: "${INFRAHUB_TASKMANAGER_DB_PASSWORD:?INFRAHUB_TASKMANAGER_DB_PASSWORD is required}"
       INFRAHUB_SYNC_PRODUCT_DATABASE: "${INFRAHUB_SYNC_PRODUCT_DATABASE:-infrahub_sync}"
       INFRAHUB_SYNC_PRODUCT_ROLE: "${INFRAHUB_SYNC_PRODUCT_ROLE:-infrahub_sync}"
       INFRAHUB_SYNC_PRODUCT_PASSWORD: "${INFRAHUB_SYNC_PRODUCT_PASSWORD:?INFRAHUB_SYNC_PRODUCT_PASSWORD is required}"
-      INFRAHUB_SYNC_PREFECT_DATABASE: "${INFRAHUB_SYNC_PREFECT_DATABASE:-prefect}"
-      INFRAHUB_SYNC_PREFECT_ROLE: "${INFRAHUB_SYNC_PREFECT_ROLE:-prefect}"
-      INFRAHUB_SYNC_PREFECT_PASSWORD: "${INFRAHUB_SYNC_PREFECT_PASSWORD:?INFRAHUB_SYNC_PREFECT_PASSWORD is required}"
     configs:
       - source: db-bootstrap-script
         target: /usr/local/bin/databases.sh
@@ -147,45 +140,6 @@ services:
       timeout: 5s
       retries: 30
 
-  prefect-server:
-    image: "prefecthq/prefect:3.8.1-python3.12@sha256:2d647011130f4bb36ee07b8386921890f1da44a9b7fbf81cfa86a555b92f151e"
-    restart: unless-stopped
-    command: ["prefect", "server", "start", "--host", "0.0.0.0", "--port", "4200"]
-    depends_on:
-      db-bootstrap:
-        condition: service_completed_successfully
-    environment:
-      # PostgreSQL, not the container-local SQLite Prefect would otherwise use:
-      # this server keeps no state of its own, which is why it needs no volume
-      # and why a replacement container resumes from the same records.
-      PREFECT_SERVER_DATABASE_CONNECTION_URL: "${INFRAHUB_SYNC_PREFECT_DATABASE_URL:-postgresql+asyncpg://\
-        ${INFRAHUB_SYNC_PREFECT_ROLE:-prefect}:\
-        ${INFRAHUB_SYNC_PREFECT_PASSWORD:?INFRAHUB_SYNC_PREFECT_PASSWORD is required}\
-        @postgres:5432/${INFRAHUB_SYNC_PREFECT_DATABASE:-prefect}}"
-      PREFECT_SERVER_API_HOST: "0.0.0.0"
-      PREFECT_SERVER_API_PORT: "4200"
-      PREFECT_SERVER_UI_API_URL: >-
-        http://${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_PREFECT_PORT:-4200}/api
-      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
-      # Basic authentication on the whole API, the UI's calls included: the UI
-      # asks for this value once and sends it with each request. Prefect leaves
-      # only the health and readiness probes open, which the check below uses.
-      PREFECT_SERVER_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
-    # Both published surfaces bind to loopback by default: external exposure and
-    # TLS termination are outside the supported single-host shape.
-    ports:
-      - "${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_PREFECT_PORT:-4200}:4200"
-    healthcheck:
-      test:
-        - "CMD"
-        - "python"
-        - "-c"
-        - "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health', timeout=5)"
-      interval: 5s
-      timeout: 10s
-      retries: 30
-      start_period: 20s
-
   # One completion-style job converges everything durable this deployment needs:
   # the product schema, the artifact bucket, the process work pool, and the
   # installed deployment. It is safe to repeat, and it is the only place any of
@@ -204,8 +158,7 @@ services:
         condition: service_completed_successfully
       object-store:
         condition: service_healthy
-      prefect-server:
-        condition: service_healthy
+    networks: ["default", "infrahub"]
     environment:
       <<: *sync-storage
     read_only: true
@@ -217,6 +170,7 @@ services:
     depends_on:
       sync-bootstrap:
         condition: service_completed_successfully
+    networks: ["default", "infrahub"]
     environment:
       <<: *sync-storage
       # Loopback belongs to the host publication below. A container listening on
@@ -263,6 +217,7 @@ services:
     depends_on:
       sync-bootstrap:
         condition: service_completed_successfully
+    networks: ["default", "infrahub"]
     environment:
       <<: *sync-storage
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS:-300}"
@@ -308,9 +263,9 @@ services:
     tmpfs: *sync-scratch
 
 configs:
-  # Converge the two owner roles and the two databases this deployment needs, as
-  # the PostgreSQL administrator. Safe to repeat: a second run finds both roles
-  # and both databases and changes nothing.
+  # Converge Sync's owner role and database on the task manager's PostgreSQL
+  # server, as its administrator. Safe to repeat: a second run finds both, sets
+  # the role's password to the one in `.env`, and changes nothing else.
   #
   # Compose interpolates this content, so every shell `$` is written `$$`: the
   # script reads its values from the container environment at run time, and no
@@ -319,6 +274,18 @@ configs:
     content: |
       #!/bin/sh
       set -eu
+
+      # The server belongs to Infrahub's Compose project, so no `depends_on` can
+      # wait for it to accept connections. Wait here, bounded, instead.
+      attempt=0
+      until pg_isready --quiet; do
+        attempt=$$((attempt + 1))
+        if [ "$$attempt" -ge 60 ]; then
+          echo "infrahub-sync: the task manager's PostgreSQL server is not accepting connections" >&2
+          exit 1
+        fi
+        sleep 2
+      done
 
       # `psql -c` interpolates nothing, so every operator-supplied value crosses
       # into SQL through a bound variable and PostgreSQL's own quoting functions.
@@ -334,23 +301,31 @@ configs:
       SELECT format(
         'CREATE DATABASE %I OWNER %I', :'database', :'role'
       ) WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'database') \gexec
+      -- A database of that name owned by another role is someone else's data on a
+      -- server Sync shares with Infrahub: refuse rather than adopt it.
+      SELECT format(
+        'DO $$body$$ BEGIN RAISE EXCEPTION %L; END $$body$$',
+        'infrahub-sync: database ' || :'database' || ' is owned by another role'
+      ) WHERE EXISTS (
+        SELECT 1 FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba
+        WHERE d.datname = :'database' AND r.rolname <> :'role'
+      ) \gexec
+      -- The password follows `.env`, so a regenerated credential takes effect on
+      -- the next start instead of leaving the services unable to connect.
+      SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'role', :'password') \gexec
+      -- Other roles on the shared server cannot connect to Sync's database.
+      SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', :'database') \gexec
       SQL
 
-      psql --set=ON_ERROR_STOP=1 --quiet \
-        --set=role="$${INFRAHUB_SYNC_PREFECT_ROLE}" \
-        --set=password="$${INFRAHUB_SYNC_PREFECT_PASSWORD}" \
-        --set=database="$${INFRAHUB_SYNC_PREFECT_DATABASE}" \
-        --file=/dev/stdin <<'SQL'
-      SELECT format(
-        'CREATE ROLE %I LOGIN PASSWORD %L', :'role', :'password'
-      ) WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') \gexec
-      SELECT format(
-        'CREATE DATABASE %I OWNER %I', :'database', :'role'
-      ) WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'database') \gexec
-      SQL
-
-      echo "infrahub-sync: product and Prefect roles and databases are present"
+      echo "infrahub-sync: product role and database are present"
 
 volumes:
-  postgres-data:
   object-store-data:
+
+networks:
+  # Infrahub's Compose network, where its task manager and the task manager's
+  # PostgreSQL server resolve by service name. Infrahub creates it; this file
+  # only joins it.
+  infrahub:
+    external: true
+    name: "${INFRAHUB_NETWORK:-infrahub_default}"

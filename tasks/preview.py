@@ -1,7 +1,7 @@
 """Preview environment: one command from a fresh clone to a testable v3 stack.
 
-`invoke preview.up` brings up a disposable Infrahub instance and a dedicated
-Prefect server (Docker), starts the Sync HTTP API and a Prefect worker from
+`invoke preview.up` brings up a disposable Infrahub instance (Docker), whose
+task manager Sync runs on, starts the Sync HTTP API and a Prefect worker from
 this checkout, and applies the service deployment. It writes nothing to
 Infrahub and admits no Sync run: bringing the stack up is safe to repeat on an
 environment somebody is already using.
@@ -27,6 +27,7 @@ import subprocess  # noqa: S404 -- fixed argv process management for the local p
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from invoke import Context, task
 
@@ -113,8 +114,6 @@ def load_preview_env() -> dict[str, str]:
     image_settings = {
         "INFRAHUB_DOCKER_IMAGE",
         "INFRAHUB_DOCKER_IMAGE_DIGEST",
-        "PREVIEW_PREFECT_IMAGE_TAG",
-        "PREVIEW_PREFECT_IMAGE_DIGEST",
     }
     for key in image_settings & os.environ.keys():
         values[key] = os.environ[key]
@@ -136,8 +135,6 @@ def load_preview_env() -> dict[str, str]:
         "PREVIEW_PREFECT_WORKER_QUERY_SECONDS",
         "VERSION",
         "INFRAHUB_DOCKER_IMAGE_DIGEST",
-        "PREVIEW_PREFECT_IMAGE_TAG",
-        "PREVIEW_PREFECT_IMAGE_DIGEST",
     }
     missing = required - values.keys()
     if missing:
@@ -151,11 +148,6 @@ def load_preview_env() -> dict[str, str]:
         "INFRAHUB_DOCKER_IMAGE_DIGEST"
     ):
         msg = "Change INFRAHUB_DOCKER_IMAGE_DIGEST with VERSION; use an empty value for a local image"
-        raise PreviewError(msg)
-    if values["PREVIEW_PREFECT_IMAGE_TAG"] != shipped.get("PREVIEW_PREFECT_IMAGE_TAG") and values[
-        "PREVIEW_PREFECT_IMAGE_DIGEST"
-    ] == shipped.get("PREVIEW_PREFECT_IMAGE_DIGEST"):
-        msg = "Change PREVIEW_PREFECT_IMAGE_DIGEST with PREVIEW_PREFECT_IMAGE_TAG"
         raise PreviewError(msg)
     return values
 
@@ -189,6 +181,12 @@ def _runtime_env(values: dict[str, str]) -> dict[str, str]:
     """
     urls = preview_urls(values)
     env = dict(os.environ)
+    # The task manager's PostgreSQL role, resolved as Compose resolves it for the
+    # containers: the env files first, then the shell, then Infrahub's default.
+    db_user, db_password = (
+        quote(values.get(name) or env.get(name) or "postgres", safe="")
+        for name in ("INFRAHUB_TASKMANAGER_DB_USER", "INFRAHUB_TASKMANAGER_DB_PASSWORD")
+    )
     for retired in RETIRED_SERVICE_SETTINGS:
         env.pop(retired, None)
     env.update(
@@ -201,7 +199,7 @@ def _runtime_env(values: dict[str, str]) -> dict[str, str]:
             "PREFECT_API_URL": f"{urls['prefect']}/api",
             "INFRAHUB_SYNC_CONFIG_DIRECTORY": str(REPO_ROOT / "examples"),
             "INFRAHUB_SYNC_DATABASE_URL": (
-                f"postgresql://postgres:postgres@127.0.0.1:{values['PREVIEW_STORAGE_POSTGRES_PORT']}/infrahub_sync"
+                f"postgresql://{db_user}:{db_password}@127.0.0.1:{values['PREVIEW_STORAGE_POSTGRES_PORT']}/infrahub_sync"
             ),
             "INFRAHUB_SYNC_S3_BUCKET": values["PREVIEW_S3_BUCKET"],
             "INFRAHUB_SYNC_S3_PREFIX": "infrahub-sync",
@@ -521,6 +519,8 @@ def up(context: Context) -> None:
     STATE_DIR.mkdir(exist_ok=True)
 
     print(f" - [{NAMESPACE}] Starting containers (first run downloads images)")
+    # `sync-storage-ready` depends on the one-shot database and bucket jobs completing
+    # successfully, so this returns only once they have, and fails when either fails.
     _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} --quiet-pull", values)
     _wait_for_http(f"{urls['infrahub']}/api/config", "Infrahub")
     _wait_for_http(f"{urls['prefect']}/api/health", "Prefect")

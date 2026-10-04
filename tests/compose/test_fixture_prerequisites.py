@@ -36,7 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # The case whose own request order put the side effect ahead of the prerequisite.
 INCIDENT = "tests/compose/test_lifecycle.py::test_a_plan_apply_and_separate_sync_run_through_the_replacement_worker"
 # A case that reaches `sync_image` first, used to cache its refusal before the one above.
-EARLIER_REFUSAL = "tests/compose/test_bootstrap_idempotence.py::test_the_first_bootstrap_created_the_two_databases_and_their_owner_roles"
+EARLIER_REFUSAL = "tests/compose/test_bootstrap_idempotence.py::test_the_first_bootstrap_created_the_product_database_and_its_owner_role"
 
 # Answers the daemon probe and records every call to the one subprocess boundary
 # the compose fixtures reach Docker, Compose and infrahubctl through. Nothing the
@@ -157,10 +157,12 @@ def test_a_named_image_runs_the_fixture_through_start_seed_and_teardown(monkeypa
     assert held.startswith("docker image inspect"), held
     assert held.endswith(reference), held
 
-    fixture = inspect.unwrap(conftest.infrahub_fixture)(reference)
+    fixture = inspect.unwrap(conftest.infrahub_fixture)(reference, {"administrator": "fixture-canary"})
     provided = next(fixture)
     assert provided["address"] == f"http://127.0.0.1:{FIXTURE_INFRAHUB_PORT}"
     assert provided["token"]
+    assert provided["network"] == f"{FIXTURE_PROJECT}_default"
+    assert provided["task_manager_db"] == f"{FIXTURE_PROJECT}-task-manager-db-1"
     started, loaded, seeded = calls
     assert f"--project-name {FIXTURE_PROJECT}" in started
     assert "up --detach --wait" in started

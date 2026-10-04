@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+from typing_extensions import Self
 
 pytest.importorskip("prefect")
 
@@ -30,8 +31,9 @@ from prefect.client.orchestration import get_client
 from prefect.client.schemas.actions import WorkPoolCreate
 from prefect.client.schemas.objects import StateType, WorkerStatus
 from prefect.testing.utilities import prefect_test_harness
-from prefect.workers.process import ProcessWorker
+from prefect.workers.process import ProcessJobConfiguration, ProcessWorker, ProcessWorkerResult
 
+from infrahub_sync.service import worker as worker_module
 from infrahub_sync.service.orchestration import SERVICE_DEFINITION
 from infrahub_sync.service.worker import ServiceFlowRunRefusedError, ServiceProcessWorker, service_worker_name
 
@@ -89,13 +91,20 @@ class _Client:
 
 
 class _Runner:
+    """Stands in for the child start, the step after admission and identity checks."""
+
     def __init__(self) -> None:
         self.starts: list[dict[str, Any]] = []
 
-    async def execute_flow_run(self, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401 - pinned Prefect runner shape.
-        self.starts.append(kwargs)
-        kwargs["task_status"].started(42)
-        return SimpleNamespace(returncode=0, pid=42)
+    async def start(
+        self,
+        flow_run: FlowRun,
+        configuration: ProcessJobConfiguration,
+        task_status: Any,  # noqa: ANN401
+    ) -> ProcessWorkerResult:
+        self.starts.append({"flow_run_id": flow_run.id, "configuration": configuration, "env": configuration.env})
+        task_status.started(42)
+        return ProcessWorkerResult(status_code=0, identifier="42")
 
 
 class _TaskStatus:
@@ -121,7 +130,7 @@ async def _worker(
     worker._work_pool = cast("WorkPool", SimpleNamespace(id=POOL_ID, name=POOL_NAME, base_job_template=template))
     await worker._refresh_worker_identity()
     runner = _Runner()
-    worker._runner = cast("Any", runner)
+    worker._start_child = cast("Any", runner.start)  # type: ignore[method-assign]
     worker._emit_flow_run_submitted_event = cast("Any", lambda _configuration: None)  # type: ignore[method-assign]
     worker._give_worker_labels_to_flow_run = cast("Any", AsyncMock())  # type: ignore[method-assign]
     worker._propose_submitting_state = cast("Any", AsyncMock())  # type: ignore[method-assign]
@@ -178,6 +187,12 @@ async def test_the_service_deployment_as_applied_is_started() -> None:
     assert not isinstance(result, Exception)
     assert len(runner.starts) == 1
     cast("AsyncMock", worker._propose_crashed_state).assert_not_awaited()
+    # Prefect 3.8.6 runs an unconfigured command through its workspace supervisor,
+    # which re-resolves the deployment and may pick another launcher; only a
+    # configured command is run exactly as admitted.
+    configuration = runner.starts[0]["configuration"]
+    assert configuration._command_configured is True
+    assert configuration.command == worker_module._SERVICE_CHILD_COMMAND
 
 
 async def test_a_flow_run_without_a_deployment_is_refused() -> None:
@@ -370,7 +385,7 @@ async def test_a_real_server_run_of_a_foreign_deployment_is_crashed_and_never_st
     async with worker:
         await worker.sync_with_backend()
         assert worker.backend_id is not None, "the real server did not issue an identity"
-        worker._runner = cast("Any", runner)
+        worker._start_child = cast("Any", runner.start)  # type: ignore[method-assign]
         await worker.get_and_submit_flow_runs()
 
     started = {start["flow_run_id"] for start in runner.starts}
@@ -384,3 +399,79 @@ async def test_a_real_server_run_of_a_foreign_deployment_is_crashed_and_never_st
         admitted_state = (await client.read_flow_run(admitted.id)).state
         assert admitted_state is not None
         assert admitted_state.type != StateType.CRASHED
+
+
+async def test_an_admitted_run_starts_the_admitted_command_and_never_reads_the_deployment_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real `ServiceProcessWorker` start step on Prefect 3.8.6.
+
+    Only the process start and its executor context are replaced. The deployment
+    record is server data anyone who can write to the task manager can change after
+    admission, so neither the child nor the parent's crash and cancellation hooks
+    may read it again: the child is pinned to the installed entrypoint, and the
+    parent's hook resolver returns the installed flow.
+    """
+    starts: list[dict[str, Any]] = []
+    resolvers: list[Any] = []
+
+    class Starter:
+        def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401 - Prefect's starter keywords.
+            starts.append(kwargs)
+
+    class Executor:
+        async def submit(self, *, task_status: Any) -> SimpleNamespace:  # noqa: ANN401, PLR6301
+            handle = SimpleNamespace(pid=42)
+            task_status.started(handle)
+            return SimpleNamespace(status_code=0, handle=handle)
+
+    class Context:
+        control_channel = None
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        def create_executor(self, _flow_run: object, starter: object, **kwargs: Any) -> Executor:  # noqa: ANN401, PLR6301
+            assert isinstance(starter, Starter), "the child went through Prefect's workspace supervisor"
+            resolvers.append(kwargs["resolve_flow"])
+            return Executor()
+
+    def read_again(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("the deployment was read again after admission")
+
+    monkeypatch.setattr(worker_module, "EngineCommandStarter", Starter)
+    monkeypatch.setattr(worker_module, "FlowRunExecutorContext", Context)
+    monkeypatch.setattr("prefect.flows.load_flow_from_flow_run", read_again)
+    worker, _runner = await _worker(_service_deployment())
+    del worker._start_child  # the real start step, not the test stand-in
+
+    result, status = await _submit(worker, _flow_run())
+
+    assert not isinstance(result, Exception), result
+    assert status.values == [42]
+    assert len(starts) == 1
+    assert starts[0]["command"] == worker_module._SERVICE_CHILD_COMMAND
+    assert starts[0]["env"]["PREFECT__WORKER_ID"] == str(worker.backend_id)
+    assert starts[0]["env"]["PREFECT__FLOW_ENTRYPOINT"] == SERVICE_DEFINITION.entrypoint
+    assert not worker._identity_lock.locked(), "the identity lease was not released after the start"
+    resolved = await resolvers[0](_flow_run())
+    assert resolved.name == SERVICE_DEFINITION.flow_name
+
+
+async def test_a_configuration_whose_command_is_not_configured_is_refused() -> None:
+    """Prefect would run it through its workspace supervisor, so admission refuses it."""
+    worker, _runner = await _worker(_service_deployment())
+    flow_run = _flow_run()
+    deployment = cast("Any", worker._client).deployment
+    flow = cast("Any", SimpleNamespace(id=SERVICE_FLOW_ID, name=SERVICE_DEFINITION.flow_name, labels={}))
+    configuration = worker_module.ServiceProcessJobConfiguration(command=None, env={})
+    configuration.prepare_for_flow_run(flow_run, deployment, flow, worker._work_pool)
+    assert configuration._command_configured is True
+    configuration._command_configured = False
+
+    reason = worker_module._admission_refusal(configuration, flow_run, deployment, flow, worker._work_pool)
+
+    assert reason == "child command is not configured explicitly"

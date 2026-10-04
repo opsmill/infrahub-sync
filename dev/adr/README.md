@@ -49,6 +49,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0016 — The Compose deployment is one tag-pinned file](0016-the-compose-deployment-is-one-tag-pinned-file.md)
   — why the wrapper and digest binding became a root `docker-compose.yml` pinned by the
   release commit, and what was given up.
+- [0017 — Sync runs on Infrahub's task manager](0017-sync-runs-on-infrahubs-task-manager.md)
+  — why Sync dropped its own Prefect and PostgreSQL servers, the exact Prefect pin that follows
+  Infrahub, and what sharing the task manager costs.
 
 ## Related
 

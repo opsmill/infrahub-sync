@@ -28,6 +28,7 @@ from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.orchestration import SERVICE_DEFINITION
 from infrahub_sync.service.worker import ServiceProcessWorker, ServiceWorkerIdentityError, service_worker_name
 from tests.service.execution_fixtures import append_execution
+from tests.service.worker_fakes import stub_child_start_with
 
 if TYPE_CHECKING:
     from prefect.client.schemas.objects import FlowRun, WorkPool
@@ -152,7 +153,7 @@ class _Runner:
 
 def _stub_submission(worker: ServiceProcessWorker) -> _Runner:
     runner = _Runner()
-    worker._runner = cast("Any", runner)
+    stub_child_start_with(worker, runner)
     worker._emit_flow_run_submitted_event = cast("Any", lambda _configuration: None)  # type: ignore[method-assign]
     worker._give_worker_labels_to_flow_run = cast("Any", AsyncMock())  # type: ignore[method-assign]
     worker._propose_submitting_state = cast("Any", AsyncMock())  # type: ignore[method-assign]
@@ -375,8 +376,8 @@ async def test_recurring_sync_clears_readiness_until_identity_is_refreshed(
     assert worker._has_successfully_synced
 
 
-async def test_prefect_381_injects_the_resolved_worker_uuid_into_the_actual_child_environment() -> None:
-    assert prefect_version == "3.8.1"
+async def test_prefect_386_puts_the_resolved_worker_uuid_in_the_prepared_child_environment() -> None:
+    assert prefect_version == "3.8.6"
     worker = _worker("service-a", [_record("service-a", FIRST_WORKER_ID)])
     await worker._refresh_worker_identity()
     flow_run = cast("FlowRun", _flow_run())
@@ -444,7 +445,7 @@ async def test_child_refuses_stale_identity_after_start_before_claim(
                     claim_errors.append(exc)
             return SimpleNamespace(returncode=0, pid=42)
 
-    worker._runner = cast("Any", _ClaimRunner())
+    stub_child_start_with(worker, _ClaimRunner())
 
     async def _base_sync(self: ProcessWorker) -> None:
         await self._initialize_after_sync()

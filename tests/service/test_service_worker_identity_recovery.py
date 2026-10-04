@@ -43,6 +43,7 @@ from infrahub_sync.service.worker import (
     ServiceWorkerIdentityError,
     service_worker_name,
 )
+from tests.service.worker_fakes import stub_child_start_with
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -181,7 +182,7 @@ class _StubRunner:
 def stub_child_start(worker: ServiceProcessWorker) -> _StubRunner:
     """Keep the child unspawned, so a start is observable without running one."""
     runner = _StubRunner()
-    worker._runner = cast("Any", runner)
+    stub_child_start_with(worker, runner)
     return runner
 
 

@@ -50,7 +50,7 @@ FORMS = [
     pytest.param(f"authorization: bearer {PLANTED}", "a lowercased header", id="bearer-lowercase"),
     pytest.param(f"AWS_SECRET_ACCESS_KEY={PLANTED}", "an environment entry", id="assignment-env"),
     pytest.param(f"INFRAHUB_API_TOKEN={PLANTED}", "a destination credential entry", id="assignment-token"),
-    pytest.param(f"INFRAHUB_SYNC_PREFECT_PASSWORD={PLANTED}", "a role password entry", id="assignment-password"),
+    pytest.param(f"INFRAHUB_TASKMANAGER_DB_PASSWORD={PLANTED}", "a role password entry", id="assignment-password"),
     pytest.param(f'"AWS_SECRET_ACCESS_KEY": "{PLANTED}"', "a JSON member", id="json-member"),
     pytest.param(f'{{"operator": {{"token": "{PLANTED}"}}}}', "a nested JSON principal", id="json-nested"),
     pytest.param(f"  INFRAHUB_API_TOKEN: {PLANTED}", "a YAML mapping entry", id="yaml-entry"),
@@ -244,7 +244,7 @@ def test_a_failing_compose_command_renders_no_credential(
     del compose_version
 
     refused = compose(
-        ["config", "--format", "json"], environment={**leaking_environment, "INFRAHUB_SYNC_PREFECT_PASSWORD": ""}
+        ["config", "--format", "json"], environment={**leaking_environment, "INFRAHUB_SYNC_PRODUCT_PASSWORD": ""}
     )
 
     assert refused.returncode != 0

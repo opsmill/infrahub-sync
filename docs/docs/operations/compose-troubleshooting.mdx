@@ -26,7 +26,7 @@ The message wording can change; the code stays the same.
 | Compose fails to parse `configs.db-bootstrap-script.content` | Compose is older than 2.24. Upgrade it; check with `docker compose version --short`. |
 | `<NAME> is required` | A required credential is missing from `.env`. Compose prints this before any container starts, from `docker compose config --quiet` or `up`. Add the named variable. |
 | A pull error naming `registry.opsmill.io/opsmill/infrahub-sync:<version>` | The image cannot be pulled. Check `docker login registry.opsmill.io`, which is needed until 3.0.0, then `VERSION` and `INFRAHUB_SYNC_DOCKER_IMAGE`. See [Choose an image](../compose-deployment#choose-an-image). |
-| `up` fails on a port publication | Another process holds the port. Set `INFRAHUB_SYNC_API_PORT` or `INFRAHUB_SYNC_PREFECT_PORT` in `.env`. |
+| `up` fails on a port publication | Another process holds the port. Set `INFRAHUB_SYNC_API_PORT` in `.env`. |
 | The services run an unexpected image | A `VERSION` or `INFRAHUB_SYNC_DOCKER_IMAGE` exported in your shell overrides `.env`. Unset it, then run `docker compose up -d --wait`. |
 
 ## Failures after the start
@@ -36,7 +36,7 @@ The message wording can change; the code stays the same.
 | No container is running | Run `docker compose up -d --wait`. |
 | `worker.state` is `no-live-worker` | Read the worker logs, then run `docker compose restart sync-api sync-worker`. It keeps the durable records. A paused or hung worker still looks `running` to Docker; only the worker state shows it, after three missed heartbeats or 30 seconds. |
 | A changed `.env` value has no effect | A container reads its environment once, when it is created. Run `docker compose up -d --wait`, not `restart`. |
-| You want to delete all data and begin again | Follow the [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment). `docker compose down --volumes` cannot be undone. |
+| You want to delete all data and begin again | Follow the [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment). `docker compose down --volumes` and dropping Sync's database cannot be undone. |
 
 The [stop, restart, and reset procedure](../compose-deployment#stop-restart-and-reset)
 describes each action. A reset followed by a fresh deployment is not an upgrade: the new

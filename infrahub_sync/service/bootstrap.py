@@ -33,6 +33,8 @@ from prefect.workers.process import ProcessWorker
 
 from .deploy import WORK_POOL_ENV
 from .deploy import main as apply_deployment
+from .orchestration import SERVICE_DEFINITION
+from .prefect_server import PrefectServerCheckError, check_prefect_server
 from .storage import (
     S3_BUCKET_ENV,
     S3_ENDPOINT_ENV,
@@ -60,6 +62,8 @@ WORK_POOL_UNAVAILABLE = "work-pool-unavailable"
 WORK_POOL_CONFLICT = "work-pool-conflict"
 DEPLOYMENT_FAILED = "deployment-failed"
 PRODUCT_STORE_UNAVAILABLE = "product-store-unavailable"
+PREFECT_SERVER_UNSUPPORTED = "prefect-server-unsupported"
+DEPLOYMENT_OWNED_ELSEWHERE = "deployment-owned-by-another-pool"
 SETTING_MISSING = "required-setting-missing"
 
 
@@ -129,10 +133,38 @@ def _required(name: str) -> str:
     return value
 
 
+async def refuse_a_deployment_of_another_pool(client: Any, pool: str) -> None:
+    """Refuse when the service deployment already sends its runs to another pool.
+
+    One Infrahub task manager holds one Sync deployment: the service's Prefect
+    deployment name is fixed. A deployment already bound to another pool means a
+    second Sync installation on the same task manager, and applying ours would move
+    its runs to this installation's workers.
+    """
+    try:
+        existing = await client.read_deployment_by_name(SERVICE_DEFINITION.key)
+    except ObjectNotFound:
+        return
+    except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+        raise BootstrapError(WORK_POOL_UNAVAILABLE) from None
+    if existing.work_pool_name not in {None, pool}:
+        logger.error(
+            "the service deployment already runs in work pool %r; one task manager holds one Sync deployment",
+            existing.work_pool_name,
+        )
+        raise BootstrapError(DEPLOYMENT_OWNED_ELSEWHERE)
+
+
 async def _converge_pool(name: str) -> bool:
-    """Own one Prefect client for the one step that needs one."""
+    """Own one Prefect client for the steps that need one."""
     async with get_client() as client:
+        await refuse_a_deployment_of_another_pool(client, name)
         return await converge_work_pool(client, name)
+
+
+def _check_prefect_server() -> None:
+    """Own one event loop for the Prefect server's version check."""
+    asyncio.run(check_prefect_server())
 
 
 def _converge() -> None:
@@ -142,6 +174,14 @@ def _converge() -> None:
     the pool read-then-create, and the installed deployment's own entry point --
     and a loop already running here would leave the second unable to start one.
     """
+    # Before anything is written to the task manager: Infrahub's Prefect server is
+    # not Sync's, and a server of another version gets no pool or deployment.
+    try:
+        _check_prefect_server()
+    except PrefectServerCheckError as error:
+        logger.error("%s", error)  # noqa: TRY400 - the check's message is secret-safe by construction.
+        raise BootstrapError(PREFECT_SERVER_UNSUPPORTED) from None
+
     try:
         client = boto3.client(
             "s3",

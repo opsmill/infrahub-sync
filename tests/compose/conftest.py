@@ -149,9 +149,8 @@ SCRATCH_OPTIONS = "uid=10001,gid=10001,mode=0700"
 # have to be well formed: the contract suite never starts a container, so no
 # value here reaches a process. A resolved model is what is under test.
 CONTRACT_ENVIRONMENT: dict[str, str] = {
-    "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD": "contract-administrator-password",
+    "INFRAHUB_TASKMANAGER_DB_PASSWORD": "contract-administrator-password",
     "INFRAHUB_SYNC_PRODUCT_PASSWORD": "contract-product-password",
-    "INFRAHUB_SYNC_PREFECT_PASSWORD": "contract-prefect-password",
     "INFRAHUB_SYNC_PREFECT_AUTH_STRING": "contract-prefect-auth-string",
     "INFRAHUB_SYNC_S3_ACCESS_KEY": "contract-access-key",
     "INFRAHUB_SYNC_S3_SECRET_KEY": "contract-secret-key",
@@ -311,6 +310,14 @@ def mount_sources(definition: Mapping[str, Any]) -> set[str]:
 # share one session-scoped stack, so they run single-process.
 
 FIXTURE_PROJECT = "infrahub-sync-suite-fixture"
+# Sync deployments join the fixture's Compose network and use its task manager and
+# that task manager's PostgreSQL server, as an operator deployment joins Infrahub's.
+FIXTURE_NETWORK = f"{FIXTURE_PROJECT}_default"
+FIXTURE_TASK_MANAGER_DB = f"{FIXTURE_PROJECT}-task-manager-db-1"
+# The fixture's own host ports for the task manager and its database, so a
+# developer's preview stack can keep running beside the suite.
+FIXTURE_PREFECT_PORT = "4262"
+FIXTURE_POSTGRES_PORT = "5462"
 # Deliberately not the development stack's own port: a developer's preview keeps
 # working while this suite runs its own copy of the same pinned release.
 FIXTURE_INFRAHUB_PORT = "8081"
@@ -368,7 +375,7 @@ def sync_image(docker_daemon: None) -> str:
     return reference
 
 
-def _infrahub_environment() -> dict[str, str]:
+def _infrahub_environment(task_manager_db_password: str) -> dict[str, str]:
     """The settings the pinned fixture stack and its seed both read."""
     from tasks.preview import (
         ENV_FILE,
@@ -381,6 +388,11 @@ def _infrahub_environment() -> dict[str, str]:
         **values,
         "COMPOSE_PROJECT_NAME": FIXTURE_PROJECT,
         "PREVIEW_INFRAHUB_PORT": FIXTURE_INFRAHUB_PORT,
+        "PREVIEW_PREFECT_PORT": FIXTURE_PREFECT_PORT,
+        "PREVIEW_STORAGE_POSTGRES_PORT": FIXTURE_POSTGRES_PORT,
+        # The administrator canary: the Sync deployments' database bootstrap presents
+        # it, so it must never surface in their output.
+        "INFRAHUB_TASKMANAGER_DB_PASSWORD": task_manager_db_password,
         # The development stack publishes on loopback, which the bundle's worker
         # cannot reach: on Linux its host route is the Docker bridge gateway. This
         # session-scoped fixture is removed afterwards, so it is widened here alone.
@@ -389,13 +401,14 @@ def _infrahub_environment() -> dict[str, str]:
 
 
 @pytest.fixture(scope="session")
-def infrahub_fixture(sync_image: str) -> Iterator[dict[str, str]]:
-    """One pinned Infrahub 1.10.6, seeded with the smoke schema, device, and branch.
+def infrahub_fixture(sync_image: str, canaries: dict[str, str]) -> Iterator[dict[str, str]]:
+    """One pinned Infrahub 1.11.4, seeded with the smoke schema, device, and branch.
 
     Test infrastructure, never a service of the operator deployment: it is started
     from the development stack's own pinned files, published on its own port, and
     removed with its volumes afterwards. Only `infrahub-server`, `task-worker`
-    and their dependency closure are started; the development stack's own
+    and their dependency closure, which includes the task manager and its
+    PostgreSQL server every Sync deployment of the suite runs on, are started; the development stack's own
     `sync-*` services are not part of what this fixture provides.
 
     Depends on `sync_image`, which carries the daemon prerequisite with it: the
@@ -404,7 +417,7 @@ def infrahub_fixture(sync_image: str) -> Iterator[dict[str, str]]:
     del sync_image
     from tasks.preview import COMPOSE_FILES, ENV_FILE, SCHEMA_FILE, ensure_smoke_branch
 
-    values = _infrahub_environment()
+    values = _infrahub_environment(canaries["administrator"])
     # The fixture's administrator token is the destination credential the deployment
     # resolves, so it is a secret of this session like any generated canary.
     SECRETS.register(values["INFRAHUB_INITIAL_ADMIN_TOKEN"])
@@ -445,7 +458,12 @@ def infrahub_fixture(sync_image: str) -> Iterator[dict[str, str]]:
         )
         assert loaded.returncode == 0, f"the fixture schema did not load: {loaded.output}"
         ensure_smoke_branch(seed_environment)
-        yield {"address": address, "token": values["INFRAHUB_INITIAL_ADMIN_TOKEN"]}
+        yield {
+            "address": address,
+            "token": values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
+            "network": FIXTURE_NETWORK,
+            "task_manager_db": FIXTURE_TASK_MANAGER_DB,
+        }
     finally:
         run(["down", "--volumes", "--remove-orphans"], timeout=FIXTURE_READY_SECONDS)
 
@@ -471,7 +489,7 @@ def canaries() -> dict[str, str]:
     return planted
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def deployment(
     sync_image: str,
     infrahub_fixture: dict[str, str],
@@ -479,6 +497,10 @@ def deployment(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[Any]:
     """One started, converged, endpoint-ready deployment shared by the whole module.
+
+    Module-scoped: one task manager holds one Sync deployment, because the service's
+    Prefect deployment name is fixed. Modules run one after another, so at most one
+    Sync deployment exists on the fixture's task manager at a time.
 
     The destination is the pinned fixture, reached through the host gateway the
     test-only override adds. The operator file itself neither joins that stack's
@@ -499,14 +521,21 @@ def deployment(
         image=sync_image,
         destination_token=infrahub_fixture["token"],
         canaries=canaries,
+        instance=instance,
+        infrahub_network=infrahub_fixture["network"],
     )
-    started = Deployment(instance=instance, environment_file=environment_file, overrides=(FIXTURE_OVERRIDE,))
+    started = Deployment(
+        instance=instance,
+        environment_file=environment_file,
+        overrides=(FIXTURE_OVERRIDE,),
+        task_manager_database_container=infrahub_fixture["task_manager_db"],
+    )
     result = started.up("sync-api", "sync-worker")
     if result.returncode != 0:
         # Bootstrap first: it is the step every other service waits on, and a
         # tail of the whole project is almost entirely PostgreSQL's own startup.
         detail = started.logs("sync-bootstrap", "sync-api", "sync-worker", tail=80)
-        started.down(volumes=True)
+        started.down(data=True)
         pytest.fail(f"the deployment did not start: {result.stderr[-1500:]}\n{detail.output[-4000:]}")
     try:
         wait_for(
@@ -515,4 +544,4 @@ def deployment(
         )
         yield started
     finally:
-        started.down(volumes=True)
+        started.down(data=True)

@@ -1,11 +1,13 @@
 """A deployment that starts, repeats and resets with no configuration at all.
 
-Sync-owned only. This module starts one real deployment of the image under test
-from the root `docker-compose.yml`, drives it with the plain `docker compose`
-commands an operator uses, and it depends on no external system: no Infrahub, no source, no destination, no credential for one.
-That is the property — a deployment reaches READY on its own dependencies, holds
-an empty registry until an operator registers something, and comes back empty
-after `docker compose down --volumes`.
+This module starts one real deployment of the image under test from the root
+`docker-compose.yml` and drives it with the plain `docker compose` commands an
+operator uses. Its one external system is the Infrahub fixture whose task manager
+and PostgreSQL server every Sync deployment runs on: no source, no destination,
+no credential for one. That is the property — a deployment reaches READY on its
+own dependencies, holds an empty registry until an operator registers something
+through the API, and comes back empty after the documented reset: `docker compose
+down --volumes` and a dropped product database.
 
 The package registered here declares unreachable external addresses and
 credential references nothing resolves. Registration is content admission and
@@ -43,7 +45,6 @@ pytestmark = pytest.mark.compose
 # This module's own loopback ports, so it can run beside every other deployment
 # this suite starts.
 API_PORT = "8051"
-PREFECT_PORT = "4251"
 
 # Addresses that resolve to nothing and a credential nothing sets. A registration
 # admits declared content, so this package is registrable and unusable — which is
@@ -140,26 +141,31 @@ def wait_until_ready(deployment: Deployment) -> None:
 
 @pytest.fixture(scope="module")
 def started(
-    sync_image: str, canaries: dict[str, str], tmp_path_factory: pytest.TempPathFactory
+    sync_image: str,
+    infrahub_fixture: dict[str, str],
+    canaries: dict[str, str],
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> Iterator[Deployment]:
     """One fresh project of the operator file, taken to READY with no configuration.
 
     Its `.env` carries the required credentials and nothing else: no destination
     or source credential is set, which is the whole point of this module.
     """
+    instance = f"startup{uuid.uuid4().hex[:12]}"
     environment_file = operator_environment(
         tmp_path_factory.mktemp(f"startup{uuid.uuid4().hex[:8]}"),
         image=sync_image,
         destination_token="",
         canaries=canaries,
+        instance=instance,
+        infrahub_network=infrahub_fixture["network"],
         api_port=int(API_PORT),
-        prefect_port=int(PREFECT_PORT),
     )
     deployment = Deployment(
-        instance=f"startup{uuid.uuid4().hex[:12]}",
+        instance=instance,
         environment_file=environment_file,
         api_port=int(API_PORT),
-        prefect_port=int(PREFECT_PORT),
+        task_manager_database_container=infrahub_fixture["task_manager_db"],
     )
     launched = deployment.up()
     assert launched.returncode == 0, launched.stderr[-3000:]
@@ -167,7 +173,7 @@ def started(
         wait_until_ready(deployment)
         yield deployment
     finally:
-        deployment.down(volumes=True)
+        deployment.down(data=True)
 
 
 @pytest.fixture(scope="module")
@@ -244,13 +250,13 @@ def test_stop_and_up_preserve_the_registered_package(started: Deployment) -> Non
     assert [event for event in probe_json(started, AUDIT) if event.startswith(f"{RETIRED_BOOTSTRAP_ACTOR}/")] == []
 
 
-def test_down_volumes_and_the_next_up_comes_back_empty(started: Deployment) -> None:
-    """What `docker compose down --volumes` is for, from the other side of a real second start.
+def test_a_reset_and_the_next_up_comes_back_empty(started: Deployment) -> None:
+    """What the documented reset is for, from the other side of a real second start.
 
     Runs last: it takes this module's deployment down, with its data, and brings
     it up again from nothing under the same project name.
     """
-    removed = started.down(volumes=True)
+    removed = started.down(data=True)
     assert removed.returncode == 0, removed.stderr
 
     launched = started.up()

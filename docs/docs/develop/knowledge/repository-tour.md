@@ -75,17 +75,21 @@ credential references and the connection-free capability declaration in full.
 
 `infrahub_sync/service/` is the optional service extra. It holds the FastAPI application
 (`app.py`, `serve.py`, `config_routes.py`), authentication (`auth.py`), the Prefect worker and
-deployment (`worker.py`, `deploy.py`, `orchestration.py`, `flow.py`), liveness and checkpoint
-policy (`liveness.py`, `checkpoints.py`), per-stage scratch directories (`scratch.py`), the
-write guard (`apply_guard.py`) and artifact storage (`storage.py`).
+deployment (`worker.py`, `deploy.py`, `orchestration.py`, `flow.py`), the task-manager checks
+the API and worker run at startup (`prefect_server.py`), liveness and checkpoint policy
+(`liveness.py`, `checkpoints.py`), per-stage scratch directories (`scratch.py`), the write
+guard (`apply_guard.py`) and artifact storage (`storage.py`).
 
-Two facts about it are often missed:
+Three facts about it are often missed:
 
 - Each stage creates its own private scratch directory. The service reads no shared cache
   location.
 - It resolves its flow as an installed module, so it declares no working directory and needs
   no source tree. That is why the development stack starts the worker from an empty directory
   — see [the local development stack](../../development-stack.mdx).
+- It runs on Infrahub's task manager, not a Prefect server of its own, and its database is a
+  database on Infrahub's task-manager PostgreSQL server. `prefect_server.py` refuses to start
+  against a task manager of another Prefect version.
 
 [The configuration write guard](apply-guard.md) covers the advisory lock that serializes one
 configuration's writes.
@@ -210,8 +214,10 @@ records the upstream commit and the local additions.
   and `preview.local.env`, which Git ignores. Runtime state lives under `.preview/`.
   [Local development stack](../../development-stack.mdx) is the procedure.
 - The root `docker-compose.yml` is the operator deployment. It pulls the released image from
-  `registry.opsmill.io/opsmill/infrahub-sync` and carries its own database bootstrap script;
-  the development stack in `development/docker-compose.dev.yml` builds from the checkout instead.
+  `registry.opsmill.io/opsmill/infrahub-sync`, joins the Infrahub deployment's network and
+  runs on its task manager and task-manager PostgreSQL server, and carries its own database
+  bootstrap script. The development stack in `development/docker-compose.dev.yml` builds from
+  the checkout and runs its own task manager.
   [Compose deployment](../../compose-deployment.mdx) is the operator page.
 - [`examples/`][src-examples] holds fifteen directories, and they are not uniform. Four —
   `aci_to_infrahub`, `custom_adapter`, `netbox_to_infrahub` and

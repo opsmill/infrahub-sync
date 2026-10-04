@@ -267,6 +267,15 @@ class _Probe:
 
 
 service_worker.ServiceProcessWorker = _Probe
+
+
+async def _no_prefect_check():
+    return "checked"
+
+
+import infrahub_sync.service.prefect_server as prefect_server
+
+prefect_server.check_prefect_server = _no_prefect_check
 try:
     report["exit"] = service_worker.main(["--pool", "qualification-pool"])
 finally:

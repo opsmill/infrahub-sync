@@ -43,16 +43,18 @@ ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
-def create_app(
-    service: RunService,
-    resolver: PrincipalResolver,
-    configuration_routes: ConfigurationRoutes | None = None,
-    reconciler: RunLivenessReconciler | None = None,
-) -> FastAPI:
-    """Create the service application from explicit providers."""
+def _service_lifespan(
+    reconciler: RunLivenessReconciler | None,
+    startup_check: Callable[[], Awaitable[object]] | None,
+) -> Callable[[FastAPI], Any]:
+    """Return the app lifespan: the startup check, then the liveness loop until shutdown."""
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
+        # Inside the lifespan, so every way of serving this app runs it: `serve.main`
+        # and `uvicorn --factory ...build_app` alike. A raise here stops the server.
+        if startup_check is not None:
+            await startup_check()
         task = None
         if reconciler is not None:
 
@@ -74,6 +76,20 @@ def create_app(
                 task.cancel()
                 with suppress(CancelledError):
                     await task
+
+    return lifespan
+
+
+def create_app(
+    service: RunService,
+    resolver: PrincipalResolver,
+    configuration_routes: ConfigurationRoutes | None = None,
+    reconciler: RunLivenessReconciler | None = None,
+    startup_check: Callable[[], Awaitable[object]] | None = None,
+) -> FastAPI:
+    """Create the service application from explicit providers."""
+
+    lifespan = _service_lifespan(reconciler, startup_check)
 
     application = FastAPI(title="Infrahub Sync API", version=installed_server_version(), lifespan=lifespan)
     bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")

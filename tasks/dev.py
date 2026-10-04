@@ -16,6 +16,7 @@ from .utils import ESCAPED_REPO_PATH
 NAMESPACE = "INFRAHUB-SYNC-DEV"
 
 API_URL = "http://127.0.0.1:8030"
+# The stack's own Infrahub task manager (see docker-compose.dev.yml).
 PREFECT_URL = "http://127.0.0.1:4230"
 # The development stack's Compose file, relative to the repository root.
 DEV_COMPOSE = "docker compose -f development/docker-compose.dev.yml"
@@ -37,6 +38,7 @@ def build(context: Context, no_cache: bool = False) -> None:  # noqa: FBT001, FB
 def start(context: Context) -> None:
     """Start the local development stack, building the image first if it is absent.
 
+    It runs its own Infrahub task manager, from the image the preview pins.
     When the local NetBox (`invoke netbox.up` or `netbox.seed`) is running, the worker also
     joins NetBox's network, so a package can read NetBox at `http://netbox:8080`.
     """
@@ -55,9 +57,10 @@ def start(context: Context) -> None:
 def destroy(context: Context) -> None:
     """Remove the local development stack, along with its data volumes.
 
-    Destructive by design: the Postgres databases and the object store's buckets go with
-    it, which is what makes the next `invoke start` a first start again. The image the
-    working tree built is kept, so that start does not rebuild.
+    Destructive by design: the task manager's PostgreSQL data, which holds Sync's
+    product database, and the object store's buckets go with it, which is what makes
+    the next `invoke start` a first start again. The image the working tree built is
+    kept, so that start does not rebuild.
     """
     with context.cd(ESCAPED_REPO_PATH):
         context.run(f"{DEV_COMPOSE} down --volumes --remove-orphans", pty=True)

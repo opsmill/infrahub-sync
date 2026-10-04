@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
     from infrahub_sync.product_store import ProductProjection
 
-_REQUEST = httpx.Request("GET", "http://prefect-server:4200/api/work_pools/infrahub-sync")
+_REQUEST = httpx.Request("GET", "http://task-manager:4200/api/work_pools/infrahub-sync")
 _RESPONSE = httpx.Response(404, request=_REQUEST)
 
 BUCKET = "infrahub-sync"
@@ -90,6 +90,10 @@ class _Pool:
 
     async def create_work_pool(self, work_pool: WorkPoolCreate) -> None:
         self.created.append((work_pool.name, work_pool.type))
+
+    @staticmethod
+    async def read_deployment_by_name(_name: str) -> object:
+        raise ObjectNotFound(httpx.HTTPStatusError("404", request=_REQUEST, response=_RESPONSE))
 
 
 def _projection(tmp_path: Path) -> ProductProjection:
@@ -218,11 +222,46 @@ def test_no_registration_path_is_retained_for_a_configured_deployment() -> None:
     assert retained == [], f"the bootstrap still carries the registration surface: {retained}"
 
 
+def _recorded_steps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace every provider step before the schema with one that records its turn.
+
+    The bucket step is replaced too, so that no object-store client is built; it
+    records nothing, since its place is not what these cases assert.
+    """
+    steps: list[str] = []
+
+    async def converge_pool(_name: str) -> bool:  # noqa: RUF029 - stands in for the coroutine `asyncio.run` drives
+        steps.append("work-pool")
+        return False
+
+    def deploy() -> int:
+        steps.append("deployment")
+        return 0
+
+    monkeypatch.setattr(bootstrap, "_required", lambda _name: "present")
+    monkeypatch.setattr(bootstrap.boto3, "client", lambda *_arguments, **_settings: _Bucket())
+    monkeypatch.setattr(bootstrap, "converge_bucket", lambda *_arguments: False)
+    monkeypatch.setattr(bootstrap, "_check_prefect_server", lambda: steps.append("prefect-server"))
+    monkeypatch.setattr(bootstrap, "_converge_pool", converge_pool)
+    monkeypatch.setattr(bootstrap, "apply_deployment", deploy)
+    return steps
+
+
+def test_bootstrap_converges_in_dependency_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The version check precedes every write, and the product schema comes last."""
+    steps = _recorded_steps(monkeypatch)
+    monkeypatch.setattr(bootstrap, "service_product_projection", lambda: steps.append("product-schema"))
+
+    assert bootstrap.main() == 0
+    assert steps == ["prefect-server", "work-pool", "deployment", "product-schema"]
+
+
 def _bootstrap_before_deployment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Replace the successful steps before deployment without leaking a coroutine."""
     monkeypatch.setattr(bootstrap.boto3, "client", lambda *_arguments, **_settings: _Bucket())
     monkeypatch.setattr(bootstrap, "converge_bucket", lambda *_arguments: False)
     monkeypatch.setattr(bootstrap, "_required", lambda _name: "present")
+    monkeypatch.setattr(bootstrap, "_check_prefect_server", lambda: None)
 
     def finish(coroutine: Coroutine[object, object, bool]) -> bool:
         coroutine.close()
@@ -304,6 +343,7 @@ def _bootstrap_before_the_work_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bootstrap.boto3, "client", lambda *_arguments, **_settings: _Bucket())
     monkeypatch.setattr(bootstrap, "converge_bucket", lambda *_arguments: False)
     monkeypatch.setattr(bootstrap, "_required", lambda _name: "present")
+    monkeypatch.setattr(bootstrap, "_check_prefect_server", lambda: None)
 
 
 @pytest.mark.parametrize("context", [_FailsOnEntry, _FailsOnExit], ids=["entering the context", "leaving it"])
@@ -320,3 +360,52 @@ def test_a_real_client_context_failure_stays_behind_the_work_pool_family(
     assert result == 1
     assert "work-pool-unavailable" in caplog.text
     assert PROVIDER_CANARY not in caplog.text
+
+
+def test_a_task_manager_of_another_prefect_version_gets_no_pool_or_deployment(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The version check runs before anything is written to Infrahub's task manager."""
+    from infrahub_sync.service.prefect_server import PrefectVersionMismatchError
+
+    monkeypatch.setattr(bootstrap, "_required", lambda _name: "present")
+    monkeypatch.setattr(bootstrap.boto3, "client", lambda *_arguments, **_settings: _Bucket())
+    monkeypatch.setattr(bootstrap, "converge_bucket", lambda *_arguments: False)
+
+    def mismatch() -> None:
+        server_version = "3.7.5"
+        raise PrefectVersionMismatchError(server_version, "3.8.6")
+
+    monkeypatch.setattr(bootstrap, "_check_prefect_server", mismatch)
+    monkeypatch.setattr(bootstrap, "_converge_pool", lambda _name: pytest.fail("a pool was written"))
+    monkeypatch.setattr(bootstrap, "apply_deployment", lambda: pytest.fail("a deployment was written"))
+
+    with caplog.at_level("ERROR"):
+        result = bootstrap.main()
+
+    assert result == 1
+    assert "prefect-server-unsupported" in caplog.text
+    assert "3.7.5" in caplog.text
+
+
+class _Deployments:
+    def __init__(self, pool: str | None) -> None:
+        self._pool = pool
+
+    async def read_deployment_by_name(self, name: str) -> object:
+        assert name == "infrahub-sync-service/run"
+        if self._pool == "absent":
+            raise ObjectNotFound(httpx.HTTPStatusError("404", request=_REQUEST, response=_RESPONSE))
+        return type("Deployment", (), {"work_pool_name": self._pool})()
+
+
+@pytest.mark.parametrize("existing", ["absent", None, POOL], ids=["no-deployment", "no-pool", "this-pool"])
+async def test_a_deployment_of_this_pool_or_none_is_accepted(existing: str | None) -> None:
+    await bootstrap.refuse_a_deployment_of_another_pool(_Deployments(existing), POOL)
+
+
+async def test_a_deployment_bound_to_another_pool_is_refused_as_a_second_installation() -> None:
+    with pytest.raises(bootstrap.BootstrapError) as caught:
+        await bootstrap.refuse_a_deployment_of_another_pool(_Deployments("another-sync-pool"), POOL)
+
+    assert caught.value.family == bootstrap.DEPLOYMENT_OWNED_ELSEWHERE

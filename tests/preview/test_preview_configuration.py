@@ -47,8 +47,6 @@ def clean_image_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
         "VERSION",
         "INFRAHUB_DOCKER_IMAGE",
         "INFRAHUB_DOCKER_IMAGE_DIGEST",
-        "PREVIEW_PREFECT_IMAGE_TAG",
-        "PREVIEW_PREFECT_IMAGE_DIGEST",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -57,7 +55,6 @@ def clean_image_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     ("override", "digest_name"),
     [
         ("VERSION=9.9.9", "INFRAHUB_DOCKER_IMAGE_DIGEST"),
-        ("PREVIEW_PREFECT_IMAGE_TAG=3.9.0-python3.12", "PREVIEW_PREFECT_IMAGE_DIGEST"),
     ],
 )
 def test_preview_rejects_tag_only_image_overrides(
@@ -120,23 +117,6 @@ def test_preview_accepts_a_registry_mirror_with_the_shipped_digest(
     assert values["INFRAHUB_DOCKER_IMAGE_DIGEST"] == shipped["INFRAHUB_DOCKER_IMAGE_DIGEST"]
 
 
-@pytest.mark.parametrize(
-    ("setting", "value", "digest_name"),
-    [
-        ("PREVIEW_PREFECT_IMAGE_TAG", "3.9.0-python3.12", "PREVIEW_PREFECT_IMAGE_DIGEST"),
-    ],
-)
-def test_preview_rejects_shell_tag_only_overrides(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, setting: str, value: str, digest_name: str
-) -> None:
-    """A shell tag override cannot pair with a digest from preview.env."""
-    monkeypatch.setattr(preview, "LOCAL_ENV_FILE", tmp_path / "preview.local.env")
-    monkeypatch.setenv(setting, value)
-
-    with pytest.raises(preview.PreviewError, match=digest_name):
-        preview.load_preview_env()
-
-
 def test_preview_ignores_unrelated_shell_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The shipped Infrahub version wins over a generic shell variable."""
     monkeypatch.setattr(preview, "LOCAL_ENV_FILE", tmp_path / "preview.local.env")
@@ -144,13 +124,18 @@ def test_preview_ignores_unrelated_shell_version(monkeypatch: pytest.MonkeyPatch
 
     values = preview.load_preview_env()
 
-    assert values["VERSION"] == "1.10.6"
+    assert values["VERSION"] == "1.11.4"
 
 
-def test_preview_routes_prefect_ui_to_the_published_host_port() -> None:
+def test_preview_publishes_infrahubs_task_manager_and_its_database_on_loopback() -> None:
+    """Sync's host processes reach Infrahub's task manager and its PostgreSQL server."""
     compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
 
+    assert '"127.0.0.1:${PREVIEW_PREFECT_PORT:-4210}:4200"' in compose
     assert 'PREFECT_SERVER_UI_API_URL: "http://localhost:${PREVIEW_PREFECT_PORT:-4210}/api"' in compose
+    assert '"127.0.0.1:${PREVIEW_STORAGE_POSTGRES_PORT:-5439}:5432"' in compose
+    assert "sync-prefect:" not in compose
+    assert "sync-postgres:" not in compose
 
 
 def test_preview_declares_the_service_postgresql_and_minio_storage_shape(
@@ -183,7 +168,7 @@ def test_preview_declares_the_service_postgresql_and_minio_storage_shape(
         }
     )
 
-    assert "sync-postgres:" in compose
+    assert "sync-db-bootstrap:" in compose
     assert "sync-minio:" in compose
     assert "sync-minio-bootstrap:" in compose
     assert "mc mb --ignore-existing" in compose
@@ -207,7 +192,7 @@ def test_preview_minio_healthcheck_is_self_contained_before_bootstrap() -> None:
     compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
     minio_start = compose.index("  sync-minio:\n")
     bootstrap_start = compose.index("  sync-minio-bootstrap:\n")
-    bootstrap_end = compose.index("  infrahub-server:\n")
+    bootstrap_end = compose.index("  sync-storage-ready:\n")
     minio_service = compose[minio_start:bootstrap_start]
     bootstrap_service = compose[bootstrap_start:bootstrap_end]
 
@@ -219,8 +204,8 @@ def test_preview_minio_healthcheck_is_self_contained_before_bootstrap() -> None:
     assert "depends_on:\n      sync-minio:\n        condition: service_healthy" in bootstrap_service
 
 
-def test_preview_prefect_waits_for_successful_minio_bootstrap() -> None:
-    """The waited Prefect service exposes bootstrap failure to Compose up --wait."""
+def test_preview_bootstraps_sync_storage_after_its_dependencies() -> None:
+    """The one-shot storage jobs wait for the servers they converge, and `up --wait` waits for them."""
     command = ["docker", "compose", "--project-name", "preview-startup-test", "--env-file", str(ENV_FILE)]
     for compose_file in COMPOSE_FILES:
         command.extend(("-f", str(compose_file)))
@@ -235,9 +220,14 @@ def test_preview_prefect_waits_for_successful_minio_bootstrap() -> None:
     assert services["sync-minio"]["image"] == minio_image
     assert services["sync-minio-bootstrap"]["image"] == minio_image
     assert services["sync-minio-bootstrap"]["depends_on"]["sync-minio"]["condition"] == "service_healthy"
-    assert (
-        services["sync-prefect"]["depends_on"]["sync-minio-bootstrap"]["condition"] == "service_completed_successfully"
-    )
+    assert services["sync-db-bootstrap"]["depends_on"]["task-manager-db"]["condition"] == "service_healthy"
+    assert "createdb infrahub_sync" in " ".join(services["sync-db-bootstrap"]["entrypoint"])
+    # `up --wait` waits a one-shot job for its successful completion only when a
+    # service depends on it that way; otherwise the job's normal exit fails it.
+    ready = services["sync-storage-ready"]["depends_on"]
+    assert set(ready) == {"sync-db-bootstrap", "sync-minio-bootstrap"}, sorted(ready)
+    for job in sorted(ready):
+        assert ready[job]["condition"] == "service_completed_successfully", job
 
 
 def test_preview_up_uses_a_bounded_compose_wait(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

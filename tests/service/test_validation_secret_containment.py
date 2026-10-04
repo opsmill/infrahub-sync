@@ -281,13 +281,21 @@ def _validate(
 ) -> dict[str, Any]:
     """Drive the real serialized validation response for the one registered version."""
     monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": BEARER, "administrator": True}}))
-    app = serve.build_app(projection_factory=lambda: projection)
+    app = serve.build_app(
+        projection_factory=lambda: projection,
+        resolver_factory=EnvironmentPrincipalResolver.from_environment,
+        startup_check=_no_startup_check,
+    )
     response = TestClient(app).post(
         f"/configs/{version.config_id}/versions/{version.registry_version}/validate",
         headers={"Authorization": f"Bearer {BEARER}"},
     )
     assert response.status_code == 200, response.text
     return response.json()
+
+
+async def _no_startup_check() -> None:  # noqa: RUF029 - async check seam
+    return None
 
 
 @pytest.fixture

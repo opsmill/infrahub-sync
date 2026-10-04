@@ -50,20 +50,18 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.compose
 
-# Its own ports, so this deployment and the shared one can both be up.
+# Its own API port. Modules run one at a time, since one task manager holds one
+# Sync deployment.
 API_PORT = "8031"
-PREFECT_PORT = "4231"
 BUSY_OBSERVATION_SECONDS = 30
 # The tail an operator asks `docker compose logs` for, per service.
 LOG_TAIL = 200
 
 # Every service the file declares, used to bound what `logs` may print.
 SERVICES = (
-    "postgres",
     "db-bootstrap",
     "object-store-init",
     "object-store",
-    "prefect-server",
     "sync-bootstrap",
     "sync-api",
     "sync-worker",
@@ -72,9 +70,9 @@ SERVICES = (
 # The credentials written into the `.env`. Their values reach real processes, so
 # the log sweep looks for them rather than for a string planted only to be found.
 GENERATED_SETTINGS = (
-    "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD",
+    "INFRAHUB_TASKMANAGER_DB_PASSWORD",
     "INFRAHUB_SYNC_PRODUCT_PASSWORD",
-    "INFRAHUB_SYNC_PREFECT_PASSWORD",
+    "INFRAHUB_SYNC_PREFECT_AUTH_STRING",
     "INFRAHUB_SYNC_S3_SECRET_KEY",
     "INFRAHUB_SYNC_API_TOKEN",
 )
@@ -143,7 +141,7 @@ def volume_exists(name: str) -> bool:
 
 def plant_foreign_volume() -> str:
     """Create a volume named the way another project's would be."""
-    name = f"infrahub-sync-{uuid.uuid4().hex[:16]}_postgres-data"
+    name = f"infrahub-sync-{uuid.uuid4().hex[:16]}_data"
     created = docker(["volume", "create", "--label", f"{PROJECT_LABEL}=someone-else", name])
     assert created.returncode == 0, created.stderr
     return name
@@ -163,20 +161,22 @@ def started(
     needs neither.
     """
     destination = f"http://{container_reachable_host()}:{FIXTURE_INFRAHUB_PORT}"
+    instance = f"lifecycle{uuid.uuid4().hex[:12]}"
     environment_file = operator_environment(
         tmp_path_factory.mktemp("lifecycle"),
         image=sync_image,
         destination_token=infrahub_fixture["token"],
         canaries=canaries,
+        instance=instance,
+        infrahub_network=infrahub_fixture["network"],
         api_port=int(API_PORT),
-        prefect_port=int(PREFECT_PORT),
     )
     deployment = Deployment(
-        instance=f"lifecycle{uuid.uuid4().hex[:12]}",
+        instance=instance,
         environment_file=environment_file,
         destination=destination,
         api_port=int(API_PORT),
-        prefect_port=int(PREFECT_PORT),
+        task_manager_database_container=infrahub_fixture["task_manager_db"],
     )
     # Started here rather than in the first case, so every case below runs
     # against a deployment that exists however few of them are selected.
@@ -186,7 +186,7 @@ def started(
         wait_until_ready(deployment)
         yield deployment
     finally:
-        deployment.down(volumes=True)
+        deployment.down(data=True)
 
 
 @pytest.fixture(scope="module")
@@ -468,33 +468,36 @@ def test_a_plan_apply_and_separate_sync_run_through_the_replacement_worker(
 # ---------------------------------------------------------------------------
 
 
-def test_down_volumes_removes_only_this_project_and_leaves_a_foreign_volume(started: Deployment) -> None:
-    """`docker compose down --volumes`, the command that replaced `reset`, takes this project only.
+def test_reset_removes_only_this_project_and_leaves_a_foreign_volume(started: Deployment) -> None:
+    """The documented reset, `docker compose down --volumes` and a dropped database, takes this project only.
 
-    Its containers, its network and its two named volumes go. The planted volume
-    is named the way another project's would be, and Compose removes volumes by
-    the names this file declares under this project, so it survives.
+    Its containers, its network, its object-store volume and its product database
+    go, so no volume carries this project's label afterwards. The planted volume is
+    named the way another project's would be, and Compose removes volumes by the
+    names this file declares under this project, so it survives.
     """
     foreign = plant_foreign_volume()
-    owned = [f"{started.project}_postgres-data", f"{started.project}_object-store-data"]
+    owned = [f"{started.project}_object-store-data"]
     try:
         assert all(volume_exists(volume) for volume in owned), owned
 
-        removed = started.down(volumes=True)
+        removed = started.down(data=True)
 
         assert removed.returncode == 0, removed.stderr
         assert [volume for volume in owned if volume_exists(volume)] == []
         remaining = docker(["ps", "--all", "--filter", f"label={PROJECT_LABEL}={started.project}", "--quiet"])
         assert remaining.stdout.split() == []
-        assert volume_exists(foreign), "down --volumes removed a volume this project does not own"
+        labelled = docker(["volume", "ls", "--filter", f"label={PROJECT_LABEL}={started.project}", "--quiet"])
+        assert labelled.stdout.split() == [], labelled.stdout
+        assert volume_exists(foreign), "the reset removed a volume this project does not own"
     finally:
         docker(["volume", "rm", "--force", foreign])
 
 
-def test_the_next_up_after_down_volumes_is_a_cold_bootstrap(started: Deployment) -> None:
-    """What `down --volumes` is for: the deployment comes back with nothing, and comes back working.
+def test_the_next_up_after_a_reset_is_a_cold_bootstrap(started: Deployment) -> None:
+    """What the reset is for: the deployment comes back with nothing, and comes back working.
 
-    A teardown that removed the volumes but left the deployment unable to start
+    A teardown that dropped the database but left the deployment unable to start
     again would be a broken file, and one that started against surviving state
     would not have removed anything. Both are only visible from the other side of
     a real second start, so this drives one.
@@ -505,7 +508,7 @@ def test_the_next_up_after_down_volumes_is_a_cold_bootstrap(started: Deployment)
     """
     # The case above already removed it. Run on its own, this case has to remove
     # it too, or it would be restarting a deployment rather than bootstrapping one.
-    removed = started.down(volumes=True)
+    removed = started.down(data=True)
     assert removed.returncode == 0, removed.stderr
 
     foreign = plant_foreign_volume()
@@ -521,5 +524,5 @@ def test_the_next_up_after_down_volumes_is_a_cold_bootstrap(started: Deployment)
         assert state["configuration_versions"] == [], state["configuration_versions"]
         assert volume_exists(foreign), "the cold start took a volume this project does not own"
     finally:
-        started.down(volumes=True)
+        started.down(data=True)
         docker(["volume", "rm", "--force", foreign])

@@ -10,7 +10,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("prefect")
 
-from infrahub_sync.service import auth, deploy, serve
+from infrahub_sync.service import auth, deploy, prefect_server, serve
 
 RETIRED_NAMES = (
     "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS",
@@ -54,12 +54,15 @@ def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pyte
     captured: dict[str, Any] = {}
 
     class _Reconciler:
-        def __init__(self, _projection: object, _orchestration: object, _policy: object, work_pool: str) -> None:
+        def __init__(
+            self, _projection: object, _orchestration: object, _policy: object, work_pool: str, **_kwargs: object
+        ) -> None:
             captured["work_pool"] = work_pool
 
     monkeypatch.setattr(serve, "RunLivenessReconciler", _Reconciler)
     serve.build_app(
         projection_factory=object,
+        resolver_factory=auth.EnvironmentPrincipalResolver.from_environment,
         run_service_factory=lambda *_args, **_kwargs: object(),
         configuration_routes_factory=lambda **_kwargs: object(),
         app_factory=lambda *args: args,
@@ -68,9 +71,14 @@ def test_a_retired_work_pool_name_is_ignored_by_the_reconciler(monkeypatch: pyte
     assert captured["work_pool"] == "default"
 
 
+async def _no_prefect_check() -> str:  # noqa: RUF029 - async startup-check seam.
+    return "checked"
+
+
 def test_a_retired_host_name_is_ignored_by_the_server(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("INFRAHUB_SYNC_MANAGED_HOST", "10.0.0.1")
     monkeypatch.setattr(serve, "build_app", object)
+    monkeypatch.setattr(prefect_server, "check_prefect_server", _no_prefect_check)
     captured: dict[str, Any] = {}
     monkeypatch.setattr(serve.uvicorn, "run", lambda app, **kwargs: captured.update(app=app, **kwargs))
 

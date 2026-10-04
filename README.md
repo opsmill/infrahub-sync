@@ -84,8 +84,8 @@ checkout. After a code change, run `uv run invoke build && uv run invoke start`.
 | | |
 |---|---|
 | **Sync API** | `http://127.0.0.1:8030` — bearer token `infrahub-sync-dev-token` |
-| **Prefect UI** | `http://127.0.0.1:4230` |
-| **PostgreSQL** | `127.0.0.1:5440` |
+| **Prefect UI** (the stack's own Infrahub task manager) | `http://127.0.0.1:4230` |
+| **PostgreSQL** (the task manager's server, database `infrahub_sync`) | `127.0.0.1:5440` |
 
 ```bash
 curl -sf http://127.0.0.1:8030/version

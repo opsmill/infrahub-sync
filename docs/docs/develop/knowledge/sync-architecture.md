@@ -9,32 +9,33 @@ proposed changes in a saved plan. For example, you can review a plan from NetBox
 Infrahub before approving destination writes.
 
 In the registered service workflow, the CLI submits work to the Sync API and a worker
-executes it through Prefect.
+executes it on Infrahub's task manager, which is Infrahub's Prefect server.
 
 ### Service components
 
-The Compose deployment runs five long-running services on one host:
+The Compose deployment runs three long-running services on one host, next to an Infrahub
+deployment whose task manager and PostgreSQL server it uses:
 
 | Component | Responsibility |
 | --- | --- |
 | Sync API | Accepts configuration packages and run requests; returns product records, plans and results. |
-| Prefect server | Schedules flow runs and records their execution state and logs. |
-| Sync worker | Polls a Prefect work pool and starts a process to execute each service flow run. Its adapters read the source and read or write the destination. |
-| PostgreSQL | Stores Sync product records and Prefect execution records in separate databases. |
+| Sync worker | Polls Sync's own work pool on Infrahub's task manager and starts a process to execute each service flow run. Its adapters read the source and read or write the destination. |
 | S3-compatible object store | Stores immutable artifacts and internal plan checkpoints. The Compose bundle uses MinIO. |
+| Infrahub task manager (Infrahub's) | Infrahub's Prefect server. Schedules Sync's flow runs and records their execution state and logs, next to Infrahub's own tasks. |
+| Task manager PostgreSQL (Infrahub's) | Holds Sync's own `infrahub_sync` database, with its product records and advisory locks, separate from the task manager's `prefect` database. |
 
 ```text
-CLI / Python client ──requests──> Sync API ──submits──> Prefect server
+CLI / Python client ──requests──> Sync API ──submits──> Infrahub task manager
                                      │                    │
                               product records       execution records
                                      │                    │
                                      v                    v
-                                 PostgreSQL: separate databases
+                 task manager PostgreSQL: `infrahub_sync` next to `prefect`
 
-Sync worker ──polls──> Prefect server
+Sync worker ──polls──> Infrahub task manager
      │
      ├──executes service flow──> source / destination adapters
-     ├──reads and writes───────> Sync product records in PostgreSQL
+     ├──reads and writes───────> Sync product records in `infrahub_sync`
      └──reads and writes───────> S3-compatible object store
                                 ^
                                 │ reads artifacts
@@ -42,8 +43,8 @@ Sync worker ──polls──> Prefect server
 ```
 
 The CLI accesses the Sync API; it does not run adapters or read the worker's filesystem.
-Bootstrap jobs create the databases, artifact bucket, work pool and service deployment
-before the API and worker start. Configuration packages are registered separately.
+Bootstrap jobs create Sync's database on the task manager's PostgreSQL server, the artifact
+bucket, the work pool and the service deployment before the API and worker start. Configuration packages are registered separately.
 See [Compose deployment](../../compose-deployment.mdx) for the operating procedure.
 
 ### One registered run
@@ -81,12 +82,14 @@ For the stage entrypoints, see [Prefect orchestration](orchestration-prefect.md#
 
 ### Persistence and deployment limits
 
-Sync retains configuration versions, product runs and execution links in PostgreSQL.
-It retains artifacts and internal checkpoints in object storage. Each worker stage creates
-its own temporary directory and removes it when the stage ends; a later stage retrieves
-its plan from object storage, not from a shared cache directory.
+Sync retains configuration versions, product runs and execution links in its `infrahub_sync`
+database on the task manager's PostgreSQL server. It retains artifacts and internal
+checkpoints in object storage. Each worker stage creates its own temporary directory and
+removes it when the stage ends; a later stage retrieves its plan from object storage, not from
+a shared cache directory.
 
-Replacing an API or worker process preserves the database and object-store volumes.
+Replacing an API or worker process preserves Sync's database, which lives with Infrahub's task
+manager, and the object-store volume.
 Retained records do not guarantee that an interrupted write resumes. If the outcome of a write
 is uncertain, inspect its evidence and the destination before creating a fresh plan;
 follow the [uncertain-write procedure](../../compose-deployment.mdx#when-the-outcome-of-a-write-is-uncertain).

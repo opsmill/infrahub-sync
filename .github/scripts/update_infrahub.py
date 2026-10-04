@@ -29,9 +29,10 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).resolve().parents[2]
 IMAGE = "registry.opsmill.io/opsmill/infrahub"
 PREVIEW_ENV = Path("development/preview.env")
-# Every file that carries the pinned version; the first two also carry the digest.
+# Every file that carries the pinned version; DIGEST_FILES also carry the digest.
 PINNED_FILES = (
     Path("development/docker-compose.infrahub.yml"),
+    Path("development/docker-compose.dev.yml"),
     PREVIEW_ENV,
     Path("development/docker-compose.preview.yml"),
     Path("tests/compose/conftest.py"),
@@ -39,7 +40,11 @@ PINNED_FILES = (
     Path("tests/compose/test_compose_contract.py"),
     Path("tests/preview/test_preview_configuration.py"),
 )
-DIGEST_FILES = (Path("development/docker-compose.infrahub.yml"), PREVIEW_ENV)
+DIGEST_FILES = (
+    Path("development/docker-compose.infrahub.yml"),
+    Path("development/docker-compose.dev.yml"),
+    PREVIEW_ENV,
+)
 REQUIRED_PLATFORMS = frozenset({"linux/amd64", "linux/arm64"})
 VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[a-z0-9.-]*[a-z0-9])?")
 DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")

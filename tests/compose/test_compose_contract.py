@@ -50,9 +50,8 @@ SYNC_IMAGE_FORM = re.compile(
 )
 # The operator credentials: never defaulted, so each is guarded with `:?`.
 CREDENTIALS = (
-    "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD",
+    "INFRAHUB_TASKMANAGER_DB_PASSWORD",
     "INFRAHUB_SYNC_PRODUCT_PASSWORD",
-    "INFRAHUB_SYNC_PREFECT_PASSWORD",
     "INFRAHUB_SYNC_S3_ACCESS_KEY",
     "INFRAHUB_SYNC_S3_SECRET_KEY",
     "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",
@@ -70,10 +69,15 @@ DESTINATION_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.infrahub.yml"
 PREVIEW_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.preview.yml"
 PREVIEW_ENV = DEVELOPMENT_COMPOSE / "preview.env"
 
-# The two durable volumes and the services allowed to mount them. The short-lived
-# owner repair shares the object store's volume before the server starts.
-PERSISTENT_VOLUMES = {"postgres-data", "object-store-data"}
-PERSISTENT_SERVICES = {"postgres", "object-store-init", "object-store"}
+# The one durable volume and the services allowed to mount it. The short-lived
+# owner repair shares the object store's volume before the server starts. The
+# product database lives on Infrahub's task-manager PostgreSQL server, so the
+# file keeps no database volume of its own.
+PERSISTENT_VOLUMES = {"object-store-data"}
+PERSISTENT_SERVICES = {"object-store-init", "object-store"}
+# The services that reach Infrahub's task manager or its PostgreSQL server, and
+# so join Infrahub's network. The CLI and the object store do not.
+INFRAHUB_NETWORK_MEMBERS = {"db-bootstrap", "sync-bootstrap", "sync-api", "sync-worker"}
 
 # The test-only override, and the host route it adds -- in the form Compose
 # resolves it to, since the file writes `name:value` and the model renders
@@ -105,12 +109,12 @@ CLI_SERVICE = "cli"
 CLIENT_CREDENTIAL = "INFRAHUB_SYNC_API_TOKEN"
 CLIENT_CREDENTIAL_RECEIVERS = {CLI_SERVICE}
 
-# The Prefect API credential: the operator setting `init` generates, the server
-# setting that turns authentication on, and the client setting every Prefect
-# caller presents. The bootstrap job applies the deployment, the API submits and
-# observes runs, and the worker polls for them; nothing else calls Prefect.
+# The optional Prefect API credential: the operator setting, and the client
+# setting every Prefect caller presents. Infrahub's task manager offers no
+# credential setting, so the value is optional. The bootstrap job applies the
+# deployment, the API submits and observes runs, and the worker polls for them;
+# nothing else calls Prefect.
 PREFECT_CREDENTIAL_SETTING = "INFRAHUB_SYNC_PREFECT_AUTH_STRING"
-PREFECT_SERVER_CREDENTIAL = "PREFECT_SERVER_API_AUTH_STRING"
 PREFECT_CLIENT_CREDENTIAL = "PREFECT_API_AUTH_STRING"
 PREFECT_CREDENTIAL_RECEIVERS = {"sync-bootstrap", "sync-api", "sync-worker"}
 
@@ -168,8 +172,12 @@ def test_a_sync_service_runs_read_only_over_the_image_declared_scratch(model: di
     assert definition.get("tmpfs") == expected, f"{name} declares scratch {definition.get('tmpfs')}"
 
 
-def test_only_postgresql_and_the_object_store_keep_a_named_volume(model: dict[str, Any]) -> None:
-    """The one-shot owner repair shares only the object store's durable volume."""
+def test_only_the_object_store_keeps_a_named_volume(model: dict[str, Any]) -> None:
+    """The one-shot owner repair shares the object store's durable volume; nothing else keeps one.
+
+    The product database lives on Infrahub's task-manager PostgreSQL server, so
+    the file declares no database volume.
+    """
     declared = set(model.get("volumes") or {})
     holders = {
         name
@@ -181,18 +189,71 @@ def test_only_postgresql_and_the_object_store_keep_a_named_volume(model: dict[st
     assert holders == PERSISTENT_SERVICES, f"named volumes are held by {sorted(holders)}"
 
 
-def test_prefect_keeps_no_state_of_its_own(model: dict[str, Any]) -> None:
-    """Its records live in PostgreSQL, so a replacement container resumes from them.
+def test_the_file_runs_no_database_or_prefect_server_of_its_own(model: dict[str, Any]) -> None:
+    """Sync uses Infrahub's task manager and its PostgreSQL server; it starts neither."""
+    images = {name: definition.get("image", "") for name, definition in services(model).items()}
+    servers = sorted(
+        name
+        for name, image in images.items()
+        if name != "db-bootstrap" and ("postgres" in image or "prefecthq/prefect" in image)
+    )
 
-    Prefect defaults to a SQLite file inside its container. Left that way the
-    server would hold deployment and work-pool state no other service could see,
-    and a restart that replaced the container would silently lose it.
-    """
-    definition = service(model, "prefect-server")
-    connection = definition["environment"]["PREFECT_SERVER_DATABASE_CONNECTION_URL"]
+    assert servers == [], f"the file runs its own server: {servers}"
 
-    assert definition.get("volumes") in (None, []), f"prefect-server mounts {definition.get('volumes')}"
-    assert connection.startswith("postgresql"), f"prefect-server is configured on {connection.split(':', 1)[0]}"
+
+def test_only_the_services_that_reach_infrahub_join_its_network(model: dict[str, Any]) -> None:
+    """The task manager and its database resolve by name on Infrahub's own network."""
+    members = {name for name, definition in services(model).items() if "infrahub" in (definition.get("networks") or {})}
+    network = (model.get("networks") or {}).get("infrahub") or {}
+
+    assert members == INFRAHUB_NETWORK_MEMBERS, f"Infrahub's network is joined by {sorted(members)}"
+    assert network.get("external") is True, "the file must join Infrahub's network, not create one"
+    assert network.get("name") == "infrahub_default"
+
+
+def test_every_sync_process_reaches_infrahubs_task_manager(model: dict[str, Any]) -> None:
+    """The API, the worker, and the bootstrap job share Infrahub's Prefect server."""
+    for name in ("sync-bootstrap", "sync-api", "sync-worker"):
+        url = service(model, name)["environment"]["PREFECT_API_URL"]
+        assert url == "http://task-manager:4200/api", f"{name} calls {url}"
+
+
+def test_the_product_database_lives_on_the_task_managers_server(
+    compose_version: str, contract_environment: dict[str, str]
+) -> None:
+    """Read privately: the connection string carries the product password."""
+    del compose_version
+    resolved = resolve_privately(contract_environment)
+    for name in ("sync-bootstrap", "sync-api", "sync-worker"):
+        url = service(resolved, name)["environment"]["INFRAHUB_SYNC_DATABASE_URL"]
+        assert url.endswith("@task-manager-db:5432/infrahub_sync"), f"{name} reaches another database"
+    assert service(resolved, "db-bootstrap")["environment"]["PGHOST"] == "task-manager-db"
+    assert service(resolved, "db-bootstrap")["environment"]["PGDATABASE"] == "postgres"
+
+
+def test_the_infrahub_settings_move_every_reference_together(
+    compose_version: str, contract_environment: dict[str, str]
+) -> None:
+    """An operator's network, task manager, and database host reach every service that uses them."""
+    del compose_version
+    resolved = resolve_privately(
+        {
+            **contract_environment,
+            "INFRAHUB_NETWORK": "other_default",
+            "INFRAHUB_WORKFLOW_ADDRESS": "tm.internal",
+            "INFRAHUB_WORKFLOW_PORT": "4300",
+            "INFRAHUB_TASKMANAGER_DB_HOST": "tmdb.internal",
+            "INFRAHUB_TASKMANAGER_DB_USER": "dba",
+        }
+    )
+
+    assert resolved["networks"]["infrahub"]["name"] == "other_default"
+    for name in ("sync-bootstrap", "sync-api", "sync-worker"):
+        environment = service(resolved, name)["environment"]
+        assert environment["PREFECT_API_URL"] == "http://tm.internal:4300/api", name
+        assert environment["INFRAHUB_SYNC_DATABASE_URL"].endswith("@tmdb.internal:5432/infrahub_sync"), name
+    bootstrap = service(resolved, "db-bootstrap")["environment"]
+    assert (bootstrap["PGHOST"], bootstrap["PGUSER"], bootstrap["PGDATABASE"]) == ("tmdb.internal", "dba", "postgres")
 
 
 def test_the_worker_is_given_no_configuration_directory(model: dict[str, Any]) -> None:
@@ -245,14 +306,18 @@ def test_the_bootstrap_script_binds_every_value_as_a_variable(model: dict[str, A
     content = model["configs"][BOOTSTRAP_CONFIG]["content"]
 
     for setting in ("ROLE", "PASSWORD", "DATABASE"):
-        for owner in ("PRODUCT", "PREFECT"):
+        for owner in ("PRODUCT",):
             name = f"INFRAHUB_SYNC_{owner}_{setting}"
             # `config` prints the content with its `$$` escapes kept; Compose
             # renders each as one `$` when it creates the config.
             reference = re.compile(r'"\$?\$\{' + name + r'\}"')
             assert reference.search(content), f"the bootstrap script does not read {name} at run time"
     assert CONTRACT_ENVIRONMENT["INFRAHUB_SYNC_PRODUCT_PASSWORD"] not in content, "a password was baked in"
-    assert content.count("\\gexec") == 4, "every role and database creation is a guarded statement"
+    assert content.count("\\gexec") == 5, "every role and database statement is a bound, guarded statement"
+    assert "is owned by another role" in content, "an existing database owned by another role is refused"
+    assert "ALTER ROLE %I WITH LOGIN PASSWORD %L" in content, "the role password follows the operator's setting"
+    assert "REVOKE CONNECT ON DATABASE %I FROM PUBLIC" in content
+    assert "PREFECT" not in content, "the bootstrap script must never touch the task manager's own database"
 
 
 def test_the_file_declares_no_secret_file(cli_model: dict[str, Any]) -> None:
@@ -301,11 +366,11 @@ def test_a_missing_credential_stops_compose_naming_it(compose_version: str, name
 # ---------------------------------------------------------------------------
 
 
-def test_only_the_api_and_prefect_publish_a_host_port(model: dict[str, Any]) -> None:
-    """PostgreSQL, the object store, the worker, and every job stay on the private network."""
+def test_only_the_api_publishes_a_host_port(model: dict[str, Any]) -> None:
+    """The object store, the worker, and every job stay on the private network."""
     publishers = {name for name, definition in services(model).items() if published(definition)}
 
-    assert publishers == {"sync-api", "prefect-server"}, f"host ports are published by {sorted(publishers)}"
+    assert publishers == {"sync-api"}, f"host ports are published by {sorted(publishers)}"
 
 
 def test_every_published_address_is_loopback(model: dict[str, Any]) -> None:
@@ -322,30 +387,9 @@ def test_every_published_address_is_loopback(model: dict[str, Any]) -> None:
     assert external == [], f"{external} publish to an address other than loopback"
 
 
-def test_prefect_telemetry_is_off(model: dict[str, Any]) -> None:
-    """An optional call home is not something a deployment should have to discover."""
-    assert service(model, "prefect-server")["environment"]["PREFECT_SERVER_ANALYTICS_ENABLED"] == "false"
-
-
 # ---------------------------------------------------------------------------
 # The Prefect API credential
 # ---------------------------------------------------------------------------
-
-
-def test_the_prefect_server_requires_the_generated_credential(
-    compose_version: str, contract_environment: dict[str, str]
-) -> None:
-    """A caller that can create a deployment in the pool decides what the worker runs.
-
-    So the server is never started without authentication: the credential is the
-    operator's generated setting, and nothing else can stand in for it. Read from
-    raw output and compared privately, because the credential is redacted by name.
-    """
-    del compose_version
-    environment = service(resolve_privately(contract_environment), "prefect-server")["environment"]
-
-    requires_it = environment.get(PREFECT_SERVER_CREDENTIAL) == contract_environment[PREFECT_CREDENTIAL_SETTING]
-    assert requires_it, f"prefect-server does not require {PREFECT_CREDENTIAL_SETTING}"
 
 
 def test_every_prefect_client_presents_that_credential_and_nothing_else_holds_it(
@@ -374,16 +418,16 @@ def test_the_cli_service_is_not_given_the_prefect_credential(cli_model: dict[str
     assert PREFECT_CLIENT_CREDENTIAL not in environment
 
 
-def test_the_bundle_refuses_to_resolve_without_the_prefect_credential(
+def test_the_prefect_credential_is_optional_and_resolves_empty_when_unset(
     compose_version: str, contract_environment: dict[str, str]
 ) -> None:
-    """An empty credential would start an unauthenticated server, so it is not a default."""
+    """Infrahub's task manager has no credential setting, so the bundle starts without one."""
     del compose_version
     without = {key: value for key, value in contract_environment.items() if key != PREFECT_CREDENTIAL_SETTING}
-    result = compose(["config"], environment={**without, PREFECT_CREDENTIAL_SETTING: ""})
+    resolved = resolve_privately(without)
 
-    assert result.returncode != 0
-    assert "Prefect API credential" in result.stderr
+    for name in sorted(PREFECT_CREDENTIAL_RECEIVERS):
+        assert not service(resolved, name)["environment"][PREFECT_CLIENT_CREDENTIAL], name
 
 
 # ---------------------------------------------------------------------------
@@ -540,7 +584,7 @@ def test_preview_env_tags_match_compose_pin_defaults(compose_version: str) -> No
         assert result.returncode == 0, result.stderr
         models.append(services(json.loads(result.stdout)))
     defaults, shipped = models
-    for name in ("task-manager", "infrahub-server", "task-worker", "sync-prefect"):
+    for name in ("task-manager", "infrahub-server", "task-worker", "sync-db-bootstrap"):
         assert shipped[name]["image"] == defaults[name]["image"], name
 
 
@@ -552,10 +596,9 @@ def test_tagged_index_reference_requires_a_tag_after_the_last_slash() -> None:
 
 
 def test_image_overrides_keep_their_matching_digests(compose_version: str) -> None:
-    """Custom Infrahub and Prefect tags can be paired with their own index digests."""
+    """Custom Infrahub tags can be paired with their own index digests."""
     del compose_version
     infrahub_digest = "@sha256:" + "a" * 64
-    prefect_digest = "@sha256:" + "b" * 64
     result = compose(
         ["config", "--format", "json"],
         files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
@@ -566,8 +609,6 @@ def test_image_overrides_keep_their_matching_digests(compose_version: str) -> No
             "INFRAHUB_DOCKER_IMAGE": "example.invalid/infrahub",
             "VERSION": "custom",
             "INFRAHUB_DOCKER_IMAGE_DIGEST": infrahub_digest,
-            "PREVIEW_PREFECT_IMAGE_TAG": "custom",
-            "PREVIEW_PREFECT_IMAGE_DIGEST": prefect_digest,
         },
     )
     assert result.returncode == 0, result.stderr
@@ -575,7 +616,6 @@ def test_image_overrides_keep_their_matching_digests(compose_version: str) -> No
     assert configured["message-queue"]["image"] == "example.invalid/rabbitmq:custom"
     for name in ("task-manager", "infrahub-server", "task-worker"):
         assert configured[name]["image"] == f"example.invalid/infrahub:custom{infrahub_digest}"
-    assert configured["sync-prefect"]["image"] == f"prefecthq/prefect:custom{prefect_digest}"
 
 
 def test_local_image_override_can_drop_the_digest(compose_version: str) -> None:
@@ -590,15 +630,12 @@ def test_local_image_override_can_drop_the_digest(compose_version: str) -> None:
             "INFRAHUB_DOCKER_IMAGE": "local-infrahub",
             "VERSION": "custom",
             "INFRAHUB_DOCKER_IMAGE_DIGEST": "",
-            "PREVIEW_PREFECT_IMAGE_TAG": "custom",
-            "PREVIEW_PREFECT_IMAGE_DIGEST": "",
         },
     )
     assert result.returncode == 0, result.stderr
     configured = services(json.loads(result.stdout))
     for name in ("task-manager", "infrahub-server", "task-worker"):
         assert configured[name]["image"] == "local-infrahub:custom"
-    assert configured["sync-prefect"]["image"] == "prefecthq/prefect:custom"
 
 
 @pytest.mark.parametrize("digest_override", [{}, {"INFRAHUB_DOCKER_IMAGE_DIGEST": ""}])
@@ -616,7 +653,7 @@ def test_direct_compose_local_image_override_drops_the_digest(
     assert result.returncode == 0, result.stderr
     configured = services(json.loads(result.stdout))
     for name in ("task-manager", "infrahub-server", "task-worker"):
-        assert configured[name]["image"] == "local-infrahub:1.10.6"
+        assert configured[name]["image"] == "local-infrahub:1.11.4"
 
 
 def test_direct_compose_digest_override_replaces_the_shipped_digest(compose_version: str) -> None:
@@ -631,7 +668,7 @@ def test_direct_compose_digest_override_replaces_the_shipped_digest(compose_vers
     )
     assert result.returncode == 0, result.stderr
     configured = services(json.loads(result.stdout))
-    expected = f"registry.opsmill.io/opsmill/infrahub:1.10.6{digest}"
+    expected = f"registry.opsmill.io/opsmill/infrahub:1.11.4{digest}"
     for name in ("task-manager", "infrahub-server", "task-worker"):
         assert configured[name]["image"] == expected
         assert TAGGED_INDEX_REFERENCE.fullmatch(configured[name]["image"])
@@ -644,13 +681,12 @@ def test_standalone_version_override_drops_the_shipped_digest(compose_version: s
         ["config", "--format", "json"],
         files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
         inherit_environment=False,
-        environment={"VERSION": "custom", "PREVIEW_PREFECT_IMAGE_TAG": "custom"},
+        environment={"VERSION": "custom"},
     )
     assert result.returncode == 0, result.stderr
     configured = services(json.loads(result.stdout))
     for name in ("task-manager", "infrahub-server", "task-worker"):
         assert configured[name]["image"] == "registry.opsmill.io/opsmill/infrahub:custom"
-    assert configured["sync-prefect"]["image"] == "prefecthq/prefect:custom"
 
 
 # ---------------------------------------------------------------------------

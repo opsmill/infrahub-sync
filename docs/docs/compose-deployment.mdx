@@ -2,10 +2,12 @@
 title: Compose deployment
 ---
 
-Each release deploys Infrahub Sync on one host from a single file,
-`docker-compose.yml`, and a `.env` file that you write beside it. The deployment
-runs the Sync API, the Sync worker, a Prefect server, PostgreSQL, and
-S3-compatible object storage. Docker pulls the Sync image from the OpsMill
+Each release deploys Infrahub Sync next to an Infrahub deployment from a single
+file, `docker-compose.yml`, and a `.env` file that you write beside it. The
+deployment runs the Sync API, the Sync worker, and S3-compatible object storage.
+It runs its work on Infrahub's task manager, which is Infrahub's Prefect server,
+and keeps its records in its own database on the task manager's PostgreSQL
+server. Docker pulls the Sync image from the OpsMill
 registry like every other service image. A host needs Docker with Docker Compose
 2.24 or later, and nothing else: no product checkout, no Python, no `uv`.
 
@@ -32,7 +34,11 @@ flow, and for the configuration and reviewed-run procedure that follows it.
 - A registry login. Until the 3.0.0 release, the registry project is open to
   invited testers only, so run `docker login registry.opsmill.io` before the
   first start. See [Install Infrahub Sync](./installation.mdx#run-the-container-image).
-- Ports 8000 and 4200 free on `127.0.0.1`, or other ports set in `.env`.
+- An Infrahub release that ships the Prefect version this Sync release requires,
+  started with Docker Compose on the same host. Infrahub 1.11.3 and 1.11.4 ship
+  Prefect 3.8.6. Sync refuses to start against another Prefect version, naming
+  both versions.
+- Port 8000 free on `127.0.0.1`, or another port set in `.env`.
 
 ## Get the file
 
@@ -49,10 +55,8 @@ carries its digest, so a re-pointed tag cannot change what the file runs.
 
 | Service | What it does |
 | --- | --- |
-| `postgres` | PostgreSQL. Holds the product database and the Prefect database. |
-| `db-bootstrap` | A short-lived job that creates both databases and their owner roles. |
+| `db-bootstrap` | A short-lived job that creates Sync's product database and its owner role on the task manager's PostgreSQL server. |
 | `object-store-init`, `object-store` | S3-compatible object storage for plans and artifacts, and a short-lived job that prepares its volume. |
-| `prefect-server` | The Prefect API and UI. |
 | `sync-bootstrap` | A short-lived job that creates the product schema, the bucket, the work pool, and the Prefect deployment. |
 | `sync-api` | The Sync API. |
 | `sync-worker` | The Sync worker that runs plans and applies. |
@@ -61,7 +65,27 @@ carries its digest, so a re-pointed tag cannot change what the file runs.
 The API and the worker share no mount, no volume, and no scratch directory. Run
 state travels between them through PostgreSQL and the object store, which is
 why the worker needs no configuration mount and why replacing it loses nothing.
-PostgreSQL and the object store hold the only volumes that survive a restart.
+The product database lives on the task manager's PostgreSQL server, so the
+object store holds the only volume that survives a restart.
+
+### Infrahub's task manager
+
+The file joins Infrahub's Compose network, `infrahub_default` unless you set
+`INFRAHUB_NETWORK`, and reaches two Infrahub services on it by name:
+`task-manager`, Infrahub's Prefect server, and `task-manager-db`, its PostgreSQL
+server. Sync creates its own `infrahub_sync` database there and never touches
+Infrahub's `prefect` database. Its runs appear in Infrahub's task list, tagged
+with their branch and their stage.
+
+One Infrahub holds one Sync deployment. Sync registers a fixed Prefect deployment,
+`infrahub-sync-service/run`, on the task manager, so a second Sync deployment
+started against the same Infrahub would take over the first one's runs. Run a
+second Sync deployment against its own Infrahub.
+
+Infrahub removes the task records of a deleted branch, Sync runs included, and
+`infrahub tasks flush flow-runs` removes old ones. That removes the run's Prefect
+state and logs only: Sync's own run records stay, and the API reports such a run's
+execution as unavailable.
 
 Run every `docker compose` command on this page from the directory that holds
 `docker-compose.yml` and `.env`. Compose finds both files there without `-f` or
@@ -81,10 +105,8 @@ required variable INFRAHUB_SYNC_PRODUCT_PASSWORD is missing a value: INFRAHUB_SY
 
 | Variable | Used by |
 | --- | --- |
-| `INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD` | `postgres`, `db-bootstrap` |
+| `INFRAHUB_TASKMANAGER_DB_PASSWORD` | `db-bootstrap`: the administrator password of Infrahub's task-manager PostgreSQL server, the same value Infrahub's own Compose file uses |
 | `INFRAHUB_SYNC_PRODUCT_PASSWORD` | `db-bootstrap` and the Sync services: the product database role |
-| `INFRAHUB_SYNC_PREFECT_PASSWORD` | `db-bootstrap`, `prefect-server`: the Prefect database role |
-| `INFRAHUB_SYNC_PREFECT_AUTH_STRING` | `prefect-server` and the Sync services: the Prefect API credential. See [Prefect API authentication](#prefect-api-authentication). |
 | `INFRAHUB_SYNC_S3_ACCESS_KEY` | `object-store` and the Sync services |
 | `INFRAHUB_SYNC_S3_SECRET_KEY` | `object-store` and the Sync services |
 | `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` | `sync-api`: a JSON object of API principals |
@@ -96,7 +118,7 @@ refuses a token shorter than 16 characters.
 The database connection strings are composed inside the file from the role,
 database, and password settings. A password used in them must be URL-safe:
 hexadecimal output is. To use another password, set the whole connection string
-in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
+in `INFRAHUB_SYNC_DATABASE_URL` instead.
 
 ### Optional settings
 
@@ -108,13 +130,14 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `VERSION` | the release the file was taken from | The tag of the Sync image. See [Choose an image](#choose-an-image). |
 | `INFRAHUB_SYNC_DOCKER_IMAGE` | `registry.opsmill.io/opsmill/infrahub-sync` | The repository of the Sync image. |
 | `INFRAHUB_SYNC_DATABASE_URL` | composed | The product database connection string, as a whole. |
-| `INFRAHUB_SYNC_PREFECT_DATABASE_URL` | composed | The Prefect database connection string, as a whole. |
-| `INFRAHUB_SYNC_BIND_ADDRESS` | `127.0.0.1` | The address both published ports bind to. |
+| `INFRAHUB_SYNC_PREFECT_AUTH_STRING` | empty | A Prefect API credential, when the task manager is put behind one. See [Prefect API authentication](#prefect-api-authentication). |
+| `INFRAHUB_NETWORK` | `infrahub_default` | Infrahub's Compose network. |
+| `INFRAHUB_WORKFLOW_ADDRESS`, `INFRAHUB_WORKFLOW_PORT` | `task-manager`, `4200` | Infrahub's task manager, as Infrahub's own Compose file names it. |
+| `INFRAHUB_TASKMANAGER_DB_HOST` | `task-manager-db` | The task manager's PostgreSQL server. |
+| `INFRAHUB_TASKMANAGER_DB_USER` | `postgres` | Its administrator role. |
+| `INFRAHUB_SYNC_BIND_ADDRESS` | `127.0.0.1` | The address the published API port binds to. |
 | `INFRAHUB_SYNC_API_PORT` | `8000` | The published Sync API port. |
-| `INFRAHUB_SYNC_PREFECT_PORT` | `4200` | The published Prefect port. |
-| `INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE` | `postgres` | The PostgreSQL administrator role. |
 | `INFRAHUB_SYNC_PRODUCT_DATABASE`, `INFRAHUB_SYNC_PRODUCT_ROLE` | `infrahub_sync` | The product database and its owner role. |
-| `INFRAHUB_SYNC_PREFECT_DATABASE`, `INFRAHUB_SYNC_PREFECT_ROLE` | `prefect` | The Prefect database and its owner role. |
 | `INFRAHUB_SYNC_S3_BUCKET`, `INFRAHUB_SYNC_S3_PREFIX` | `infrahub-sync` | The artifact bucket and key prefix. |
 | `INFRAHUB_SYNC_S3_REGION` | `us-east-1` | The object store region. |
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
@@ -128,10 +151,8 @@ your own:
 
 ```dotenv
 # Required credentials
-INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD=<random hex>
+INFRAHUB_TASKMANAGER_DB_PASSWORD=<Infrahub's task-manager database password>
 INFRAHUB_SYNC_PRODUCT_PASSWORD=<random hex>
-INFRAHUB_SYNC_PREFECT_PASSWORD=<random hex>
-INFRAHUB_SYNC_PREFECT_AUTH_STRING=<random hex>
 INFRAHUB_SYNC_S3_ACCESS_KEY=<random hex>
 INFRAHUB_SYNC_S3_SECRET_KEY=<random hex>
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "<principal token>", "administrator": true}}
@@ -158,10 +179,8 @@ principal=$(rand 24)
 # mktemp creates the file readable by you alone, whatever an existing .env allowed.
 env_file=$(mktemp .env.XXXXXX)
 cat > "$env_file" <<EOF
-INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD=$(rand 24)
+INFRAHUB_TASKMANAGER_DB_PASSWORD=${INFRAHUB_TASKMANAGER_DB_PASSWORD:-postgres}
 INFRAHUB_SYNC_PRODUCT_PASSWORD=$(rand 24)
-INFRAHUB_SYNC_PREFECT_PASSWORD=$(rand 24)
-INFRAHUB_SYNC_PREFECT_AUTH_STRING=$(rand 24)
 INFRAHUB_SYNC_S3_ACCESS_KEY=$(rand 12)
 INFRAHUB_SYNC_S3_SECRET_KEY=$(rand 24)
 INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}
@@ -288,22 +307,23 @@ bootstrap jobs, and returns once every service is running and every health check
 passes. Then confirm that a worker has registered, as described in
 [Status](#status).
 
-`up` is safe to repeat. Bootstrap converges the two databases, their owner roles,
-the product schema, the artifact bucket, the Prefect work pool, and the installed
-deployment, and a second run creates none of them twice. It registers nothing,
-so a repeat leaves every configuration you registered exactly as it was.
+`up` is safe to repeat. Bootstrap converges the product database, its owner role,
+the product schema, the artifact bucket, the Prefect work pool on Infrahub's task
+manager, and the installed deployment, and a second run creates none of them twice.
+It registers nothing, so a repeat leaves every configuration you registered exactly
+as it was.
 
 A running deployment says nothing about a configuration. It starts with an empty
 registry, no credentials set, and no reachable destination. Whether a registered
 package is valid is answered by `configs validate`, and whether its destination
 answers is answered by the first run against it.
 
-Both published surfaces bind to loopback by default:
+The published API binds to loopback by default:
 
 | Surface | Address |
 | --- | --- |
 | Sync API | `http://127.0.0.1:8000` |
-| Prefect UI and API | `http://127.0.0.1:4200` |
+| Runs and their logs | Infrahub's task list, and the Prefect UI Infrahub publishes |
 
 External exposure and TLS termination are not part of this topology.
 
@@ -341,25 +361,34 @@ you run over pointing an old file at a new image.
 
 ### Prefect API authentication
 
-The Prefect server requires basic authentication on its whole API. A caller that
-can create a deployment in the work pool decides what the worker runs, so no
-Prefect call is accepted without `INFRAHUB_SYNC_PREFECT_AUTH_STRING`. The Sync
-API, the worker, and the bootstrap job present it; the `cli` service is not given
-it. Only the health and readiness probes answer without it.
+Infrahub's task manager offers no API credential setting, so by default anything
+that can reach it on Infrahub's network can read and change its deployments and
+flow runs. That includes Infrahub's own task workers, which run the Python code of
+the repositories added to Infrahub. A credential does not change this much: if the
+task manager is put behind a proxy that checks one, Infrahub's task workers need
+it too, and so does the code they run. Keep Infrahub's network private to Infrahub
+and Sync either way.
 
-The worker adds a second boundary of its own. It starts a flow run only when the
+Sync therefore does not rely on the credential. If you set one in
+`INFRAHUB_SYNC_PREFECT_AUTH_STRING`, the Sync API, the worker, and the bootstrap
+job present it; the `cli` service is not given it. At startup the API and the
+worker log `prefect_auth=credential` or `prefect_auth=network-isolation`; the
+first only says a credential is sent, not that the task manager checks it. A task
+manager that refuses the credential stops the API at startup.
+
+The boundary Sync relies on is the worker's. It starts a flow run only when the
 run belongs to the service's own deployment exactly as bootstrap applied it: the
 installed service entrypoint, no pull steps, no job variables, and the process
 pool's default job template. Any other flow run in the pool is marked `Crashed`
-with a fixed reason, and no process is started for it. The process that starts
-reads the deployment from Prefect again, so this check relies on the Prefect
-credential above: anyone who holds it could change the deployment between the
-check and the start.
+with a fixed reason, and no process is started for it. After that check nothing
+reads the deployment again: the child process runs the installed service flow
+directly, and the worker's crash and cancellation hooks load the same installed
+flow. A deployment changed after admission therefore cannot change what runs.
 
-To open the Prefect UI, browse to `http://127.0.0.1:4200`. It asks for a
-password once per browser: enter the whole value of
-`INFRAHUB_SYNC_PREFECT_AUTH_STRING`. Read it from `.env` in a text editor or with
-`sed -n 's/^INFRAHUB_SYNC_PREFECT_AUTH_STRING=//p' .env`; never `source` the file.
+Both the API and the worker refuse to start when the task manager runs another
+Prefect version than the one this Sync release requires, and name both versions.
+The check runs at startup only: when Infrahub upgrades its Prefect version,
+upgrade Sync with it, or the next restart of Sync refuses to start.
 
 ## Wrapper equivalents
 
@@ -375,12 +404,13 @@ of its commands has a plain `docker compose` equivalent.
 | `logs` | `docker compose logs --no-color --tail 200 [service]` |
 | `stop` | `docker compose stop` |
 | `restart` | `docker compose restart sync-api sync-worker`, then check the worker. It does not pick up a changed `.env`. |
-| `reset` | `docker compose down --volumes --remove-orphans`. **This deletes every registered configuration, run, retained plan, and artifact**, and nothing asks for confirmation. See [Reset the deployment](#reset-the-deployment). |
+| `reset` | `docker compose down --volumes --remove-orphans`, then drop Sync's database. **This deletes every registered configuration, run, retained plan, and artifact**, and nothing asks for confirmation. See [Reset the deployment](#reset-the-deployment). |
 | `cli` | `docker compose run --rm --no-deps -T cli ARGS`. For a package, add a read-only mount, as in [Registering a package](#registering-a-package). |
 
 The image binding file, the `.instance` file, `operator.env`, and the
 `secrets/` directory have no successor. The administrator password that lived in
-`secrets/` is now `INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD` in `.env`.
+`secrets/` has no successor either: Sync now uses Infrahub's task-manager database
+server, whose administrator password is `INFRAHUB_TASKMANAGER_DB_PASSWORD`.
 
 ## Prepare the destination schema
 
@@ -676,9 +706,10 @@ docker compose ps
 curl -s http://127.0.0.1:8000/status
 ```
 
-`docker compose ps` shows each container and the health of `postgres`,
-`object-store`, and `prefect-server`. The `/status` response needs no
-authentication; its `worker.state` says whether a worker is live:
+`docker compose ps` shows each container and the health of `object-store`.
+Infrahub's own Compose project reports the task manager and its database. The
+`/status` response needs no authentication; its `worker.state` says whether a
+worker is live:
 
 | `worker.state` | What it means |
 | --- | --- |
@@ -749,8 +780,8 @@ docker compose up -d --wait
 ```
 
 Then check `worker.state` as in [Status](#status) before submitting work. `up`
-starts the PostgreSQL, object storage, and Prefect dependencies as well as the
-API and worker.
+starts the object storage as well as the API and worker; Infrahub's task manager
+and its database are started with Infrahub.
 
 ### Restart the API and worker
 
@@ -780,44 +811,59 @@ version remains available; a live worker alone only checks deployment health.
 
 ### Reset the deployment
 
-Durable state lives in two named volumes only, `<project>_postgres-data` and
-`<project>_object-store-data`. Every other writable path is a `tmpfs` mount. Removing the
-containers, the network, and both volumes discards the deployment:
+Durable state lives in two places: the `infrahub_sync` database and role on
+Infrahub's task-manager PostgreSQL server, and the named volume
+`<project>_object-store-data`. Every other writable path is a `tmpfs` mount.
+Removing the containers, the network, the volume, the database, and the role
+discards the deployment:
 
 ```bash
 docker compose down --volumes --remove-orphans
+docker compose -p infrahub exec task-manager-db dropdb -U postgres infrahub_sync
+docker compose -p infrahub exec task-manager-db dropuser -U postgres infrahub_sync
+docker compose -p infrahub exec task-worker prefect deployment delete infrahub-sync-service/run
+docker compose -p infrahub exec task-worker prefect work-pool delete infrahub-sync
 ```
 
+Run the last four commands against Infrahub's Compose project; `-p infrahub` and
+the `postgres` role are Infrahub's defaults. `down` alone leaves the
+database, and the next start resumes from it. The last two remove Sync's Prefect
+deployment and work pool from Infrahub's task manager (run from `task-worker`, which
+has `PREFECT_API_URL` set), so no scheduled run of the
+old deployment is taken by the next start's worker against an empty database.
+Bootstrap sets the role's password to `INFRAHUB_SYNC_PRODUCT_PASSWORD` on every
+start, so a regenerated `.env` takes effect either way.
+
 :::danger
-`down --volumes` deletes every registered configuration, run, retained plan, and
-artifact. Nothing asks for confirmation, and nothing can undo it. Keep anything
-you need outside the deployment first. `.env` is left in place.
+`down --volumes` and dropping the database delete every registered configuration,
+run, retained plan, and artifact. Nothing asks for confirmation, and nothing can
+undo it. Keep anything you need outside the deployment first. `.env` is left in
+place.
 :::
 
 Starting again after a reset is a cold bootstrap, not a resumption.
-`docker compose up -d --wait` creates the two databases, the product schema, the
-bucket, the work pool, and the deployment from nothing, and the deployment
+`docker compose up -d --wait` creates the product database, the product schema,
+the bucket, the work pool, and the deployment from nothing, and the deployment
 starts with an empty configuration registry, no runs, and no artifacts. Register
 your package again afterwards.
 
-The project name, which prefixes both volumes, defaults to the name of the
-directory. Moving or renaming the directory starts a different, empty
-deployment, and leaves the old volumes behind. If the directory may change, pin
-the name with `COMPOSE_PROJECT_NAME` in `.env`, or with `docker compose -p`.
+The project name defaults to the name of the directory, and prefixes the
+object-store volume. Moving or renaming the directory starts a second set of
+containers beside the first that share Sync's database but not its object-store
+volume. If the directory may change, pin the name with `COMPOSE_PROJECT_NAME` in
+`.env`, or with `docker compose -p`.
 
 ## Resetting this alpha to a fresh deployment
 
 This alpha promises no in-place state migration and no backup or restore. The
-supported way to replace a deployment is the reset above, followed by a fresh
-start:
+supported way to replace a deployment is the full reset above, every command of
+it, followed by a fresh start with `docker compose up -d --wait`. `down`
+alone is not a reset: the product database on Infrahub's server survives it.
 
-```bash
-docker compose down --volumes --remove-orphans
-docker compose up -d --wait
-```
-
-Prior run history, retained plans, registered configurations, and artifacts do
-not survive that. Keep anything you need outside the deployment before you
+Sync's records live on Infrahub's task-manager PostgreSQL server, so Infrahub's own
+backup, restore, and reset of that server apply to them too. Prior run history,
+retained plans, registered configurations, and artifacts do not survive the full
+reset. Keep anything you need outside the deployment before you
 reset, and register your package again afterwards.
 
 The object store image is a temporary, pinned MinIO build, while a maintained
@@ -867,7 +913,7 @@ run, and needs only a new plan.
 ## What this topology does not do
 
 - It runs on one host. There is no multi-host deployment and no clustering.
-- It has no public ingress and no TLS. Both published surfaces bind to
+- It has no public ingress and no TLS. The published API port binds to
   `127.0.0.1` by default.
 - It has no in-place state migration, and no backup or restore.
 

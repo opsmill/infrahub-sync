@@ -40,8 +40,9 @@ describes each action:
   `docker compose up -d --wait` to resume the deployment, including its dependencies.
 - `docker compose restart sync-api sync-worker` replaces only the API and worker
   processes and keeps the durable records. The dependencies must already be running.
-- `docker compose down --volumes --remove-orphans` deletes this deployment's
-  containers, network, and volumes, with every registered configuration, run, and
+- [Reset the deployment](../compose-deployment#reset-the-deployment) removes this
+  deployment's containers, network, and object-store volume, then drops Sync's database
+  on the task manager's PostgreSQL server, with every registered configuration, run, and
   artifact. Nothing asks for confirmation, and you cannot undo it.
 
 Before planned maintenance, ask everyone who submits runs to this deployment to stop
@@ -65,15 +66,16 @@ deployment.
 
 ## Replace a deployment with a fresh one
 
-Delete the volumes only when you intend to delete the deployment's data. V3 releases
-are test versions, and they have no in-place migration, backup, or restore procedure.
-To replace a deployment, follow the
+Drop Sync's database and delete the object-store volume only when you intend to delete
+the deployment's data. V3 releases are test versions, and they have no in-place
+migration, backup, or restore procedure. To replace a deployment, follow the
 [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment):
-run `docker compose down --volumes --remove-orphans`, then `docker compose up -d --wait`.
+run every command of the reset, then `docker compose up -d --wait`.
 The new deployment starts with an empty registry, so register your packages again.
 
-The volumes are named after the Compose project, which defaults to the directory name.
-Moving or renaming the directory starts a different, empty deployment. Set
+The containers and the object-store volume are named after the Compose project, which
+defaults to the directory name. Moving or renaming the directory starts a second set of
+containers that share Sync's database but not its object-store volume. Set
 `COMPOSE_PROJECT_NAME` in `.env` if the directory may change.
 
 ## Change credentials
