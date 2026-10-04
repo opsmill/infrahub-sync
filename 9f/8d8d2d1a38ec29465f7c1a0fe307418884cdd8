@@ -1,0 +1,232 @@
+docs/docs/development-stack.mdx
+  s_08a08909ed3ec7::t_981d4ba11276f0 365,367
+  s_08a08909ed3ec7::t_2e85079cd48adf 12
+  s_08a08909ed3ec7::t_ce6719db5bcdc2 220-224
+  s_08a08909ed3ec7::t_317982ba880dd3 28-31
+  s_08a08909ed3ec7::t_c3991492ad912d 90-91
+  s_08a08909ed3ec7::t_ccc082eb69f2a1 400-402,406
+  s_08a08909ed3ec7::t_0741c1a78c077c 66-67
+development/docker-compose.preview.yml
+  s_08a08909ed3ec7::t_70e98115ff7df4 81-93
+  s_08a08909ed3ec7::t_7d655458316ebf 14-15
+  s_08a08909ed3ec7::t_304295ae572db9 3,7-13,17,19,21-27,30-50,78-80,94
+development/preview.env
+  s_08a08909ed3ec7::t_f06b7847d638c1 28-29
+docs/docs/develop/guidelines/testing-tiers.md
+  s_08a08909ed3ec7::t_6e2e88539a9016 238
+infrahub_sync/service/orchestration.py
+  s_08a08909ed3ec7::t_3925b4cbc16bc5 63
+  s_08a08909ed3ec7::t_836c62a6ff27dc 5,9,29-33,60-62,64-76,153-160,178,181-207
+changelog/+prefect-access-boundary.security.md
+  s_08a08909ed3ec7::t_cb055d80391aa7 3,5
+README.md
+  s_08a08909ed3ec7::t_6a73d875178ce8 87-88
+docs/docs/quickstart-compose.mdx
+  s_08a08909ed3ec7::t_c87ae3736ee186 38
+  s_08a08909ed3ec7::t_a0dfcc7483fe93 7-12
+  s_08a08909ed3ec7::t_b1c649acea022e 60-63,71
+docs/docs/operations/day-2-operations.mdx
+  s_08a08909ed3ec7::t_7ee862a2565cbb 43-45
+  s_08a08909ed3ec7::t_9aa81939cd6bce 69-71,73,76-78
+infrahub_sync/service/serve.py
+  s_08a08909ed3ec7::t_9112474613ce51 47-51
+  s_08a08909ed3ec7::t_09d9b9655c3d4f 46
+  s_08a08909ed3ec7::t_9867eeb36779f2 52-54
+  s_175d08993e2b88::t_270e5af0fe4608 18,55,63,69,87,91-94
+docs/docs/compose-deployment.mdx
+  s_08a08909ed3ec7::t_ca110a93bc9189 310-314
+  s_08a08909ed3ec7::t_dba1ee3ecfe4de 814-818,822-825,828-836,838-841,845-846,850-854,859-866
+  s_08a08909ed3ec7::t_3d43023ab517d1 37-41
+  s_08a08909ed3ec7::t_7f3830d5f3226b 133-138
+  s_08a08909ed3ec7::t_a1fea61e441fd3 154
+  s_08a08909ed3ec7::t_73461069d4ff4d 182
+  s_08a08909ed3ec7::t_301dcd129bbd98 407,412-413
+  s_08a08909ed3ec7::t_fba6125205c4ff 709-712
+  s_08a08909ed3ec7::t_7fe086af8faba7 5-10
+  s_08a08909ed3ec7::t_63bb5e0b592eca 121
+  s_08a08909ed3ec7::t_5ca0138ff00c54 916
+  s_08a08909ed3ec7::t_97171d1f74d8a8 364-379,383-386,388-391
+  s_08a08909ed3ec7::t_570858a05c29c8 58,68-88
+  s_08a08909ed3ec7::t_a5b1e4deea0773 108
+  s_08a08909ed3ec7::t_ae3c87c31f6e4c 783-784
+  s_08a08909ed3ec7::t_73324f11a3a0e2 321,326
+dev/adr/README.md
+  s_08a08909ed3ec7::t_c7a2076e4a8777 52-54
+development/README.md
+  s_08a08909ed3ec7::t_8a56f3674c1459 68
+  s_08a08909ed3ec7::t_6b7079f811eb43 4,62
+infrahub_sync/service/bootstrap.py
+  s_08a08909ed3ec7::t_b3a6e0aafd2eb4 36-37
+  s_08a08909ed3ec7::t_851897272b9aa0 136-157,159,161,165-169,177-184
+  s_08a08909ed3ec7::t_8a6f5fa4c1f14f 65-66
+docs/docs/operations/compose-troubleshooting.mdx
+  s_08a08909ed3ec7::t_b27add3aa02b9f 39
+  s_08a08909ed3ec7::t_b27a8f591c3eac 29
+docs/docs/develop/knowledge/sync-architecture.md
+  s_08a08909ed3ec7::t_146bea806e6441 12,16-17,22,24-25,28,33,35,38,46-47
+  s_08a08909ed3ec7::t_6b44f49d54c9e0 85-89,91-92
+development/docker-compose.dev.yml
+  s_08a08909ed3ec7::t_fe8dee427f1afc 91-93,95,98-99,103,105,109-129,138-139,142
+  s_08a08909ed3ec7::t_2c2f2975121b8c 24-28
+  s_08a08909ed3ec7::t_ac5e985dbef422 198
+  s_08a08909ed3ec7::t_a36d5019e53e1b 44
+  s_08a08909ed3ec7::t_0715a0fc7e8dd9 52,55-58,62,66,68
+tasks/preview.py
+  s_08a08909ed3ec7::t_abb83cf6240e7f 202
+  s_08a08909ed3ec7::t_801b14c5db712a 522-523
+  s_08a08909ed3ec7::t_30de85483310d1 30
+  s_08a08909ed3ec7::t_90f1396d8d8330 3-4
+  s_08a08909ed3ec7::t_0391afa117417a 184-189
+tasks/dev.py
+  s_08a08909ed3ec7::t_67505413ab7f49 19
+  s_08a08909ed3ec7::t_fcab42d0347e0b 60-63
+  s_08a08909ed3ec7::t_3536b522b50ca0 41
+docker-compose.yml
+  s_08a08909ed3ec7::t_b0f9331025c14e 266-268,278-289,304-305,307-317,320,324-331
+  s_08a08909ed3ec7::t_a893b07c8e63d0 53
+  s_08a08909ed3ec7::t_5bc3d2e80d0f62 61-68,71-74,78,80-84
+  s_08a08909ed3ec7::t_fea8d017aa11b4 220
+  s_08a08909ed3ec7::t_870d9ab08dc5fe 19-24,30-31
+  s_08a08909ed3ec7::t_6190851d1c83db 161,173
+docs/docs/develop/knowledge/repository-tour.md
+  s_08a08909ed3ec7::t_52259c8fb4c937 217-220
+  s_08a08909ed3ec7::t_b1b738aff5fe9d 78-81,83,90-92
+.github/scripts/update_infrahub.py
+  s_08a08909ed3ec7::t_36350ab5398a59 32,35,43-47
+.github/workflows/workflow-linter.yml
+  s_08a08909ed3ec7::t_bf99746d5605c0 132-153
+CLAUDE.md
+  s_08a08909ed3ec7::t_7de5ae67967d13 6-10
+changelog/+infrahub-task-manager.changed.md
+  s_08a08909ed3ec7::t_3f317098a6997a 1-10
+dev/adr/0017-sync-runs-on-infrahubs-task-manager.md
+  s_08a08909ed3ec7::t_bc62b95c338ede 1-64
+dev/specs/008-infrahub-platform-alignment/checklists/requirements.md
+  s_08a08909ed3ec7::t_72934843321a13 1-38
+dev/specs/008-infrahub-platform-alignment/contracts/sync-http-api.md
+  s_08a08909ed3ec7::t_573017c3e51413 1-71
+dev/specs/008-infrahub-platform-alignment/contracts/task-manager.md
+  s_08a08909ed3ec7::t_411db161634a72 1-44
+dev/specs/008-infrahub-platform-alignment/data-model.md
+  s_08a08909ed3ec7::t_bd3909ab5706dd 1-132
+dev/specs/008-infrahub-platform-alignment/plan.md
+  s_08a08909ed3ec7::t_6377c1e9ad357a 1-146
+dev/specs/008-infrahub-platform-alignment/quickstart.md
+  s_08a08909ed3ec7::t_a45a6590c74d26 1-163
+dev/specs/008-infrahub-platform-alignment/research.md
+  s_08a08909ed3ec7::t_22c55fb61755eb 1-198
+dev/specs/008-infrahub-platform-alignment/spec.md
+  s_08a08909ed3ec7::t_b17d123c494931 1-261
+dev/specs/008-infrahub-platform-alignment/tasks.md
+  s_08a08909ed3ec7::t_90589c9e85f698 1-193
+development/docker-compose.infrahub.yml
+  s_08a08909ed3ec7::t_e05664802d1192 254,287,333
+docs/docs/develop/knowledge/orchestration-prefect.md
+  s_08a08909ed3ec7::t_42043991799b38 35-46,204,210,212-216
+docs/docs/reference/prefect-remote-run.mdx
+  s_08a08909ed3ec7::t_04ebdcbb0727cd 37
+docs/docs/reference/sync-http-api.mdx
+  s_08a08909ed3ec7::t_92ffb37d76ebcd 26,104
+examples/prefect_remote_run/README.md
+  s_08a08909ed3ec7::t_1aecba3b500ee4 73
+infrahub_sync/service/app.py
+  s_08a08909ed3ec7::t_0832264d82fbd4 46-50,54-57,80-93
+infrahub_sync/service/prefect_server.py
+  s_08a08909ed3ec7::t_f8afc3f8ae65e8 1-182
+infrahub_sync/service/worker.py
+  s_08a08909ed3ec7::t_bd847cbf19cd5f 8-9,23,25-31,37,52-54,56-60,80-84,161-166,191-195,197-198,210-214,440,444-490,544
+pyproject.toml
+  s_08a08909ed3ec7::t_03fc21cdc4171b 72,89
+tasks/__init__.py
+  s_08a08909ed3ec7::t_41812f8f52b30e 5,37
+tasks/prefect_alignment.py
+  s_08a08909ed3ec7::t_67468fc1d28d55 1-125
+tests/compose/conftest.py
+  s_08a08909ed3ec7::t_0f087bf65f92bf 152,313-320,378,391-395,404-405,410-411,420,461-466,492,501-504,524-531,538,547
+tests/compose/fixture-override.yaml
+  s_08a08909ed3ec7::t_c87677ddb0f4d8 5
+tests/compose/lifecycle.py
+  s_08a08909ed3ec7::t_6a76de3bbb9fb4 94,103-105,164-170,172,174-194,201-205,227-230,366-367,384-391,393-394,551,564,566
+tests/compose/test_bootstrap_idempotence.py
+  s_08a08909ed3ec7::t_3592a3be2edc53 50-51,55-56,58-64,66,118-119,121,123-125
+tests/compose/test_compose_contract.py
+  s_08a08909ed3ec7::t_36a1032be8442e 53,72-80,112-116,175-180,192-202,204-231,233-256,309,316-320,369-370,373,421,424,427,429-430,587,599,656,671,684
+tests/compose/test_configuration_free_startup.py
+  s_08a08909ed3ec7::t_ab2e17274af067 3-10,144-147,154,160-161,165,168,176,253-254,259
+tests/compose/test_documentation.py
+  s_08a08909ed3ec7::t_f07846e6d57c1e 264,279,282-283
+tests/compose/test_fixture_prerequisites.py
+  s_08a08909ed3ec7::t_6421b3ef5d2cdd 39,160,164-165
+tests/compose/test_lifecycle.py
+  s_08a08909ed3ec7::t_4e0d5a665aabde 53-54,73,75,144,164,170-171,175,179,189,471-472,474-477,480,484,490-492,497-498,500,511,527
+tests/compose/test_redaction.py
+  s_08a08909ed3ec7::t_cefa6d2ca178b9 53,247
+tests/dev_stack/test_task_manager_wiring.py
+  s_08a08909ed3ec7::t_bad5b4cf88f0ee 1-60
+tests/integration/test_task_manager_runs.py
+  s_08a08909ed3ec7::t_90a7b87c5a0dc2 1-102
+tests/preview/test_preview_configuration.py
+  s_08a08909ed3ec7::t_706fa168bc1cd0 127,130-131,134,136-138,171,195,207-208,223-230
+tests/service/test_compose_bootstrap.py
+  s_08a08909ed3ec7::t_65ff164cb6266a 43,94-97,225-258,264,346,363-411
+tests/service/test_config_routes.py
+  s_08a08909ed3ec7::t_081b384ecdbde4 25,1084,1123-1124,1163-1166,1193-1195
+tests/service/test_environment_names.py
+  s_08a08909ed3ec7::t_4749e49b04971f 13,57-59,65,74-77,81
+tests/service/test_flow_and_prefect.py
+  s_08a08909ed3ec7::t_76ed79610665e4 874,883-887
+tests/service/test_installed_flow_identity.py
+  s_08a08909ed3ec7::t_a86fcdc7e85312 270-278
+tests/service/test_prefect_server.py
+  s_08a08909ed3ec7::t_d3060b6329a518 1-253
+tests/service/test_service_worker.py
+  s_08a08909ed3ec7::t_a9ce404a7e698c 31,156,379-380,448
+tests/service/test_service_worker_admission.py
+  s_08a08909ed3ec7::t_4af69b6cb10b4d 26,34,36,94-95,99-107,133,190-195,388,402-477
+tests/service/test_service_worker_identity_recovery.py
+  s_08a08909ed3ec7::t_382a95834d150f 46,185
+tests/service/test_validation_secret_containment.py
+  s_08a08909ed3ec7::t_7900a075a1b2f3 284-288,297-300
+tests/service/test_worker_claim.py
+  s_08a08909ed3ec7::t_d19c674be8488c 10,21,39,114-123,134-154,156-158,160-161,167
+tests/service/worker_fakes.py
+  s_08a08909ed3ec7::t_7fd12fbb7b6147 1-50
+tests/test_prefect_alignment.py
+  s_08a08909ed3ec7::t_b215722e11578f 1-122
+uv.lock
+  s_08a08909ed3ec7::t_cac9921008a367 82,94,96,1272-1273,2100,2163,2165
+tests/service/test_orchestration_tags.py
+  s_5bf8a632292f73::t_1fe2ebd077b5fc 1-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9f8d8d2d1a38ec29465f7c1a0fe307418884cdd8",
+  "prompts": {},
+  "sessions": {
+    "s_08a08909ed3ec7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21445c9c-5a8d-449e-b739-c09c874959d5",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_175d08993e2b88": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a3572fad49adf65af",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_5bf8a632292f73": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abb10ec4d367e1208",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
