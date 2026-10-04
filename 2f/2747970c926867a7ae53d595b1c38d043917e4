@@ -1,0 +1,19 @@
+dev/specs/008-infrahub-platform-alignment/tasks.md
+  s_08a08909ed3ec7::t_5c1996c1a3d9e2 154-165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2f2747970c926867a7ae53d595b1c38d043917e4",
+  "prompts": {},
+  "sessions": {
+    "s_08a08909ed3ec7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21445c9c-5a8d-449e-b739-c09c874959d5",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
