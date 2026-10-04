@@ -10,10 +10,11 @@ defines the source, the destination, and the mappings of one sync. A package als
 optional `format_version` (only `1`, the default) and an optional `credentials` block. For
 a complete package, see `examples/netbox_to_infrahub/package.yml`.
 
-Write the package as YAML or JSON and register it with `infrahub-sync configs register`.
-Run commands then select it by its configuration ID and registry version. The service
-worker resolves the registered configuration and loads installed or pre-rendered adapter
-classes. It reads the registered content, not the file.
+Write the package as YAML or JSON and store it as the `document` of a `SyncConfiguration`
+in Infrahub; see [Configuration package](../configuration-package.mdx). Run commands then
+select it by its configuration ID, and each run records the version it uses. The service
+worker resolves that recorded version and loads installed or pre-rendered adapter classes.
+It reads the recorded content, not a file.
 
 ## Configuration fields
 
@@ -25,7 +26,7 @@ Describes the overall synchronization configuration.
 | `source` | `SyncAdapter` | Configuration for the source adapter. | Yes |
 | `destination` | `SyncAdapter` | Configuration for the destination adapter. | Yes |
 | `order` | List of strings | Order in which objects should be synchronized. Optional — when omitted, infrahub-sync auto-computes tiers from schema_mapping. | No |
-| `schema_mapping` | List of `SchemaMappingModel` | Defines how data is mapped from source to destination. | No; a package without mappings registers but synchronizes nothing. |
+| `schema_mapping` | List of `SchemaMappingModel` | Defines how data is mapped from source to destination. | No; a package without mappings validates but synchronizes nothing. |
 | `diffsync_flags` | List of DiffSync flag names | Changes which operations a plan contains. `SKIP_UNMATCHED_SRC` removes creates. `SKIP_UNMATCHED_DST` is always in effect. No flag makes apply execute a delete. See [Creates, updates, and deletes](../creating-a-sync-project.mdx#creates-updates-and-deletes). | No |
 
 ### Automatic write order
@@ -81,9 +82,9 @@ serial or parallel execution mode to choose.
 ### Sync data storage
 
 V3 keeps sync data in memory during a run. It does not support a configured store,
-including Redis. Remove any `store` block before registering a configuration package.
-Removing the block from your local files does not change a version you already
-registered: register a new version, then run that version.
+including Redis. Remove any `store` block from a configuration's document. Removing it
+does not change a version a run already recorded: the next run records the edited document
+as a new version.
 
 <!-- vale off -->
 ### Source and Destination
@@ -105,8 +106,8 @@ A registered run uses the settings declared in the package:
   the same declared URL.
 - Each `$credential` reference resolves when a run starts, from the environment variable that
   its `credentials` entry names in the worker environment.
-- To change a URL or another setting, edit the package and register a new version with
-  `configs version`. Then run the new version.
+- To change a URL or another setting, edit the configuration's document in Infrahub. The
+  next run records it as a new version.
 
 Adapter environment variables such as `CISCO_APIC_VERIFY`, `IPF_URL`, or `IPF_TOKEN` do
 not change the address, credentials, or TLS verification of a registered run. A setting

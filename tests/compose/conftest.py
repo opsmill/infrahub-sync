@@ -34,6 +34,7 @@ from tests.docker_image import (
     image_reference,
     missing_image_settings,
 )
+from tests.infrahub_records import SYNC_SCHEMA
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator, Mapping, Sequence
@@ -154,7 +155,7 @@ CONTRACT_ENVIRONMENT: dict[str, str] = {
     "INFRAHUB_SYNC_PREFECT_AUTH_STRING": "contract-prefect-auth-string",
     "INFRAHUB_SYNC_S3_ACCESS_KEY": "contract-access-key",
     "INFRAHUB_SYNC_S3_SECRET_KEY": "contract-secret-key",
-    "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": '{"contract": {"token": "contract-token-0123456789"}}',
+    "INFRAHUB_SYNC_INFRAHUB_TOKEN": "contract-service-account-token",
     "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": "contract-destination-token",
 }
 
@@ -404,6 +405,10 @@ def _infrahub_environment(task_manager_db_password: str) -> dict[str, str]:
 def infrahub_fixture(sync_image: str, canaries: dict[str, str]) -> Iterator[dict[str, str]]:
     """One pinned Infrahub 1.11.4, seeded with the smoke schema, device, and branch.
 
+    It also holds Sync's schema extension, every deployment's configurations and run
+    records, and the identities of the suite's callers: its administrator token is
+    both each deployment's service account and the caller every module presents.
+
     Test infrastructure, never a service of the operator deployment: it is started
     from the development stack's own pinned files, published on its own port, and
     removed with its volumes afterwards. Only `infrahub-server`, `task-worker`
@@ -457,6 +462,20 @@ def infrahub_fixture(sync_image: str, canaries: dict[str, str]) -> Iterator[dict
             env={**os.environ, **seed_environment},
         )
         assert loaded.returncode == 0, f"the fixture schema did not load: {loaded.output}"
+        # Sync's own schema extension: the API and worker refuse to start without it.
+        sync_loaded = capture(
+            [
+                str(Path(sys.executable).parent / "infrahubctl"),
+                "schema",
+                "load",
+                "--wait",
+                str(FIXTURE_SCHEMA_CONVERGE_SECONDS),
+                str(SYNC_SCHEMA),
+            ],
+            timeout=FIXTURE_READY_SECONDS,
+            env={**os.environ, **seed_environment},
+        )
+        assert sync_loaded.returncode == 0, f"the Sync schema did not load: {sync_loaded.output}"
         ensure_smoke_branch(seed_environment)
         yield {
             "address": address,
@@ -479,10 +498,7 @@ def canaries() -> dict[str, str]:
     """
     from tests.compose.lifecycle import canary
 
-    planted = {
-        kind: canary(kind)
-        for kind in ("administrator", "product", "prefect", "prefect_auth", "object_store", "principal")
-    }
+    planted = {kind: canary(kind) for kind in ("administrator", "product", "prefect", "prefect_auth", "object_store")}
     # Registered at the boundary, so no retained Compose or Docker stream can
     # render one. The sweeps still search the raw streams for these values.
     SECRETS.register(*planted.values())
@@ -520,6 +536,7 @@ def deployment(
         directory,
         image=sync_image,
         destination_token=infrahub_fixture["token"],
+        infrahub_token=infrahub_fixture["token"],
         canaries=canaries,
         instance=instance,
         infrahub_network=infrahub_fixture["network"],

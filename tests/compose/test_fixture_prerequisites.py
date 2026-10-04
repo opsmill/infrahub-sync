@@ -133,7 +133,7 @@ def test_no_image_means_the_infrahub_fixture_starts_nothing(tmp_path: Path, sele
 
 
 def test_a_named_image_runs_the_fixture_through_start_seed_and_teardown(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Supplying the prerequisite preserves the fixture: it starts, seeds, yields, and tears down.
+    """Supplying the prerequisite preserves the fixture: it starts, loads both schemas, seeds, yields, and tears down.
 
     The two real fixture bodies are driven directly, so this says what the
     fixture does once the prerequisite passes without scheduling a session.
@@ -163,10 +163,12 @@ def test_a_named_image_runs_the_fixture_through_start_seed_and_teardown(monkeypa
     assert provided["token"]
     assert provided["network"] == f"{FIXTURE_PROJECT}_default"
     assert provided["task_manager_db"] == f"{FIXTURE_PROJECT}-task-manager-db-1"
-    started, loaded, seeded = calls
+    started, loaded, sync_loaded, seeded = calls
     assert f"--project-name {FIXTURE_PROJECT}" in started
     assert "up --detach --wait" in started
     assert "infrahubctl schema load --wait" in loaded
+    assert "infrahubctl schema load --wait" in sync_loaded
+    assert sync_loaded.endswith("schema/sync.yml"), sync_loaded
     assert seeded.startswith("seed ")
 
     with pytest.raises(StopIteration):

@@ -128,8 +128,6 @@ def test_from_netbox_accepts_cli_terminal_outcomes(runner: ModuleType, monkeypat
     def cli(*command: str, **_kwargs: object) -> str:
         if "netbox.demo-package" in command or "branch" in command:
             return ""
-        if "register" in command:
-            return "config_id: config-1\nregistry_version: 1\n"
         if "diff" in command:
             return "run_id: diff-1\noperations: 1688\n"
         if "sync" in command:
@@ -139,6 +137,7 @@ def test_from_netbox_accepts_cli_terminal_outcomes(runner: ModuleType, monkeypat
         pytest.fail(f"unexpected command: {command}")
 
     monkeypatch.setattr(runner, "run", cli)
+    monkeypatch.setattr(runner, "put_netbox_configuration", lambda _env: "nightly-from-netbox")
     monkeypatch.setattr(runner, "check_import_counts", lambda run_id, _env: checked.append(run_id))
     runner.from_netbox({})
     assert checked == ["diff-1"]

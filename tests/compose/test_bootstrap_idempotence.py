@@ -19,7 +19,17 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tests.compose.lifecycle import api_client, probe_json, register, run_bootstrap, smoke_package
+from tasks.preview import SMOKE_BRANCH
+from tests.compose.lifecycle import (
+    api_client,
+    await_phase,
+    idempotency,
+    probe_json,
+    put_configuration,
+    recorded_versions,
+    run_bootstrap,
+    smoke_package,
+)
 
 if TYPE_CHECKING:
     from tests.compose.lifecycle import Deployment
@@ -163,26 +173,47 @@ def test_the_sync_bootstrap_repeats_without_duplicating_any_durable_object(
     assert probe_json(deployment, PREFECT) == converged["prefect"]
 
 
-def test_a_repeated_bootstrap_leaves_an_explicitly_registered_package_alone(
-    deployment: Deployment, canaries: dict[str, str], destination_url: str
-) -> None:
-    """The registry the operator filled is the state a repeat must not touch.
+RUNS = """
+import json, os, psycopg
+with psycopg.connect(os.environ["INFRAHUB_SYNC_DATABASE_URL"]) as connection:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT run_id, phase FROM product_runs ORDER BY run_id")
+        print(json.dumps([list(row) for row in cursor.fetchall()]))
+"""
 
-    Registered through the API first, because an empty registry is preserved by a
-    bootstrap that wipes one as readily as by one that writes nothing.
+
+def test_a_repeated_bootstrap_leaves_recorded_runs_and_versions_alone(
+    deployment: Deployment, infrahub_fixture: dict[str, str], destination_url: str
+) -> None:
+    """The records a run left are the state a repeat must not touch.
+
+    A run is made first, because an empty run table is preserved by a bootstrap that
+    wipes one as readily as by one that writes nothing. The run records its
+    configuration version in Infrahub, which no bootstrap reaches.
     """
-    with api_client(deployment, canaries["principal"]) as client:
-        _config_id, registry_version = register(
-            client,
-            smoke_package(destination_url),
-            "compose suite: a configuration a repeated bootstrap must preserve",
+    config_id = put_configuration(infrahub_fixture, smoke_package(destination_url))
+    with api_client(deployment, infrahub_fixture["token"]) as client:
+        created = client.post(
+            "/runs",
+            headers=idempotency("compose-bootstrap-plan"),
+            json={
+                "operation": "plan",
+                "config_id": config_id,
+                "branch": SMOKE_BRANCH,
+                "reason": "compose suite: a run a repeated bootstrap must preserve",
+            },
         )
-    registered = probe_json(deployment, CONFIGURATIONS)
+        assert created.status_code == 202, created.text
+        await_phase(client, created.json()["run"]["run_id"], "planned")
+    runs = probe_json(deployment, RUNS)
     audited = probe_json(deployment, AUDIT)
+    versions = recorded_versions(infrahub_fixture, config_id)
 
     repeated = run_bootstrap(deployment)
 
     assert repeated.returncode == 0, repeated.output
-    assert probe_json(deployment, CONFIGURATIONS) == registered
+    assert runs, "this case compared a run table that held nothing"
+    assert probe_json(deployment, RUNS) == runs
     assert probe_json(deployment, AUDIT) == audited
-    assert [entry[1] for entry in registered if entry[0] == "compose-suite-registered"] == [registry_version]
+    assert recorded_versions(infrahub_fixture, config_id) == versions
+    assert probe_json(deployment, CONFIGURATIONS) == [], "a configuration was kept in Sync's own store"

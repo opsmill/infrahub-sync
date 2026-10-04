@@ -1,0 +1,220 @@
+---
+# yaml-language-server: $schema=https://schema.infrahub.app/infrahub/schema/latest.json
+#
+# The Infrahub Sync schema extension. The operator loads it into Infrahub, on a
+# branch first, with `infrahubctl schema load schema/sync.yml`, once per install and
+# on each Sync upgrade that changes it. Sync itself never loads or changes a schema;
+# at startup it checks that these kinds and fields exist.
+#
+# Users create and change configurations through Infrahub's usual workflow. Sync
+# writes versions, approvals, and run mirrors, always on the default branch.
+version: "1.0"
+nodes:
+  - name: Configuration
+    namespace: Sync
+    description: One sync between one source and one destination.
+    label: Sync Configuration
+    icon: mdi:sync
+    inherit_from: [CoreTaskTarget]
+    human_friendly_id: [name__value]
+    display_label: "{{ name__value }}"
+    order_by: [name__value]
+    uniqueness_constraints:
+      - [name__value]
+    attributes:
+      - name: name
+        kind: Text
+        unique: true
+        description: The config_id the Sync API and CLI use.
+        regex: "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        order_weight: 1000
+      - name: description
+        kind: Text
+        optional: true
+        order_weight: 1100
+      - name: document
+        kind: TextArea
+        description: The whole configuration package, as YAML or JSON.
+        order_weight: 1200
+    relationships:
+      - name: versions
+        peer: SyncConfigurationVersion
+        kind: Component
+        cardinality: many
+        optional: true
+        identifier: sync_configuration__versions
+      - name: runs
+        peer: SyncRun
+        kind: Generic
+        cardinality: many
+        optional: true
+        identifier: sync_configuration__runs
+
+  - name: ConfigurationVersion
+    namespace: Sync
+    description: An immutable copy of a configuration's document, recorded when a run starts.
+    label: Sync Configuration Version
+    icon: mdi:history
+    include_in_menu: false
+    human_friendly_id: [configuration__name__value, number__value]
+    display_label: "{{ configuration__name__value }} v{{ number__value }}"
+    order_by: [number__value]
+    uniqueness_constraints:
+      - [configuration, number__value]
+      - [configuration, checksum__value]
+    attributes:
+      - name: number
+        kind: Number
+        order_weight: 1000
+      - name: checksum
+        kind: Text
+        description: SHA-256 of the canonical declared content.
+        order_weight: 1100
+      - name: document
+        kind: TextArea
+        description: The configuration document this version records.
+        order_weight: 1200
+      - name: created_at
+        kind: DateTime
+        description: When the run that first used this content recorded it.
+        order_weight: 1300
+    relationships:
+      - name: configuration
+        peer: SyncConfiguration
+        kind: Parent
+        cardinality: one
+        optional: false
+        identifier: sync_configuration__versions
+      - name: runs
+        peer: SyncRun
+        kind: Generic
+        cardinality: many
+        optional: true
+        identifier: sync_configuration_version__runs
+
+  - name: Run
+    namespace: Sync
+    description: A mirror of one plan, verify, apply, or sync run; Sync's database holds its state.
+    label: Sync Run
+    icon: mdi:play-circle-outline
+    inherit_from: [CoreTaskTarget]
+    include_in_menu: false
+    human_friendly_id: [run_id__value]
+    display_label: "{{ operation__value }} {{ run_id__value }}"
+    order_by: [started_at__value]
+    uniqueness_constraints:
+      - [run_id__value]
+    attributes:
+      - name: run_id
+        kind: Text
+        unique: true
+        description: The run identifier the Sync API returns.
+        order_weight: 1000
+      - name: operation
+        kind: Dropdown
+        choices:
+          - name: plan
+            label: Plan
+          - name: verify
+            label: Verify
+          - name: apply
+            label: Apply
+          - name: sync
+            label: Sync
+        order_weight: 1100
+      - name: phase
+        kind: Text
+        description: The run's phase as Sync's database records it.
+        order_weight: 1200
+      - name: outcome
+        kind: Text
+        optional: true
+        description: The run's outcome once it has finished.
+        order_weight: 1300
+      - name: target_branch
+        kind: Text
+        optional: true
+        order_weight: 1400
+      - name: plan_checksum
+        kind: Text
+        optional: true
+        description: SHA-256 checksum of the run's saved plan.
+        order_weight: 1500
+      - name: summary
+        kind: JSON
+        optional: true
+        order_weight: 1600
+      - name: requested_by
+        kind: Text
+        description: The Infrahub account that requested the run.
+        order_weight: 1700
+      - name: reason
+        kind: Text
+        optional: true
+        order_weight: 1800
+      - name: flow_run_id
+        kind: Text
+        optional: true
+        description: The run's Prefect flow run on Infrahub's task manager.
+        order_weight: 1900
+      - name: started_at
+        kind: DateTime
+        order_weight: 2000
+      - name: finished_at
+        kind: DateTime
+        optional: true
+        order_weight: 2100
+    relationships:
+      - name: configuration
+        peer: SyncConfiguration
+        kind: Generic
+        cardinality: one
+        optional: true
+        identifier: sync_configuration__runs
+      - name: version
+        peer: SyncConfigurationVersion
+        kind: Generic
+        cardinality: one
+        optional: true
+        identifier: sync_configuration_version__runs
+      - name: plan_run
+        peer: SyncRun
+        kind: Generic
+        cardinality: one
+        optional: true
+        description: For an apply, the plan run it applies.
+        identifier: sync_run__plan_run
+      - name: approvals
+        peer: SyncApproval
+        kind: Generic
+        cardinality: many
+        optional: true
+        description: One per apply of this run's plan, each naming its approver.
+        identifier: sync_run__approvals
+
+  - name: Approval
+    namespace: Sync
+    description: A user's approval of one saved plan, by its checksum. Creating one is the apply right.
+    label: Sync Approval
+    icon: mdi:check-decagram
+    include_in_menu: false
+    display_label: "{{ approved_by__value }} {{ approved_checksum__value }}"
+    attributes:
+      - name: approved_checksum
+        kind: Text
+        order_weight: 1000
+      - name: approved_by
+        kind: Text
+        description: The Infrahub account that approved the plan.
+        order_weight: 1100
+      - name: reason
+        kind: Text
+        optional: true
+        order_weight: 1200
+    relationships:
+      - name: run
+        peer: SyncRun
+        kind: Generic
+        cardinality: one
+        optional: false
+        identifier: sync_run__approvals

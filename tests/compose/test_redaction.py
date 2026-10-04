@@ -96,6 +96,7 @@ def test_a_redacted_json_document_is_still_a_json_document() -> None:
                 "environment": {
                     "INFRAHUB_SYNC_DATABASE_URL": f"postgresql://infrahub_sync:{PLANTED}@postgres:5432/db",
                     "AWS_SECRET_ACCESS_KEY": PLANTED,
+                    "INFRAHUB_SYNC_INFRAHUB_TOKEN": PLANTED,
                     "INFRAHUB_SYNC_SERVICE_HOST": "0.0.0.0",  # noqa: S104 -- the container listener the file sets
                 }
             }
@@ -168,6 +169,7 @@ def leaking_environment(contract_environment: dict[str, str]) -> dict[str, str]:
         **contract_environment,
         "INFRAHUB_SYNC_DATABASE_URL": f"postgresql://infrahub_sync:{PLANTED}@postgres:5432/infrahub_sync",
         "INFRAHUB_SYNC_S3_SECRET_KEY": PLANTED,
+        "INFRAHUB_SYNC_INFRAHUB_TOKEN": PLANTED,
         "INFRAHUB_API_TOKEN": PLANTED,
     }
     SECRETS.register(PLANTED)

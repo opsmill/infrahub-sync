@@ -4,9 +4,10 @@ One command from a fresh clone to a complete, testable Infrahub Sync v3 stack:
 a disposable Infrahub instance whose task manager Sync runs on, the Sync HTTP API,
 and a Prefect worker running the service deployment.
 
-`preview.up` starts that stack and stops there. It writes nothing to Infrahub
-and admits no Sync run, so repeating it against an environment somebody is
-already using changes none of their data.
+`preview.up` starts that stack and stops there. Its one write to Infrahub is the
+Sync schema extension, `schema/sync.yml`, which the Sync API and worker need before
+they start. It creates no branch or node and admits no Sync run, so repeating it
+against an environment somebody is already using changes none of their data.
 
 Two commands write, and each says what it will write before writing:
 

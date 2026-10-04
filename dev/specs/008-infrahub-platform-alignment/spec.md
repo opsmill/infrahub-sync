@@ -31,7 +31,8 @@ database server for now. Drop Sync's own Prefect server, PostgreSQL and object s
 - Q: When is a configuration version created? → A: When a run starts: the run reuses the
   version matching the current content, or creates the next one.
 - Q: How is a configuration validated before merge? → A: On demand through the Sync API against
-  any branch; merging is not blocked, and a run refuses invalid content with the findings.
+  any branch; merging is not blocked, and a run refuses invalid content, naming the first
+  defect; the validation request lists every finding.
 - Q: Who installs and upgrades the Sync schema extension? → A: The operator, with Infrahub's
   usual tools, as an install and upgrade step; Sync only checks at startup that the loaded
   extension has the kinds, attributes, relationships and generics it needs.
@@ -107,7 +108,8 @@ checksum.
    validation of that branch, **Then** the author gets the findings without anything being
    merged or versioned.
 7. **Given** invalid content merged to the default branch, **When** a run starts, **Then** the
-   run is refused with the findings and no version is created.
+   run is refused with `configuration-invalid` naming the first defect, no version is
+   created, and validating the configuration lists every finding.
 8. **Given** a configuration stored in Infrahub, **When** a run starts, **Then** the run appears in
    the Tasks tab of that configuration and of its `SyncRun`, linked to both.
 
@@ -187,8 +189,9 @@ plan files, and apply it by checksum; confirm the apply used the stored plan wit
   as FR-006 describes. A request that names a version MUST use that version.
 - **FR-009**: Authors MUST be able to ask the Sync API to validate a configuration as it stands
   on any Infrahub branch and get the findings back. Merging is not blocked by validation. A run
-  MUST validate the content it is about to use and refuse to start, with the findings, if the
-  content is invalid; no version is created for invalid content.
+  MUST validate the content it is about to use and refuse to start if the content is invalid,
+  naming the first defect and pointing to validation for the full list of findings; no
+  version is created for invalid content.
 - **FR-010**: Plan files and review artifacts MUST be stored in Infrahub's storage, attached to
   the run that produced them, with their checksums.
 - **FR-011**: An apply MUST read the stored plan, verify its checksum against the approved one,

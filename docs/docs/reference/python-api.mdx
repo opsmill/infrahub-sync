@@ -1,6 +1,6 @@
 ---
 title: Python API
-description: Register configurations and control Sync runs through the Sync HTTP API.
+description: Read configurations and control Sync runs through the Sync HTTP API.
 ---
 
 `SyncClient` is the supported Python interface for the Sync HTTP API. It sends typed requests to
@@ -12,20 +12,22 @@ Psycopg, and Boto3 remain optional service dependencies.
 
 ## Connect
 
-Construct a client with an absolute HTTP or HTTPS service URL, a bearer token, and a positive
-request timeout. TLS verification is enabled and redirects are refused.
+Construct a client with an absolute HTTP or HTTPS service URL, your Infrahub API token, and a
+positive request timeout. The client presents the token in the `X-INFRAHUB-KEY` header, and the
+service asks Infrahub who you are and what you may do. TLS verification is enabled and redirects
+are refused.
 
-HTTP provides no transport encryption for bearer credentials. Use HTTP only when the service
+HTTP provides no transport encryption for the token. Use HTTP only when the service
 connection stays inside a network you trust; use HTTPS across networks you do not trust.
 
 ```python
 from infrahub_sync.client import SyncClient
 
-client = SyncClient("https://sync.example.com", "replace-with-a-token", timeout=30)
+client = SyncClient("https://sync.example.com", "replace-with-your-infrahub-token", timeout=30)
 ```
 
-`SyncClient.from_environment()` reads `INFRAHUB_SYNC_API_URL` and
-`INFRAHUB_SYNC_API_TOKEN`:
+`SyncClient.from_environment()` reads `INFRAHUB_SYNC_API_URL` and `INFRAHUB_SYNC_TOKEN`. When
+`INFRAHUB_SYNC_TOKEN` is unset, it reads the older `INFRAHUB_SYNC_API_TOKEN`:
 
 ```python
 from infrahub_sync.client import SyncClient
@@ -35,49 +37,44 @@ with SyncClient.from_environment(timeout=30) as client:
     status = client.get_status()
 ```
 
-The first protected operation checks `/version` before sending the bearer token. The client
+The first protected operation checks `/version` before sending the token. The client
 requires the server to declare `v3-unstable` and caches a successful compatibility check for that
 client instance.
 
-## Register and inspect configurations
+## Inspect and validate configurations
 
-Configuration mutations require a reason and an idempotency key. A retry after an uncertain
-transport result must reuse the same key.
+Configurations live in Infrahub, as `SyncConfiguration` nodes; create and edit them there. The
+client reads them through the Sync API, and `config_id` is the configuration's `name`:
 
 ```python
-from infrahub_sync.client import ConfigMutationRequest, SyncClient
-
-package = {
-    "format_version": 1,
-    "configuration": {
-        "name": "inventory",
-        "source": {"name": "netbox", "settings": {}},
-        "destination": {"name": "infrahub", "settings": {}},
-    },
-}
+from infrahub_sync.client import SyncClient
 
 with SyncClient.from_environment() as client:
-    registered = client.register_config(
-        ConfigMutationRequest(package=package, reason="Register inventory sync"),
-        idempotency_key="register-inventory-20260830",
-    )
-    config_id = registered.configuration.config_id
-    registry_version = registered.version.registry_version
-    report = client.validate_config(config_id, registry_version, offset=0, limit=256)
+    config_id = "inventory"
+    on_branch = client.validate_config_on_branch(config_id, "my-change", offset=0, limit=256)
+    on_default = client.validate_config_on_branch(config_id)
+    versions = client.list_config_versions(config_id)
+    report = client.validate_config(config_id, versions[-1].registry_version)
 ```
 
-`package` above is a minimal shape: it registers, but without `schema_mapping` it
-synchronizes nothing. For a complete package, see
-`examples/netbox_to_infrahub/package.yml`.
+`validate_config_on_branch` validates the configuration's document as it stands on an Infrahub
+branch, or on the default branch when `branch` is `None`, and records nothing. It returns a
+`BranchValidationResource` with the document's `checksum` and a page of findings.
+`validate_config` re-checks one recorded version against the adapters installed now.
 
-The client also exposes `create_config_version`, `list_configs`, `get_config`,
-`list_config_versions`, and `get_config_version`. Configuration list methods return the complete
-server response and do not expose pagination arguments. Validation exposes the server's finding
-page fields and preserves finding order.
+The client also exposes `list_configs`, `get_config`, `list_config_versions`, and
+`get_config_version`. Configuration list methods return the complete server response and do not
+expose pagination arguments. Validation exposes the server's finding page fields and preserves
+finding order.
+
+`register_config` and `create_config_version` remain for a Sync that keeps configurations in its
+own store. A Sync connected to Infrahub refuses them with `410 configurations-in-infrahub`.
 
 ## Create and inspect runs
 
-Create a plan from a registered configuration version:
+Create a plan from a configuration. Without `registry_version`, the run uses the configuration's
+current document on the Infrahub default branch, and records it as a new version when no version
+holds it yet; the accepted run names the version it uses:
 
 ```python
 from infrahub_sync.client import CreateRunRequest, SyncClient
@@ -87,7 +84,6 @@ with SyncClient.from_environment() as client:
         CreateRunRequest(
             operation="plan",
             config_id=config_id,
-            registry_version=registry_version,
             branch="main",
             confirm_writes=False,
             reason="Review inventory changes",
@@ -140,5 +136,5 @@ except SyncClientError:
 ```
 
 Exceptions contain fixed client-owned text. Valid API refusals retain only their documented
-machine fields. Raw response bodies, response headers, bearer values, and HTTPX exception chains
+machine fields. Raw response bodies, response headers, token values, and HTTPX exception chains
 do not cross the client boundary.

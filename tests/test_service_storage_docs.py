@@ -12,13 +12,15 @@ SERVICE_STORAGE_SETTINGS = frozenset(
         "INFRAHUB_SYNC_S3_PREFIX",
         "INFRAHUB_SYNC_S3_ENDPOINT_URL",
         "INFRAHUB_SYNC_S3_REGION",
+        "INFRAHUB_SYNC_INFRAHUB_ADDRESS",
+        "INFRAHUB_SYNC_INFRAHUB_TOKEN",
     }
 )
 
 
 @pytest.mark.parametrize("name", ["durable-product-records.mdx", "sync-http-api.mdx"])
 def test_service_storage_operator_references_state_the_complete_deployed_contract(name: str) -> None:
-    """Every service-storage reference names one PostgreSQL/S3 deployment shape."""
+    """Every service-storage reference names one PostgreSQL, S3 and Infrahub deployment shape."""
     text = (REFERENCE_ROOT / name).read_text(encoding="utf-8")
 
     assert not {setting for setting in SERVICE_STORAGE_SETTINGS if f"`{setting}`" not in text}

@@ -30,7 +30,6 @@ UP_VALUES = {
     "PREVIEW_PREFECT_PORT": "4210",
     "PREVIEW_SYNC_API_PORT": "8090",
     "PREVIEW_WORK_POOL": "preview-pool",
-    "PREVIEW_BEARER_TOKENS": '{"tester@local": {"token": "t", "administrator": true}}',
 }
 SMOKE_ENVIRONMENT = {"INFRAHUB_ADDRESS": "http://127.0.0.1:8080", "INFRAHUB_API_TOKEN": "local-token"}
 # The source the CLI-cycle smoke plans against the same branch.
@@ -143,6 +142,10 @@ def test_preview_declares_the_service_postgresql_and_minio_storage_shape(
 ) -> None:
     """Preview supplies storage and liveness settings to both service processes.
 
+    Both are also given the preview Infrahub's address and the service account's
+    token: that Infrahub holds Sync's configurations and run records and identifies
+    callers.
+
     Every retired name is seeded first, as an operator's shell would carry it across the
     cutover, so the absences asserted below are removals rather than values that merely
     happened not to be set.
@@ -153,7 +156,6 @@ def test_preview_declares_the_service_postgresql_and_minio_storage_shape(
     environment = preview._runtime_env(
         {
             "INFRAHUB_INITIAL_ADMIN_TOKEN": "local-token",
-            "PREVIEW_BEARER_TOKENS": "{}",
             "PREVIEW_INFRAHUB_PORT": "8080",
             "PREVIEW_PREFECT_PORT": "4210",
             "PREVIEW_SYNC_API_PORT": "8090",
@@ -179,6 +181,8 @@ def test_preview_declares_the_service_postgresql_and_minio_storage_shape(
     assert environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] == "http://127.0.0.1:9010"
     assert environment["AWS_ACCESS_KEY_ID"] == "preview-minio-access"
     assert environment["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
+    assert environment["INFRAHUB_SYNC_INFRAHUB_ADDRESS"] == "http://localhost:8080"
+    assert environment["INFRAHUB_SYNC_INFRAHUB_TOKEN"] == SMOKE_ENVIRONMENT["INFRAHUB_API_TOKEN"]
     # Seeded above and gone here: the retired names are removed, not merely unset.
     for retired in preview.RETIRED_SERVICE_SETTINGS:
         assert retired not in environment, retired
@@ -266,12 +270,15 @@ def test_preview_up_uses_a_bounded_compose_wait(monkeypatch: pytest.MonkeyPatch,
     assert compose_calls == ["up --detach --wait --wait-timeout 420 --quiet-pull"]
 
 
-def test_bringing_the_preview_up_writes_nothing_to_infrahub(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """`up` starts the stack and nothing else; `seed` and `smoke` own every write.
+def test_bringing_the_preview_up_writes_only_the_sync_schema_to_infrahub(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`up` starts the stack and installs Sync's schema; `seed` and `smoke` own every other write.
 
-    The daily bring-up must leave the disposable Infrahub exactly as it found it, so the
-    commands `up` issues are pinned in full: no schema load, no seeded branch or device,
-    and no smoke suite -- the one path that admits a Sync run.
+    The Sync API and worker refuse to start without `schema/sync.yml`, so loading it is
+    part of starting Sync. The commands `up` issues are pinned in full otherwise: no
+    smoke schema, no seeded branch or device, and no smoke suite -- the one path that
+    admits a Sync run.
     """
     started: list[str] = []
     commands: list[str] = []
@@ -304,6 +311,7 @@ def test_bringing_the_preview_up_writes_nothing_to_infrahub(monkeypatch: pytest.
 
     assert started == ["prefect-worker", "sync-api"]
     assert commands == [
+        f"uv run infrahubctl schema load --wait {preview.SCHEMA_CONVERGE_SECONDS} {preview.SYNC_SCHEMA_FILE}",
         "uv run prefect work-pool create preview-pool --type process",
         "uv run python -m infrahub_sync.service.deploy",
     ]
@@ -526,13 +534,16 @@ def test_the_smoke_task_does_not_run_the_suite_when_the_seed_fails(monkeypatch: 
 
 
 def test_actual_smoke_path_receives_the_preview_aws_credential_chain(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The reusable smoke command receives the same MinIO credentials as API, worker, and CLI."""
+    """The reusable smoke command receives the same MinIO credentials as API, worker, and CLI.
+
+    It is also given the service account that reaches the preview's Infrahub, where the
+    configurations it writes and the run records it reads live.
+    """
     events: list[tuple[str, dict[str, str]]] = []
     context = Context()
     values = {
         "COMPOSE_PROJECT_NAME": "preview-test",
         "INFRAHUB_INITIAL_ADMIN_TOKEN": "local-token",
-        "PREVIEW_BEARER_TOKENS": "{}",
         "PREVIEW_INFRAHUB_PORT": "8080",
         "PREVIEW_PREFECT_PORT": "4210",
         "PREVIEW_SYNC_API_PORT": "8090",
@@ -558,6 +569,8 @@ def test_actual_smoke_path_receives_the_preview_aws_credential_chain(monkeypatch
     assert len(smoke_environments) == 1
     assert smoke_environments[0]["AWS_ACCESS_KEY_ID"] == "preview-minio-access"
     assert smoke_environments[0]["AWS_SECRET_ACCESS_KEY"] == PREVIEW_MINIO_SECRET
+    assert smoke_environments[0]["INFRAHUB_SYNC_INFRAHUB_ADDRESS"] == "http://localhost:8080"
+    assert smoke_environments[0]["INFRAHUB_SYNC_INFRAHUB_TOKEN"] == SMOKE_ENVIRONMENT["INFRAHUB_API_TOKEN"]
 
 
 def test_the_smoke_task_leaves_an_unreachable_environment_to_pytest(monkeypatch: pytest.MonkeyPatch) -> None:

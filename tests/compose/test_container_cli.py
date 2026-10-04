@@ -63,7 +63,7 @@ def _container_environment() -> dict[str, str]:
         **CONTRACT_ENVIRONMENT,
         **SOURCE_TOKENS,
         **image,
-        "INFRAHUB_SYNC_API_TOKEN": CLIENT_CREDENTIAL,
+        "INFRAHUB_SYNC_TOKEN": CLIENT_CREDENTIAL,
     }
 
 
@@ -139,7 +139,7 @@ def test_the_cli_container_holds_no_credential_beyond_its_own_api_token(docker_d
     assert result.returncode == 0, result.output
     # Read from the raw stream, and only here. The redaction boundary replaces a
     # credential-named key's value, so on the redacted stream the digest under
-    # `INFRAHUB_SYNC_API_TOKEN` is already `[redacted]` and answers nothing. The
+    # `INFRAHUB_SYNC_TOKEN` is already `[redacted]` and answers nothing. The
     # obligation that comes with the exception is met below: every comparison is
     # made before its assertion, and only Booleans and names reach one.
     digests = json.loads(_probe_payload(result))
@@ -149,17 +149,17 @@ def test_the_cli_container_holds_no_credential_beyond_its_own_api_token(docker_d
     # words -- an over-broad match here would report the base image's own keys.
     supplied = {name for name in digests if name.startswith(("INFRAHUB_", "AWS_", "POSTGRES_", "PREFECT_API"))}
 
-    assert supplied == {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_API_TOKEN"}, sorted(supplied)
+    assert supplied == {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_TOKEN"}, sorted(supplied)
 
     # The intended value arrived, and no other operator input did. Both compared
     # as digests before the assertions, so what reaches a failure report is a
     # Boolean and a list of names.
     expected = _digest(CLIENT_CREDENTIAL)
-    received_intended = digests.get("INFRAHUB_SYNC_API_TOKEN") == expected
+    received_intended = digests.get("INFRAHUB_SYNC_TOKEN") == expected
     planted = {
         name: _digest(value)
         for name, value in environment.items()
-        if name not in {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_API_TOKEN"} and len(value) >= 8
+        if name not in {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_TOKEN"} and len(value) >= 8
     }
     carried = sorted(name for name, digest in planted.items() if digest in set(digests.values()))
 
@@ -181,10 +181,9 @@ def _deployment_cli(deployment: Deployment, *arguments: str) -> Captured:
 def test_the_cli_service_reaches_the_deployment_with_the_token_its_env_file_carries(deployment: Deployment) -> None:
     """The replacement for `./infrahub-sync-compose cli configs list`.
 
-    The `.env` carries the principal's token twice: once in the API's
-    `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, once as the `INFRAHUB_SYNC_API_TOKEN`
-    the `cli` service presents. A call that authenticated proves both reached
-    the right container.
+    The `.env` carries the caller's Infrahub token as the `INFRAHUB_SYNC_TOKEN`
+    the `cli` service presents, and the API asks Infrahub who that is. A call that
+    authenticated proves the token reached the CLI and the API reached Infrahub.
     """
     listed = _deployment_cli(deployment, "configs", "list")
 

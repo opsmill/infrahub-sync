@@ -1,4 +1,4 @@
-"""Two live workers, one registered configuration: the guard is what serializes them.
+"""Two live workers, one configuration: the guard is what serializes them.
 
 These legs contend from **two different runs of the same configuration**, which is the
 only shape that puts the advisory guard under test. Two writes on one run are refused by
@@ -44,7 +44,6 @@ stack.
 from __future__ import annotations
 
 import concurrent.futures
-import json
 import threading
 import time
 import uuid
@@ -66,6 +65,7 @@ from tasks.preview import (
     load_preview_env,
     preview_urls,
 )
+from tests.infrahub_records import load_sync_schema, put_configuration
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -107,7 +107,6 @@ class LiveStack:
     sync_api: str
     infrahub: str
     infrahub_token: str
-    bearer_token: str
     database_url: str
 
 
@@ -139,23 +138,22 @@ def live_stack_fixture() -> LiveStack:
             probe.execute("SELECT 1")
     except psycopg.Error as exc:
         pytest.skip(f"preview service PostgreSQL unreachable ({exc}); start it with `invoke preview.up`")
-    principals = json.loads(values["PREVIEW_BEARER_TOKENS"])
-    actor = min(principals)
+    # The Sync API identifies callers through the preview's Infrahub, so the administrator's
+    # Infrahub token is both the caller's credential and the oracle's.
     return LiveStack(
         sync_api=urls["sync_api"],
         infrahub=urls["infrahub"],
         infrahub_token=values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
-        bearer_token=principals[actor]["token"],
         database_url=database_url,
     )
 
 
 @pytest.fixture(name="api")
 def api_fixture(live_stack: LiveStack) -> Iterator[httpx.Client]:
-    """A bearer-authenticated client for the live Sync API."""
+    """A client for the live Sync API, authenticated with the caller's Infrahub token."""
     with httpx.Client(
         base_url=live_stack.sync_api,
-        headers={"Authorization": f"Bearer {live_stack.bearer_token}"},
+        headers={"X-INFRAHUB-KEY": live_stack.infrahub_token},
         timeout=60,
     ) as client:
         yield client
@@ -166,13 +164,16 @@ def _idempotency_headers() -> dict[str, str]:
     return {"Idempotency-Key": f"guard-live-{uuid.uuid4()}"}
 
 
-def _register_configuration(api: httpx.Client, live_stack: LiveStack, name: str) -> tuple[str, int]:
-    """Register this leg's own package and return the identity the API assigned it.
+def _put_configuration(live_stack: LiveStack, name: str) -> str:
+    """Write this leg's own configuration into Infrahub under a fresh name, and return it.
 
-    Each leg registers its own, because the advisory key is derived from the `config_id`:
-    sharing one with another leg or with leftover probe state would let unrelated work
-    contend for the key this leg is measuring.
+    Each leg writes its own, because the advisory key is derived from the `config_id` — the
+    configuration's name: sharing one with another leg, another run of this leg, or
+    leftover probe state would let unrelated work contend for the key this leg measures.
     """
+    from infrahub_sdk import InfrahubClientSync  # pylint: disable=import-outside-toplevel
+
+    config_id = f"{name}-{uuid.uuid4().hex[:12]}"
     package = {
         "format_version": 1,
         "configuration": {
@@ -206,14 +207,10 @@ def _register_configuration(api: httpx.Client, live_stack: LiveStack, name: str)
             "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"}
         },
     }
-    registered = api.post(
-        "/configs",
-        headers=_idempotency_headers(),
-        json={"package": package, "reason": f"live write-guard leg: register {name}"},
-    )
-    assert registered.status_code == 201, registered.text
-    version = registered.json()["version"]
-    return version["config_id"], version["registry_version"]
+    client = InfrahubClientSync(address=live_stack.infrahub, config={"api_token": live_stack.infrahub_token})
+    load_sync_schema(client)
+    put_configuration(client, config_id, package)
+    return config_id
 
 
 def _seed_one_source_update(live_stack: LiveStack) -> str:
@@ -508,7 +505,7 @@ def test_two_live_apply_workers_serialize_on_one_configuration(api: httpx.Client
     Both applies are admitted, because a write admission is per run — so nothing but the
     advisory key stands between the two workers, and the key is what the assertions read.
     """
-    config_id, registry_version = _register_configuration(api, live_stack, "guard-live-apply")
+    config_id = _put_configuration(live_stack, "guard-live-apply")
     _seed_one_source_update(live_stack)
 
     approved: dict[str, tuple[str, str]] = {}
@@ -519,7 +516,6 @@ def test_two_live_apply_workers_serialize_on_one_configuration(api: httpx.Client
             json={
                 "operation": "plan",
                 "config_id": config_id,
-                "registry_version": registry_version,
                 "branch": SMOKE_BRANCH,
                 "reason": f"live write-guard apply leg: plan {label}",
             },
@@ -579,7 +575,7 @@ def test_two_live_sync_workers_serialize_extraction_and_planning(api: httpx.Clie
     alone and is released before the apply, so under it alone the second worker would plan
     while the first was still verifying and applying — well inside the first hold.
     """
-    config_id, registry_version = _register_configuration(api, live_stack, "guard-live-sync")
+    config_id = _put_configuration(live_stack, "guard-live-sync")
     _seed_one_source_update(live_stack)
 
     def start(label: str) -> httpx.Response:
@@ -589,7 +585,6 @@ def test_two_live_sync_workers_serialize_extraction_and_planning(api: httpx.Clie
             json={
                 "operation": "sync",
                 "config_id": config_id,
-                "registry_version": registry_version,
                 "branch": SMOKE_BRANCH,
                 "confirm_writes": True,
                 "reason": f"live write-guard sync leg: sync {label}",
@@ -607,6 +602,8 @@ def test_two_live_sync_workers_serialize_extraction_and_planning(api: httpx.Clie
         for label, response in responses.items():
             assert response.status_code == 202, response.text
             run_ids[label] = response.json()["run"]["run_id"]
+        # Both started on the same new content, which the version lock records exactly once.
+        assert {response.json()["run"]["registry_version"] for response in responses.values()} == {1}
         sampled_run_ids.extend(run_ids.values())
         _await_blocked_workers(sampler)
         holder.release()

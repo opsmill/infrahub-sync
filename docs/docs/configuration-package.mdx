@@ -2,9 +2,10 @@
 title: Configuration package
 ---
 
-A configuration package is the YAML or JSON file that describes one sync: its source, its
-destination, and how source records map to destination kinds. You register the package with
-the Sync API. Every later run uses the registered copy, not the file.
+A configuration package is the YAML or JSON document that describes one sync: its source, its
+destination, and how source records map to destination kinds. It is the `document` of a
+`SyncConfiguration` node in Infrahub. Each run records the exact content it used as an
+immutable version.
 
 For the fields inside `configuration`, see [Sync instance configuration](./reference/config.mdx)
 and the [Schema mapping reference](./reference/schema-mapping.mdx). To write a first package
@@ -61,63 +62,109 @@ reads when a run starts. The identifier must start with `INFRAHUB_SYNC_CREDENTIA
 validation refuses any other identifier. Set that variable where the worker runs. On a Compose deployment,
 set it in `.env` and run `docker compose up -d --wait`; see
 [Reading from NetBox or Nautobot](./compose-deployment.mdx#reading-from-netbox-or-nautobot).
-Registration refuses a package that contains a literal credential value.
+Validation refuses a package that contains a literal credential value, and no run starts
+from it.
 
 ## Connection settings
 
-The worker connects to the URLs declared in the registered package. Environment variables
+The worker connects to the URLs declared in the package. Environment variables
 such as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not replace them. Only the credential values
 come from the worker environment. To change a URL, a branch, or any other setting, edit the
-file and register it as a new version with `configs version`.
+configuration's document in Infrahub. The next run records it as a new version.
 
 Declare URLs that the worker can reach. On a Compose deployment, `localhost` in a package
 refers to the worker container.
 
-## Registration and versions
+## Configurations in Infrahub
 
-Register a new package, or a new version of a registered one:
+A configuration is a `SyncConfiguration` node in Infrahub. The kind comes from the Sync
+schema extension, which an Infrahub administrator loads once; see
+[Load the Sync schema](./compose-deployment.mdx#load-the-sync-schema). It has three
+attributes:
 
-```bash
-infrahub-sync configs register package.yml --reason "register NetBox import"
-infrahub-sync configs version <config-id> package.yml --reason "update the device mapping"
+| Attribute | Content |
+| --- | --- |
+| `name` | The configuration's identity. The CLI and the API call it `config_id`. Letters, digits, `.`, `_` and `-`, starting with a letter or digit, at most 128 characters. |
+| `description` | Optional free text. |
+| `document` | The whole package, as YAML or JSON text. |
+
+Create and edit configurations with Infrahub's usual tools: the web interface, GraphQL, or
+an object file:
+
+```yaml
+---
+apiVersion: infrahub.app/v1
+kind: Object
+spec:
+  kind: SyncConfiguration
+  data:
+    - name: netbox-demo
+      description: NetBox demo data into Infrahub
+      document: |
+        format_version: 1
+        configuration:
+          name: from-netbox
+          ...          # abbreviated
 ```
 
-[Run a sync](./running-a-sync.mdx) shows the same commands for a Compose deployment.
+```bash
+infrahubctl object load sync-configuration.yml
+```
 
-- `configs register` always creates a new configuration with a new `config_id`, at version 1.
-  Registering the same file again creates another configuration. It does not add a version.
-- `configs version` adds the next version to an existing configuration.
-- Registered versions are immutable. A new version never changes an earlier one.
-- Each run names one registered version by `config_id` and version number. No run command
-  takes a file path.
+[`examples/netbox_to_infrahub/sync-configuration.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/netbox_to_infrahub/sync-configuration.yml)
+is a complete object file. You can make the change on an Infrahub branch, validate it there,
+and merge it through a proposed change. Runs read the configuration on the default branch.
 
-Both commands print the version's `config_id`, `registry_version`, `package_checksum`,
-`created_at`, and `declared_content`. `configs version` also prints `created`. It is `false`
-when the submitted content matches an existing version of that configuration. In that case
-the command prints the existing version and stores nothing.
+Reading configurations through Sync needs `view` on `SyncConfiguration` in Infrahub.
 
-### When registration fails
+## Versions
 
-Registration checks the package before it stores anything. If the check fails, the command
-reports `code: configs-validation` and stores nothing. The response does not name the
-defect, and `configs validate` cannot check a package that was not stored. Compare the file
-with [Sync instance configuration](./reference/config.mdx) and the adapter page. Check
-these causes first:
+Sync records a version when a run starts on content that no version of the configuration
+holds yet:
 
-- An adapter name that is not bundled. See [Choose an adapter](./adapters/choosing-an-adapter.mdx).
-- A setting that the adapter does not accept.
-- A literal credential value instead of a `$credential` reference.
-- A URL setting that is not an absolute URL.
+- The run reads the document on the Infrahub default branch and validates it.
+- Content that an existing version holds reuses that version. Content is compared by a
+  checksum of its canonical form, so a change in formatting, key order, or comments alone
+  reuses the version.
+- New content becomes the next version: `1`, then `2`, and so on. Two runs that start on the
+  same new content at the same time share one version.
+- Content with errors is refused with `configuration-invalid` and gets no version.
 
-## Validate a version
-
-`configs validate` checks a registered version again, against the adapter declarations of
-the Sync release that runs now. A version that registered without findings can report
-findings after an upgrade.
+A version is a `SyncConfigurationVersion` node with a `number`, a `checksum`, the `document`
+it records, and `created_at`. Sync writes it on the default branch. Versions are immutable:
+a later edit never changes an earlier version. Each run names the version it used as
+`registry_version`, and `diff` or `sync` with `--version N` runs an earlier version again.
 
 ```bash
-infrahub-sync configs validate <config-id> <version>
+infrahub-sync configs list
+infrahub-sync configs show <config-id>
+infrahub-sync configs versions <config-id>
+infrahub-sync configs show <config-id> --version 2
 ```
+
+`configs register` and `configs version` remain only for a Sync that keeps configurations
+in its own store. A Sync connected to Infrahub refuses them with
+`410 configurations-in-infrahub`.
+
+## Validate a configuration
+
+`configs validate` checks a configuration's document as it stands on an Infrahub branch, or
+one recorded version again:
+
+```bash
+infrahub-sync configs validate <config-id>
+infrahub-sync configs validate <config-id> --branch <branch>
+infrahub-sync configs validate <config-id> --version <number>
+```
+
+Without an option, it reads the document on the default branch. `--branch` reads it on
+another branch, so you can check a change before you merge it. Validating on a branch other
+than the default also needs `view` on `SyncConfiguration` with the `allow_other` or
+`allow_all` decision; Sync refuses it with `403 forbidden` naming
+`object:Sync:Configuration:view` otherwise. Validating a document records
+nothing. `--version` checks a recorded version against the adapter declarations of the Sync
+release that runs now; a version recorded without findings can report findings after an
+upgrade. `--branch` and `--version` cannot be combined.
 
 The check reads only the declared content. It does not connect to the source or the
 destination, so it does not test URLs, tokens, or the destination schema.
@@ -130,19 +177,21 @@ The output is paged. The default page holds 256 findings. The output reports
 `total_findings` and `next_offset`; to read the next page, pass `--offset <next_offset>`.
 `--limit` sets the page size.
 
-## Retry keys
+### When a document is refused
 
-`configs register` and `configs version` accept `--idempotency-key`. If you omit it, the CLI
-generates a key and prints it before it sends the request.
+A document that is not a YAML or JSON mapping is refused with
+`configuration-document-invalid`. Compare a document with findings with
+[Sync instance configuration](./reference/config.mdx) and the adapter page. Check these
+causes first:
 
-If the connection fails, you cannot tell whether the service stored the version. Run the
-same command again with the printed key. If the service already accepted the first request,
-it returns the original response and stores nothing new. A retry with the same key but a
-different request is refused with `idempotency-conflict`.
+- An adapter name that is not bundled. See [Choose an adapter](./adapters/choosing-an-adapter.mdx).
+- A setting that the adapter does not accept.
+- A literal credential value instead of a `$credential` reference.
+- A URL setting that is not an absolute URL.
 
 ## Convert a config.yml file
 
-Several examples in the repository are `config.yml` files, not packages. Registration
+Several examples in the repository are `config.yml` files, not packages. Validation
 refuses them as they are. To convert one:
 
 1. Add `format_version: 1`, and indent the whole file under a `configuration:` key.
@@ -150,8 +199,8 @@ refuses them as they are. To convert one:
    reference in a top-level `credentials` block.
 3. Add a token credential to the Infrahub destination. Most `config.yml` examples omit it.
 4. Replace example URLs with addresses that the Sync worker can reach.
-5. Remove settings that the adapter does not accept in a registered package. The adapter
-   pages list the accepted settings.
+5. Remove settings that the adapter does not accept in a package. The adapter pages list
+   the accepted settings.
 
 A `config.yml` file is used directly only by the
 [Prefect remote run](./reference/prefect-remote-run.mdx) and by Python callers that load a

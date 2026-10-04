@@ -1,8 +1,9 @@
-"""Sync API surface: auth boundary and the full registered run lifecycle.
+"""Sync API surface: auth boundary and the full run lifecycle of an Infrahub configuration.
 
-The shipped API is registered-only: a run names a registered configuration version, not
-a directory on the worker's disk. So the smoke registers its own package first, through
-`POST /configs`, and drives plan → review → apply against that exact version.
+A run names a configuration, never a directory on the worker's disk, and configurations
+live in Infrahub as `SyncConfiguration` nodes. So the smoke writes its own package into
+Infrahub first, the way an operator would, and drives plan → review → apply against it;
+the plan records the version it used, and the apply continues that version.
 
 The package is Infrahub-to-Infrahub against the preview's own instance — `main` as the
 source, the disposable smoke branch as the destination — because the registered path
@@ -30,6 +31,7 @@ so the apply fails on its first operation having written nothing.
 
 from __future__ import annotations
 
+import functools
 import json
 import time
 import uuid
@@ -40,6 +42,7 @@ import httpx
 import pytest
 
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
+from tests.infrahub_records import load_sync_schema, put_configuration
 from tests.preview.evidence import canary_leaks, transcript_hooks
 
 if TYPE_CHECKING:
@@ -56,7 +59,7 @@ SMOKE_FIELDS = ("name", "type")
 
 
 def smoke_package(infrahub_url: str) -> dict[str, Any]:
-    """The declared package the smoke registers, as `POST /configs` accepts it.
+    """The declared package the smoke runs, as a `SyncConfiguration` document holds it.
 
     Both adapters are the bundled `infrahub` one, so the registered worker resolves them
     through the installed loader with nothing generated and nothing on the filesystem. The
@@ -98,19 +101,25 @@ def smoke_package(infrahub_url: str) -> dict[str, Any]:
 
 
 def register_request(infrahub_url: str) -> dict[str, Any]:
-    """The `POST /configs` body: a declared package plus its audit reason."""
+    """The `POST /configs` body a Sync connected to Infrahub refuses with 410."""
     return {"package": smoke_package(infrahub_url), "reason": "preview smoke: register the smoke configuration"}
 
 
-def create_run_request(config_id: str, registry_version: int) -> dict[str, Any]:
-    """The `POST /runs` body: a registered version, never a directory name."""
-    return {
+def create_run_request(config_id: str, registry_version: int | None = None) -> dict[str, Any]:
+    """The `POST /runs` body: a configuration, never a directory name.
+
+    Without a version the run uses the configuration's current document and records the
+    version that holds it.
+    """
+    body: dict[str, Any] = {
         "operation": "plan",
         "config_id": config_id,
-        "registry_version": registry_version,
         "branch": SMOKE_BRANCH,
         "reason": "preview smoke: create a service plan",
     }
+    if registry_version is not None:
+        body["registry_version"] = registry_version
+    return body
 
 
 def apply_run_request(checksum: str) -> dict[str, Any]:
@@ -144,12 +153,13 @@ def unwritten_plan_reasons(summary: Mapping[str, Any]) -> list[str]:
 def _client(preview_env: dict[str, Any], token: str | None) -> httpx.Client:
     headers = {}
     if token is not None:
-        headers["Authorization"] = f"Bearer {token}"
+        # The caller's Infrahub API token, presented the way Infrahub itself accepts it.
+        headers["X-INFRAHUB-KEY"] = token
     return httpx.Client(base_url=preview_env["urls"]["sync_api"], headers=headers, timeout=30)
 
 
 def authenticated_client(preview_env: dict[str, Any], *, transcript: Path) -> httpx.Client:
-    """The bearer-authenticated raw client, recording every exchange."""
+    """The raw client authenticated with the caller's Infrahub token, recording every exchange."""
     client = _client(preview_env, preview_env["bearer_token"])
     client.event_hooks = transcript_hooks(transcript)
     return client
@@ -182,19 +192,14 @@ def wait_for_phase(client: httpx.Client, run_id: str, target_phase: str) -> dict
     pytest.fail(f"run {run_id} did not reach {target_phase!r} within {POLL_TIMEOUT_SECONDS}s: {payload}")
 
 
-def _registered_version(client: httpx.Client, preview_env: dict[str, Any]) -> tuple[str, int]:
-    """Register the smoke package and prove the returned version validates cleanly."""
-    registered = client.post(
-        "/configs", headers=idempotency_headers(), json=register_request(preview_env["urls"]["infrahub"])
-    )
-    assert registered.status_code == 201, registered.text
-    version = registered.json()["version"]
-    config_id, registry_version = version["config_id"], version["registry_version"]
+def _validated_configuration(client: httpx.Client, preview_env: dict[str, Any]) -> str:
+    """Put the smoke package into Infrahub and prove its document validates cleanly."""
+    config_id = put_smoke_configuration(preview_env, "preview-service-api")
 
-    validated = client.post(f"/configs/{config_id}/versions/{registry_version}/validate")
+    validated = client.post(f"/configs/{config_id}/validate")
     assert validated.status_code == 200, validated.text
     assert validated.json()["findings"] == [], validated.text
-    return config_id, registry_version
+    return config_id
 
 
 def infrahub_client(preview_env: dict[str, Any]) -> Any:  # noqa: ANN401 — the SDK's sync client
@@ -204,6 +209,38 @@ def infrahub_client(preview_env: dict[str, Any]) -> Any:  # noqa: ANN401 — the
     return InfrahubClientSync(
         address=preview_env["urls"]["infrahub"], config={"api_token": preview_env["infrahub_token"]}
     )
+
+
+@functools.cache
+def _schema_loaded(infrahub_url: str, token: str) -> None:
+    """Load the Sync schema extension once per session; `preview.up` normally has already."""
+    from infrahub_sdk import InfrahubClientSync
+
+    load_sync_schema(InfrahubClientSync(address=infrahub_url, config={"api_token": token}))
+
+
+def configuration_name(prefix: str) -> str:
+    """A configuration name no other test or earlier run has used, so each test owns its versions."""
+    return f"{prefix}-{uuid.uuid4().hex[:12]}"
+
+
+def put_smoke_configuration(
+    preview_env: dict[str, Any], prefix: str, package: Mapping[str, Any] | str | None = None
+) -> str:
+    """Write a fresh `SyncConfiguration` holding the smoke package, or `package`, and return its name.
+
+    `package` is a mapping or the YAML or JSON text an operator would paste. The name is
+    the configuration's identity on the Sync API. Configurations are created in Infrahub,
+    never through `POST /configs`, so this is the operator's step.
+    """
+    _schema_loaded(preview_env["urls"]["infrahub"], preview_env["infrahub_token"])
+    name = configuration_name(prefix)
+    put_configuration(
+        infrahub_client(preview_env),
+        name,
+        package if package is not None else smoke_package(preview_env["urls"]["infrahub"]),
+    )
+    return name
 
 
 def mirrored_device_payloads(nodes: Iterable[Any]) -> list[dict[str, Any]]:
@@ -269,7 +306,8 @@ def seed_source_branch(preview_env: dict[str, Any]) -> str:
     return mutated_type
 
 
-def test_requests_without_a_bearer_token_are_refused(preview_env: dict[str, Any]) -> None:
+def test_requests_without_an_infrahub_api_key_are_refused(preview_env: dict[str, Any]) -> None:
+    """No `X-INFRAHUB-KEY` header means no caller to identify: 401 before any lookup."""
     with _client(preview_env, token=None) as client:
         response = client.get("/runs/does-not-exist")
     assert response.status_code == 401
@@ -281,13 +319,13 @@ def test_service_plan_and_apply_lifecycle(preview_env: dict[str, Any], evidence_
 
     transcript = evidence_dir / "service-lifecycle-http.jsonl"
     with authenticated_client(preview_env, transcript=transcript) as client:
-        config_id, registry_version = _registered_version(client, preview_env)
+        config_id = _validated_configuration(client, preview_env)
 
-        created = client.post(
-            "/runs", headers=idempotency_headers(), json=create_run_request(config_id, registry_version)
-        )
+        created = client.post("/runs", headers=idempotency_headers(), json=create_run_request(config_id))
         assert created.status_code == 202, created.text
         run_id = created.json()["run"]["run_id"]
+        # A fresh configuration's first run records its first version.
+        assert created.json()["run"]["registry_version"] == 1, created.text
 
         planned = wait_for_phase(client, run_id, "planned")
         assert planned["run"]["outcome"] is not None, planned["run"]
@@ -334,8 +372,7 @@ def test_service_plan_and_apply_lifecycle(preview_env: dict[str, Any], evidence_
     captured = transcript.read_text(encoding="utf-8")
     exchanges = {(entry["method"], entry["path"], entry["status"]) for entry in map(json.loads, captured.splitlines())}
     assert exchanges >= {
-        ("POST", "/configs", 201),
-        ("POST", f"/configs/{config_id}/versions/{registry_version}/validate", 200),
+        ("POST", f"/configs/{config_id}/validate", 200),
         ("POST", "/runs", 202),
         ("GET", f"/runs/{run_id}/plan", 200),
         ("POST", f"/runs/{run_id}/apply", 202),

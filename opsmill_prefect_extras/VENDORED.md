@@ -16,8 +16,11 @@ and so `diff -r` against the upstream commit stays empty.
 Known side effect of the frozen test suite: upstream's
 `tests/vendored_prefect_extras/workflows/conftest.py` computes a "repository
 root" from its own location and prepends it to `sys.path`; in this repository
-that path is the `tests/` directory. It is harmless here (nothing imports the
-test packages by their short names) and is left in place rather than edited.
+that path is the `tests/` directory. The file is left in place rather than
+edited; the local `tests/vendored_prefect_extras/conftest.py` guard removes
+that entry once collection is complete, because a test package directly under
+`tests/` named after a standard-library module (`tests/platform`) would
+otherwise shadow that module in a `multiprocessing` spawn child.
 
 ## Freeze rule — do not modify this directory
 

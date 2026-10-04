@@ -55,8 +55,8 @@ configuration:
   # Export them before starting the worker:
   #   export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="nbt_..."
   #   export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="..."
-  # The CLI separately uses INFRAHUB_SYNC_API_URL and INFRAHUB_SYNC_API_TOKEN to
-  # authenticate to the Sync API.
+  # The CLI separately uses INFRAHUB_SYNC_API_URL and INFRAHUB_SYNC_TOKEN (your
+  # Infrahub API token) to reach the Sync API and authenticate to it.
 
   # order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
   # Uncomment and edit only if you need to override the computed order:

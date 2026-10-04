@@ -55,20 +55,37 @@ curl -fsSLO https://raw.githubusercontent.com/opsmill/infrahub-sync/<version>/do
 The file pins the Sync image of that release. Run every later command from this
 directory.
 
+## Prepare Infrahub
+
+Sync keeps its configurations in Infrahub, and needs two things there before it
+starts. With `infrahubctl` and an Infrahub administrator's token (see
+[Prepare the destination schema](./compose-deployment.mdx#prepare-the-destination-schema)
+to install it), load the Sync schema extension from the same release, through a branch:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/opsmill/infrahub-sync/<version>/schema/sync.yml
+infrahubctl branch create sync-schema
+infrahubctl schema load sync.yml --branch sync-schema
+infrahubctl branch merge sync-schema
+```
+
+Then create an Infrahub account for Sync, with the permissions listed in
+[The Sync service account](./compose-deployment.mdx#the-sync-service-account), and an
+API token for it. The API and the worker refuse to start while the schema is missing.
+
 ## Write the credentials
 
 The file needs five credentials, and defaults none of them. This generates random
 values for Sync's own credentials, takes the task-manager database password from the
 `INFRAHUB_TASKMANAGER_DB_PASSWORD` variable of your shell and falls back to
-`postgres`, Infrahub's default, and gives the bundled CLI the same token as the one
-principal the API accepts. If you started Infrahub with another password, for
-example from Infrahub's own `.env`, export `INFRAHUB_TASKMANAGER_DB_PASSWORD` with
-that value before you run it; otherwise `db-bootstrap` cannot authenticate against
-`task-manager-db`.
+`postgres`, Infrahub's default, and asks for the Sync service account's token without
+echoing it. If you started Infrahub with another password, for example from Infrahub's
+own `.env`, export `INFRAHUB_TASKMANAGER_DB_PASSWORD` with that value before you run
+it; otherwise `db-bootstrap` cannot authenticate against `task-manager-db`:
 
 ```sh
 rand() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
-principal=$(rand 24)
+read -rs -p 'Sync service account token: ' sync_service_token; echo
 # mktemp creates the file readable by you alone, whatever an existing .env allowed.
 env_file=$(mktemp .env.XXXXXX)
 cat > "$env_file" <<EOF
@@ -76,11 +93,17 @@ INFRAHUB_TASKMANAGER_DB_PASSWORD=${INFRAHUB_TASKMANAGER_DB_PASSWORD:-postgres}
 INFRAHUB_SYNC_PRODUCT_PASSWORD=$(rand 24)
 INFRAHUB_SYNC_S3_ACCESS_KEY=$(rand 12)
 INFRAHUB_SYNC_S3_SECRET_KEY=$(rand 24)
-INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}
-INFRAHUB_SYNC_API_TOKEN=$principal
+INFRAHUB_SYNC_INFRAHUB_TOKEN=$sync_service_token
 EOF
 mv -f "$env_file" .env
+unset sync_service_token
 docker compose config --quiet
+```
+
+The bundled CLI presents your own Infrahub API token. Export it before you call it:
+
+```sh
+export INFRAHUB_SYNC_TOKEN=<your Infrahub API token>
 ```
 
 `config --quiet` prints nothing when every credential is set. Otherwise it names
@@ -120,7 +143,7 @@ An earlier alpha deployed through the `infrahub-sync-compose` wrapper. Start the
 release in a new directory with a new `.env`, and empty state. If the old
 deployment uses the same ports, stop it first and keep its directory and volumes.
 Do not point the new deployment at the old data. Supply credentials in the new
-`.env`, register your configuration again, and review a fresh plan before
+`.env`, create your configuration in Infrahub, and review a fresh plan before
 applying. The [wrapper equivalents](./compose-deployment.mdx#wrapper-equivalents)
 map each old command to its `docker compose` form.
 
@@ -139,8 +162,8 @@ Continue to the tutorial for your existing source and destination:
 - [Preview Nautobot data in an existing Infrahub](tutorials/nautobot-to-existing-infrahub)
   to map locations and devices and review a saved preview from your Nautobot.
 
-Each tutorial includes destination schema preparation, credentials, package
-registration, validation, and preview with the bundled Sync CLI. For a fresh
+Each tutorial includes destination schema preparation, credentials, the
+configuration in Infrahub, validation, and preview with the bundled Sync CLI. For a fresh
 local Infrahub and the public NetBox demo, follow the separate
 [local demo tutorial](tutorials/netbox-demo-to-infrahub).
 

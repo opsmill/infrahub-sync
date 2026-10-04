@@ -5,8 +5,9 @@ sidebar_position: 7
 
 The Sync HTTP API accepts authenticated run requests, records a stable Sync run
 identity, and delegates execution to a separate Prefect deployment. Sync owns the HTTP,
-authorization, plan, result, artifact, audit, and idempotency contracts. Prefect owns live
-execution state, workers, retries, logs, and cancellation.
+plan, result, artifact, audit, and idempotency contracts. Infrahub holds the configurations,
+identifies callers, and decides what they may do. Prefect owns live execution state,
+workers, retries, logs, and cancellation.
 
 The [direct Prefect remote run](./prefect-remote-run.mdx) remains a
 separate four-parameter deployment. Use the Sync API when a trusted automation client
@@ -31,42 +32,99 @@ any of these modules. Ordinary CLI and Python API imports remain Prefect-free.
 
 You also need:
 
+- an Infrahub with the Sync schema extension loaded, and an API token for a Sync service
+  account; see [Connect to Infrahub](#connect-to-infrahub);
 - a Prefect API and an existing process work pool;
 - a worker with access to the allowed Sync configuration directory, needed only for
   legacy unregistered runs;
 - PostgreSQL for product records; and
 - an S3-compatible bucket for immutable artifacts.
 
-The API and worker each create a process-local client from the same PostgreSQL/S3 settings.
-They share durable records and artifacts through those services, not through a product filesystem.
-S3 credentials use Boto3's standard credential-provider chain.
+The API and worker each create process-local clients from the same PostgreSQL, S3, and
+Infrahub settings. They share durable records and artifacts through those services, not
+through a product filesystem. S3 credentials use Boto3's standard credential-provider chain.
 
-## Configure principals
+## Connect to Infrahub
 
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` contains a non-empty JSON object keyed by actor. Each
-entry has a bearer token of at least 16 characters and an optional administrator flag:
+Configurations, their versions, and the Infrahub copies of runs live in Infrahub, in the
+kinds that `schema/sync.yml` adds: `SyncConfiguration`, `SyncConfigurationVersion`,
+`SyncRun`, and `SyncApproval`. Load the extension once per installation, and again on each
+Sync upgrade that changes it, on a branch first as for any schema change:
 
 ```bash
-export INFRAHUB_SYNC_SERVICE_BEARER_TOKENS='{
-  "automation@example.com": {
-    "token": "replace-with-a-secret-token",
-    "administrator": false
-  },
-  "sync-admin@example.com": {
-    "token": "replace-with-another-secret-token",
-    "administrator": true
-  }
-}'
+infrahubctl branch create sync-schema
+infrahubctl schema load schema/sync.yml --branch sync-schema
+infrahubctl branch merge sync-schema
 ```
 
-Inject this value through your deployment's secret mechanism. Do not put a real token in a
-shell history, Sync configuration, request body, idempotency key, or Prefect parameter.
-Tokens must be unique. The resolver compares them with a timing-safe operation and never
-persists, returns, or submits them to Prefect.
+Sync never loads or changes a schema itself. At startup, the API and the worker check that
+these kinds and their fields exist, and refuse to start when one is missing. An Infrahub that
+cannot be reached at startup is tolerated with a warning.
 
-Any authenticated principal can create and inspect a run. Only the initiating actor or an
-administrator can verify, apply, or cancel it. Every accepted mutation and authorization
-refusal records secret-safe actor, reason, and outcome evidence.
+Set these variables on the API and on every worker:
+
+| Variable | Requirement |
+| --- | --- |
+| `INFRAHUB_SYNC_INFRAHUB_ADDRESS` | Absolute URL of the Infrahub that holds the configurations. |
+| `INFRAHUB_SYNC_INFRAHUB_TOKEN` | API token of the Sync service account. Sync never logs it. |
+| `INFRAHUB_SYNC_INFRAHUB_TLS_INSECURE` | Optional `true` or `false`; `true` skips TLS certificate verification. Defaults to `false`. |
+
+The service account reads configurations and writes versions, run copies, and approvals.
+Grant it, on the default branch:
+
+- `view` on `SyncConfiguration`, `SyncConfigurationVersion`, `SyncRun`, and `SyncApproval`;
+- `create` on `SyncConfigurationVersion`, `SyncRun`, and `SyncApproval`; and
+- `update` on `SyncRun`.
+
+Every one of those writes is on the default branch, so the account also needs the global
+permission `edit_default_branch` (`global:edit_default_branch:allow_all`). Infrahub refuses any
+mutation on the default branch without it, super administrators excepted.
+
+Sync writes every record on Infrahub's default branch.
+
+## Authentication
+
+Every caller presents its own Infrahub API token, the way Infrahub accepts it:
+
+```http
+X-INFRAHUB-KEY: <infrahub api token>
+```
+
+`Authorization: Bearer <token>` is accepted too. Sync asks Infrahub who the caller is and
+which permissions the account holds. A token Infrahub refuses, or an inactive account, gets
+`401 unauthenticated`. When Infrahub cannot be reached, the request gets
+`503 identity-unavailable`. Sync never stores, returns, or submits a caller's token to
+Prefect.
+
+Inject tokens through your secret mechanism. Do not put a real token in a shell history,
+Sync configuration, request body, idempotency key, or Prefect parameter.
+
+### Permissions
+
+Each route requires an Infrahub object permission on a Sync kind. Grant them through
+Infrahub roles, on the default branch:
+
+| Action | Required Infrahub permission |
+| --- | --- |
+| Read configurations and their versions, validate a configuration | `view` on `SyncConfiguration` |
+| Read runs, plans, results, and artifacts | `view` on `SyncRun` |
+| Create a plan run, or verify a plan | `create` on `SyncRun` |
+| Apply a reviewed plan | `create` on `SyncApproval` |
+| Create a `sync` run | `create` on `SyncRun` and `create` on `SyncApproval` |
+| Cancel a run | `update` on `SyncRun` |
+
+Only a permission with the `allow_default` or `allow_all` decision grants, because Sync's
+records live on the default branch. Validating a configuration on a branch other than the
+default also needs `view` on `SyncConfiguration` with the `allow_other` or `allow_all`
+decision, because Sync reads that branch with its own account; without it the request gets
+`403 forbidden` naming `object:Sync:Configuration:view`. A covering `deny` refuses. An Infrahub super
+administrator is allowed everything. A refusal is `403 forbidden`, and its message names the
+missing permission, for example `object:Sync:Approval:create`.
+
+The Infrahub permission alone authorizes verify, apply, and cancel: an approver with `create`
+on `SyncApproval` can apply a plan that another account created. A composed `sync` records
+no `SyncApproval`, because no reviewed checksum exists when it is admitted. Every accepted mutation and authorization refusal records
+secret-safe actor, reason, and outcome evidence. The actor is the caller's Infrahub account.
 
 ## Deploy the service flow
 
@@ -128,7 +186,8 @@ Configure the worker environment before it starts:
 | Variable | Requirement |
 | --- | --- |
 | `PREFECT_API_URL` | Prefect API used by the deployment and worker. |
-| `INFRAHUB_SYNC_CONFIG_DIRECTORY` | Legacy runs only. A registered run reads its declared configuration from PostgreSQL and resolves both adapters from installed code, so a worker serving registered runs needs no directory and no configuration mount. Set it only where unregistered runs — which resolve a `SyncConfig` file by name — still have to be served; those runs refuse when it is unset or names no directory. |
+| `INFRAHUB_SYNC_INFRAHUB_ADDRESS`, `INFRAHUB_SYNC_INFRAHUB_TOKEN` | The Infrahub that holds the configurations, and the Sync service account's token. See [Connect to Infrahub](#connect-to-infrahub). |
+| `INFRAHUB_SYNC_CONFIG_DIRECTORY` | Legacy runs only. A registered run reads its declared configuration from its recorded version and resolves both adapters from installed code, so a worker serving registered runs needs no directory and no configuration mount. Set it only where unregistered runs — which resolve a `SyncConfig` file by name — still have to be served; those runs refuse when it is unset or names no directory. |
 | `INFRAHUB_SYNC_DATABASE_URL` | Non-empty PostgreSQL connection string accepted by Psycopg for product records. |
 | `INFRAHUB_SYNC_S3_BUCKET` | Non-empty bucket for immutable product artifacts. |
 | `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |
@@ -169,6 +228,8 @@ export INFRAHUB_SYNC_DATABASE_URL="postgresql://sync:replace-me@postgres/infrahu
 export INFRAHUB_SYNC_S3_BUCKET="infrahub-sync-artifacts"
 export INFRAHUB_SYNC_S3_PREFIX="infrahub-sync"
 export INFRAHUB_SYNC_SERVICE_HOST="127.0.0.1"
+export INFRAHUB_SYNC_INFRAHUB_ADDRESS="https://infrahub.example.com"
+export INFRAHUB_SYNC_INFRAHUB_TOKEN="<sync service account token>"
 python -m infrahub_sync.service.serve
 ```
 
@@ -187,10 +248,10 @@ does not retry automatically.
 :::
 
 The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and any
-network access controls at your ingress boundary. The bearer-token provider is the MVP
-application authentication boundary, not a replacement for transport security.
+network access controls at your ingress boundary. Infrahub token authentication is the
+application boundary, not a replacement for transport security.
 
-Open `http://127.0.0.1:8000/docs`, select **Authorize**, and enter the configured token
+Open `http://127.0.0.1:8000/docs`, select **Authorize**, and enter your Infrahub API token
 without the `Bearer` prefix; Swagger UI adds the complete `Authorization` header.
 
 ## Discovery and liveness
@@ -198,7 +259,7 @@ without the `Bearer` prefix; Swagger UI adds the complete `Authorization` header
 `GET /status` and `GET /version` are the two unauthenticated lifecycle and
 server-discovery routes. They intentionally disclose neither a configured work-pool
 name, worker or run identity, credential, nor Prefect endpoint. All run and
-configuration routes remain bearer-authenticated.
+configuration routes require an Infrahub API token.
 
 `GET /version` returns the installed server version and the currently supported
 unstable API identifier:
@@ -260,20 +321,22 @@ verdict still carries that execution's live detail.
 
 ## Routes
 
-Every route below requires `Authorization: Bearer <token>`. Every `POST` route that writes or
-requests a change also requires a non-empty `Idempotency-Key` header and a non-empty `reason` in
-its JSON body; `POST /configs/{config_id}/versions/{registry_version}/validate` is the one
-exception, since it only re-checks an already-registered version and takes no body.
+Every route below requires an Infrahub API token, and the permission listed in
+[Permissions](#permissions). Every `POST` route that writes or requests a change also requires
+a non-empty `Idempotency-Key` header and a non-empty `reason` in its JSON body. The two
+validation routes are the exception: they record nothing and take no body.
+
+A `config_id` is the `name` of a `SyncConfiguration` in Infrahub.
 
 | Route | Behavior |
 | --- | --- |
-| `POST /configs` | Register a new configuration package as version 1. Administrator only. |
-| `POST /configs/{config_id}/versions` | Register a new version of an existing configuration. Administrator only. |
-| `GET /configs` | List registered configurations. |
-| `GET /configs/{config_id}` | Return one registered configuration's summary. |
-| `GET /configs/{config_id}/versions` | List a configuration's registered versions. |
-| `GET /configs/{config_id}/versions/{registry_version}` | Return one registered version. |
-| `POST /configs/{config_id}/versions/{registry_version}/validate` | Re-check a registered version against the adapter declarations installed now. |
+| `GET /configs` | List the configurations in Infrahub: those with a recorded version first, oldest first, then the rest by name. |
+| `GET /configs/{config_id}` | Return one configuration's summary. `created_at` is when its first version was recorded, and `null` until a run records one. |
+| `GET /configs/{config_id}/versions` | List a configuration's recorded versions. |
+| `GET /configs/{config_id}/versions/{registry_version}` | Return one recorded version. |
+| `POST /configs/{config_id}/validate` | Validate the configuration's document as it stands on an Infrahub branch. Records nothing. |
+| `POST /configs/{config_id}/versions/{registry_version}/validate` | Re-check a recorded version against the adapter declarations installed now. |
+| `POST /configs`, `POST /configs/{config_id}/versions` | Refused with `410 configurations-in-infrahub`: create and change configurations in Infrahub. Only a Sync that runs without Infrahub accepts them. |
 | `POST /runs` | Create one Sync run and accept `plan` or confirmed composed `sync`. |
 | `GET /runs/{run_id}` | Return the durable product record, with current linked Prefect detail for non-terminal executions. |
 | `GET /runs/{run_id}/plan` | Return retained saved-plan review data. |
@@ -284,38 +347,77 @@ exception, since it only re-checks an already-registered version and takes no bo
 | `POST /runs/{run_id}/apply` | Accept a confirmed apply for the exact retained reviewed checksum. |
 | `POST /runs/{run_id}/cancel` | Ask Prefect to cancel only the latest active linked execution. |
 
+### Validate a configuration on a branch
+
+```bash
+curl --request POST \
+  "http://127.0.0.1:8000/configs/netbox-demo/validate?branch=my-change" \
+  --header "X-INFRAHUB-KEY: $INFRAHUB_SYNC_TOKEN"
+```
+
+The route reads the configuration's `document` on `branch`, or on the default branch when
+`branch` is omitted, and validates it. It creates no version. `offset` and `limit` page the
+findings. The response echoes `branch`, which is `null` when the request named none:
+
+```json
+{
+  "config_id": "netbox-demo",
+  "branch": "my-change",
+  "checksum": "<sha-256 of the canonical content>",
+  "findings": [],
+  "offset": 0,
+  "limit": 256,
+  "total_findings": 0,
+  "next_offset": null
+}
+```
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| `404` | `branch-not-found` | The branch does not exist in Infrahub. |
+| `404` | `configs-not-found` | No configuration has that name on that branch. |
+| `422` | `configuration-document-invalid` | The document is not a YAML or JSON mapping. |
+| `503` | `infrahub-unavailable` | Infrahub could not be reached. |
+
 ### Create a plan
 
-Address the exact registered configuration revision by its `config_id` and
-`registry_version`:
+Name the configuration by its `config_id`:
 
 ```bash
 curl --request POST http://127.0.0.1:8000/runs \
-  --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  --header "X-INFRAHUB-KEY: $INFRAHUB_SYNC_TOKEN" \
   --header "Idempotency-Key: plan-inventory-2026-08-10" \
   --header "Content-Type: application/json" \
   --data '{
     "operation": "plan",
-    "config_id": "<config_id>",
-    "registry_version": 1,
+    "config_id": "netbox-demo",
     "reason": "review inventory changes"
   }'
 ```
 
-`branch` and `confirm_writes` are also accepted. `POST /runs` accepts only this registered
-form — `config_id`, `registry_version`, `branch`, `confirm_writes`, and `reason` — and
+Without `registry_version`, the run uses the configuration's current document on the
+Infrahub default branch. Sync reuses the version that holds that content, or records it as
+the next version. Content with errors is refused with `422 configuration-invalid`, and no
+version is recorded; read its findings with `POST /configs/{config_id}/validate`. With `registry_version`, the run uses that recorded version. A Sync
+that runs without Infrahub requires `registry_version` and answers
+`422 configuration-version-required` without it.
+
+`branch` and `confirm_writes` are also accepted. `POST /runs` accepts only this form —
+`operation`, `config_id`, `registry_version`, `branch`, `confirm_writes`, and `reason` — and
 forbids extra fields; it does not accept a `sync_name` or `configuration_reference` form.
 A legacy, directory-resolved configuration runs through the
 [direct Prefect deployment](./prefect-remote-run.mdx) instead.
 
-Acceptance returns `202` with the durable `ProductRun` and its first orchestration link.
+Acceptance returns `202` with the durable `ProductRun`, which names the `registry_version`
+the run uses, and its first orchestration link. The run also appears in Infrahub as a
+`SyncRun` node; see [Where records live](./durable-product-records.mdx#where-records-live).
 The `run_id` in that response is the identity for every later stage, result, artifact, and
 Prefect execution link.
 
 Read the plan after the worker publishes it:
 
 ```bash
-curl --header "Authorization: Bearer $SYNC_API_TOKEN" \
+curl --header "X-INFRAHUB-KEY: $INFRAHUB_SYNC_TOKEN" \
   http://127.0.0.1:8000/runs/20260810T1500-0123abcd/plan
 ```
 
@@ -333,7 +435,7 @@ advancing the product run:
 ```bash
 curl --request POST \
   http://127.0.0.1:8000/runs/20260810T1500-0123abcd/verify \
-  --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  --header "X-INFRAHUB-KEY: $INFRAHUB_SYNC_TOKEN" \
   --header "Idempotency-Key: verify-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
   --data '{"reason":"verify the reviewed plan"}'
@@ -344,7 +446,7 @@ Apply requires the exact retained checksum and explicit write confirmation:
 ```bash
 curl --request POST \
   http://127.0.0.1:8000/runs/20260810T1500-0123abcd/apply \
-  --header "Authorization: Bearer $SYNC_API_TOKEN" \
+  --header "X-INFRAHUB-KEY: $INFRAHUB_SYNC_TOKEN" \
   --header "Idempotency-Key: apply-20260810T1500-0123abcd" \
   --header "Content-Type: application/json" \
   --data '{
@@ -354,7 +456,8 @@ curl --request POST \
   }'
 ```
 
-The worker verifies the saved plan again before its first destination write. Destination
+Sync records a `SyncApproval` node in Infrahub that names the approving account and the
+checksum. The worker verifies the saved plan again before its first destination write. Destination
 deletes remain disabled.
 
 `PlanSchemaChangedError` means the live destination-schema semantics no longer match the
@@ -451,13 +554,13 @@ Every error uses the same envelope:
 
 | Status | Meaning |
 | --- | --- |
-| `401` | Missing or invalid authentication. |
-| `403` | The actor does not own the mutation and is not an administrator. |
-| `404` | The Sync run or run-owned artifact does not exist. |
+| `401` | Missing token, or a token Infrahub refuses. |
+| `403` | The account lacks the Infrahub permission the message names. |
+| `404` | The Sync run, run-owned artifact, configuration, version, or branch does not exist. |
 | `409` | Idempotency conflict, missing confirmation, stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
-| `410` | The retained plan or artifact has expired. |
-| `422` | Invalid request schema, missing idempotency key, or a secret-bearing flow parameter. |
-| `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved. |
+| `410` | The retained plan or artifact has expired, or a configuration write that belongs in Infrahub (`configurations-in-infrahub`). |
+| `422` | Invalid request schema, missing idempotency key, a secret-bearing flow parameter, or a configuration document that is invalid (`configuration-invalid`, `configuration-document-invalid`). |
+| `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved, or Infrahub cannot be reached (`identity-unavailable`, `infrahub-unavailable`). |
 
 Prefect detail can expire or become unavailable while the durable Sync record, results,
 and published artifacts remain readable. Cancellation never deletes the product record or

@@ -52,6 +52,9 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0017 — Sync runs on Infrahub's task manager](0017-sync-runs-on-infrahubs-task-manager.md)
   — why Sync dropped its own Prefect and PostgreSQL servers, the exact Prefect pin that follows
   Infrahub, and what sharing the task manager costs.
+- [0018 — Configurations live in Infrahub, and Infrahub identifies Sync's callers](0018-configurations-live-in-infrahub-and-infrahub-identifies-callers.md)
+  — the schema extension, versions recorded at run start, Infrahub permissions instead of Sync's
+  own tokens, and why run state stays in PostgreSQL for now (option B).
 
 ## Related
 

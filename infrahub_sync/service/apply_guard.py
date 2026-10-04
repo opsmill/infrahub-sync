@@ -128,6 +128,19 @@ def advisory_lock_key(configuration_id: str) -> int:
     return int.from_bytes(digest[:8], byteorder="big", signed=True)
 
 
+VERSION_KEY_PREFIX = "infrahub-sync:version:v1:"
+
+
+def version_lock_key(configuration_id: str) -> int:
+    """Derive one configuration's version-creation advisory key.
+
+    The same derivation as `advisory_lock_key` in its own key space, so recording a
+    configuration version never waits on, or blocks, that configuration's writes.
+    """
+    digest = hashlib.sha256((VERSION_KEY_PREFIX + configuration_id).encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], byteorder="big", signed=True)
+
+
 def deadline_milliseconds(seconds: float) -> int:
     """Convert one accepted deadline to `lock_timeout` milliseconds, rounding up.
 

@@ -20,19 +20,18 @@ import httpx
 import pytest
 
 from infrahub_sync.client import APIError, SyncClient
-from infrahub_sync.client.models import CancelRunRequest, ConfigMutationRequest, CreateRunRequest
+from infrahub_sync.client.models import CancelRunRequest, CreateRunRequest
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH
 from tests.preview.evidence import canary_leaks
-from tests.preview.test_cli_client import package_file, run_cli
+from tests.preview.test_cli_client import run_cli
 from tests.preview.test_service_api import (
     authenticated_client,
     create_run_request,
     device_types,
     idempotency_headers,
     infrahub_client,
-    register_request,
+    put_smoke_configuration,
     seed_source_branch,
-    smoke_package,
     wait_for_phase,
 )
 
@@ -51,10 +50,10 @@ CLAIM_TIMEOUT_SECONDS = 120.0
 TERMINAL_EXECUTION_STATES = frozenset({"cancelled", "completed", "crashed", "failed"})
 
 
-def _sync_request(config_id: str, registry_version: int) -> dict[str, Any]:
-    """The `POST /runs` body for the confirmed one-run synchronization."""
+def _sync_request(config_id: str) -> dict[str, Any]:
+    """The `POST /runs` body for the confirmed one-run synchronization of the current document."""
     return {
-        **create_run_request(config_id, registry_version),
+        **create_run_request(config_id),
         "operation": "sync",
         "confirm_writes": True,
         "reason": SYNC_REASON,
@@ -92,28 +91,17 @@ def _await_prefect_terminal_state(preview_env: dict[str, Any], flow_run_id: str)
     return pytest.fail(f"Prefect flow run {flow_run_id} stayed non-terminal ({state})")
 
 
-def test_the_cli_synchronizes_in_one_run(preview_env: dict[str, Any], tmp_path: Path, evidence_dir: Path) -> None:
+def test_the_cli_synchronizes_in_one_run(preview_env: dict[str, Any], evidence_dir: Path) -> None:
     """`sync` plans and applies under one run id, and the destination carries the value."""
     mutated_type = seed_source_branch(preview_env)
     artifacts: dict[str, object] = {}
-    registered = run_cli(
-        preview_env,
-        "configs",
-        "register",
-        str(package_file(preview_env, tmp_path)),
-        "--reason",
-        SYNC_REASON,
-        artifacts=artifacts,
-        artifact_name="CLI sync configs register",
-    )
+    config_id = put_smoke_configuration(preview_env, "preview-sync-cli")
 
     completed = run_cli(
         preview_env,
         "sync",
         "--config-id",
-        registered["config_id"],
-        "--version",
-        registered["registry_version"],
+        config_id,
         "--branch",
         SMOKE_BRANCH,
         "--reason",
@@ -127,6 +115,7 @@ def test_the_cli_synchronizes_in_one_run(preview_env: dict[str, Any], tmp_path: 
     )
     assert completed["operation"] == "sync"
     assert completed["phase"] == "applied"
+    assert completed["registry_version"] == "1", completed
 
     oracle_transcript = evidence_dir / "run-sync-cli-oracle-http.jsonl"
     with authenticated_client(preview_env, transcript=oracle_transcript) as client:
@@ -147,15 +136,10 @@ def test_the_python_client_synchronizes_in_one_run(preview_env: dict[str, Any]) 
     mutated_type = seed_source_branch(preview_env)
 
     with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
-        registered = client.register_config(
-            ConfigMutationRequest(package=smoke_package(preview_env["urls"]["infrahub"]), reason=SYNC_REASON),
-            idempotency_headers("preview-completion")["Idempotency-Key"],
-        )
         accepted = client.sync(
             CreateRunRequest(
                 operation="sync",
-                config_id=registered.version.config_id,
-                registry_version=registered.version.registry_version,
+                config_id=put_smoke_configuration(preview_env, "preview-sync-python"),
                 branch=SMOKE_BRANCH,
                 confirm_writes=True,
                 reason=SYNC_REASON,
@@ -174,7 +158,6 @@ def test_the_python_client_synchronizes_in_one_run(preview_env: dict[str, Any]) 
         canary_leaks(
             preview_env["infrahub_token"],
             {
-                "sync register resource": registered,
                 "sync accepted resource": accepted,
                 "sync run resource": applied,
                 "sync results resource": results,
@@ -190,18 +173,10 @@ def test_raw_http_synchronizes_in_one_run(preview_env: dict[str, Any], evidence_
     transcript = evidence_dir / "run-sync-http.jsonl"
 
     with authenticated_client(preview_env, transcript=transcript) as client:
-        registered = client.post(
-            "/configs",
-            headers=idempotency_headers("preview-completion"),
-            json=register_request(preview_env["urls"]["infrahub"]),
-        )
-        assert registered.status_code == 201, registered.text
-        version = registered.json()["version"]
-
         created = client.post(
             "/runs",
             headers=idempotency_headers("preview-completion"),
-            json=_sync_request(version["config_id"], version["registry_version"]),
+            json=_sync_request(put_smoke_configuration(preview_env, "preview-sync-http")),
         )
         assert created.status_code == 202, created.text
         run_id = created.json()["run"]["run_id"]
@@ -224,15 +199,10 @@ def test_the_python_client_cancels_a_run_it_has_just_admitted(preview_env: dict[
     seed_source_branch(preview_env)
 
     with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
-        registered = client.register_config(
-            ConfigMutationRequest(package=smoke_package(preview_env["urls"]["infrahub"]), reason=CANCEL_REASON),
-            idempotency_headers("preview-completion")["Idempotency-Key"],
-        )
         accepted = client.plan(
             CreateRunRequest(
                 operation="plan",
-                config_id=registered.version.config_id,
-                registry_version=registered.version.registry_version,
+                config_id=put_smoke_configuration(preview_env, "preview-cancel-python"),
                 branch=SMOKE_BRANCH,
                 reason=CANCEL_REASON,
             ),
@@ -255,7 +225,6 @@ def test_the_python_client_cancels_a_run_it_has_just_admitted(preview_env: dict[
 
     evidence = evidence_dir / "cancellation-python.txt"
     artifacts: dict[str, object] = {
-        "Python cancellation register resource": registered,
         "Python cancellation accepted resource": accepted,
         "Python cancellation claimed state": claimed_state,
     }
@@ -295,18 +264,10 @@ def test_raw_http_cancels_a_run_it_has_just_admitted(preview_env: dict[str, Any]
     transcript = evidence_dir / "run-cancel-http.jsonl"
 
     with authenticated_client(preview_env, transcript=transcript) as client:
-        registered = client.post(
-            "/configs",
-            headers=idempotency_headers("preview-completion"),
-            json=register_request(preview_env["urls"]["infrahub"]),
-        )
-        assert registered.status_code == 201, registered.text
-        version = registered.json()["version"]
-
         created = client.post(
             "/runs",
             headers=idempotency_headers("preview-completion"),
-            json=create_run_request(version["config_id"], version["registry_version"]),
+            json=create_run_request(put_smoke_configuration(preview_env, "preview-cancel-http")),
         )
         assert created.status_code == 202, created.text
         admitted = created.json()

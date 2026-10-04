@@ -2,7 +2,7 @@
 
 The package maps the public NetBox demo into the Infrahub schema library. Before running
 it, follow the [NetBox demo tutorial](../../docs/docs/tutorials/netbox-demo-to-infrahub.mdx)
-through **Register the configuration package**. The tutorial is the setup authority for
+through **Create the configuration in Infrahub**. The tutorial is the setup authority for
 the schema-library source revision, a current `nbt_...` token, and the required `pynetbox`
 worker dependency.
 
@@ -16,17 +16,21 @@ path writes a copy of this package with the addresses the local worker container
 The worker uses the two URLs in this package, `https://demo.netbox.dev` and
 `http://localhost:8000`. Environment variables such as `NETBOX_URL` and
 `INFRAHUB_ADDRESS` do not change them. To use other addresses, edit the URLs in a copy
-of the package before you register it, or register a new version of it with
-`configs version`. Only the two tokens, `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and
+of the package before you load it, or edit the configuration's `document` in Infrahub
+afterwards; the next run records the change as a new version. Only the two tokens, `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and
 `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, come from the worker's environment.
 
-Connect to a Sync service whose worker has `pynetbox` installed, then register, plan,
-review, and apply:
+`sync-configuration.yml` wraps `package.yml`, verbatim, as an Infrahub object: a
+`SyncConfiguration` named `from-netbox`. Load Sync's schema extension and the object into the
+Infrahub that the Sync service uses, then, against a Sync service whose worker has `pynetbox`
+installed, plan, review, and apply with your own Infrahub API token:
 
 ```bash
-uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
-  --reason "register NetBox demo import"
-uv run infrahub-sync diff --config-id <config-id> --version <version> \
+infrahubctl schema load schema/sync.yml
+infrahubctl object load examples/netbox_to_infrahub/sync-configuration.yml
+export INFRAHUB_SYNC_TOKEN=<your Infrahub API token>
+uv run infrahub-sync configs validate from-netbox
+uv run infrahub-sync diff --config-id from-netbox \
   --branch netbox-import --reason "review NetBox demo import"
 uv run infrahub-sync runs plan <run-id> --detail
 uv run infrahub-sync apply <run-id> \

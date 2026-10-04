@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, Query
 from fastapi import Path as APIPath
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from infrahub_sdk.exceptions import BranchNotFoundError
+from infrahub_sdk.exceptions import Error as InfrahubSdkError
 
 from infrahub_sync.client.models import (
     ConfigurationSummaryResource,
@@ -20,6 +22,7 @@ from infrahub_sync.client.models import (
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.platform.records import ConfigurationDocumentError
 from infrahub_sync.product_store import (
     AuditEvent,
     MutationReceipt,
@@ -83,15 +86,27 @@ class ConfigurationRoutes:
         product_projection: ProductProjection,
         service: Any = configs,
         secrets: tuple[str, ...] = (),
+        configurations: Any = None,
     ) -> None:
         self._projection = product_projection
         self._service = service
         self._secrets = secrets
+        # Infrahub's configurations when it holds them; reads answer from there, and the
+        # register and version routes refuse because users change configurations in Infrahub.
+        self._configurations = configurations
+
+    @property
+    def in_infrahub(self) -> bool:
+        """Whether configurations are created and changed in Infrahub rather than through this API."""
+        return self._configurations is not None
 
     def _call(self, operation: Any, **kwargs: Any) -> Any:
         """Translate configuration service refusals into fixed API classifications."""
+        return self._translated(operation, projection=self._configurations or self._projection, **kwargs)
+
+    def _translated(self, operation: Any, **kwargs: Any) -> Any:
         try:
-            return operation(projection=self._projection, **kwargs)
+            return operation(**kwargs)
         except self._service.ConfigsError as error:
             error_type = type(error)
             if error_type is self._service.ConfigsRequestError:
@@ -172,6 +187,49 @@ class ConfigurationRoutes:
                 "next_offset": offset + len(findings) if offset + len(findings) < len(report.findings) else None,
             }
         )
+
+    def on_default_branch(self, branch: str | None) -> bool:
+        """Whether a request names Infrahub's default branch, or no branch at all."""
+        if branch is None or self._configurations is None:
+            return True
+        try:
+            return branch == self._configurations.default_branch()
+        except InfrahubSdkError:
+            raise ServiceAPIError(503, "infrahub-unavailable", "Infrahub could not be reached") from None
+
+    def validate_on_branch(
+        self, config_id: str, branch: str | None, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT
+    ) -> dict[str, Any]:
+        """Validate a configuration's document as it stands on a branch; records nothing."""
+        if self._configurations is None:
+            raise ServiceAPIError(
+                409,
+                "configurations-not-in-infrahub",
+                "this Sync keeps configurations in its own store, not in Infrahub",
+            )
+        try:
+            content = self._configurations.declared_content(config_id, branch)
+        except BranchNotFoundError:
+            raise ServiceAPIError(404, "branch-not-found", "the branch does not exist in Infrahub") from None
+        except ConfigurationDocumentError as error:
+            raise ServiceAPIError(422, "configuration-document-invalid", str(error)) from None
+        except InfrahubSdkError:
+            raise ServiceAPIError(503, "infrahub-unavailable", "Infrahub could not be reached") from None
+        if content is None:
+            raise ConfigurationAPIError(404, "not-found", reason="configuration-not-found", proven_pre_effect=True)
+        findings = self._translated(self._service.validate_declared, package=content, secrets=self._secrets)
+        checksum = self._translated(self._service.declared_checksum, package=content)
+        page = tuple(configs.redact_finding(finding, self._secrets) for finding in findings[offset : offset + limit])
+        return {
+            "config_id": config_id,
+            "branch": branch,
+            "checksum": checksum,
+            "findings": [finding.model_dump(mode="json") for finding in page],
+            "offset": offset,
+            "limit": limit,
+            "total_findings": len(findings),
+            "next_offset": offset + len(page) if offset + len(page) < len(findings) else None,
+        }
 
     @_provider_error_boundary
     def mutate(
@@ -279,9 +337,26 @@ class ConfigurationRoutes:
         return self._projection
 
 
-def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:
-    """Create the seven authenticated configuration resources."""
+def _refuse_when_in_infrahub(routes: ConfigurationRoutes) -> None:
+    if routes.in_infrahub:
+        raise ServiceAPIError(
+            410,
+            "configurations-in-infrahub",
+            "create and change configurations in Infrahub; a run records the version it uses",
+        )
+
+
+def configuration_router(
+    routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any, authorize: Any = None
+) -> APIRouter:
+    """Create the authenticated configuration resources."""
     router = APIRouter()
+
+    def configuration_viewer(principal: Annotated[Principal, Depends(authenticate)]) -> Principal:
+        if authorize is not None:
+            authorize(principal, "view", "Configuration")
+        return principal
+
     config_id_parameter = APIPath(pattern=_CONFIG_ID_PATTERN)
     registry_version_parameter = APIPath()
     page_offset = Query()
@@ -293,6 +368,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         principal: Annotated[Principal, Depends(authenticate)],
         key: Annotated[str, Depends(idempotency_key)],
     ) -> Any:
+        _refuse_when_in_infrahub(routes)
         if not principal.administrator:
             routes.audit_refusal(principal.actor, "register-config", body.reason)
             raise ServiceAPIError(403, "forbidden", "administrator access is required")
@@ -314,6 +390,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         principal: Annotated[Principal, Depends(authenticate)],
         key: Annotated[str, Depends(idempotency_key)],
     ) -> Any:
+        _refuse_when_in_infrahub(routes)
         if not principal.administrator:
             routes.audit_refusal(principal.actor, "create-config-version", body.reason)
             raise ServiceAPIError(403, "forbidden", "administrator access is required")
@@ -330,7 +407,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
 
     @router.get("/configs")
     def list_configs(
-        _principal: Annotated[Principal, Depends(authenticate)],
+        _principal: Annotated[Principal, Depends(configuration_viewer)],
         offset: Annotated[str, page_offset] = "0",
         limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
     ) -> Any:
@@ -340,14 +417,14 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
 
     @router.get("/configs/{config_id}")
     def get_config(
-        config_id: Annotated[str, config_id_parameter], _principal: Annotated[Principal, Depends(authenticate)]
+        config_id: Annotated[str, config_id_parameter], _principal: Annotated[Principal, Depends(configuration_viewer)]
     ) -> Any:
         return routes.get_config(config_id)
 
     @router.get("/configs/{config_id}/versions")
     def list_versions(
         config_id: Annotated[str, config_id_parameter],
-        _principal: Annotated[Principal, Depends(authenticate)],
+        _principal: Annotated[Principal, Depends(configuration_viewer)],
         offset: Annotated[str, page_offset] = "0",
         limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
     ) -> Any:
@@ -359,7 +436,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
     def get_version(
         config_id: Annotated[str, config_id_parameter],
         registry_version: Annotated[str, registry_version_parameter],
-        _principal: Annotated[Principal, Depends(authenticate)],
+        _principal: Annotated[Principal, Depends(configuration_viewer)],
     ) -> Any:
         return routes.get_version(
             config_id, _strict_integer(registry_version, minimum=1, maximum=_MAX_REGISTRY_VERSION)
@@ -369,13 +446,36 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
     def validate(
         config_id: Annotated[str, config_id_parameter],
         registry_version: Annotated[str, registry_version_parameter],
-        _principal: Annotated[Principal, Depends(authenticate)],
+        _principal: Annotated[Principal, Depends(configuration_viewer)],
         offset: Annotated[str, page_offset] = "0",
         limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
     ) -> Any:
         return routes.validate(
             config_id,
             _strict_integer(registry_version, minimum=1, maximum=_MAX_REGISTRY_VERSION),
+            offset=_strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION),
+            limit=_strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT),
+        )
+
+    @router.post("/configs/{config_id}/validate")
+    def validate_on_branch(
+        config_id: Annotated[str, config_id_parameter],
+        principal: Annotated[Principal, Depends(configuration_viewer)],
+        branch: Annotated[str | None, Query()] = None,
+        offset: Annotated[str, page_offset] = "0",
+        limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
+    ) -> Any:
+        # Sync reads the branch with its own account, so the caller must be allowed to
+        # see configurations on that branch themselves.
+        if not routes.on_default_branch(branch) and not principal.allows("view", "Configuration", default_branch=False):
+            raise ServiceAPIError(
+                403,
+                "forbidden",
+                "Infrahub permission object:Sync:Configuration:view on branches other than the default is required",
+            )
+        return routes.validate_on_branch(
+            config_id,
+            branch,
             offset=_strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION),
             limit=_strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT),
         )

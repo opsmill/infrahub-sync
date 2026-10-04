@@ -61,6 +61,7 @@ from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModel
 
 from .apply_guard import ApplyGuard, hold_apply_guard
 from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
+from .infrahub_records import mirror_finished, optional_infrahub_records
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME
@@ -403,7 +404,7 @@ def _claim_current_execution(projection: ProductProjection, run_id: str) -> tupl
     return flow_run_id, worker_id
 
 
-def _worker_execution_context(
+def _worker_execution_context(  # pylint: disable=too-many-arguments
     run_id: str,
     binding: tuple[str, int, str] | None,
     *,
@@ -412,6 +413,7 @@ def _worker_execution_context(
     run_branch: str | None,
     stage: str,
     build_models: bool = True,
+    configurations: Any = None,
 ) -> tuple[ProductProjection, Any, str]:
     """Load the durable run and resolve its registered or legacy runtime.
 
@@ -441,7 +443,8 @@ def _worker_execution_context(
         return projection, instance, sync_name
 
     config_id, registry_version, package_checksum = binding
-    registered = projection.lookup_configuration_version(config_id, registry_version).value
+    source = projection if configurations is None else configurations
+    registered = source.lookup_configuration_version(config_id, registry_version).value
     if registered is None:
         raise ValueError(_REGISTERED_VERSION_UNAVAILABLE)
     try:
@@ -523,6 +526,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
         run_branch=branch,
         stage=stage,
         build_models=stage not in ("apply", "sync"),
+        configurations=optional_infrahub_records()[0],
     )
 
     secrets[:] = collect_secret_values(instance)
@@ -597,6 +601,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 projection=projection,
                 run_branch=branch,
                 stage=stage,
+                configurations=optional_infrahub_records()[0],
             )
             _require_planned_schema(run_id=run_id, manifest=manifest, models=instance._runtime_models)
             applied = execute_run(
@@ -636,6 +641,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 projection=projection,
                 run_branch=branch,
                 stage=stage,
+                configurations=optional_infrahub_records()[0],
             )
             run_directory = scratch.run_directory(instance.name, run_id)
             saved = _plan(instance, run_id=run_id, branch=branch, composed_sync=True, base_directory=scratch.root)
@@ -823,6 +829,7 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
             writeback=writeback,
             secrets=secrets,
         )
+        mirror_finished(projection, run_id)
     except Exception as persistence_error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         run_logger.log(
             logging.WARNING,
@@ -941,6 +948,7 @@ def _commit_success(
             secrets=secrets,
         ):
             _raise_writeback_refused()
+        mirror_finished(projection, run_id)
     except Exception:
         if _stored_success(projection, run_id, flow_run_id):
             return

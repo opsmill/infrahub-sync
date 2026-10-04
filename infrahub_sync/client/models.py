@@ -55,14 +55,18 @@ class CreateRunRequest(_RequestModel):
 
     operation: Literal["plan", "sync"] = "plan"
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
-    registry_version: int
+    # Omitted: the run uses the configuration's current content, recorded as a version
+    # when no version holds it yet.
+    registry_version: int | None = None
     branch: str | None = None
     confirm_writes: bool = False
     reason: str = Field(min_length=1)
 
     @field_validator("registry_version", mode="before")
     @classmethod
-    def _require_registry_version(cls, value: object) -> int:
+    def _require_registry_version(cls, value: object) -> int | None:
+        if value is None:
+            return None
         if type(value) is not int or not 1 <= value <= 2**63 - 1:  # pylint: disable=unidiomatic-typecheck
             raise ValueError(_REGISTRY_VERSION_MESSAGE)
         return value
@@ -379,14 +383,15 @@ class ConfigurationSummaryResource(_ResourceModel):
     """Identify one registered configuration."""
 
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
-    created_at: datetime
+    # None for a configuration in Infrahub that no run has used yet.
+    created_at: datetime | None = None
 
     @field_validator("created_at")
     @classmethod
-    def _require_timezone(cls, value: datetime) -> datetime:
-        checked = _timezone(value, "configuration timestamps must include a timezone")
-        assert checked is not None
-        return checked
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        return _timezone(value, "configuration timestamps must include a timezone")
 
 
 class ConfigurationVersionResource(_ResourceModel):
@@ -436,6 +441,19 @@ class ValidationReportResource(_ResourceModel):
     registry_version: int
     package_checksum: str
     destination_schema_fingerprint: str | None = None
+    findings: tuple[ValidationFindingResource, ...]
+    offset: int
+    limit: int
+    total_findings: int
+    next_offset: int | None
+
+
+class BranchValidationResource(_ResourceModel):
+    """Return one page of findings for a configuration's document on an Infrahub branch."""
+
+    config_id: str
+    branch: str | None
+    checksum: str
     findings: tuple[ValidationFindingResource, ...]
     offset: int
     limit: int

@@ -7,10 +7,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, NoReturn
 from uuid import uuid4
 
+from anyio import to_thread
+from infrahub_sdk.exceptions import AuthenticationError
+from infrahub_sdk.exceptions import Error as InfrahubSdkError
 from pydantic import ValidationError
 
 from infrahub_sync.cache.paths import generate_run_id
@@ -18,6 +22,8 @@ from infrahub_sync.configuration import ConfigurationPackageParseError, parse_co
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.execution import collect_secret_values, redact, sanitize_exception_chain
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.platform.client import SERVICE_ACCOUNT_REFUSED
+from infrahub_sync.platform.records import ConfigurationDocumentError, RunMirror
 from infrahub_sync.product_store import (
     AuditEvent,
     DuplicatePrefectExecutionError,
@@ -26,6 +32,7 @@ from infrahub_sync.product_store import (
     ProductProjection,
     ProductRun,
 )
+from infrahub_sync.product_store.configs import ConfigsRequestError, ConfigsValidationError
 
 from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
 from .models import (
@@ -126,8 +133,15 @@ class RunService:
         secrets: tuple[str, ...] = (),
         cancellation_recovery_seconds: float = 30.0,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        configurations: Any = None,
+        mirror: RunMirror | None = None,
     ) -> None:
         self._projection = projection
+        # Where configurations and their versions are read and recorded: Infrahub in a
+        # deployment, the product store's own tables in local and test use.
+        self._configurations = projection if configurations is None else configurations
+        # Run state stays in the product store; the mirror copies it into Infrahub.
+        self._mirror = mirror
         self._orchestration = orchestration
         self._secrets = tuple(dict.fromkeys((*collect_secret_values(), *secrets)))
         self._cancellation_recovery_seconds = cancellation_recovery_seconds
@@ -161,7 +175,6 @@ class RunService:
             self._require_matching_receipt(existing, receipt)
             if existing.state == "accepted":
                 return await self._resume_or_replay(existing, {}, principal, request.reason)
-        sync_name, package_checksum = self._registered_configuration(request.config_id, request.registry_version)
         if request.operation == "sync" and not request.confirm_writes:
             self._audit(
                 None,
@@ -171,6 +184,25 @@ class RunService:
                 outcome="refused-confirmation",
             )
             raise self._error(409, "confirmation-required", "confirm_writes=true is required for sync")
+        registry_version = request.registry_version
+        if registry_version is None:
+            # A retry of a reservation that never reached Prefect keeps the version the
+            # reservation recorded, even when the configuration changed in between.
+            reserved_run = (
+                self._projection.lookup_run(existing.run_id).value
+                if existing is not None and existing.run_id is not None
+                else None
+            )
+            if reserved_run is not None and reserved_run.registry_version is not None:
+                registry_version = reserved_run.registry_version
+            else:
+                # Configuration reads and version writes may reach Infrahub over the
+                # network, so they run off the event loop.
+                registry_version = await to_thread.run_sync(self._current_version, request.config_id)
+            request = request.model_copy(update={"registry_version": registry_version})
+        sync_name, package_checksum = await to_thread.run_sync(
+            self._registered_configuration, request.config_id, registry_version
+        )
 
         run = ProductRun(
             run_id=run_id,
@@ -200,23 +232,86 @@ class RunService:
                 outcome="replayed",
             )
             return self._stored_response(reserved)
+        # The submission names the version and checksum the reservation stored, which a
+        # concurrent request may have made before this one.
+        stored_run = self._projection.lookup_run(reserved.run_id).value if reserved.run_id is not None else None
+        if stored_run is not None and stored_run.registry_version is not None:
+            registry_version = stored_run.registry_version
+            package_checksum = stored_run.package_checksum or package_checksum
         parameters: dict[str, object] = {
             "run_id": reserved.run_id,
             "stage": request.operation,
             "config_id": request.config_id,
-            "registry_version": request.registry_version,
+            "registry_version": registry_version,
             "package_checksum": package_checksum,
             "branch": request.branch,
             "expected_checksum": None,
             "confirm_writes": request.confirm_writes,
         }
-        return await self._submit(reserved, parameters, principal, request.reason)
+        accepted = await self._submit(reserved, parameters, principal, request.reason)
+        if reserved.run_id is not None:
+            await self._mirror_and_tag(reserved.run_id, {"target_branch": request.branch, "reason": request.reason})
+        return accepted
+
+    def _current_version(self, config_id: str) -> int:
+        """The version holding the configuration's current content, recorded now if none does."""
+        current_version = getattr(self._configurations, "current_version", None)
+        if current_version is None:
+            raise self._error(
+                422, "configuration-version-required", "registry_version is required for this configuration store"
+            )
+        try:
+            lookup = current_version(config_id)
+        except ConfigurationDocumentError as exc:
+            raise self._error(422, "configuration-document-invalid", str(exc)) from None
+        except (ConfigsValidationError, ConfigsRequestError) as exc:
+            # A malformed package is the user's content, refused like an invalid one.
+            raise self._error(422, "configuration-invalid", str(exc)) from None
+        except AuthenticationError:
+            raise self._error(503, "infrahub-unavailable", SERVICE_ACCOUNT_REFUSED) from None
+        except InfrahubSdkError:
+            raise self._error(503, "infrahub-unavailable", "Infrahub could not be reached") from None
+        if lookup.value is None:
+            raise self._error(404, "configuration-not-found", "the requested configuration does not exist")
+        return lookup.value.registry_version
+
+    def _mirror_run(self, run_id: str, extra: dict[str, Any] | None = None) -> tuple[str, ...]:
+        """Copy the run's current state into Infrahub, best effort, returning the nodes it touched."""
+        if self._mirror is None:
+            return ()
+        stored = self._projection.lookup_run(run_id).value
+        if stored is None:
+            return ()
+        plan_checksum = self._plan_checksum(run_id)
+        if plan_checksum is not None:
+            extra = {**(extra or {}), "plan_checksum": plan_checksum}
+        return self._mirror.mirror(stored, extra, current=lambda: self._projection.lookup_run(run_id).value)
+
+    def _plan_checksum(self, run_id: str) -> str | None:
+        """The checksum of the run's saved plan, once it has one."""
+        try:
+            return self._plan(run_id).checksum
+        except ServiceAPIError:
+            return None
+
+    async def _mirror_and_tag(self, run_id: str, extra: dict[str, Any] | None = None) -> None:
+        """Mirror the run, then tag its latest flow run with the run's Infrahub nodes.
+
+        The tags list the flow run in the Tasks view of the `SyncRun` and
+        `SyncConfiguration` nodes. Both steps are best effort.
+        """
+        nodes = await to_thread.run_sync(self._mirror_run, run_id, extra)
+        tag_nodes = getattr(self._orchestration, "tag_nodes", None)
+        stored = self._projection.lookup_run(run_id).value
+        if not nodes or tag_nodes is None or stored is None or not stored.prefect_executions:
+            return
+        await tag_nodes(stored.prefect_executions[-1].flow_run_id, nodes)
 
     def _registered_configuration(
         self, config_id: str, registry_version: int, *, expected_checksum: str | None = None
     ) -> tuple[str, str]:
         """Read the immutable registered package before allocating any run-side state."""
-        stored = self._projection.lookup_configuration_version(config_id, registry_version).value
+        stored = self._configurations.lookup_configuration_version(config_id, registry_version).value
         if stored is None:
             raise self._error(
                 404, "configuration-version-not-found", "the requested configuration version does not exist"
@@ -252,7 +347,7 @@ class RunService:
         )
         if existing is not None:
             return await self._resume_or_replay(existing, parameters, principal, request.reason)
-        self._require_supported_run_configuration(run)
+        await to_thread.run_sync(self._require_supported_run_configuration, run)
         self._plan(run_id)
         receipt = self._reserve_existing(
             run,
@@ -262,7 +357,9 @@ class RunService:
             reason=request.reason,
             body=body,
         )
-        return await self._resume_or_replay(receipt, parameters, principal, request.reason)
+        accepted = await self._resume_or_replay(receipt, parameters, principal, request.reason)
+        await self._mirror_and_tag(run_id)
+        return accepted
 
     async def apply_run(
         self, run_id: str, request: ApplyRunRequest, principal: Principal, idempotency_key: str
@@ -303,7 +400,7 @@ class RunService:
                 outcome="refused-confirmation",
             )
             raise self._error(409, "confirmation-required", "confirm_writes=true is required for apply", run_id=run_id)
-        self._require_supported_run_configuration(run)
+        await to_thread.run_sync(self._require_supported_run_configuration, run)
         plan = self._plan(run_id)
         if not plan.checksum_ok or plan.checksum != request.expected_checksum:
             self._audit(
@@ -328,9 +425,31 @@ class RunService:
             body=body,
             admit_write=True,
         )
-        return await self._resume_or_replay(receipt, parameters, principal, request.reason)
+        replayed = receipt.state == "accepted"
+        accepted = await self._resume_or_replay(receipt, parameters, principal, request.reason)
+        # A replay answers an apply already approved; it records no second approval.
+        if self._mirror is not None and not replayed:
+            await to_thread.run_sync(
+                partial(
+                    self._mirror.approve,
+                    run_id,
+                    checksum=request.expected_checksum,
+                    approved_by=principal.actor,
+                    reason=request.reason,
+                )
+            )
+            await self._mirror_and_tag(run_id)
+        return accepted
 
-    async def cancel_run(  # noqa: PLR0911  # pylint: disable=too-many-branches,too-many-return-statements,too-many-statements
+    async def cancel_run(
+        self, run_id: str, request: CancelRunRequest, principal: Principal, idempotency_key: str
+    ) -> tuple[int, dict[str, Any]]:
+        """Request cancellation of a run's live execution, then copy the run's state to Infrahub."""
+        result = await self._cancel_run(run_id, request, principal, idempotency_key)
+        await to_thread.run_sync(self._mirror_run, run_id)
+        return result
+
+    async def _cancel_run(  # noqa: PLR0911  # pylint: disable=too-many-branches,too-many-return-statements,too-many-statements
         self, run_id: str, request: CancelRunRequest, principal: Principal, idempotency_key: str
     ) -> tuple[int, dict[str, Any]]:
         """Request cancellation of only the latest active service execution."""
@@ -576,6 +695,8 @@ class RunService:
                 )
                 wrote = True
         rendered = self._required_run(run_id) if wrote else run
+        if wrote:
+            await to_thread.run_sync(self._mirror_run, run_id)
         return self._resource_with_observations(self._redacted_links(rendered), collected)
 
     async def status(self, work_pool_name: str) -> ServiceStatusResource:
@@ -769,7 +890,7 @@ class RunService:
             )
             return self._stored_response(receipt)
         assert receipt.run_id is not None
-        self._require_supported_run_configuration(self._required_run(receipt.run_id))
+        await to_thread.run_sync(self._require_supported_run_configuration, self._required_run(receipt.run_id))
         return await self._submit(receipt, parameters, principal, reason)
 
     @staticmethod
@@ -829,6 +950,12 @@ class RunService:
 
     def _owned_run(self, run_id: str, principal: Principal, operation: str, reason: str) -> ProductRun:
         run = self._required_run(run_id)
+        # A caller Infrahub identified was already authorized by an Infrahub permission
+        # (create SyncApproval to apply, update SyncRun to cancel), which is the right to
+        # act on any run: an approver applies a plan someone else made. A principal with
+        # no Infrahub permissions, from the development resolver, keeps to its own runs.
+        if principal.permissions is not None:
+            return run
         if not principal.administrator and run.actor != principal.actor:
             self._audit(
                 run_id,

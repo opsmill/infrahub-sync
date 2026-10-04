@@ -60,7 +60,8 @@ SERVICE_DEFINITION = WorkflowDefinition(
 # Infrahub's task views list a flow run only when it carries this namespace tag,
 # and can narrow the list by a branch tag (Infrahub
 # `task_manager/flow_run/filters.py`). The values follow Infrahub's own
-# `WorkflowTag` formats so its task views read Sync runs like its own.
+# `WorkflowTag` formats so its task views read Sync runs like its own. Node tags,
+# which attach a run to an Infrahub node, arrive with Sync's records in Infrahub.
 INFRAHUB_TAG_NAMESPACE: Final = "infrahub.app"
 
 
@@ -200,6 +201,28 @@ class PrefectOrchestration:
             response = getattr(error, "response", None)
             logger.warning(
                 "flow run %s was accepted but not tagged for Infrahub's task views (%s, status=%s); it still runs",
+                flow_run_id,
+                type(error).__name__,
+                getattr(response, "status_code", None),
+            )
+
+    async def tag_nodes(self, flow_run_id: str, node_ids: Iterable[str]) -> None:
+        """Add `infrahub.app/node/<id>` tags, so the flow run shows in those nodes' Tasks views.
+
+        Best effort, like the submission tags: a failure is logged and the run is unaffected.
+        """
+        wanted = [f"{INFRAHUB_TAG_NAMESPACE}/node/{node_id}" for node_id in node_ids]
+        client = cast("_TaggingClient", self._client)
+        try:
+            run_id = UUID(flow_run_id)
+            current = (await client.read_flow_run(run_id)).tags or []
+            tags = list(dict.fromkeys([*current, *wanted]))
+            if tags != list(current):
+                await client.update_flow_run(run_id, tags=tags)
+        except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            response = getattr(error, "response", None)
+            logger.warning(
+                "flow run %s was not tagged with its Infrahub nodes (%s, status=%s); it still runs",
                 flow_run_id,
                 type(error).__name__,
                 getattr(response, "status_code", None),

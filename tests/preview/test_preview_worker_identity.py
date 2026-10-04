@@ -27,7 +27,6 @@ def _staged_up(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any
             "PREVIEW_PREFECT_PORT": "4210",
             "PREVIEW_SYNC_API_PORT": "8090",
             "PREVIEW_WORK_POOL": "preview-pool",
-            "PREVIEW_BEARER_TOKENS": '{"tester@local": {"token": "t", "administrator": true}}',
         },
     )
     monkeypatch.setattr(

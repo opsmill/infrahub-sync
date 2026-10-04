@@ -14,7 +14,6 @@ the shared branch would take concurrent writes.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -75,14 +74,15 @@ def preview_settings() -> dict[str, Any]:
     except PreviewError as exc:
         pytest.skip(f"preview settings unavailable ({exc}); start with `invoke preview.up`")
     urls = preview_urls(values)
-    principals = json.loads(values["PREVIEW_BEARER_TOKENS"])
-    first_actor = min(principals)
+    # The Sync API identifies callers through the preview's Infrahub, so a caller's
+    # token is an Infrahub API token; the administrator's is the one the preview seeds.
     return {
         "values": values,
         "urls": urls,
         "infrahub_token": values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
-        "bearer_token": principals[first_actor]["token"],
-        "actor": first_actor,
+        "bearer_token": values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
+        # The administrator account's display label, which Sync records as the actor.
+        "actor": "Admin",
         "examples_dir": str(REPO_ROOT / "examples"),
     }
 

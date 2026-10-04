@@ -22,14 +22,20 @@
 # manager's PostgreSQL server, where Sync keeps its own `infrahub_sync` database.
 # This file joins Infrahub's Compose network, named by INFRAHUB_NETWORK.
 #
+# Configurations live in Infrahub, in the kinds `schema/sync.yml` adds: load that
+# schema into Infrahub before the first start (`infrahubctl schema load`). The API
+# and the worker refuse to start when it is missing. Callers authenticate with their
+# own Infrahub API token, and Sync checks their Infrahub permissions.
+#
 # Two properties this file exists to hold:
 #
 #   * the API and the worker share no mount, no writable volume, and no scratch
-#     directory. Run state crosses between them through PostgreSQL and the
-#     object store, never through a filesystem.
+#     directory. Run state crosses between them through PostgreSQL, the object
+#     store and Infrahub, never through a filesystem.
 #   * only the object store keeps data across a restart here; Sync's database
-#     lives on the task manager's PostgreSQL server, outside this file. Every
-#     other writable path is tmpfs and disappears with its container.
+#     lives on the task manager's PostgreSQL server, and its configurations and
+#     run records in Infrahub, both outside this file. Every other writable path
+#     is tmpfs and disappears with its container.
 #
 # Nothing here defaults a credential. The connection strings are built from the
 # role, database and password settings, and stay overridable as a whole; a
@@ -46,6 +52,13 @@ x-sync-scratch: &sync-scratch
 # Everything a Sync process needs to reach its durable state. The API, the
 # worker, and the bootstrap job resolve these independently: they are given the
 # same endpoints, never the same filesystem.
+# The Infrahub that holds Sync's configurations and run records, and identifies
+# callers. The token is the Sync service account's: it records versions, run
+# mirrors and approvals, and is never a caller's.
+x-sync-infrahub: &sync-infrahub
+  INFRAHUB_SYNC_INFRAHUB_ADDRESS: "${INFRAHUB_SYNC_INFRAHUB_ADDRESS:-http://infrahub-server:8000}"
+  INFRAHUB_SYNC_INFRAHUB_TOKEN: "${INFRAHUB_SYNC_INFRAHUB_TOKEN:?INFRAHUB_SYNC_INFRAHUB_TOKEN is required}"
+
 x-sync-storage: &sync-storage
   INFRAHUB_SYNC_DATABASE_URL: "${INFRAHUB_SYNC_DATABASE_URL:-postgresql://\
     ${INFRAHUB_SYNC_PRODUCT_ROLE:-infrahub_sync}:\
@@ -172,18 +185,14 @@ services:
         condition: service_completed_successfully
     networks: ["default", "infrahub"]
     environment:
-      <<: *sync-storage
+      <<: [*sync-storage, *sync-infrahub]
       # Loopback belongs to the host publication below. A container listening on
       # loopback alone would be unreachable from its own published port.
       INFRAHUB_SYNC_SERVICE_HOST: "0.0.0.0"
-      # A JSON object of API principals, for example
-      # {"operator": {"token": "<random>", "administrator": true}}.
-      INFRAHUB_SYNC_SERVICE_BEARER_TOKENS: >-
-        ${INFRAHUB_SYNC_SERVICE_BEARER_TOKENS:?INFRAHUB_SYNC_SERVICE_BEARER_TOKENS is required}
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS:-300}"
       PREFECT_WORKER_QUERY_SECONDS: "${PREFECT_WORKER_QUERY_SECONDS:-10}"
-      # Optional, and empty when unset: a deployment starts before any package is
-      # registered, so there is no destination to hold a credential for yet. A
+      # Optional, and empty when unset: a deployment starts before any configuration
+      # exists, so there is no destination to hold a credential for yet. A
       # run that selects an absent value fails that run, not this start.
       INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
     read_only: true
@@ -204,8 +213,8 @@ services:
   sync-worker:
     image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
     restart: unless-stopped
-    # A registered run reads its declared configuration from PostgreSQL and
-    # resolves both adapters from installed code, so this container is given no
+    # A run reads its configuration version from Infrahub and resolves both
+    # adapters from installed code, so this container is given no
     # configuration mount at all -- there is nothing on a worker filesystem for
     # a run to depend on.
     command:
@@ -219,7 +228,7 @@ services:
         condition: service_completed_successfully
     networks: ["default", "infrahub"]
     environment:
-      <<: *sync-storage
+      <<: [*sync-storage, *sync-infrahub]
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS:-300}"
       PREFECT_WORKER_QUERY_SECONDS: "${PREFECT_WORKER_QUERY_SECONDS:-10}"
       # The API ages a worker out of the live set after three missed heartbeats
@@ -254,11 +263,11 @@ services:
     restart: "no"
     entrypoint: ["infrahub-sync"]
     environment:
-      # The API on the deployment's own network, and the token of a principal in
-      # INFRAHUB_SYNC_SERVICE_BEARER_TOKENS. Empty when unset, so a call against
-      # an authenticated deployment refuses at the API rather than failing here.
+      # The API on the deployment's own network, and the caller's own Infrahub API
+      # token. Empty when unset, so a call against an authenticated deployment
+      # refuses at the API rather than failing here.
       INFRAHUB_SYNC_API_URL: "http://sync-api:8000"
-      INFRAHUB_SYNC_API_TOKEN: "${INFRAHUB_SYNC_API_TOKEN:-}"
+      INFRAHUB_SYNC_TOKEN: "${INFRAHUB_SYNC_TOKEN:-}"
     read_only: true
     tmpfs: *sync-scratch
 

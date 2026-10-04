@@ -34,9 +34,12 @@ The message wording can change; the code stays the same.
 | Symptom | Action |
 | --- | --- |
 | No container is running | Run `docker compose up -d --wait`. |
+| `sync-api` or `sync-worker` restarts in a loop and the log says the Sync schema is missing | Infrahub lacks Sync's schema extension, or holds an older one. Load it with `infrahubctl schema load schema/sync.yml` (on a branch, then merge), then run `docker compose up -d --wait`. |
+| `sync-api` or `sync-worker` restarts in a loop and the log says Infrahub refused `INFRAHUB_SYNC_INFRAHUB_TOKEN` | The service account's token is wrong, expired or revoked. Create a token for the Sync service account in Infrahub, set it in `.env`, then run `docker compose up -d --wait`. |
+| Every authenticated call answers `503 identity-unavailable` | The API cannot reach Infrahub at `INFRAHUB_SYNC_INFRAHUB_ADDRESS`. Check that Infrahub is up and that `INFRAHUB_NETWORK` names its Compose network. |
 | `worker.state` is `no-live-worker` | Read the worker logs, then run `docker compose restart sync-api sync-worker`. It keeps the durable records. A paused or hung worker still looks `running` to Docker; only the worker state shows it, after three missed heartbeats or 30 seconds. |
 | A changed `.env` value has no effect | A container reads its environment once, when it is created. Run `docker compose up -d --wait`, not `restart`. |
-| You want to delete all data and begin again | Follow the [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment). `docker compose down --volumes` and dropping Sync's database cannot be undone. |
+| You want to delete all data and begin again | Follow the [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment). Dropping Sync's database cannot be undone. |
 
 The [stop, restart, and reset procedure](../compose-deployment#stop-restart-and-reset)
 describes each action. A reset followed by a fresh deployment is not an upgrade: the new
@@ -44,16 +47,28 @@ deployment starts empty.
 
 ## Command-line client failures
 
-`docker compose run --rm --no-deps -T cli ...` calls the Sync API with
-`INFRAHUB_SYNC_API_TOKEN`.
+`docker compose run --rm --no-deps -T cli ...` calls the Sync API with your own Infrahub
+API token, `INFRAHUB_SYNC_TOKEN`.
 
-- **Every call fails to authenticate.** `INFRAHUB_SYNC_API_TOKEN` is empty, or differs
-  from the principal's token in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. An `operator.env`
-  carried over from an earlier alpha may lack the `INFRAHUB_SYNC_API_TOKEN` line entirely.
-  Add it to `.env`, with the token already inside `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`.
-- **The CLI cannot read a mounted package.** The image runs as UID 10001, so the file
-  must be readable by other users. Run `chmod 0644` on it, and mount it read-only as in
-  [Registering a package](../compose-deployment#registering-a-package).
+- **Every call answers `401`.** `INFRAHUB_SYNC_TOKEN` is empty, or Infrahub refuses the
+  token: it is expired or revoked, or its account is inactive. Export a valid Infrahub API
+  token in your shell, then run the command again.
+- **A call answers `403`.** Your Infrahub account lacks the permission that the message
+  names, for example `object:Sync:Approval:create`. Ask an Infrahub administrator to grant
+  it on the default branch; see
+  [Caller permissions](../compose-deployment#caller-permissions).
+- **Every call answers `503 identity-unavailable`.** The Sync API cannot reach Infrahub to
+  ask who you are. Check `INFRAHUB_SYNC_INFRAHUB_ADDRESS` and that Infrahub is running.
+- **`configs register` or `configs version` answers `410 configurations-in-infrahub`.**
+  Configurations live in Infrahub. Create or edit the `SyncConfiguration` there; the next
+  run records the version. See
+  [Create the configuration in Infrahub](../compose-deployment#create-the-configuration-in-infrahub).
+- **An `.env` from an earlier alpha still sets `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` and
+  `INFRAHUB_SYNC_API_TOKEN`.** The Sync API no longer reads either. Remove
+  `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`, add `INFRAHUB_SYNC_INFRAHUB_TOKEN` with the Sync
+  service account's token, and call the CLI with your own token in `INFRAHUB_SYNC_TOKEN`.
+  The CLI still reads `INFRAHUB_SYNC_API_TOKEN` when `INFRAHUB_SYNC_TOKEN` is unset, but
+  the Compose `cli` service passes only `INFRAHUB_SYNC_TOKEN`.
 
 ## Reconcile before retrying writes
 

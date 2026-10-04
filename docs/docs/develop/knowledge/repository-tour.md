@@ -74,11 +74,13 @@ credential references and the connection-free capability declaration in full.
 ### The Sync service and its worker
 
 `infrahub_sync/service/` is the optional service extra. It holds the FastAPI application
-(`app.py`, `serve.py`, `config_routes.py`), authentication (`auth.py`), the Prefect worker and
-deployment (`worker.py`, `deploy.py`, `orchestration.py`, `flow.py`), the task-manager checks
-the API and worker run at startup (`prefect_server.py`), liveness and checkpoint policy
-(`liveness.py`, `checkpoints.py`), per-stage scratch directories (`scratch.py`), the write
-guard (`apply_guard.py`) and artifact storage (`storage.py`).
+(`app.py`, `serve.py`, `config_routes.py`), caller identity and permissions (`auth.py`, which
+asks Infrahub who a caller is), the Prefect worker and deployment (`worker.py`, `deploy.py`,
+`orchestration.py`, `flow.py`), the task-manager checks the API and worker run at startup
+(`prefect_server.py`), liveness and checkpoint policy (`liveness.py`, `checkpoints.py`),
+per-stage scratch directories (`scratch.py`), the write guard (`apply_guard.py`), artifact
+storage (`storage.py`) and the glue that builds Sync's Infrahub records from the environment
+and mirrors finished runs (`infrahub_records.py`).
 
 Three facts about it are often missed:
 
@@ -93,6 +95,20 @@ Three facts about it are often missed:
 
 [The configuration write guard](apply-guard.md) covers the advisory lock that serializes one
 configuration's writes.
+
+### Infrahub platform
+
+`infrahub_sync/platform/` is everything Sync keeps in Infrahub itself, written with the Sync
+service account on the default branch:
+
+| Module | Owns |
+|---|---|
+| `client.py` | The service-account and per-caller SDK clients, built from `INFRAHUB_SYNC_INFRAHUB_ADDRESS` and `INFRAHUB_SYNC_INFRAHUB_TOKEN`, and the default-branch lookup |
+| `schema_check.py` | The startup check that the Sync schema extension (`schema/sync.yml`) is loaded, kind by kind and field by field |
+| `records.py` | Configurations and their versions (recorded when a run starts on new content), and the best-effort `SyncRun` and `SyncApproval` mirrors |
+
+The schema extension itself is `schema/sync.yml` at the repository root. The operator loads it
+with Infrahub's tools; Sync never loads a schema.
 
 ### Runtime schema
 
@@ -130,11 +146,15 @@ are the deep documents.
 
 ### Product storage
 
-`infrahub_sync/product_store/` is the durable record of configurations, runs and artifacts.
-`configs.py` is the configuration service boundary — register, version, list, show, validate —
-`store.py` the durable projection, `models.py` the record types and `bundle.py` the artifact
-bundle. [Durable product records](../../reference/durable-product-records.mdx) documents what
-is kept.
+`infrahub_sync/product_store/` is the durable record of runs, receipts, write admissions,
+audit events and artifacts: the records in PostgreSQL in a deployment and SQLite locally, the
+artifact bytes in S3-compatible object storage in a deployment and a directory locally.
+`store.py` is the durable projection, `models.py` the record types and `bundle.py` the
+artifact bundle.
+`configs.py` is the configuration validation service, and the registration boundary of a Sync
+that has no Infrahub; with Infrahub, configurations are read from `platform/records.py` and
+the registration routes answer `410`. [Durable product records](../../reference/durable-product-records.mdx)
+documents what is kept where.
 
 ### Adapters
 
@@ -223,9 +243,10 @@ records the upstream commit and the local additions.
   `aci_to_infrahub`, `custom_adapter`, `netbox_to_infrahub` and
   `prometheus_to_infrahub (node_exporter)` — pair a `config.yml` with the `package.yml`
   envelope, and a product test holds each pair to its envelope. Ten carry a `config.yml`
-  alone, with no registry envelope. One, `prefect_remote_run`, has neither: it is an
-  orchestration fixture holding a schema and sample flow-run request bodies. Counts verified
-  at this revision.
+  alone, with no package envelope. One, `prefect_remote_run`, has neither: it is an
+  orchestration fixture holding a schema and sample flow-run request bodies.
+  `netbox_to_infrahub/sync-configuration.yml` is the same package as an Infrahub object file,
+  loadable with `infrahubctl object load`. Counts verified at this revision.
 
 ### Tests
 

@@ -15,6 +15,14 @@ Three adaptations, all confined to this file so no vendored test changes:
 3. Skip the one test that reads the upstream repository's root `README.md`
    (`test_executor_docs_disclose_local_engine_limitations`) — that file is
    upstream project documentation and is deliberately not vendored.
+4. Remove the `tests/` directory from `sys.path` once collection is complete.
+   The vendored `workflows/conftest.py` computes upstream's repository root from
+   its own location and prepends it; here that path is `tests/`. With it first
+   on `sys.path`, a test package directly under `tests/` whose name matches a
+   standard-library module (`tests/platform`) shadows that module in every
+   fresh interpreter that inherits `sys.path`, such as the `multiprocessing`
+   spawn child in `tests/cache/test_locks.py`. The repository root pytest
+   itself inserts is what the dotted paths in adaptation 2 need.
 """
 
 import sys
@@ -38,9 +46,19 @@ sys.modules["tests.workflows"] = _vendored_workflows
 
 _UPSTREAM_DOC_TESTS = frozenset({"test_executor_docs_disclose_local_engine_limitations"})
 
+# The `tests/` directory, which the vendored `workflows/conftest.py` prepends to `sys.path`
+# as upstream's "repository root" (adaptation 4).
+_STRAY_TESTS_DIR = str(Path(__file__).resolve().parents[1])
+
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Skip vendored tests that assert upstream repository documentation."""
+    """Skip vendored tests that assert upstream repository documentation.
+
+    Also drop the `tests/` entry the vendored `workflows/conftest.py` put on
+    `sys.path`; every directory conftest has loaded by the time this hook runs.
+    """
+    while _STRAY_TESTS_DIR in sys.path:
+        sys.path.remove(_STRAY_TESTS_DIR)
     marker = pytest.mark.skip(reason="asserts the upstream repository's README.md, which is not vendored")
     for item in items:
         if item.name in _UPSTREAM_DOC_TESTS and "vendored_prefect_extras" in str(item.path):

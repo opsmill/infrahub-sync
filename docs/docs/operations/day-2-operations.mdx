@@ -42,8 +42,9 @@ describes each action:
   processes and keeps the durable records. The dependencies must already be running.
 - [Reset the deployment](../compose-deployment#reset-the-deployment) removes this
   deployment's containers, network, and object-store volume, then drops Sync's database
-  on the task manager's PostgreSQL server, with every registered configuration, run, and
-  artifact. Nothing asks for confirmation, and you cannot undo it.
+  on the task manager's PostgreSQL server, with every run record and artifact.
+  Configurations, versions, and run copies stay in Infrahub. Nothing asks for
+  confirmation, and you cannot undo it.
 
 Before planned maintenance, ask everyone who submits runs to this deployment to stop
 submitting new runs. Then check each run you know of with
@@ -54,7 +55,7 @@ every submitted run, postpone the maintenance.
 
 After you resume the deployment,
 [verify a retained configuration version](../compose-deployment#verify-a-retained-configuration)
-to check that your registered packages are still available.
+to check that Sync still reads your configurations from Infrahub.
 
 ## Change the image
 
@@ -71,7 +72,8 @@ the deployment's data. V3 releases are test versions, and they have no in-place
 migration, backup, or restore procedure. To replace a deployment, follow the
 [replacement procedure](../compose-deployment#resetting-this-alpha-to-a-fresh-deployment):
 run every command of the reset, then `docker compose up -d --wait`.
-The new deployment starts with an empty registry, so register your packages again.
+The new deployment starts with no runs. Your configurations stay in Infrahub, and
+the next run of each records its version as usual.
 
 The containers and the object-store volume are named after the Compose project, which
 defaults to the directory name. Moving or renaming the directory starts a second set of
@@ -86,9 +88,11 @@ not their values. To add or change a token, edit its line in `.env` as
 run `docker compose up -d --wait`, which recreates the services whose environment
 changed. `docker compose restart` keeps the environment the containers already had.
 
-This release has no tested procedure for rotating credentials. The Sync API token that
-the `cli` service presents, `INFRAHUB_SYNC_API_TOKEN`, must equal the principal's token
-in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`; change both together. See
+This release has no tested procedure for rotating credentials. Callers authenticate
+with their own Infrahub API tokens, which they rotate in Infrahub; the `cli` service
+presents `INFRAHUB_SYNC_TOKEN`. To rotate the Sync service account's token, create a new
+token for that account in Infrahub, set it as `INFRAHUB_SYNC_INFRAHUB_TOKEN` in `.env`,
+run `docker compose up -d --wait`, then revoke the old token. See
 [Use it](../compose-deployment#use-it).
 
 Never `source` `.env` or put a credential on a command line. Keep values out of logs,

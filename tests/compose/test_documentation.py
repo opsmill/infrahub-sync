@@ -42,19 +42,19 @@ COMPOSE_SUITE_COMMAND = (
 
 # The CLI calls of the reviewed-run procedure, as an operator passes them to
 # `docker compose run --rm cli ...`. Each has to be a call the shipped CLI has.
+# Configurations are created in Infrahub, so no call registers a package.
 CLI_CALLS = (
     "configs list",
-    "configs register /input/package.yaml --reason 'register my configuration'",
     "configs show CONFIG_ID",
-    "configs versions CONFIG_ID",
-    "configs validate CONFIG_ID 1",
-    "diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'review initial sync'",
+    "configs validate CONFIG_ID",
+    "diff --config-id CONFIG_ID --branch BRANCH_NAME --reason 'review initial sync'",
     "runs plan RUN_ID --detail",
     "apply RUN_ID --expected-checksum CHECKSUM --branch BRANCH_NAME --reason 'apply reviewed initial sync'",
     "runs show RUN_ID",
     "runs results RUN_ID",
-    "diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'verify unchanged source'",
-    "configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'",
+    "diff --config-id CONFIG_ID --branch BRANCH_NAME --reason 'verify unchanged source'",
+    "configs versions CONFIG_ID",
+    "configs validate CONFIG_ID --branch CHANGE_BRANCH",
 )
 
 
@@ -410,10 +410,16 @@ def test_the_page_links_the_registry_login_instructions(document: Path) -> None:
     assert "./installation.mdx#run-the-container-image" in document.read_text(encoding="utf-8")
 
 
-def test_the_troubleshooting_page_covers_an_operator_file_without_the_cli_token() -> None:
-    """An `operator.env` from an earlier alpha has no `INFRAHUB_SYNC_API_TOKEN` line at all."""
+def test_the_troubleshooting_page_covers_the_move_to_infrahub_tokens() -> None:
+    """An `.env` from an earlier alpha still carries the removed Sync-only bearer tokens."""
     troubleshooting = TROUBLESHOOTING.read_text(encoding="utf-8")
 
-    assert "`operator.env`" in troubleshooting
-    assert "INFRAHUB_SYNC_API_TOKEN" in troubleshooting
     assert "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" in troubleshooting
+    assert "INFRAHUB_SYNC_TOKEN" in troubleshooting
+    assert "INFRAHUB_SYNC_INFRAHUB_TOKEN" in troubleshooting
+
+
+def test_no_deployment_page_tells_an_operator_to_configure_sync_bearer_tokens() -> None:
+    """The removed principals variable may be named only as something to remove."""
+    for document in (PAGE, QUICKSTART):
+        assert "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" not in document.read_text(encoding="utf-8"), document.name

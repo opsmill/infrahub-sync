@@ -85,7 +85,10 @@ relative to each repository.
   | Read configurations, versions, runs | `view` on the kind |
   | Validate a configuration on a branch | `view` on `SyncConfiguration` |
   | Plan | `create` on `SyncRun` |
-  | Apply, or sync (plan, verify and apply) | `create` on `SyncApproval` |
+  | Verify a saved plan | `create` on `SyncRun` |
+  | Apply a saved plan | `create` on `SyncApproval` |
+  | Sync (plan, verify and apply) | `create` on `SyncRun` and `create` on `SyncApproval` |
+  | Cancel a run | `update` on `SyncRun` |
 
   Run records name the caller's Infrahub account. `service/auth.py`
   (`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`) and the admin gating in `config_routes.py` are removed.

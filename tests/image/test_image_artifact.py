@@ -14,6 +14,7 @@ from packaging.version import Version
 
 from tests.image.conftest import (
     BUNDLED_SOURCE_ADAPTERS,
+    CALLER_TOKEN,
     EXCLUDED_MODULES,
     INJECTED_SECRETS,
     READ_ONLY_ROOTS,
@@ -125,9 +126,33 @@ def test_the_default_command_serves_the_sync_api(started_container: str) -> None
     assert served["server_version"] == installed_version("infrahub-sync")
 
 
-def test_the_api_logs_none_of_the_secrets_it_was_started_with(started_container: str) -> None:
-    """Principle VI: a bearer token, database password or S3 key never reaches the logs."""
+def _authenticated_get(container: str, path: str) -> dict[str, Any]:
+    """Call one authenticated route from inside the container and return status and body."""
+    probe = (
+        "import json,httpx;"
+        f"r=httpx.get('http://127.0.0.1:8000{path}',headers={{'X-INFRAHUB-KEY':{CALLER_TOKEN!r}}},timeout=30);"
+        "print(json.dumps({'status':r.status_code,'body':r.json()}))"
+    )
+    result = docker(["exec", container, "python", "-c", probe], timeout=60)
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+def test_a_caller_is_refused_as_unidentifiable_while_infrahub_is_unreachable(started_container: str) -> None:
+    """The API starts without Infrahub, but asks it who every caller is, so it answers 503."""
     wait_for_api(started_container)
+
+    answered = _authenticated_get(started_container, "/configs")
+
+    assert answered["status"] == 503, answered
+    assert answered["body"]["error"]["code"] == "identity-unavailable", answered
+
+
+def test_the_api_logs_none_of_the_secrets_it_was_started_with(started_container: str) -> None:
+    """Principle VI: an Infrahub token or a database password never reaches the logs."""
+    wait_for_api(started_container)
+    # A presented caller token is a secret too, and identifying it is the path that fails here.
+    _authenticated_get(started_container, "/configs")
 
     logs = docker(["logs", started_container])
 

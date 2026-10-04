@@ -12,7 +12,7 @@ Inherits `CoreTaskTarget`. One sync between one source and one destination.
 
 | Field | Kind | Rules |
 |---|---|---|
-| name | Text | Unique; human-friendly ID |
+| name | Text | Unique; human-friendly ID; `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`. It is the configuration's identity for Sync: the API path, the write lock and the version lock are keyed on it. Renaming a configuration between a plan and its apply is not handled by this spec |
 | description | Text | Optional |
 | document | TextArea | The whole package (source, destination, mappings, order, credential references), YAML or JSON. Never holds a credential value (FR-017) |
 | source_row_counts | JSON | Baseline written after a successful plan; read-only for users |

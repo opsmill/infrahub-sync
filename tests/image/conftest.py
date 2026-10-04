@@ -164,9 +164,13 @@ STORAGE_PASSWORD = "smoke-db-password-5d1c9e"  # noqa: S105 -- throwaway credent
 STORAGE_READY_SECONDS = 120
 # Distinct, greppable throwaway values, so a test can prove none of them reaches
 # the container's logs (constitution Principle VI).
-BEARER_TOKEN = "smoke-token-0123456789"  # noqa: S105 -- throwaway credential for the smoke container
+SERVICE_TOKEN = "smoke-service-token-0123456789"  # noqa: S105 -- throwaway Infrahub service token for the smoke container
+CALLER_TOKEN = "smoke-caller-token-7e3d91"  # noqa: S105 -- throwaway caller token the smoke presents
 S3_SECRET_KEY = "smoke-secret-key-8a4f2b"  # noqa: S105 -- throwaway credential for the smoke container
-INJECTED_SECRETS = (BEARER_TOKEN, STORAGE_PASSWORD, S3_SECRET_KEY)
+INJECTED_SECRETS = (SERVICE_TOKEN, CALLER_TOKEN, STORAGE_PASSWORD, S3_SECRET_KEY)
+# Nothing listens here inside the container, so the API starts with Infrahub unreachable:
+# startup tolerates it, and a caller it cannot identify is refused with 503.
+UNREACHABLE_INFRAHUB = "http://127.0.0.1:9"
 API_READY_SECONDS = 60
 
 
@@ -235,9 +239,9 @@ def _wait_for_storage(container: str) -> None:
 def api_environment(storage_host: str) -> dict[str, str]:
     """Return the settings the default command needs to build and serve.
 
-    The object store is addressed but never called during startup, and Prefect is
-    pointed at a port nothing listens on: the reconciler logs its failures and the
-    API serves regardless. Only the database has to be real.
+    The object store is addressed but never called during startup, and Prefect and
+    Infrahub are pointed at ports nothing listens on: the reconciler logs its failures,
+    and the API serves regardless. Only the database has to be real.
     """
     return {
         "INFRAHUB_SYNC_DATABASE_URL": (
@@ -248,7 +252,8 @@ def api_environment(storage_host: str) -> dict[str, str]:
         "AWS_ACCESS_KEY_ID": "smoke-access-key",
         "AWS_SECRET_ACCESS_KEY": S3_SECRET_KEY,
         "PREFECT_API_URL": "http://127.0.0.1:4200/api",
-        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": json.dumps({"smoke": {"token": BEARER_TOKEN, "administrator": False}}),
+        "INFRAHUB_SYNC_INFRAHUB_ADDRESS": UNREACHABLE_INFRAHUB,
+        "INFRAHUB_SYNC_INFRAHUB_TOKEN": SERVICE_TOKEN,
     }
 
 

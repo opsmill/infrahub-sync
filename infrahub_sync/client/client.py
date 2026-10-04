@@ -28,6 +28,7 @@ from .models import (
     ApplyRunRequest,
     ArtifactContent,
     ArtifactListResource,
+    BranchValidationResource,
     CancelRunRequest,
     ConfigErrorEnvelope,
     ConfigMutationRequest,
@@ -53,6 +54,8 @@ if TYPE_CHECKING:
 
 _Model = TypeVar("_Model", bound=BaseModel)
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# Infrahub branch names may hold a slash, as in `feature/vlan-change`.
+_BRANCH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,249}$")
 _DIGEST = re.compile(r"sha-256=(?P<digest>[0-9a-f]{64})")
 _ERROR_STATUSES = frozenset({401, 403, 404, 409, 410, 422, 503})
 _CONFIG_ERROR_STATUSES = _ERROR_STATUSES | {400}
@@ -62,6 +65,7 @@ _TOKEN_ARG = "token"
 _TIMEOUT_ARG = "timeout"
 _OFFSET_ARG = "offset"
 _LIMIT_ARG = "limit"
+_BRANCH_ARG = "branch"
 _REQUEST_ARG = "request"
 _IDEMPOTENCY_KEY_ARG = "idempotency_key"
 _GET_ARTIFACT = "get_artifact"
@@ -92,7 +96,8 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             transport=transport,
             follow_redirects=False,
         )
-        self._authorization = f"Bearer {token}"
+        # The caller's Infrahub API token, presented the way Infrahub itself accepts it.
+        self._infrahub_key = token
         self._compatible = False
 
     @classmethod
@@ -102,10 +107,14 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         timeout: float = 30.0,
         transport: httpx.BaseTransport | None = None,
     ) -> SyncClient:
-        """Build a client from the documented URL and token environment settings."""
+        """Build a client from the documented URL and token environment settings.
+
+        The token is the caller's Infrahub API token, `INFRAHUB_SYNC_TOKEN`;
+        `INFRAHUB_SYNC_API_TOKEN` is still read when it is unset.
+        """
         return cls(
             os.environ.get("INFRAHUB_SYNC_API_URL", ""),
-            os.environ.get("INFRAHUB_SYNC_API_TOKEN", ""),
+            os.environ.get("INFRAHUB_SYNC_TOKEN") or os.environ.get("INFRAHUB_SYNC_API_TOKEN", ""),
             timeout=timeout,
             transport=transport,
         )
@@ -252,6 +261,31 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             model=ValidationReportResource,
             success={200},
             params={"offset": offset, "limit": limit},
+            config_route=True,
+        )
+
+    def validate_config_on_branch(
+        self, config_id: str, branch: str | None = None, *, offset: int = 0, limit: int = 256
+    ) -> BranchValidationResource:
+        """Validate a configuration's document as it stands on an Infrahub branch, the default unless named."""
+
+        config_id = self._identifier(config_id, "config_id")
+        if type(offset) is not int or offset < 0:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_OFFSET_ARG)
+        if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
+            raise ClientInputError(_LIMIT_ARG)
+        params: dict[str, int | str] = {"offset": offset, "limit": limit}
+        if branch is not None:
+            if not isinstance(branch, str) or _BRANCH.fullmatch(branch) is None:
+                raise ClientInputError(_BRANCH_ARG)
+            params["branch"] = branch
+        return self._request_model(
+            "validate_config_on_branch",
+            "POST",
+            f"/configs/{config_id}/validate",
+            model=BranchValidationResource,
+            success={200},
+            params=params,
             config_route=True,
         )
 
@@ -487,7 +521,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         success: set[int],
         body: BaseModel | None = None,
         idempotency_key: str | None = None,
-        params: dict[str, int] | None = None,
+        params: dict[str, int | str] | None = None,
         config_route: bool = False,
         request_timeout: float | None = None,
     ) -> _Model:
@@ -558,12 +592,12 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         authenticated: bool = True,
         headers: dict[str, str] | None = None,
         json: object = None,
-        params: dict[str, int] | None = None,
+        params: dict[str, int | str] | None = None,
         request_timeout: float | None = None,
     ) -> httpx.Response:
         request_headers = dict(headers or {})
         if authenticated:
-            request_headers["Authorization"] = self._authorization
+            request_headers["X-INFRAHUB-KEY"] = self._infrahub_key
         try:
             return self._http.request(
                 method,

@@ -727,7 +727,9 @@ def test_every_public_service_operation_carries_the_error_boundary() -> None:
     assert guarded <= set(public)
     assert set(public) - guarded == _TEXT_HELPERS
     assert guarded == {
+        "admit_declared",
         "create_version",
+        "declared_checksum",
         "get_config",
         "get_version",
         "list_configs",
@@ -735,6 +737,7 @@ def test_every_public_service_operation_carries_the_error_boundary() -> None:
         "load_package_content",
         "register",
         "validate",
+        "validate_declared",
     }
 
 

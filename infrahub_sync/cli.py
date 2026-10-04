@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
+    BranchValidationResource,
     ClientInputError,
     CompatibilityError,
     ConfigMutationRequest,
@@ -132,9 +133,10 @@ def _client(ctx: typer.Context) -> SyncClient:
     injected = ctx.obj.get("client")
     if injected is not None:
         return cast("SyncClient", injected)
+    # The caller's Infrahub API token; the older Sync-only variable is read when it is unset.
     client = SyncClient(
         cast("str", ctx.obj.get("api_url", "")),
-        os.environ.get("INFRAHUB_SYNC_API_TOKEN", ""),
+        os.environ.get("INFRAHUB_SYNC_TOKEN") or os.environ.get("INFRAHUB_SYNC_API_TOKEN", ""),
     )
     ctx.obj["client"] = client
     ctx.call_on_close(client.close)
@@ -276,7 +278,7 @@ def _echo_config_summary(resource: ConfigurationSummaryResource) -> None:
     _echo_fields(
         (
             ("config_id", resource.config_id),
-            ("created_at", resource.created_at.isoformat()),
+            ("created_at", resource.created_at.isoformat() if resource.created_at else None),
         )
     )
 
@@ -325,6 +327,27 @@ def _echo_validation(resource: ValidationReportResource) -> None:
         )
 
 
+def _echo_branch_validation(resource: BranchValidationResource) -> None:
+    _echo_fields(
+        (
+            ("config_id", resource.config_id),
+            ("branch", resource.branch),
+            ("checksum", resource.checksum),
+            ("offset", resource.offset),
+            ("limit", resource.limit),
+            ("total_findings", resource.total_findings),
+            ("next_offset", resource.next_offset),
+        )
+    )
+    for finding in resource.findings:
+        typer.echo(
+            _display(
+                "finding: "
+                f"code={finding.code} severity={finding.severity} location={finding.location} message={finding.message}"
+            )
+        )
+
+
 @configs_app.command("register")
 def configs_register(
     ctx: typer.Context,
@@ -336,7 +359,11 @@ def configs_register(
         help="Retry key. A new key is generated and printed when omitted.",
     ),
 ) -> None:
-    """Register a JSON or YAML configuration package."""
+    """Register a package in a Sync without Infrahub; with Infrahub, create it there.
+
+    Only for a Sync that keeps configurations in its own store. Where configurations live
+    in Infrahub, create them there; the Sync API refuses this command and says so.
+    """
     with _client_errors():
         key = _idempotency_key(idempotency_key)
         _echo_idempotency_key(key)
@@ -359,7 +386,11 @@ def configs_version(
         help="Retry key. A new key is generated and printed when omitted.",
     ),
 ) -> None:
-    """Create the next immutable version of a registered configuration."""
+    """Add a version in a Sync without Infrahub; with Infrahub, edit the configuration there.
+
+    Only for a Sync that keeps configurations in its own store. Where configurations live
+    in Infrahub, change the configuration there; a run records the version it uses.
+    """
     with _client_errors():
         key = _idempotency_key(idempotency_key)
         _echo_idempotency_key(key)
@@ -372,7 +403,7 @@ def configs_version(
 
 @configs_app.command("list")
 def configs_list(ctx: typer.Context) -> None:
-    """List registered configurations."""
+    """List configurations."""
     with _client_errors():
         for index, resource in enumerate(_client(ctx).list_configs()):
             if index:
@@ -397,7 +428,7 @@ def configs_show(
 
 @configs_app.command("versions")
 def configs_versions(ctx: typer.Context, config_id: str = typer.Argument(...)) -> None:
-    """List immutable versions of a registered configuration."""
+    """List the immutable versions recorded for a configuration."""
     with _client_errors():
         for index, resource in enumerate(_client(ctx).list_config_versions(config_id)):
             if index:
@@ -408,14 +439,25 @@ def configs_versions(ctx: typer.Context, config_id: str = typer.Argument(...)) -
 @configs_app.command("validate")
 def configs_validate(
     ctx: typer.Context,
+    *,
     config_id: str = typer.Argument(...),
-    version: int = typer.Argument(...),
+    version: int | None = typer.Option(None, "--version", help="Validate one recorded version."),
+    branch: str | None = typer.Option(
+        None, "--branch", help="Validate the document on this Infrahub branch. Defaults to the default branch."
+    ),
     offset: int = typer.Option(0, "--offset", help="Finding offset."),
     limit: int = typer.Option(256, "--limit", help="Maximum findings to return."),
 ) -> None:
-    """Validate a registered configuration version."""
+    """Validate a configuration's current document in Infrahub, or one recorded version."""
+    if version is not None and branch is not None:
+        typer.echo("error: --version and --branch cannot be combined; a recorded version has no branch", err=True)
+        raise typer.Exit(code=2)
     with _client_errors():
-        _echo_validation(_client(ctx).validate_config(config_id, version, offset=offset, limit=limit))
+        client = _client(ctx)
+        if version is not None:
+            _echo_validation(client.validate_config(config_id, version, offset=offset, limit=limit))
+        else:
+            _echo_branch_validation(client.validate_config_on_branch(config_id, branch, offset=offset, limit=limit))
 
 
 def _echo_run(resource: RunResource) -> None:
@@ -480,7 +522,7 @@ def _operation_request(
     *,
     operation: str,
     config_id: str,
-    version: int,
+    version: int | None,
     branch: str | None,
     reason: str,
 ) -> CreateRunRequest:
@@ -581,7 +623,7 @@ def _admit_run(
     *,
     operation: str,
     config_id: str,
-    version: int,
+    version: int | None,
     branch: str | None,
     reason: str,
     idempotency_key: str | None,
@@ -617,7 +659,9 @@ def diff_cmd(
     ctx: typer.Context,
     *,
     config_id: str = typer.Option(..., "--config-id", help="Registered configuration identity."),
-    version: int = typer.Option(..., "--version", help="Registered configuration version."),
+    version: int | None = typer.Option(
+        None, "--version", help="Configuration version. Omitted: the current document, recorded as a version if new."
+    ),
     reason: str = typer.Option(..., "--reason", help="Audit reason for the plan."),
     branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
@@ -648,7 +692,9 @@ def sync_cmd(
     ctx: typer.Context,
     *,
     config_id: str = typer.Option(..., "--config-id", help="Registered configuration identity."),
-    version: int = typer.Option(..., "--version", help="Registered configuration version."),
+    version: int | None = typer.Option(
+        None, "--version", help="Configuration version. Omitted: the current document, recorded as a version if new."
+    ),
     reason: str = typer.Option(..., "--reason", help="Audit reason for the synchronization."),
     branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),

@@ -5,6 +5,7 @@ import os
 from asyncio import CancelledError, create_task, sleep
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
+from inspect import isawaitable
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, Request, Response
@@ -14,7 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 
-from .auth import Principal, PrincipalResolver
+from .auth import SYNC_NAMESPACE, Action, Principal, PrincipalResolver, PrincipalUnavailableError
 from .compatibility import API_STABILITY, API_VERSIONS, installed_server_version
 from .config_routes import ConfigurationAPIError, ConfigurationRoutes, configuration_router
 from .liveness import RunLivenessReconciler
@@ -94,21 +95,40 @@ def create_app(
     application = FastAPI(title="Infrahub Sync API", version=installed_server_version(), lifespan=lifespan)
     bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
 
-    def authenticate(
+    async def authenticate(
         request: Request,
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_auth)],
+        infrahub_key: Annotated[str | None, Header(alias="X-INFRAHUB-KEY")] = None,
     ) -> Principal:
-        if credentials is None:
-            service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
-            raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
-        token = credentials.credentials.lstrip(" ")
+        # An Infrahub API token, presented the way Infrahub accepts it or as a bearer token.
+        presented = infrahub_key if infrahub_key is not None else (credentials.credentials if credentials else None)
+        token = (presented or "").lstrip(" ")
         if not token:
             service.record_authentication_refusal(request.url.path, "missing-or-invalid-authorization")
             raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
-        principal = resolver.resolve(token)
-        if principal is None:
+        try:
+            resolved = resolver.resolve(token)
+            principal = await resolved if isawaitable(resolved) else resolved
+        except PrincipalUnavailableError:
+            raise ServiceAPIError(
+                503, "identity-unavailable", "Infrahub could not be asked who the caller is"
+            ) from None
+        if not isinstance(principal, Principal):
             service.record_authentication_refusal(request.url.path, "invalid-bearer-token")
             raise ServiceAPIError(401, "unauthenticated", "a valid bearer token is required")
+        return principal
+
+    def authorize(principal: Principal, action: Action, name: str) -> None:
+        """Refuse unless Infrahub grants `action` on `Sync<name>` on the default branch."""
+        if not principal.allows(action, name):
+            raise ServiceAPIError(
+                403,
+                "forbidden",
+                f"Infrahub permission object:{SYNC_NAMESPACE}:{name}:{action} on the default branch is required",
+            )
+
+    def viewer(principal: Annotated[Principal, Depends(authenticate)]) -> Principal:
+        authorize(principal, "view", "Run")
         return principal
 
     def idempotency_key(value: Annotated[str | None, Header(alias="Idempotency-Key")] = None) -> str:
@@ -193,33 +213,34 @@ def create_app(
         principal: Annotated[Principal, Depends(authenticate)],
         key: Annotated[str, Depends(idempotency_key)],
     ) -> JSONResponse:
+        authorize(principal, "create", "Run")
+        if body.operation == "sync":
+            authorize(principal, "create", "Approval")
         status, content = await service.create_run(body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
     @application.get("/runs/{run_id}", responses=ERROR_RESPONSES)
-    async def get_run(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> RunResource:
+    async def get_run(run_id: str, _principal: Annotated[Principal, Depends(viewer)]) -> RunResource:
         observations = await reconciler.reconcile_run(run_id) if reconciler is not None else {}
         return await service.get_run(run_id, observations)
 
     @application.get("/runs/{run_id}/plan", responses=ERROR_RESPONSES)
-    def get_plan(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> PlanResource:
+    def get_plan(run_id: str, _principal: Annotated[Principal, Depends(viewer)]) -> PlanResource:
         return service.get_plan(run_id)
 
     @application.get("/runs/{run_id}/results", responses=ERROR_RESPONSES)
-    def get_results(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> ResultsResource:
+    def get_results(run_id: str, _principal: Annotated[Principal, Depends(viewer)]) -> ResultsResource:
         return service.get_results(run_id)
 
     @application.get(
         "/runs/{run_id}/artifacts",
         responses=ERROR_RESPONSES,
     )
-    def list_artifacts(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> ArtifactListResource:
+    def list_artifacts(run_id: str, _principal: Annotated[Principal, Depends(viewer)]) -> ArtifactListResource:
         return service.list_artifacts(run_id)
 
     @application.get("/runs/{run_id}/artifacts/{artifact_id}", responses=ERROR_RESPONSES)
-    def get_artifact(
-        run_id: str, artifact_id: str, _principal: Annotated[Principal, Depends(authenticate)]
-    ) -> Response:
+    def get_artifact(run_id: str, artifact_id: str, _principal: Annotated[Principal, Depends(viewer)]) -> Response:
         data, media_type, digest = service.get_artifact(run_id, artifact_id)
         return Response(content=data, media_type=media_type, headers={"Digest": f"sha-256={digest}"})
 
@@ -230,6 +251,7 @@ def create_app(
         principal: Annotated[Principal, Depends(authenticate)],
         key: Annotated[str, Depends(idempotency_key)],
     ) -> JSONResponse:
+        authorize(principal, "create", "Run")
         status, content = await service.verify_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
@@ -240,6 +262,7 @@ def create_app(
         principal: Annotated[Principal, Depends(authenticate)],
         key: Annotated[str, Depends(idempotency_key)],
     ) -> JSONResponse:
+        authorize(principal, "create", "Approval")
         status, content = await service.apply_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
@@ -250,10 +273,11 @@ def create_app(
         principal: Annotated[Principal, Depends(authenticate)],
         key: Annotated[str, Depends(idempotency_key)],
     ) -> JSONResponse:
+        authorize(principal, "update", "Run")
         status, content = await service.cancel_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
     if configuration_routes is not None:
-        application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key))
+        application.include_router(configuration_router(configuration_routes, authenticate, idempotency_key, authorize))
 
     return application

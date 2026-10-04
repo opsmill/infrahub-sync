@@ -1,8 +1,8 @@
-"""A real registered run, through the deployed worker, against a real Infrahub.
+"""A real run, through the deployed worker, against a real Infrahub.
 
-The property this module exists for: a registered managed plan resolves its
-declared configuration out of PostgreSQL and both adapter classes out of
-installed code, so the worker container needs no configuration mount and shares
+The property this module exists for: a managed plan resolves its declared
+configuration out of the version recorded in Infrahub and both adapter classes
+out of installed code, so the worker container needs no configuration mount and shares
 no filesystem with the API that submitted the run.
 
 Proving that by reading the Compose file would prove nothing — a worker can
@@ -26,7 +26,8 @@ from tests.compose.lifecycle import (
     idempotency,
     inspect,
     plant_pending_update,
-    register,
+    put_configuration,
+    recorded_versions,
     smoke_package,
 )
 from tests.compose.redaction import SECRETS
@@ -73,32 +74,34 @@ def test_the_deployed_worker_has_no_configuration_directory_in_its_environment(
     assert "INFRAHUB_SYNC_CONFIG_DIRECTORY" not in names
 
 
-def test_a_registered_plan_runs_through_the_deployed_worker(
-    deployment: Deployment, canaries: dict[str, str], destination_url: str, pending_update: str
+def test_a_plan_on_a_configuration_in_infrahub_runs_through_the_deployed_worker(
+    deployment: Deployment, infrahub_fixture: dict[str, str], destination_url: str, pending_update: str
 ) -> None:
     """The whole path: admit, schedule, claim, extract, plan, publish, retrieve.
 
     The review artifact is fetched back through the API, which reads it from the
     object store the worker published it to — the transport that exists so the
-    two never need a filesystem in common.
+    two never need a filesystem in common. The configuration is written into
+    Infrahub, and the run, started without a version, records the one it used.
     """
-    with api_client(deployment, canaries["principal"]) as client:
-        config_id, registry_version = register(
-            client, smoke_package(destination_url), "compose suite: register the qualification configuration"
-        )
+    config_id = put_configuration(infrahub_fixture, smoke_package(destination_url))
+    with api_client(deployment, infrahub_fixture["token"]) as client:
         created = client.post(
             "/runs",
             headers=idempotency("compose-plan"),
             json={
                 "operation": "plan",
                 "config_id": config_id,
-                "registry_version": registry_version,
                 "branch": SMOKE_BRANCH,
                 "reason": "compose suite: plan through the deployed worker",
             },
         )
         assert created.status_code == 202, created.text
-        run_id = created.json()["run"]["run_id"]
+        run = created.json()["run"]
+        run_id = run["run_id"]
+        assert [number for number, _checksum in recorded_versions(infrahub_fixture, config_id)].count(
+            run["registry_version"]
+        ) == 1, "the run's version is not recorded in Infrahub"
 
         await_phase(client, run_id, "planned")
 

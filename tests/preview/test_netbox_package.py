@@ -1,10 +1,12 @@
-"""The shipped `from-netbox` package against the running service: register and validate.
+"""The shipped `from-netbox` package against the running service: put it in Infrahub, validate.
 
 The preview stack has no NetBox source, no schema library and no NetBox token, so this
-module never plans or applies this package. What it does prove is the part that needs no
-source: the package a reader actually copies out of `examples/` registers through all
-three interfaces, resolves its credentials by reference rather than by value, and reports
-the same findings whichever interface asked.
+module never plans or applies this package — and since only a run records a version, it
+validates each configuration's document as it stands on the default branch. What it does
+prove is the part that needs no source: the package a reader actually copies out of
+`examples/` is accepted as a `SyncConfiguration` document verbatim, resolves its
+credentials by reference rather than by value, and reports the same findings whichever
+of the three interfaces asked.
 
 The last row is the one the package's shape rests on. Default validation judges declared
 content only — no schema read, no network — so the source URL is pointed at a listener
@@ -23,11 +25,10 @@ import pytest
 import yaml
 
 from infrahub_sync.client import SyncClient
-from infrahub_sync.client.models import ConfigMutationRequest
 from tasks.preview import REPO_ROOT
 from tests.preview.evidence import canary_leaks
 from tests.preview.test_cli_client import ANSI, run_cli, run_cli_command
-from tests.preview.test_service_api import authenticated_client, idempotency_headers
+from tests.preview.test_service_api import authenticated_client, put_smoke_configuration
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -36,7 +37,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.preview
 
 PACKAGE_FILE = REPO_ROOT / "examples" / "netbox_to_infrahub" / "package.yml"
-REASON = "preview qualification: register the shipped NetBox package"
 # A destination kind the shipped package deliberately does not map, so declaring it omitted
 # is accepted and reports exactly one warning. This is the copy that separates an interface
 # which renders findings from one that renders none because there were none to render.
@@ -105,23 +105,13 @@ def _http_findings(payload: dict[str, Any]) -> list[str]:
     ]
 
 
-def _register_over_http(client: Any, package: dict[str, Any]) -> dict[str, Any]:  # noqa: ANN401 — the raw client
-    response = client.post(
-        "/configs",
-        headers=idempotency_headers("preview-netbox"),
-        json={"package": package, "reason": REASON},
-    )
-    assert response.status_code == 201, response.text
-    return dict(response.json()["version"])
-
-
-def test_the_shipped_netbox_package_registers_through_every_interface(  # noqa: PLR0914
+def test_the_shipped_netbox_package_is_a_configuration_document_through_every_interface(
     preview_env: dict[str, Any], evidence_dir: Path
 ) -> None:
-    """The file on disk registers as-is, replays on its key, and checksums the same everywhere."""
+    """The file on disk is accepted verbatim, and checksums the same everywhere, YAML or JSON."""
     package = shipped_package()
-    # The credential references are what makes registration possible at all: a package
-    # carrying a literal token is refused before anything is persisted.
+    # The credential references are what makes the document admissible at all: a package
+    # carrying a literal token is refused before any version is recorded.
     assert package["configuration"]["source"]["settings"]["token"] == {"$credential": "netbox-token"}
     assert package["configuration"]["destination"]["settings"]["token"] == {"$credential": "infrahub-token"}
     assert package["credentials"] == {
@@ -129,67 +119,41 @@ def test_the_shipped_netbox_package_registers_through_every_interface(  # noqa: 
         "infrahub-token": {"provider": "env", "identifier": "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"},
     }
 
+    # The YAML text exactly as the reader copies it, and the same content as JSON: an
+    # operator may paste either into the document attribute.
+    from_yaml = put_smoke_configuration(preview_env, "preview-netbox-yaml", PACKAGE_FILE.read_text(encoding="utf-8"))
+    from_json = put_smoke_configuration(preview_env, "preview-netbox-json", json.dumps(package))
+
     artifacts: dict[str, object] = {}
-    key = idempotency_headers("preview-netbox")["Idempotency-Key"]
     from_cli = run_cli(
         preview_env,
         "configs",
-        "register",
-        str(PACKAGE_FILE),
-        "--reason",
-        REASON,
-        "--idempotency-key",
-        key,
+        "validate",
+        from_yaml,
         artifacts=artifacts,
-        artifact_name="NetBox package register",
+        artifact_name="NetBox package validate",
     )
-    replayed_cli = run_cli(
-        preview_env,
-        "configs",
-        "register",
-        str(PACKAGE_FILE),
-        "--reason",
-        REASON,
-        "--idempotency-key",
-        key,
-        artifacts=artifacts,
-        artifact_name="NetBox package register replay",
-    )
-    assert replayed_cli == from_cli
+    assert from_cli["total_findings"] == "0", from_cli
 
     with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
-        request = ConfigMutationRequest(package=package, reason=REASON)
-        python_key = idempotency_headers("preview-netbox")["Idempotency-Key"]
-        from_python = client.register_config(request, python_key)
-        replayed_python = client.register_config(request, python_key)
-        assert replayed_python == from_python
+        from_python = client.validate_config_on_branch(from_json)
+        assert from_python.findings == ()
 
-    transcript = evidence_dir / "netbox-package-register-http.jsonl"
+    transcript = evidence_dir / "netbox-package-document-http.jsonl"
     with authenticated_client(preview_env, transcript=transcript) as api:
-        http_key = idempotency_headers("preview-netbox")
-        body = {"package": package, "reason": REASON}
-        first = api.post("/configs", headers=http_key, json=body)
-        assert first.status_code == 201, first.text
-        replayed_http = api.post("/configs", headers=http_key, json=body)
-        assert replayed_http.json() == first.json()
-        from_http = first.json()["version"]
+        response = api.post(f"/configs/{from_yaml}/validate")
+        assert response.status_code == 200, response.text
+        from_http = response.json()
 
-    # Three independent registrations of one declared file: different configurations, the
-    # same content, so the checksum the registry computed has to be one value.
-    assert from_cli["package_checksum"] == from_python.version.package_checksum == from_http["package_checksum"]
-    assert len({from_cli["config_id"], from_python.version.config_id, from_http["config_id"]}) == 3
+    # One declared content in two configurations and two notations, so the checksum a
+    # version of it would carry has to be one value.
+    assert from_cli["checksum"] == from_python.checksum == from_http["checksum"]
     captured = transcript.read_text(encoding="utf-8")
     exchanges = [
         (record["method"], record["path"], record["status"]) for record in map(json.loads, captured.splitlines())
     ]
-    assert exchanges == [("POST", "/configs", 201), ("POST", "/configs", 201)]
-    artifacts.update(
-        {
-            "NetBox Python register resource": from_python,
-            "NetBox Python register replay resource": replayed_python,
-            str(transcript): captured,
-        }
-    )
+    assert exchanges == [("POST", f"/configs/{from_yaml}/validate", 200)]
+    artifacts.update({"NetBox Python validation resource": from_python, str(transcript): captured})
     assert canary_leaks(preview_env["infrahub_token"], artifacts) == []
 
 
@@ -201,38 +165,35 @@ def test_the_netbox_package_validates_identically_through_every_interface(
     artifacts: dict[str, object] = {}
     python_reports: list[object] = []
     http_bodies: list[bytes] = []
+    clean = put_smoke_configuration(preview_env, "preview-netbox-clean", shipped_package())
+    warned = put_smoke_configuration(preview_env, "preview-netbox-warned", _with_omission())
+    expected = {
+        clean: [],
+        warned: [
+            _rendered(
+                "intentional-omission",
+                "warning",
+                "/omissions/0",
+                f"declared content is intentionally omitted from synchronization: {OMISSION_REASON}",
+            )
+        ],
+    }
     with authenticated_client(preview_env, transcript=transcript) as api:
-        clean = _register_over_http(api, shipped_package())
-        warned = _register_over_http(api, _with_omission())
-        expected = {
-            (clean["config_id"], clean["registry_version"]): [],
-            (warned["config_id"], warned["registry_version"]): [
-                _rendered(
-                    "intentional-omission",
-                    "warning",
-                    "/omissions/0",
-                    f"declared content is intentionally omitted from synchronization: {OMISSION_REASON}",
-                )
-            ],
-        }
-
-        for index, ((config_id, registry_version), findings) in enumerate(expected.items(), start=1):
-            version = str(registry_version)
+        for index, (config_id, findings) in enumerate(expected.items(), start=1):
             cli = run_cli_command(
                 preview_env,
                 "configs",
                 "validate",
                 config_id,
-                version,
                 artifacts=artifacts,
                 artifact_name=f"NetBox package validate {index}",
             )
             assert cli.returncode == 0, cli.stderr
 
             with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
-                report = client.validate_config(config_id, registry_version)
+                report = client.validate_config_on_branch(config_id)
             python_reports.append(report)
-            body = api.post(f"/configs/{config_id}/versions/{version}/validate")
+            body = api.post(f"/configs/{config_id}/validate")
             assert body.status_code == 200, body.text
             http_bodies.append(body.content)
 
@@ -242,19 +203,14 @@ def test_the_netbox_package_validates_identically_through_every_interface(
             assert _cli_findings(cli.stdout) == python_findings == _http_findings(body.json()) == findings
             assert report.total_findings == len(findings)
             assert body.json()["total_findings"] == len(findings)
-            # Decision: no interface exposes the destination-schema opt-in, so this stays absent.
-            assert report.destination_schema_fingerprint is None
-            assert body.json()["destination_schema_fingerprint"] is None
 
     captured = transcript.read_text(encoding="utf-8")
     exchanges = [
         (record["method"], record["path"], record["status"]) for record in map(json.loads, captured.splitlines())
     ]
     assert exchanges == [
-        ("POST", "/configs", 201),
-        ("POST", "/configs", 201),
-        ("POST", f"/configs/{clean['config_id']}/versions/{clean['registry_version']}/validate", 200),
-        ("POST", f"/configs/{warned['config_id']}/versions/{warned['registry_version']}/validate", 200),
+        ("POST", f"/configs/{clean}/validate", 200),
+        ("POST", f"/configs/{warned}/validate", 200),
     ]
     artifacts[str(transcript)] = captured
     artifacts.update(
@@ -275,12 +231,11 @@ def test_validating_the_netbox_package_reads_no_source(
     assert httpx.get(source_sink, timeout=5).status_code == 200
     assert _sink_requests == ["GET /"]
     _sink_requests.clear()
+    config_id = put_smoke_configuration(preview_env, "preview-netbox-sink", package)
 
     transcript = evidence_dir / "netbox-package-zero-source-http.jsonl"
     with authenticated_client(preview_env, transcript=transcript) as api:
-        version = _register_over_http(api, package)
-        assert version["declared_content"]["configuration"]["source"]["settings"]["url"] == source_sink
-        report = api.post(f"/configs/{version['config_id']}/versions/{version['registry_version']}/validate")
+        report = api.post(f"/configs/{config_id}/validate")
         assert report.status_code == 200, report.text
         assert report.json()["findings"] == [], report.text
 
@@ -289,10 +244,7 @@ def test_validating_the_netbox_package_reads_no_source(
     exchanges = [
         (record["method"], record["path"], record["status"]) for record in map(json.loads, captured.splitlines())
     ]
-    assert exchanges == [
-        ("POST", "/configs", 201),
-        ("POST", f"/configs/{version['config_id']}/versions/{version['registry_version']}/validate", 200),
-    ]
+    assert exchanges == [("POST", f"/configs/{config_id}/validate", 200)]
     assert (
         canary_leaks(
             preview_env["infrahub_token"],

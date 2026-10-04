@@ -83,14 +83,19 @@ checkout. After a code change, run `uv run invoke build && uv run invoke start`.
 
 | | |
 |---|---|
-| **Sync API** | `http://127.0.0.1:8030` — bearer token `infrahub-sync-dev-token` |
+| **Sync API** | `http://127.0.0.1:8030` — Infrahub API token `06438eb2-8019-4776-878c-0941b1f1d1ec` (the local preview Infrahub's administrator token) |
 | **Prefect UI** (the stack's own Infrahub task manager) | `http://127.0.0.1:4230` |
 | **PostgreSQL** (the task manager's server, database `infrahub_sync`) | `127.0.0.1:5440` |
 
 ```bash
 curl -sf http://127.0.0.1:8030/version
-curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8030/status
+curl -sf -H 'X-INFRAHUB-KEY: 06438eb2-8019-4776-878c-0941b1f1d1ec' http://127.0.0.1:8030/configs
 ```
+
+Configurations and callers live in Infrahub, so the API answers authenticated calls only
+while the local preview Infrahub runs (`uv run invoke preview.up`) with the Sync schema
+`schema/sync.yml` loaded into it. Without it, authenticated calls answer
+`503 identity-unavailable`.
 
 The stack starts with no source and no destination. To continue to a first sync from a
 local NetBox into a local Infrahub, follow
@@ -115,30 +120,33 @@ This build keeps its own BuildKit cache, so the first build starts with an empty
 ## Example: NetBox → Infrahub
 
 The repository includes a NetBox configuration package at
-`examples/netbox_to_infrahub/package.yml`. This example registers it with a deployed Sync
-service; edit the package's URLs for your NetBox and Infrahub first. For the local NetBox and
+`examples/netbox_to_infrahub/package.yml`, and an Infrahub object file that wraps it as a
+`SyncConfiguration` named `from-netbox`, `examples/netbox_to_infrahub/sync-configuration.yml`.
+Its `document` is the package, verbatim. Edit the URLs in that document for your NetBox and
+Infrahub first, or change them in Infrahub after loading it. For the local NetBox and
 Infrahub above, run `uv run invoke netbox.demo-package --dev-stack` instead, then follow
 [Run a first sync](https://feature-v3-develop.infrahub-sync.pages.dev/development-stack#run-a-first-sync).
-Register the package once, then address the immutable configuration version returned by the
-service:
+Load the Sync schema into Infrahub once, create the configuration there, then plan from it.
+Each run records the version of the configuration it used:
 
 ```bash
-export INFRAHUB_SYNC_API_URL=https://sync.example.com
-export INFRAHUB_SYNC_API_TOKEN=<token>
+infrahubctl schema load schema/sync.yml
+infrahubctl object load examples/netbox_to_infrahub/sync-configuration.yml
 
-uv run infrahub-sync configs register examples/netbox_to_infrahub/package.yml \
-  --reason "register NetBox import"
-uv run infrahub-sync diff --config-id <config-id> --version <version> \
+export INFRAHUB_SYNC_API_URL=https://sync.example.com
+export INFRAHUB_SYNC_TOKEN=<your Infrahub API token>
+
+uv run infrahub-sync diff --config-id from-netbox \
   --branch netbox-import --reason "review NetBox import"
 uv run infrahub-sync runs plan <run-id> --detail
 uv run infrahub-sync apply <run-id> --expected-checksum <checksum> \
   --branch netbox-import --reason "apply reviewed NetBox import"
 ```
 
-The worker uses the source and destination URLs in the registered package. Environment
+The worker uses the source and destination URLs in the package. Environment
 variables such as `NETBOX_URL` or `INFRAHUB_ADDRESS` do not change them; only the tokens
 come from the worker's environment. Read the
-[example prerequisites](examples/netbox_to_infrahub/README.md) before you register it.
+[example prerequisites](examples/netbox_to_infrahub/README.md) before you load it.
 
 For a complete walkthrough, see the
 [NetBox-to-Infrahub tutorial](https://feature-v3-develop.infrahub-sync.pages.dev/tutorials/netbox-demo-to-infrahub).
@@ -192,21 +200,21 @@ default Sync image does not include them; see each adapter's page in the documen
 - If your source has a REST API but no dedicated adapter (ServiceNow, Infoblox, internal
   IPAM, and others), start with the Generic REST API adapter. The `examples/` directory
   includes Generic REST API configurations for LibreNMS, Observium, Device42, and PeeringDB.
-- A registered package must name an adapter bundled with Infrahub Sync. Running a custom
-  adapter from a registered package is not qualified in this release; see the
+- A configuration package must name an adapter bundled with Infrahub Sync. Running a custom
+  adapter from a package is not qualified in this release; see the
   [local adapters guide](https://feature-v3-develop.infrahub-sync.pages.dev/adapters/local-adapters)
   and the template at `examples/custom_adapter/`.
 
 ### Components
 
-- **Sync service.** The Sync API registers configuration packages, admits runs, and keeps
-  run records, saved plans, and artifacts. The worker reads the source and destination and
+- **Sync service.** The Sync API reads configurations from Infrahub, checks each caller's
+  Infrahub permissions, admits runs, and keeps run records, saved plans, and artifacts. The worker reads the source and destination and
   writes the reviewed plan.
 - **Declarative YAML configuration.** Per-field mapping with 14 filter operations
   (including `regex` and `is_ip_within`), per-field transforms, custom Jinja filters, and
   cross-reference resolution. When `order` is omitted, the write order comes from the
   mapping's references.
-- **Typer-based CLI.** Register and inspect configuration packages, create plan or sync
+- **Typer-based CLI.** Inspect and validate configurations, create plan or sync
   runs, review saved plans, and apply a reviewed checksum through the Sync API.
 - **Custom CA certificates.** Trust an internal CA for the CLI's connection to the Sync API. A
   Compose worker cannot trust a custom CA yet; see the custom certificates guide.
@@ -215,7 +223,7 @@ default Sync image does not include them; see each adapter's page in the documen
 
 | Surface | Use it for | Runtime requirements |
 |---|---|---|
-| CLI | Configuration registration, plan review, run admission, and reviewed-plan apply | Base installation and Sync API access |
+| CLI | Configuration validation, plan review, run admission, and reviewed-plan apply | Base installation and Sync API access |
 | Python client | Typed access to every shipped Sync API resource | Base installation and Sync API access |
 | Direct Prefect deployment | Starting and observing one read-only plan through Prefect's API | `prefect` extra and a Prefect server |
 | Sync HTTP API | Authenticated remote runs, durable records and artifacts, reviewed apply, idempotency, and cancellation | `service` extra, Prefect, a work pool, a worker, and shared durable storage |

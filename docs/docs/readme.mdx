@@ -50,19 +50,20 @@ candidate.
 - **Plan** — the list of creates, updates, and deletes that a run calculates. The Sync
   API saves it with a checksum, so you can review it before anything is written.
 
-### Register, plan, review, apply
+### Configure, plan, review, apply
 
-1. `infrahub-sync configs register <package>` registers the package. Later commands use
-   the returned configuration ID and version.
-2. `infrahub-sync diff --config-id <id> --version <version> --reason <reason>` asks the
-   worker to read both systems and save a plan. The destination is not changed. The
+1. Create a `SyncConfiguration` in Infrahub that holds the package as its `document`. Its
+   name is the configuration ID that later commands use.
+2. `infrahub-sync diff --config-id <id> --reason <reason>` asks the worker to read both
+   systems and save a plan. The run records the configuration's current content as a
+   version, or reuses the version that already holds it. The destination is not changed. The
    client waits for the plan by default and prints its summary and checksum.
 3. `infrahub-sync runs plan <run-id> --detail` shows the saved plan again, for example
    after you started the run with `--no-wait`.
 4. `infrahub-sync apply <run-id> --expected-checksum <checksum> --reason <reason>` writes
    exactly the reviewed plan.
 
-`infrahub-sync sync --config-id <id> --version <version> --reason <reason>` calculates a
+`infrahub-sync sync --config-id <id> --reason <reason>` calculates a
 plan and writes it in one run, with no stop for review.
 
 When `order` is omitted, the write order comes from the mapping's references. A plan

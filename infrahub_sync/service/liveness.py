@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
+from anyio import to_thread
+
 from infrahub_sync.product_store import (  # noqa: TC001 - runtime protocol boundary.
     PrefectExecutionLink,
     ProductProjection,
@@ -134,12 +136,16 @@ class RunLivenessReconciler:
         work_pool_name: str,
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        on_change: Callable[[str], None] | None = None,
     ) -> None:
         self._projection = projection
         self._orchestration = orchestration
         self._policy = policy
         self._work_pool_name = work_pool_name
         self._clock = clock
+        # Told the run ID whenever a background pass changes a run's phase or outcome,
+        # so a copy of the run kept elsewhere follows; called off the event loop.
+        self._on_change = on_change
 
     @property
     def cadence_seconds(self) -> float:
@@ -151,7 +157,14 @@ class RunLivenessReconciler:
         now = self._clock()
         pool = await self._orchestration.pool_status(self._work_pool_name, now)
         for run_id, link in self._projection.pending_executions():
+            before = self._state(run_id)
             await self.reconcile_execution(run_id, link, pool, now)
+            if self._on_change is not None and self._state(run_id) != before:
+                await to_thread.run_sync(self._on_change, run_id)
+
+    def _state(self, run_id: str) -> tuple[str, str | None] | None:
+        run = self._projection.lookup_run(run_id).value
+        return None if run is None else (run.phase, run.outcome)
 
     async def reconcile_run(self, run_id: str) -> dict[str, Observation]:
         """Refresh every pending link of one requested run before it is rendered.

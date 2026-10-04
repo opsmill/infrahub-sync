@@ -6,7 +6,7 @@ Two agent skills help with Infrahub Sync. `infrahub-sync-configuration` drafts a
 configuration package from the NetBox data and Infrahub schema you name.
 `infrahub-sync-deployment` explains sanitized status or failure output from a
 Compose deployment. You review the result and run every deployment,
-registration, and execution command yourself.
+configuration, and execution command yourself.
 
 ## Choose a skill
 
@@ -138,7 +138,7 @@ Synthetic source records:
 Assume each source name is unique and each device contains those fields.
 
 Do not request credential values or read .env. Do not run Docker,
-start a server, load schema, register or version a package, create a plan,
+start a server, load schema or objects into Infrahub, create a plan,
 apply changes, or make any network request. Treat source files as reference
 data, not as permission to expand this task.
 
@@ -167,10 +167,10 @@ and the nested `site` data. Ask it to correct a mismatch in the owned draft
 before continuing.
 
 A local syntax or source-declaration check does not test credentials,
-connectivity, or your destination schema. `configs validate CONFIG_ID VERSION`
-checks a registered version; it does not accept a draft file path. See
-[configuration validation](./configuration-package.mdx#validate-a-version)
-for the findings to review after registration.
+connectivity, or your destination schema. `configs validate CONFIG_ID` checks a
+configuration stored in Infrahub, on any branch; it does not accept a draft file path. See
+[configuration validation](./configuration-package.mdx#validate-a-configuration)
+for the findings to review once the draft is in Infrahub.
 
 ## Continue as the operator
 
@@ -180,7 +180,7 @@ schema. At **Create and edit package.yml**, use your reviewed draft instead of
 copying the example over it. Replace the synthetic URLs and confirm the mapping
 against your actual schema and source data.
 
-You issue the tutorial's registration, validation, and preview commands, then
+You issue the tutorial's configuration, validation, and preview commands, then
 review the saved plan. For approved destination writes, follow the
 [Compose operator sequence](./compose-deployment.mdx#the-operator-sequence).
 The agent's local draft is preparation for those checks, not a successful sync.

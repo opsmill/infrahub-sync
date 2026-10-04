@@ -3,16 +3,15 @@
 This module starts one real deployment of the image under test from the root
 `docker-compose.yml` and drives it with the plain `docker compose` commands an
 operator uses. Its one external system is the Infrahub fixture whose task manager
-and PostgreSQL server every Sync deployment runs on: no source, no destination,
-no credential for one. That is the property — a deployment reaches READY on its
-own dependencies, holds an empty registry until an operator registers something
-through the API, and comes back empty after the documented reset: `docker compose
-down --volumes` and a dropped product database.
+and PostgreSQL server every Sync deployment runs on, and which holds Sync's
+configurations and identifies callers: no source, no destination, no credential
+for one. That is the property — a deployment reaches READY on its own
+dependencies, records nothing until a run starts, and comes back empty after the
+documented reset: `docker compose down --volumes` and a dropped product database.
 
-The package registered here declares unreachable external addresses and
-credential references nothing resolves. Registration is content admission and
-reaches no network, so the package stays registered and is never planned,
-applied or synced.
+The configuration written into Infrahub here declares unreachable external
+addresses and credential references nothing resolves. Writing it reaches no
+source or destination, and it is never planned, applied or synced.
 
 This is an empty-startup and lifecycle proof. It is not the write-bearing
 lifecycle matrix, which runs elsewhere against a real destination.
@@ -20,7 +19,6 @@ lifecycle matrix, which runs elsewhere against a real destination.
 
 from __future__ import annotations
 
-import json
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -31,7 +29,7 @@ from tests.compose.lifecycle import (
     api_client,
     operator_environment,
     probe_json,
-    register,
+    put_configuration,
     run_bootstrap,
     wait_for,
     worker_state,
@@ -46,15 +44,15 @@ pytestmark = pytest.mark.compose
 # this suite starts.
 API_PORT = "8051"
 
-# Addresses that resolve to nothing and a credential nothing sets. A registration
-# admits declared content, so this package is registrable and unusable — which is
-# what keeps a startup proof from acquiring a destination.
+# Addresses that resolve to nothing and a credential nothing sets: a valid
+# configuration that is unusable, which is what keeps a startup proof from
+# acquiring a destination.
 UNREACHABLE_SOURCE = "http://sync-r2-source.invalid:8000"
 UNREACHABLE_DESTINATION = "http://sync-r2-destination.invalid:8000"
 DECLARED_NAME = "configuration-free-startup"
 
-# What a registry holds, read from inside the deployment through the store that
-# holds it rather than from the API that serves it.
+# What Sync's own configuration store holds, read from inside the deployment. With
+# configurations in Infrahub it stays empty for the deployment's whole life.
 REGISTRY = """
 import json
 from infrahub_sync.configuration.models import parse_configuration_package
@@ -158,6 +156,7 @@ def started(
         destination_token="",
         canaries=canaries,
         instance=instance,
+        infrahub_token=infrahub_fixture["token"],
         infrahub_network=infrahub_fixture["network"],
         api_port=int(API_PORT),
     )
@@ -177,10 +176,9 @@ def started(
 
 
 @pytest.fixture(scope="module")
-def principal(started: Deployment) -> str:
-    """The bearer token of this deployment's one principal."""
-    tokens = json.loads(started.setting("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"))
-    return str(next(iter(tokens.values()))["token"])
+def principal(infrahub_fixture: dict[str, str]) -> str:
+    """The Infrahub API token this module calls the deployment with."""
+    return infrahub_fixture["token"]
 
 
 def test_a_deployment_with_no_configuration_reaches_ready(started: Deployment) -> None:
@@ -205,39 +203,50 @@ def test_a_repeated_up_keeps_the_registry_empty(started: Deployment) -> None:
     assert probe_json(started, AUDIT) == [], "a repeated start recorded an audit event"
 
 
-def test_a_repeated_bootstrap_leaves_registered_content_exactly_as_it_was(started: Deployment, principal: str) -> None:
-    """The registry is the operator's, and convergence passes over it untouched.
-
-    Registered through the API and never planned: the package declares addresses
-    that resolve to nothing, so admitting it proves registration is content
-    admission rather than a connection.
-    """
+def test_registration_through_the_api_points_to_infrahub(started: Deployment, principal: str) -> None:
+    """Configurations are created in Infrahub; the API's old registration route says so."""
     with api_client(started, principal) as client:
-        config_id, registry_version = register(
-            client, declared_package(), "startup gate: register a configuration bootstrap must preserve"
+        refused = client.post(
+            "/configs",
+            headers={"Idempotency-Key": f"startup-register-{uuid.uuid4().hex[:8]}"},
+            json={"package": declared_package(), "reason": "startup gate: the retired registration route"},
         )
-    registered = probe_json(started, REGISTRY)
+
+    assert refused.status_code == 410, refused.text
+    assert refused.json()["error"]["code"] == "configurations-in-infrahub"
+    assert probe_json(started, REGISTRY) == []
+
+
+def test_a_repeated_bootstrap_leaves_a_configuration_in_infrahub_served_as_it_was(
+    started: Deployment, principal: str, infrahub_fixture: dict[str, str]
+) -> None:
+    """Convergence passes over the operator's configuration and records nothing.
+
+    Written into Infrahub and never planned: the configuration declares addresses
+    that resolve to nothing, so serving it proves reading it is not a connection.
+    """
+    config_id = put_configuration(infrahub_fixture, declared_package())
+    with api_client(started, principal) as client:
+        served = client.get(f"/configs/{config_id}")
     audited = probe_json(started, AUDIT)
-    assert [entry[0] for entry in registered] == [DECLARED_NAME], registered
+    assert served.status_code == 200, served.text
 
     repeated = run_bootstrap(started)
 
     assert repeated.returncode == 0, repeated.output
-    assert probe_json(started, REGISTRY) == registered
-    assert [entry[1] for entry in registered] == [registry_version]
-    assert config_id
-    # The operator's registration is the one decision recorded, and a repeated
-    # bootstrap adds nothing to the census under any actor. The operation name is
-    # the API's to choose, so what is asserted is the count and the actor.
+    with api_client(started, principal) as client:
+        assert client.get(f"/configs/{config_id}").json() == served.json()
+    assert probe_json(started, REGISTRY) == []
     census = probe_json(started, AUDIT)
     assert census == audited, census
-    assert len(audited) == 1, audited
     assert [event for event in census if event.startswith(f"{RETIRED_BOOTSTRAP_ACTOR}/")] == [], census
 
 
-def test_stop_and_up_preserve_the_registered_package(started: Deployment) -> None:
-    """`docker compose stop` keeps data; `up` again converges without touching the registry."""
-    before = probe_json(started, REGISTRY)
+def test_stop_and_up_keep_serving_the_configuration(started: Deployment, principal: str) -> None:
+    """`docker compose stop` keeps data; `up` again converges and serves the same configuration."""
+    with api_client(started, principal) as client:
+        before = client.get(f"/configs/{DECLARED_NAME}")
+    assert before.status_code == 200, before.text
 
     stopped = started.compose(["stop"])
     assert stopped.returncode == 0, stopped.stderr
@@ -245,8 +254,9 @@ def test_stop_and_up_preserve_the_registered_package(started: Deployment) -> Non
     assert restarted.returncode == 0, restarted.stderr[-3000:]
 
     wait_for("the deployment reporting a live worker again", lambda: worker_state(started) in {"ready", "busy"})
-    assert probe_json(started, REGISTRY) == before
-    assert before, "this case compared a registry that held nothing"
+    with api_client(started, principal) as client:
+        assert client.get(f"/configs/{DECLARED_NAME}").json() == before.json()
+    assert probe_json(started, REGISTRY) == []
     assert [event for event in probe_json(started, AUDIT) if event.startswith(f"{RETIRED_BOOTSTRAP_ACTOR}/")] == []
 
 

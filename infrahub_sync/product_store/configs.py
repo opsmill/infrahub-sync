@@ -51,7 +51,11 @@ from infrahub_sync.configuration.schema_validation import (
     collect_destination_schema_findings,
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
-from infrahub_sync.configuration.validation import _CODE_UNSUPPORTED_SYNC_STORE, _location_digest
+from infrahub_sync.configuration.validation import (
+    _CODE_UNSUPPORTED_SYNC_STORE,
+    _location_digest,
+    validate_package_credentials,
+)
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redaction_order
 from infrahub_sync.product_store.store import (
     ConfigurationNotFoundError,
@@ -908,3 +912,31 @@ def validate(
         findings=findings,
         destination_schema_fingerprint=fingerprint,
     )
+
+
+@_service_boundary
+def admit_declared(package: Mapping[str, Any]) -> ConfigurationPackage:
+    """Admit declared content as registration does, or refuse it with every finding.
+
+    Used where a version is recorded from content that was never registered through this
+    service: a configuration document edited in Infrahub becomes a version only when it
+    passes the same checks a registration ran before persisting.
+    """
+    parsed = _parse(package)
+    try:
+        validate_package_credentials(parsed)
+    except CredentialConfigurationError as exc:
+        raise _validation_refusal(exc, parsed) from None
+    return parsed
+
+
+@_service_boundary
+def validate_declared(package: Mapping[str, Any], *, secrets: Sequence[str] = ()) -> tuple[ValidationFinding, ...]:
+    """Report every declared defect in content that is not a registered version, in contract order."""
+    return collect_findings(_parse(package, refuse_store=False), secrets)
+
+
+@_service_boundary
+def declared_checksum(package: Mapping[str, Any]) -> str:
+    """The checksum a version of this declared content would carry."""
+    return _parse(package, refuse_store=False).checksum()

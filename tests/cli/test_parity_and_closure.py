@@ -245,12 +245,13 @@ def test_configuration_docs_describe_registered_worker_execution() -> None:
     config = " ".join((ROOT / "docs/docs/reference/config.mdx").read_text(encoding="utf-8").split())
     migration = " ".join((ROOT / "docs/docs/migrating-from-netbox-or-nautobot.mdx").read_text(encoding="utf-8").split())
 
-    assert "register it with `infrahub-sync configs register`" in config
-    assert "service worker resolves the registered configuration" in config
+    assert "store it as the `document` of a `SyncConfiguration` in Infrahub" in config
+    assert "service worker resolves that recorded version" in config
+    assert "infrahub-sync configs register" not in config
     assert "loads installed or pre-rendered adapter classes" in config
     assert "builds runtime models from the registered package" not in config
     assert "generated in the same folder" not in config
-    assert "registers the `from-netbox` configuration package" in migration
+    assert "stores the `from-netbox` configuration package in Infrahub" in migration
     assert "generates the `from-netbox` sync code" not in migration
 
 
@@ -263,9 +264,12 @@ def test_netbox_tutorial_starts_and_authenticates_the_service_boundary() -> None
         "infrahub_sync.service.deploy",
         "infrahub_sync.service.worker --pool",
         "infrahub_sync.service.serve",
-        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",
+        "schema/sync.yml",
+        "INFRAHUB_SYNC_INFRAHUB_ADDRESS",
+        "INFRAHUB_SYNC_INFRAHUB_TOKEN",
         "INFRAHUB_SYNC_API_URL",
-        "INFRAHUB_SYNC_API_TOKEN",
+        "INFRAHUB_SYNC_TOKEN",
         "The worker, not the CLI, reads the NetBox",
     )
     assert not [token for token in required if token not in text]
+    assert "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" not in text

@@ -30,16 +30,16 @@ destination. This is the canonical procedure; `AGENTS.md` links here.
 
 The registered Sync service runs only adapters that ship in this repository. A package names
 its adapter by a short configuration name, such as `netbox`, and the service looks that name
-up in a fixed set of capability declarations. A package that names any other adapter is
-refused at registration, and nothing is stored. Installing the adapter where the worker can
-import it does not change this.
+up in a fixed set of capability declarations. A package that names any other adapter fails
+validation, and a run refuses it before it records a version. Installing the adapter where
+the worker can import it does not change this.
 
 Adding an adapter therefore means adding two things together: the connector under
 `infrahub_sync/adapters/`, and its capability declaration. This guide teaches that route.
 
 The worked example in Step 1, `examples/custom_adapter/`, shows the shape of an adapter. Its
-`package.yml` is refused at registration like any other package that names an adapter outside
-the repository. Loading an adapter from a file path is development-only behavior; see
+`package.yml` fails validation like any other package that names an adapter outside the
+repository. Loading an adapter from a file path is development-only behavior; see
 [Local adapters](../../adapters/local-adapters.mdx).
 [The current boundary](#the-current-boundary-for-adapters-outside-the-distribution) below
 records the evidence for this limit.
@@ -387,7 +387,7 @@ environment variables, an example configuration and the common errors. Add it to
 uv run rumdl check docs/docs/adapters/
 ```
 
-### The worked flow: register to convergence
+### The worked flow: configuration to convergence
 
 Run the local gates first:
 
@@ -398,36 +398,37 @@ uv run invoke tests.tests-unit
 ```
 
 Then drive the package through the Sync API. Every command below is a client of that service:
-the CLI reads no source system and no local plan file, so `INFRAHUB_SYNC_API_URL` and a token
-must be set.
+the CLI reads no source system and no local plan file, so `INFRAHUB_SYNC_API_URL` and your
+Infrahub API token must be set. The Infrahub that the Sync service uses holds the
+configuration, and the Sync schema extension must be loaded in it.
 
 ```bash
 export INFRAHUB_SYNC_API_URL=https://sync.example.com
-export INFRAHUB_SYNC_API_TOKEN=<token>
+export INFRAHUB_SYNC_TOKEN=<your Infrahub API token>
 ```
 
-**Register the package.** The path argument is positional, and it is the envelope:
+**Create the configuration in Infrahub.** A `SyncConfiguration` node holds the whole package as
+its `document`. Create it in the Infrahub web interface, or from an object file such as
+`examples/netbox_to_infrahub/sync-configuration.yml`, which holds `package.yml` verbatim under
+`document`:
 
 ```bash
-uv run infrahub-sync configs register examples/mysystem_to_infrahub/package.yml \
-  --reason "register the mysystem example"
+uv run infrahubctl object load examples/mysystem_to_infrahub/sync-configuration.yml
 ```
 
-Registration prints the service-issued configuration identity and its first version. Both are
-positional arguments from here on.
+The configuration's `name` is its `CONFIG_ID` from here on.
 
-**Validate the registered version.** This re-checks the stored version against the *current*
-capability declarations, so it can report a finding on a package that registered cleanly
-earlier:
+**Validate the configuration.** This checks the document against the *current* capability
+declarations. `--branch` checks it on an Infrahub branch before you merge a change:
 
 ```bash
-uv run infrahub-sync configs validate CONFIG_ID 1
+uv run infrahub-sync configs validate CONFIG_ID
 ```
 
 **Create a plan run.** `diff` takes its identity as options, and an audit reason is required:
 
 ```bash
-uv run infrahub-sync diff --config-id CONFIG_ID --version 1 \
+uv run infrahub-sync diff --config-id CONFIG_ID \
   --reason "review the new adapter"
 ```
 
@@ -452,11 +453,11 @@ uv run infrahub-sync apply RUN_ID \
   --reason "apply the reviewed plan"
 ```
 
-**Verify convergence.** Create a new plan over the same registered version. It should report
+**Verify convergence.** Create a new plan over the same, unchanged configuration. It should report
 zero creates, zero updates and zero deletes. If it does not, inspect the worker's installed
 adapter, the destination schema and the source records before applying anything else.
 
-`configs register`, `configs validate` and `runs plan` write nothing to the destination; `diff`
+`configs validate` and `runs plan` write nothing to the destination; `diff`
 plans against both sides and writes nothing. Run `sync` or `apply` only with explicit approval
 against a known-safe target. [Run a sync](../../running-a-sync.mdx) covers wait, idempotency,
 delete and failure behavior.
@@ -464,13 +465,20 @@ delete and failure behavior.
 ### The current boundary for adapters outside the distribution
 
 **At this revision, an adapter installed outside the distribution has no qualified execution
-path.** A package whose `source.name` or `destination.name` is not a bundled adapter is refused at
-registration, and no configuration or version row is created. One narrower route is admitted but
+path.** A package whose `source.name` or `destination.name` is not a bundled adapter fails
+validation, and no version is recorded. One narrower route is admitted but
 not qualified: a package whose `source.name` is a bundled adapter may set `source.adapter` to the
 import path of an adapter class in an installed distribution, and the worker then runs that class
 as the source (`infrahub_sync/configuration/models.py`, `_require_strict_model`; test
 `test_an_installed_dotted_source_with_an_infrahub_destination_may_execute`). The destination may not
 name one. This is recorded here so you do not discover the boundary after writing a connector.
+
+:::note Configurations in Infrahub
+Configurations now live in Infrahub, so such a package is stored as a `SyncConfiguration`
+like any other. `configs validate CONFIG_ID` reports its `missing-adapter` finding, and a run
+refuses it with `422 configuration-invalid` before it records a version. Points 4 to 6
+below describe the store-registration route, which only a Sync without Infrahub still uses.
+:::
 
 What the evidence shows, reproduced read-only and in-process against the shipped
 `examples/custom_adapter/package.yml` at revision `61b6a1b9dccae637b522084f563858dfcd5e31a9`.
@@ -557,7 +565,7 @@ For the development-time plugin loader and what it is and is not, see
 - [ ] `tests/configuration/test_contracts.py` expected set updated, and `tests/configuration/test_adapter_setting_conformance.py` satisfied.
 - [ ] Optional SDK imported with `# ty: ignore[unresolved-import]`; credentials from environment references; no secrets logged or committed.
 - [ ] `uv run invoke format` and `uv run invoke lint` are clean; `uv run ty check .` exits 0.
-- [ ] `configs register`, `configs validate` and `diff` succeed for the example, and the plan reviews as expected against a known destination state.
+- [ ] The configuration loads into Infrahub, and `configs validate` and `diff` succeed for the example, and the plan reviews as expected against a known destination state.
 - [ ] Unit tests added under `tests/adapters/`; `uv run invoke tests.tests-unit` passes offline.
 - [ ] Example added under `examples/` with both `config.yml` and `package.yml`; environment variables documented.
 - [ ] Documentation page added under `docs/docs/adapters/` and listed in `docs/sidebars.ts`.

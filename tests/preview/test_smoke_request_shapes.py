@@ -34,6 +34,14 @@ def test_the_run_body_is_a_valid_create_run_request() -> None:
     assert request.operation == "plan"
 
 
+def test_a_run_body_without_a_version_names_none() -> None:
+    """The smokes run a configuration's current document, so the body omits the version."""
+    body = smoke.create_run_request("config-001")
+
+    assert "registry_version" not in body
+    assert CreateRunRequest.model_validate(body).registry_version is None
+
+
 def test_the_apply_body_is_a_valid_apply_run_request() -> None:
     assert ApplyRunRequest.model_validate(smoke.apply_run_request(CHECKSUM)).expected_checksum == CHECKSUM
 

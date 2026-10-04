@@ -16,6 +16,7 @@ from infrahub_sync.cli import app
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
+    BranchValidationResource,
     ClientInputError,
     CompatibilityError,
     ConfigMutationRequest,
@@ -231,7 +232,7 @@ def test_configuration_reads_and_validation_keep_machine_fields_and_finding_orde
     summary = _invoke(client, "configs", "show", "edge-sync")
     shown = _invoke(client, "configs", "show", "edge-sync", "--version", "1")
     versions = _invoke(client, "configs", "versions", "edge-sync")
-    validated = _invoke(client, "configs", "validate", "edge-sync", "1", "--offset", "2", "--limit", "3")
+    validated = _invoke(client, "configs", "validate", "edge-sync", "--version", "1", "--offset", "2", "--limit", "3")
 
     assert all(result.exit_code == 0 for result in (listed, summary, shown, versions, validated))
     client.list_configs.assert_called_once_with()
@@ -760,7 +761,7 @@ def test_configuration_validation_escapes_terminal_controls_in_findings(client: 
         }
     )
 
-    validated = _invoke(client, "configs", "validate", "edge-sync", "1")
+    validated = _invoke(client, "configs", "validate", "edge-sync", "--version", "1")
 
     assert validated.exit_code == 0, validated.output
     _assert_no_terminal_controls(validated.output)
@@ -979,3 +980,78 @@ def test_store_refusal_explains_how_to_keep_data_in_memory(tmp_path: Path, clien
     assert result.exit_code == 1
     assert "Configured sync stores, including Redis, are not supported in V3." in result.output
     assert "Remove the store block to keep sync data in memory." in result.output
+
+
+def test_validate_without_a_version_checks_the_document_on_a_branch(client: MagicMock) -> None:
+    client.validate_config_on_branch.return_value = BranchValidationResource(
+        config_id="edge-sync",
+        branch="feature/vlan",
+        checksum=CHECKSUM,
+        findings=(),
+        offset=0,
+        limit=256,
+        total_findings=0,
+        next_offset=None,
+    )
+
+    result = _invoke(client, "configs", "validate", "edge-sync", "--branch", "feature/vlan")
+
+    assert result.exit_code == 0, result.output
+    client.validate_config_on_branch.assert_called_once_with("edge-sync", "feature/vlan", offset=0, limit=256)
+    client.validate_config.assert_not_called()
+    assert "branch: feature/vlan" in result.output
+    assert f"checksum: {CHECKSUM}" in result.output
+
+
+def test_validate_refuses_a_version_and_a_branch_together(client: MagicMock) -> None:
+    result = _invoke(client, "configs", "validate", "edge-sync", "--version", "1", "--branch", "main")
+
+    assert result.exit_code == 2
+    client.validate_config.assert_not_called()
+    client.validate_config_on_branch.assert_not_called()
+
+
+def test_diff_without_a_version_asks_for_the_current_document(client: MagicMock) -> None:
+    result = _invoke(client, "diff", "--config-id", "edge-sync", "--reason", "inspect", "--no-wait")
+
+    assert result.exit_code == 0, result.output
+    request, _key = client.plan.call_args.args
+    assert request.registry_version is None
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [
+        ({"INFRAHUB_SYNC_TOKEN": "infrahub-token", "INFRAHUB_SYNC_API_TOKEN": "older-token"}, "infrahub-token"),
+        ({"INFRAHUB_SYNC_API_TOKEN": "older-token"}, "older-token"),
+    ],
+)
+def test_the_cli_presents_the_callers_infrahub_token(
+    monkeypatch: pytest.MonkeyPatch, environment: dict[str, str], expected: str
+) -> None:
+    from infrahub_sync import cli
+
+    monkeypatch.delenv("INFRAHUB_SYNC_TOKEN", raising=False)
+    monkeypatch.delenv("INFRAHUB_SYNC_API_TOKEN", raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    built: list[str] = []
+
+    class _Client:
+        def __init__(self, _url: str, token: str) -> None:
+            built.append(token)
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+        @staticmethod
+        def list_configs() -> tuple[()]:
+            return ()
+
+    monkeypatch.setattr(cli, "SyncClient", _Client)
+
+    result = RUNNER.invoke(app, ["--api-url", "https://sync.example", "configs", "list"])
+
+    assert result.exit_code == 0, result.output
+    assert built == [expected]

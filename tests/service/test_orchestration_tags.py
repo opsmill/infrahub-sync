@@ -127,6 +127,43 @@ async def test_a_tagging_failure_never_fails_the_accepted_submission(
     assert "still runs" in caplog.text
 
 
+async def test_node_tags_are_added_to_the_flow_runs_current_tags() -> None:
+    client = _Client(current=["infrahub.app", "infrahub.app/branch/main"])
+    orchestration = PrefectOrchestration(cast("Any", client), executor=cast("Any", _Executor()))
+
+    await orchestration.tag_nodes(str(FLOW_RUN_ID), ["run-node", "configuration-node"])
+
+    assert client.updates == [
+        (
+            FLOW_RUN_ID,
+            [
+                "infrahub.app",
+                "infrahub.app/branch/main",
+                "infrahub.app/node/run-node",
+                "infrahub.app/node/configuration-node",
+            ],
+        )
+    ]
+
+
+async def test_node_tags_already_present_are_not_written_again() -> None:
+    client = _Client(current=["infrahub.app/node/run-node"])
+    orchestration = PrefectOrchestration(cast("Any", client), executor=cast("Any", _Executor()))
+
+    await orchestration.tag_nodes(str(FLOW_RUN_ID), ["run-node"])
+
+    assert client.updates == []
+
+
+async def test_a_node_tag_failure_is_logged_not_raised(caplog: pytest.LogCaptureFixture) -> None:
+    client = _Client(failure=httpx.ConnectError("task manager unreachable"), current=[])
+    orchestration = PrefectOrchestration(cast("Any", client), executor=cast("Any", _Executor()))
+
+    await orchestration.tag_nodes(str(FLOW_RUN_ID), ["run-node"])
+
+    assert "was not tagged with its Infrahub nodes" in caplog.text
+
+
 def test_the_api_orchestration_offers_every_prefect_operation_the_service_uses() -> None:
     """The API wraps Prefect per call; a missing method is silently skipped by the service."""
     from infrahub_sync.service.serve import _ClientPerCallOrchestration  # noqa: PLC2701

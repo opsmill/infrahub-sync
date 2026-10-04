@@ -62,7 +62,7 @@ first whenever you test a new revision.
 
 | Service | Address |
 | --- | --- |
-| Sync API | `http://127.0.0.1:8030`, bearer token `infrahub-sync-dev-token` |
+| Sync API | `http://127.0.0.1:8030`, called with an Infrahub API token of the preview Infrahub |
 | Prefect UI (the stack's own Infrahub task manager) | `http://127.0.0.1:4230` |
 | PostgreSQL (the task manager's server, database `infrahub_sync`) | `127.0.0.1:5440` |
 
@@ -70,12 +70,26 @@ Check the service:
 
 ```bash
 curl -sf http://127.0.0.1:8030/version
-curl -sf -H 'Authorization: Bearer infrahub-sync-dev-token' http://127.0.0.1:8030/status
+curl -sf http://127.0.0.1:8030/status
 ```
 
-The `status` response reports `"service": "ready"` when the worker is running. The
-service starts with an empty configuration registry and connects to no source or
-destination until you register a package.
+The `status` response reports `"service": "ready"` when the worker is running.
+
+Configurations and callers live in Infrahub. The stack uses the preview's Infrahub
+(`uv run invoke preview.up`), reached through `host.docker.internal` on the preview's
+Infrahub port (`PREVIEW_INFRAHUB_PORT`, 8080 unless you set it), with the preview's
+administrator token, `06438eb2-8019-4776-878c-0941b1f1d1ec`, as Sync's service account.
+Call the API with that same token in `INFRAHUB_SYNC_TOKEN`. `preview.up` loads the Sync
+schema, `schema/sync.yml`, into the preview's Infrahub; the API and the worker refuse to
+start without it.
+
+On Docker Engine for Linux, `host.docker.internal` is the bridge gateway, which cannot
+reach the preview's loopback-only port. There, set `INFRAHUB_SYNC_INFRAHUB_ADDRESS` to an
+address the containers reach before `uv run invoke start`.
+
+While the preview is not running, the API starts but answers every authenticated call with
+`503 identity-unavailable`. The service connects to no source or destination until a run
+names a configuration.
 
 After a code change, run `uv run invoke build && uv run invoke start`. The data volumes
 are kept. `uv run invoke destroy` stops the stack and deletes its data volumes; the image
@@ -88,7 +102,7 @@ Infrahub branch. It takes about 30 minutes, most of it the apply. Run every comm
 from the repository root.
 
 1. Start a local Infrahub. `preview.up` also starts an object store and a Sync API on
-   port 8010. This path uses only its Infrahub, on `http://localhost:8080`.
+   port 8010. This path uses its Infrahub, on `http://localhost:8080`.
 
     ```bash
     uv run invoke preview.up
@@ -122,6 +136,9 @@ from the repository root.
     uv run infrahubctl schema load tests/data/nightly_schema --wait 120
     ```
 
+   `preview.up` has already loaded the Sync schema extension, `schema/sync.yml`, which
+   holds the configurations, their versions, and a copy of each run.
+
 4. Start the local NetBox with the official demo data. The first start takes several
    minutes. NetBox is published on `127.0.0.1:8082`, and the command prints the
    `nbt_...` API token:
@@ -143,20 +160,29 @@ from the repository root.
    `it reads NetBox at http://netbox:8080`. The NetBox tasks and `start` connect the
    worker again each time either one is recreated.
 
-6. Write a copy of the example package for this stack, and register it:
+6. Write a copy of the example package for this stack, wrap it in a `SyncConfiguration`
+   named `netbox-demo`, and load it into Infrahub:
 
     ```bash
     uv run invoke netbox.demo-package --dev-stack
+    uv run python - <<'PY'
+    import pathlib, yaml
+    document = pathlib.Path(".netbox/from-netbox.local.yml").read_text(encoding="utf-8")
+    configuration = {"name": "netbox-demo", "document": document}
+    spec = {"kind": "SyncConfiguration", "data": [configuration]}
+    objects = {"apiVersion": "infrahub.app/v1", "kind": "Object", "spec": spec}
+    pathlib.Path(".netbox/sync-configuration.local.yml").write_text(yaml.safe_dump(objects, sort_keys=False))
+    PY
+    uv run infrahubctl object load .netbox/sync-configuration.local.yml
     export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8030
-    export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
-    uv run infrahub-sync configs register .netbox/from-netbox.local.yml \
-      --reason "register local NetBox import"
+    export INFRAHUB_SYNC_TOKEN="$INFRAHUB_API_TOKEN"
+    uv run infrahub-sync configs validate netbox-demo
     ```
 
    The copy, `.netbox/from-netbox.local.yml`, is `examples/netbox_to_infrahub/package.yml`
    with two URLs changed: the source is `http://netbox:8080`, and the destination is
    `http://host.docker.internal:8080`. Inside the worker container, `localhost` is the
-   container itself. The worker uses the URLs in the registered package; environment
+   container itself. The worker uses the URLs in the package; environment
    variables such as `INFRAHUB_ADDRESS` do not change them.
 
    The preview Infrahub publishes on `127.0.0.1` only. Docker Desktop routes
@@ -170,15 +196,15 @@ from the repository root.
    then answers on that address only, so the tasks and the host processes use
    `http://<gateway>:8080`, and you open the UI there instead of `localhost`.
 
-   Record the `config_id` from the output. If you change the package later, register
-   the change with `configs version <config-id> <package>`. Registering changed content
-   with `configs register` creates a new configuration ID at version 1.
+   The configuration's name, `netbox-demo`, is its `config_id`. To change the package
+   later, edit the configuration's `document` in Infrahub, or load the object file again.
+   The next run records the new content as the next version.
 
 7. Create a destination branch and plan the import:
 
     ```bash
     uv run infrahubctl branch create netbox-import
-    uv run infrahub-sync diff --config-id <config-id> --version 1 \
+    uv run infrahub-sync diff --config-id netbox-demo \
       --branch netbox-import --reason "plan local NetBox import"
     ```
 
@@ -211,7 +237,7 @@ uv run invoke preview.down --volumes
 uv run invoke netbox.down
 ```
 
-To register your own package instead of the example, continue with
+To use your own package instead of the example, continue with
 [Create a sync project](./creating-a-sync-project.mdx) and [Run a sync](./running-a-sync.mdx).
 Use the addresses the worker container can reach, as in step 6.
 
@@ -219,9 +245,10 @@ Use the addresses the worker container can reach, as in step 6.
 
 The preview stack runs Infrahub, with its task manager, and MinIO for the service's
 artifacts, in containers. Sync runs on Infrahub's task manager and keeps its records in an
-`infrahub_sync` database on the task manager's PostgreSQL server, as a deployment does. The
-Sync HTTP API and its Prefect worker run on your host, from your checkout. Use it to work on
-the service code itself.
+`infrahub_sync` database on the task manager's PostgreSQL server, as a deployment does. Its
+configurations, their versions, and a copy of each run are nodes in the preview's Infrahub.
+The Sync HTTP API and its Prefect worker run on your host, from your checkout. Use it to work
+on the service code itself.
 
 **Verified 2026-10-04 against source revision
 [`9f8d8d2d1a38ec29465f7c1a0fe307418884cdd8`](https://github.com/opsmill/infrahub-sync/tree/9f8d8d2d1a38ec29465f7c1a0fe307418884cdd8).** The commands, ports,
@@ -234,7 +261,7 @@ replay of the stack.
 
 | Command | What it does |
 | --- | --- |
-| `uv run invoke preview.up` | Start the containers and the host processes. Writes nothing to Infrahub. |
+| `uv run invoke preview.up` | Start the containers and the host processes. Loads the Sync schema extension and writes nothing else to Infrahub. |
 | `uv run invoke preview.seed` | Write the smoke dataset into Infrahub. |
 | `uv run invoke preview.smoke` | Seed, then run the smoke suite, which creates and applies real runs. |
 | `uv run invoke preview.status` | Show container, host process, and endpoint state. |
@@ -245,11 +272,12 @@ replay of the stack.
 `preview.logs` prints the Sync API log by default; pass `-n prefect-worker` for the
 worker's, and `--lines` for how much of it to print.
 
-### Starting the stack writes nothing
+### Starting the stack writes only the Sync schema
 
-`preview.up` brings the stack up and stops there. It loads no schema, creates no branch
-or node, and admits no run, so starting it again against an environment you are already
-using changes none of your data.
+`preview.up` brings the stack up and stops there. Its one write is the Sync schema
+extension, `schema/sync.yml`, which the Sync API and worker need before they start. It
+creates no branch or node and admits no run, so starting it again against an environment
+you are already using changes none of your data.
 
 Two commands write, and each says what it will write before writing:
 
@@ -277,8 +305,9 @@ uv run invoke preview.up
 `preview.up` starts the containers and waits for Infrahub and Prefect to answer, refuses if it
 finds retired state, creates the Prefect work pool, starts the Prefect worker, applies the
 service deployment, starts the Sync API, and waits for it to serve its OpenAPI document. It
-then prints the addresses, the bearer principals, the configuration directory and the runtime
-state directory.
+then prints the addresses, the configuration directory and the runtime state directory. Call
+its Sync API with an Infrahub API token of the preview's Infrahub, such as the administrator
+token in `development/preview.env`, which is also Sync's service account.
 
 Two details of that startup shape the rest of the loop:
 
@@ -337,7 +366,7 @@ uv run invoke preview.smoke
 ```
 
 Seeds, then runs the smoke suite against the running stack. It writes: see
-[Starting the stack writes nothing](#starting-the-stack-writes-nothing) above for exactly what.
+[Starting the stack writes only the Sync schema](#starting-the-stack-writes-only-the-sync-schema) above for exactly what.
 Every test in the suite skips when the stack is unreachable, so read the collection summary
 before you treat a passing run as evidence. [Testing tiers](develop/guidelines/testing-tiers.md)
 covers what each suite proves.
@@ -385,8 +414,9 @@ repository root, which Git also ignores.
 
 Nothing the stack uses is a secret, and none of it works anywhere else:
 
-- `development/preview.env` ships the MinIO access key and secret key, the Infrahub admin
-  token, and the Sync API bearer principal.
+- `development/preview.env` ships the MinIO access key and secret key, and the Infrahub
+  admin token, which also serves as Sync's service account and as the token you call the
+  Sync API with.
 - `development/docker-compose.infrahub.yml` is based on the official Infrahub Compose
   file at `https://infrahub.opsmill.io/<VERSION>` for the `VERSION` in
   `development/preview.env`. This repository adds image digest pins to it; when

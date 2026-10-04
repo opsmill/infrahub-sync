@@ -5,7 +5,7 @@ summary and in detail, the bounded wait is proved to expire without touching the
 run, and the two review resources the CLI does not ship — verification, and the saved-plan
 artifact with its digest — are driven through the typed client and over raw HTTP.
 
-Each test registers its own configuration and creates its own run, because a review row
+Each test writes its own configuration into Infrahub and creates its own run, because a review row
 has to observe a plan whose operations it set up: the shared smoke branch converges as the
 other modules apply to it, and a plan with nothing in it renders no operation to filter.
 """
@@ -20,17 +20,16 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from infrahub_sync.client import SyncClient
-from infrahub_sync.client.models import ConfigMutationRequest, CreateRunRequest, VerifyRunRequest
+from infrahub_sync.client.models import CreateRunRequest, VerifyRunRequest
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
 from tests.preview.evidence import canary_leaks
-from tests.preview.test_cli_client import ANSI, fields, package_file, run_cli, run_cli_command
+from tests.preview.test_cli_client import ANSI, fields, run_cli, run_cli_command
 from tests.preview.test_service_api import (
     authenticated_client,
     create_run_request,
     idempotency_headers,
-    register_request,
+    put_smoke_configuration,
     seed_source_branch,
-    smoke_package,
     unwritten_plan_reasons,
     wait_for_phase,
 )
@@ -71,29 +70,18 @@ def _await_verification(client: Any, run_id: str) -> dict[str, Any]:  # noqa: AN
 
 
 def test_the_cli_admits_a_run_without_waiting_then_reviews_its_saved_plan(
-    preview_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
+    preview_env: dict[str, Any], evidence_dir: Path
 ) -> None:
     """`--no-wait`, then `runs plan` in summary, in detail, filtered, and refused."""
     seed_source_branch(preview_env)
     artifacts: dict[str, object] = {}
-    registered = run_cli(
-        preview_env,
-        "configs",
-        "register",
-        str(package_file(preview_env, tmp_path)),
-        "--reason",
-        REASON,
-        artifacts=artifacts,
-        artifact_name="run review configs register",
-    )
+    config_id = put_smoke_configuration(preview_env, "preview-review-cli")
 
     accepted = run_cli(
         preview_env,
         "diff",
         "--config-id",
-        registered["config_id"],
-        "--version",
-        registered["registry_version"],
+        config_id,
         "--branch",
         SMOKE_BRANCH,
         "--reason",
@@ -174,21 +162,12 @@ def test_the_cli_admits_a_run_without_waiting_then_reviews_its_saved_plan(
 
 
 def test_the_cli_bounded_wait_expires_without_cancelling_the_run(
-    preview_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
+    preview_env: dict[str, Any], evidence_dir: Path
 ) -> None:
     """An expired local wait is a non-zero exit; the remote run keeps going and completes."""
     seed_source_branch(preview_env)
     artifacts: dict[str, object] = {}
-    registered = run_cli(
-        preview_env,
-        "configs",
-        "register",
-        str(package_file(preview_env, tmp_path)),
-        "--reason",
-        REASON,
-        artifacts=artifacts,
-        artifact_name="wait timeout configs register",
-    )
+    config_id = put_smoke_configuration(preview_env, "preview-wait-cli")
 
     # Shorter than the worker's query interval, so the run cannot have finished: what the
     # command reports is the wait expiring, never the run failing.
@@ -196,9 +175,7 @@ def test_the_cli_bounded_wait_expires_without_cancelling_the_run(
         preview_env,
         "diff",
         "--config-id",
-        registered["config_id"],
-        "--version",
-        registered["registry_version"],
+        config_id,
         "--branch",
         SMOKE_BRANCH,
         "--reason",
@@ -231,15 +208,10 @@ def test_the_python_client_verifies_a_plan_and_reads_its_artifact_and_results(
     seed_source_branch(preview_env)
 
     with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
-        registered = client.register_config(
-            ConfigMutationRequest(package=smoke_package(preview_env["urls"]["infrahub"]), reason=REASON),
-            idempotency_headers("preview-review")["Idempotency-Key"],
-        )
         accepted = client.plan(
             CreateRunRequest(
                 operation="plan",
-                config_id=registered.version.config_id,
-                registry_version=registered.version.registry_version,
+                config_id=put_smoke_configuration(preview_env, "preview-review-python"),
                 branch=SMOKE_BRANCH,
                 reason=REASON,
             ),
@@ -280,7 +252,6 @@ def test_the_python_client_verifies_a_plan_and_reads_its_artifact_and_results(
             preview_env["infrahub_token"],
             {
                 "get_plan resource": plan,
-                "register_config resource": registered,
                 "plan accepted resource": accepted,
                 "planned resource": planned,
                 "verify accepted resource": verified,
@@ -302,18 +273,10 @@ def test_raw_http_verifies_a_plan_and_reads_its_artifact_and_results(
     transcript = evidence_dir / "run-review-http.jsonl"
 
     with authenticated_client(preview_env, transcript=transcript) as client:
-        registered = client.post(
-            "/configs",
-            headers=idempotency_headers("preview-review"),
-            json=register_request(preview_env["urls"]["infrahub"]),
-        )
-        assert registered.status_code == 201, registered.text
-        version = registered.json()["version"]
-
         created = client.post(
             "/runs",
             headers=idempotency_headers("preview-review"),
-            json=create_run_request(version["config_id"], version["registry_version"]),
+            json=create_run_request(put_smoke_configuration(preview_env, "preview-review-http")),
         )
         assert created.status_code == 202, created.text
         run_id = created.json()["run"]["run_id"]

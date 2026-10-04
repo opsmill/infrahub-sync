@@ -252,10 +252,10 @@ def wait_for(description: str, probe: Callable[[], object], *, timeout: int = RE
 
 
 def api_client(deployment: Deployment, token: str) -> httpx.Client:
-    """An authenticated client for the deployment's published Sync API."""
+    """A client for the deployment's published Sync API, presenting a caller's Infrahub token."""
     return httpx.Client(
         base_url=deployment.api,
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"X-INFRAHUB-KEY": token},
         timeout=60,
     )
 
@@ -272,16 +272,29 @@ def worker_state(deployment: Deployment) -> str:
     return str(response.json()["worker"]["state"])
 
 
-def register(client: httpx.Client, package: Mapping[str, Any], reason: str) -> tuple[str, int]:
-    """Register one declared package and return the version it created."""
-    response = client.post(
-        "/configs",
-        headers=idempotency("compose-register"),
-        json={"package": dict(package), "reason": reason},
-    )
-    assert response.status_code == 201, response.text
-    version = response.json()["version"]
-    return version["config_id"], version["registry_version"]
+def put_configuration(infrahub_fixture: Mapping[str, str], package: Mapping[str, Any]) -> str:
+    """Write one declared package into the fixture's Infrahub, the way an operator does.
+
+    Configurations are created in Infrahub, not through the Sync API. The returned
+    identity is the configuration's name; a run started without a version records one.
+    """
+    from infrahub_sdk import InfrahubClientSync
+
+    from tests.infrahub_records import put_configuration as put
+
+    client = InfrahubClientSync(address=infrahub_fixture["address"], config={"api_token": infrahub_fixture["token"]})
+    name = str(package["configuration"]["name"])
+    put(client, name, package)
+    return name
+
+
+def recorded_versions(infrahub_fixture: Mapping[str, str], config_id: str) -> list[list[Any]]:
+    """The versions Infrahub holds for one configuration, as `[number, checksum]` pairs."""
+    from infrahub_sdk import InfrahubClientSync
+
+    client = InfrahubClientSync(address=infrahub_fixture["address"], config={"api_token": infrahub_fixture["token"]})
+    nodes = client.filters(kind="SyncConfigurationVersion", configuration__name__value=config_id)
+    return sorted([int(node.number.value), str(node.checksum.value)] for node in nodes)  # ty: ignore[unresolved-attribute]
 
 
 def await_phase(client: httpx.Client, run_id: str, phase: str, *, timeout: int = RUN_TIMEOUT_SECONDS) -> dict[str, Any]:
@@ -364,19 +377,20 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
     destination_token: str,
     canaries: Mapping[str, str],
     instance: str,
+    infrahub_token: str,
     infrahub_network: str,
     api_port: int = API_PORT,
 ) -> Path:
     """Write the `.env` one deployment runs on, and return it.
 
     The shape the operator documentation asks for: every required credential, the
-    image under test as `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, and the
-    principal's token a second time as `INFRAHUB_SYNC_API_TOKEN`, which is what
-    the `cli` service presents to the API. The passwords are the session's
-    canaries, so their appearance anywhere an operator can see is a leak.
+    image under test as `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`, Sync's service
+    account token for the Infrahub fixture, and that same token a second time as
+    `INFRAHUB_SYNC_TOKEN`, which is what the `cli` service presents to the API. The
+    passwords are the session's canaries, so their appearance anywhere an operator
+    can see is a leak.
     """
     repository, _, version = image.rpartition(":")
-    principals = json.dumps({"compose-suite": {"token": canaries["principal"], "administrator": True}})
     values = {
         "INFRAHUB_SYNC_DOCKER_IMAGE": repository,
         "VERSION": version,
@@ -395,8 +409,8 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
         "INFRAHUB_SYNC_PREFECT_AUTH_STRING": canaries["prefect_auth"],
         "INFRAHUB_SYNC_S3_ACCESS_KEY": "compose-suite-access-key",
         "INFRAHUB_SYNC_S3_SECRET_KEY": canaries["object_store"],
-        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": principals,
-        "INFRAHUB_SYNC_API_TOKEN": canaries["principal"],
+        "INFRAHUB_SYNC_INFRAHUB_TOKEN": infrahub_token,
+        "INFRAHUB_SYNC_TOKEN": infrahub_token,
         "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": destination_token,
     }
     directory.mkdir(parents=True, exist_ok=True)
@@ -461,7 +475,7 @@ SMOKE_FIELDS = ("name", "type")
 
 
 def smoke_package(destination_url: str) -> dict[str, Any]:
-    """The declared package this suite registers.
+    """The declared package this suite puts into Infrahub.
 
     Infrahub to Infrahub against the fixture's own instance: `main` as the
     source, the disposable smoke branch as the destination. The token is a
@@ -471,7 +485,7 @@ def smoke_package(destination_url: str) -> dict[str, Any]:
     return {
         "format_version": 1,
         "configuration": {
-            "name": "compose-suite-registered",
+            "name": "compose-suite-smoke",
             "source": {
                 "name": "infrahub",
                 "settings": {

@@ -2,11 +2,6 @@
 
 Synchronize registered configurations through the Sync API.
 
-Set `INFRAHUB_SYNC_API_TOKEN` to the bearer token for your actor before running any
-command; the CLI reads it from the environment and never accepts it as a flag. See
-[Sync HTTP API — Configure principals](./sync-http-api.mdx#configure-principals) for how
-tokens are issued.
-
 **Usage**:
 
 ```console
@@ -44,7 +39,7 @@ $ infrahub-sync diff [OPTIONS]
 **Options**:
 
 * `--config-id <str>`: Registered configuration identity.  [required]
-* `--version <int>`: Registered configuration version.  [required]
+* `--version <int>`: Configuration version. Omitted: the current document, recorded as a version if new.
 * `--reason <str>`: Audit reason for the plan.  [required]
 * `--branch <str>`: Destination branch admitted by the Sync API.
 * `--idempotency-key <str>`: Retry key.
@@ -66,7 +61,7 @@ $ infrahub-sync sync [OPTIONS]
 **Options**:
 
 * `--config-id <str>`: Registered configuration identity.  [required]
-* `--version <int>`: Registered configuration version.  [required]
+* `--version <int>`: Configuration version. Omitted: the current document, recorded as a version if new.
 * `--reason <str>`: Audit reason for the synchronization.  [required]
 * `--branch <str>`: Destination branch admitted by the Sync API.
 * `--idempotency-key <str>`: Retry key.
@@ -116,16 +111,19 @@ $ infrahub-sync configs [OPTIONS] COMMAND [ARGS]...
 
 **Commands**:
 
-* `register`: Register a JSON or YAML configuration...
-* `version`: Create the next immutable version of a...
-* `list`: List registered configurations.
+* `register`: Register a package in a Sync without...
+* `version`: Add a version in a Sync without Infrahub;...
+* `list`: List configurations.
 * `show`: Show a configuration or one of its versions.
-* `versions`: List immutable versions of a registered...
-* `validate`: Validate a registered configuration version.
+* `versions`: List the immutable versions recorded for a...
+* `validate`: Validate a configuration&#x27;s current...
 
 ### `infrahub-sync configs register`
 
-Register a JSON or YAML configuration package.
+Register a package in a Sync without Infrahub; with Infrahub, create it there.
+
+Only for a Sync that keeps configurations in its own store. Where configurations live
+in Infrahub, create them there; the Sync API refuses this command and says so.
 
 **Usage**:
 
@@ -145,7 +143,10 @@ $ infrahub-sync configs register [OPTIONS] {package}
 
 ### `infrahub-sync configs version`
 
-Create the next immutable version of a registered configuration.
+Add a version in a Sync without Infrahub; with Infrahub, edit the configuration there.
+
+Only for a Sync that keeps configurations in its own store. Where configurations live
+in Infrahub, change the configuration there; a run records the version it uses.
 
 **Usage**:
 
@@ -166,7 +167,7 @@ $ infrahub-sync configs version [OPTIONS] {config_id} {package}
 
 ### `infrahub-sync configs list`
 
-List registered configurations.
+List configurations.
 
 **Usage**:
 
@@ -199,7 +200,7 @@ $ infrahub-sync configs show [OPTIONS] {config_id}
 
 ### `infrahub-sync configs versions`
 
-List immutable versions of a registered configuration.
+List the immutable versions recorded for a configuration.
 
 **Usage**:
 
@@ -217,21 +218,22 @@ $ infrahub-sync configs versions [OPTIONS] {config_id}
 
 ### `infrahub-sync configs validate`
 
-Validate a registered configuration version.
+Validate a configuration&#x27;s current document in Infrahub, or one recorded version.
 
 **Usage**:
 
 ```console
-$ infrahub-sync configs validate [OPTIONS] {config_id} {version}
+$ infrahub-sync configs validate [OPTIONS] {config_id}
 ```
 
 **Arguments**:
 
 * `config_id`: [required]
-* `version`: [required]
 
 **Options**:
 
+* `--version <int>`: Validate one recorded version.
+* `--branch <str>`: Validate the document on this Infrahub branch. Defaults to the default branch.
 * `--offset <int>`: Finding offset.  [default: 0]
 * `--limit <int>`: Maximum findings to return.  [default: 256]
 * `--help`: Show this message and exit.

@@ -14,17 +14,21 @@
 # `development/` directory. The repository ignores `*.env`, so a stray
 # `development/.env` would feed this stack silently.
 #
-# Destination: none. A deployment starts with an empty configuration registry
-# and reaches nothing until a package is registered. To sync against a local
-# Infrahub, run `uv run invoke preview.up` and start this stack with
-# INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN set; sync-worker already carries the
-# host route. A package's `env` credential identifiers must start with
-# INFRAHUB_SYNC_CREDENTIAL_, and these three are the ones this stack passes.
+# Infrahub: configurations, versions and run records live in Infrahub, and callers
+# authenticate with an Infrahub API token. This stack uses the preview's Infrahub
+# (`uv run invoke preview.up`, then load `schema/sync.yml` into it) through the host
+# route, with the preview's administrator token as Sync's service account. Call the
+# API with that same token as INFRAHUB_SYNC_TOKEN. Without the preview running, the
+# API starts but answers every authenticated call with 503 identity-unavailable.
 #
 # Infrahub's task manager: this stack runs its own, from the same pinned Infrahub
 # image the preview uses, with its own PostgreSQL server. Sync allows one
 # deployment per task manager (the service's Prefect deployment name is fixed),
-# so the dev stack never shares the preview's.
+# so the dev stack never shares the preview's. To sync into a local Infrahub, run
+# `uv run invoke preview.up` and start this stack with
+# INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN set; sync-worker already carries the
+# host route. A package's `env` credential identifiers must start with
+# INFRAHUB_SYNC_CREDENTIAL_, and these three are the ones this stack passes.
 #
 # Source: the local NetBox (`uv run invoke netbox.up` or `netbox.seed`) publishes
 # on the host's loopback address only, which no container can reach. The Invoke
@@ -50,6 +54,17 @@ x-sync-env: &sync-env
   AWS_SECRET_ACCESS_KEY: "devsecretkey"
   INFRAHUB_SYNC_SERVICE_WORK_POOL: "infrahub-sync"
   PREFECT_API_URL: "http://task-manager:4200/api"
+
+# The Infrahub the API and the worker use, for configurations and run records; the
+# bootstrap job reaches no Infrahub.
+x-sync-infrahub: &sync-infrahub
+  # Docker Desktop routes host.docker.internal to the host's loopback, where the preview
+  # publishes Infrahub. Docker Engine on Linux does not: there, set this to an address
+  # the containers reach, or publish the preview's Infrahub beyond loopback.
+  INFRAHUB_SYNC_INFRAHUB_ADDRESS: >-
+    ${INFRAHUB_SYNC_INFRAHUB_ADDRESS:-http://host.docker.internal:${PREVIEW_INFRAHUB_PORT:-8080}}
+  # The preview's administrator token, a constant in development/preview.env.
+  INFRAHUB_SYNC_INFRAHUB_TOKEN: "${INFRAHUB_SYNC_INFRAHUB_TOKEN:-06438eb2-8019-4776-878c-0941b1f1d1ec}"
 
 services:
   # Infrahub's task manager, as Infrahub's own Compose file runs it: Infrahub's
@@ -151,17 +166,16 @@ services:
       sync-bootstrap:
         condition: service_completed_successfully
     environment:
-      <<: *sync-env
+      <<: [*sync-env, *sync-infrahub]
       INFRAHUB_SYNC_SERVICE_HOST: "0.0.0.0"
-      # Required: the API refuses to construct its principal resolver without
-      # one, and rejects a token shorter than 16 characters.
-      INFRAHUB_SYNC_SERVICE_BEARER_TOKENS: >-
-        {"dev": {"token": "infrahub-sync-dev-token", "administrator": true}}
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "300"
       PREFECT_WORKER_QUERY_SECONDS: "10"
       INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
     ports:
       - "127.0.0.1:8030:8000"
+    # The API identifies callers through the preview's Infrahub on this laptop.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test:
         - "CMD"
@@ -181,7 +195,7 @@ services:
       sync-bootstrap:
         condition: service_completed_successfully
     environment:
-      <<: *sync-env
+      <<: [*sync-env, *sync-infrahub]
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "300"
       PREFECT_WORKER_QUERY_SECONDS: "10"
       PREFECT_WORKER_HEARTBEAT_SECONDS: "10"

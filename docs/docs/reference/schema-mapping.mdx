@@ -245,11 +245,11 @@ Adapters can also register custom Jinja filters via a `_add_custom_filters` clas
 
 ## Validating a mapping
 
-Register and validate the package before creating a plan:
+Store the package in Infrahub and validate it before creating a plan:
 
 ```shell
-infrahub-sync configs validate <config-id> <version>
-infrahub-sync diff --config-id <config-id> --version <version> --reason "review mapping"
+infrahub-sync configs validate <config-id>
+infrahub-sync diff --config-id <config-id> --reason "review mapping"
 ```
 
 When the plan is ready, `diff` prints its summary: the operation counts by action and by
@@ -272,8 +272,8 @@ completes, and reports how many deletes it skipped. Deletes are computed only wh
 destination side ran a full extract, and both review depths say which case applies. See
 [Review the plan](../running-a-sync.mdx#review-the-plan).
 
-To change the mapping, edit the package, register it with `configs version`, and create a
-new plan from the new version. Apply a plan only after its review matches your expectations.
+To change the mapping, edit the configuration's document in Infrahub and create a new
+plan; the run records the edited document as a new version. Apply a plan only after its review matches your expectations.
 
 ---
 
@@ -458,7 +458,7 @@ Nautobot's API and model structure are similar to NetBox but with some differenc
 
 Start from the `examples/nautobot-v1_to_infrahub/` (Nautobot 1.x) or `examples/nautobot-v2_to_infrahub/` (Nautobot 2.0 and later) directory in the Infrahub Sync repository and adapt from there.
 
-Neither example is a registrable package: each contains only `config.yml`, and registering it as is is refused. Wrap the configuration in a package envelope (`format_version`, `configuration`, and `credentials` with `$credential` references in place of inline secrets) before you register it. See [Configuration package](../configuration-package.mdx).
+Neither example is a valid package: each contains only `config.yml`, and validation refuses it as is. Wrap the configuration in a package envelope (`format_version`, `configuration`, and `credentials` with `$credential` references in place of inline secrets) before you store it in Infrahub. See [Configuration package](../configuration-package.mdx).
 
 ## Related
 

@@ -57,6 +57,17 @@ def test_the_transcript_records_the_exchange_with_the_authorization_value_remove
     assert json.loads(record["response_body"]) == {"config_id": "c-1"}
 
 
+def test_the_transcript_removes_the_infrahub_api_key_value(tmp_path: Path) -> None:
+    """The Sync API authenticates callers by their Infrahub token, sent as `X-INFRAHUB-KEY`."""
+    path = tmp_path / "transcript.jsonl"
+    with _client(path, lambda _request: httpx.Response(200, json=[])) as client:
+        client.get("/configs", headers={"X-INFRAHUB-KEY": CANARY})
+
+    (record,) = _records(path)
+    assert record["request_headers"]["x-infrahub-key"] == "<redacted>"
+    assert CANARY not in path.read_text(encoding="utf-8")
+
+
 def test_the_transcript_records_a_response_body_the_hook_receives_unread(tmp_path: Path) -> None:
     """A streamed response is unread inside the hook; serializing it first loses the body.
 

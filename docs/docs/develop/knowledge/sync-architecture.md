@@ -18,9 +18,10 @@ deployment whose task manager and PostgreSQL server it uses:
 
 | Component | Responsibility |
 | --- | --- |
-| Sync API | Accepts configuration packages and run requests; returns product records, plans and results. |
+| Sync API | Accepts run requests and reads configurations from Infrahub; returns product records, plans and results. |
 | Sync worker | Polls Sync's own work pool on Infrahub's task manager and starts a process to execute each service flow run. Its adapters read the source and read or write the destination. |
 | S3-compatible object store | Stores immutable artifacts and internal plan checkpoints. The Compose bundle uses MinIO. |
+| Infrahub | Holds Sync's configurations, which operators create, and the versions, run copies and approvals that the Sync service account writes, as `SyncConfiguration`, `SyncConfigurationVersion`, `SyncRun` and `SyncApproval` nodes. |
 | Infrahub task manager (Infrahub's) | Infrahub's Prefect server. Schedules Sync's flow runs and records their execution state and logs, next to Infrahub's own tasks. |
 | Task manager PostgreSQL (Infrahub's) | Holds Sync's own `infrahub_sync` database, with its product records and advisory locks, separate from the task manager's `prefect` database. |
 
@@ -44,7 +45,7 @@ Sync worker ──polls──> Infrahub task manager
 
 The CLI accesses the Sync API; it does not run adapters or read the worker's filesystem.
 Bootstrap jobs create Sync's database on the task manager's PostgreSQL server, the artifact
-bucket, the work pool and the service deployment before the API and worker start. Configuration packages are registered separately.
+bucket, the work pool and the service deployment before the API and worker start. Configurations are created in Infrahub.
 See [Compose deployment](../../compose-deployment.mdx) for the operating procedure.
 
 ### One registered run
@@ -82,9 +83,10 @@ For the stage entrypoints, see [Prefect orchestration](orchestration-prefect.md#
 
 ### Persistence and deployment limits
 
-Sync retains configuration versions, product runs and execution links in its `infrahub_sync`
-database on the task manager's PostgreSQL server. It retains artifacts and internal
-checkpoints in object storage. Each worker stage creates its own temporary directory and
+Configurations and their versions live in Infrahub, while product runs, execution links and
+advisory locks stay in Sync's `infrahub_sync` database on the task manager's PostgreSQL server
+and artifacts stay in object storage. Sync retains internal checkpoints in that object storage
+too. Each worker stage creates its own temporary directory and
 removes it when the stage ends; a later stage retrieves its plan from object storage, not from
 a shared cache directory.
 

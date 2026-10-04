@@ -7,7 +7,8 @@ file, `docker-compose.yml`, and a `.env` file that you write beside it. The
 deployment runs the Sync API, the Sync worker, and S3-compatible object storage.
 It runs its work on Infrahub's task manager, which is Infrahub's Prefect server,
 and keeps its records in its own database on the task manager's PostgreSQL
-server. Docker pulls the Sync image from the OpsMill
+server. Your configurations live in Infrahub itself, and callers sign in with their own
+Infrahub API tokens. Docker pulls the Sync image from the OpsMill
 registry like every other service image. A host needs Docker with Docker Compose
 2.24 or later, and nothing else: no product checkout, no Python, no `uv`.
 
@@ -38,6 +39,8 @@ flow, and for the configuration and reviewed-run procedure that follows it.
   started with Docker Compose on the same host. Infrahub 1.11.3 and 1.11.4 ship
   Prefect 3.8.6. Sync refuses to start against another Prefect version, naming
   both versions.
+- The Sync schema extension loaded into that Infrahub, and an Infrahub account for
+  Sync with an API token. See [Load the Sync schema](#load-the-sync-schema).
 - Port 8000 free on `127.0.0.1`, or another port set in `.env`.
 
 ## Get the file
@@ -75,7 +78,8 @@ The file joins Infrahub's Compose network, `infrahub_default` unless you set
 `task-manager`, Infrahub's Prefect server, and `task-manager-db`, its PostgreSQL
 server. Sync creates its own `infrahub_sync` database there and never touches
 Infrahub's `prefect` database. Its runs appear in Infrahub's task list, tagged
-with their branch and their stage.
+with their branch and their stage, and in the **Tasks** tab of the run's `SyncRun`
+and `SyncConfiguration` nodes.
 
 One Infrahub holds one Sync deployment. Sync registers a fixed Prefect deployment,
 `infrahub-sync-service/run`, on the task manager, so a second Sync deployment
@@ -90,6 +94,59 @@ execution as unavailable.
 Run every `docker compose` command on this page from the directory that holds
 `docker-compose.yml` and `.env`. Compose finds both files there without `-f` or
 `--env-file`.
+
+## Load the Sync schema
+
+Sync keeps configurations, their versions, and a copy of each run in Infrahub, in four
+kinds that the schema extension `schema/sync.yml` adds: `SyncConfiguration`,
+`SyncConfigurationVersion`, `SyncRun`, and `SyncApproval`. Load it once per installation,
+and again on each Sync upgrade that changes it. Sync never loads a schema itself: the API
+and the worker check the kinds at startup and refuse to start when one is missing.
+
+Fetch the file from the same release tag as `docker-compose.yml`, and load it through a
+branch, as for any schema change. Run `infrahubctl` with an Infrahub administrator's token,
+as in [Prepare the destination schema](#prepare-the-destination-schema):
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/opsmill/infrahub-sync/<version>/schema/sync.yml
+infrahubctl branch create sync-schema
+infrahubctl schema load sync.yml --branch sync-schema
+infrahubctl branch merge sync-schema
+```
+
+### The Sync service account
+
+Sync reads configurations and writes versions, run copies, and approvals with its own
+Infrahub account. Create an account for it, give it a role with these object permissions,
+and create an API token for the account. The token is `INFRAHUB_SYNC_INFRAHUB_TOKEN` in
+`.env`.
+
+| Namespace | Name | Action | Decision |
+| --- | --- | --- | --- |
+| `Sync` | `Configuration`, `ConfigurationVersion`, `Run`, `Approval` | `view` | `allow_default` |
+| `Sync` | `ConfigurationVersion`, `Run`, `Approval` | `create` | `allow_default` |
+| `Sync` | `Run` | `update` | `allow_default` |
+| global | `edit_default_branch` | — | `allow_all` (Infrahub requires it for any write on the default branch, where every Sync record lives) |
+
+### Caller permissions
+
+Everyone who calls Sync, through the `cli` service, HTTP, or Python, uses their own Infrahub
+API token. Sync asks Infrahub who the caller is and checks these permissions on the default
+branch:
+
+| To | Grant |
+| --- | --- |
+| Read configurations and versions, validate a configuration | `view` on `SyncConfiguration` |
+| Read runs, plans, results, and artifacts | `view` on `SyncRun` |
+| Plan with `diff`, or verify a plan | `create` on `SyncRun` |
+| Apply a reviewed plan | `create` on `SyncApproval` |
+| Run `sync` | `create` on `SyncRun` and on `SyncApproval` |
+| Cancel a run | `update` on `SyncRun` |
+
+Granting `create` on `SyncRun` without `create` on `SyncApproval` lets an account plan but
+not write. The permission alone decides: an account with `create` on `SyncApproval` can
+apply a plan that another account created. See
+[Permissions](./reference/sync-http-api.mdx#permissions).
 
 ## The `.env` file {#configuration-prerequisites}
 
@@ -109,11 +166,7 @@ required variable INFRAHUB_SYNC_PRODUCT_PASSWORD is missing a value: INFRAHUB_SY
 | `INFRAHUB_SYNC_PRODUCT_PASSWORD` | `db-bootstrap` and the Sync services: the product database role |
 | `INFRAHUB_SYNC_S3_ACCESS_KEY` | `object-store` and the Sync services |
 | `INFRAHUB_SYNC_S3_SECRET_KEY` | `object-store` and the Sync services |
-| `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` | `sync-api`: a JSON object of API principals |
-
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` maps each principal name to its token, for
-example `{"operator": {"token": "<random>", "administrator": true}}`. The API
-refuses a token shorter than 16 characters.
+| `INFRAHUB_SYNC_INFRAHUB_TOKEN` | `sync-api` and `sync-worker`: the API token of [the Sync service account](#the-sync-service-account). It is never a caller's token, and Sync never logs it. |
 
 The database connection strings are composed inside the file from the role,
 database, and password settings. A password used in them must be URL-safe:
@@ -124,7 +177,8 @@ in `INFRAHUB_SYNC_DATABASE_URL` instead.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `INFRAHUB_SYNC_API_TOKEN` | empty | The token the `cli` service presents. It must equal a principal's `token` in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. Empty, every `cli` call is refused. |
+| `INFRAHUB_SYNC_TOKEN` | empty | Your own Infrahub API token, which the `cli` service presents. Set it in your shell rather than in `.env` when several people use the host. Empty, every `cli` call is refused with `401`. |
+| `INFRAHUB_SYNC_INFRAHUB_ADDRESS` | `http://infrahub-server:8000` | The Infrahub that holds the configurations, as `sync-api` and `sync-worker` reach it on Infrahub's Compose network. |
 | `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | empty | The destination Infrahub token, for a package that references it. |
 | `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN` | empty | Source tokens, for a package that references them. Only the worker receives them. |
 | `VERSION` | the release the file was taken from | The tag of the Sync image. See [Choose an image](#choose-an-image). |
@@ -155,12 +209,9 @@ INFRAHUB_TASKMANAGER_DB_PASSWORD=<Infrahub's task-manager database password>
 INFRAHUB_SYNC_PRODUCT_PASSWORD=<random hex>
 INFRAHUB_SYNC_S3_ACCESS_KEY=<random hex>
 INFRAHUB_SYNC_S3_SECRET_KEY=<random hex>
-INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "<principal token>", "administrator": true}}
+INFRAHUB_SYNC_INFRAHUB_TOKEN=<the Sync service account's Infrahub API token>
 
-# The token the cli service presents: the same value as the principal's token
-INFRAHUB_SYNC_API_TOKEN=<principal token>
-
-# Only for a registered package that references them
+# Only for a package that references them
 # INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=<your Infrahub token>
 # INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=<your NetBox token>
 # INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN=<your Nautobot token>
@@ -171,11 +222,13 @@ INFRAHUB_SYNC_API_TOKEN=<principal token>
 ```
 
 To generate the credentials instead, run this once, in the directory of
-`docker-compose.yml`. It reads `/dev/urandom` and needs no Python:
+`docker-compose.yml`. It reads `/dev/urandom` and needs no Python. It asks for the
+Sync service account's token first; `read -s` keeps it off the screen and out of
+your shell history:
 
 ```bash
 rand() { od -An -tx1 -N"$1" /dev/urandom | tr -d ' \n'; }
-principal=$(rand 24)
+read -rs -p 'Sync service account token: ' sync_service_token; echo
 # mktemp creates the file readable by you alone, whatever an existing .env allowed.
 env_file=$(mktemp .env.XXXXXX)
 cat > "$env_file" <<EOF
@@ -183,14 +236,14 @@ INFRAHUB_TASKMANAGER_DB_PASSWORD=${INFRAHUB_TASKMANAGER_DB_PASSWORD:-postgres}
 INFRAHUB_SYNC_PRODUCT_PASSWORD=$(rand 24)
 INFRAHUB_SYNC_S3_ACCESS_KEY=$(rand 12)
 INFRAHUB_SYNC_S3_SECRET_KEY=$(rand 24)
-INFRAHUB_SYNC_SERVICE_BEARER_TOKENS={"operator": {"token": "$principal", "administrator": true}}
-INFRAHUB_SYNC_API_TOKEN=$principal
+INFRAHUB_SYNC_INFRAHUB_TOKEN=$sync_service_token
 EOF
 mv -f "$env_file" .env
+unset sync_service_token
 ```
 
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` and `INFRAHUB_SYNC_API_TOKEN` hold one
-credential. If you change the principal's token, change both to the same value.
+The `cli` service presents `INFRAHUB_SYNC_TOKEN`, your own Infrahub API token. Export it
+in your shell before you call the CLI; Compose passes it to the `cli` service.
 
 Handle `.env` as the secret it is:
 
@@ -229,8 +282,9 @@ If you upgrade from an earlier alpha, move to the prefixed names:
    `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`,
    and `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN`.
 2. Change the `identifier` of each `env` credential in your packages to the new name.
-3. Register a new version of each package with `configs version`. A version registered
-   before the upgrade keeps its old identifiers, and its runs fail in the worker.
+3. Update the document of each configuration in Infrahub. The next run records it as a
+   new version. A version recorded before the upgrade keeps its old identifiers, and its
+   runs fail in the worker.
 4. Run `docker compose up -d --wait`, so the services receive the renamed variables.
 
 :::note
@@ -274,7 +328,7 @@ Nautobot uses the same shape with `nautobot`, `nautobot-token` and
   `http://<host-IP>:<port>`.
 - **The declared `url` is the one used.** `NETBOX_ADDRESS`, `NETBOX_URL`,
   `NAUTOBOT_ADDRESS` and `NAUTOBOT_URL` exported in your shell are ignored: a
-  registered run reads what its package declares.
+  run reads what its package declares.
 - **Both tokens are optional.** A deployment that reads from neither source
   starts normally, and a package naming one source does not need the other's
   token. When a package does select a source, a missing or empty token fails
@@ -282,9 +336,8 @@ Nautobot uses the same shape with `nautobot`, `nautobot-token` and
 - **Start again after changing either value.** `docker compose up -d --wait`
   recreates the worker with the new value; `restart` keeps the old one.
 
-Only `sync-worker` receives these tokens. Registration and the default
-validation judge declared content without resolving a source secret, so the API
-and the bootstrap job never hold one.
+Only `sync-worker` receives these tokens. Validation judges declared content
+without resolving a source secret, so the API and the bootstrap job never hold one.
 
 :::note
 That both adapters install and import is a packaging property of this release.
@@ -309,14 +362,16 @@ passes. Then confirm that a worker has registered, as described in
 
 `up` is safe to repeat. Bootstrap converges the product database, its owner role,
 the product schema, the artifact bucket, the Prefect work pool on Infrahub's task
-manager, and the installed deployment, and a second run creates none of them twice.
-It registers nothing, so a repeat leaves every configuration you registered exactly
-as it was.
+manager, and the installed deployment, and a second run creates none of them twice. It
+writes nothing to Infrahub, so a repeat leaves every configuration exactly as it was.
 
-A running deployment says nothing about a configuration. It starts with an empty
-registry, no credentials set, and no reachable destination. Whether a registered
-package is valid is answered by `configs validate`, and whether its destination
-answers is answered by the first run against it.
+The API and the worker check at startup that the Sync schema is loaded, and refuse to
+start when a kind or field is missing. If Infrahub cannot be reached at that moment, they
+start with a warning.
+
+A running deployment says nothing about a configuration. Whether a configuration
+is valid is answered by `configs validate`, and whether its destination answers
+is answered by the first run against it.
 
 The published API binds to loopback by default:
 
@@ -404,8 +459,8 @@ of its commands has a plain `docker compose` equivalent.
 | `logs` | `docker compose logs --no-color --tail 200 [service]` |
 | `stop` | `docker compose stop` |
 | `restart` | `docker compose restart sync-api sync-worker`, then check the worker. It does not pick up a changed `.env`. |
-| `reset` | `docker compose down --volumes --remove-orphans`, then drop Sync's database. **This deletes every registered configuration, run, retained plan, and artifact**, and nothing asks for confirmation. See [Reset the deployment](#reset-the-deployment). |
-| `cli` | `docker compose run --rm --no-deps -T cli ARGS`. For a package, add a read-only mount, as in [Registering a package](#registering-a-package). |
+| `reset` | `docker compose down --volumes --remove-orphans`, then drop Sync's database. **This deletes every run, retained plan, and artifact**; configurations, versions, and run copies stay in Infrahub, and nothing asks for confirmation. See [Reset the deployment](#reset-the-deployment). |
+| `cli` | `docker compose run --rm --no-deps -T cli ARGS`. Export `INFRAHUB_SYNC_TOKEN` first. |
 
 The image binding file, the `.instance` file, `operator.env`, and the
 `secrets/` directory have no successor. The administrator password that lived in
@@ -497,11 +552,12 @@ docker compose run --rm --no-deps -T cli configs list
 ```
 
 The `cli` service sits in the `cli` profile, so `up` never starts it, and
-`docker compose run` uses it all the same. It presents `INFRAHUB_SYNC_API_TOKEN`,
-which must equal the principal's token inside
-`INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. They are one credential: if you change one,
-change the other to the same value. With `INFRAHUB_SYNC_API_TOKEN` empty, the API
-refuses every `cli` call.
+`docker compose run` uses it all the same. Its environment holds two settings:
+`INFRAHUB_SYNC_API_URL`, set to `http://sync-api:8000` on the deployment's network,
+and `INFRAHUB_SYNC_TOKEN`. It presents `INFRAHUB_SYNC_TOKEN`, your
+own Infrahub API token, from your shell or `.env`. Sync checks your Infrahub
+permissions on each call; see [Caller permissions](#caller-permissions). With
+`INFRAHUB_SYNC_TOKEN` empty, the API refuses every `cli` call.
 
 Each call is one container: nothing is published, no service is started as a
 side effect, no volume is kept, and the container is removed when the command
@@ -515,34 +571,33 @@ source, or destination credential, and no Docker socket.
 
 The [NetBox](tutorials/netbox-to-existing-infrahub) and
 [Nautobot](tutorials/nautobot-to-existing-infrahub) tutorials include schema and
-package preparation, registration, validation, and a first preview. Continue
-here for the full operator sequence and lifecycle commands. After changing
-`.env`, run `docker compose up -d --wait` so services receive the new
-environment. Source credentials are optional for startup but required for a run
-that uses them.
+package preparation, validation, and a first preview. Continue here for the full
+operator sequence and lifecycle commands. After changing `.env`, run
+`docker compose up -d --wait` so services receive the new environment. Source
+credentials are optional for startup but required for a run that uses them.
 
-### Registering a package
+### Create the configuration in Infrahub
 
-A package is a file on your machine, and the CLI runs in a container. Mount the
-file read-only at `/input/package.yaml` for the one call that reads it:
+A configuration is a `SyncConfiguration` node in Infrahub: a `name`, which Sync calls
+`CONFIG_ID`, an optional `description`, and a `document` that holds the whole
+[configuration package](configuration-package) as YAML or JSON. Create it in the Infrahub
+web interface, or load an object file with `infrahubctl`:
 
-```bash
-chmod 0644 package.yml
-docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" cli configs register /input/package.yaml --reason 'register my configuration'
+```sh
+infrahubctl object load sync-configuration.yml
 ```
 
-The image runs as UID 10001, so the file must be readable by other users, or the
-CLI cannot open it. After registration the declared content lives in PostgreSQL:
-no host file is mounted by the API or the worker, and the file you registered
-from is not needed again. Every later command names the configuration by its
-identifier and version.
+[`examples/netbox_to_infrahub/sync-configuration.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/netbox_to_infrahub/sync-configuration.yml)
+is a complete object file. Make the change on an Infrahub branch to review it in a
+proposed change; runs read the configuration on the default branch once it is merged.
+The API and the worker mount no host file.
 
 Two things a package declares are resolved elsewhere:
 
 - **Its URLs are resolved inside a container.** `localhost` there is the
   container itself. Name an address the Compose network can reach.
 - **Its credentials are references.** The value lives in `.env` and is resolved
-  by the service that needs it, so no secret is registered, stored or echoed.
+  by the service that needs it, so no secret is stored in Infrahub or echoed.
   Add the credential before the run that needs it and run
   `docker compose up -d --wait` to recreate the services whose environment
   changed.
@@ -554,52 +609,59 @@ requires a manual `order`.
 ### The operator sequence
 
 ```bash
+export INFRAHUB_SYNC_TOKEN=<your Infrahub API token>
 docker compose run --rm --no-deps -T cli configs list
 # Add destination and source credentials to .env before planning, then recreate
 # the affected services. restart alone keeps the old container environment.
 docker compose up -d --wait
-docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" cli configs register /input/package.yaml --reason 'register my configuration'
 docker compose run --rm --no-deps -T cli configs show CONFIG_ID
-docker compose run --rm --no-deps -T cli configs versions CONFIG_ID
-docker compose run --rm --no-deps -T cli configs validate CONFIG_ID 1
-docker compose run --rm --no-deps -T cli configs show CONFIG_ID --version 1
-docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'review initial sync'
+docker compose run --rm --no-deps -T cli configs validate CONFIG_ID
+docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --branch BRANCH_NAME --reason 'review initial sync'
 docker compose run --rm --no-deps -T cli runs plan RUN_ID --detail
 docker compose run --rm --no-deps -T cli apply RUN_ID --expected-checksum CHECKSUM --branch BRANCH_NAME --reason 'apply reviewed initial sync'
 docker compose run --rm --no-deps -T cli runs show RUN_ID
 docker compose run --rm --no-deps -T cli runs results RUN_ID
-docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --version 1 --branch BRANCH_NAME --reason 'verify unchanged source'
-# Versioning is explicit, and never rewrites a registered version:
-docker compose run --rm --no-deps -T -v "$PWD/edited-package.yml:/input/package.yaml:ro" cli configs version CONFIG_ID /input/package.yaml --reason 'register edited configuration'
+docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --branch BRANCH_NAME --reason 'verify unchanged source'
+docker compose run --rm --no-deps -T cli configs versions CONFIG_ID
+# Check an edit on an Infrahub branch before you merge it; this records nothing:
+docker compose run --rm --no-deps -T cli configs validate CONFIG_ID --branch CHANGE_BRANCH
 ```
 
-`CONFIG_ID`, `RUN_ID` and `CHECKSUM` are results the previous commands printed.
-`runs show` reports the run's phase, outcome and Prefect correlation; `runs
-results` prints what the service recorded for it as JSON.
+`CONFIG_ID` is the configuration's `name` in Infrahub. `RUN_ID` and `CHECKSUM` are
+results the previous commands printed. `runs show` reports the run's phase, outcome
+and Prefect correlation; `runs results` prints what the service recorded for it as
+JSON.
 
-`configs validate` takes a registered identifier and version, never a file path.
-It re-checks that version against the adapters installed now. Each finding has a
-stable code, a severity, and a JSON Pointer location; see the
+`configs validate CONFIG_ID` checks the configuration's document on the Infrahub
+default branch, or on the branch `--branch` names, and records nothing.
+`configs validate CONFIG_ID --version N` re-checks a recorded version against the
+adapters installed now. Each finding has a stable code, a severity, and a JSON
+Pointer location; see the
 [finding-code reference](reference/durable-product-records#finding-codes). Errors
 block execution; warnings record a known omission. A clean validation reads no
 destination schema and contacts neither endpoint.
 
-Unlike plain `configs show CONFIG_ID`, which prints only the summary
-(`config_id`, `created_at`), `configs show CONFIG_ID --version 1` prints the
-version's `declared_content`. Check its
-`configuration.destination.settings.branch` before planning: a declared branch
-there overrides `--branch` on both `diff` and `apply`, the run request's
-`--branch` is used only when the package declares none, and the destination
-falls back to `main` when neither is set. If the declared branch is not the
-one you intend to write, register a new version with the intended branch
-before you plan.
+`diff` without `--version` plans from the current document on the default branch. Sync
+records that document as the next version when no version holds it yet, and reuses the
+existing version otherwise; the run output names it as `registry_version`. A document with
+errors is refused with `configuration-invalid`, and no version is recorded. A
+formatting-only edit reuses the current version. `--version N` plans from an earlier
+version again.
 
-On a new deployment, `configs list` prints no command output and exits zero;
-any `Container … Creating/Created` lines are Compose progress. `diff` creates a
-run and persists product records, even though it does not write to the
-destination. The plan output does not repeat its branch: apply must use the same
-`--branch` supplied to `diff`. This release writes saved-plan format 3; it can
-review format 2 but refuses to apply it, and does not support older formats.
+Check the document's `configuration.destination.settings.branch` before planning:
+a declared branch there overrides `--branch` on both `diff` and `apply`, the run
+request's `--branch` is used only when the package declares none, and the
+destination falls back to `main` when neither is set. If the declared branch is not
+the one you intend to write, change the document in Infrahub before you plan.
+
+On a new deployment, `configs list` prints nothing for an Infrahub without
+configurations and exits zero; any `Container … Creating/Created` lines are Compose
+progress. `diff` creates a run and persists product records, even though it does not
+write to the destination. Each run also appears in Infrahub as a `SyncRun` node, and an
+apply records a `SyncApproval` node naming the approver and the checksum. The plan output
+does not repeat its branch: apply must use the same `--branch` supplied to `diff`. This
+release writes saved-plan format 3; it can review format 2 but refuses to apply it, and
+does not support older formats.
 
 A null optional cardinality-one relationship in an update does not clear the
 destination field. The plan format cannot distinguish an absent relationship
@@ -620,7 +682,7 @@ If the final output from `apply` still shows `execution_state: running`, run
 
 Review the saved plan before every apply:
 
-- the run, the configuration identifier and registry version, the branch, and
+- the run, the configuration identifier and recorded version, the branch, and
   the exact checksum;
 - the creates, the updates, and the recorded deletes;
 - relationships that could point at the wrong object;
@@ -651,10 +713,7 @@ visible to every process on the host while the request runs:
 umask 077
 CURL_CONFIG=$(mktemp)
 # `printf` is a shell builtin, so the token reaches no process argument list.
-# Run this from the directory that holds .env.
-printf 'header = "Authorization: Bearer %s"\n' \
-  "$(sed -n 's/^INFRAHUB_SYNC_API_TOKEN=//p' .env)" \
-  > "$CURL_CONFIG"
+printf 'header = "X-INFRAHUB-KEY: %s"\n' "$INFRAHUB_SYNC_TOKEN" > "$CURL_CONFIG"
 
 curl -sS --config "$CURL_CONFIG" "$INFRAHUB_SYNC_API_URL/configs"
 
@@ -666,7 +725,7 @@ From Python:
 ```python
 from infrahub_sync.client import SyncClient
 
-with SyncClient("http://127.0.0.1:8000", "<the principal token>") as client:
+with SyncClient("http://127.0.0.1:8000", "<your Infrahub API token>") as client:
     print(client.get_status().worker.state)
 ```
 
@@ -687,9 +746,7 @@ configuration and removes it afterwards:
 ```bash
 umask 077
 CURL_CONFIG=$(mktemp)
-printf 'header = "Authorization: Bearer %s"\n' \
-  "$(sed -n 's/^INFRAHUB_SYNC_API_TOKEN=//p' .env)" \
-  > "$CURL_CONFIG"
+printf 'header = "X-INFRAHUB-KEY: %s"\n' "$INFRAHUB_SYNC_TOKEN" > "$CURL_CONFIG"
 
 curl -sS -X POST --config "$CURL_CONFIG" \
   -H "Idempotency-Key: $(uuidgen)" -H 'Content-Type: application/json' \
@@ -797,13 +854,13 @@ start stopped dependencies, and it does not pick up a changed `.env`; use
 
 ### Verify a retained configuration
 
-Before maintenance, read a version of an existing registered configuration:
+Before maintenance, read a recorded version of an existing configuration:
 
 ```bash
 docker compose run --rm --no-deps -T cli configs show CONFIG_ID --version VERSION
 ```
 
-Replace `CONFIG_ID` and `VERSION` with the identifier and version you registered.
+Replace `CONFIG_ID` and `VERSION` with the configuration's name and a version a run recorded.
 Save the output, then repeat the command after the worker reports `ready`.
 Confirm that `config_id`, `registry_version`, `package_checksum`, and
 `declared_content` match the earlier output. This checks that the configuration
@@ -811,11 +868,11 @@ version remains available; a live worker alone only checks deployment health.
 
 ### Reset the deployment
 
-Durable state lives in two places: the `infrahub_sync` database and role on
-Infrahub's task-manager PostgreSQL server, and the named volume
-`<project>_object-store-data`. Every other writable path is a `tmpfs` mount.
-Removing the containers, the network, the volume, the database, and the role
-discards the deployment:
+Durable state lives in three places: the `infrahub_sync` database and role on
+Infrahub's task-manager PostgreSQL server, the named volume
+`<project>_object-store-data`, and Sync's nodes in Infrahub itself. Every other
+writable path is a `tmpfs` mount. Removing the containers, the network, the volume,
+the database, and the role discards the deployment:
 
 ```bash
 docker compose down --volumes --remove-orphans
@@ -835,17 +892,18 @@ Bootstrap sets the role's password to `INFRAHUB_SYNC_PRODUCT_PASSWORD` on every
 start, so a regenerated `.env` takes effect either way.
 
 :::danger
-`down --volumes` and dropping the database delete every registered configuration,
-run, retained plan, and artifact. Nothing asks for confirmation, and nothing can
-undo it. Keep anything you need outside the deployment first. `.env` is left in
-place.
+`down --volumes` and dropping the database delete every run, retained plan, and
+artifact. Nothing asks for confirmation, and nothing can undo it. Configurations,
+their versions, the `SyncRun` copies, and approvals stay in Infrahub; delete those
+nodes in Infrahub to remove them. Keep anything you need outside the deployment
+first. `.env` is left in place.
 :::
 
 Starting again after a reset is a cold bootstrap, not a resumption.
 `docker compose up -d --wait` creates the product database, the product schema,
 the bucket, the work pool, and the deployment from nothing, and the deployment
-starts with an empty configuration registry, no runs, and no artifacts. Register
-your package again afterwards.
+starts with no runs and no artifacts. Your configurations in Infrahub are
+unchanged.
 
 The project name defaults to the name of the directory, and prefixes the
 object-store volume. Moving or renaming the directory starts a second set of

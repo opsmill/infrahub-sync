@@ -19,6 +19,7 @@ REPORTS = ROOT / ".preview" / "nightly-e2e"
 SUITES = ("integration", "preview", "saved-plan", "from-netbox")
 EXPECTED_DEMO_OPERATIONS = 1688
 SCHEMA_SHA256 = "b74a0ff09cde3aafb1275293be7523f1b377d64073c43aca3ccc14cbe4c5a025"
+NETBOX_CONFIGURATION = "nightly-from-netbox"
 
 
 def run(*command: str, env: dict[str, str] | None = None, capture: bool = False) -> str:
@@ -51,7 +52,9 @@ def environment() -> dict[str, str]:
     env.update(
         {
             "INFRAHUB_SYNC_API_URL": urls["sync_api"],
-            "INFRAHUB_SYNC_API_TOKEN": json.loads(preview["PREVIEW_BEARER_TOKENS"])["tester@local"]["token"],
+            # The Sync API identifies callers through the preview's Infrahub, so the CLI
+            # presents an Infrahub API token: the disposable administrator's.
+            "INFRAHUB_SYNC_TOKEN": preview["INFRAHUB_INITIAL_ADMIN_TOKEN"],
             "NETBOX_URL": netbox_url(netbox),
             "NETBOX_TOKEN": netbox_token(netbox),
             # What the preview worker resolves for a registered package's `netbox-token`.
@@ -147,28 +150,29 @@ def check_import_counts(run_id: str, env: dict[str, str]) -> None:
         raise RuntimeError(msg)
 
 
+def put_netbox_configuration(env: dict[str, str]) -> str:
+    """Write the generated package into Infrahub as a configuration, as an operator would."""
+    from infrahub_sdk import Config, InfrahubClientSync  # noqa: PLC0415 -- live-suite dependency
+
+    from tests.infrahub_records import load_sync_schema, put_configuration  # noqa: PLC0415 -- live-suite helper
+
+    client = InfrahubClientSync(config=Config(address=env["INFRAHUB_ADDRESS"], api_token=env["INFRAHUB_API_TOKEN"]))
+    load_sync_schema(client)
+    document = (ROOT / ".netbox" / "from-netbox.local.yml").read_text(encoding="utf-8")
+    put_configuration(client, NETBOX_CONFIGURATION, document)
+    return NETBOX_CONFIGURATION
+
+
 def from_netbox(env: dict[str, str]) -> None:
-    """Register, plan, and apply the shipped example against the local demo dataset."""
+    """Put the shipped example in Infrahub, then plan and apply it against the local demo dataset.
+
+    No `--version` is passed: the plan records the configuration's current document as a
+    version, and the sync reuses that version because the document has not changed.
+    """
     run("uv", "run", "--no-sync", "invoke", "netbox.demo-package", env=env)
-    registered = parsed_fields(
-        run(
-            "uv",
-            "run",
-            "--no-sync",
-            "infrahub-sync",
-            "configs",
-            "register",
-            ".netbox/from-netbox.local.yml",
-            "--reason",
-            "nightly local NetBox check",
-            env=env,
-            capture=True,
-        )
-    )
-    config_id = registered["config_id"]
-    version = registered["registry_version"]
+    config_id = put_netbox_configuration(env)
     run("uv", "run", "--no-sync", "infrahubctl", "branch", "create", "netbox-import", env=env)
-    common = ("--config-id", config_id, "--version", version, "--branch", "netbox-import")
+    common = ("--config-id", config_id, "--branch", "netbox-import")
     plan_run_id = ""
     for operation in ("diff", "sync"):
         result = run(

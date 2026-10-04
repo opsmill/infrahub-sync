@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import tempfile
 import warnings
@@ -18,6 +19,8 @@ from uuid import UUID, uuid4
 
 import anyio
 import httpx
+from infrahub_sdk.exceptions import AuthenticationError
+from infrahub_sdk.exceptions import Error as InfrahubSdkError
 from prefect.client.schemas.objects import Worker, WorkerStatus
 from prefect.exceptions import ObjectNotFound
 from prefect.flows import load_flow_from_entrypoint
@@ -33,17 +36,27 @@ from prefect.utilities.processutils import command_to_string, get_sys_executable
 from prefect.workers.process import ProcessJobConfiguration, ProcessWorker, ProcessWorkerResult
 from pydantic import PrivateAttr
 
+from infrahub_sync.platform.client import (
+    SERVICE_ACCOUNT_REFUSED,
+    PlatformSettings,
+    PlatformSettingsError,
+    default_branch_sync,
+    service_client_sync,
+)
+from infrahub_sync.platform.schema_check import SyncSchemaMissingError, require_sync_schema_sync
+
 from .orchestration import SERVICE_DEFINITION
 from .prefect_server import WORKER_SERVICE, refuse_start_unless_prefect_ready
 
 if TYPE_CHECKING:
-    import logging
     from collections.abc import Iterator, Sequence
 
     from anyio.abc import TaskStatus
     from prefect.client.schemas.objects import Flow as APIFlow
     from prefect.client.schemas.objects import FlowRun, WorkPool
     from prefect.client.schemas.responses import DeploymentResponse
+
+_logger = logging.getLogger(__name__)
 
 _IDENTITY_ERROR = "service worker identity is unavailable"
 _WORKER_NAME_PREFIX = "infrahub-sync-service"
@@ -538,10 +551,37 @@ def neutral_working_directory() -> Iterator[Path]:
         rmtree(root, ignore_errors=True)
 
 
+def refuse_start_without_sync_schema() -> None:
+    """Stop the worker when Infrahub lacks the Sync schema extension this release needs.
+
+    Skipped when the worker is given no Infrahub, as in local use where configurations
+    live in the product store. An unreachable Infrahub is tolerated, as the API does.
+    """
+    try:
+        settings = PlatformSettings.from_environment()
+    except PlatformSettingsError:
+        _logger.info("no Infrahub is configured; runs read configurations from Sync's own store")
+        return
+    client = service_client_sync(settings)
+    try:
+        require_sync_schema_sync(client, default_branch_sync(client))
+    except SyncSchemaMissingError as error:
+        refusal = f"infrahub-sync worker refused to start: {error}"
+        raise SystemExit(refusal) from None
+    except AuthenticationError:
+        refusal = f"infrahub-sync worker refused to start: {SERVICE_ACCOUNT_REFUSED}"
+        raise SystemExit(refusal) from None
+    except InfrahubSdkError as error:
+        _logger.warning(
+            "Infrahub could not be reached at startup (%s); the Sync schema was not checked", type(error).__name__
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Start one fail-closed service process worker."""
     pool = _pool_argument(argv)
     refuse_start_unless_prefect_ready(WORKER_SERVICE)
+    refuse_start_without_sync_schema()
     # Entered before the worker exists, so nothing this parent imports later -- the
     # runner, its crash hooks, or an adapter -- can resolve out of a source tree.
     with neutral_working_directory():

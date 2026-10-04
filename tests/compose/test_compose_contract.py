@@ -54,7 +54,7 @@ CREDENTIALS = (
     "INFRAHUB_SYNC_PRODUCT_PASSWORD",
     "INFRAHUB_SYNC_S3_ACCESS_KEY",
     "INFRAHUB_SYNC_S3_SECRET_KEY",
-    "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",
+    "INFRAHUB_SYNC_INFRAHUB_TOKEN",
 )
 # The database bootstrap script: a top-level `configs` entry, mounted where the
 # job's entrypoint runs it.
@@ -103,11 +103,16 @@ DESTINATION_CREDENTIAL_RECEIVERS = {"sync-api", "sync-worker"}
 
 # The opt-in client, and the profile that is the only way to resolve it.
 CLI_SERVICE = "cli"
-# The API client credential, and the only service allowed to hold one. It
+# The caller's Infrahub API token, and the only service allowed to hold one. It
 # authenticates a caller *to* this deployment, so a worker or a job holding it
 # would be a service carrying a credential for the service that dispatches it.
-CLIENT_CREDENTIAL = "INFRAHUB_SYNC_API_TOKEN"
+CLIENT_CREDENTIAL = "INFRAHUB_SYNC_TOKEN"
 CLIENT_CREDENTIAL_RECEIVERS = {CLI_SERVICE}
+# The Sync service account's Infrahub token, and the services that use it: the API
+# identifies callers and records versions and run mirrors, the worker records a
+# run's outcome. The bootstrap jobs and the CLI talk to no Infrahub.
+SERVICE_ACCOUNT_CREDENTIAL = "INFRAHUB_SYNC_INFRAHUB_TOKEN"
+SERVICE_ACCOUNT_RECEIVERS = {"sync-api", "sync-worker"}
 
 # The optional Prefect API credential: the operator setting, and the client
 # setting every Prefect caller presents. Infrahub's task manager offers no
@@ -806,7 +811,7 @@ def test_the_cli_service_is_given_exactly_the_two_settings_it_needs(cli_model: d
     """
     environment = service(cli_model, CLI_SERVICE)["environment"]
 
-    assert set(environment) == {"INFRAHUB_SYNC_API_URL", "INFRAHUB_SYNC_API_TOKEN"}, sorted(environment)
+    assert set(environment) == {"INFRAHUB_SYNC_API_URL", CLIENT_CREDENTIAL}, sorted(environment)
     assert environment["INFRAHUB_SYNC_API_URL"] == "http://sync-api:8000"
 
 
@@ -908,3 +913,22 @@ def test_a_declared_source_credential_reaches_only_the_worker(
     }
     assert carriers == SOURCE_TOKEN_RECEIVERS, f"{setting} value reached {sorted(carriers)}"
     assert service(resolved, "sync-worker")["environment"][setting] == planted
+
+
+def test_the_service_account_token_is_held_by_the_api_and_the_worker_alone(cli_model: dict[str, Any]) -> None:
+    """The token that writes Sync's records into Infrahub stays with the two services that write them."""
+    holders = {
+        name
+        for name, definition in services(cli_model).items()
+        if SERVICE_ACCOUNT_CREDENTIAL in (definition.get("environment") or {})
+    }
+
+    assert holders == SERVICE_ACCOUNT_RECEIVERS, f"{SERVICE_ACCOUNT_CREDENTIAL} is given to {sorted(holders)}"
+    for name in sorted(SERVICE_ACCOUNT_RECEIVERS):
+        environment = service(cli_model, name)["environment"]
+        assert environment["INFRAHUB_SYNC_INFRAHUB_ADDRESS"] == "http://infrahub-server:8000", name
+
+
+def test_no_service_is_given_the_retired_bearer_principals(cli_model: dict[str, Any]) -> None:
+    for name, definition in services(cli_model).items():
+        assert "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" not in (definition.get("environment") or {}), name

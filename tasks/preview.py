@@ -2,9 +2,10 @@
 
 `invoke preview.up` brings up a disposable Infrahub instance (Docker), whose
 task manager Sync runs on, starts the Sync HTTP API and a Prefect worker from
-this checkout, and applies the service deployment. It writes nothing to
-Infrahub and admits no Sync run: bringing the stack up is safe to repeat on an
-environment somebody is already using.
+this checkout, and applies the service deployment. Its one write to Infrahub is
+Sync's schema extension, `schema/sync.yml`, which the Sync API and worker need
+before they start, and it admits no Sync run: bringing the stack up is safe to
+repeat on an environment somebody is already using.
 
 The two write-bearing actions are explicit. `invoke preview.seed` puts the
 smoke dataset into Infrahub, and `invoke preview.smoke` seeds and then runs the
@@ -19,7 +20,6 @@ defaults); personal overrides belong in the gitignored
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import shlex
 import signal
@@ -47,6 +47,7 @@ COMPOSE_FILES = (
     DEV_DIR / "docker-compose.preview.yml",
 )
 SCHEMA_FILE = REPO_ROOT / "examples" / "prefect_remote_run" / "schemas" / "infra_device.yml"
+SYNC_SCHEMA_FILE = REPO_ROOT / "schema" / "sync.yml"
 SMOKE_BRANCH = "preview-smoke"
 # The kind the preview schema defines, and the one device both branches share. It is
 # seeded on `main` *before* the smoke branch forks, so the branch inherits it; the
@@ -121,7 +122,6 @@ def load_preview_env() -> dict[str, str]:
     required = {
         "COMPOSE_PROJECT_NAME",
         "INFRAHUB_INITIAL_ADMIN_TOKEN",
-        "PREVIEW_BEARER_TOKENS",
         "PREVIEW_INFRAHUB_PORT",
         "PREVIEW_PREFECT_PORT",
         "PREVIEW_SYNC_API_PORT",
@@ -207,7 +207,10 @@ def _runtime_env(values: dict[str, str]) -> dict[str, str]:
             "INFRAHUB_SYNC_S3_REGION": "us-east-1",
             "AWS_ACCESS_KEY_ID": values["PREVIEW_MINIO_ACCESS_KEY"],
             "AWS_SECRET_ACCESS_KEY": values["PREVIEW_MINIO_SECRET_KEY"],
-            "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": values["PREVIEW_BEARER_TOKENS"],
+            # Sync's configurations and run records live in this Infrahub, which also
+            # identifies the API's callers; the administrator is Sync's service account.
+            "INFRAHUB_SYNC_INFRAHUB_ADDRESS": urls["infrahub"],
+            "INFRAHUB_SYNC_INFRAHUB_TOKEN": values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
             "INFRAHUB_SYNC_SERVICE_WORK_POOL": values["PREVIEW_WORK_POOL"],
             "INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS": values["PREVIEW_RUN_ADMISSION_TTL_SECONDS"],
             "PREFECT_WORKER_QUERY_SECONDS": values["PREVIEW_PREFECT_WORKER_QUERY_SECONDS"],
@@ -512,7 +515,11 @@ def _stop_process(name: str) -> None:
 
 @task
 def up(context: Context) -> None:
-    """Bring up the full preview stack without writing to it, then print URLs."""
+    """Bring up the full preview stack, then print URLs.
+
+    The one write is Sync's own schema extension, `schema/sync.yml`, which the Sync API
+    and worker require before they start.
+    """
     values = load_preview_env()
     urls = preview_urls(values)
     env = _runtime_env(values)
@@ -525,6 +532,12 @@ def up(context: Context) -> None:
     _wait_for_http(f"{urls['infrahub']}/api/config", "Infrahub")
     _wait_for_http(f"{urls['prefect']}/api/health", "Prefect")
     assert_no_legacy_state(env["PREFECT_API_URL"], values["PREVIEW_WORK_POOL"])
+
+    print(f" - [{NAMESPACE}] Loading the Sync schema extension {SYNC_SCHEMA_FILE}")
+    context.run(
+        f"uv run infrahubctl schema load --wait {SCHEMA_CONVERGE_SECONDS} {shlex.quote(str(SYNC_SCHEMA_FILE))}",
+        env={"INFRAHUB_ADDRESS": env["INFRAHUB_ADDRESS"], "INFRAHUB_API_TOKEN": env["INFRAHUB_API_TOKEN"]},
+    )
 
     print(f" - [{NAMESPACE}] Ensuring the Prefect work pool exists")
     context.run(
@@ -572,14 +585,15 @@ def up(context: Context) -> None:
     )
     _wait_for_http(f"{urls['sync_api']}/openapi.json", "Sync API", timeout=90)
 
-    tokens = json.loads(values["PREVIEW_BEARER_TOKENS"])
     print(f" - [{NAMESPACE}] Preview environment ready")
     print(f"     Infrahub UI:      {urls['infrahub']}  (admin / infrahub)")
     print(f"     Prefect UI:       {urls['prefect']}")
-    print(f"     Sync API: {urls['sync_api']}  (bearer principals: {', '.join(sorted(tokens))})")
+    print(
+        f"     Sync API: {urls['sync_api']}  (call it with an Infrahub API token, e.g. INFRAHUB_SYNC_TOKEN=$INFRAHUB_INITIAL_ADMIN_TOKEN)"
+    )
     print(f"     Config directory: {env['INFRAHUB_SYNC_CONFIG_DIRECTORY']}")
     print(f"     Runtime state:    {STATE_DIR}")
-    print("     Nothing has been written to Infrahub; `preview.seed` and `preview.smoke` write.")
+    print("     Only the Sync schema was written to Infrahub; `preview.seed` and `preview.smoke` write data.")
     print("     Next: `uv run invoke preview.seed`, `preview.smoke`, or `preview.status`")
 
 

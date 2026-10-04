@@ -150,6 +150,17 @@ Then load the schema into Infrahub using the project's `load-schema` task, which
 uv run invoke load-schema
 ```
 
+Infrahub Sync keeps its own records in Infrahub too: the configuration you run, the versions
+of it that runs record, and a copy of each run. Load the Sync schema extension from the
+checkout:
+
+```bash
+uv run infrahubctl schema load ../infrahub-sync/schema/sync.yml --wait 120
+```
+
+This tutorial loads both schemas straight into `main`. On a shared Infrahub, load a schema
+on a branch first and merge it through a proposed change.
+
 Refresh [the local Infrahub web interface](http://localhost:8000). You should see additional schema objects in the left navigation. You can also open the schema view in the UI to explore the kinds and relationships that were loaded.
 
 ## Create a NetBox API token
@@ -192,16 +203,16 @@ Open `sync-projects/netbox-demo/package.yml` in an editor and scan the top-level
 - `schema_mapping` defines how NetBox API resources become Infrahub objects.
 
 The worker reads the `source.settings.url` and `destination.settings.url` values from the
-registered package itself, not from the environment. The `INFRAHUB_ADDRESS` variable
+package itself, not from the environment. The `INFRAHUB_ADDRESS` variable
 exported above is used only by `infrahubctl`, the `invoke load-schema` task, and other
 project-template commands that run outside Infrahub Sync. If either target is not at the
 address already in the file, edit those two URLs in
-`sync-projects/netbox-demo/package.yml` before you register it. Only the two credentials
+`sync-projects/netbox-demo/package.yml` before you load it into Infrahub. Only the two credentials
 (`INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`) come from the worker's
 environment, resolved
 through the `credentials` block at the bottom of the file.
 
-This tutorial registers the package, uses `diff` to create a service plan, reviews that
+This tutorial stores the package in Infrahub, uses `diff` to create a service plan, reviews that
 plan, and then applies it by its checksum, so the writes are exactly what you reviewed. See
 [Run a sync](../running-a-sync.mdx) for the one-step `sync` alternative, which calculates
 and writes a new plan in the same run instead of applying a plan you already reviewed.
@@ -289,7 +300,8 @@ export AWS_ACCESS_KEY_ID="sync-local"
 export AWS_SECRET_ACCESS_KEY="sync-local-secret"
 export INFRAHUB_SYNC_SERVICE_WORK_POOL="sync-process-pool"
 export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/sync-projects"
-export INFRAHUB_SYNC_SERVICE_BEARER_TOKENS='{"tutorial-admin":{"token":"tutorial-sync-api-token","administrator":true}}'
+export INFRAHUB_SYNC_INFRAHUB_ADDRESS="http://localhost:8000"
+export INFRAHUB_SYNC_INFRAHUB_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="nbt_..."
 export INFRAHUB_ADDRESS="http://localhost:8000"
 export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
@@ -301,6 +313,11 @@ entries under `credentials` naming `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and
 `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` — so the worker
 resolves the values from these variables. No NetBox or Infrahub adapter credential value is
 written into the package or sent to the Sync API.
+
+`INFRAHUB_SYNC_INFRAHUB_ADDRESS` and `INFRAHUB_SYNC_INFRAHUB_TOKEN` connect the Sync API and
+worker to the Infrahub that holds your configuration. This tutorial uses the local admin
+token as Sync's service account; a real deployment gives Sync an account of its own, with the
+permissions listed in [Connect to Infrahub](../reference/sync-http-api.mdx#connect-to-infrahub).
 
 4. In terminal 2, create the process pool, deploy the service flow, and start its worker:
 
@@ -317,29 +334,43 @@ export INFRAHUB_SYNC_SERVICE_HOST="127.0.0.2"
 uv run python -m infrahub_sync.service.serve
 ```
 
-6. In the terminal where you will run the CLI, configure the API credentials and verify
-   compatibility:
+6. In the terminal where you will run the CLI, set the API address and your Infrahub API
+   token, then verify compatibility:
 
 ```bash
 export INFRAHUB_SYNC_API_URL="http://127.0.0.2:8000"
-export INFRAHUB_SYNC_API_TOKEN="tutorial-sync-api-token"
+export INFRAHUB_SYNC_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 curl --fail "${INFRAHUB_SYNC_API_URL}/version"
 ```
 
-The API token authenticates the CLI to the Sync API. It is separate from
-`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, which the worker uses to access the destination Infrahub instance.
+The CLI authenticates to the Sync API with your own Infrahub API token, and Sync asks
+Infrahub what you may do. Here it is the local admin token. It is separate from
+`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, which the worker uses to write to the
+destination Infrahub instance.
 
-## Register the configuration package
+## Create the configuration in Infrahub
 
-Register the downloaded package with the Sync API.
+A configuration is a `SyncConfiguration` object in Infrahub. Its `document` holds the whole
+package. Wrap the package in an Infrahub object file, then load it:
 
 ```bash
-uv run infrahub-sync configs register sync-projects/netbox-demo/package.yml \
-  --reason "register NetBox demo import"
+uv run python - <<'PY'
+import pathlib, yaml
+document = pathlib.Path("sync-projects/netbox-demo/package.yml").read_text(encoding="utf-8")
+configuration = {"name": "netbox-demo", "document": document}
+spec = {"kind": "SyncConfiguration", "data": [configuration]}
+objects = {"apiVersion": "infrahub.app/v1", "kind": "Object", "spec": spec}
+pathlib.Path("sync-projects/netbox-demo/sync-configuration.yml").write_text(yaml.safe_dump(objects, sort_keys=False))
+PY
+uv run infrahubctl object load sync-projects/netbox-demo/sync-configuration.yml
+uv run infrahub-sync configs validate netbox-demo
 ```
 
-Record the returned `config_id` and `registry_version`. If you edit the package later, use
-`configs version <config-id> <package>` to create another immutable registry version.
+The configuration's name, `netbox-demo`, is its `config_id`. `configs validate` should
+report no findings. You can also open the configuration in the Infrahub web interface.
+
+If you edit the package later, change the configuration's `document` in Infrahub. The next
+run records the new content as the next version; earlier versions never change.
 
 For more about the command flow, see [Run a sync](../running-a-sync.mdx).
 
@@ -362,8 +393,7 @@ Run a dry-run diff against the `netbox-import` branch before writing any data to
 
 ```bash
 uv run infrahub-sync diff \
-  --config-id <config-id> \
-  --version <version> \
+  --config-id netbox-demo \
   --branch netbox-import \
   --reason "review NetBox demo import"
 ```
@@ -390,7 +420,7 @@ relationships into the `netbox-import` branch — `main` is untouched until you 
 resulting proposed change. Because this configuration omits `order:`, Infrahub Sync
 derives the write order from the mapping references.
 
-`infrahub-sync sync --config-id <config-id> --version <version> --branch netbox-import
+`infrahub-sync sync --config-id netbox-demo --branch netbox-import
 --reason "..."` is the one-step alternative: it calculates and writes a new plan in the
 same run, with no stop for review. Choose it once you trust the mapping and no longer need
 to review each plan before it writes.
@@ -452,7 +482,7 @@ You used Infrahub Sync to move data from NetBox into Infrahub in a controlled se
 2. NetBox provided the source data.
 3. A branch isolated the import from `main` so it could be reviewed first.
 4. `package.yml` described the adapters, field mappings, references, filters, and Transformations.
-5. The Sync API registered the configuration and issued the run identity.
+5. Infrahub held the configuration, and the Sync API recorded its version and issued the run identity.
 6. `diff` asked the worker to compare the source and destination without writing changes.
 7. `apply` wrote the exact reviewed plan, bound to its checksum, to the branch.
 

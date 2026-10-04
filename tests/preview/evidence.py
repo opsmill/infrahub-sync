@@ -20,14 +20,17 @@ if TYPE_CHECKING:
     import httpx
 
 REDACTED = "<redacted>"
+# Callers present their Infrahub API token as `X-INFRAHUB-KEY`; `Authorization` stays
+# covered for any client that still sends a bearer value.
+CREDENTIAL_HEADERS = frozenset({"authorization", "x-infrahub-key"})
 
 
 def _headers(headers: httpx.Headers) -> dict[str, str]:
-    """Header names with the authorization value replaced, never the header itself.
+    """Header names with each credential value replaced, never the header itself.
 
-    Which routes were called authenticated is the evidence; the bearer value is not.
+    Which routes were called authenticated is the evidence; the token is not.
     """
-    return {name: (REDACTED if name.lower() == "authorization" else value) for name, value in headers.items()}
+    return {name: (REDACTED if name.lower() in CREDENTIAL_HEADERS else value) for name, value in headers.items()}
 
 
 def transcript_hooks(path: Path) -> dict[str, list[Callable[[httpx.Response], None]]]:

@@ -359,12 +359,14 @@ class ConfigurationSummary(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     config_id: str = Field(pattern=_IDENTIFIER_PATTERN)
-    created_at: datetime
+    # When the configuration's first version was recorded; none for a configuration
+    # kept in Infrahub that no run has used yet.
+    created_at: datetime | None
 
     @field_validator("created_at")
     @classmethod
-    def _require_timezone(cls, value: datetime) -> datetime:
-        if value.utcoffset() is None:
+    def _require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.utcoffset() is None:
             msg = "configuration timestamps must include a timezone"
             raise ValueError(msg)
         return value

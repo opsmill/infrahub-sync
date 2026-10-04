@@ -27,15 +27,39 @@ If publication fails, synchronization stops before contacting the destination wr
 surface and retains typed failure evidence on a terminal failed ProductRun. A reserved
 artifact remains unavailable until an exact publication retry completes it.
 
-## Configuration registry
+## Where records live
 
-The product store holds an append-only registry of declared configuration packages. A
-package is a strict, JSON-native envelope containing declared content only: adapter names,
-settings, and *references* to credentials. It never contains a credential value.
+Sync's PostgreSQL database is the authority for run state. It keeps the product runs,
+mutation receipts, write admissions, Prefect execution links, configuration safety
+baselines, audit events, and the advisory locks that keep two writers off one
+configuration.
 
-Registration validates before it persists, so an invalid package is refused and no version
-is written. `validate` re-reads a version that is already registered and checks it against
-the adapter declarations installed *now* — which is why a package accepted at registration
+Configurations and their versions live in Infrahub, in the kinds of the Sync schema
+extension. Sync reads and writes them on Infrahub's default branch:
+
+| Infrahub kind | Holds | Written by |
+| --- | --- | --- |
+| `SyncConfiguration` | A configuration's `name`, `description`, and `document`. | Users, through Infrahub |
+| `SyncConfigurationVersion` | An immutable copy of a document: `number`, `checksum`, `document`, `created_at`. | Sync, when a run starts on new content |
+| `SyncRun` | A copy of one run's operation, phase, outcome, target branch, plan checksum, summary, requester, reason, Prefect `flow_run_id`, and `finished_at`. | Sync, after each state change |
+| `SyncApproval` | The account that approved an apply, and the checksum it approved. A composed `sync` records none: it has no reviewed checksum when it is admitted. | Sync, when an apply is accepted |
+
+A `SyncRun` node is a mirror, written on a best-effort basis. A failed mirror write is logged
+and never fails the run, and the node can be rebuilt from the database. Each Prefect flow
+run is tagged `infrahub.app/node/<id>` for its `SyncRun` and its `SyncConfiguration`, so
+Infrahub lists it in the **Tasks** tab of both nodes.
+
+The database still has its `configurations` and `configuration_versions` tables. Only a Sync
+that runs without Infrahub uses them, for local and test use.
+
+## Configuration packages
+
+A package is a strict, JSON-native envelope containing declared content only: adapter
+names, settings, and *references* to credentials. It never contains a credential value.
+
+A run validates the document before it records a version, so invalid content is refused
+and no version is written. Validating a recorded version re-reads it and checks it against
+the adapter declarations installed *now* — which is why a version recorded without findings
 can report findings later, after an adapter's declared setting surface changes.
 
 A package carrying several independent defects yields one finding per defect, not just the
@@ -114,7 +138,8 @@ explicitly unqualified optional features, and nothing else.
 
 ### Service deployment
 
-The Sync API and worker construct the PostgreSQL/S3 profile from these settings:
+The Sync API and worker construct the PostgreSQL/S3 profile from these settings, and connect
+to the Infrahub that holds the configurations with two more:
 
 | Variable | Requirement |
 | --- | --- |
@@ -123,6 +148,8 @@ The Sync API and worker construct the PostgreSQL/S3 profile from these settings:
 | `INFRAHUB_SYNC_S3_PREFIX` | Optional object-key prefix; defaults to `infrahub-sync`. |
 | `INFRAHUB_SYNC_S3_ENDPOINT_URL` | Optional absolute `http` or `https` URL with no userinfo. The value reaches Boto3 unchanged; Boto3 owns any narrower SDK compatibility. |
 | `INFRAHUB_SYNC_S3_REGION` | Optional region passed to Boto3. |
+| `INFRAHUB_SYNC_INFRAHUB_ADDRESS` | Absolute URL of the Infrahub that holds the configurations. |
+| `INFRAHUB_SYNC_INFRAHUB_TOKEN` | API token of the Sync service account, which reads the configurations and writes versions, run copies, and approvals. |
 
 S3 credentials use Boto3's standard credential-provider chain. Configure credentials in
 the API, worker, CLI, or smoke-process environment that constructs the client. Sync does
@@ -130,7 +157,8 @@ not define access-key or secret-key settings.
 
 Constructing a service process initializes the PostgreSQL schema. The PostgreSQL role must
 have the DDL privileges required to create the product-record tables in its configured
-schema, plus permission to read and write their rows.
+schema, plus permission to read and write their rows. The Infrahub service account needs
+the permissions listed in [Connect to Infrahub](./sync-http-api.mdx#connect-to-infrahub).
 
 ### Test injection
 

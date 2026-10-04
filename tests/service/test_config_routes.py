@@ -1115,7 +1115,8 @@ def test_build_app_binds_one_projection_and_passes_configuration_dependency(
     class Resolver:
         secret_values: tuple[str, ...] = ()
 
-    def route_factory(*, product_projection: object, secrets: tuple[str, ...]) -> object:
+    def route_factory(*, product_projection: object, secrets: tuple[str, ...], configurations: object) -> object:
+        assert configurations is None
         assert secrets == ()
         assert product_projection is projection_dependency
         return route_dependency
@@ -1154,7 +1155,8 @@ def test_build_app_composes_one_service_projection_for_runs_and_configurations(
         received.append("storage")
         return projection
 
-    def routes_factory(*, product_projection: object, secrets: tuple[str, ...]) -> object:
+    def routes_factory(*, product_projection: object, secrets: tuple[str, ...], configurations: object) -> object:
+        assert configurations is None
         assert product_projection is projection
         assert secrets == ()
         received.append("routes")

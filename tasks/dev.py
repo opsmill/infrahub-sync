@@ -21,7 +21,8 @@ PREFECT_URL = "http://127.0.0.1:4230"
 # The development stack's Compose file, relative to the repository root.
 DEV_COMPOSE = "docker compose -f development/docker-compose.dev.yml"
 # The dev stack's constant principal, the same value docker-compose.dev.yml inlines.
-API_TOKEN = "infrahub-sync-dev-token"  # noqa: S105 -- a local-only development credential
+# The preview's Infrahub administrator token: callers authenticate with an Infrahub token.
+API_TOKEN = "06438eb2-8019-4776-878c-0941b1f1d1ec"  # noqa: S105 -- a local-only development credential
 WAIT_TIMEOUT_SECONDS = 420
 
 
@@ -47,7 +48,9 @@ def start(context: Context) -> None:
     # `up` recreates the worker whenever its settings change, which drops a network it
     # was connected to afterwards. Reconnect it to the local NetBox, if that is running.
     attach_dev_worker(context, load_netbox_env())
-    print(f" - [{NAMESPACE}] Sync API    {API_URL}  (bearer {API_TOKEN})")
+    print(
+        f" - [{NAMESPACE}] Sync API    {API_URL}  (INFRAHUB_SYNC_TOKEN={API_TOKEN}, the preview's Infrahub admin token)"
+    )
     print(f" - [{NAMESPACE}] Prefect UI  {PREFECT_URL}")
     print(f" - [{NAMESPACE}] After a code change: `uv run invoke build && uv run invoke start`")
     print(f" - [{NAMESPACE}] Stop and reset:      `uv run invoke destroy`")
@@ -59,8 +62,9 @@ def destroy(context: Context) -> None:
 
     Destructive by design: the task manager's PostgreSQL data, which holds Sync's
     product database, and the object store's buckets go with it, which is what makes
-    the next `invoke start` a first start again. The image the working tree built is
-    kept, so that start does not rebuild.
+    the next `invoke start` a first start again. Configurations and run records in the
+    preview's Infrahub are not touched. The image the working tree built is kept, so
+    that start does not rebuild.
     """
     with context.cd(ESCAPED_REPO_PATH):
         context.run(f"{DEV_COMPOSE} down --volumes --remove-orphans", pty=True)

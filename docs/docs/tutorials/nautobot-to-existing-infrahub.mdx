@@ -7,7 +7,7 @@ existing Infrahub. You will:
 
 - load two destination kinds, the Infrahub schema types that receive the data, into
   an Infrahub branch. A branch holds changes apart from `main` until you merge them.
-- register a Sync configuration package.
+- store a Sync configuration package in Infrahub.
 - review a saved plan: the list of creates, updates, and deletes that the Sync
   service calculates and stores before it writes anything.
 
@@ -71,8 +71,9 @@ token created under your account settings; a login password does not work here.
 Use source credentials that can read the mapped objects and an Infrahub token
 that can load schema and read those destination kinds on your chosen branch.
 
-Do not change the Sync API credentials you generated for the deployment. The bundled CLI uses them to
-contact Sync; `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` authenticates to the destination Infrahub.
+The bundled CLI contacts Sync with your own Infrahub API token, `INFRAHUB_SYNC_TOKEN`, which
+you exported in the quickstart; `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` is the token
+the worker uses to write to the destination Infrahub.
 Do not run `source .env`: that file also contains the deployment's
 internal credentials.
 
@@ -164,7 +165,7 @@ complete Nautobot mapping:
 ```yaml
 ---
 # Map Nautobot locations and devices to TestingSite and TestingDevice in Infrahub.
-# Replace both URLs and provide the matching destination schema before registration.
+# Replace both URLs and provide the matching destination schema before you load this package.
 # Set INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN and INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN
 # in the deployment's .env file.
 format_version: 1
@@ -213,7 +214,7 @@ mapped device points to through `location` must still pass that same filter: `Te
 resolves `site` from `TestingSite`, so a device whose location is filtered out has no site to
 resolve against, and planning fails.
 
-Before registering `package.yml`:
+Before you load `package.yml` into Infrahub:
 
 - Replace both URLs with addresses the **worker container** can reach.
   `localhost` and `127.0.0.1` inside the worker refer to that container.
@@ -229,7 +230,7 @@ The mapping includes locations and devices only. It does not import IP addressin
 or interfaces. Source devices need the mapped name, model, serial, and
 location relationship; review source data before expecting a complete preview.
 
-## Reload credentials and register the package
+## Reload credentials and create the configuration
 
 Recreate services whose environment changed, then check readiness:
 
@@ -242,24 +243,36 @@ Continue only when the `/status` response shows `worker.state` as `ready`.
 `up -d --wait` recreates the services whose environment changed;
 `docker compose restart` keeps the environment from when the containers were created.
 
-Register your package with the included Sync CLI:
+Sync reads configurations from Infrahub. Wrap `package.yml` in an Infrahub object
+file that creates a `SyncConfiguration` named `nautobot-first-preview`, with the package as its
+`document`:
 
 ```sh
-chmod 0644 package.yml
-docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
-  cli configs register /input/package.yaml --reason 'register Nautobot first preview'
+{
+  printf '%s\n' '---' 'apiVersion: infrahub.app/v1' 'kind: Object' 'spec:' \
+    '  kind: SyncConfiguration' '  data:' '    - name: nautobot-first-preview' '      document: |'
+  sed 's/^/        /' package.yml
+} > sync-configuration.yml
 ```
 
-The `-v` option mounts the host file read-only at `/input/package.yaml` for this
-one call. The image runs as UID 10001, so the file must be readable by other users.
-Sync stores the declared package, and the CLI prints `config_id` and
-`registry_version`. Record both; replace `CONFIG_ID` and `VERSION` below with
-those values.
+Load it with the same scoped environment you used for the schema. The token needs
+`create` on `SyncConfiguration` in Infrahub:
+
+```sh
+(
+  export INFRAHUB_ADDRESS="https://infrahub.example.invalid"
+  export INFRAHUB_API_TOKEN="$(sed -n 's/^INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN=//p' .env)"
+  .schema-tools/bin/infrahubctl object load sync-configuration.yml
+)
+```
+
+Runs read the configuration on Infrahub's default branch, whatever `BRANCH_NAME` you
+write to. The configuration's name, `nautobot-first-preview`, is its `CONFIG_ID` from here on.
 
 ## Validate the configuration
 
 ```sh
-docker compose run --rm --no-deps -T cli configs validate CONFIG_ID VERSION
+docker compose run --rm --no-deps -T cli configs validate nautobot-first-preview
 ```
 
 Read `total_findings` and every `finding` line. If `next_offset` is not `<none>`,
@@ -267,25 +280,20 @@ repeat with `--offset` set to that value to read the remaining findings. Resolve
 findings with `severity=error` before planning; a zero command exit alone does
 not mean the report contains no errors.
 
-This checks the registered package's declared content. It does not test source
+This checks the configuration's declared content on Infrahub's default branch. It does not test source
 credentials, connectivity, or the live destination schema. The preview below
 performs the reads against both servers.
 
-If you edit `package.yml` after registration, register a new immutable version:
-
-```sh
-docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
-  cli configs version CONFIG_ID /input/package.yaml --reason 'correct first-preview package'
-```
-
-Use the returned `registry_version` as `VERSION`, then validate it again.
+If you edit `package.yml` later, write `sync-configuration.yml` and load it again, or edit
+the configuration's `document` in Infrahub, then validate it again. The next run records
+the new content as the next version.
 
 ## Preview and review the changes
 
 Use the same `BRANCH_NAME` where you loaded the schema:
 
 ```sh
-docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --version VERSION \
+docker compose run --rm --no-deps -T cli diff --config-id nautobot-first-preview \
   --branch BRANCH_NAME --reason 'preview Nautobot locations and devices'
 ```
 
@@ -328,11 +336,11 @@ docker compose logs --no-color --tail 200 sync-worker
 Find the `flow_run_id` from `runs show` in the logs to identify the Prefect
 flow-run name. Read the messages for that name. If they report a source connection
 failure, check the source URL and reachability from the worker container. Correct the cause before creating another preview. After credential
-edits, run `docker compose up -d --wait` again; after package edits, register and validate the new version.
+edits, run `docker compose up -d --wait` again; after package edits, load and validate the configuration again.
 
 ## Continue
 
-You now have a registered configuration and a saved preview to review. For
+You now have a configuration in Infrahub and a saved preview to review. For
 later approved writes and deployment maintenance, see the
 [Compose operator sequence](../compose-deployment#the-operator-sequence) and
 [Operate a Compose deployment](../operations/day-2-operations.mdx).

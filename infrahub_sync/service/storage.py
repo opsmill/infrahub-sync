@@ -18,10 +18,10 @@ from infrahub_sync.product_store import (
     ProductStoreProviderError,
     production_product_projection,
 )
-from infrahub_sync.service.apply_guard import connect_guard_session, dsn_secret_values
+from infrahub_sync.service.apply_guard import connect_guard_session, dsn_secret_values, version_lock_key
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterator, Mapping
 
 _CONDITIONAL_CONFLICT_ATTEMPTS = 3
 DATABASE_URL_ENV = "INFRAHUB_SYNC_DATABASE_URL"
@@ -177,6 +177,22 @@ def service_guard_session(*, environ: Mapping[str, str] | None = None) -> psycop
     """
     values: Mapping[str, str] = os.environ if environ is None else environ
     return connect_guard_session(_database_url(values))
+
+
+@contextlib.contextmanager
+def service_version_lock(configuration_id: str, *, environ: Mapping[str, str] | None = None) -> Iterator[None]:
+    """Hold one configuration's version-creation lock for the duration of the block.
+
+    Every Sync process that records a configuration version takes this lock first, so
+    two runs that start on the same new content record one version between them.
+    """
+    with service_guard_session(environ=environ) as session:
+        key = version_lock_key(configuration_id)
+        session.execute("SELECT pg_advisory_lock(%s)", (key,))
+        try:
+            yield
+        finally:
+            session.execute("SELECT pg_advisory_unlock(%s)", (key,))
 
 
 def service_guard_secrets(*, environ: Mapping[str, str] | None = None) -> tuple[str, ...]:

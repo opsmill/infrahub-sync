@@ -1017,3 +1017,39 @@ def test_a_lost_write_worker_leaves_durable_reconciliation_evidence(tmp_path, pu
     assert run is not None
     assert run.prefect_executions[0].terminal_state == "interrupted"
     assert run.reconciliation_required is expected
+
+
+def test_a_background_pass_reports_each_run_it_changed(tmp_path) -> None:
+    """The callback is what keeps Infrahub's run mirror in step with abandoned runs."""
+    now = datetime(2026, 8, 29, 12, tzinfo=timezone.utc)
+    projection = local_product_projection(tmp_path)
+    projection.create_run(
+        _run(
+            "run-never-claimed",
+            PrefectExecutionLink(
+                flow_run_id="flow-never-claimed",
+                purpose="plan",
+                attempt=1,
+                submitted_at=now - timedelta(minutes=10),
+            ),
+        )
+    )
+    changed: list[str] = []
+    reconciler = RunLivenessReconciler(
+        projection,
+        _Orchestration(
+            PoolStatus(detail_available=False, queue_depth=None, observed_at=None),
+            Observation(available=True, state="scheduled"),
+        ),
+        LivenessPolicy(1, 30, 5),
+        "pool",
+        clock=lambda: now,
+        on_change=changed.append,
+    )
+
+    asyncio.run(reconciler.reconcile_once())
+
+    run = projection.lookup_run("run-never-claimed").value
+    assert run is not None
+    assert run.phase != "accepted", run.phase
+    assert changed == ["run-never-claimed"]

@@ -1,4 +1,4 @@
-"""CLI surface: the shipped console script drives one registered lifecycle.
+"""CLI surface: the shipped console script drives one configuration's lifecycle.
 
 The Sync API smoke proves the wire; this proves the entrypoint a developer actually
 types. It runs `infrahub-sync` as the installed console script in its own process, so
@@ -33,6 +33,7 @@ from tests.preview.test_service_api import (
     authenticated_client,
     device_types,
     infrahub_client,
+    put_smoke_configuration,
     seed_source_branch,
     smoke_package,
     unwritten_plan_reasons,
@@ -63,7 +64,8 @@ def cli_environment(preview_env: dict[str, Any]) -> dict[str, str]:
     return {
         **os.environ,
         "INFRAHUB_SYNC_API_URL": preview_env["urls"]["sync_api"],
-        "INFRAHUB_SYNC_API_TOKEN": preview_env["bearer_token"],
+        # The caller's Infrahub API token; the Sync API identifies the caller through it.
+        "INFRAHUB_SYNC_TOKEN": preview_env["bearer_token"],
         "NO_COLOR": "1",
         "COLUMNS": "200",
     }
@@ -125,41 +127,37 @@ def run_cli(
 
 
 def package_file(preview_env: dict[str, Any], directory: Path) -> Path:
-    """Write the smoke package where `configs register` can read it as an argument."""
+    """Write the smoke package where a `configs register` invocation can read it as an argument."""
     path = directory / "preview-smoke-package.json"
     path.write_text(json.dumps(smoke_package(preview_env["urls"]["infrahub"])), encoding="utf-8")
     return path
 
 
-def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: PLR0914
-    preview_env: dict[str, Any], tmp_path: Path, evidence_dir: Path
+def test_cli_validates_plans_reviews_and_applies_against_the_service(
+    preview_env: dict[str, Any], evidence_dir: Path
 ) -> None:
-    """`configs register` → `diff` → `runs plan` → `apply`, proved through the API."""
+    """`configs validate` → `diff` → `runs plan` → `apply`, proved through the API."""
     mutated_type = seed_source_branch(preview_env)
     assert device_types(infrahub_client(preview_env), SMOKE_BRANCH)[SHARED_DEVICE_NAME] != mutated_type
     artifacts: dict[str, object] = {}
+    config_id = put_smoke_configuration(preview_env, "preview-cli")
 
-    registered = run_cli(
+    validated = run_cli(
         preview_env,
         "configs",
-        "register",
-        str(package_file(preview_env, tmp_path)),
-        "--reason",
-        "preview CLI smoke: register the smoke configuration",
-        "--idempotency-key",
-        f"preview-cli-{uuid.uuid4()}",
+        "validate",
+        config_id,
         artifacts=artifacts,
-        artifact_name="CLI lifecycle configs register",
+        artifact_name="CLI lifecycle configs validate",
     )
-    config_id, registry_version = registered["config_id"], registered["registry_version"]
+    assert validated["total_findings"] == "0", validated
 
+    # No `--version`: the plan uses the configuration's current document and records it.
     planned = run_cli(
         preview_env,
         "diff",
         "--config-id",
         config_id,
-        "--version",
-        registry_version,
         "--branch",
         SMOKE_BRANCH,
         "--reason",
@@ -174,6 +172,7 @@ def test_cli_registers_plans_reviews_and_applies_against_the_service(  # noqa: P
         artifact_name="CLI lifecycle diff",
     )
     run_id, checksum = planned["run_id"], planned["plan_checksum"]
+    assert planned["registry_version"] == "1", planned
 
     oracle_transcript = evidence_dir / "cli-lifecycle-oracle-http.jsonl"
     with authenticated_client(preview_env, transcript=oracle_transcript) as client:

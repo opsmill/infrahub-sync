@@ -99,7 +99,7 @@ needs, the second names each setting and where to get it.
 | Saved-plan apply | `INFRAHUB_ADDRESS` and `INFRAHUB_API_TOKEN` **plus** `NETBOX_URL` and `NETBOX_TOKEN` | saved-plan apply |
 | Remote run | `INFRAHUB_ADDRESS`, `INFRAHUB_API_TOKEN`, `PREFECT_API_URL`, and a separately served deployment the test resolves | remote-run |
 | Durable store | `INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL`, `_S3_BUCKET` and `_S3_ENDPOINT_URL`, plus `boto3` and `psycopg` | service storage, isolated worker handoff |
-| Live stack | A running development stack, probed rather than configured | managed write-guard live |
+| Live stack | A running development stack, probed rather than configured | managed write-guard live, configurations in Infrahub (`tests/integration/test_configurations_in_infrahub.py`) |
 | Prefect idempotency | The `prefect` and `opsmill_prefect_extras` imports only | [`tests/integration/test_service_prefect_idempotency.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration/test_service_prefect_idempotency.py) |
 | Product store on PostgreSQL | A disposable PostgreSQL at `PRODUCT_STORE_TEST_POSTGRESQL_DSN`, plus `psycopg` | [`tests/product_store/test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_contract.py), [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_configuration_baseline.py), [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_write_admission.py), [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/service/test_apply_versus_verify_race.py) |
 
@@ -119,7 +119,7 @@ Use a separate, empty database for each of the three PostgreSQL settings. Do not
 preview service's own `infrahub_sync` database: these tests lock, terminate, create, and drop
 objects in the database they receive.
 
-Three families need more detail than the tables give:
+Four families need more detail than the tables give:
 
 - **Saved-plan apply** needs a NetBox reachable at `NETBOX_URL`, seeded with the fixed dataset
   the test module's own docstring describes (sites `site-a`/`site-b`/`site-c`, racks
@@ -149,6 +149,9 @@ Three families need more detail than the tables give:
   ```
 
   `uv run invoke netbox.down` removes the NetBox containers and their data volumes.
+- **Live stack**: `tests/integration/test_configurations_in_infrahub.py` needs the preview
+  stack from `uv run invoke preview.up`; it loads `schema/sync.yml` itself and skips, naming
+  the unreachable service, when the stack is down.
 - **Prefect idempotency** needs no external service. It skips unless `prefect` and
   `opsmill_prefect_extras` import, then starts Prefect's own isolated temporary API server with
   `PREFECT_HOME` and `PREFECT_LOCAL_STORAGE_PATH` redirected under `tmp_path`. It writes only
@@ -309,7 +312,8 @@ point them at:
 ##### The `from-netbox` example check
 
 The `from-netbox` example check runs the shipped `examples/netbox_to_infrahub` package
-through the Sync API: register it, then `diff` and `sync` into an Infrahub branch. It is not a
+through the Sync API: load it into Infrahub as a `SyncConfiguration`, then `diff` and
+`sync` into an Infrahub branch. It is not a
 pytest test. Run it by hand when you change the example mapping, the NetBox adapter, or the
 pinned NetBox image, and record the result in the pull request. The nightly
 end-to-end workflow also runs it against the pinned local `demo` dataset.
@@ -366,26 +370,37 @@ Run these commands from the repository root:
    the same way. In that case, load the snapshot. If the Marketplace version differs from the
    snapshot, record the difference in the pull request.
 
-4. Write the local package and register it. The shipped package names the public NetBox
-   demo and an Infrahub on port 8000. `netbox.demo-package` writes
-   `.netbox/from-netbox.local.yml`, a copy that points at the local NetBox and the preview
-   Infrahub. The mapping and the credential references stay the same. Pass
-   `--infrahub-url` to use another Infrahub address.
+4. Write the local package and load it into the preview Infrahub as a `SyncConfiguration`
+   named `netbox-demo`. The shipped package names the public NetBox demo and an Infrahub on
+   port 8000. `netbox.demo-package` writes `.netbox/from-netbox.local.yml`, a copy that
+   points at the local NetBox and the preview Infrahub. The mapping and the credential
+   references stay the same. Pass `--infrahub-url` to use another Infrahub address.
+   `preview.up` has already loaded the Sync schema extension. The preview's Sync API
+   identifies callers through its Infrahub, so call it with the same admin token.
 
    ```bash
    uv run invoke netbox.demo-package
+   uv run python - <<'PY'
+   import pathlib, yaml
+   document = pathlib.Path(".netbox/from-netbox.local.yml").read_text(encoding="utf-8")
+   configuration = {"name": "netbox-demo", "document": document}
+   spec = {"kind": "SyncConfiguration", "data": [configuration]}
+   objects = {"apiVersion": "infrahub.app/v1", "kind": "Object", "spec": spec}
+   pathlib.Path(".netbox/sync-configuration.local.yml").write_text(yaml.safe_dump(objects, sort_keys=False))
+   PY
+   uv run infrahubctl object load .netbox/sync-configuration.local.yml
    export INFRAHUB_SYNC_API_URL="http://localhost:8010"
-   export INFRAHUB_SYNC_API_TOKEN="preview-tester-token-0001"
-   uv run infrahub-sync configs register .netbox/from-netbox.local.yml --reason "register the local NetBox demo import"
+   export INFRAHUB_SYNC_TOKEN="$INFRAHUB_API_TOKEN"
+   uv run infrahub-sync configs validate netbox-demo
    ```
 
-5. Create the branch, then run `diff` and `sync` with the `config_id` and `registry_version`
-   from the registration.
+5. Create the branch, then run `diff` and `sync`. Each run records the configuration's
+   current document as a version, or reuses the version that holds it.
 
    ```bash
    uv run infrahubctl branch create netbox-import
-   uv run infrahub-sync diff --config-id <config-id> --version <version> --branch netbox-import --reason "review the local NetBox demo import"
-   uv run infrahub-sync sync --config-id <config-id> --version <version> --branch netbox-import --reason "import the local NetBox demo data"
+   uv run infrahub-sync diff --config-id netbox-demo --branch netbox-import --reason "review the local NetBox demo import"
+   uv run infrahub-sync sync --config-id netbox-demo --branch netbox-import --reason "import the local NetBox demo data"
    ```
 
 On the pinned dataset and the current example mapping, the plan has 1,688 operations: 1,687

@@ -38,7 +38,7 @@ from tests.compose.lifecycle import (
     operator_environment,
     plant_pending_update,
     probe_json,
-    register,
+    put_configuration,
     smoke_package,
     wait_for,
     worker_state,
@@ -74,7 +74,7 @@ GENERATED_SETTINGS = (
     "INFRAHUB_SYNC_PRODUCT_PASSWORD",
     "INFRAHUB_SYNC_PREFECT_AUTH_STRING",
     "INFRAHUB_SYNC_S3_SECRET_KEY",
-    "INFRAHUB_SYNC_API_TOKEN",
+    "INFRAHUB_SYNC_INFRAHUB_TOKEN",
 )
 
 
@@ -92,8 +92,8 @@ def wait_until_ready(deployment: Deployment) -> None:
     )
 
 
-def submit(client: httpx.Client, config_id: str, registry_version: int, operation: str, reason: str) -> str:
-    """Create one managed run and return its identifier.
+def submit(client: httpx.Client, config_id: str, operation: str, reason: str) -> str:
+    """Create one managed run on the configuration's current document and return its identifier.
 
     A `sync` writes at the destination in one admission, so the API requires the
     confirmation up front; a `plan` writes nothing and takes none.
@@ -101,7 +101,6 @@ def submit(client: httpx.Client, config_id: str, registry_version: int, operatio
     body: dict[str, Any] = {
         "operation": operation,
         "config_id": config_id,
-        "registry_version": registry_version,
         "branch": SMOKE_BRANCH,
         "reason": reason,
     }
@@ -157,8 +156,8 @@ def started(
     """A fresh project of the operator file, written a `.env` and taken to READY.
 
     The destination credential is supplied for the managed rows below, which do
-    register a package and run against the pinned Infrahub. The start itself
-    needs neither.
+    put a configuration into Infrahub and run against the pinned Infrahub. The
+    start itself needs neither.
     """
     destination = f"http://{container_reachable_host()}:{FIXTURE_INFRAHUB_PORT}"
     instance = f"lifecycle{uuid.uuid4().hex[:12]}"
@@ -168,6 +167,7 @@ def started(
         destination_token=infrahub_fixture["token"],
         canaries=canaries,
         instance=instance,
+        infrahub_token=infrahub_fixture["token"],
         infrahub_network=infrahub_fixture["network"],
         api_port=int(API_PORT),
     )
@@ -190,10 +190,9 @@ def started(
 
 
 @pytest.fixture(scope="module")
-def principal(started: Deployment) -> str:
-    """The bearer token of this deployment's one principal."""
-    tokens = json.loads(started.setting("INFRAHUB_SYNC_SERVICE_BEARER_TOKENS"))
-    return str(next(iter(tokens.values()))["token"])
+def principal(infrahub_fixture: dict[str, str]) -> str:
+    """The Infrahub API token this module calls the deployment with."""
+    return infrahub_fixture["token"]
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +236,9 @@ def test_a_started_deployment_reports_ready(started: Deployment) -> None:
     assert worker_state(started) in {"ready", "busy"}
 
 
-def test_a_busy_worker_is_still_ready_at_the_deployment_level(started: Deployment, principal: str) -> None:
+def test_a_busy_worker_is_still_ready_at_the_deployment_level(
+    started: Deployment, principal: str, infrahub_fixture: dict[str, str]
+) -> None:
     """A deployment with work in flight is working, not degraded.
 
     `busy` is a positive scheduled queue depth -- `service.py` derives the state
@@ -252,10 +253,8 @@ def test_a_busy_worker_is_still_ready_at_the_deployment_level(started: Deploymen
     state under test here and `no-live-worker` the neighbouring case's.
     """
     worker = started.container("sync-worker")
+    config_id = put_configuration(infrahub_fixture, smoke_package(started.destination))
     with api_client(started, principal) as client:
-        config_id, registry_version = register(
-            client, smoke_package(started.destination), "compose suite: configuration for the busy check"
-        )
         paused = docker(["pause", worker])
         assert paused.returncode == 0, paused.stderr
         try:
@@ -265,7 +264,6 @@ def test_a_busy_worker_is_still_ready_at_the_deployment_level(started: Deploymen
                 json={
                     "operation": "plan",
                     "config_id": config_id,
-                    "registry_version": registry_version,
                     "branch": SMOKE_BRANCH,
                     "reason": "compose suite: occupy the worker",
                 },
@@ -419,11 +417,9 @@ def test_a_plan_apply_and_separate_sync_run_through_the_replacement_worker(
     sync that converges.
     """
     planted = plant_pending_update(infrahub_fixture)
+    config_id = put_configuration(infrahub_fixture, smoke_package(started.destination))
     with api_client(started, principal) as client:
-        config_id, registry_version = register(
-            client, smoke_package(started.destination), "compose suite: configuration for the approved path"
-        )
-        run_id = submit(client, config_id, registry_version, "plan", "compose suite: plan after restart")
+        run_id = submit(client, config_id, "plan", "compose suite: plan after restart")
         await_phase(client, run_id, "planned")
 
         plan = client.get(f"/runs/{run_id}/plan")
@@ -456,7 +452,7 @@ def test_a_plan_apply_and_separate_sync_run_through_the_replacement_worker(
         assert applied.status_code == 202, applied.text
         await_phase(client, run_id, "applied")
 
-        sync_id = submit(client, config_id, registry_version, "sync", "compose suite: separate sync after apply")
+        sync_id = submit(client, config_id, "sync", "compose suite: separate sync after apply")
         # A managed sync ends in the same durable phase an approved apply does.
         await_phase(client, sync_id, "applied")
 
@@ -503,8 +499,7 @@ def test_the_next_up_after_a_reset_is_a_cold_bootstrap(started: Deployment) -> N
     a real second start, so this drives one.
 
     Cold is asserted, not assumed: no runs, no artifacts, and an empty
-    configuration registry. Before the teardown there were runs, artifacts, and
-    the configurations this suite registered itself.
+    configuration registry. Before the teardown there were runs and artifacts.
     """
     # The case above already removed it. Run on its own, this case has to remove
     # it too, or it would be restarting a deployment rather than bootstrapping one.

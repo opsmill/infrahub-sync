@@ -148,8 +148,8 @@ def test_compatibility_precedes_auth_and_is_cached() -> None:
     assert client.list_configs() == ()
 
     assert [request.url.path for request in requests] == ["/version", "/configs", "/configs"]
-    assert "Authorization" not in requests[0].headers
-    assert requests[1].headers["Authorization"] == f"Bearer {TOKEN}"
+    assert "X-INFRAHUB-KEY" not in requests[0].headers
+    assert requests[1].headers["X-INFRAHUB-KEY"] == TOKEN
     assert client.get_version().model_extra == {"future": "readable"}
 
 
@@ -174,7 +174,7 @@ def test_compatibility_refuses_before_protected_request(response: httpx.Response
     with pytest.raises(CompatibilityError):
         client.list_configs()
     assert [request.url.path for request in requests] == ["/version"]
-    assert "Authorization" not in requests[0].headers
+    assert "X-INFRAHUB-KEY" not in requests[0].headers
 
 
 def test_compatibility_error_preserves_only_safely_parsed_discovery_fields() -> None:
@@ -263,7 +263,7 @@ def test_all_route_methods_send_the_frozen_contract() -> None:
     client.cancel_run("run-1", CancelRunRequest(reason="test"), "key-6")
 
     protected = [request for request in requests if request.url.path not in {"/version", "/status"}]
-    assert all(request.headers["Authorization"] == f"Bearer {TOKEN}" for request in protected)
+    assert all(request.headers["X-INFRAHUB-KEY"] == TOKEN for request in protected)
     assert [request.headers.get("Idempotency-Key") for request in requests if request.method == "POST"] == [
         "key-1",
         "key-2",
@@ -580,3 +580,58 @@ def test_artifact_requires_a_matching_digest(digest_header: str | None) -> None:
         ),
     )
     assert client.get_artifact("run-1", "artifact-1").data == data
+
+
+def test_validate_on_branch_sends_the_branch_and_reads_the_report() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        body = {
+            "config_id": "cfg",
+            "branch": "feature/vlan",
+            "checksum": "c" * 64,
+            "findings": [],
+            "offset": 0,
+            "limit": 256,
+            "total_findings": 0,
+            "next_offset": None,
+        }
+        return httpx.Response(200, json=body)
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    report = client.validate_config_on_branch("cfg", "feature/vlan")
+
+    assert report.branch == "feature/vlan"
+    assert requests[-1].method == "POST"
+    assert requests[-1].url.path == "/configs/cfg/validate"
+    assert requests[-1].url.params["branch"] == "feature/vlan"
+    assert requests[-1].headers["X-INFRAHUB-KEY"] == TOKEN
+
+
+@pytest.mark.parametrize("branch", ["", "/leading", "has space", "a" * 251])
+def test_validate_on_branch_refuses_an_invalid_branch_before_any_request(branch: str) -> None:
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(lambda _r: pytest.fail("sent")))
+
+    with pytest.raises(ClientInputError):
+        client.validate_config_on_branch("cfg", branch)
+
+
+def test_the_environment_token_is_the_callers_infrahub_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INFRAHUB_SYNC_API_URL", "https://example.test")
+    monkeypatch.setenv("INFRAHUB_SYNC_TOKEN", "infrahub-token")
+    monkeypatch.setenv("INFRAHUB_SYNC_API_TOKEN", "older-token")
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(200, json=[])
+
+    SyncClient.from_environment(transport=httpx.MockTransport(handler)).list_configs()
+
+    assert sent[-1].headers["X-INFRAHUB-KEY"] == "infrahub-token"

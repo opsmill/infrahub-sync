@@ -5,17 +5,38 @@ title: Run a sync
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-The Infrahub Sync CLI is a client of the Sync API. The Sync service stores your
-configuration packages and plans. Its worker connects to the source and the destination.
-The CLI does not load adapters and does not run a sync locally.
+The Infrahub Sync CLI is a client of the Sync API. Your configurations live in Infrahub, as
+`SyncConfiguration` nodes. The Sync service keeps your plans and run records, and its worker
+connects to the source and the destination. The CLI does not load adapters and does not run
+a sync locally.
 
 A reviewed sync has five steps:
 
-1. Register the configuration package.
-2. Validate the registered version.
+1. Create the configuration in Infrahub.
+2. Validate it.
 3. Create a plan.
 4. Review the plan.
 5. Apply the reviewed plan.
+
+## Before you start
+
+Your Infrahub administrator loads the Sync schema extension into Infrahub once, and again on
+a Sync upgrade that changes it. See [Load the Sync schema](./compose-deployment.mdx#load-the-sync-schema).
+
+You need an Infrahub account and its API token. Sync asks Infrahub who you are and what you
+may do, so the permissions below are granted in Infrahub, on the default branch:
+
+| To | You need |
+| --- | --- |
+| Read configurations and their versions | `view` on `SyncConfiguration` |
+| Read runs, plans, results, and artifacts | `view` on `SyncRun` |
+| Create a plan with `diff`, or verify one | `create` on `SyncRun` |
+| Apply a reviewed plan | `create` on `SyncApproval` |
+| Run `sync` | `create` on `SyncRun` and `create` on `SyncApproval` |
+| Cancel a run | `update` on `SyncRun` |
+
+The permission alone decides, so one account can create a plan and another, with `create` on
+`SyncApproval`, can apply it. See [Permissions](./reference/sync-http-api.mdx#permissions).
 
 ## Connect the CLI to the Sync API
 
@@ -27,26 +48,24 @@ differs:
 
   Run each command as `docker compose run --rm --no-deps -T cli <command>` from the
   directory that holds `docker-compose.yml` and `.env`. The `cli` service supplies the Sync
-  API URL and token.
-
-  A command that reads a file from your machine needs that file mounted read-only at
-  `/input/package.yaml`, with `-v "$PWD/package.yml:/input/package.yaml:ro"` before `cli`.
-  The image runs as UID 10001, so the file must be readable by other users. See
-  [Registering a package](./compose-deployment.mdx#registering-a-package).
+  API URL, and presents the Infrahub API token that `INFRAHUB_SYNC_TOKEN` holds in your
+  shell or in `.env`.
 
   </TabItem>
   <TabItem value="source" label="Run from source">
 
   Run each command as `uv run infrahub-sync <command>` from the repository checkout. Set the
-  Sync API URL and bearer token first. For the local development stack, these are:
+  Sync API URL and your Infrahub API token first. For the local development stack, these are:
 
   ```bash
   export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8030
-  export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
+  export INFRAHUB_SYNC_TOKEN=06438eb2-8019-4776-878c-0941b1f1d1ec
   ```
 
-  The token has no command-line option, so it does not appear in shell history or in
-  process arguments. `--api-url` overrides the URL for one command.
+  That token is the local preview Infrahub's administrator token. The token has no
+  command-line option, so it does not appear in shell history or in process arguments.
+  `--api-url` overrides the URL for one command. When `INFRAHUB_SYNC_TOKEN` is unset, the
+  CLI reads the older `INFRAHUB_SYNC_API_TOKEN`.
 
   </TabItem>
 </Tabs>
@@ -54,60 +73,54 @@ differs:
 Before its first authenticated request, the CLI checks that the service is compatible. It
 refuses an incompatible service before it sends the token.
 
-In the commands below, replace `CONFIG_ID`, `RUN_ID`, and `CHECKSUM` with the values that
-the previous command printed, and `BRANCH` with the destination branch.
+In the commands below, replace `CONFIG_ID`, `RUN_ID`, and `CHECKSUM` with your values, and
+`BRANCH` with the destination branch. `CONFIG_ID` is the configuration's `name` in Infrahub.
 
-## Register the package
+## Create the configuration in Infrahub
+
+A `SyncConfiguration` has a `name`, an optional `description`, and a `document`: the whole
+[configuration package](./configuration-package.mdx), as YAML or JSON text. Create it the way
+you create any Infrahub object: in the web interface, through GraphQL, or from an object
+file with `infrahubctl`:
+
+```bash
+infrahubctl object load sync-configuration.yml
+```
+
+[`examples/netbox_to_infrahub/sync-configuration.yml`](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/examples/netbox_to_infrahub/sync-configuration.yml)
+is a complete object file. Like any Infrahub change, you can make it on a branch, review it
+in a proposed change, and merge it. Runs read the configuration on the default branch only.
+
+Nothing is recorded when you create or edit the configuration. A run records the version it
+uses. See [Configuration package](./configuration-package.mdx#versions).
+
+## Validate the configuration
 
 <Tabs groupId="sync-client">
   <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
-    cli configs register /input/package.yaml --reason "register inventory import"
+  docker compose run --rm --no-deps -T cli configs validate CONFIG_ID
+  docker compose run --rm --no-deps -T cli configs validate CONFIG_ID --branch my-change
   ```
 
   </TabItem>
   <TabItem value="source" label="Run from source">
 
   ```bash
-  uv run infrahub-sync configs register package.yml --reason "register inventory import"
+  uv run infrahub-sync configs validate CONFIG_ID
+  uv run infrahub-sync configs validate CONFIG_ID --branch my-change
   ```
 
   </TabItem>
 </Tabs>
 
-The output includes the `config_id` and the `registry_version`, which is `1` for a new
-registration. Every later command names the package by these two values. The file itself is
-not read again. For what registration checks and returns, see
-[Configuration package](./configuration-package.mdx#registration-and-versions).
+`configs validate` reports findings in the configuration's document as it stands on the
+Infrahub default branch, or on the branch that `--branch` names. Use `--branch` to check a
+change before you merge it. It records nothing, and it does not connect to the source or the
+destination.
 
-## Validate the registered version
-
-<Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run the container image" default>
-
-  ```bash
-  docker compose run --rm --no-deps -T cli configs validate CONFIG_ID 1
-  docker compose run --rm --no-deps -T cli configs show CONFIG_ID --version 1
-  ```
-
-  </TabItem>
-  <TabItem value="source" label="Run from source">
-
-  ```bash
-  uv run infrahub-sync configs validate CONFIG_ID 1
-  uv run infrahub-sync configs show CONFIG_ID --version 1
-  ```
-
-  </TabItem>
-</Tabs>
-
-`configs validate` reports findings in the declared content. It does not connect to the
-source or the destination.
-
-`configs show --version` prints the registered content. Check
-`configuration.destination.settings.branch`:
+Check `configuration.destination.settings.branch` in the document:
 
 - If the package declares a branch, every run writes to that branch, and `--branch` has no
   effect.
@@ -116,7 +129,7 @@ source or the destination.
 
 The worker ignores `INFRAHUB_DEFAULT_BRANCH` and `INFRAHUB_DEFAULT_BRANCH_FROM_GIT` for this choice. After a completed run, the CLI prints `destination_branch`; `runs plan RUN_ID` shows the branch recorded in its saved plan. If the CLI cannot read the saved plan after a successful `sync` or `apply`, it prints `destination_branch: <unavailable>` and still exits successfully. A plan without a destination binding reports `destination_branch: <none>`.
 
-To inspect what is registered, use `configs list`, `configs show CONFIG_ID`, and
+To inspect what Sync sees, use `configs list`, `configs show CONFIG_ID`, and
 `configs versions CONFIG_ID`.
 
 ## Create a plan
@@ -125,7 +138,7 @@ To inspect what is registered, use `configs list`, `configs show CONFIG_ID`, and
   <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --version 1 \
+  docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID \
     --branch BRANCH --reason "review inventory import"
   ```
 
@@ -133,14 +146,22 @@ To inspect what is registered, use `configs list`, `configs show CONFIG_ID`, and
   <TabItem value="source" label="Run from source">
 
   ```bash
-  uv run infrahub-sync diff --config-id CONFIG_ID --version 1 \
+  uv run infrahub-sync diff --config-id CONFIG_ID \
     --branch BRANCH --reason "review inventory import"
   ```
 
   </TabItem>
 </Tabs>
 
-`diff` asks the service to create a plan. The worker reads the source and the destination
+`diff` asks the service to create a plan from the configuration's current document on the
+Infrahub default branch. The service records that document as a new version when no version
+holds it yet, and reuses the existing version otherwise. The run output names it as
+`registry_version`. To plan against an earlier version, pass `--version N`.
+
+A document with errors is refused with `configuration-invalid`, and no version is recorded.
+Run `configs validate CONFIG_ID` to read the findings.
+
+The worker reads the source and the destination
 and saves the plan. It writes nothing to the destination. By default, `diff` waits for the
 plan, then prints the `run_id`, the `plan_checksum`, and the operation counts by action and
 by kind.
@@ -216,32 +237,12 @@ no longer writable, or a planned value would be dropped, apply refuses the write
 the kind and the field. Create and review a new plan in that case. Operations applied before
 a refusal stay applied.
 
-## Change a registered package
+## Change a configuration
 
-A registered version never changes. To change a package, edit the file and register it as a
-new version of the same configuration:
-
-<Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run the container image" default>
-
-  ```bash
-  docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
-    cli configs version CONFIG_ID /input/package.yaml --reason "update inventory mapping"
-  ```
-
-  </TabItem>
-  <TabItem value="source" label="Run from source">
-
-  ```bash
-  uv run infrahub-sync configs version CONFIG_ID package.yml --reason "update inventory mapping"
-  ```
-
-  </TabItem>
-</Tabs>
-
-Then validate the new version and create a plan with `--version` set to the new version
-number. Do not use `configs register` for an edited package: it creates a separate
-configuration with a new `config_id`.
+Edit the `document` of the `SyncConfiguration` in Infrahub, on a branch if you want a review.
+Validate the change with `configs validate CONFIG_ID --branch <your-branch>`, then merge it.
+The next `diff` or `sync` records the new content as the next version. Earlier versions never
+change, and a formatting-only change reuses the current version.
 
 ## Run a sync without a review step
 
@@ -250,19 +251,20 @@ configuration with a new `config_id`.
 Run from source:
 
 ```bash
-uv run infrahub-sync sync --config-id CONFIG_ID --version 1 --branch BRANCH \
+uv run infrahub-sync sync --config-id CONFIG_ID --branch BRANCH \
   --reason "scheduled synchronization"
 ```
 
 Run the container image:
 
 ```bash
-docker compose run --rm --no-deps -T cli sync --config-id CONFIG_ID --version 1 --branch BRANCH \
+docker compose run --rm --no-deps -T cli sync --config-id CONFIG_ID --branch BRANCH \
   --reason "scheduled synchronization"
 ```
 
 The worker saves the plan before the first write, so you can read it afterwards with
-`runs plan`. `sync` does not apply a plan that you reviewed earlier; it creates a new one. To
+`runs plan`. `sync` does not apply a plan that you reviewed earlier; it creates a new one,
+and records no `SyncApproval`, since no reviewed checksum exists when it starts. To
 approve the exact operations before they are written, use `diff`, `runs plan`, and `apply`.
 
 ## Reference
@@ -293,11 +295,11 @@ and the retry key. Check the run later with `runs show RUN_ID` or `runs plan RUN
 
 ### Retry keys
 
-`configs register`, `configs version`, `diff`, `sync`, and `apply` accept
-`--idempotency-key`. If you omit it, the CLI generates a key and prints it. If the connection
-fails before you see a response, run the same command again with that key. The service then
-returns the original response instead of starting a second operation. See
-[Retry keys](./configuration-package.mdx#retry-keys).
+`diff`, `sync`, and `apply` accept `--idempotency-key`. If you omit it, the CLI generates a
+key and prints it. If the connection fails before you see a response, run the same command
+again with that key. The service then returns the original response instead of starting a
+second operation. A retry with the same key but a different request is refused with
+`idempotency-conflict`.
 
 ### Output fields
 
@@ -305,6 +307,12 @@ returns the original response instead of starting a second operation. See
   `--offset` and `--limit` to read another page of findings.
 - `runs show RUN_ID` prints the run's phase, outcome, execution state, and Prefect
   correlation.
+- Each run also appears in Infrahub as a `SyncRun` node, linked to its configuration and
+  version. Sync's own database stays the record of the run; the node is a copy, written on
+  a best-effort basis, that also carries the Prefect `flow_run_id` and `finished_at`. The
+  run's Prefect flow run is tagged with both nodes, so its logs appear in the **Tasks** tab
+  of the `SyncRun` and of its `SyncConfiguration` in Infrahub. An apply also creates a `SyncApproval` node that names the approver
+  and the approved checksum.
 - `runs results RUN_ID` prints the results that the service recorded for the run, as JSON.
 
 For every command and option, see the [Sync CLI reference](./reference/cli.mdx).
