@@ -1,0 +1,74 @@
+dev/adr/0017-sync-runs-on-infrahubs-task-manager.md
+  s_08a08909ed3ec7::t_5b43de6d9fcd0d 13
+  s_08a08909ed3ec7::t_25d1e441eedab1 25-27
+dev/specs/008-infrahub-platform-alignment/contracts/task-manager.md
+  s_08a08909ed3ec7::t_b32688225d91f6 44-45
+  s_08a08909ed3ec7::t_1687c443462616 5-6
+tests/service/test_flow_and_prefect.py
+  s_08a08909ed3ec7::t_b08be65bf8d20e 939
+dev/specs/008-infrahub-platform-alignment/contracts/sync-http-api.md
+  s_08a08909ed3ec7::t_47e58604dadb93 70
+  s_08a08909ed3ec7::t_fa4a9ded1f843c 17-19
+tests/service/test_prefect_server.py
+  s_08a08909ed3ec7::t_e7d844df49becd 21
+  s_08a08909ed3ec7::t_94bedc872abbc3 255-277
+  s_08a08909ed3ec7::t_1015b47446bea6 278-279
+tests/service/test_compose_bootstrap.py
+  s_08a08909ed3ec7::t_68b6032361e49c 355
+  s_08a08909ed3ec7::t_507012bc9459c6 33-37
+  s_08a08909ed3ec7::t_4b60a3b9a1cb13 343-354,356-444
+dev/specs/008-infrahub-platform-alignment/checklists/requirements.md
+  s_08a08909ed3ec7::t_d38f685d109ce9 38-42
+infrahub_sync/service/prefect_server.py
+  s_08a08909ed3ec7::t_c18ab0331afc6d 178,180-184
+  s_08a08909ed3ec7::t_ec74c2ae3a8ff0 50
+  s_08a08909ed3ec7::t_16aab492db2bff 70-80
+  s_08a08909ed3ec7::t_ecd6b22d36f1b0 115-116,118-121
+infrahub_sync/service/bootstrap.py
+  s_08a08909ed3ec7::t_a5209364734161 62
+  s_08a08909ed3ec7::t_319d4a5c9ce28f 194-195,198-200
+  s_08a08909ed3ec7::t_d3e8a7fc329330 25,28,32,38-44
+  s_08a08909ed3ec7::t_be492502f7976f 148-164,166-183
+.github/workflows/update-infrahub.yml
+  s_08a08909ed3ec7::t_1fb139edf9c076 70
+dev/specs/008-infrahub-platform-alignment/plan.md
+  s_08a08909ed3ec7::t_5fbc151c48e502 28-29
+  s_08a08909ed3ec7::t_961de92e9271ab 85-86
+  s_08a08909ed3ec7::t_63b46f2e3ad230 11-16
+  s_08a08909ed3ec7::t_4b3f907b43e1ab 17-18
+  s_08a08909ed3ec7::t_63dbfa0a48b5c4 100
+  s_08a08909ed3ec7::t_b91a99a78f7974 107
+changelog/+infrahub-task-manager.changed.md
+  s_08a08909ed3ec7::t_8ce423061ed4ed 5-9
+docs/docs/development-stack.mdx
+  s_08a08909ed3ec7::t_04f07b593a9291 253-254,256-257
+tests/compose/test_compose_contract.py
+  s_08a08909ed3ec7::t_ed444f4e483380 346
+dev/specs/008-infrahub-platform-alignment/quickstart.md
+  s_08a08909ed3ec7::t_15c8e5803169db 13-15
+  s_08a08909ed3ec7::t_f8080b61b14962 59-61
+  s_08a08909ed3ec7::t_0d3fa602f0a6a3 30-33
+dev/specs/008-infrahub-platform-alignment/spec.md
+  s_08a08909ed3ec7::t_6d841731d88503 149-150
+  s_08a08909ed3ec7::t_a0448ae59b50ff 66-67
+  s_08a08909ed3ec7::t_ba4c5df44d8c66 49-51
+  s_08a08909ed3ec7::t_6ae350fd891b0a 111-112
+  s_08a08909ed3ec7::t_ccf7d1baa4d01e 36-37
+  s_08a08909ed3ec7::t_4ff49c5555af58 174-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "5b753d43f7f2609ac1fc8a481f6a6d144b219006",
+  "prompts": {},
+  "sessions": {
+    "s_08a08909ed3ec7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21445c9c-5a8d-449e-b739-c09c874959d5",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
