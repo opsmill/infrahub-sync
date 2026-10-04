@@ -55,6 +55,8 @@ dev/specs/008-infrahub-platform-alignment/spec.md
   s_08a08909ed3ec7::t_6ae350fd891b0a 111-112
   s_08a08909ed3ec7::t_ccf7d1baa4d01e 36-37
   s_08a08909ed3ec7::t_4ff49c5555af58 174-178
+docs/docs/quickstart-compose.mdx
+  s_08a08909ed3ec7::t_13afe9affb4531 77-83
 ---
 {
   "schema_version": "authorship/3.0.0",
