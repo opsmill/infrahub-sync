@@ -190,26 +190,33 @@ def test_invoke_start_reconnects_a_recreated_worker(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(context, "run", lambda command, **_kwargs: events.append(command.split(" ", 2)[1]))
     monkeypatch.setattr(dev, "load_netbox_env", lambda: VALUES)
     monkeypatch.setattr(dev, "attach_dev_worker", lambda _context, _values: events.append("attach") or False)
+    monkeypatch.setattr(dev, "attach_dev_worker_to_infrahub", lambda _context: events.append("infrahub") or False)
 
     cast("Task", dev.start).body(context)
 
-    assert events == ["compose", "attach"]
+    assert events == ["compose", "attach", "infrahub"]
 
 
+@pytest.mark.parametrize(
+    ("infrahub_url", "expected"),
+    [
+        ("", "http://infrahub-server:8000"),
+        ("http://infrahub.example.invalid:8000", "http://infrahub.example.invalid:8000"),
+    ],
+    ids=["default-infrahub-network", "explicit-url"],
+)
 def test_demo_package_for_the_dev_stack_writes_the_worker_addresses(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, infrahub_url: str, expected: str
 ) -> None:
+    """The worker reads NetBox and writes to Infrahub over the networks it joins at `invoke start`."""
     destination = tmp_path / "from-netbox.local.yml"
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: VALUES)
-    monkeypatch.setattr(netbox, "load_preview_env", lambda: {"PREVIEW_INFRAHUB_PORT": "8080"})
-    monkeypatch.setattr(
-        netbox, "preview_urls", lambda values: {"infrahub": f"http://localhost:{values['PREVIEW_INFRAHUB_PORT']}"}
-    )
+    monkeypatch.setattr(netbox, "load_preview_env", lambda: pytest.fail("the dev stack does not read the preview"))
     monkeypatch.setattr(netbox, "STATE_DIR", destination.parent)
     monkeypatch.setattr(netbox, "LOCAL_PACKAGE", destination)
 
-    cast("Task", netbox.demo_package).body(Context(), dev_stack=True)
+    cast("Task", netbox.demo_package).body(Context(), infrahub_url=infrahub_url, dev_stack=True)
 
     written = yaml.safe_load(destination.read_text(encoding="utf-8"))
     assert written["configuration"]["source"]["settings"]["url"] == "http://netbox:8080"
-    assert written["configuration"]["destination"]["settings"]["url"] == "http://host.docker.internal:8080"
+    assert written["configuration"]["destination"]["settings"]["url"] == expected

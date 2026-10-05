@@ -99,8 +99,8 @@ in the documentation. In short:
 
 - Infrahub's own Compose file starts a local Infrahub on `http://localhost:8000`: in a
   directory outside the checkout, run `curl https://infrahub.opsmill.io > docker-compose.yml`
-  and `docker compose -p infrahub up -d --wait`. The worker reaches it at
-  `http://host.docker.internal:8000`; inside the worker, `localhost` is the container itself.
+  and `docker compose -p infrahub up -d --wait`. `uv run invoke start` connects the worker
+  to Infrahub's network, where it reaches Infrahub at `http://infrahub-server:8000`.
 - `uv run invoke netbox.seed --dataset demo` starts a local NetBox with the official demo
   data. The worker joins NetBox's network and reaches it at `http://netbox:8080`.
 - Set `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, then run `uv run invoke start` again, so
@@ -117,9 +117,7 @@ This build keeps its own BuildKit cache, so the first build starts with an empty
 The repository includes a NetBox configuration package at
 `examples/netbox_to_infrahub/package.yml`. This example registers it with a deployed Sync
 service; edit the package's URLs for your NetBox and Infrahub first. For the local NetBox and
-Infrahub above, run
-`uv run invoke netbox.demo-package --dev-stack --infrahub-url http://host.docker.internal:8000`
-instead, then follow
+Infrahub above, run `uv run invoke netbox.demo-package --dev-stack` instead, then follow
 [Run a first sync](https://feature-v3-develop.infrahub-sync.pages.dev/development-stack#run-a-first-sync).
 Register the package once, then address the immutable configuration version returned by the
 service:
