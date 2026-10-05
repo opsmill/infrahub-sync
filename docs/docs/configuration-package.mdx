@@ -72,7 +72,7 @@ worker submission was not recorded as accepted also checks the version. Retrying
 accepted request with the same idempotency key returns its stored response.
 
 Register a new version with identifiers that start with `INFRAHUB_SYNC_CREDENTIAL_`
-followed by a nonempty name. Recreate affected saved plans by planning from the new version
+followed by a nonempty name made only of ASCII letters, digits, and underscores. Recreate affected saved plans by planning from the new version
 before you verify or apply them. Existing versions and their saved plans are not rewritten.
 The API checks declarations without resolving credential values.
 
