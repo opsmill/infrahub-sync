@@ -50,7 +50,11 @@ class FakeAttr:
 
 @dataclass
 class FakeSchema:
+<<<<<<< HEAD
     """Stand-in for the kind schema the adapter reads through ``client.schema.get``."""
+=======
+    """Stand-in for the kind schema the adapter holds in its own mapping."""
+>>>>>>> origin/main
 
     kind: str
     attribute_names: list[str] = field(default_factory=list)

@@ -16,7 +16,11 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
+<<<<<<< HEAD
 from typing import TYPE_CHECKING, Any
+=======
+from typing import Any, Protocol
+>>>>>>> origin/main
 
 import pytest
 from diffsync.exceptions import ObjectNotFound
@@ -27,6 +31,12 @@ from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
+
+
+class _KindedNode(Protocol):
+    """The public surface a stored node has to expose: its kind."""
+
+    def get_kind(self) -> str: ...
 
 
 class _FakeStore:
@@ -54,6 +64,7 @@ class _FakeStore:
             return None
         return self._items[store_key]
 
+<<<<<<< HEAD
     def seed(self, *, model: str, identifier: str, item: object) -> None:
         self._items[model, identifier] = item
 
@@ -135,6 +146,10 @@ class _FakeNode(SimpleNamespace):
 
     def get_branch(self) -> str:
         return self.branch
+=======
+    def set(self, *, key: str, node: _KindedNode) -> None:  # match client.store.set signature
+        self._items[node.get_kind(), key] = node
+>>>>>>> origin/main
 
 
 class _FakeClient:
@@ -225,6 +240,7 @@ class _Harness(InfrahubAdapter):
         return dict(node._fake_diffsync_data)  # ty: ignore[unresolved-attribute]
 
 
+<<<<<<< HEAD
 class _RelationshipHarness(InfrahubAdapter):
     """Exercise production conversion without initializing a live client."""
 
@@ -313,6 +329,14 @@ def _resolve_cached_sdk_peer(harness: InfrahubAdapter, *, kind: str, unique_id: 
         peer_schema=SimpleNamespace(kind=kind),  # ty: ignore[invalid-argument-type]
         store=harness.client.store,
         fallback=False,
+=======
+def _make_node(kind: str, node_id: str, diffsync_data: dict[str, object]) -> SimpleNamespace:
+    """A fake SDK node exposing the public ``get_kind()`` the adapter reads."""
+    return SimpleNamespace(
+        id=node_id,
+        get_kind=lambda: kind,
+        _fake_diffsync_data=diffsync_data,
+>>>>>>> origin/main
     )
 
 

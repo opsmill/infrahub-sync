@@ -78,7 +78,10 @@ if TYPE_CHECKING:
 
     from infrahub_sync.plan.models import PlannedOperation
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/main
 def _node_has_complete_attributes(node: InfrahubNodeSync, node_schema: MainSchemaTypesAPI) -> bool:
     """Check if a node has all its non-optional attributes populated."""
     for attr_schema in node_schema.attributes:
@@ -118,10 +121,16 @@ def resolve_peer_node(
       - If not found and fallback is enabled, use the client to fetch the node.
       - If node is found but has incomplete attributes, re-fetch from Infrahub.
 
+<<<<<<< HEAD
     `schemas` is the caller's already-loaded kind-to-schema mapping and the only schema
     source this function consults. Completeness is judged against the peer's own kind; a
     kind absent from `schemas` leaves the stored peer as it is, so resolving a peer issues
     no schema request.
+=======
+    `schemas` is the caller's already-loaded kind-to-schema mapping and is the only schema
+    source this function uses. Completeness is judged against it alone: a kind absent from
+    `schemas` is not fetched, and the stored peer is left as it is.
+>>>>>>> origin/main
 
     Returns the found peer node or None.
     """
@@ -155,12 +164,24 @@ _NODE_NOT_FOUND_CODE = "NODE_NOT_FOUND"
 _NODE_NOT_FOUND_HTTP_STATUS = 404
 
 
+<<<<<<< HEAD
 def _graphql_extensions(exc: GraphQLError) -> Iterator[Mapping[str, Any]]:
     """The `extensions` mapping of each error the destination returned.
 
     The **only** place a server verdict is read from. The HTTP transport status is 200 even
     for a refused mutation, so it settles nothing; `extensions.http_status` is what carries
     the server's own answer.
+=======
+def update_node(
+    node: InfrahubNodeSync,
+    attrs: Mapping[str, Any],
+    client: InfrahubClientSync,
+    node_schema: MainSchemaTypesAPI,
+    schemas: Mapping[str, MainSchemaTypesAPI],
+    source: str | None = None,
+    owner: str | None = None,
+) -> InfrahubNodeSync:
+>>>>>>> origin/main
     """
     for error in getattr(exc, "errors", ()) or ():
         if isinstance(error, Mapping):
@@ -169,6 +190,7 @@ def _graphql_extensions(exc: GraphQLError) -> Iterator[Mapping[str, Any]]:
                 yield extensions
 
 
+<<<<<<< HEAD
 def _refuse_stale_destination_id(exc: GraphQLError, *, operation: PlannedOperation) -> None:
     """Re-raise a not-found on an id-keyed upsert as the named, proven-not-written refusal.
 
@@ -506,17 +528,85 @@ class PeerResolver:
         if not kwargs:
             for name, value in identity.items():
                 if value is None or isinstance(value, (Mapping, list, tuple)):
+=======
+    Args:
+        node: The node to update.
+        attrs: The attributes and relationships to update.
+        client: The client that owns `node`, used for store lookups.
+        node_schema: The schema of `node`, read once by the caller.
+        schemas: The adapter's loaded schema mapping, used to look up relationship peers
+            without a schema request.
+        source: Optional source ID to set on updated attributes and relationships.
+        owner: Optional owner ID to set on updated attributes and relationships.
+    """
+    for attr_name, attr_value in attrs.items():
+        if attr_name in node_schema.attribute_names:
+            attr = getattr(node, attr_name)
+            attr.value = attr_value
+            if source:
+                attr.source = NodeProperty(data=source)
+            if owner:
+                attr.owner = NodeProperty(data=owner)
+
+        if attr_name in node_schema.relationship_names:
+            for rel_schema in node_schema.relationships:
+                peer_schema = schemas.get(rel_schema.peer)
+                if attr_name != rel_schema.name or peer_schema is None:
+>>>>>>> origin/main
                     continue
                 kwargs[_filter_kwarg_name(name)] = value
 
+<<<<<<< HEAD
         return kwargs
+=======
+                if rel_schema.cardinality == "one":
+                    if attr_value:
+                        peer_node = resolve_peer_node(
+                            key=attr_value,
+                            rel_schema=rel_schema,
+                            peer_schema=peer_schema,
+                            store=client.store,
+                            client=client,
+                            fallback=False,
+                            schemas=schemas,
+                        )
+                        if not peer_node:
+                            logger.warning("Unable to find %s [%s] in the Store - Ignored", rel_schema.peer, attr_value)
+                            continue
+                        # Keep the peer object so the SDK can detect resource pools
+                        # and generate a ``from_pool`` allocation when required.
+                        setattr(node, attr_name, peer_node)
+                        relationship: RelatedNodeSync = getattr(node, attr_name)
+                        if source:
+                            relationship.source = source
+                        if owner:
+                            relationship.owner = owner
+                    else:
+                        # TODO: delete the old relationship data ?
+                        pass
+>>>>>>> origin/main
 
     def _query(self, *, peer_kind: str, identity: Mapping[str, Any], referring_operation_id: str) -> str:
         """Query the destination for one peer, refusing on zero and on more than one.
 
+<<<<<<< HEAD
         The refusals belong to **this** resolver only (AD048). Destination loading
         resolves peers from the SDK store, with a `client.get` fallback when the
         store misses or holds an incomplete node.
+=======
+                    for value in list(attr_value):
+                        peer_node = resolve_peer_node(
+                            key=value,
+                            rel_schema=rel_schema,
+                            peer_schema=peer_schema,
+                            store=client.store,
+                            client=client,
+                            fallback=False,
+                            schemas=schemas,
+                        )
+                        if peer_node:
+                            new_peer_ids.append(peer_node.id)
+>>>>>>> origin/main
 
         An **empty** filter set is refused before the query is issued: an
         unfiltered `client.filters(kind=...)` lists every node of the kind, and with exactly
@@ -1370,6 +1460,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         peers.remember(operation.kind, operation.identity, node_id)
         return node_id
 
+<<<<<<< HEAD
     @staticmethod
     def _assert_identity_components_accounted_for(
         *,
@@ -1378,6 +1469,27 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         operation: PlannedOperation,
     ) -> None:
         """The diagnostic: every HFID component of a **create** is accounted for (AD051).
+=======
+    def update(self, attrs: dict) -> Self | None:
+        adapter = self.adapter
+        if not isinstance(adapter, InfrahubAdapter):
+            msg = f"{self.__class__.__name__}.update expected an InfrahubAdapter, got {type(adapter).__name__}"
+            raise TypeError(msg)
+        node = adapter.client.get(id=self.local_id, kind=self.__class__.__name__)
+        source_id = adapter.source_node.id if adapter.source_node else None
+        owner_id = adapter.owner_node.id if adapter.owner_node else None
+        node_schema = adapter.schema[node.get_kind()]
+        node = update_node(
+            node=node,
+            attrs=attrs,
+            client=adapter.client,
+            node_schema=node_schema,
+            schemas=adapter.schema,
+            source=source_id,
+            owner=owner_id,
+        )
+        node.save(allow_upsert=True)
+>>>>>>> origin/main
 
         FR-024 refuses the same condition at plan time; this is what stops it becoming silent
         data duplication at apply time when the plan was hand-built or the schema changed

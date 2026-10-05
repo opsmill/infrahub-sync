@@ -1,6 +1,25 @@
+<<<<<<< HEAD:docs/docs/develop/constitution.md
 ---
 title: Project constitution
 ---
+=======
+<!--
+SYNC IMPACT REPORT
+Version change: 1.0.0 → 1.0.1 (PATCH)
+Modified principles: None
+Modified sections:
+  - Development Workflow & Quality Gates › Git Workflow: PR label guidance now
+    names the `changes/*` release-intent labels the release-label check enforces,
+    replacing labels that were never defined in .github/labels.yml
+Added sections: None
+Removed sections: None
+Templates requiring updates:
+  - .specify/templates/plan-template.md ✅ reviewed, no change needed
+  - .specify/templates/spec-template.md ✅ reviewed, no change needed
+  - .specify/templates/tasks-template.md ✅ reviewed, no change needed
+Follow-up TODOs: None
+-->
+>>>>>>> origin/main:dev/constitution.md
 
 ## Project constitution
 
@@ -179,7 +198,7 @@ is not acceptable.
 
 - Do not force-push shared branches; use follow-up commits rather than amending to hide fixes.
 - Small, scoped, reversible commits; imperative subject line, rationale in the PR body.
-- Apply PR labels (`bugs`, `breaking`, `enhancements`, `features`; default `enhancements`).
+- Apply exactly one release-intent label (`changes/major`, `changes/minor`, or `changes/patch`) to every normal pull request; generated `chore(release):` pull requests are exempt. See `RELEASING.md`.
 
 ### Governance
 
@@ -202,4 +221,8 @@ This constitution is the authoritative reference for development standards in th
   sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
+<<<<<<< HEAD:docs/docs/develop/constitution.md
 **Version**: 1.0.2 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-09-29
+=======
+**Version**: 1.0.1 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-10-01
+>>>>>>> origin/main:dev/constitution.md

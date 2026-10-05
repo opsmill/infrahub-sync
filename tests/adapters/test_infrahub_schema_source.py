@@ -1,6 +1,7 @@
 """The adapter reads a kind's schema from its own mapping, never from the SDK's manager.
 
 An ``InfrahubNodeSync`` built with an explicit schema — directly, or through
+<<<<<<< HEAD
 ``from_graphql(..., schema=...)`` — is absent from ``client.schema.cache`` (SDK 1.18.1
 `node/node.py:1318-1331` and `1346-1352`). ``SchemaManagerSync.get()`` misses for such a
 node and issues ``GET /api/schema`` (`schema/__init__.py:594-603, 761-771`). Conversion and
@@ -9,16 +10,41 @@ loaded mapping is their only schema source.
 
 Each test drives a real SDK node and a real client whose schema cache is empty and whose
 HTTP layer raises on any use, so a schema fetch fails the test rather than passing silently.
+=======
+``from_graphql(..., schema=...)`` — never registers that schema in
+``client.schema.cache``. ``SchemaManagerSync.get()`` therefore misses and issues
+``GET /api/schema``. The adapter paths exercised here resolve a kind's schema from the
+adapter's own loaded mapping, so they issue no request at all.
+
+Each test drives a real SDK node and a real client whose schema cache is empty and whose
+HTTP layer raises on any use, so an added schema fetch fails the test rather than passing
+silently.
+>>>>>>> origin/main
 """
 
 from __future__ import annotations
 
+<<<<<<< HEAD
 from typing import TYPE_CHECKING, NoReturn
 
 import pytest
 from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.node import InfrahubNodeSync
 from infrahub_sdk.schema.main import AttributeKind, AttributeSchemaAPI, NodeSchemaAPI
+=======
+from typing import TYPE_CHECKING, NoReturn, cast
+
+import pytest
+from infrahub_sdk import Config, InfrahubClientSync
+from infrahub_sdk.node import Attribute, InfrahubNodeSync
+from infrahub_sdk.schema.main import (
+    AttributeKind,
+    AttributeSchemaAPI,
+    NodeSchemaAPI,
+    RelationshipCardinality,
+    RelationshipSchemaAPI,
+)
+>>>>>>> origin/main
 
 from infrahub_sync import (
     SchemaMappingField,
@@ -26,7 +52,11 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
+<<<<<<< HEAD
 from infrahub_sync.adapters.infrahub import InfrahubAdapter
+=======
+from infrahub_sync.adapters.infrahub import InfrahubAdapter, resolve_peer_node, update_node
+>>>>>>> origin/main
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
@@ -54,7 +84,11 @@ def client(monkeypatch: pytest.MonkeyPatch) -> InfrahubClientSync:
     """A real client whose schema cache is empty and whose transport always fails.
 
     ``_get``/``_post`` are the two methods ``SchemaManagerSync._fetch`` goes through, so
+<<<<<<< HEAD
     replacing them turns any schema request into a test failure instead of a real socket.
+=======
+    replacing them turns any schema request into a test failure rather than a real socket.
+>>>>>>> origin/main
     """
     # No token: the client never reaches the network, and an unauthenticated client
     # starts with the same empty schema cache these tests depend on.
@@ -113,15 +147,22 @@ def test_conversion_of_an_uncached_node_issues_no_request(client: InfrahubClient
     assert not client.schema.cache, "conversion must not populate the schema cache either"
 
 
+<<<<<<< HEAD
 def test_identifier_reconciliation_of_an_uncached_store_node_issues_no_request(client: InfrahubClientSync) -> None:
     """The peer path: a directly constructed node in the SDK store is judged without a fetch."""
     schema = _node_schema()
     adapter = _adapter(client, {KIND: schema})
+=======
+def test_peer_resolution_of_an_uncached_store_node_issues_no_request(client: InfrahubClientSync) -> None:
+    """The peer path: completeness is judged from the caller's mapping, not a fetch."""
+    schema = _node_schema()
+>>>>>>> origin/main
     node = InfrahubNodeSync(
         client=client, schema=schema, branch="main", data={"id": "w1", "name": {"value": "widget-a"}}
     )
     client.store.set(node=node, key="w1")
 
+<<<<<<< HEAD
     adapter._reconcile_peer_sdk_alias(
         peer_kind=KIND,
         peer_id="w1",
@@ -130,4 +171,70 @@ def test_identifier_reconciliation_of_an_uncached_store_node_issues_no_request(c
     )
 
     assert client.store.get(key="widget-a", kind=KIND, raise_when_missing=False) is node
+=======
+    peer_node = resolve_peer_node(
+        key="w1",
+        rel_schema=RelationshipSchemaAPI(name="widget", peer=KIND, cardinality=RelationshipCardinality.ONE),
+        peer_schema=schema,
+        store=client.store,
+        client=client,
+        fallback=True,
+        schemas={KIND: schema},
+    )
+
+    assert peer_node is node
+    assert not client.schema.cache
+
+
+def test_peer_resolution_refetches_an_incomplete_store_node_of_a_mapped_kind(client: InfrahubClientSync) -> None:
+    """A stored peer missing a required value, of a kind in the mapping, is re-fetched."""
+    schema = _node_schema()
+    node = InfrahubNodeSync(client=client, schema=schema, branch="main", data={"id": "w1"})
+    client.store.set(node=node, key="w1")
+
+    with pytest.raises(_SchemaFetchAttemptedError):
+        resolve_peer_node(
+            key="w1",
+            rel_schema=RelationshipSchemaAPI(name="widget", peer=KIND, cardinality=RelationshipCardinality.ONE),
+            peer_schema=schema,
+            store=client.store,
+            client=client,
+            fallback=True,
+            schemas={KIND: schema},
+        )
+
+
+def test_peer_resolution_keeps_an_incomplete_store_node_of_an_unmapped_kind(client: InfrahubClientSync) -> None:
+    """A stored peer whose kind is absent from the mapping is returned as is, unfetched."""
+    schema = _node_schema()
+    node = InfrahubNodeSync(client=client, schema=schema, branch="main", data={"id": "w1"})
+    client.store.set(node=node, key="w1")
+
+    peer_node = resolve_peer_node(
+        key="w1",
+        rel_schema=RelationshipSchemaAPI(name="widget", peer=KIND, cardinality=RelationshipCardinality.ONE),
+        peer_schema=schema,
+        store=client.store,
+        client=client,
+        fallback=True,
+        schemas={},
+    )
+
+    assert peer_node is node
+    assert not client.schema.cache
+
+
+def test_update_of_an_uncached_node_issues_no_request(client: InfrahubClientSync) -> None:
+    """``update_node`` applies attributes using the caller's mapping, not a schema fetch."""
+    schema = _node_schema()
+    node = InfrahubNodeSync(
+        client=client, schema=schema, branch="main", data={"id": "w1", "name": {"value": "widget-a"}}
+    )
+
+    updated = update_node(
+        node=node, attrs={"name": "widget-b"}, client=client, node_schema=schema, schemas={KIND: schema}
+    )
+
+    assert cast("Attribute", updated.name).value == "widget-b"
+>>>>>>> origin/main
     assert not client.schema.cache
