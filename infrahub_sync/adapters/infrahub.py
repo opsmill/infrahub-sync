@@ -3,14 +3,10 @@ from __future__ import annotations
 import copy
 import ipaddress
 import logging
-import os
 from typing import TYPE_CHECKING, Any
 
 from diffsync import Adapter, DiffSyncModel
-from infrahub_sdk import (
-    Config,
-    InfrahubClientSync,
-)
+from infrahub_sdk import InfrahubClientSync
 from infrahub_sdk.exceptions import NodeNotFoundError
 from infrahub_sdk.node.property import NodeProperty
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
@@ -26,6 +22,7 @@ from infrahub_sync import (
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.generator import has_field
+from infrahub_sync.utils import build_infrahub_config, resolve_infrahub_connection
 
 logger = logging.getLogger(__name__)
 
@@ -325,8 +322,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         self.config = config
 
         settings = adapter.settings or {}
-        infrahub_url = os.environ.get("INFRAHUB_ADDRESS") or os.environ.get("INFRAHUB_URL") or settings.get("url")
-        infrahub_token = os.environ.get("INFRAHUB_API_TOKEN") or settings.get("token")
+        infrahub_url, infrahub_token = resolve_infrahub_connection(settings=settings)
         infrahub_branch = settings.get("branch") or branch
         verify_ssl = settings.get("verify_ssl")
 
@@ -334,13 +330,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             msg = "Both url and token must be specified!"
             raise ValueError(msg)
 
-        sdk_config: dict[str, Any] = {"timeout": 60, "api_token": infrahub_token}
-        if infrahub_branch:
-            sdk_config["default_branch"] = infrahub_branch
-        if verify_ssl is not None:
-            sdk_config["tls_insecure"] = not verify_ssl
-
-        self.client = InfrahubClientSync(address=infrahub_url, config=Config(**sdk_config))
+        sdk_config = build_infrahub_config(token=infrahub_token, branch=infrahub_branch, verify_ssl=verify_ssl)
+        self.client = InfrahubClientSync(address=infrahub_url, config=sdk_config)
 
         # Resolve source and owner nodes for lineage tracking
         # Default: use CoreAccount matching config.source.name
