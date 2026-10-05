@@ -21,7 +21,13 @@ from [`infrahub_sync/plan/verify.py`](https://github.com/opsmill/infrahub-sync/b
 [`infrahub_sync/service/flow.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/infrahub_sync/service/flow.py).
 The refusal recorded in [The current boundary](#the-current-boundary-for-adapters-outside-the-distribution)
 was reproduced in-process against the shipped example package, read-only. The worked
-register-to-apply flow was **not** replayed against a live service for this revision.
+flow was **not** replayed against a live service for this revision.
+
+The worked flow from configuration to convergence was rewritten after this revision, when
+configurations moved into Infrahub. Its Sync command forms, `configs validate CONFIG_ID` with
+`--branch`, `diff` without `--version`, and the `INFRAHUB_SYNC_TOKEN` variable, were read on
+2026-10-04 from `uv run infrahub-sync … --help` after that change, not at this revision.
+`infrahubctl object load` is Infrahub's own command.
 
 The end-to-end procedure for connecting a new system to infrahub-sync as a source or a
 destination. This is the canonical procedure; `AGENTS.md` links here.

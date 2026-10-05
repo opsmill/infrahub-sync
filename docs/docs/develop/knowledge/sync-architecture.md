@@ -54,9 +54,14 @@ A **product run** is the durable Sync record identified by `run_id`. A **Prefect
 is one execution associated with it; planning, verification and apply can have separate
 Prefect execution IDs for the same product run.
 
-1. **Submit.** The API reads the selected registered configuration version and binds the
-   product run to its configuration ID, version and package checksum. It reserves the run
-   before submitting the requested stage to Prefect, then stores the Prefect execution link.
+1. **Submit.** The API binds the product run to a configuration ID, version and package
+   checksum. When the request names a version, the API reads that recorded version. When it
+   names none, the API reads the configuration's current document on Infrahub's default
+   branch, validates it, and reuses the `SyncConfigurationVersion` that holds that content or
+   records it as the next one. A document that is not a YAML or JSON mapping is refused with
+   `configuration-document-invalid`, and content with errors with `configuration-invalid`;
+   neither refusal records a version. The API reserves the run before submitting the
+   requested stage to Prefect, then stores the Prefect execution link.
 2. **Execute.** The worker claims that execution, reads the registered package and resolves
    its credential references. For planning, it reads the destination schema and builds
    runtime models before loading the source and destination data.
@@ -64,11 +69,16 @@ Prefect execution IDs for the same product run.
    operations. The worker publishes an internal plan checkpoint and then the review
    artifact available through the API, so a reviewable plan also has the retained data needed for a later apply.
 4. **Review and apply.** You review the plan through the Sync API and approve its checksum.
-   The apply stage retrieves the checkpoint, verifies its binding and checksum, and checks
-   the destination schema before writing. It uses the saved operations rather than
-   extracting the source again.
-5. **Record the result.** The worker saves final evidence and updates the product run.
-   The API returns the retained result alongside available Prefect execution information.
+   When the API accepts the apply, it records a `SyncApproval` node that names the approver
+   and the approved checksum. The apply stage retrieves the checkpoint, verifies its binding
+   and checksum, and checks the destination schema before writing. It uses the saved
+   operations rather than extracting the source again.
+5. **Record the result.** The worker saves final evidence and updates the product run, then
+   copies the run to its `SyncRun` node in Infrahub. The API also writes that node when it
+   accepts a run, an apply or a cancellation, and when it records a change in the run's
+   state. These copies are best effort: a failed write never fails the run, because Sync's
+   database holds it. The API returns the retained result alongside available Prefect
+   execution information.
 
 Verification can also run as a separate stage; it checks the retained plan without
 constructing adapters. A confirmed `sync` combines planning, verification and apply in one

@@ -70,11 +70,17 @@ Set these variables on the API and on every worker:
 | `INFRAHUB_SYNC_INFRAHUB_TLS_INSECURE` | Optional `true` or `false`; `true` skips TLS certificate verification. Defaults to `false`. |
 
 The service account reads configurations and writes versions, run copies, and approvals.
-Grant it, on the default branch:
+Grant it:
 
-- `view` on `SyncConfiguration`, `SyncConfigurationVersion`, `SyncRun`, and `SyncApproval`;
-- `create` on `SyncConfigurationVersion`, `SyncRun`, and `SyncApproval`; and
-- `update` on `SyncRun`.
+- `view` on `SyncConfiguration` with the `allow_all` decision, because Sync reads a
+  configuration on another branch when a caller validates it there;
+- `view` on `SyncConfigurationVersion`, `SyncRun`, and `SyncApproval`, on the default branch;
+- `create` on `SyncConfigurationVersion`, `SyncRun`, and `SyncApproval`, on the default
+  branch; and
+- `update` on `SyncRun`, on the default branch.
+
+Without `allow_all` on `SyncConfiguration`, validating on another branch gets
+`503 infrahub-unavailable`, and its message names the missing permission.
 
 Every one of those writes is on the default branch, so the account also needs the global
 permission `edit_default_branch` (`global:edit_default_branch:allow_all`). Infrahub refuses any
@@ -377,7 +383,8 @@ findings. The response echoes `branch`, which is `null` when the request named n
 | `404` | `branch-not-found` | The branch does not exist in Infrahub. |
 | `404` | `configs-not-found` | No configuration has that name on that branch. |
 | `422` | `configuration-document-invalid` | The document is not a YAML or JSON mapping. |
-| `503` | `infrahub-unavailable` | Infrahub could not be reached. |
+| `422` | `configuration-invalid` | The document is a mapping but not a configuration package, for example one without a `configuration` key. The message names the first defect. |
+| `503` | `infrahub-unavailable` | Infrahub could not be reached, or it refused the Sync service account's read. |
 
 ### Create a plan
 

@@ -257,6 +257,11 @@ paths and restart behavior below were derived by reading, at that exact revision
 [`development/preview.env`](https://github.com/opsmill/infrahub-sync/blob/9f8d8d2d1a38ec29465f7c1a0fe307418884cdd8/development/preview.env). They were not established by a live
 replay of the stack.
 
+The load of the Sync schema extension by `preview.up`, the Infrahub API token that replaces
+the bearer principal, and the matching rows in the credentials list were added afterward,
+when Sync's configurations and run records moved into Infrahub. Those parts describe the
+later stack, not this revision.
+
 ### Commands
 
 | Command | What it does |

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi import Path as APIPath
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from infrahub_sdk.exceptions import BranchNotFoundError
+from infrahub_sdk.exceptions import AuthenticationError, BranchNotFoundError
 from infrahub_sdk.exceptions import Error as InfrahubSdkError
 
 from infrahub_sync.client.models import (
@@ -22,6 +22,7 @@ from infrahub_sync.client.models import (
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_REASON
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.platform.client import SERVICE_ACCOUNT_REFUSED
 from infrahub_sync.platform.records import ConfigurationDocumentError
 from infrahub_sync.product_store import (
     AuditEvent,
@@ -38,6 +39,10 @@ from .service import ServiceAPIError
 _CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 _MAX_REGISTRY_VERSION = 2**63 - 1
 _MAX_PAGE_LIMIT = 256
+_SERVICE_ACCOUNT_BRANCH_REFUSED = (
+    "Infrahub refused the Sync service account's read of the configuration: the account needs a token "
+    "Infrahub accepts, and object:Sync:Configuration:view with allow_all to read a branch other than the default"
+)
 
 
 class ConfigurationAPIError(Exception):
@@ -194,8 +199,24 @@ class ConfigurationRoutes:
             return True
         try:
             return branch == self._configurations.default_branch()
+        except AuthenticationError:
+            raise ServiceAPIError(503, "infrahub-unavailable", SERVICE_ACCOUNT_REFUSED) from None
         except InfrahubSdkError:
             raise ServiceAPIError(503, "infrahub-unavailable", "Infrahub could not be reached") from None
+
+    def _declared_report(self, content: dict[str, Any]) -> tuple[tuple[Any, ...], str]:
+        """Every finding in a declared document, and the checksum its version would carry.
+
+        A document that is not a configuration package at all has no findings to list.
+        It is refused with its first defect, as a run on the same document is refused.
+        """
+        try:
+            return (
+                self._service.validate_declared(package=content, secrets=self._secrets),
+                self._service.declared_checksum(package=content),
+            )
+        except self._service.ConfigsRequestError as error:
+            raise ServiceAPIError(422, "configuration-invalid", str(error), secrets=self._secrets) from None
 
     def validate_on_branch(
         self, config_id: str, branch: str | None, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT
@@ -213,12 +234,14 @@ class ConfigurationRoutes:
             raise ServiceAPIError(404, "branch-not-found", "the branch does not exist in Infrahub") from None
         except ConfigurationDocumentError as error:
             raise ServiceAPIError(422, "configuration-document-invalid", str(error)) from None
+        except AuthenticationError:
+            # A refused token, or an account that may read the default branch only.
+            raise ServiceAPIError(503, "infrahub-unavailable", _SERVICE_ACCOUNT_BRANCH_REFUSED) from None
         except InfrahubSdkError:
             raise ServiceAPIError(503, "infrahub-unavailable", "Infrahub could not be reached") from None
         if content is None:
             raise ConfigurationAPIError(404, "not-found", reason="configuration-not-found", proven_pre_effect=True)
-        findings = self._translated(self._service.validate_declared, package=content, secrets=self._secrets)
-        checksum = self._translated(self._service.declared_checksum, package=content)
+        findings, checksum = self._translated(self._declared_report, content=content)
         page = tuple(configs.redact_finding(finding, self._secrets) for finding in findings[offset : offset + limit])
         return {
             "config_id": config_id,

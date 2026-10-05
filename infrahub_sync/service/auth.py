@@ -200,9 +200,9 @@ class InfrahubPrincipalResolver:
         except Error:
             raise PrincipalUnavailableError from None
         account = (profile or {}).get("AccountProfile") or {}
-        # The account's label, or its id when it has none: Infrahub's profile query
-        # returns no unique account name.
-        actor = str(account.get("display_label") or account.get("id") or "").strip()
+        # The account's unique name. Its label, which Infrahub renders as the display
+        # label, is optional and may be shared by two accounts.
+        actor = str((account.get("name") or {}).get("value") or account.get("id") or "").strip()
         status = ((account.get("status") or {}).get("value") or "active").lower()
         if not actor or status != "active":
             return None

@@ -346,7 +346,13 @@ class RunService:
             body=body,
         )
         if existing is not None:
-            return await self._resume_or_replay(existing, parameters, principal, request.reason)
+            # A retry of a verify whose submission failed submits it now, so it mirrors
+            # and tags the run the first attempt could not.
+            resumed = existing.state != "accepted"
+            accepted = await self._resume_or_replay(existing, parameters, principal, request.reason)
+            if resumed:
+                await self._mirror_and_tag(run_id)
+            return accepted
         await to_thread.run_sync(self._require_supported_run_configuration, run)
         self._plan(run_id)
         receipt = self._reserve_existing(
@@ -383,7 +389,13 @@ class RunService:
             body=body,
         )
         if existing is not None:
-            return await self._resume_or_replay(existing, parameters, principal, request.reason)
+            # A retry of an apply whose submission failed submits it now, so it records
+            # the approval the first attempt could not.
+            resumed = existing.state != "accepted"
+            accepted = await self._resume_or_replay(existing, parameters, principal, request.reason)
+            if resumed:
+                await self._record_approval(run_id, request, principal)
+            return accepted
         self._require_non_secret_parameters(
             principal.actor,
             "apply",
@@ -428,18 +440,24 @@ class RunService:
         replayed = receipt.state == "accepted"
         accepted = await self._resume_or_replay(receipt, parameters, principal, request.reason)
         # A replay answers an apply already approved; it records no second approval.
-        if self._mirror is not None and not replayed:
-            await to_thread.run_sync(
-                partial(
-                    self._mirror.approve,
-                    run_id,
-                    checksum=request.expected_checksum,
-                    approved_by=principal.actor,
-                    reason=request.reason,
-                )
-            )
-            await self._mirror_and_tag(run_id)
+        if not replayed:
+            await self._record_approval(run_id, request, principal)
         return accepted
+
+    async def _record_approval(self, run_id: str, request: ApplyRunRequest, principal: Principal) -> None:
+        """Record the accepted apply's approval in Infrahub, then mirror and tag the run; best effort."""
+        if self._mirror is None:
+            return
+        await to_thread.run_sync(
+            partial(
+                self._mirror.approve,
+                run_id,
+                checksum=request.expected_checksum,
+                approved_by=principal.actor,
+                reason=request.reason,
+            )
+        )
+        await self._mirror_and_tag(run_id)
 
     async def cancel_run(
         self, run_id: str, request: CancelRunRequest, principal: Principal, idempotency_key: str

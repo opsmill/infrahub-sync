@@ -8,7 +8,6 @@ from pydantic import ValidationError
 
 from infrahub_sync.platform.client import (
     PlatformSettings,
-    PlatformSettingsError,
     default_branch_sync,
     service_client_sync,
 )
@@ -41,13 +40,14 @@ def infrahub_records() -> tuple[InfrahubConfigurations, RunMirror]:
 def optional_infrahub_records() -> tuple[InfrahubConfigurations | None, RunMirror | None]:
     """Infrahub's records when the environment names an Infrahub; otherwise none.
 
-    Without the Infrahub settings, configurations are read from the product store, as in
-    local and test use, and runs are mirrored nowhere.
+    When the environment sets none of the Infrahub settings, configurations are read from
+    the product store, as in local and test use, and runs are mirrored nowhere. Settings
+    that are only partly set, or malformed, raise `PlatformSettingsError`, as they stop
+    the worker at startup.
     """
-    try:
-        return infrahub_records()
-    except PlatformSettingsError:
+    if PlatformSettings.optional_from_environment() is None:
         return None, None
+    return infrahub_records()
 
 
 def stored_plan_checksum(projection: ProductProjection, run_id: str) -> str | None:

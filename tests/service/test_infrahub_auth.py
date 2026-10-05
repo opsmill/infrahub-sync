@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from infrahub_sdk.exceptions import AuthenticationError, ServerNotReachableError
 
+from infrahub_sync.platform.client import PlatformSettings, caller_client
 from infrahub_sync.product_store import local_product_projection
 from infrahub_sync.service.app import create_app
 from infrahub_sync.service.auth import (
@@ -18,6 +19,7 @@ from infrahub_sync.service.auth import (
     permits,
 )
 from infrahub_sync.service.service import RunService
+from tests.platform.test_client import RenamedDefaultBranchServer
 from tests.service.test_http_api import _FakeOrchestration, _registered_package
 
 if TYPE_CHECKING:
@@ -58,11 +60,15 @@ def test_a_super_administrator_is_allowed_everything() -> None:
     assert principal.allows("create", "Approval")
 
 
-def _profile(*, name: str = "alice", status: str = "active", identifiers: frozenset[str] = PLANNER) -> dict:
+def _profile(
+    *, name: str = "alice", label: str = "Alice", status: str = "active", identifiers: frozenset[str] = PLANNER
+) -> dict:
     permissions = [{"node": {"identifier": {"value": identifier}}} for identifier in sorted(identifiers)]
     return {
         "AccountProfile": {
-            "display_label": name,
+            # Infrahub renders an account's display label from its optional `label`.
+            "display_label": label,
+            "name": {"value": name},
             "status": {"value": status},
             "member_of_groups": {
                 "edges": [{"node": {"roles": {"edges": [{"node": {"permissions": {"edges": permissions}}}]}}}]
@@ -286,9 +292,34 @@ async def test_a_denied_super_administrator_is_not_an_administrator() -> None:
     assert not principal.allows("create", "Run")
 
 
-async def test_an_account_without_a_label_is_identified_by_its_id() -> None:
+async def test_two_accounts_that_share_a_label_are_two_actors() -> None:
+    first = await _resolver(_profile(name="jsmith", label="John Smith")).resolve("first-token")
+    second = await _resolver(_profile(name="jsmith2", label="John Smith")).resolve("second-token")
+
+    assert first is not None
+    assert second is not None
+    assert (first.actor, second.actor) == ("jsmith", "jsmith2")
+
+
+async def test_a_caller_is_identified_on_a_renamed_default_branch() -> None:
+    server = RenamedDefaultBranchServer()
+    settings = PlatformSettings(address="http://infrahub-server:8000", token="service-token-0123456789")  # noqa: S106
+
+    def client_for(token: str) -> Any:  # noqa: ANN401 - a real SDK client on a fake server
+        client = caller_client(settings, token)
+        client._request_method = server.request  # ty: ignore[invalid-assignment]
+        return client
+
+    principal = await InfrahubPrincipalResolver(client_for).resolve("caller-token")
+
+    assert principal is not None
+    assert principal.actor == "alice"
+    assert server.urls == ["http://infrahub-server:8000/graphql"]
+
+
+async def test_an_account_without_a_name_is_identified_by_its_id() -> None:
     profile = _profile()
-    profile["AccountProfile"]["display_label"] = None
+    profile["AccountProfile"]["name"] = None
     profile["AccountProfile"]["id"] = "18a6c-account-id"
 
     principal = await _resolver(profile).resolve("caller-token")

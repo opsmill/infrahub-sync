@@ -264,8 +264,8 @@ services:
     entrypoint: ["infrahub-sync"]
     environment:
       # The API on the deployment's own network, and the caller's own Infrahub API
-      # token. Empty when unset, so a call against an authenticated deployment
-      # refuses at the API rather than failing here.
+      # token. Empty when unset, so Compose still runs the service; the client then
+      # stops before it calls the API and names the missing token.
       INFRAHUB_SYNC_API_URL: "http://sync-api:8000"
       INFRAHUB_SYNC_TOKEN: "${INFRAHUB_SYNC_TOKEN:-}"
     read_only: true

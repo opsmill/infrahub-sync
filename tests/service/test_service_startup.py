@@ -10,7 +10,7 @@ from typing import Any, cast
 import pytest
 from infrahub_sdk.exceptions import AuthenticationError, ServerNotReachableError
 
-from infrahub_sync.platform.client import ServiceAccountRefusedError
+from infrahub_sync.platform.client import PlatformSettingsError, ServiceAccountRefusedError
 from infrahub_sync.platform.schema_check import SyncSchemaMissingError
 from infrahub_sync.service import infrahub_records, serve, worker
 from infrahub_sync.service.auth import InfrahubPrincipalResolver
@@ -140,6 +140,29 @@ def test_a_worker_without_infrahub_skips_the_schema_check(monkeypatch: pytest.Mo
     monkeypatch.setattr(worker, "service_client_sync", lambda _settings: pytest.fail("contacted Infrahub"))
 
     worker.refuse_start_without_sync_schema()
+
+
+@pytest.mark.parametrize(
+    ("settings", "named"),
+    [
+        ({"INFRAHUB_SYNC_INFRAHUB_ADDRESS": "http://infrahub-server:8000"}, "INFRAHUB_SYNC_INFRAHUB_TOKEN"),
+        ({**ENVIRONMENT, "INFRAHUB_SYNC_INFRAHUB_TLS_INSECURE": "yes"}, "INFRAHUB_SYNC_INFRAHUB_TLS_INSECURE"),
+    ],
+)
+def test_incomplete_infrahub_settings_stop_the_worker_and_its_runs(
+    monkeypatch: pytest.MonkeyPatch, settings: dict[str, str], named: str
+) -> None:
+    for name in (*ENVIRONMENT, "INFRAHUB_SYNC_INFRAHUB_TLS_INSECURE"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in settings.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(worker, "service_client_sync", lambda _settings: pytest.fail("contacted Infrahub"))
+
+    with pytest.raises(SystemExit, match=named) as stopped:
+        worker.refuse_start_without_sync_schema()
+    with pytest.raises(PlatformSettingsError, match=named):
+        infrahub_records.optional_infrahub_records()
+    assert "service-token" not in str(stopped.value)
 
 
 async def test_a_refused_service_token_stops_the_api(environment: None, monkeypatch: pytest.MonkeyPatch) -> None:

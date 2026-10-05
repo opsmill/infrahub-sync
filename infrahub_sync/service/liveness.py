@@ -143,8 +143,9 @@ class RunLivenessReconciler:
         self._policy = policy
         self._work_pool_name = work_pool_name
         self._clock = clock
-        # Told the run ID whenever a background pass changes a run's phase or outcome,
-        # so a copy of the run kept elsewhere follows; called off the event loop.
+        # Told the run ID whenever a background pass or a request-time refresh changes a
+        # run's phase or outcome, so a copy of the run kept elsewhere follows; called off
+        # the event loop.
         self._on_change = on_change
 
     @property
@@ -177,10 +178,15 @@ class RunLivenessReconciler:
             return {}
         now = self._clock()
         pool = await self._orchestration.pool_status(self._work_pool_name, now)
+        before = (run.phase, run.outcome)
         observations: dict[str, Observation] = {}
         for link in run.prefect_executions:
             if link.terminal_at is None:
                 observations[link.flow_run_id] = await self.reconcile_execution(run_id, link, pool, now)
+        # A link terminalized here leaves the background pass's view, so the request
+        # that refreshed the run reports the change itself.
+        if self._on_change is not None and observations and self._state(run_id) != before:
+            await to_thread.run_sync(self._on_change, run_id)
         return observations
 
     async def reconcile_execution(  # noqa: PLR0911  # pylint: disable=too-many-return-statements

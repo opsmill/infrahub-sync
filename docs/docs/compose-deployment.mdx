@@ -123,7 +123,8 @@ and create an API token for the account. The token is `INFRAHUB_SYNC_INFRAHUB_TO
 
 | Namespace | Name | Action | Decision |
 | --- | --- | --- | --- |
-| `Sync` | `Configuration`, `ConfigurationVersion`, `Run`, `Approval` | `view` | `allow_default` |
+| `Sync` | `Configuration` | `view` | `allow_all` (Sync reads a configuration on another branch when a caller validates it there) |
+| `Sync` | `ConfigurationVersion`, `Run`, `Approval` | `view` | `allow_default` |
 | `Sync` | `ConfigurationVersion`, `Run`, `Approval` | `create` | `allow_default` |
 | `Sync` | `Run` | `update` | `allow_default` |
 | global | `edit_default_branch` | — | `allow_all` (Infrahub requires it for any write on the default branch, where every Sync record lives) |
@@ -177,7 +178,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` instead.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `INFRAHUB_SYNC_TOKEN` | empty | Your own Infrahub API token, which the `cli` service presents. Set it in your shell rather than in `.env` when several people use the host. Empty, every `cli` call is refused with `401`. |
+| `INFRAHUB_SYNC_TOKEN` | empty | Your own Infrahub API token, which the `cli` service presents. Set it in your shell rather than in `.env` when several people use the host. Empty, every `cli` call stops before it reaches the API, with `error: client-input` and `argument: token`. |
 | `INFRAHUB_SYNC_INFRAHUB_ADDRESS` | `http://infrahub-server:8000` | The Infrahub that holds the configurations, as `sync-api` and `sync-worker` reach it on Infrahub's Compose network. |
 | `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | empty | The destination Infrahub token, for a package that references it. |
 | `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN` | empty | Source tokens, for a package that references them. Only the worker receives them. |
@@ -557,7 +558,9 @@ The `cli` service sits in the `cli` profile, so `up` never starts it, and
 and `INFRAHUB_SYNC_TOKEN`. It presents `INFRAHUB_SYNC_TOKEN`, your
 own Infrahub API token, from your shell or `.env`. Sync checks your Infrahub
 permissions on each call; see [Caller permissions](#caller-permissions). With
-`INFRAHUB_SYNC_TOKEN` empty, the API refuses every `cli` call.
+`INFRAHUB_SYNC_TOKEN` empty, the client refuses every `cli` call before it reaches the
+API, printing `error: client-input` and `argument: token`. A token that Infrahub refuses
+gets `401` from the API.
 
 Each call is one container: nothing is published, no service is started as a
 side effect, no volume is kept, and the container is removed when the command

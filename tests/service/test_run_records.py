@@ -415,6 +415,87 @@ def test_run_routes_need_their_infrahub_permission(tmp_path: Path, store: _Store
     assert permission in response.json()["error"]["message"]
 
 
+class _StageFailsOnce(_TaggingOrchestration):
+    """Fails the first submission of one stage, as a task manager that is briefly unreachable."""
+
+    def __init__(self, stage: str) -> None:
+        super().__init__()
+        self._stage = stage
+        self.failed = False
+
+    async def submit(self, parameters: dict[str, object], *, idempotency_key: str) -> Any:  # noqa: ANN401
+        if parameters.get("stage") == self._stage and not self.failed:
+            self.failed = True
+            msg = "the task manager is unreachable"
+            raise ConnectionError(msg)
+        return await super().submit(parameters, idempotency_key=idempotency_key)
+
+
+@pytest.mark.parametrize("stage", ["apply", "verify"])
+def test_a_retry_that_submits_a_failed_stage_records_it_in_infrahub(tmp_path: Path, store: _Store, stage: str) -> None:
+    projection = local_product_projection(tmp_path.resolve())
+    orchestration = _StageFailsOnce(stage)
+    service = RunService(
+        projection,
+        orchestration,
+        configurations=InfrahubConfigurations(client=store, branch="main", version_lock=_no_lock),
+        mirror=RunMirror(client=store, branch="main"),
+    )
+    client = TestClient(create_app(service, _Resolver()), raise_server_exceptions=False)
+    run_id = _plan(client, "plan").json()["run"]["run_id"]
+    plan = _publish_plan(projection, run_id)
+    _settle_open_executions(projection, run_id)
+    body: dict[str, Any] = {"reason": "reviewed"}
+    if stage == "apply":
+        body |= {"expected_checksum": plan.checksum, "confirm_writes": True}
+    headers = {**HEADERS, "Idempotency-Key": stage}
+
+    first = client.post(f"/runs/{run_id}/{stage}", headers=headers, json=body)
+    retried = client.post(f"/runs/{run_id}/{stage}", headers=headers, json=body)
+
+    assert first.status_code == 503, first.text
+    assert retried.status_code == 202, retried.text
+    stored = projection.lookup_run(run_id).value
+    assert stored is not None
+    assert stored.prefect_executions[-1].flow_run_id in [flow_run_id for flow_run_id, _ in orchestration.tagged]
+    approvals = store.filters(kind="SyncApproval")
+    assert [approval.approved_by.value for approval in approvals] == (["alice"] if stage == "apply" else [])
+
+
+def test_a_malformed_branch_document_is_refused_with_its_defect(tmp_path: Path) -> None:
+    store = _BranchStore("unrelated: mapping\n")
+    store.configuration("netbox-demo", yaml.safe_dump(DECLARED))
+
+    response = _routes_client(tmp_path, store).post(
+        "/configs/netbox-demo/validate", params={"branch": "my-change"}, headers=HEADERS
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "configuration-invalid"
+    assert "/unrelated" in response.json()["error"]["message"]
+
+
+def test_a_service_account_that_cannot_read_the_branch_is_named(tmp_path: Path) -> None:
+    store = _BranchStore(yaml.safe_dump(DECLARED))
+    store.configuration("netbox-demo", yaml.safe_dump(DECLARED))
+    on_default_branch = store.filters
+
+    def default_branch_only(kind: str, branch: str | None = None, **filters: Any) -> list[Any]:  # noqa: ANN401
+        if branch == "my-change":
+            message = "403"
+            raise AuthenticationError(message)
+        return on_default_branch(kind, branch=branch, **filters)
+
+    store.filters = default_branch_only  # ty: ignore[invalid-assignment]
+
+    response = _routes_client(tmp_path, store).post(
+        "/configs/netbox-demo/validate", params={"branch": "my-change"}, headers=HEADERS
+    )
+
+    assert response.status_code == 503, response.text
+    assert "object:Sync:Configuration:view with allow_all" in response.json()["error"]["message"]
+
+
 def test_a_refused_service_token_is_named_when_a_run_cannot_record_its_version(tmp_path: Path, store: _Store) -> None:
     def refused(*_args: Any, **_kwargs: Any) -> Any:  # noqa: ANN401
         message = "401"

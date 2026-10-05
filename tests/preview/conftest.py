@@ -81,8 +81,8 @@ def preview_settings() -> dict[str, Any]:
         "urls": urls,
         "infrahub_token": values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
         "bearer_token": values["INFRAHUB_INITIAL_ADMIN_TOKEN"],
-        # The administrator account's display label, which Sync records as the actor.
-        "actor": "Admin",
+        # The administrator account's name, which Sync records as the actor.
+        "actor": "admin",
         "examples_dir": str(REPO_ROOT / "examples"),
     }
 

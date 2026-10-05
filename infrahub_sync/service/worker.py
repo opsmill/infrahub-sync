@@ -554,12 +554,16 @@ def neutral_working_directory() -> Iterator[Path]:
 def refuse_start_without_sync_schema() -> None:
     """Stop the worker when Infrahub lacks the Sync schema extension this release needs.
 
-    Skipped when the worker is given no Infrahub, as in local use where configurations
-    live in the product store. An unreachable Infrahub is tolerated, as the API does.
+    Skipped when the environment sets none of the Infrahub settings, as in local use
+    where configurations live in the product store. Settings that are only partly set,
+    or malformed, stop the worker. An unreachable Infrahub is tolerated, as the API does.
     """
     try:
-        settings = PlatformSettings.from_environment()
-    except PlatformSettingsError:
+        settings = PlatformSettings.optional_from_environment()
+    except PlatformSettingsError as error:
+        refusal = f"infrahub-sync worker refused to start: {error}"
+        raise SystemExit(refusal) from None
+    if settings is None:
         _logger.info("no Infrahub is configured; runs read configurations from Sync's own store")
         return
     client = service_client_sync(settings)

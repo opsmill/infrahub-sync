@@ -50,9 +50,12 @@ deployment starts empty.
 `docker compose run --rm --no-deps -T cli ...` calls the Sync API with your own Infrahub
 API token, `INFRAHUB_SYNC_TOKEN`.
 
-- **Every call answers `401`.** `INFRAHUB_SYNC_TOKEN` is empty, or Infrahub refuses the
-  token: it is expired or revoked, or its account is inactive. Export a valid Infrahub API
-  token in your shell, then run the command again.
+- **Every call prints `error: client-input` and `argument: token`, and exits with status
+  `2`.** `INFRAHUB_SYNC_TOKEN` is empty, so the client stops before it calls the API.
+  Export your Infrahub API token in your shell, then run the command again.
+- **Every call answers `401`.** Infrahub refuses the token: it is expired or revoked, or
+  its account is inactive. Export a valid Infrahub API token in your shell, then run the
+  command again.
 - **A call answers `403`.** Your Infrahub account lacks the permission that the message
   names, for example `object:Sync:Approval:create`. Ask an Infrahub administrator to grant
   it on the default branch; see
