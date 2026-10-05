@@ -127,7 +127,7 @@ def _run_update(node: FakeNode, attrs: dict[str, object], source: str | None = N
     ``FakeNode`` provides, so the type mismatch is suppressed here once rather than
     at every call site.
     """
-    update_node(node, attrs, node.client, node.schema, source=source, owner=owner)  # ty: ignore[invalid-argument-type]
+    update_node(node, attrs, node.client, node.schema, node.client.schema.all(), source=source, owner=owner)  # ty: ignore[invalid-argument-type]
 
 
 def _make_sdk_relationship_nodes(
@@ -255,7 +255,15 @@ def test_update_node_relationship_one_gets_attribution(monkeypatch: pytest.Monke
     node, peer, client, node_schema = _make_sdk_relationship_nodes()
     monkeypatch.setattr(infrahub_adapter, "resolve_peer_node", lambda **_kwargs: peer)
 
-    update_node(node, {"location": "rack-uid"}, client, node_schema, source=SOURCE_ID, owner=OWNER_ID)
+    update_node(
+        node,
+        {"location": "rack-uid"},
+        client,
+        node_schema,
+        client.schema.all.return_value,
+        source=SOURCE_ID,
+        owner=OWNER_ID,
+    )
 
     relationship = cast("RelatedNodeSync", node.location)
     assert relationship.peer is peer
@@ -272,7 +280,7 @@ def test_update_node_relationship_one_no_attribution_when_unset(monkeypatch: pyt
     node, peer, client, node_schema = _make_sdk_relationship_nodes()
     monkeypatch.setattr(infrahub_adapter, "resolve_peer_node", lambda **_kwargs: peer)
 
-    update_node(node, {"location": "rack-uid"}, client, node_schema)
+    update_node(node, {"location": "rack-uid"}, client, node_schema, client.schema.all.return_value)
 
     relationship = cast("RelatedNodeSync", node.location)
     assert relationship.peer is peer
@@ -285,7 +293,15 @@ def test_update_node_relationship_one_preserves_resource_pool_allocation(monkeyp
     node, pool, client, node_schema = _make_sdk_relationship_nodes(resource_pool=True)
     monkeypatch.setattr(infrahub_adapter, "resolve_peer_node", lambda **_kwargs: pool)
 
-    update_node(node, {"location": "pool-uid"}, client, node_schema, source=SOURCE_ID, owner=OWNER_ID)
+    update_node(
+        node,
+        {"location": "pool-uid"},
+        client,
+        node_schema,
+        client.schema.all.return_value,
+        source=SOURCE_ID,
+        owner=OWNER_ID,
+    )
 
     relationship = cast("RelatedNodeSync", node.location)
     assert relationship.peer is pool
