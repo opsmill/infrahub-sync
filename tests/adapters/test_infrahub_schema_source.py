@@ -13,11 +13,11 @@ silently.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, NoReturn, cast
 
 import pytest
 from infrahub_sdk import Config, InfrahubClientSync
-from infrahub_sdk.node import InfrahubNodeSync
+from infrahub_sdk.node import Attribute, InfrahubNodeSync
 from infrahub_sdk.schema.main import (
     AttributeKind,
     AttributeSchemaAPI,
@@ -32,7 +32,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
-from infrahub_sync.adapters.infrahub import InfrahubAdapter, resolve_peer_node
+from infrahub_sync.adapters.infrahub import InfrahubAdapter, resolve_peer_node, update_node
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
@@ -138,4 +138,19 @@ def test_peer_resolution_of_an_uncached_store_node_issues_no_request(client: Inf
     )
 
     assert peer_node is node
+    assert not client.schema.cache
+
+
+def test_update_of_an_uncached_node_issues_no_request(client: InfrahubClientSync) -> None:
+    """``update_node`` applies attributes using the caller's mapping, not a schema fetch."""
+    schema = _node_schema()
+    node = InfrahubNodeSync(
+        client=client, schema=schema, branch="main", data={"id": "w1", "name": {"value": "widget-a"}}
+    )
+
+    updated = update_node(
+        node=node, attrs={"name": "widget-b"}, client=client, node_schema=schema, schemas={KIND: schema}
+    )
+
+    assert cast("Attribute", updated.name).value == "widget-b"
     assert not client.schema.cache
