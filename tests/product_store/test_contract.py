@@ -21,7 +21,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from typing_extensions import LiteralString
 
 from infrahub_sync import product_store
@@ -3263,7 +3263,122 @@ def test_a_public_json_artifact_stays_valid_json_when_a_secret_is_a_number(
 
     artifact = redaction_provider.lookup_artifact("run-001", "plan-review").value
     assert artifact is not None
-    assert json.loads(artifact) == {"vlan": 7, "asn": "***", "serial": "1***"}
+    assert json.loads(artifact) == {"vlan": 7, "asn": "***", "serial": "***"}
+
+
+@pytest.mark.parametrize(
+    ("data", "secret"),
+    [
+        pytest.param(TypeAdapter(dict[str, float]).dump_json({"number": -1e100}), "-1e100", id="pydantic-exponent"),
+        pytest.param(b'{"number":123456789012345678901234.0}', "901234567890", id="long-float"),
+        pytest.param(b'{"number":-1.000E100}', "-1.000E100", id="uppercase-exponent"),
+        pytest.param(b'{"number":-0.000000}', "-0.000000", id="negative-zero"),
+    ],
+)
+def test_a_public_json_artifact_masks_the_complete_matching_number_token(
+    data: bytes, secret: str, redaction_provider: ProductProjection
+) -> None:
+    redaction_provider.create_run(_run())
+
+    reference = redaction_provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=data,
+        secrets=(secret,),
+    )
+
+    artifact = redaction_provider.lookup_artifact("run-001", "plan-review").value
+    assert artifact is not None
+    assert json.loads(artifact) == {"number": "***"}
+    assert secret.encode() not in artifact
+    assert reference.digest == sha256(artifact).hexdigest()
+    assert reference.size == len(artifact)
+
+
+def test_a_public_json_artifact_preserves_nonmatching_numbers_and_boolean_values(
+    redaction_provider: ProductProjection,
+) -> None:
+    data = b'{ "number": -1e100, "precise": 123456789012345678901234.0, "flag": true, "empty": null }'
+    redaction_provider.create_run(_run())
+    redaction_provider.publish_artifact(
+        "run-001",
+        artifact_id="plan-review",
+        kind="saved-plan-review",
+        media_type="application/json",
+        data=data,
+        secrets=("unmatched-canary",),
+    )
+
+    assert redaction_provider.lookup_artifact("run-001", "plan-review").value == data
+
+
+def test_a_public_json_artifact_plan_with_a_matching_number_is_retrievable_through_authenticated_http(
+    monkeypatch: pytest.MonkeyPatch, redaction_provider: ProductProjection
+) -> None:
+    """Use the worker's review serializer and publication method, then the real plan route."""
+    pytest.importorskip("prefect")
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from infrahub_sync.plan.identity import operation_id
+    from infrahub_sync.plan.models import PlanManifest, PlannedOperation
+    from infrahub_sync.plan.review import SavedPlan
+    from infrahub_sync.service import flow as service_flow
+    from infrahub_sync.service.app import create_app
+    from infrahub_sync.service.auth import PRINCIPALS_ENV, EnvironmentPrincipalResolver
+    from infrahub_sync.service.service import PLAN_ARTIFACT_ID, RunService
+
+    token = "plan-review-auth-canary"  # noqa: S105 - synthetic authentication credential.
+    secret = "-1e100"  # noqa: S105 - synthetic numeric credential.
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"reviewer": {"token": token}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    redaction_provider.create_run(_run())
+    saved = SavedPlan(
+        manifest=PlanManifest(
+            format_version=2,
+            run_id="run-001",
+            created_at="2026-08-08T12:00:00+00:00",
+            config_version="a" * 64,
+            source_snapshot=[],
+            operations_count=1,
+            delete_operations_computed=True,
+            plan_checksum="b" * 64,
+        ),
+        operations=[
+            PlannedOperation(
+                operation_id=operation_id("create", "Example", {"name": "example"}),
+                action="create",
+                kind="Example",
+                identity={"name": "example"},
+                tier=0,
+                payload={"name": "example", "number": -1e100, "unchanged": 7, "flag": True},
+            )
+        ],
+        checksum_ok=True,
+        verification_notes=[],
+    )
+    serialized = service_flow._review_document("run-001", saved).model_dump_json().encode()
+    assert b'"number":-1e100' in serialized
+
+    service_flow._publish_plan(redaction_provider, "run-001", saved, (secret,))
+
+    service = RunService(redaction_provider, MagicMock(), secrets=resolver.secret_values)
+    with TestClient(create_app(service, resolver)) as client:
+        assert client.get("/runs/run-001/plan").status_code == 401
+        response = client.get("/runs/run-001/plan", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 200
+    assert response.json()["operations"][0]["payload"] == {
+        "name": "example",
+        "number": "***",
+        "unchanged": 7,
+        "flag": True,
+    }
+    artifact = redaction_provider.lookup_artifact("run-001", PLAN_ARTIFACT_ID).value
+    assert artifact is not None
+    assert json.loads(artifact) == response.json()
+    assert secret.encode() not in artifact
 
 
 def test_a_public_json_artifact_masks_a_number_written_without_the_exponent_sign(
