@@ -13,7 +13,8 @@ six-hour budget when its stack manager is created. Stack lifecycle commands, inc
 the NetBox restore, schema loading, the baseline sync, the change script, and the measured
 sync receive the remaining budget. Shell commands run in their own sessions; a deadline
 kills their whole process group, including redirected commands and `uv run` children.
-Ctrl-C sends SIGINT to the setup command's process group and stops the repetition.
+Ctrl-C sends SIGINT to the setup command's process group. The runner waits up to one
+second for the group to exit, kills any survivors, and reaps the command before cleanup.
 The runner also checks the deadline after validation. Local file work is not interrupted
 by this deadline. v2 environment setup and HTTP reads use their own command and request
 timeouts.

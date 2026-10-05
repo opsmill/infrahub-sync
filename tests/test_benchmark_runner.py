@@ -1131,14 +1131,16 @@ def test_source_counts_reject_missing_or_extra_foundation_and_skip_rows(kind, de
 
 
 @pytest.mark.usefixtures("default_sigint_handler")
-def test_setup_interrupt_stops_sleeping_grandchild_and_records_reason(monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize("ignore_sigint", [False, True])
+def test_setup_interrupt_stops_sleeping_grandchild_and_records_reason(monkeypatch, tmp_path, ignore_sigint) -> None:
     from development.bench import runtime
 
     child_pid = tmp_path / "child.pid"
     script = tmp_path / "spawn.py"
     script.write_text(
-        "import subprocess,sys,time\nfrom pathlib import Path\n"
-        "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\n"
+        "import signal,subprocess,sys,time\nfrom pathlib import Path\n"
+        + ("signal.signal(signal.SIGINT, signal.SIG_IGN)\n" if ignore_sigint else "")
+        + "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\n"
         f"Path({str(child_pid)!r}).write_text(str(child.pid))\n"
         "time.sleep(60)\n",
         encoding="utf-8",
@@ -1170,7 +1172,9 @@ def test_setup_interrupt_stops_sleeping_grandchild_and_records_reason(monkeypatc
 
         @staticmethod
         def close() -> None:
-            pass
+            stat = Path(f"/proc/{int(child_pid.read_text())}/stat")
+            assert not stat.exists() or stat.read_text(encoding="utf-8").split()[2] == "Z", "cleanup raced a live child"
+            assert processes[0].poll() is not None
 
     monkeypatch.setattr(subprocess, "Popen", popen)
     monkeypatch.setattr(runtime.SessionLocal, "wait", wait)
