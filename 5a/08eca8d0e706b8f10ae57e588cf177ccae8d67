@@ -1,0 +1,19 @@
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_b49d0b79aa3886::t_d35fb5dc86b597 381
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a08eca8d0e706b8f10ae57e588cf177ccae8d67",
+  "prompts": {},
+  "sessions": {
+    "s_b49d0b79aa3886": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "449f9b38-87d0-464b-8686-20851ebbf841",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
