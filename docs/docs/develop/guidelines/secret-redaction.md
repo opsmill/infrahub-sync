@@ -159,11 +159,13 @@ letter. The raw value then never appears in the bytes. `publish_artifact` theref
 decodes a JSON artifact and redacts the decoded strings, mapping keys and numbers. It
 checks numbers against both their original JSON token and their normalized Python JSON
 spelling. A match anywhere in either spelling replaces the whole numeric value with the
-string `"***"`, so the document remains valid JSON. Nonmatching numbers remain numeric.
-It re-serializes the document only when a value was replaced. Every public artifact then
-gets a byte pass over the raw value and its JSON string forms, which `json_string_forms`
-derives. The recorded digest and size are computed from the redacted bytes that are
-stored. Internal artifacts are never redacted; see
+string `"***"`, preventing secrets from corrupting numeric tokens during the JSON pass.
+Nonmatching numbers remain numeric. It re-serializes the document only when a value was
+replaced. Every public artifact then gets a byte pass over the raw value and its JSON
+string forms, which `json_string_forms` derives. A secret that spans a number and
+following punctuation can still corrupt JSON during this byte pass; for example,
+`"7,"` can change `{"a":17,"b":2}` into invalid JSON. The recorded digest and size are
+computed from the redacted bytes that are stored. Internal artifacts are never redacted; see
 [ADR 0011](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0011-internal-run-bundles-are-private-and-byte-stable.md).
 
 ### Never chain a validation library's raw detail

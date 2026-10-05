@@ -3563,17 +3563,22 @@ def _redacted_json_bytes(data: bytes, secrets: Sequence[str]) -> bytes:
         return data
     number_redacted = False
 
-    def redact_number(token: str) -> int | float | str:
+    def redact_number(token: str, value: float) -> int | float | str:
         """Check the document's number spelling before conversion loses it."""
         nonlocal number_redacted
-        value = float(token) if any(character in token for character in ".eE") else int(token)
         if redact_ordered(token, forms) != token or _redact_ordered_value(value, forms, numbers=True) == REDACTED:
             number_redacted = True
             return REDACTED
         return value
 
+    def parse_integer(token: str) -> int | str:
+        return redact_number(token, int(token))
+
+    def parse_decimal(token: str) -> float | str:
+        return redact_number(token, float(token))
+
     try:
-        document = json.loads(data, parse_int=redact_number, parse_float=redact_number)
+        document = json.loads(data, parse_int=parse_integer, parse_float=parse_decimal)
     except (ValueError, RecursionError):
         # Declared JSON that does not parse gets the byte pass alone.
         return data
