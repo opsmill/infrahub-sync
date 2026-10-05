@@ -160,7 +160,7 @@ decodes a JSON artifact and redacts the decoded strings, mapping keys and number
 checks numbers against both their original JSON token and their normalized Python JSON
 spelling. A match anywhere in either spelling replaces the whole numeric value with the
 string `"***"`, preventing secrets from corrupting numeric tokens during the JSON pass.
-Nonmatching numbers remain numeric. It re-serializes the document only when a value was
+Numbers without a match remain numeric. It re-serializes the document only when a value was
 replaced. Every public artifact then gets a byte pass over the raw value and its JSON
 string forms, which `json_string_forms` derives. A secret that spans a number and
 following punctuation can still corrupt JSON during this byte pass; for example,
