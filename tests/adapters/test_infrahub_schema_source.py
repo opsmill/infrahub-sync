@@ -18,7 +18,13 @@ from typing import TYPE_CHECKING, NoReturn
 import pytest
 from infrahub_sdk import Config, InfrahubClientSync
 from infrahub_sdk.node import InfrahubNodeSync
-from infrahub_sdk.schema.main import AttributeKind, AttributeSchemaAPI, NodeSchemaAPI
+from infrahub_sdk.schema.main import (
+    AttributeKind,
+    AttributeSchemaAPI,
+    NodeSchemaAPI,
+    RelationshipCardinality,
+    RelationshipSchemaAPI,
+)
 
 from infrahub_sync import (
     SchemaMappingField,
@@ -26,7 +32,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
-from infrahub_sync.adapters.infrahub import InfrahubAdapter
+from infrahub_sync.adapters.infrahub import InfrahubAdapter, resolve_peer_node
 
 if TYPE_CHECKING:
     from collections.abc import MutableMapping
@@ -130,4 +136,42 @@ def test_identifier_reconciliation_of_an_uncached_store_node_issues_no_request(c
     )
 
     assert client.store.get(key="widget-a", kind=KIND, raise_when_missing=False) is node
+    assert not client.schema.cache
+
+
+def test_peer_resolution_refetches_an_incomplete_store_node_of_a_mapped_kind(client: InfrahubClientSync) -> None:
+    """A stored peer missing a required value, of a kind in the mapping, is re-fetched."""
+    schema = _node_schema()
+    node = InfrahubNodeSync(client=client, schema=schema, branch="main", data={"id": "w1"})
+    client.store.set(node=node, key="w1")
+
+    with pytest.raises(_SchemaFetchAttemptedError):
+        resolve_peer_node(
+            key="w1",
+            rel_schema=RelationshipSchemaAPI(name="widget", peer=KIND, cardinality=RelationshipCardinality.ONE),
+            peer_schema=schema,
+            store=client.store,
+            client=client,
+            fallback=True,
+            schemas={KIND: schema},
+        )
+
+
+def test_peer_resolution_keeps_an_incomplete_store_node_of_an_unmapped_kind(client: InfrahubClientSync) -> None:
+    """A stored peer whose kind is absent from the mapping is returned as is, unfetched."""
+    schema = _node_schema()
+    node = InfrahubNodeSync(client=client, schema=schema, branch="main", data={"id": "w1"})
+    client.store.set(node=node, key="w1")
+
+    peer_node = resolve_peer_node(
+        key="w1",
+        rel_schema=RelationshipSchemaAPI(name="widget", peer=KIND, cardinality=RelationshipCardinality.ONE),
+        peer_schema=schema,
+        store=client.store,
+        client=client,
+        fallback=True,
+        schemas={},
+    )
+
+    assert peer_node is node
     assert not client.schema.cache

@@ -166,7 +166,7 @@ uv run rumdl fmt .     # fix
 
 ## Changelog
 
-Release notes are written by contributors, not generated from PR titles. Every pull request must add a news fragment under `changelog/`, including pull requests into `feature/v3-develop`. The `changelog-check.yml` workflow that enforces this for `main` is disabled at present: its `pull_request` trigger is commented out, so it runs only when dispatched manually. Reviewers check for the fragment.
+Release notes are written by contributors, not generated from PR titles. Every pull request must add a news fragment under `changelog/`, including pull requests into `feature/v3-develop`. The `changelog-check.yml` workflow that enforces this for `main` is disabled at present: its `pull_request` trigger is commented out, and a manual dispatch fails because it has no pull request to check. Reviewers check for the fragment.
 
 Create one with towncrier, naming it after the issue or PR number:
 
@@ -178,9 +178,11 @@ The file must be a direct child of `changelog/` named `<id>.<type>.md`. The seve
 
 `security`, `removed`, `deprecated`, `added`, `changed`, `fixed`, `housekeeping`
 
-Use `+` as the id for a change with no issue number (`+short-slug.housekeeping.md`). Nested paths and unknown types are ignored by towncrier, so the check rejects them rather than let an entry vanish at release time. A fragment that is empty or whitespace-only fails the release build, which names the file.
+Use `+` as the id for a change with no issue number (`+short-slug.housekeeping.md`). Nested paths and unknown types are ignored by towncrier, so reviewers reject them rather than let an entry vanish at release time (`changelog-check.yml` rejects them too once its trigger is restored). A fragment that is empty or whitespace-only fails the release build, which names the file.
 
 Label a pull request `ci/skip-changelog` when it needs no entry, for example a dependency bump or a typo fix. Dependabot applies that label itself.
+
+Every normal pull request into `main` must also carry exactly one release-intent label — `changes/major`, `changes/minor`, or `changes/patch` — and `release-label-check.yml` fails the PR if it does not. These labels alone determine the version bump. Dependabot and `update-infrahub-sdk.yml` apply `changes/patch` themselves; generated `chore(release):` pull requests are exempt because they apply, rather than introduce, that release intent.
 
 **Versions and `CHANGELOG.md` are never edited manually.** For a V2 release from `main`, merging does not prepare the release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md). V3 pre-release candidates are built by `workflow-candidate.yml` instead; see [`develop/guides/qualifying-an-internal-candidate.md`](docs/docs/develop/guides/qualifying-an-internal-candidate.md).
 
@@ -202,7 +204,7 @@ Label a pull request `ci/skip-changelog` when it needs no entry, for example a d
 ## Git and PR Process
 
 - Do not force-push on shared branches. Do not amend to hide pre-commit fixes; use a follow-up commit.
-- Apply PR labels: `bugs`, `breaking`, `enhancements`, `features` (default `enhancements`).
+- Apply exactly one `changes/*` release-intent label as described above.
 - Run the required workflow (format → lint → CLI sanity) before a PR.
 - Agents must identify themselves (e.g. `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>` or `🤖 Generated with Copilot`).
 - Commit subject: imperative "what changed." Rationale goes in the PR body.

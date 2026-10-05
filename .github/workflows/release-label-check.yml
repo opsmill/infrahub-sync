@@ -1,0 +1,50 @@
+---
+# yamllint disable rule:truthy
+name: Release bump label
+
+# The `changes/*` label is the only input version-drafter reads to choose the
+# next version, so every pull request into `main` must carry exactly one.
+# `edited` is listed because the generated release pull request exemption
+# depends on the title.
+#
+# `pull_request_target` runs this file and the checker as they are on `main`,
+# so a pull request cannot weaken the gate it is being checked by. The job
+# checks out only the base commit and the checker reads only the event
+# payload — never check out or run pull request head code here. The flip side:
+# a change to this workflow or the checker takes effect only once merged.
+on:
+  pull_request_target:
+    branches:
+      - main
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+
+# Keyed on the pull request, not `github.ref` (always `main` under
+# `pull_request_target`). Each label change fires its own event; cancelling
+# the older run keeps a stale result from overwriting the current one.
+concurrency:
+  group: label-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  validate:
+    name: Require one release bump label
+    runs-on: "ubuntu-22.04"
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: "Check out base commit"
+        uses: "actions/checkout@v7"
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: "Set up Python"
+        uses: "actions/setup-python@v7"
+        with:
+          python-version: "3.12"
+
+      - name: "Validate release bump label"
+        run: python scripts/check_release_labels.py --event-path "${GITHUB_EVENT_PATH}"

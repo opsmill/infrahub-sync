@@ -179,7 +179,7 @@ is not acceptable.
 
 - Do not force-push shared branches; use follow-up commits rather than amending to hide fixes.
 - Small, scoped, reversible commits; imperative subject line, rationale in the PR body.
-- Apply PR labels (`bugs`, `breaking`, `enhancements`, `features`; default `enhancements`).
+- Apply exactly one release-intent label (`changes/major`, `changes/minor`, or `changes/patch`) to every normal pull request; generated `chore(release):` pull requests are exempt. See `RELEASING.md`.
 
 ### Governance
 
@@ -202,4 +202,4 @@ This constitution is the authoritative reference for development standards in th
   sets the principles those documents
   implement. Where they appear to conflict, the constitution governs.
 
-**Version**: 1.0.2 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-09-29
+**Version**: 1.0.3 | **Ratified**: 2026-06-22 | **Last Amended**: 2026-10-01
