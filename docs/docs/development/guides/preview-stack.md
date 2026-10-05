@@ -170,7 +170,8 @@ repository root, which Git also ignores.
 
 ## Every credential is a development default
 
-Nothing the stack uses is a secret, and none of it works anywhere else:
+Nothing the stack uses is a secret. These are public development defaults, and the Infrahub
+ones also authenticate against any other Infrahub instance that still uses the same defaults:
 
 - `development/preview.env` ships the MinIO access key and secret key, the Infrahub admin
   token, and the Sync API bearer principal.
@@ -180,9 +181,9 @@ Nothing the stack uses is a secret, and none of it works anywhere else:
   refreshing from upstream, restore and verify those pins. Its Infrahub admin
   token, agent token, and security key defaults are the upstream published values.
 
-They reach only the disposable local containers this stack creates. Do not reuse them in
-a deployment, and mint your own tokens in `development/preview.local.env` if you need
-different ones.
+Do not reuse them in a deployment, and do not leave an Infrahub that still uses them
+reachable from other machines. Mint your own tokens in `development/preview.local.env` if
+you need different ones.
 
 When updating an Infrahub or Prefect image in the preview, change its tag and
 matching `@sha256:` digest together in `development/preview.env`. Inspect the
