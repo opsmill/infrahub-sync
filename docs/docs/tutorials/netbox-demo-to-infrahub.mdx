@@ -1,22 +1,21 @@
 ---
 title: Sync the public NetBox demo to a local Infrahub
-description: Set up a local Infrahub instance, load a data model, and synchronize infrastructure data from the public NetBox demo.
+description: Start a local Infrahub and the Sync service, load a data model, and synchronize infrastructure data from the public NetBox demo.
 ---
 
-By the end of this tutorial you will have run a local Infrahub and the Sync service,
-loaded a schema that covers locations, devices, interfaces, IPAM, and organizations, and
-imported data from the [public NetBox demo](https://demo.netbox.dev) into an Infrahub
-branch that you can review as a proposed change. You start with no Infrahub instance and
-no schema.
+By the end of this tutorial you will have run a local Infrahub and the Sync service, loaded a
+schema that covers locations, devices, interfaces, IPAM, and organizations, and imported data
+from the [public NetBox demo](https://demo.netbox.dev) into an Infrahub branch that you can
+review as a proposed change. Sync runs in containers built from a checkout of Infrahub Sync.
+You start with no Infrahub instance and no schema.
 
 :::tip Other routes
 
 - For an existing NetBox and Infrahub with a Compose Sync deployment, follow
   [Preview NetBox data in an existing Infrahub](netbox-to-existing-infrahub).
   That tutorial ends with a saved preview; this local demo continues through an import.
-- To run the Sync service from a checkout in containers, with a local NetBox instead
-  of the public demo, follow [Run from source](../development-stack.mdx#run-from-source).
-  It uses the same example package and ends with the same import.
+- To import the same data from a local NetBox with a fixed dataset, which gives the same
+  result on every run, follow [Run a first sync](../development-stack.mdx#run-a-first-sync).
 
 :::
 
@@ -25,52 +24,32 @@ no schema.
 **Prerequisites**:
 
 - [Docker](https://docs.docker.com/get-docker/) installed and running (Docker Desktop or OrbStack)
+- [Git](https://git-scm.com/downloads)
 - [uv](https://docs.astral.sh/uv/getting-started/installation/) (Python package manager)
-- [Python 3.11+](https://www.python.org/downloads/)
+- [Python](https://www.python.org/downloads/) 3.11 to 3.13
 
 :::warning Public demo data
-The NetBox demo instance is public and resets regularly. Object counts, names, and sample data may differ from the examples in this tutorial. Because anyone can edit it, it can also contain malformed or unexpected data that breaks the sync — see [Troubleshooting](#troubleshooting) if you run into errors.
-:::
-
-## Create a project
-
-[Copier](https://copier.readthedocs.io/) is a project scaffolding tool. Use it to create a new Infrahub project from the official template, which includes the standard file structure, task definitions, and a `schemas/` folder:
-
-1. Run the following command to create a new project directory:
-
-```bash
-uv tool run --from 'copier' copier copy https://github.com/opsmill/infrahub-template infrahub-automation
-```
-
-When prompted, enter a project name (for example, `infrahub-automation`), then press **Enter** to accept the default for every remaining prompt (they all default to **No**).
-
-2. Navigate to the project directory:
-
-```bash
-cd infrahub-automation
-```
-
-3. Open the project in your IDE. If you have Visual Studio Code installed, you can run:
-
-```bash
-code .
-```
-
-:::success Verification
-Run `ls` in the project directory. You should see files including `pyproject.toml`, `tasks.py`, and a `schemas/` folder.
+Anyone can edit the public NetBox demo, so object counts, names, and sample data differ from
+the examples in this tutorial. Other users also add records that stop a run, such as two
+devices with the same name or two identical addresses with no VRF.
+[When a run fails](#when-a-run-fails) shows how to find the record that caused it.
 :::
 
 ## Start Infrahub
 
-The project template includes [Invoke](https://www.pyinvoke.org/) tasks that wrap Docker Compose commands.
+Infrahub publishes a Docker Compose file for a local instance. Put it in a directory of its
+own, outside the Infrahub Sync checkout that you clone in the next step, because that
+checkout already holds a `docker-compose.yml` of its own.
 
-1. Start all Infrahub services with a single command:
+1. Download the Compose file and start Infrahub:
 
 ```bash
-uv run invoke start
+mkdir -p ~/infrahub-local && cd ~/infrahub-local
+curl https://infrahub.opsmill.io > docker-compose.yml
+docker compose -p infrahub up -d --wait
 ```
 
-The first run takes a few minutes while Docker downloads the container images.
+The first start takes a few minutes while Docker downloads the container images.
 
 2. Open your browser and go to [http://localhost:8000](http://localhost:8000).
 
@@ -83,74 +62,79 @@ The first run takes a few minutes while Docker downloads the container images.
 You should see the Infrahub web interface with a navigation menu on the left side.
 :::
 
-## Install infrahub-sync
+## Get Infrahub Sync
 
-1. Clone Infrahub Sync beside the automation project, then install the service profile
-   from that checkout. The service profile is not published to PyPI yet, so the checkout
-   keeps the executable, this tutorial, and its example package at one revision:
+The checkout provides the `infrahub-sync` command, `infrahubctl`, the Sync service image, and
+the example package this tutorial uses.
+
+1. Clone the V3 branch beside the Infrahub directory and install the development environment:
 
 ```bash
-git clone --branch feature/v3-develop https://github.com/opsmill/infrahub-sync.git ../infrahub-sync
-uv add --editable "../infrahub-sync[service]" pynetbox
+cd ~
+git clone --branch feature/v3-develop https://github.com/opsmill/infrahub-sync.git
+cd infrahub-sync
+uv sync --extra dev --extra prefect --extra service
 ```
 
 The repository's default branch is `main`, which is V2. Clone the V3 line explicitly, as
-shown above, or a pinned V3 tag once one exists.
+shown above, or a pinned V3 tag once one exists. Run every remaining command from the
+`infrahub-sync` directory.
 
-This installs the `infrahub-sync` command. `pynetbox` is required by the NetBox adapter.
-
-2. Verify infrahub-sync command is available:
+2. Verify the `infrahub-sync` command is available:
 
 ```bash
 uv run infrahub-sync --help
 ```
 
-For more about supported adapters and their Python requirements, see the [NetBox adapter documentation](../adapters/netbox.mdx).
-
 ## Load a schema into Infrahub
 
-Infrahub stores data according to its schema. Before we can import any data, we need Infrahub to know the kinds of objects that the sync will create.
+Infrahub stores data according to its schema. Before Sync can import anything, Infrahub needs
+the kinds of objects that the sync creates.
 
 The schema for this tutorial covers DCIM and IPAM features similar to NetBox's. It is
 not a copy of NetBox's data model. A real migration can keep the parts of NetBox that
 matter to you and adapt the model to your own workflows.
 
-The schemas are published on the [Infrahub Marketplace](https://marketplace.infrahub.app/collections/infrahub/traditional-infrastructure-sot) as the `infrahub/traditional-infrastructure-sot` collection. Download it with `infrahubctl`, which the project template already installs:
-
-```bash
-uv run infrahubctl marketplace get infrahub/traditional-infrastructure-sot --collection
-```
-
-The command writes the collection's 16 schema files into `schemas/traditional-infrastructure-sot/`. It reads from the marketplace only, so your Infrahub instance does not need to be reachable yet.
-
-The command can fail with `Marketplace request failed: ReadTimeout`. If it does, copy the
-same 16 files from the Infrahub Sync checkout instead. The nightly tests load this copy:
-
-```bash
-mkdir -p schemas
-cp -R ../infrahub-sync/tests/data/nightly_schema/traditional-infrastructure-sot schemas/
-```
-
-:::success Verification
-Run `ls schemas/traditional-infrastructure-sot`. You should see files including `dcim.yml`, `location.yml`, `ipam.yml`, and `organization.yml`.
-:::
-
-Export the local Infrahub address and API token. Infrahub Sync will need them later to authenticate against your instance:
+1. Export the local Infrahub address and API token for `infrahubctl`:
 
 ```bash
 export INFRAHUB_ADDRESS="http://localhost:8000"
 export INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
 ```
 
-This is the default admin token that the project's Docker Compose stack seeds automatically, and it matches the default already configured in `infrahubctl.toml`. Do not reuse it for an internet-facing or shared Infrahub instance.
+This is the default admin token that Infrahub's Compose file creates. Do not reuse it for an
+internet-facing or shared Infrahub instance.
 
-Then load the schema into Infrahub using the project's `load-schema` task, which walks the `schemas/` folder recursively and loads every file you downloaded:
+2. Download the schema. It is published on the
+[Infrahub Marketplace](https://marketplace.infrahub.app/collections/infrahub/traditional-infrastructure-sot)
+as the `infrahub/traditional-infrastructure-sot` collection:
 
 ```bash
-uv run invoke load-schema
+uv run infrahubctl marketplace get infrahub/traditional-infrastructure-sot \
+  --collection --output-dir .netbox/schemas
 ```
 
-Refresh [the local Infrahub web interface](http://localhost:8000). You should see additional schema objects in the left navigation. You can also open the schema view in the UI to explore the kinds and relationships that were loaded.
+The command writes the collection's 16 schema files into `.netbox/schemas/`. Git ignores the
+`.netbox/` directory.
+
+The command can fail with `Marketplace request failed: ReadTimeout`. If it does, skip it and
+load the copy of the same 16 files that the nightly tests use, in the next step.
+
+3. Load the schema into Infrahub:
+
+```bash
+uv run infrahubctl schema load .netbox/schemas --wait 120
+```
+
+If you skipped the download, load the copy from the checkout instead:
+
+```bash
+uv run infrahubctl schema load tests/data/nightly_schema/traditional-infrastructure-sot --wait 120
+```
+
+Refresh [the local Infrahub web interface](http://localhost:8000). You should see additional
+schema objects in the left navigation. You can also open the schema view in the UI to explore
+the kinds and relationships that were loaded.
 
 ## Create a NetBox API token
 
@@ -170,36 +154,82 @@ export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="nbt_..."
 
 Export the complete `nbt_...` token value. Do not include an authorization prefix such as `Bearer`, and do not copy only the short **Key** field.
 
+## Start the Sync service
+
+The Sync service is a Sync API, a worker that connects to NetBox and Infrahub, a Prefect
+server, PostgreSQL, and object storage. The development stack builds the service image from
+your checkout and starts all of them in containers.
+
+1. Give the worker the Infrahub token. The worker reads both credentials from its environment
+   when its container starts:
+
+```bash
+export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="${INFRAHUB_API_TOKEN}"
+```
+
+2. Build the image and start the stack:
+
+```bash
+uv run invoke build
+uv run invoke start
+```
+
+`start` waits until every service is healthy, then prints the Sync API address, its bearer
+token, and the Prefect UI address.
+
+3. Point the CLI at the Sync API and check the service:
+
+```bash
+export INFRAHUB_SYNC_API_URL="http://127.0.0.1:8030"
+export INFRAHUB_SYNC_API_TOKEN="infrahub-sync-dev-token"
+curl -sf -H "Authorization: Bearer ${INFRAHUB_SYNC_API_TOKEN}" "${INFRAHUB_SYNC_API_URL}/status"
+```
+
+The response reports `"service": "ready"` when the worker is running. The API token
+authenticates the CLI to the Sync API. It is separate from
+`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, which the worker uses to access Infrahub.
+
+If you change either credential later, export the new value and run `uv run invoke start`
+again. It recreates the worker with the new environment.
+
+For the addresses, the image rebuild after a code change, and the other stack commands, see
+[Local development stack](../development-stack.mdx#run-from-source).
+
 ## Create the sync project
 
 A sync project is a directory containing a `package.yml` file. Its `configuration` key names the source and destination adapters, maps source fields to destination fields, and includes references that let Infrahub Sync compute write order.
 
-From your project directory (`infrahub-automation`), create a sync project directory and download the example NetBox to Infrahub package.
+1. Copy the example NetBox to Infrahub package, and set its Infrahub address to one the
+   worker can reach:
 
 ```bash
-mkdir -p sync-projects/netbox-demo
-cp ../infrahub-sync/examples/netbox_to_infrahub/package.yml \
-  sync-projects/netbox-demo/package.yml
+mkdir -p .netbox
+sed 's#url: "http://localhost:8000"#url: "http://host.docker.internal:8000"#' \
+  examples/netbox_to_infrahub/package.yml > .netbox/from-netbox.yml
+grep -n 'url:' .netbox/from-netbox.yml
 ```
 
-The copied configuration is named `from-netbox`. It maps selected NetBox objects onto the Infrahub schema.
+The `grep` prints the two addresses: `https://demo.netbox.dev` for the source and
+`http://host.docker.internal:8000` for the destination.
 
-Open `sync-projects/netbox-demo/package.yml` in an editor and scan the top-level keys under `configuration`:
+The worker runs in a container, and inside a container `localhost` is the container itself,
+not your machine. Docker Desktop and OrbStack resolve `host.docker.internal` to your machine,
+where Infrahub publishes port 8000. On Linux, the worker's Compose service maps
+`host.docker.internal` to the host's internal IP address (Docker's `host-gateway` value);
+this route has not been tested on Linux yet.
+
+The worker reads `source.settings.url` and `destination.settings.url` from the registered
+package itself, not from the environment. `INFRAHUB_ADDRESS` is used only by `infrahubctl`.
+Only the two credentials come from the worker's environment, resolved through the
+`credentials` block at the bottom of the file.
+
+The copied configuration is named `from-netbox`. Open `.netbox/from-netbox.yml` in an editor
+and scan the top-level keys under `configuration`:
 
 - `name` identifies the sync project.
 - `source` configures the NetBox adapter.
 - `destination` configures the Infrahub adapter.
 - `schema_mapping` defines how NetBox API resources become Infrahub objects.
-
-The worker reads the `source.settings.url` and `destination.settings.url` values from the
-registered package itself, not from the environment. The `INFRAHUB_ADDRESS` variable
-exported above is used only by `infrahubctl`, the `invoke load-schema` task, and other
-project-template commands that run outside Infrahub Sync. If either target is not at the
-address already in the file, edit those two URLs in
-`sync-projects/netbox-demo/package.yml` before you register it. Only the two credentials
-(`INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`) come from the worker's
-environment, resolved
-through the `credentials` block at the bottom of the file.
 
 This tutorial registers the package, uses `diff` to create a service plan, reviews that
 plan, and then applies it by its checksum, so the writes are exactly what you reviewed. See
@@ -208,138 +238,18 @@ and writes a new plan in the same run instead of applying a plan you already rev
 
 For a fuller explanation of this file, see [Create a sync project](../creating-a-sync-project.mdx) and the [schema mapping reference](../reference/schema-mapping.mdx).
 
-## Start the Sync API and worker
-
-The CLI sends configuration and run requests to a Sync API. A Prefect worker performs the
-adapter work. This local tutorial starts both; a production deployment should follow the
-[Sync HTTP API reference](../reference/sync-http-api.mdx).
-
-Infrahub already listens on `127.0.0.1:8000`, so the commands below bind the Sync API to
-`127.0.0.2:8000`.
-
-On macOS, create that loopback alias first with
-`sudo ifconfig lo0 alias 127.0.0.2 up`. If a process is bound to port 8000 on all
-interfaces, the second address cannot reuse that port; stop the conflicting process or
-start the Sync API on another port with
-`uv run uvicorn --factory infrahub_sync.service.serve:build_app --host 127.0.0.2 --port 8001`,
-then use that port in `INFRAHUB_SYNC_API_URL`.
-
-1. Save this local service definition as `sync-services.yml`:
-
-```yaml
-services:
-  postgres:
-    image: postgres:17
-    environment:
-      POSTGRES_USER: sync
-      POSTGRES_PASSWORD: sync-local-only
-      POSTGRES_DB: infrahub_sync
-    ports:
-      - "127.0.0.1:5433:5432"
-  minio:
-    # Temporary Chainguard image while a maintained S3 store is selected.
-    image: cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
-    command: server /data
-    environment:
-      MINIO_ROOT_USER: sync-local
-      MINIO_ROOT_PASSWORD: sync-local-secret
-    ports:
-      - "127.0.0.1:9000:9000"
-  minio-client:
-    image: cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
-    entrypoint: /bin/sh
-    command:
-      - -c
-      - until mc alias set local http://minio:9000 sync-local sync-local-secret; do sleep 1; done; mc mb --ignore-existing local/infrahub-sync-artifacts
-```
-
-Start PostgreSQL and MinIO, then create the artifact bucket:
-
-```bash
-docker compose -f sync-services.yml up --detach postgres minio
-docker compose -f sync-services.yml run --rm minio-client
-```
-
-The `minio-client` command above already waits for MinIO before it creates the
-bucket. Confirm PostgreSQL accepts connections before continuing:
-
-```bash
-docker compose -f sync-services.yml exec postgres pg_isready -U sync
-```
-
-Expect `accepting connections`. These fixed values are local tutorial
-credentials; do not use them outside an isolated development machine.
-
-2. In terminal 1, start Prefect:
-
-```bash
-uv run prefect server start --host 127.0.0.1 --port 4200
-```
-
-3. In each remaining service terminal, change to the `infrahub-automation` project root
-   and export the shared service, storage, worker, and adapter settings:
-
-```bash
-export PREFECT_API_URL="http://127.0.0.1:4200/api"
-export INFRAHUB_SYNC_DATABASE_URL="postgresql://sync:sync-local-only@127.0.0.1:5433/infrahub_sync"
-export INFRAHUB_SYNC_S3_BUCKET="infrahub-sync-artifacts"
-export INFRAHUB_SYNC_S3_ENDPOINT_URL="http://127.0.0.1:9000"
-export INFRAHUB_SYNC_S3_REGION="us-east-1"
-export AWS_ACCESS_KEY_ID="sync-local"
-export AWS_SECRET_ACCESS_KEY="sync-local-secret"
-export INFRAHUB_SYNC_SERVICE_WORK_POOL="sync-process-pool"
-export INFRAHUB_SYNC_CONFIG_DIRECTORY="$PWD/sync-projects"
-export INFRAHUB_SYNC_SERVICE_BEARER_TOKENS='{"tutorial-admin":{"token":"tutorial-sync-api-token","administrator":true}}'
-export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="nbt_..."
-export INFRAHUB_ADDRESS="http://localhost:8000"
-export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
-```
-
-Use the complete NetBox token created earlier. The worker, not the CLI, reads the NetBox
-and Infrahub adapter credentials. The package declares them as references — `$credential`
-entries under `credentials` naming `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and
-`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` — so the worker
-resolves the values from these variables. No NetBox or Infrahub adapter credential value is
-written into the package or sent to the Sync API.
-
-4. In terminal 2, create the process pool, deploy the service flow, and start its worker:
-
-```bash
-uv run prefect work-pool create --type process sync-process-pool
-uv run python -m infrahub_sync.service.deploy
-uv run python -m infrahub_sync.service.worker --pool sync-process-pool
-```
-
-5. In terminal 3, start the Sync API:
-
-```bash
-export INFRAHUB_SYNC_SERVICE_HOST="127.0.0.2"
-uv run python -m infrahub_sync.service.serve
-```
-
-6. In the terminal where you will run the CLI, configure the API credentials and verify
-   compatibility:
-
-```bash
-export INFRAHUB_SYNC_API_URL="http://127.0.0.2:8000"
-export INFRAHUB_SYNC_API_TOKEN="tutorial-sync-api-token"
-curl --fail "${INFRAHUB_SYNC_API_URL}/version"
-```
-
-The API token authenticates the CLI to the Sync API. It is separate from
-`INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, which the worker uses to access the destination Infrahub instance.
-
 ## Register the configuration package
 
-Register the downloaded package with the Sync API.
+Register the package with the Sync API.
 
 ```bash
-uv run infrahub-sync configs register sync-projects/netbox-demo/package.yml \
+uv run infrahub-sync configs register .netbox/from-netbox.yml \
   --reason "register NetBox demo import"
 ```
 
 Record the returned `config_id` and `registry_version`. If you edit the package later, use
-`configs version <config-id> <package>` to create another immutable registry version.
+`configs version <config-id> .netbox/from-netbox.yml` to create another immutable registry
+version.
 
 For more about the command flow, see [Run a sync](../running-a-sync.mdx).
 
@@ -374,6 +284,8 @@ Review it again with `infrahub-sync runs plan <run-id> --detail`.
 
 Review the output before continuing. On a first run against an empty branch, most planned changes should be creates. Exact counts depend on the current public NetBox demo data.
 
+If the CLI prints `phase: plan-failed`, see [When a run fails](#when-a-run-fails).
+
 ## Apply the reviewed plan
 
 Apply the reviewed plan with its checksum, so the writes are exactly what you reviewed:
@@ -385,10 +297,9 @@ uv run infrahub-sync apply <run-id> \
   --reason "import NetBox demo data"
 ```
 
-The first apply can take a few minutes because it writes the imported objects and
-relationships into the `netbox-import` branch — `main` is untouched until you merge the
-resulting proposed change. Because this configuration omits `order:`, Infrahub Sync
-derives the write order from the mapping references.
+The apply writes the imported objects and relationships into the `netbox-import` branch —
+`main` is untouched until you merge the resulting proposed change. Because this configuration
+omits `order:`, Infrahub Sync derives the write order from the mapping references.
 
 `infrahub-sync sync --config-id <config-id> --version <version> --branch netbox-import
 --reason "..."` is the one-step alternative: it calculates and writes a new plan in the
@@ -396,8 +307,44 @@ same run, with no stop for review. Choose it once you trust the mapping and no l
 to review each plan before it writes.
 
 Run the same `diff` again to confirm the branch matches NetBox. After a successful import,
-the plan lists no creates. It records one delete of the built-in `default` IP namespace,
-and `apply` never runs deletes.
+the plan lists no creates, apart from records that other users added to the demo in the
+meantime. It records one delete of the built-in `default` IP namespace, and `apply` never
+runs deletes.
+
+## When a run fails
+
+The CLI prints the run's final phase and outcome, but not the error that ended it. The error
+is recorded on the run's Prefect flow run.
+
+1. Print the run record, which includes the flow run ID:
+
+```bash
+uv run infrahub-sync runs show <run-id>
+```
+
+2. Open the flow run in the Prefect UI, at `http://127.0.0.1:4230/runs/flow-run/<flow-run-id>`.
+   Its name says what it was doing, for example `Plan sync of from-netbox`. The state
+   message of a failed flow run contains the error. **Runs** in the Prefect UI lists every
+   flow run.
+
+The same error is in the worker's log:
+
+```bash
+docker compose -f development/docker-compose.dev.yml logs sync-worker
+```
+
+[Troubleshooting](#troubleshooting) lists the errors the public demo data produces and what
+each one means.
+
+### When an apply stops partway
+
+An apply that fails after it has started writing ends with `phase: apply-interrupted` and
+`outcome: ambiguous`. Nothing is rolled back: the operations written before the failure stay
+written on the branch, and the failed operation may have written part of its change.
+
+To finish the import, remove the cause, then run `diff` again on the same branch and apply
+the new plan. The new plan compares NetBox with what the branch now holds, so it contains only
+what is still missing or different.
 
 ## Verify the imported data
 
@@ -413,14 +360,17 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
    - prefixes, IP addresses, and aggregates
    - circuits
 
-   NetBox has no IP namespace of its own, so the example creates one Infrahub IP namespace per NetBox VRF *name*. A prefix or IP address in a VRF goes to the namespace named after that VRF, and one with no VRF goes to Infrahub's built-in `default` namespace. That matters because Infrahub identifies a prefix by namespace plus prefix, and an IP address by namespace plus address: without the namespace, the same address in two different VRFs would become a single Infrahub object. The example still syncs the VRF itself, so you keep both the VRF relationship and a namespace that keeps overlapping addresses apart. Infrahub's built-in `default` namespace usually has nothing on the NetBox side to match it, since only a VRF carrying that name produces one: when nothing does, the plan records `default` as a literal identity and resolves it against Infrahub as the plan is applied, and when a VRF named `default` does exist the plan resolves it from NetBox like any other namespace.
-
-   The name is what does the separating, and it has to be unique. Two distinct NetBox VRFs carrying the same name produce the same Infrahub namespace record twice: the second one is refused as it is loaded from NetBox, and the run fails there — before a plan exists, so nothing reaches Infrahub. The two are not merged into one namespace. A NetBox VRF actually named `default` is a different case: its prefixes and addresses share the built-in namespace with everything that has no VRF, and a prefix or address value repeated inside that shared namespace collides there. You do not have to rename anything in NetBox to get past either — [key the namespace on the VRF ID instead of its name](../reference/schema-mapping.mdx#key-the-namespace-on-the-vrf-id-instead-of-its-name).
+   NetBox has no IP namespace of its own, so the example creates one Infrahub IP namespace per
+   NetBox VRF name, and puts prefixes and addresses with no VRF in Infrahub's built-in
+   `default` namespace. Infrahub identifies a prefix or an address by namespace plus value, so
+   the same address in two VRFs stays two objects. The
+   [schema mapping reference](../reference/schema-mapping.mdx#key-the-namespace-on-the-vrf-id-instead-of-its-name)
+   explains the recipe and what to do when two VRFs share a name.
 
    :::info This is a minimal mapping
    Some records and relationships may be missing — that doesn't mean the sync failed.
 
-   Two exclusions keep this mapping working against the current demo data. VLAN names in
+   Three exclusions keep this mapping working against the current demo data. VLAN names in
    NetBox are only unique within a VLAN group, but Infrahub's `IpamVLAN` identifies a VLAN by
    name alone. The mapping puts the VLAN group's name and its length before the VLAN name
    (for example, `Data` in group `Site A` becomes `6:Site A:Data`). The length keeps pairs
@@ -460,12 +410,29 @@ The same pattern applies to larger migrations: start with a clear schema, map a 
 
 ## Stop the local services
 
-When you are finished, stop the API, worker, and Prefect processes with Ctrl-C. Then stop
-the Infrahub Docker Compose stack and remove the tutorial storage containers:
+Stopping and deleting are separate steps, so you can keep the imported data for later.
+
+To remove the Sync service and its data (registered packages, runs, and plans), from the
+`infrahub-sync` directory:
 
 ```bash
-uv run invoke stop
-docker compose -f sync-services.yml down
+uv run invoke destroy
+```
+
+The image built from your checkout is kept, so the next `uv run invoke start` does not
+rebuild it.
+
+To stop Infrahub and keep its data, from the Infrahub directory:
+
+```bash
+cd ~/infrahub-local
+docker compose -p infrahub down
+```
+
+To stop Infrahub and delete its data, including the `netbox-import` branch, add `--volumes`:
+
+```bash
+docker compose -p infrahub down --volumes
 ```
 
 ## Troubleshooting
@@ -480,12 +447,13 @@ The service worker cannot resolve a credential reference declared by the package
 package contains credential references and declarations, but secret
 credential values belong only in the worker environment. The package names
 `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, and the worker reads
-their values. Export these variables before
-starting the Prefect worker:
+their values when its container starts. Export both, then run `uv run invoke start`, which
+recreates the worker with the new values:
 
 ```bash
 export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN="<your-netbox-token>"
 export INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN="06438eb2-8019-4776-878c-0941b1f1d1ec"
+uv run invoke start
 ```
 
 This error names whichever adapter (NetBox or Infrahub) is missing its variables — the same message is raised for either one.
@@ -513,8 +481,8 @@ two different problems you have.
 
 The public NetBox demo is shared. Other visitors can create duplicate records, such as
 two identical prefixes in one VRF. If the error names `IpamPrefix` and shows the same
-prefix and namespace, inspect those prefixes in NetBox. Remove or rename the duplicate
-in the demo if you can identify it, or retry after the demo resets.
+prefix and namespace, inspect those prefixes in NetBox, and remove or rename the duplicate
+in the demo if you can identify it.
 
 #### Two IP addresses or prefixes in one namespace
 
@@ -545,13 +513,14 @@ Re-run the command once NetBox or the mapping reflects what you intend. Deleting
 
 ## Next steps
 
-Now that you have completed a first sync, you have covered some of the basic objects in NetBox.
+You have imported a first set of NetBox objects. To bring in the parts that are specific to
+your own NetBox, such as roles or custom fields:
 
-This is only the first step. You will likely want to bring in the parts that are unique to your own NetBox instance (for example, roles or custom fields).
-
-Other guides will soon be available to cover:
-
-- How to sync locations/regions
-- How to deal with VLAN/Prefix/Device roles
-- How to cover custom attributes / relationships
-- Migrate configuration context
+- [Create a sync project](../creating-a-sync-project.mdx) explains each part of a package and
+  the rules a mapping has to follow for the destination schema.
+- The [schema mapping reference](../reference/schema-mapping.mdx) covers filters and transforms,
+  which condition source data before it reaches Infrahub.
+- [Run a sync](../running-a-sync.mdx) covers validating a package version, reviewing plans, and
+  changing a registered package.
+- [Migrate from NetBox or Nautobot](../migrating-from-netbox-or-nautobot.mdx) covers moving a
+  source of truth to Infrahub in stages.

@@ -31,7 +31,7 @@ def tests_integration(context: Context) -> None:
     """Run integration tests against a live Infrahub.
 
     Each test family skips when its settings are missing; see
-    docs/docs/develop/guidelines/testing-tiers.md#integration.
+    docs/docs/development/guidelines/testing-tiers.md#integration.
     """
     with context.cd(MAIN_DIRECTORY):
         context.run("pytest -m integration", pty=True)
@@ -43,7 +43,7 @@ def tests_product_store_postgresql(context: Context) -> None:
 
     Requires ``PRODUCT_STORE_TEST_POSTGRESQL_DSN``. Plain ``pytest -m integration`` skips these
     tests when the driver or server is missing; this task turns every skip, an unset DSN, and an
-    empty selection into a failure. See docs/docs/develop/guidelines/testing-tiers.md.
+    empty selection into a failure. See docs/docs/development/guidelines/testing-tiers.md.
     """
     if not os.environ.get("PRODUCT_STORE_TEST_POSTGRESQL_DSN"):
         print("PRODUCT_STORE_TEST_POSTGRESQL_DSN is not set; refusing to run without a PostgreSQL server.")

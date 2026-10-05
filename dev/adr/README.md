@@ -55,6 +55,6 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 
 ## Related
 
-- [Knowledge](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/develop/knowledge/index.md) — how the system works after these decisions.
-- [Guidelines](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/develop/guidelines/index.md) — the rules they imply for new code.
-- [Constitution](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/develop/constitution.md) — the principles they serve.
+- [Knowledge](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/development/knowledge/index.md) — how the system works after these decisions.
+- [Guidelines](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/development/guidelines/index.md) — the rules they imply for new code.
+- [Constitution](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/development/constitution.md) — the principles they serve.

@@ -84,8 +84,8 @@ Two facts about it are often missed:
 - Each stage creates its own private scratch directory. The service reads no shared cache
   location.
 - It resolves its flow as an installed module, so it declares no working directory and needs
-  no source tree. That is why the development stack starts the worker from an empty directory
-  — see [the local development stack](../../development-stack.mdx).
+  no source tree. That is why the preview stack starts the worker from an empty directory
+  — see [Run the preview stack](../guides/preview-stack.md).
 
 [The configuration write guard](apply-guard.md) covers the advisory lock that serializes one
 configuration's writes.
@@ -208,7 +208,8 @@ records the upstream commit and the local additions.
 
 - [`development/`][src-development] holds the local stack: the compose files, the shipped `preview.env` defaults
   and `preview.local.env`, which Git ignores. Runtime state lives under `.preview/`.
-  [Local development stack](../../development-stack.mdx) is the procedure.
+  [Local development stack](../../development-stack.mdx) and
+  [Run the preview stack](../guides/preview-stack.md) are the procedures.
 - The root `docker-compose.yml` is the operator deployment. It pulls the released image from
   `registry.opsmill.io/opsmill/infrahub-sync` and carries its own database bootstrap script;
   the development stack in `development/docker-compose.dev.yml` builds from the checkout instead.
@@ -234,7 +235,7 @@ Which of these the default gate runs, and which need something live, is
 ### Historical evidence
 
 [`dev/adr/`][src-dev-adr] holds the decision records, and [`dev/specs/archive/`][src-dev-specs-archive] the completed specifications
-whose durable output became the pages under `docs/docs/develop/`. Both explain why a boundary
+whose durable output became the pages under `docs/docs/development/`. Both explain why a boundary
 exists. Neither is a current inventory: when an archived document and the code disagree, the
 code is right and the page you are reading should be corrected.
 

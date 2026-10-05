@@ -22,7 +22,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS_ROOT = REPO_ROOT / "docs" / "docs"
-EXCLUDED_DIRS = (DOCS_ROOT / "release-notes", DOCS_ROOT / "develop")
+EXCLUDED_DIRS = (DOCS_ROOT / "release-notes", DOCS_ROOT / "development")
 GUIDE_SUFFIXES = frozenset({".mdx", ".md"})
 
 CANDIDATE_VERSION = re.compile(

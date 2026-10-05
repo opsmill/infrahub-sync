@@ -16,9 +16,10 @@
 #
 # Destination: none. A deployment starts with an empty configuration registry
 # and reaches nothing until a package is registered. To sync against a local
-# Infrahub, run `uv run invoke preview.up` and start this stack with
-# INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN set; sync-worker already carries the
-# host route. A package's `env` credential identifiers must start with
+# Infrahub, start one from Infrahub's own Compose file (https://infrahub.opsmill.io)
+# and start this stack with INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN set; the
+# package then names Infrahub as http://host.docker.internal:8000, which sync-worker
+# reaches through its host route. A package's `env` credential identifiers must start with
 # INFRAHUB_SYNC_CREDENTIAL_, and these three are the ones this stack passes.
 #
 # Source: the local NetBox (`uv run invoke netbox.up` or `netbox.seed`) publishes

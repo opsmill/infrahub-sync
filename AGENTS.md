@@ -41,7 +41,7 @@ uv run invoke lint
 `invoke lint` runs rumdl → ruff → pylint → yamllint → ty, and stops after the first gate
 failure. The Pylint leg captures Pylint's JSON report and fails on any diagnostic. The Pylint gate and the
 archive exclusions that keep `rumdl fmt` away from incompatible historical artifacts are
-documented in [`develop/knowledge/quality-gates.md`](docs/docs/develop/knowledge/quality-gates.md).
+documented in [`development/knowledge/quality-gates.md`](docs/docs/development/knowledge/quality-gates.md).
 
 The `prefect` extra is not optional for development: without it `ty` cannot resolve
 `infrahub_sync/orchestration/`'s imports and `tests/orchestration/test_flow.py` skips
@@ -61,7 +61,7 @@ uv run infrahub-sync runs --help
 
 The `from-netbox` example check is integration-backed. It needs a local NetBox with
 the pinned `demo` dataset, the preview stack, and the schema library. Follow
-[The `from-netbox` example check](docs/docs/develop/guidelines/testing-tiers.md#the-from-netbox-example-check).
+[The `from-netbox` example check](docs/docs/development/guidelines/testing-tiers.md#the-from-netbox-example-check).
 
 **Docs** (only if user-facing changes — see [Documentation](#documentation)):
 
@@ -89,7 +89,7 @@ infrahub-sync/
 └─ .github/workflows/            # CI
 ```
 
-[`develop/knowledge/repository-tour.md`](docs/docs/develop/knowledge/repository-tour.md) is the
+[`development/knowledge/repository-tour.md`](docs/docs/development/knowledge/repository-tour.md) is the
 canonical inventory of `infrahub_sync/`. It maps every current package — the CLI and its HTTP
 client, configuration admission, the service and worker, runtime schema, execution, plans,
 product storage, adapters, cache, generator, orchestration, the Potenda engine, plugin loading
@@ -122,7 +122,7 @@ Available adapters (`infrahub_sync/adapters/`): `infrahub`, `netbox`, `nautobot`
 - Prefer explicit types on new or changed code; public functions and classes get concise docstrings.
 - Ruff: formatted and lint-clean. Honor `pyproject.toml`.
 - Pylint: passes on a clean checkout and is a failing CI step; fix every finding you introduce.
-  Details are in [`develop/knowledge/quality-gates.md`](docs/docs/develop/knowledge/quality-gates.md).
+  Details are in [`development/knowledge/quality-gates.md`](docs/docs/development/knowledge/quality-gates.md).
 - ty: included in `uv run invoke lint`; do not increase the error count.
 - Raise specific exceptions; avoid broad `except Exception:`.
 
@@ -150,7 +150,7 @@ uv run invoke tests.tests-unit
 ```
 
 This runs the offline unit tier. The live tiers and their settings are in
-[`develop/guidelines/testing-tiers.md`](docs/docs/develop/guidelines/testing-tiers.md).
+[`development/guidelines/testing-tiers.md`](docs/docs/development/guidelines/testing-tiers.md).
 
 ## Documentation
 
@@ -184,7 +184,7 @@ Label a pull request `ci/skip-changelog` when it needs no entry, for example a d
 
 **Versions and `CHANGELOG.md` are never edited manually.** For a V2 release from `main`, merging does not prepare the release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md).
 
-The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` by `ci-docker-image.yml`, for linux/amd64 and linux/arm64, signed and with SBOMs attached. A release publishes it, and a maintainer can dispatch it by hand; see [`develop/guides/publishing-an-image.md`](docs/docs/develop/guides/publishing-an-image.md). The operator deployment is the root `docker-compose.yml`; the development stack is `development/docker-compose.dev.yml`.
+The container image is published to `registry.opsmill.io/opsmill/infrahub-sync` by `ci-docker-image.yml`, for linux/amd64 and linux/arm64, signed and with SBOMs attached. A release publishes it, and a maintainer can dispatch it by hand; see [`development/guides/publishing-an-image.md`](docs/docs/development/guides/publishing-an-image.md). The operator deployment is the root `docker-compose.yml`; the development stack is `development/docker-compose.dev.yml`.
 
 ## Invoke Tasks (reference)
 
@@ -240,27 +240,27 @@ A platform file that copies text instead must include the "Required Development 
 
 ## Adding a New Adapter
 
-See [`develop/guides/adding-an-adapter.md`](docs/docs/develop/guides/adding-an-adapter.md) for the full
-step-by-step procedure. Supporting developer reference lives under `docs/docs/develop/`:
+See [`development/guides/adding-an-adapter.md`](docs/docs/development/guides/adding-an-adapter.md) for the full
+step-by-step procedure. Supporting developer reference lives under `docs/docs/development/`:
 
-- [Adapter knowledge](docs/docs/develop/knowledge/index.md) — how the sync engine, the adapter contract, schema mapping, and the incremental cache work.
-- [Adapter guidelines](docs/docs/develop/guidelines/index.md) — the rules for writing and testing an adapter.
-- [Adapter guides](docs/docs/develop/guides/index.md) — adding and testing an adapter, step by step.
+- [Adapter knowledge](docs/docs/development/knowledge/index.md) — how the sync engine, the adapter contract, schema mapping, and the incremental cache work.
+- [Adapter guidelines](docs/docs/development/guidelines/index.md) — the rules for writing and testing an adapter.
+- [Adapter guides](docs/docs/development/guides/index.md) — adding and testing an adapter, step by step.
 
 Core rule unchanged: provide a read-only `diff` pathway and validate it before enabling `sync`.
 
 ## Beyond Adapters
 
-`docs/docs/develop/` is not adapter-only. When the work is not an adapter, start here:
+`docs/docs/development/` is not adapter-only. When the work is not an adapter, start here:
 
-- [The shared execution surface](docs/docs/develop/knowledge/execution-surface.md) — the typed entry point
+- [The shared execution surface](docs/docs/development/knowledge/execution-surface.md) — the typed entry point
   used by the service worker and direct Python callers. The CLI submits runs through the Sync HTTP API;
   the direct Prefect flow calls the execution module through `run_remote_request`.
-- [Prefect orchestration](docs/docs/develop/knowledge/orchestration-prefect.md) — the optional
+- [Prefect orchestration](docs/docs/development/knowledge/orchestration-prefect.md) — the optional
   orchestration integration and its import boundary.
-- [Quality gates](docs/docs/develop/knowledge/quality-gates.md) — what the lint and format aggregates
+- [Quality gates](docs/docs/development/knowledge/quality-gates.md) — what the lint and format aggregates
   really do, and the Pylint gate.
-- [Testing](docs/docs/develop/guidelines/testing.md) — repository-wide test rules.
-- [Secret redaction](docs/docs/develop/guidelines/secret-redaction.md) — required reading before adding any
+- [Testing](docs/docs/development/guidelines/testing.md) — repository-wide test rules.
+- [Secret redaction](docs/docs/development/guidelines/secret-redaction.md) — required reading before adding any
   failure path that crosses a process boundary.
 - [Decision records](dev/adr/README.md) — why the architecture is shaped the way it is.
