@@ -1,0 +1,24 @@
+docs/docs/contributing.mdx
+  s_d50d484cdcca4f::t_666b537f2b7b9e 329-331
+AGENTS.md
+  s_d50d484cdcca4f::t_666b537f2b7b9e 169,185
+  s_d50d484cdcca4f::t_633d405d13a1bb 187
+docs/docs/develop/constitution.md
+  s_d50d484cdcca4f::t_666b537f2b7b9e 205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "43e1a84dc97f582ddd3cd13976da3e68b747c511",
+  "prompts": {},
+  "sessions": {
+    "s_d50d484cdcca4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e1a616b8-b081-465e-b5ee-e4345f32cc7a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
