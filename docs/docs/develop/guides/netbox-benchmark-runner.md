@@ -23,7 +23,8 @@ invalid result with no valid time.
 
 ### Prepare the tier
 
-Install the development environment with the `dev`, `prefect`, and `service` extras.
+Use Python 3.11 or later for the benchmark runner. Install the development environment
+with the `dev`, `prefect`, and `service` extras.
 Use a Linux host with Docker running; v2 memory sampling reads `/proc`.
 Follow [NetBox benchmark tiers](netbox-benchmark-tiers.md) to
 seed and save the source database:

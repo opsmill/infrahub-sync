@@ -261,6 +261,17 @@ def test_invalid_cell_options_fail_before_stack_mutation(line, scenario, variant
         bench.cell_options(line, "S", scenario, variant, 1, "")
 
 
+@pytest.mark.parametrize("entrypoint", ["v2_environment", "run_cell"])
+def test_benchmark_rejects_unsupported_python_before_setup(monkeypatch, entrypoint) -> None:
+    monkeypatch.setattr(bench.sys, "version_info", (3, 10, 0))
+    if entrypoint == "v2_environment":
+        with pytest.raises(BenchmarkError, match=r"requires Python 3\.11 or later"):
+            bench.v2_environment("2.0.1")
+    else:
+        with pytest.raises(BenchmarkError, match=r"requires Python 3\.11 or later"):
+            bench.run_cell.body(Context())
+
+
 def test_medians_exclude_invalid_samples(tmp_path) -> None:
     target = tmp_path / "results.jsonl"
     for status, seconds in [("ok", 2), ("ok", 4), ("failed", 100)]:
@@ -274,6 +285,7 @@ def test_medians_exclude_invalid_samples(tmp_path) -> None:
 @pytest.mark.parametrize("line", ["v2", "v3"])
 @pytest.mark.parametrize("scenario", ["cold", "warm", "changed"])
 @pytest.mark.parametrize("delete_evidence", ["exact", "missing", "extra"])
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 or later")
 def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR0917, PLR0915 -- complete runner protocol
     monkeypatch, tmp_path, mapping, scenario, line, delete_evidence
 ) -> None:
@@ -768,6 +780,7 @@ def test_destination_identity_checks_server_and_records_image(monkeypatch, versi
 
 @pytest.mark.parametrize("timeout", ["setup", "command", "deadline"])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 or later")
 def test_runner_distinguishes_setup_timeout_from_cell_deadline(monkeypatch, tmp_path, timeout, cleanup_fails) -> None:
     from development.bench.runtime import QuietContext
 
@@ -919,6 +932,7 @@ def test_real_invoke_deadline_kills_grandchild_in_command_group(monkeypatch, tmp
 
 
 @pytest.mark.parametrize("cleanup_fails", [False, True])
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 or later")
 def test_runner_records_keyboard_interrupt_before_propagating(monkeypatch, tmp_path, cleanup_fails) -> None:
     events = []
 
@@ -950,6 +964,7 @@ def test_runner_records_keyboard_interrupt_before_propagating(monkeypatch, tmp_p
 
 @pytest.mark.parametrize("line", ["v2", "v3"])
 @pytest.mark.parametrize("container", ["running-worker", "stopped-worker", "api", "database"])
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 or later")
 def test_runner_rejects_existing_development_container_before_mutation(monkeypatch, tmp_path, line, container) -> None:
     monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
@@ -1132,6 +1147,7 @@ def test_source_counts_reject_missing_or_extra_foundation_and_skip_rows(kind, de
 
 @pytest.mark.usefixtures("default_sigint_handler")
 @pytest.mark.parametrize("ignore_sigint", [False, True])
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 or later")
 def test_setup_interrupt_stops_sleeping_grandchild_and_records_reason(monkeypatch, tmp_path, ignore_sigint) -> None:
     from development.bench import runtime
 
@@ -1210,7 +1226,7 @@ def test_invoke_tasks_load_without_toml(tmp_path) -> None:
         "import sys\nfrom importlib.abc import MetaPathFinder\n"
         "class WithoutToml(MetaPathFinder):\n"
         " def find_spec(self, fullname, path=None, target=None):\n"
-        "  if fullname == 'toml': raise ModuleNotFoundError(\"No module named 'toml'\")\n"
+        "  if fullname in {'toml', 'tomlkit', 'tomllib'}: raise ModuleNotFoundError(fullname)\n"
         "sys.meta_path.insert(0, WithoutToml())\n"
         "from invoke.program import Program\nProgram().run('invoke --list', exit=False)\n",
         encoding="utf-8",

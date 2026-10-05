@@ -10,6 +10,7 @@ import os
 import re
 import shlex
 import shutil
+import sys
 import time
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -274,7 +275,10 @@ class CellStack:
 
 def v2_environment(ref: str) -> tuple[Path, str, str]:
     """Build one isolated release worktree/environment and record its immutable identity."""
-    import tomlkit as toml  # noqa: PLC0415 -- development profile includes tomlkit
+    if sys.version_info < (3, 11):
+        msg = "benchmark runner requires Python 3.11 or later"
+        raise BenchmarkError(msg)
+    import tomllib  # noqa: PLC0415 -- benchmark requires Python 3.11; Invoke still loads on 3.10
 
     output(["git", "fetch", "origin", "main", "--tags"], cwd=ROOT)
     commit = output(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=ROOT)
@@ -292,7 +296,7 @@ def v2_environment(ref: str) -> tuple[Path, str, str]:
         cwd=directory,
         env=env,
     )
-    version = toml.loads((directory / "pyproject.toml").read_text(encoding="utf-8")).unwrap()["project"]["version"]
+    version = tomllib.loads((directory / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     return directory, version, commit
 
 
@@ -422,7 +426,10 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
     v2_ref: str = "",
 ) -> None:
     """Run a destructive, manual cell, restoring both databases for every repetition."""
-    import tomlkit as toml  # noqa: PLC0415 -- keep TOML parsing at the benchmark boundary
+    if sys.version_info < (3, 11):
+        msg = "benchmark runner requires Python 3.11 or later"
+        raise BenchmarkError(msg)
+    import tomllib  # noqa: PLC0415 -- benchmark requires Python 3.11; Invoke still loads on 3.10
 
     cell_options(line, tier, scenario, variant, repetitions, v2_ref)
     STATE.mkdir(parents=True, exist_ok=True)
@@ -436,7 +443,7 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
             raise BenchmarkError(msg) from None
         directory, version, commit = (
             ROOT,
-            toml.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8")).unwrap()["project"]["version"],
+            tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"],
             output(["git", "rev-parse", "HEAD"], cwd=ROOT)
             + ("-dirty" if output(["git", "status", "--porcelain"], cwd=ROOT) else ""),
         )
