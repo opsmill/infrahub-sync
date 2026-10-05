@@ -378,7 +378,7 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
    :::info This is a minimal mapping
    Some records and relationships may be missing — that doesn't mean the sync failed.
 
-   Three exclusions keep this mapping working against the current demo data. VLAN names in
+   Three mapping adjustments keep this mapping working against the current demo data. VLAN names in
    NetBox are only unique within a VLAN group, but Infrahub's `IpamVLAN` identifies a VLAN by
    name alone. The mapping puts the VLAN group's name and its length before the VLAN name
    (for example, `Data` in group `Site A` becomes `6:Site A:Data`). The length keeps pairs
