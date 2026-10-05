@@ -1,0 +1,23 @@
+tests/image/test_version_policy.py
+  s_d50d484cdcca4f::t_4df9df9f3964af 31
+changelog/+pcre2-debian-pin.fixed.md
+  s_d50d484cdcca4f::t_4df9df9f3964af 1
+Dockerfile
+  s_d50d484cdcca4f::t_4df9df9f3964af 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9cd12f1971075481adf20cac59cc7e909ba66024",
+  "prompts": {},
+  "sessions": {
+    "s_d50d484cdcca4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e1a616b8-b081-465e-b5ee-e4345f32cc7a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
