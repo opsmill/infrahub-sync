@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import structlog
-import toml
 import yaml
 from invoke import Context, task
 from rich.console import Console
@@ -31,6 +30,7 @@ from development.bench.records import (
     parse_v2_summary,
     stage_seconds,
     validate_result,
+    validate_source_counts,
 )
 from development.bench.runtime import (
     LIMIT_SECONDS,
@@ -183,10 +183,12 @@ class CellStack:
             return version, image.id, digest
 
     def require_exclusive_sync(self) -> None:
-        """Refuse an existing worker before changing either disposable database."""
+        """Refuse any existing development container before changing either database."""
         # The existing dev task owns its fixed project. Refuse another caller's stack.
-        if netbox.dev_worker_containers(self.context):
-            msg = "the development Sync stack has existing containers; run invoke destroy before benchmarking (removes volumes)"
+        if self.context.run(
+            f"docker ps --all --quiet --filter label=com.docker.compose.project={netbox.DEV_STACK_PROJECT}"
+        ).stdout.strip():
+            msg = "the development Sync stack has existing containers; run uv run invoke destroy before benchmarking (removes volumes)"
             raise BenchmarkError(msg)
 
     def start_sync(self) -> None:
@@ -272,6 +274,8 @@ class CellStack:
 
 def v2_environment(ref: str) -> tuple[Path, str, str]:
     """Build one isolated release worktree/environment and record its immutable identity."""
+    import tomlkit as toml  # noqa: PLC0415 -- development profile includes tomlkit
+
     output(["git", "fetch", "origin", "main", "--tags"], cwd=ROOT)
     commit = output(["git", "rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=ROOT)
     output(["git", "merge-base", "--is-ancestor", commit, "origin/main"], cwd=ROOT)
@@ -288,7 +292,7 @@ def v2_environment(ref: str) -> tuple[Path, str, str]:
         cwd=directory,
         env=env,
     )
-    version = toml.loads((directory / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    version = toml.loads((directory / "pyproject.toml").read_text(encoding="utf-8")).unwrap()["project"]["version"]
     return directory, version, commit
 
 
@@ -342,8 +346,6 @@ def v2_sync(stack: CellStack, directory: Path, variant: str, timeout: float) -> 
 def v3_sync(stack: CellStack, registered: tuple[str, int], record: ResultRecord, timeout: float) -> None:
     """Submit confirmed sync through the API, then verify plan and applied summaries."""
 
-    from infrahub_sync.service.service import PLAN_ARTIFACT_ID  # noqa: PLC0415 -- public plan publication boundary
-
     with SyncClient(dev.API_URL, os.environ["INFRAHUB_SYNC_API_TOKEN"]) as client:
         started = time.monotonic()
         accepted = client.sync(
@@ -384,11 +386,23 @@ def v3_sync(stack: CellStack, registered: tuple[str, int], record: ResultRecord,
             raise BenchmarkError(msg)
         # The current apply summary counts saved operations, including undispatched deletes.
         # Use the plan's explicit disclosure to report only executed actions.
-        record.skipped_deletes = actions["delete"]
+        record.builtin_deletes = {}
+        for operation in plan.operations:
+            if (
+                operation.action == "delete"
+                and operation.kind == "IpamNamespace"
+                and operation.identity == {"name": "default"}
+            ):
+                record.builtin_deletes[operation.kind] = record.builtin_deletes.get(operation.kind, 0) + 1
+        record.skipped_deletes = {
+            kind: count - record.builtin_deletes.get(kind, 0)
+            for kind, count in actions["delete"].items()
+            if count - record.builtin_deletes.get(kind, 0)
+        }
         actions["delete"] = {}
         record.actions = actions
         record.action_evidence = "run-plan-and-apply-summary"
-        checkpoint = next(ref for ref in finished.run.artifact_refs if ref.artifact_id == PLAN_ARTIFACT_ID)
+        checkpoint = next(ref for ref in finished.run.artifact_refs if ref.kind == "saved-plan-review")
         if finished.run.finished_at is None:
             msg = "finished run has no timestamp"
             raise BenchmarkError(msg)
@@ -408,6 +422,8 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
     v2_ref: str = "",
 ) -> None:
     """Run a destructive, manual cell, restoring both databases for every repetition."""
+    import tomlkit as toml  # noqa: PLC0415 -- keep TOML parsing at the benchmark boundary
+
     cell_options(line, tier, scenario, variant, repetitions, v2_ref)
     STATE.mkdir(parents=True, exist_ok=True)
     import fcntl  # noqa: PLC0415 -- Linux benchmark host
@@ -420,7 +436,7 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
             raise BenchmarkError(msg) from None
         directory, version, commit = (
             ROOT,
-            toml.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"],
+            toml.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8")).unwrap()["project"]["version"],
             output(["git", "rev-parse", "HEAD"], cwd=ROOT)
             + ("-dirty" if output(["git", "status", "--porcelain"], cwd=ROOT) else ""),
         )
@@ -473,18 +489,18 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
                         v3_sync(stack, registered, baseline, stack.remaining())
                     else:
                         v2_sync(stack, directory, "full" if variant == "incremental" else variant, stack.remaining())
-                    _, counts = stack.counts(mapping)
+                    source, counts = stack.counts(mapping)
+                    validate_source_counts(tier, source)
                     validate_result(tier, "cold", counts, {}, mapping)
                 expected = None
+                change_document = None
                 if scenario == "changed":
                     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                         netbox.change(stack.context, tier=tier)
-                    expected = expected_actions(
-                        json.loads(
-                            (netbox.STATE_DIR / "changes" / f"{tier}.expected.json").read_text(encoding="utf-8")
-                        ),
-                        mapping,
+                    change_document = json.loads(
+                        (netbox.STATE_DIR / "changes" / f"{tier}.expected.json").read_text(encoding="utf-8")
                     )
+                    expected = expected_actions(change_document, mapping)
                 _, before = stack.counts(mapping)
                 if line == "v3":
                     v3_sync(stack, registered, record, stack.remaining())
@@ -501,6 +517,7 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
                         msg = "v2 summary unavailable: count deltas cannot prove updates or zero warm actions"
                         raise BenchmarkError(msg)  # noqa: TRY301 -- fail this cell before recording a time
                 stack.remaining()
+                validate_source_counts(tier, record.netbox_counts, change_document)
                 validate_result(
                     tier,
                     scenario,
@@ -569,6 +586,8 @@ def report(_context: Context) -> None:
         "Scenario",
         "Harness commit",
         "Mapping SHA256",
+        "Infrahub image ID",
+        "Infrahub image digest",
         "v2 variant",
         "v2 version/commit",
         "v2 seconds",
@@ -582,6 +601,8 @@ def report(_context: Context) -> None:
             row["scenario"],
             row["harness_commit"] or "unknown",
             row["mapping_sha256"] or "unknown",
+            row["infrahub_image_id"] or "unknown",
+            row["infrahub_image_digest"] or "unknown",
             row["variant"],
             row["v2_version"] or "",
             f"{row['v2_seconds']:.3f}" if row["v2_seconds"] is not None else "",

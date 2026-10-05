@@ -13,6 +13,7 @@ six-hour budget when its stack manager is created. Stack lifecycle commands, inc
 the NetBox restore, schema loading, the baseline sync, the change script, and the measured
 sync receive the remaining budget. Shell commands run in their own sessions; a deadline
 kills their whole process group, including redirected commands and `uv run` children.
+Ctrl-C sends SIGINT to the setup command's process group and stops the repetition.
 The runner also checks the deadline after validation. Local file work is not interrupted
 by this deadline. v2 environment setup and HTTP reads use their own command and request
 timeouts.
@@ -43,13 +44,14 @@ Remove the local development Sync stack before a benchmark:
 uv run invoke destroy
 ```
 
-This command removes the development containers and their volumes. Stopped worker
-containers also block the runner. The benchmark requires exclusive ownership of the
-fixed development stack; it checks for existing workers before restoring NetBox or
-rebuilding Infrahub. It does not reuse an existing API or worker. The runner builds the Sync
-image from this checkout and uses the existing start tasks for its API and worker. It
-requires `INFRAHUB_SYNC_API_TOKEN` in your environment, matching the local stack's API
-principal. It creates an isolated destination stack from the preview Compose files, pinned to
+This command removes the development containers and their volumes. Any development
+Sync container blocks the runner, including stopped containers and stacks with only an
+API or database. The benchmark checks the fixed development Compose project before
+restoring NetBox or rebuilding Infrahub. For v3, the runner builds the Sync image from
+this checkout and uses the existing start tasks for its API and worker. v3 requires
+`INFRAHUB_SYNC_API_TOKEN` in your environment, matching the local stack's API principal.
+v2 uses its isolated release environment and does not require the Sync API or its token.
+The runner creates an isolated destination stack from the preview Compose files, pinned to
 Infrahub 1.11.3. It uses the preview connection settings and local NetBox settings,
 including personal connection overrides. The runner enforces the OpsMill image repository
 and version, ignoring preview image overrides. Keep the preview stack stopped so its ports are available.
@@ -125,19 +127,25 @@ Each measured repetition appends one JSON object to the git-ignored
   virtual, and LAG interfaces split and both VRF projections counted.
 - `machine` records CPU model/count, physical memory, OS, and architecture.
   `actions`, `action_evidence`, `run_id`, and `error` explain validation evidence.
-  `skipped_deletes` records v3 plan deletions that apply did not dispatch.
+  `skipped_deletes` records other plan deletions that v3 apply did not dispatch.
+  `builtin_deletes` separately records deletions of Infrahub's built-in default
+  `IpamNamespace` (`name=default`), which apply also did not dispatch.
 
-Cold and warm counts must match the mapped tier, including Infrahub's preserved default
+NetBox totals must match the tier, including foundation and skipped rows. After source
+changes, its totals also account for every create and delete in the change file.
+Cold and warm Infrahub counts must match the mapped tier, including Infrahub's preserved default
 IP namespace. A warm cell must also show zero applied actions. Changed cells compare
 per-kind actions against `.netbox/changes/<tier>.expected.json`, translating
 prefix VRF moves into deletes and creates. v2 must execute the expected deletes.
-v3 checks its saved plan against the apply summary and must record exactly the expected
-deletes as not executed, following [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md).
+v3 checks its saved plan against the apply summary. It records the built-in default
+`IpamNamespace` deletion in `builtin_deletes` and excludes only that deletion from the
+change comparison. Every other recorded delete must match the expected change file
+exactly and is recorded as not executed in `skipped_deletes`, following [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md).
 It must apply the expected creates and updates, with zero executed deletes. Missing or
-extra recorded deletes fail validation. Destination counts include the retained objects
+extra non-builtin recorded deletes fail validation. Destination counts include the retained objects
 for v3; v2 counts subtract executed deletes. A valid v3 changed cell keeps its time and
-records the deletions under `skipped_deletes`. A warm v3 plan can contain a default IP namespace deletion that is
-not dispatched; the runner records it in `skipped_deletes` and checks zero executed actions.
+records the deletions under `skipped_deletes`. A warm v3 plan can contain the same built-in default IP namespace
+deletion; the runner records it in `builtin_deletes` and checks zero executed actions.
 v2 parses complete per-kind summaries or successful per-object action
 status lines from a finished sync. For a parallel no-op, all mapped tier logs and the
 completed release footer establish zero writes. The runner otherwise records count
@@ -153,6 +161,7 @@ The report states that v2 executes deletes and v3 records them without execution
 Changed timings therefore measure different delete behavior. The table compares medians
 from valid samples only. It keeps versions, commits, and v2
 variants separate. It pools repetitions and pairs lines only when `harness_commit` and
-`mapping_sha256` both match. Older records without provenance remain in a separate
+`mapping_sha256` both match, together with `infrahub_image_id` and
+`infrahub_image_digest`. Older records without provenance remain in a separate
 unknown group. A missing valid line appears as an empty comparison cell. An invalid
 result is evidence of a failed benchmark cell, never a performance measurement.

@@ -10,8 +10,9 @@ from dataclasses import asdict, dataclass, field
 from statistics import median
 from typing import TYPE_CHECKING, Any
 
+from development.bench.runtime import BenchmarkError
 from development.netbox.datasets.change_netbox import eligible, identifier
-from development.netbox.datasets.tier_data import TIER_COUNTS, build_dataset
+from development.netbox.datasets.tier_data import FOUNDATION_COUNTS, SKIP_COUNTS, TIER_COUNTS, build_dataset
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -89,19 +90,40 @@ def validate_result(  # noqa: PLR0913, PLR0917 -- independent validation inputs
         if expected is not None and skipped_deletes is not None:
             if normalized({"delete": skipped_deletes})["delete"] != normalized(expected)["delete"]:
                 msg = "recorded nonexecuted deletes differ from the expected change file"
-                raise ValueError(msg)
+                raise BenchmarkError(msg)
             executed_expected = {**expected, "delete": {}}
         if executed_expected is None or normalized(actions) != normalized(executed_expected):
             msg = "applied actions differ from the expected change file"
-            raise ValueError(msg)
+            raise BenchmarkError(msg)
         for kind in wanted:
             wanted[kind] += executed_expected["create"].get(kind, 0) - executed_expected["delete"].get(kind, 0)
     elif scenario == "warm" and any(normalized(actions).values()):
         msg = "warm run applied nonzero actions"
-        raise ValueError(msg)
+        raise BenchmarkError(msg)
     if counts != wanted:
         msg = "Infrahub counts differ from the mapped tier counts"
-        raise ValueError(msg)
+        raise BenchmarkError(msg)
+
+
+def expected_source_counts(tier: str, document: dict[str, Any] | None = None) -> dict[str, int]:
+    """Count all source rows, including skipped and foundation rows and source mutations."""
+    counts = TIER_COUNTS[tier] | FOUNDATION_COUNTS
+    for kind, count in SKIP_COUNTS[tier].items():
+        counts[kind] += count
+    if document is not None:
+        for change in document["changes"]:
+            if change["action"] == "create":
+                counts[change["kind"]] += 1
+            elif change["action"] == "delete":
+                counts[change["kind"]] -= 1
+    return counts
+
+
+def validate_source_counts(tier: str, counts: dict[str, int], document: dict[str, Any] | None = None) -> None:
+    """Reject unexpected source totals before a benchmark may report a valid time."""
+    if counts != expected_source_counts(tier, document):
+        msg = "NetBox counts differ from the tier and expected source changes"
+        raise BenchmarkError(msg)
 
 
 def count_delta(before: dict[str, int], after: dict[str, int]) -> Actions:
@@ -220,6 +242,7 @@ class ResultRecord:
     machine: dict[str, Any] = field(default_factory=dict)
     actions: Actions = field(default_factory=dict)
     skipped_deletes: dict[str, int] = field(default_factory=dict)
+    builtin_deletes: dict[str, int] = field(default_factory=dict)
     action_evidence: str | None = None
     error: str | None = None
     run_id: str | None = None
@@ -245,20 +268,25 @@ class ResultRecord:
 
 
 def medians(path: Path) -> list[dict[str, Any]]:
-    """Compare valid medians only within the same harness and mapping identity."""
+    """Compare valid medians only within the same harness, mapping, and destination image."""
     if not path.exists():
         return []
-    cells: dict[tuple[str, str, str, str], dict[tuple[str, str, str, str], list[float]]] = defaultdict(
+    cells: dict[tuple[str, str, str, str, str, str], dict[tuple[str, str, str, str], list[float]]] = defaultdict(
         lambda: defaultdict(list)
     )
     for line in path.read_text(encoding="utf-8").splitlines():
         record = json.loads(line)
         if record["status"] == "ok" and record["wall_seconds"] is not None:
             identity = record["line"], record["version"], record["commit"], record["variant"]
-            provenance = record.get("harness_commit") or "", record.get("mapping_sha256") or ""
+            provenance = (
+                record.get("harness_commit") or "",
+                record.get("mapping_sha256") or "",
+                record.get("infrahub_image_id") or "",
+                record.get("infrahub_image_digest") or "",
+            )
             cells[(record["tier"], record["scenario"], *provenance)][identity].append(record["wall_seconds"])
     rows = []
-    for (tier, scenario, harness_commit, mapping_sha256), identities in sorted(cells.items()):
+    for (tier, scenario, harness_commit, mapping_sha256, image_id, image_digest), identities in sorted(cells.items()):
         v2 = [identity for identity in identities if identity[0] == "v2"] or [None]
         v3 = [identity for identity in identities if identity[0] == "v3"] or [None]
         for left in v2:
@@ -269,6 +297,8 @@ def medians(path: Path) -> list[dict[str, Any]]:
                         "scenario": scenario,
                         "harness_commit": harness_commit or None,
                         "mapping_sha256": mapping_sha256 or None,
+                        "infrahub_image_id": image_id or None,
+                        "infrahub_image_digest": image_digest or None,
                         "variant": left[3] if left else "full",
                         "v2_version": f"{left[1]}@{left[2]}" if left else None,
                         "v3_version": f"{right[1]}@{right[2]}" if right else None,

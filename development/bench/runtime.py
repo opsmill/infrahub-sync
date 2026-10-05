@@ -43,6 +43,12 @@ class SessionLocal(Local):
             start_new_session=True,
         )
 
+    def send_interrupt(self, interrupt: KeyboardInterrupt) -> None:
+        """Interrupt the command and its descendants, then stop the benchmark repetition."""
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(self.process.pid, signal.SIGINT)
+        raise interrupt
+
     def kill(self) -> None:
         with contextlib.suppress(ProcessLookupError):
             os.killpg(self.process.pid, signal.SIGKILL)

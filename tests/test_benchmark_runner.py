@@ -25,11 +25,13 @@ from development.bench.records import (
     count_delta,
     expected_actions,
     expected_counts,
+    expected_source_counts,
     mapped_kinds,
     medians,
     parse_v2_summary,
     stage_seconds,
     validate_result,
+    validate_source_counts,
 )
 from development.bench.runtime import BenchmarkError, docker_memory_mib, measured_process, output
 from development.netbox.datasets.change_netbox import expected_text, plan_changes
@@ -116,6 +118,8 @@ def test_jsonl_contract_and_invalid_times(tmp_path, status) -> None:
         "machine",
         "harness_commit",
         "mapping_sha256",
+        "builtin_deletes",
+        "skipped_deletes",
     } <= rows[0].keys()
     assert rows[0]["wall_seconds"] == (3 if status == "ok" else None)
     assert rows[0]["plan_seconds"] == (1 if status == "ok" else None)
@@ -123,14 +127,14 @@ def test_jsonl_contract_and_invalid_times(tmp_path, status) -> None:
 
 
 def test_warm_rejects_writes_even_when_counts_match(mapping) -> None:
-    with pytest.raises(ValueError, match="nonzero"):
+    with pytest.raises(BenchmarkError, match="nonzero"):
         validate_result("S", "warm", expected_counts("S", mapping), {"update": {"DcimDevice": 1}}, mapping)
 
 
 def test_cold_rejects_missing_kind(mapping) -> None:
     counts = expected_counts("S", mapping)
     counts.pop("IpamVLAN")
-    with pytest.raises(ValueError, match="counts differ"):
+    with pytest.raises(BenchmarkError, match="counts differ"):
         validate_result("S", "cold", counts, {}, mapping)
 
 
@@ -139,7 +143,7 @@ def test_changed_requires_applied_actions_and_resulting_counts(mapping) -> None:
     counts = expected_counts("S", mapping)
     counts["InterfacePhysical"] += 1
     validate_result("S", "changed", counts, actions, mapping, actions)
-    with pytest.raises(ValueError, match="actions differ"):
+    with pytest.raises(BenchmarkError, match="actions differ"):
         validate_result("S", "changed", counts, count_delta(expected_counts("S", mapping), counts), mapping, actions)
 
 
@@ -147,15 +151,16 @@ def test_changed_requires_applied_actions_and_resulting_counts(mapping) -> None:
     "damage", ["none", "missing-delete", "extra-delete", "wrong-kind", "create", "update", "executed-delete", "counts"]
 )
 def test_v3_changed_requires_exact_skipped_deletes_and_executed_writes(mapping, damage) -> None:
-    expected = {"create": {"IpamPrefix": 1}, "update": {"InterfaceVirtual": 1}, "delete": {"IpamPrefix": 1}}
+    expected = expected_actions(json.loads(expected_text("S", plan_changes("S"))), mapping)
     actions = {**expected, "delete": {}}
-    skipped = {"IpamPrefix": 1}
+    skipped = expected["delete"].copy()
     counts = expected_counts("S", mapping)
-    counts["IpamPrefix"] += 1
+    for kind, count in expected["create"].items():
+        counts[kind] += count
     if damage == "missing-delete":
         skipped = {}
     elif damage == "extra-delete":
-        skipped["IpamPrefix"] = 2
+        skipped["InterfacePhysical"] = 2
     elif damage == "wrong-kind":
         skipped = {"IpamIPAddress": 1}
     elif damage in {"create", "update"}:
@@ -163,11 +168,11 @@ def test_v3_changed_requires_exact_skipped_deletes_and_executed_writes(mapping, 
     elif damage == "executed-delete":
         actions["delete"] = skipped.copy()
     elif damage == "counts":
-        counts["IpamPrefix"] -= 1
+        counts["InterfacePhysical"] -= 1
     if damage == "none":
         validate_result("S", "changed", counts, actions, mapping, expected, skipped_deletes=skipped)
     else:
-        with pytest.raises(ValueError, match="differ"):
+        with pytest.raises(BenchmarkError, match="differ"):
             validate_result("S", "changed", counts, actions, mapping, expected, skipped_deletes=skipped)
 
 
@@ -310,7 +315,7 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR091
 
         @staticmethod
         def counts(_mapping) -> tuple[dict, dict]:
-            return {}, counts.copy()
+            return expected_source_counts("S"), counts.copy()
 
         @staticmethod
         def remaining() -> int:
@@ -346,13 +351,14 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR091
             if record.scenario == "changed"
             else {action: {} for action in ("create", "update", "delete")}
         )
+        record.builtin_deletes = {"IpamNamespace": 1}
         if record.scenario == "changed":
             counts["InterfacePhysical"] += 1
             record.skipped_deletes = {"InterfacePhysical": {"exact": 1, "missing": 0, "extra": 2}[delete_evidence]}
 
     changes = tmp_path / "changes"
     changes.mkdir()
-    (changes / "S.expected.json").write_text("{}", encoding="utf-8")
+    (changes / "S.expected.json").write_text('{"changes": []}', encoding="utf-8")
     monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
@@ -406,9 +412,11 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR091
     assert all(row["mapping_sha256"] == expected_hash for row in rows)
     if status == "failed":
         assert all(row["wall_seconds"] is None for row in rows)
+        assert all("recorded nonexecuted deletes differ" in row["error"] for row in rows)
     else:
         assert all(row["wall_seconds"] == 1 for row in rows)
     if scenario == "changed" and line == "v3":
+        assert all(row["builtin_deletes"] == {"IpamNamespace": 1} for row in rows)
         assert all(
             row["skipped_deletes"]["InterfacePhysical"] == {"exact": 1, "missing": 0, "extra": 2}[delete_evidence]
             for row in rows
@@ -465,7 +473,8 @@ def test_quiet_context_suppresses_success_and_failure_output(capsys) -> None:
 
 
 @pytest.mark.parametrize("applied_updates", [0, 1])
-def test_v3_uses_api_plan_and_apply_evidence(monkeypatch, applied_updates) -> None:
+@pytest.mark.parametrize("namespace", ["default", "seed-vrf"])
+def test_v3_uses_api_plan_and_apply_evidence(monkeypatch, applied_updates, namespace) -> None:
     from types import SimpleNamespace
 
     from infrahub_sync.client.models import ArtifactReferenceResource, PublicRunResource
@@ -520,15 +529,16 @@ def test_v3_uses_api_plan_and_apply_evidence(monkeypatch, applied_updates) -> No
         def get_plan(_run_id) -> SimpleNamespace:
             return SimpleNamespace(
                 operations=[
-                    SimpleNamespace(action="delete", kind="IpamNamespace", identity={"name": "default"}),
+                    SimpleNamespace(action="delete", kind="IpamNamespace", identity={"name": namespace}),
+                    SimpleNamespace(action="delete", kind="InterfacePhysical", identity={"name": "eth0"}),
                     SimpleNamespace(action="update", kind="InterfaceVirtual", identity={"name": "test"}),
                 ],
-                summary=SimpleNamespace(deletes_not_executed=1),
+                summary=SimpleNamespace(deletes_not_executed=2),
             )
 
         @staticmethod
         def get_results(_run_id) -> SimpleNamespace:
-            return SimpleNamespace(results={"summary": {"create": 0, "update": applied_updates, "delete": 1}})
+            return SimpleNamespace(results={"summary": {"create": 0, "update": applied_updates, "delete": 2}})
 
     monkeypatch.setenv("INFRAHUB_SYNC_API_TOKEN", "test-api-token")
     monkeypatch.setattr(bench, "SyncClient", Client)
@@ -537,7 +547,10 @@ def test_v3_uses_api_plan_and_apply_evidence(monkeypatch, applied_updates) -> No
     if applied_updates:
         bench.v3_sync(stack, ("config", 1), record, 10)
         assert record.actions == {"create": {}, "update": {"InterfaceVirtual": 1}, "delete": {}}
-        assert record.skipped_deletes == {"IpamNamespace": 1}
+        assert record.builtin_deletes == ({"IpamNamespace": 1} if namespace == "default" else {})
+        assert record.skipped_deletes == (
+            {"InterfacePhysical": 1} if namespace == "default" else {"InterfacePhysical": 1, "IpamNamespace": 1}
+        )
         assert (record.plan_seconds, record.apply_seconds) == (2, 2)
         assert record.peak_rss_mb == 12
     else:
@@ -563,7 +576,7 @@ def test_v2_flags_are_only_sent_to_the_isolated_release(tmp_path, variant) -> No
 def test_destination_start_includes_the_schema_task_worker(monkeypatch) -> None:
     commands = []
     stack = bench.CellStack()
-    monkeypatch.setattr(bench.netbox, "dev_worker_containers", lambda _context: [])
+    monkeypatch.setattr(stack.context, "run", lambda *_args, **_kwargs: SimpleNamespace(stdout=""))
     monkeypatch.setattr(bench.netbox, "restore", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(stack, "compose", commands.append)
     monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "")
@@ -583,8 +596,21 @@ def test_v2_generation_uses_the_release_environment(tmp_path) -> None:
     assert command[-1] == str(tmp_path / "mapping")
 
 
-def test_worker_memory_closes_the_docker_client_without_context_manager(monkeypatch) -> None:
-    import docker
+@pytest.fixture
+def docker_sdk(monkeypatch) -> SimpleNamespace:
+    """Exercise the SDK boundary with a double, including when the SDK is not installed."""
+
+    class DockerSDKError(RuntimeError):
+        pass
+
+    errors = SimpleNamespace(DockerException=DockerSDKError)
+    sdk = SimpleNamespace(from_env=lambda **_kwargs: None, errors=errors)
+    monkeypatch.setitem(sys.modules, "docker", sdk)
+    monkeypatch.setitem(sys.modules, "docker.errors", errors)
+    return sdk
+
+
+def test_worker_memory_closes_the_docker_client_without_context_manager(monkeypatch, docker_sdk) -> None:
 
     calls = []
 
@@ -593,7 +619,7 @@ def test_worker_memory_closes_the_docker_client_without_context_manager(monkeypa
         return {"memory_stats": {"usage": 12 * 1024**2}}
 
     client = SimpleNamespace(api=SimpleNamespace(stats=stats), close=lambda: calls.append("closed"))
-    monkeypatch.setattr(docker, "from_env", lambda **_kwargs: client)
+    monkeypatch.setattr(docker_sdk, "from_env", lambda **_kwargs: client)
     stack = bench.CellStack()
     stack.worker = "benchmark-worker"
     assert stack.memory() == 12
@@ -717,8 +743,7 @@ def test_report_before_any_results(monkeypatch, tmp_path, capsys) -> None:
 
 
 @pytest.mark.parametrize("version", ["1.11.3", "1.10.6"])
-def test_destination_identity_checks_server_and_records_image(monkeypatch, version) -> None:
-    import docker
+def test_destination_identity_checks_server_and_records_image(monkeypatch, version, docker_sdk) -> None:
     from infrahub_sdk import InfrahubClientSync
 
     monkeypatch.setenv("INFRAHUB_DOCKER_IMAGE", "local/unverified-infrahub")
@@ -731,7 +756,7 @@ def test_destination_identity_checks_server_and_records_image(monkeypatch, versi
         containers=SimpleNamespace(list=lambda **kwargs: filters.append(kwargs) or [SimpleNamespace(image=image)]),
         close=lambda: None,
     )
-    monkeypatch.setattr(docker, "from_env", lambda **_kwargs: engine)
+    monkeypatch.setattr(docker_sdk, "from_env", lambda **_kwargs: engine)
     monkeypatch.setattr(InfrahubClientSync, "get_version", lambda _self: version)
     if version == "1.11.3":
         assert stack.destination_identity() == (version, "sha256:image", bench.INFRAHUB_IMAGE + "@sha256:digest")
@@ -789,7 +814,7 @@ def test_runner_distinguishes_setup_timeout_from_cell_deadline(monkeypatch, tmp_
 
 def test_stopped_development_worker_requires_destroy(monkeypatch) -> None:
     stack = bench.CellStack()
-    monkeypatch.setattr(bench.netbox, "dev_worker_containers", lambda _context: ["stopped-worker"])
+    monkeypatch.setattr(stack.context, "run", lambda *_args, **_kwargs: SimpleNamespace(stdout="stopped-worker"))
     monkeypatch.setattr(bench.dev, "build", lambda _context: pytest.fail("must not build over existing stack"))
     with pytest.raises(BenchmarkError, match=r"invoke destroy.*removes volumes"):
         stack.start_sync()
@@ -924,14 +949,20 @@ def test_runner_records_keyboard_interrupt_before_propagating(monkeypatch, tmp_p
 
 
 @pytest.mark.parametrize("line", ["v2", "v3"])
-@pytest.mark.parametrize("worker", ["running-worker", "stopped-worker"])
-def test_runner_rejects_existing_worker_before_mutation(monkeypatch, tmp_path, line, worker) -> None:
+@pytest.mark.parametrize("container", ["running-worker", "stopped-worker", "api", "database"])
+def test_runner_rejects_existing_development_container_before_mutation(monkeypatch, tmp_path, line, container) -> None:
     monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
     monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "harness-sha")
     monkeypatch.setattr(bench, "v2_environment", lambda _ref: (tmp_path, "2.0.1", "release-sha"))
-    monkeypatch.setattr(bench.netbox, "dev_worker_containers", lambda _context: [worker])
+    commands = []
+
+    def docker_ps(_context, command, **_kwargs: object):
+        commands.append(command)
+        return SimpleNamespace(stdout=container)
+
+    monkeypatch.setattr(bench.QuietContext, "run", docker_ps)
 
     def destructive(*_args: object, **_kwargs: object):
         pytest.fail("rejected cell must not mutate or remove existing stacks")
@@ -944,14 +975,17 @@ def test_runner_rejects_existing_worker_before_mutation(monkeypatch, tmp_path, l
     bench.run_cell.body(Context(), line=line, v2_ref="2.0.1")
     row = json.loads(bench.RESULTS.read_text())
     assert row["status"] == "failed"
-    assert "invoke destroy" in row["error"]
+    assert "uv run invoke destroy" in row["error"]
+    assert "--all" in commands[0]
+    assert "com.docker.compose.project=infrahub-sync-dev" in commands[0]
+    assert "com.docker.compose.service" not in commands[0]
 
 
 @pytest.mark.parametrize("failure", ["source", "destination"])
 def test_partial_setup_cleans_only_acquired_stacks(monkeypatch, failure) -> None:
     stack = bench.CellStack()
     events = []
-    monkeypatch.setattr(bench.netbox, "dev_worker_containers", lambda _context: [])
+    monkeypatch.setattr(stack.context, "run", lambda *_args, **_kwargs: SimpleNamespace(stdout=""))
 
     def restore(*_args: object, **_kwargs: object):
         if failure == "source":
@@ -1038,7 +1072,7 @@ def test_interrupted_v2_sync_kills_session_and_reaps_process(monkeypatch, tmp_pa
             process.wait()
 
 
-@pytest.mark.parametrize("different", ["harness", "mapping"])
+@pytest.mark.parametrize("different", ["harness", "mapping", "image-id", "image-digest"])
 def test_report_never_pools_or_pairs_different_provenance(tmp_path, different) -> None:
     path = tmp_path / "results.jsonl"
     for line, harness, mapping_hash, seconds in [
@@ -1059,10 +1093,131 @@ def test_report_never_pools_or_pairs_different_provenance(tmp_path, different) -
             peak_rss_mb=1,
             harness_commit=harness,
             mapping_sha256=mapping_hash,
+            infrahub_image_id="other-image" if line == "v2" and seconds == 20 and different == "image-id" else "image",
+            infrahub_image_digest="other-digest"
+            if line == "v2" and seconds == 20 and different == "image-digest"
+            else "digest",
         ).append(path)
     rows = medians(path)
     assert len(rows) == 2
-    assert rows[0]["v2_seconds"] == 2
-    assert rows[0]["v3_seconds"] == 1
-    assert rows[1]["v2_seconds"] == 20
-    assert rows[1]["v3_seconds"] is None
+    paired = next(row for row in rows if row["v3_seconds"] is not None)
+    unpaired = next(row for row in rows if row["v3_seconds"] is None)
+    assert paired["v2_seconds"] == 2
+    assert paired["v3_seconds"] == 1
+    assert unpaired["v2_seconds"] == 20
+
+
+@pytest.mark.parametrize("tier", ["S", "M", "L"])
+@pytest.mark.parametrize("changed", [False, True])
+def test_source_counts_include_skips_foundations_and_raw_changes(tier, changed) -> None:
+    from development.netbox.datasets.tier_data import build_dataset
+
+    document = json.loads(expected_text(tier, plan_changes(tier))) if changed else None
+    counts = {kind: len(rows) for kind, rows in build_dataset(tier).items()}
+    if document:
+        for change in document["changes"]:
+            counts[change["kind"]] += {"create": 1, "delete": -1, "update": 0}[change["action"]]
+    validate_source_counts(tier, counts, document)
+    assert counts == expected_source_counts(tier, document)
+
+
+@pytest.mark.parametrize("kind", ["dcim/device-roles", "dcim/devices", "dcim/interfaces", "ipam/vlans"])
+@pytest.mark.parametrize("delta", [-1, 1])
+def test_source_counts_reject_missing_or_extra_foundation_and_skip_rows(kind, delta) -> None:
+    counts = expected_source_counts("S")
+    counts[kind] += delta
+    with pytest.raises(BenchmarkError, match="NetBox counts differ"):
+        validate_source_counts("S", counts)
+
+
+@pytest.mark.usefixtures("default_sigint_handler")
+def test_setup_interrupt_stops_sleeping_grandchild_and_records_reason(monkeypatch, tmp_path) -> None:
+    from development.bench import runtime
+
+    child_pid = tmp_path / "child.pid"
+    script = tmp_path / "spawn.py"
+    script.write_text(
+        "import subprocess,sys,time\nfrom pathlib import Path\n"
+        "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\n"
+        f"Path({str(child_pid)!r}).write_text(str(child.pid))\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    processes = []
+    original_popen = subprocess.Popen
+
+    def popen(*args: Any, **kwargs: Any):  # noqa: ANN401 -- real Popen protocol
+        process = original_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    original_wait = runtime.SessionLocal.wait
+
+    def wait(runner):
+        deadline = time.monotonic() + 3
+        while not child_pid.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert child_pid.exists()
+        os.kill(os.getpid(), signal.SIGINT)
+        original_wait(runner)
+
+    class Stack:
+        context = runtime.QuietContext()
+
+        def reset(self, _tier):
+            self.context.run(shlex.join([sys.executable, str(script)]), in_stream=False)
+            pytest.fail("interrupted setup must not continue")
+
+        @staticmethod
+        def close() -> None:
+            pass
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(runtime.SessionLocal, "wait", wait)
+    monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
+    monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
+    monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
+    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "harness-sha")
+    started = time.monotonic()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            bench.run_cell.body(Context(), repetitions=2)
+        assert time.monotonic() - started < 5
+        row = json.loads(bench.RESULTS.read_text())
+        assert row["status"] == "failed"
+        assert row["wall_seconds"] is None
+        assert "interrupted by the user" in row["error"]
+        stat = Path(f"/proc/{int(child_pid.read_text())}/stat")
+        deadline = time.monotonic() + 2
+        while stat.exists() and stat.read_text(encoding="utf-8").split()[2] != "Z" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not stat.exists() or stat.read_text(encoding="utf-8").split()[2] == "Z"
+    finally:
+        for process in processes:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+
+
+def test_invoke_tasks_load_without_toml(tmp_path) -> None:
+    script = tmp_path / "without_toml.py"
+    script.write_text(
+        "import sys\nfrom importlib.abc import MetaPathFinder\n"
+        "class WithoutToml(MetaPathFinder):\n"
+        " def find_spec(self, fullname, path=None, target=None):\n"
+        "  if fullname == 'toml': raise ModuleNotFoundError(\"No module named 'toml'\")\n"
+        "sys.meta_path.insert(0, WithoutToml())\n"
+        "from invoke.program import Program\nProgram().run('invoke --list', exit=False)\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(  # noqa: S603 -- fixed interpreter and local test script
+        [sys.executable, str(script)],
+        cwd=bench.ROOT,
+        env=os.environ | {"PYTHONPATH": str(bench.ROOT)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "bench.run" in result.stdout
