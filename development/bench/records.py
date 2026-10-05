@@ -79,15 +79,23 @@ def validate_result(  # noqa: PLR0913, PLR0917 -- independent validation inputs
     actions: Actions,
     mapping: dict[str, list[str]],
     expected: Actions | None = None,
+    *,
+    skipped_deletes: dict[str, int] | None = None,
 ) -> None:
     """Reject count or action mismatches before a result may carry a valid time."""
     wanted = expected_counts(tier, mapping)
     if scenario == "changed":
-        if expected is None or normalized(actions) != normalized(expected):
+        executed_expected = expected
+        if expected is not None and skipped_deletes is not None:
+            if normalized({"delete": skipped_deletes})["delete"] != normalized(expected)["delete"]:
+                msg = "recorded nonexecuted deletes differ from the expected change file"
+                raise ValueError(msg)
+            executed_expected = {**expected, "delete": {}}
+        if executed_expected is None or normalized(actions) != normalized(executed_expected):
             msg = "applied actions differ from the expected change file"
             raise ValueError(msg)
         for kind in wanted:
-            wanted[kind] += expected["create"].get(kind, 0) - expected["delete"].get(kind, 0)
+            wanted[kind] += executed_expected["create"].get(kind, 0) - executed_expected["delete"].get(kind, 0)
     elif scenario == "warm" and any(normalized(actions).values()):
         msg = "warm run applied nonzero actions"
         raise ValueError(msg)

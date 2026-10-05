@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from invoke import Context
 from invoke.exceptions import CommandTimedOut, UnexpectedExit
+from invoke.runners import Local
 from typing_extensions import Self
 
 if TYPE_CHECKING:
@@ -27,12 +28,33 @@ class BenchmarkError(RuntimeError):
     """A safe failure message without provider output or credentials."""
 
 
+class SessionLocal(Local):
+    """Run quiet benchmark commands in a session and kill all descendants on timeout."""
+
+    def start(self, command: str, shell: str, env: dict[str, Any]) -> None:
+        self.process = subprocess.Popen(  # noqa: S602 -- fixed task commands use Invoke's shell semantics
+            command,
+            shell=True,
+            executable=shell,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+            start_new_session=True,
+        )
+
+    def kill(self) -> None:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(self.process.pid, signal.SIGKILL)
+
+
 class QuietContext(Context):
     """Suppress legacy task banners and command output at the benchmark boundary."""
 
     deadline: float | None = None
 
     def run(self, command: str, **kwargs: object):  # noqa: ANN201 -- Invoke has a dynamic Result/Promise API
+        self.config.runners.local = SessionLocal
         kwargs.update(hide=True, pty=False, echo=False)
         requested = kwargs.get("timeout", LIMIT_SECONDS)
         timeout = min(requested, LIMIT_SECONDS) if isinstance(requested, (int, float)) else LIMIT_SECONDS

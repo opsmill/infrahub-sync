@@ -8,8 +8,16 @@ title: "Run a NetBox benchmark cell"
 
 The manual benchmark compares v2 and v3 against the same local NetBox tier and a fresh
 Infrahub 1.11.3 destination. It runs outside CI. Tier L contains 87,815 mapped source
-objects; seeding and benchmark runs can take hours. Each repetition has a six-hour
-limit for preparation and sync. Cleanup has a separate five-minute limit. A timeout or validation failure produces an invalid result with no valid time.
+objects; seeding and benchmark runs can take hours. Each repetition starts a shared
+six-hour budget when its stack manager is created. Stack lifecycle commands, including
+the NetBox restore, schema loading, the baseline sync, the change script, and the measured
+sync receive the remaining budget. Shell commands run in their own sessions; a deadline
+kills their whole process group, including redirected commands and `uv run` children.
+The runner also checks the deadline after validation. Local file work is not interrupted
+by this deadline. v2 environment setup and HTTP reads use their own command and request
+timeouts.
+Cleanup has a separate five-minute budget. A timeout or validation failure produces an
+invalid result with no valid time.
 
 ### Prepare the tier
 
@@ -105,6 +113,8 @@ Each measured repetition appends one JSON object to the git-ignored
   `wall_seconds` measures submission/process start through a finished sync, excluding
   preparation, validation, and cleanup. Only reaching the six-hour cell limit produces
   `timed_out`; earlier setup command timeouts produce `failed` with a separate error.
+  A cleanup failure retains `timed_out` and adds a manual-cleanup instruction to `error`.
+  An interrupted repetition records the interruption before stopping the runner.
 - v3 `plan_seconds` and `apply_seconds` split the recorded run interval at the published
   plan-review artifact timestamp. These intervals include queue/load and verification or
   checkpoint overhead; they are not CPU timings of the diff and write loops.
@@ -119,12 +129,14 @@ Each measured repetition appends one JSON object to the git-ignored
 
 Cold and warm counts must match the mapped tier, including Infrahub's preserved default
 IP namespace. A warm cell must also show zero applied actions. Changed cells compare
-per-kind applied actions against `.netbox/changes/<tier>.expected.json`, translating
-prefix VRF moves into deletes and creates. v3 checks its saved plan against the
-apply summary and excludes deletions disclosed as not executed. The current v3 engine
-does not execute planned deletes, so a changed cell requiring deletes remains invalid;
-the runner does not change this behavior. All current v3 changed cells require deletes
-and therefore fail. A warm v3 plan can contain a default IP namespace deletion that is
+per-kind actions against `.netbox/changes/<tier>.expected.json`, translating
+prefix VRF moves into deletes and creates. v2 must execute the expected deletes.
+v3 checks its saved plan against the apply summary and must record exactly the expected
+deletes as not executed, following [ADR 0004](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0004-deletes-are-recorded-but-never-executed.md).
+It must apply the expected creates and updates, with zero executed deletes. Missing or
+extra recorded deletes fail validation. Destination counts include the retained objects
+for v3; v2 counts subtract executed deletes. A valid v3 changed cell keeps its time and
+records the deletions under `skipped_deletes`. A warm v3 plan can contain a default IP namespace deletion that is
 not dispatched; the runner records it in `skipped_deletes` and checks zero executed actions.
 v2 parses complete per-kind summaries or successful per-object action
 status lines from a finished sync. For a parallel no-op, all mapped tier logs and the
@@ -137,7 +149,9 @@ reported timings.
 uv run invoke bench.report
 ```
 
-The table compares medians from valid samples only. It keeps versions, commits, and v2
+The report states that v2 executes deletes and v3 records them without execution.
+Changed timings therefore measure different delete behavior. The table compares medians
+from valid samples only. It keeps versions, commits, and v2
 variants separate. It pools repetitions and pairs lines only when `harness_commit` and
 `mapping_sha256` both match. Older records without provenance remain in a separate
 unknown group. A missing valid line appears as an empty comparison cell. An invalid

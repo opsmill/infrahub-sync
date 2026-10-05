@@ -12,6 +12,7 @@ import sys
 import time
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -142,6 +143,34 @@ def test_changed_requires_applied_actions_and_resulting_counts(mapping) -> None:
         validate_result("S", "changed", counts, count_delta(expected_counts("S", mapping), counts), mapping, actions)
 
 
+@pytest.mark.parametrize(
+    "damage", ["none", "missing-delete", "extra-delete", "wrong-kind", "create", "update", "executed-delete", "counts"]
+)
+def test_v3_changed_requires_exact_skipped_deletes_and_executed_writes(mapping, damage) -> None:
+    expected = {"create": {"IpamPrefix": 1}, "update": {"InterfaceVirtual": 1}, "delete": {"IpamPrefix": 1}}
+    actions = {**expected, "delete": {}}
+    skipped = {"IpamPrefix": 1}
+    counts = expected_counts("S", mapping)
+    counts["IpamPrefix"] += 1
+    if damage == "missing-delete":
+        skipped = {}
+    elif damage == "extra-delete":
+        skipped["IpamPrefix"] = 2
+    elif damage == "wrong-kind":
+        skipped = {"IpamIPAddress": 1}
+    elif damage in {"create", "update"}:
+        actions[damage] = {}
+    elif damage == "executed-delete":
+        actions["delete"] = skipped.copy()
+    elif damage == "counts":
+        counts["IpamPrefix"] -= 1
+    if damage == "none":
+        validate_result("S", "changed", counts, actions, mapping, expected, skipped_deletes=skipped)
+    else:
+        with pytest.raises(ValueError, match="differ"):
+            validate_result("S", "changed", counts, actions, mapping, expected, skipped_deletes=skipped)
+
+
 def test_parse_summary_requires_complete_kinds() -> None:
     text = 'DcimDevice {"create": 0, "update": 2, "delete": 0}\nIpamVRF create=1 update=0 delete=0'
     assert parse_v2_summary(text, {"DcimDevice", "IpamVRF"}) == {
@@ -239,8 +268,9 @@ def test_medians_exclude_invalid_samples(tmp_path) -> None:
 
 @pytest.mark.parametrize("line", ["v2", "v3"])
 @pytest.mark.parametrize("scenario", ["cold", "warm", "changed"])
-def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0915 -- complete runner protocol
-    monkeypatch, tmp_path, mapping, scenario, line
+@pytest.mark.parametrize("delete_evidence", ["exact", "missing", "extra"])
+def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0913, PLR0917, PLR0915 -- complete runner protocol
+    monkeypatch, tmp_path, mapping, scenario, line, delete_evidence
 ) -> None:
     events = []
     counts = expected_counts("S", mapping)
@@ -256,6 +286,7 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0915 -- comp
         @staticmethod
         def reset(tier) -> None:
             events.append(("reset", tier))
+            counts.update(expected_counts("S", mapping))
 
         @staticmethod
         def destination_identity() -> tuple[str, str, str]:
@@ -315,6 +346,9 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0915 -- comp
             if record.scenario == "changed"
             else {action: {} for action in ("create", "update", "delete")}
         )
+        if record.scenario == "changed":
+            counts["InterfacePhysical"] += 1
+            record.skipped_deletes = {"InterfacePhysical": {"exact": 1, "missing": 0, "extra": 2}[delete_evidence]}
 
     changes = tmp_path / "changes"
     changes.mkdir()
@@ -359,7 +393,7 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0915 -- comp
         repetitions=2,
     )
     rows = [json.loads(line) for line in bench.RESULTS.read_text(encoding="utf-8").splitlines()]
-    status = "failed" if scenario == "changed" and line == "v3" else "ok"
+    status = "failed" if scenario == "changed" and line == "v3" and delete_evidence != "exact" else "ok"
     assert [row["status"] for row in rows] == [status, status]
     assert all(row["harness_commit"] == "harness-sha" for row in rows)
     assert all(row["commit"] == ("release-sha" if line == "v2" else "harness-sha") for row in rows)
@@ -372,7 +406,13 @@ def test_runner_repeats_from_fresh_state_and_cleans_up(  # noqa: PLR0915 -- comp
     assert all(row["mapping_sha256"] == expected_hash for row in rows)
     if status == "failed":
         assert all(row["wall_seconds"] is None for row in rows)
-        assert all("does not execute planned deletes" in row["error"] for row in rows)
+    else:
+        assert all(row["wall_seconds"] == 1 for row in rows)
+    if scenario == "changed" and line == "v3":
+        assert all(
+            row["skipped_deletes"]["InterfacePhysical"] == {"exact": 1, "missing": 0, "extra": 2}[delete_evidence]
+            for row in rows
+        )
     assert events.count(("reset", "S")) == events.count(("close",)) == 2
     assert events.count(("sync", "cold")) == 2
     if scenario != "cold":
@@ -410,6 +450,7 @@ def test_report_task_prints_side_by_side_medians(tmp_path, monkeypatch, capsys) 
     assert "2.000" in output
     assert "2@abc" in output
     assert "3@abc" in output
+    assert "v2 executes deletes; v3 records deletes without executing them" in output
 
 
 def test_quiet_context_suppresses_success_and_failure_output(capsys) -> None:
@@ -701,7 +742,8 @@ def test_destination_identity_checks_server_and_records_image(monkeypatch, versi
 
 
 @pytest.mark.parametrize("timeout", ["setup", "command", "deadline"])
-def test_runner_distinguishes_setup_timeout_from_cell_deadline(monkeypatch, tmp_path, timeout) -> None:
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_runner_distinguishes_setup_timeout_from_cell_deadline(monkeypatch, tmp_path, timeout, cleanup_fails) -> None:
     from development.bench.runtime import QuietContext
 
     events = []
@@ -723,6 +765,9 @@ def test_runner_distinguishes_setup_timeout_from_cell_deadline(monkeypatch, tmp_
         @staticmethod
         def close() -> None:
             events.append("closed")
+            if cleanup_fails:
+                msg = "cleanup failed"
+                raise BenchmarkError(msg)
 
     monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
     monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
@@ -735,6 +780,10 @@ def test_runner_distinguishes_setup_timeout_from_cell_deadline(monkeypatch, tmp_
     assert row["commit"] == "abc-dirty"
     assert row["infrahub_version"] is None
     assert row["wall_seconds"] is None
+    if cleanup_fails:
+        assert "remove the disposable stacks manually" in row["error"]
+        if timeout == "deadline":
+            assert "cell exceeded its time limit" in row["error"]
     assert events == ["closed"]
 
 
@@ -788,6 +837,90 @@ def test_quiet_context_shorter_command_timeout_is_safe(capsys) -> None:
         context.run("printf secret-token; sleep 5", timeout=0.2)
     captured = capsys.readouterr()
     assert "secret-token" not in str(exc.value) + captured.out + captured.err
+
+
+@pytest.mark.parametrize("shape", ["redirected", "uv-run"])
+def test_real_invoke_deadline_kills_grandchild_in_command_group(monkeypatch, tmp_path, shape) -> None:
+    from development.bench.runtime import QuietContext
+
+    child_pid = tmp_path / "child.pid"
+    script = tmp_path / "spawn.py"
+    script.write_text(
+        "import subprocess,sys,time\nfrom pathlib import Path\n"
+        "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\n"
+        f"Path({str(child_pid)!r}).write_text(str(child.pid))\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+    original_popen = subprocess.Popen
+    processes = []
+
+    def popen(*args: Any, **kwargs: Any):  # noqa: ANN401 -- forward the real Popen protocol
+        process = original_popen(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    command = shlex.join([sys.executable, str(script)])
+    if shape == "redirected":
+        source = tmp_path / "input.sql"
+        source.write_text("", encoding="utf-8")
+        command += f" < {shlex.quote(str(source))} > {shlex.quote(str(tmp_path / 'output'))}"
+    else:
+        command = shlex.join(["uv", "run", "--no-sync", "python", str(script)])
+    context = QuietContext()
+    context.deadline = time.monotonic() + 2
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            context.run(command, in_stream=False)
+        assert time.monotonic() - started < 4
+        assert child_pid.exists(), "the command must spawn its grandchild before the deadline"
+        assert processes[0].returncode is not None
+        stat = Path(f"/proc/{int(child_pid.read_text())}/stat")
+        deadline = time.monotonic() + 1
+        while stat.exists() and stat.read_text(encoding="utf-8").split()[2] != "Z" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not stat.exists() or stat.read_text(encoding="utf-8").split()[2] == "Z", "grandchild is still running"
+    finally:
+        for process in processes:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            # The pre-fix runner does not create a session; also remove the leaked descendant.
+            if child_pid.exists():
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(int(child_pid.read_text()), signal.SIGKILL)
+            process.wait()
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_runner_records_keyboard_interrupt_before_propagating(monkeypatch, tmp_path, cleanup_fails) -> None:
+    events = []
+
+    class Stack:
+        @staticmethod
+        def reset(_tier: str) -> None:
+            raise KeyboardInterrupt
+
+        @staticmethod
+        def close() -> None:
+            events.append("closed")
+            if cleanup_fails:
+                msg = "cleanup failed"
+                raise BenchmarkError(msg)
+
+    monkeypatch.setattr(bench, "STATE", tmp_path / "bench")
+    monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
+    monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
+    monkeypatch.setattr(bench, "CellStack", Stack)
+    monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "harness-sha")
+    with pytest.raises(KeyboardInterrupt):
+        bench.run_cell.body(Context(), repetitions=2)
+    row = json.loads(bench.RESULTS.read_text())
+    assert row["status"] == "failed"
+    assert row["wall_seconds"] is None
+    assert "interrupted by the user" in row["error"]
+    assert events == ["closed"]
 
 
 @pytest.mark.parametrize("line", ["v2", "v3"])

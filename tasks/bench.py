@@ -110,7 +110,11 @@ class CellStack:
         self.started_destination = False
 
     def remaining(self) -> float:
-        """Enforce one six-hour envelope for preparation, baseline, and measured sync."""
+        """Budget stack commands, schema load, baseline, changes, and sync; check after validation.
+
+        Local file work is not interrupted; v2 setup and HTTP reads use their own timeouts.
+        Cleanup replaces this deadline with a separate five-minute budget.
+        """
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             msg = "cell exceeded the six-hour limit"
@@ -497,11 +501,20 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
                         msg = "v2 summary unavailable: count deltas cannot prove updates or zero warm actions"
                         raise BenchmarkError(msg)  # noqa: TRY301 -- fail this cell before recording a time
                 stack.remaining()
-                if scenario == "changed" and line == "v3" and expected and expected["delete"]:
-                    msg = "v3 does not execute planned deletes; the expected changed actions cannot be met"
-                    raise BenchmarkError(msg)  # noqa: TRY301 -- do not report unexecuted deletes as applied
-                validate_result(tier, scenario, record.infrahub_counts, record.actions, mapping, expected)
+                validate_result(
+                    tier,
+                    scenario,
+                    record.infrahub_counts,
+                    record.actions,
+                    mapping,
+                    expected,
+                    skipped_deletes=record.skipped_deletes if line == "v3" else None,
+                )
+                stack.remaining()
                 record.status = "ok"
+            except KeyboardInterrupt:
+                record.error = "benchmark repetition interrupted by the user"
+                raise
             except (TimeoutError, RunWaitTimeoutError):
                 try:
                     stack.remaining()
@@ -530,10 +543,10 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
                 try:
                     stack.close()
                 except (BenchmarkError, TimeoutError):
-                    record.status, record.error = (
-                        "failed",
-                        "benchmark stack cleanup failed; remove the disposable stacks manually",
-                    )
+                    if record.status != "timed_out":
+                        record.status = "failed"
+                    cleanup_error = "benchmark stack cleanup failed; remove the disposable stacks manually"
+                    record.error = f"{record.error}; {cleanup_error}" if record.error else cleanup_error
                 record.append(RESULTS)
             log.info(
                 "benchmark_cell",
@@ -576,3 +589,4 @@ def report(_context: Context) -> None:
             f"{row['v3_seconds']:.3f}" if row["v3_seconds"] is not None else "",
         )
     Console().print(table)
+    Console().print("Delete semantics: v2 executes deletes; v3 records deletes without executing them.")
