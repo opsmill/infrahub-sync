@@ -166,11 +166,7 @@ uv run rumdl fmt .     # fix
 
 ## Changelog
 
-<<<<<<< HEAD
-Release notes are written by contributors, not generated from PR titles. Every pull request must add a news fragment under `changelog/`, including pull requests into `feature/v3-develop`. The `changelog-check.yml` workflow that enforces this for `main` is disabled at present: its `pull_request` trigger is commented out, so it runs only when dispatched manually. Reviewers check for the fragment.
-=======
-Release notes are written by contributors, not generated from PR titles. Every pull request into `main` must add a news fragment under `changelog/`. The `changelog-check.yml` workflow that enforces this is disabled at present: its `pull_request` trigger is commented out, and a manual dispatch fails because it has no pull request to check. Reviewers check for the fragment.
->>>>>>> origin/main
+Release notes are written by contributors, not generated from PR titles. Every pull request must add a news fragment under `changelog/`, including pull requests into `feature/v3-develop`. The `changelog-check.yml` workflow that enforces this for `main` is disabled at present: its `pull_request` trigger is commented out, and a manual dispatch fails because it has no pull request to check. Reviewers check for the fragment.
 
 Create one with towncrier, naming it after the issue or PR number:
 
@@ -186,13 +182,9 @@ Use `+` as the id for a change with no issue number (`+short-slug.housekeeping.m
 
 Label a pull request `ci/skip-changelog` when it needs no entry, for example a dependency bump or a typo fix. Dependabot applies that label itself.
 
-<<<<<<< HEAD
-**Versions and `CHANGELOG.md` are never edited manually.** For a V2 release from `main`, merging does not prepare the release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md). V3 pre-release candidates are built by `workflow-candidate.yml` instead; see [`develop/guides/qualifying-an-internal-candidate.md`](docs/docs/develop/guides/qualifying-an-internal-candidate.md).
-=======
-Every normal pull request must also carry exactly one release-intent label — `changes/major`, `changes/minor`, or `changes/patch` — and `release-label-check.yml` fails the PR if it does not. These labels alone determine the version bump. Dependabot and `update-infrahub-sdk.yml` apply `changes/patch` themselves; generated `chore(release):` pull requests are exempt because they apply, rather than introduce, that release intent.
+Every normal pull request into `main` must also carry exactly one release-intent label — `changes/major`, `changes/minor`, or `changes/patch` — and `release-label-check.yml` fails the PR if it does not. These labels alone determine the version bump. Dependabot and `update-infrahub-sdk.yml` apply `changes/patch` themselves; generated `chore(release):` pull requests are exempt because they apply, rather than introduce, that release intent.
 
-**Versions and `CHANGELOG.md` are never edited by hand.** Merging to `main` does not prepare a release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md).
->>>>>>> origin/main
+**Versions and `CHANGELOG.md` are never edited manually.** For a V2 release from `main`, merging does not prepare the release: dispatch `trigger-push-stable.yml` from Actions with `main` selected, which opens a `chore(release)` pull request carrying the version bump and the changelog assembled from the fragments it consumes. Merging that pull request creates the tag and publishes the GitHub Release. Do not bump `pyproject.toml`, edit `CHANGELOG.md`, or create tags yourself. See [RELEASING.md](RELEASING.md). V3 pre-release candidates are built by `workflow-candidate.yml` instead; see [`develop/guides/qualifying-an-internal-candidate.md`](docs/docs/develop/guides/qualifying-an-internal-candidate.md).
 
 ## Invoke Tasks (reference)
 

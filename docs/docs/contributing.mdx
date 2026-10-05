@@ -323,15 +323,12 @@ vale docs/docs/contributing.mdx
 
 ## Changelog entries
 
-<<<<<<< HEAD
 Release notes are written by contributors rather than generated from pull request titles. Every pull request must add a news fragment under `changelog/`, including pull requests into `feature/v3-develop`.
 
 The `Changelog` workflow (`.github/workflows/changelog-check.yml`) checks this only for pull
-requests into `main`, and it is disabled at present: it runs only when dispatched manually.
-Reviewers check for the fragment.
-=======
-Release notes are written by contributors rather than generated from pull request titles, so every pull request into `main` must add a news fragment under `changelog/`. No CI check enforces this at present, so reviewers check for the fragment.
->>>>>>> origin/main
+requests into `main`, and it is disabled at present: its `pull_request` trigger is commented
+out, and a manual dispatch fails because it has no pull request to check. Reviewers check for
+the fragment.
 
 Create one with towncrier, naming it after the issue or pull request number:
 

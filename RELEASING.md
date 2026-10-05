@@ -42,11 +42,7 @@ The bump labels live in `.github/version-drafter.yml`. Every normal pull request
 | Contains `enhance`, `improve`, `feature`, or `refactor` | `changes/minor` |
 | Contains `fix`, `docs`, `chore`, or a dependency update | `changes/patch` |
 
-<<<<<<< HEAD
-Every pull request into `main` must also carry a news fragment under `changelog/`. `changelog-check.yml` holds that check, but its pull request trigger is disabled while the towncrier rollout is reconsidered, so reviewers check for the fragment. See the Changelog section of [AGENTS.md](AGENTS.md).
-=======
 Every pull request into `main` must also carry a news fragment under `changelog/`, but no CI check enforces this at present. The `pull_request` trigger of `changelog-check.yml` is commented out while the towncrier rollout is reconsidered, so reviewers check for the fragment. Dispatching the workflow manually does not check a pull request: the dispatch event carries no pull request number, so the run fails. `ci/skip-changelog` remains a separate opt-out for changes that need no release-note entry. See the Changelog section of [AGENTS.md](AGENTS.md).
->>>>>>> origin/main
 
 ### Step 2: Merge to main
 
@@ -197,12 +193,8 @@ Ensure PRs have appropriate labels before merging. If labels are missing, the ve
 
 | Workflow | Type | Purpose |
 |----------|------|---------|
-<<<<<<< HEAD
-| `changelog-check.yml` | Manual dispatch (pull request trigger disabled) | Requires a news fragment on every pull request |
-=======
 | `changelog-check.yml` | None (`pull_request` trigger commented out) | Requires a news fragment on each pull request into `main` once its trigger is restored; a manual dispatch has no pull request to check and fails |
 | `release-label-check.yml` | PR into `main` (`pull_request_target`) | Requires exactly one `changes/*` release bump label; runs as defined on `main`, so changes to it apply only after merge |
->>>>>>> origin/main
 | `trigger-push-stable.yml` | Dispatched on `main` | Resolves the version, bumps `pyproject.toml`, assembles the changelog, opens the release pull request |
 | `release-publish.yml` | Push to `main` | Tags and publishes the GitHub Release when a `release/*` pull request lands |
 | `trigger-release.yml` | GitHub Release published | Invokes the publish workflow |
