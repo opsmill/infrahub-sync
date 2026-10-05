@@ -75,7 +75,8 @@ The file joins Infrahub's Compose network, `infrahub_default` unless you set
 `task-manager`, Infrahub's Prefect server, and `task-manager-db`, its PostgreSQL
 server. Sync creates its own `infrahub_sync` database there and never touches
 Infrahub's `prefect` database. Its runs appear in Infrahub's task list, tagged
-with their branch and their stage.
+with their branch and their stage, under a title that says what the run does,
+for example `Plan sync of netbox-to-infrahub`.
 
 One Infrahub holds one Sync deployment. Sync registers a fixed Prefect deployment,
 `infrahub-sync-service/run`, on the task manager, so a second Sync deployment

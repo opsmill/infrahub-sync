@@ -251,6 +251,7 @@ def test_service_and_direct_prefect_flow_schemas_are_separate_and_exact() -> Non
         "branch",
         "expected_checksum",
         "confirm_writes",
+        "configuration_name",
     )
     assert tuple(inspect.signature(infrahub_sync_run.fn).parameters) == (
         "sync_name",
@@ -881,9 +882,11 @@ class _RemoteClient:
         self.keys: list[str | None] = []
         self.parameters: list[dict[str, Any]] = []
         self.tags: list[list[str]] = []
+        self.names: list[str] = []
 
-    async def update_flow_run(self, flow_run_id: UUID, *, tags: list[str]):
+    async def update_flow_run(self, flow_run_id: UUID, *, name: str, tags: list[str]):
         assert flow_run_id == self.flow_run.id
+        self.names.append(name)
         self.tags.append(tags)
 
     async def read_deployment_by_name(self, name: str):
@@ -929,6 +932,7 @@ async def test_prefect_extras_executor_receives_opaque_key_unchanged() -> None:
         "branch": None,
         "expected_checksum": None,
         "confirm_writes": False,
+        "configuration_name": "netbox-to-infrahub",
     }
 
     submission = await gateway.submit(parameters, idempotency_key="opaque-prefect-key")
@@ -937,6 +941,7 @@ async def test_prefect_extras_executor_receives_opaque_key_unchanged() -> None:
     assert client.keys == ["opaque-prefect-key"]
     assert client.parameters == [parameters]
     assert client.tags == [["infrahub-sync", "service", "infrahub.app", "infrahub.app/workflow-type/sync-plan"]]
+    assert client.names == ["Plan sync of netbox-to-infrahub"]
 
 
 class _ReadTransportFailureClient:

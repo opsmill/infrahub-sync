@@ -19,6 +19,7 @@ from prefect import flow, get_run_logger
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.objects import WorkerStatus
 from prefect.exceptions import MissingContextError, ObjectNotFound
+from prefect.runtime import flow_run as current_flow_run
 
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.configuration.runtime import resolve_runtime_instance
@@ -63,7 +64,7 @@ from .apply_guard import ApplyGuard, hold_apply_guard
 from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
 from .liveness import LivenessPolicy
 from .models import PlanResource
-from .orchestration import SERVICE_FLOW_NAME
+from .orchestration import SERVICE_FLOW_NAME, run_name
 from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
@@ -377,9 +378,7 @@ def _require_current_worker_identity(flow_run_id: str, worker_id: str) -> None:
 
 def _prefect_flow_run_id() -> str:
     """Read the flow-run UUID from Prefect's process-local runtime context."""
-    from prefect.runtime import flow_run  # pylint: disable=import-outside-toplevel
-
-    flow_run_id = _canonical_uuid(flow_run.id)
+    flow_run_id = _canonical_uuid(current_flow_run.id)
     if flow_run_id is None:
         raise RuntimeError(_WORKER_EXECUTION_ID_INVALID)
     return flow_run_id
@@ -831,7 +830,13 @@ def _record_failure(  # pylint: disable=too-many-arguments,too-many-positional-a
         )
 
 
-@flow(name=SERVICE_FLOW_NAME)
+def _service_run_name() -> str:
+    """The title Infrahub's task list shows for this run, set by Prefect when the run starts."""
+    parameters = current_flow_run.parameters
+    return run_name(parameters.get("stage"), parameters.get("configuration_name"))
+
+
+@flow(name=SERVICE_FLOW_NAME, flow_run_name=_service_run_name)
 def service_sync_run(  # pylint: disable=too-many-positional-arguments
     run_id: str,
     stage: Literal["plan", "verify", "apply", "sync"],
@@ -841,8 +846,14 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     branch: str | None = None,
     expected_checksum: str | None = None,
     confirm_writes: bool = False,
+    configuration_name: str | None = None,
 ) -> dict[str, Any]:
-    """Execute one API-reserved stage and publish its durable product data."""
+    """Execute one API-reserved stage and publish its durable product data.
+
+    `configuration_name` is the configuration's readable name, used only for the run's
+    title in the task views; the configuration is identified by `config_id`.
+    """
+    del configuration_name
     run_logger, prefect_context = _run_logger()
     secrets: list[str] = []
     failure: Exception | None = None

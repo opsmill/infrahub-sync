@@ -209,6 +209,7 @@ class RunService:
             "branch": request.branch,
             "expected_checksum": None,
             "confirm_writes": request.confirm_writes,
+            "configuration_name": sync_name,
         }
         return await self._submit(reserved, parameters, principal, request.reason)
 
@@ -877,6 +878,9 @@ class RunService:
             "expected_checksum": expected_checksum,
             "confirm_writes": confirm_writes,
         }
+        configuration_name = run.summary.get("sync_name")
+        if isinstance(configuration_name, str) and configuration_name:
+            parameters["configuration_name"] = configuration_name
         binding = run.configuration_binding
         if binding is not None:
             parameters.update(config_id=binding[0], registry_version=binding[1], package_checksum=binding[2])

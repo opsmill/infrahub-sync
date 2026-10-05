@@ -236,6 +236,7 @@ def test_admission_reads_registered_binding_before_allocating_run(
         "branch",
         "expected_checksum",
         "confirm_writes",
+        "configuration_name",
     }
 
     missing = CreateRunRequest(
@@ -409,6 +410,7 @@ def test_authentication_idempotency_and_secret_boundaries(
         "branch",
         "expected_checksum",
         "confirm_writes",
+        "configuration_name",
     }
     assert RAW_KEY not in opaque_key
     boundary = repr((first.json(), parameters, projection.audit_events()))

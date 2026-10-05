@@ -74,6 +74,32 @@ def run_tags(stage: str | None, branch: str | None) -> tuple[str, ...]:
     return tags
 
 
+# The title Infrahub's task list shows for a run, instead of the generated name Prefect
+# gives a flow run. It follows Infrahub's own naming rule for flow runs (`dev/guides/
+# backend/creating-async-tasks.md`): say what the run does, and leave out the branch and
+# any ID, which the task views already show in their own columns.
+_RUN_NAMES: Final = {
+    "plan": "Plan sync of {configuration}",
+    "verify": "Verify sync plan of {configuration}",
+    "apply": "Apply sync plan of {configuration}",
+    "sync": "Sync {configuration}",
+}
+_UNNAMED_RUNS: Final = {"plan": "Plan sync", "verify": "Verify sync plan", "apply": "Apply sync plan", "sync": "Sync"}
+
+
+def run_name(stage: object, configuration_name: object) -> str:
+    """Return the task-list title of one stage: what it does, and to which configuration.
+
+    The configuration is named by its readable name, never by its ID, which the task
+    views do not need in a title.
+    """
+    if not isinstance(stage, str) or stage not in _RUN_NAMES:
+        return "Sync run"
+    if isinstance(configuration_name, str) and configuration_name:
+        return _RUN_NAMES[stage].format(configuration=configuration_name)
+    return _UNNAMED_RUNS[stage]
+
+
 @dataclass(frozen=True, slots=True)
 class Submission:
     """One Prefect-accepted service execution."""
@@ -155,7 +181,7 @@ class _TaggingClient(Protocol):
 
     async def read_flow_run(self, flow_run_id: UUID) -> Any: ...
 
-    async def update_flow_run(self, flow_run_id: UUID, *, tags: Iterable[str]) -> httpx.Response: ...
+    async def update_flow_run(self, flow_run_id: UUID, *, name: str, tags: Iterable[str]) -> httpx.Response: ...
 
 
 class _PoolClient(Protocol):
@@ -179,23 +205,27 @@ class PrefectOrchestration:
         return Submission(flow_run_id=handle.id, state=await handle.status())
 
     async def _tag(self, flow_run_id: str, parameters: Mapping[str, object]) -> None:
-        """Add the Infrahub task-view tags to the accepted flow run.
+        """Add the Infrahub task-view tags and the run's title to the accepted flow run.
 
-        The vendored executor creates the flow run with the deployment's tags only,
-        so the per-run tags are added once Prefect has accepted it. Prefect replaces a
-        run's tag list on update, so the run's current tags are read and kept. Any
-        failure here leaves the run unlisted in Infrahub, never unsubmitted: Prefect
-        has accepted the run, it will execute, and the submission is reported as such.
+        The vendored executor creates the flow run with the deployment's tags only and
+        a name Prefect generates, so the per-run tags and the title are set once Prefect
+        has accepted it. The flow sets the same title again when it starts; setting it
+        here as well means a run waiting for a worker is listed under its title too.
+        Prefect replaces a run's tag list on update, so the run's current tags are read
+        and kept. Any failure here leaves the run unlisted in Infrahub, never
+        unsubmitted: Prefect has accepted the run, it will execute, and the submission
+        is reported as such.
         """
         stage = parameters.get("stage")
         branch = parameters.get("branch")
         wanted = run_tags(stage if isinstance(stage, str) else None, branch if isinstance(branch, str) else None)
+        name = run_name(stage, parameters.get("configuration_name"))
         client = cast("_TaggingClient", self._client)
         try:
             run_id = UUID(flow_run_id)
             current = (await client.read_flow_run(run_id)).tags or []
             tags = list(dict.fromkeys([*current, *SERVICE_DEFINITION.tags, *wanted]))
-            await client.update_flow_run(run_id, tags=tags)
+            await client.update_flow_run(run_id, name=name, tags=tags)
         except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
             response = getattr(error, "response", None)
             logger.warning(

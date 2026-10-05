@@ -31,6 +31,21 @@ infrahub.app/node/<SyncRun node id>
 infrahub.app/node/<SyncConfiguration node id>
 ```
 
+## Flow-run titles (FR-003)
+
+Every flow run Sync creates is titled after its stage and its configuration's readable
+name, passed to the flow as `configuration_name` beside `config_id`, the way
+Infrahub titles its own flow runs (`dev/guides/backend/creating-async-tasks.md` in
+Infrahub): no branch and no ID, which the task views show in their own columns. Sync
+sets the title when Prefect accepts the run, and the flow sets it again when it starts.
+
+| Stage | Title |
+|---|---|
+| `plan` | `Plan sync of <configuration>` |
+| `verify` | `Verify sync plan of <configuration>` |
+| `apply` | `Apply sync plan of <configuration>` |
+| `sync` | `Sync <configuration>` |
+
 ## Access (FR-018)
 
 | `INFRAHUB_SYNC_PREFECT_AUTH_STRING` | Behavior | Startup log |
