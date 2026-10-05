@@ -1,0 +1,19 @@
+changelog/+pr364-review.fixed.md
+  s_d50d484cdcca4f::t_2a7e20bc7c9b38 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1627fbf9e66f74b354acff104785c4e0c27f8a07",
+  "prompts": {},
+  "sessions": {
+    "s_d50d484cdcca4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e1a616b8-b081-465e-b5ee-e4345f32cc7a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
