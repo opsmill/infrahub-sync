@@ -141,6 +141,44 @@ def test_peer_resolution_of_an_uncached_store_node_issues_no_request(client: Inf
     assert not client.schema.cache
 
 
+def test_peer_resolution_refetches_an_incomplete_store_node_of_a_mapped_kind(client: InfrahubClientSync) -> None:
+    """A stored peer missing a required value, of a kind in the mapping, is re-fetched."""
+    schema = _node_schema()
+    node = InfrahubNodeSync(client=client, schema=schema, branch="main", data={"id": "w1"})
+    client.store.set(node=node, key="w1")
+
+    with pytest.raises(_SchemaFetchAttemptedError):
+        resolve_peer_node(
+            key="w1",
+            rel_schema=RelationshipSchemaAPI(name="widget", peer=KIND, cardinality=RelationshipCardinality.ONE),
+            peer_schema=schema,
+            store=client.store,
+            client=client,
+            fallback=True,
+            schemas={KIND: schema},
+        )
+
+
+def test_peer_resolution_keeps_an_incomplete_store_node_of_an_unmapped_kind(client: InfrahubClientSync) -> None:
+    """A stored peer whose kind is absent from the mapping is returned as is, unfetched."""
+    schema = _node_schema()
+    node = InfrahubNodeSync(client=client, schema=schema, branch="main", data={"id": "w1"})
+    client.store.set(node=node, key="w1")
+
+    peer_node = resolve_peer_node(
+        key="w1",
+        rel_schema=RelationshipSchemaAPI(name="widget", peer=KIND, cardinality=RelationshipCardinality.ONE),
+        peer_schema=schema,
+        store=client.store,
+        client=client,
+        fallback=True,
+        schemas={},
+    )
+
+    assert peer_node is node
+    assert not client.schema.cache
+
+
 def test_update_of_an_uncached_node_issues_no_request(client: InfrahubClientSync) -> None:
     """``update_node`` applies attributes using the caller's mapping, not a schema fetch."""
     schema = _node_schema()
