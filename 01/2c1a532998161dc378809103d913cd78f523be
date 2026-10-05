@@ -1,0 +1,27 @@
+docs/docs/creating-a-sync-project.mdx
+  s_b49d0b79aa3886::t_28aed72e78b841 81,83-87
+docs/docs/development-stack.mdx
+  s_b49d0b79aa3886::t_5af491f8b4bbb7 94-100
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_b49d0b79aa3886::t_5af491f8b4bbb7 54-60,351-355,385
+docs/docs/running-a-sync.mdx
+  s_b49d0b79aa3886::t_5af491f8b4bbb7 244-251
+docs/docs/development/guides/preview-stack.md
+  s_b49d0b79aa3886::t_5af491f8b4bbb7 173-174,184-186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "012c1a532998161dc378809103d913cd78f523be",
+  "prompts": {},
+  "sessions": {
+    "s_b49d0b79aa3886": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "449f9b38-87d0-464b-8686-20851ebbf841",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
