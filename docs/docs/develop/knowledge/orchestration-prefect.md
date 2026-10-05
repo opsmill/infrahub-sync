@@ -50,7 +50,7 @@ records; Prefect records live execution state and logs. See
 [durable product records](../../reference/durable-product-records.mdx) for the distinction.
 
 ```python
-@flow(name="infrahub-sync-service")
+@flow(name="infrahub-sync-service", flow_run_name=_service_run_name)
 def service_sync_run(
     run_id: str,
     stage: Literal["plan", "verify", "apply", "sync"],
@@ -60,8 +60,16 @@ def service_sync_run(
     branch: str | None = None,
     expected_checksum: str | None = None,
     confirm_writes: bool = False,
+    configuration_name: str | None = None,
 ) -> dict[str, Any]: ...
 ```
+
+`configuration_name` is the configuration's readable name and serves only the run's
+title. The API sets the title when Prefect accepts the run, and `flow_run_name` sets it
+again when the run starts, for example `Plan sync of netbox-to-infrahub`, instead of the
+name Prefect generates. The title follows the rule Infrahub applies to its own flow runs:
+it says what the run does and leaves out the branch and any ID, which the run's page
+already shows.
 
 Registered execution supplies all three configuration fields: `config_id`,
 `registry_version` and `package_checksum`. The worker checks them against the product run
