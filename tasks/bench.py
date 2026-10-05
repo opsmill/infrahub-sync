@@ -276,7 +276,7 @@ class CellStack:
 def v2_environment(ref: str) -> tuple[Path, str, str]:
     """Build one isolated release worktree/environment and record its immutable identity."""
     if sys.version_info < (3, 11):
-        msg = "benchmark runner requires Python 3.11 or later"
+        msg = "benchmark runner requires Python 3.11 to 3.13"
         raise BenchmarkError(msg)
     import tomllib  # noqa: PLC0415 -- benchmark requires Python 3.11; Invoke still loads on 3.10
 
@@ -427,7 +427,7 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
 ) -> None:
     """Run a destructive, manual cell, restoring both databases for every repetition."""
     if sys.version_info < (3, 11):
-        msg = "benchmark runner requires Python 3.11 or later"
+        msg = "benchmark runner requires Python 3.11 to 3.13"
         raise BenchmarkError(msg)
     import tomllib  # noqa: PLC0415 -- benchmark requires Python 3.11; Invoke still loads on 3.10
 
