@@ -152,6 +152,10 @@ def test_generated_release_pull_request_is_exempt(tmp_path: Path, title: str) ->
         {"title": "fix: example"},
         {"head_ref": "release/arbitrary"},
         {"head_ref": "release/v1.2.3"},
+        {"title": "chore(release): 9.9.9"},
+        {"title": "chore(release): 1.2.30"},
+        {"title": "chore(release): 1.2.3-rc1"},
+        {"title": "chore(release):1.2.3"},
     ],
     ids=[
         "untrusted-author",
@@ -160,6 +164,10 @@ def test_generated_release_pull_request_is_exempt(tmp_path: Path, title: str) ->
         "non-release-title",
         "non-version-ref",
         "v-prefixed-ref",
+        "mismatched-title-version",
+        "title-version-shares-prefix",
+        "title-version-has-prerelease",
+        "title-without-space",
     ],
 )
 def test_lookalike_release_pull_request_is_not_exempt(tmp_path: Path, override: dict[str, str]) -> None:
