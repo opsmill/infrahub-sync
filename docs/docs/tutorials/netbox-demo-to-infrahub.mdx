@@ -338,9 +338,11 @@ each one means.
 
 ### When an apply stops partway
 
-An apply that fails after it has started writing ends with `phase: apply-interrupted` and
-`outcome: ambiguous`. Nothing is rolled back: the operations written before the failure stay
-written on the branch, and the failed operation may have written part of its change.
+An apply can stop after it has written earlier operations. Nothing is rolled back: those
+writes stay on the branch. The run ends with `phase: apply-failed` when the failed operation
+is known not to have written, and with `phase: apply-interrupted` and `outcome: ambiguous`
+when the service cannot tell, in which case the failed operation may have written part of its
+change.
 
 To finish the import, remove the cause, then run `diff` again on the same branch and apply
 the new plan. The new plan compares NetBox with what the branch now holds, so it contains only

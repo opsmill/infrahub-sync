@@ -241,9 +241,14 @@ checkout running the local development stack.
 
 ### Recover from an interrupted apply
 
-An apply that fails after its first write ends with `phase: apply-interrupted` and
-`outcome: ambiguous`. Nothing is rolled back: the operations written before the failure stay
-written, and the failed operation may have written part of its change.
+An apply can stop after it has written earlier operations. Nothing is rolled back: those
+writes stay written. How the run ends depends on what the service knows about the operation
+that failed:
+
+- If the failed operation is known not to have written, the run ends with
+  `phase: apply-failed` and `outcome: failed`.
+- If the service cannot tell whether it wrote, the run ends with `phase: apply-interrupted`
+  and `outcome: ambiguous`, and the failed operation may have written part of its change.
 
 Remove the cause first, in the source data or in the package. Then create a new plan for the
 same branch with `diff`, review it, and apply it. The new plan compares the source with what
