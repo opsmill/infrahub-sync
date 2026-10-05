@@ -1,0 +1,1 @@
+Registering a configuration package that names Peering Manager as its destination now fails at registration, because Peering Manager is declared as a source only. Before, registration succeeded and the worker refused the run later.
