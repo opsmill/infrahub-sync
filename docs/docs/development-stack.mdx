@@ -182,8 +182,14 @@ every host-side address and browser URL below. See
    then answers on that address only, so the tasks and the host processes use
    `http://<gateway>:8080`, and you open the UI there instead of `localhost`.
 
-   The output includes a `config_id: <value>` field. Use that value in place of `<config-id>` in the commands
-   below. If you change the package later, register
+   The output includes a `config_id` field. A synthetic example, in the format the command prints:
+
+   ```text
+   config_id: 20261005T1200-1234abcd
+   ```
+
+   Your own command prints a different value, and it is not the package name. Use the value your command
+   printed in place of `<config-id>` in the commands below. If you change the package later, register
    the change with `configs version <config-id> <package>`. Registering changed content
    with `configs register` creates a new configuration ID at version 1.
 
