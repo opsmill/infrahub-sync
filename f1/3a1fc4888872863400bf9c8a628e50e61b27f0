@@ -1,0 +1,38 @@
+infrahub_sync/service/orchestration.py
+  s_08a08909ed3ec7::t_9df5a33288e82f 5,9,29-30,57-81,158-163,181,184-204
+  s_08a08909ed3ec7::t_431a926f167919 205
+docs/docs/develop/knowledge/orchestration-prefect.md
+  s_08a08909ed3ec7::t_30e4c6cf1ed681 53,63,67-72
+  s_08a08909ed3ec7::t_1a5b6ac03ce70b 73
+infrahub_sync/service/service.py
+  s_08a08909ed3ec7::t_9df5a33288e82f 212,881-883
+tests/service/test_flow_and_prefect.py
+  s_08a08909ed3ec7::t_06706223c49c2d 254,883-887,932,940
+tests/service/test_http_api.py
+  s_08a08909ed3ec7::t_06706223c49c2d 239,413
+tests/service/test_registered_schema_guard.py
+  s_08a08909ed3ec7::t_06706223c49c2d 591
+tests/service/test_run_titles.py
+  s_08a08909ed3ec7::t_06706223c49c2d 1-27,31,33-119
+  s_08a08909ed3ec7::t_dde5de614c68e6 28-30,32
+changelog/+flow-run-titles.changed.md
+  s_08a08909ed3ec7::t_30e4c6cf1ed681 1-3
+infrahub_sync/service/flow.py
+  s_08a08909ed3ec7::t_9df5a33288e82f 22,67,381,833-839,849,851-856
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f13a1fc4888872863400bf9c8a628e50e61b27f0",
+  "prompts": {},
+  "sessions": {
+    "s_08a08909ed3ec7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21445c9c-5a8d-449e-b739-c09c874959d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
