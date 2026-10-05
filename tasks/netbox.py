@@ -11,7 +11,7 @@ prints the URL and token banner for both datasets; `seed` also reports its loade
   and restored in place of the whole database. It is never committed.
 
 `invoke netbox.demo-package` writes a copy of the shipped `from-netbox` package that
-points at this local NetBox and the preview Infrahub. `invoke netbox.down` removes the
+points at this local NetBox and a local Infrahub. `invoke netbox.down` removes the
 containers and their volumes.
 
 NetBox publishes its port on the host's loopback address only. A container cannot reach
@@ -117,6 +117,9 @@ DEV_STACK_WORKER_SERVICE = "sync-worker"
 # The address the dev stack's worker uses for NetBox once it has joined NetBox's network:
 # the NetBox Compose service name and its container port, not the host port.
 WORKER_NETBOX_URL = "http://netbox:8080"
+# The address the dev stack's worker uses for a local Infrahub started from Infrahub's own
+# Compose file, once it has joined that project's network: the service name and its port.
+WORKER_INFRAHUB_URL = "http://infrahub-server:8000"
 # NetBox's first migration run took roughly 16 minutes on the reference machine, right at
 # the previous 960s ceiling -- this leaves real headroom instead of racing it.
 WAIT_TIMEOUT_SECONDS = 1800
@@ -222,14 +225,13 @@ def _attached_networks(context: Context, container: str) -> set[str]:
     return set(output.split()) if output else set()
 
 
-def attach_dev_worker(context: Context, values: dict[str, str]) -> bool:
-    """Connect the dev stack's worker to NetBox's network, when both exist.
+def connect_dev_worker(context: Context, network: str) -> bool:
+    """Connect the dev stack's worker to a Docker network, when both exist.
 
     Safe to repeat: a worker that is already connected is left as it is. Returns whether
-    a worker is connected when this returns. Does nothing when NetBox's network or the
-    worker does not exist, so neither stack depends on the other being started.
+    a worker is connected when this returns. Does nothing when the network or the worker
+    does not exist, so neither stack depends on the other being started.
     """
-    network = netbox_network(values)
     if _docker_output(context, f"network inspect --format '{{{{.Name}}}}' {shlex.quote(network)}") is None:
         return False
     containers = dev_worker_containers(context)
@@ -237,9 +239,16 @@ def attach_dev_worker(context: Context, values: dict[str, str]) -> bool:
         if network in _attached_networks(context, container):
             continue
         context.run(f"docker network connect {shlex.quote(network)} {shlex.quote(container)}", pty=False)
-    if containers:
-        print(f" - [{NAMESPACE}] The dev stack's worker is on {network}; it reads NetBox at {WORKER_NETBOX_URL}")
     return bool(containers)
+
+
+def attach_dev_worker(context: Context, values: dict[str, str]) -> bool:
+    """Connect the dev stack's worker to NetBox's network, when both exist."""
+    network = netbox_network(values)
+    connected = connect_dev_worker(context, network)
+    if connected:
+        print(f" - [{NAMESPACE}] The dev stack's worker is on {network}; it reads NetBox at {WORKER_NETBOX_URL}")
+    return connected
 
 
 def detach_dev_worker(context: Context, values: dict[str, str]) -> None:
@@ -485,21 +494,19 @@ def seed(context: Context, dataset: str = DEFAULT_DATASET, tier: str = "S") -> N
 
 @task(name="demo-package")
 def demo_package(_context: Context, infrahub_url: str = "", dev_stack: bool = False) -> None:  # noqa: FBT001, FBT002 -- Invoke boolean flag idiom
-    """Write a copy of the `from-netbox` package for this NetBox and the preview Infrahub.
+    """Write a copy of the `from-netbox` package for this NetBox and a local Infrahub.
 
     The copy keeps the shipped mapping and credential references and changes only the two
-    URLs. `--infrahub-url` defaults to the preview Infrahub address. `--dev-stack` writes
-    the addresses the local development stack's worker uses instead: NetBox on its own
-    network, and the preview Infrahub through `host.docker.internal`.
+    URLs. Without `--dev-stack`, the URLs are the host addresses of this NetBox and of the
+    preview Infrahub. `--dev-stack` writes the addresses the local development stack's
+    worker uses instead: NetBox and Infrahub on the Compose networks the worker joins at
+    `invoke start`. `--infrahub-url` replaces the Infrahub address in either case.
     """
     values = load_netbox_env()
     source = WORKER_NETBOX_URL if dev_stack else netbox_url(values)
     destination = infrahub_url
     if not destination:
-        destination = preview_urls(load_preview_env())["infrahub"]
-        if dev_stack:
-            # Inside the worker container `localhost` is the container itself.
-            destination = destination.replace("http://localhost:", "http://host.docker.internal:", 1)
+        destination = WORKER_INFRAHUB_URL if dev_stack else preview_urls(load_preview_env())["infrahub"]
     text = local_package_text(SHIPPED_PACKAGE.read_text(encoding="utf-8"), source, destination)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     LOCAL_PACKAGE.write_text(text, encoding="utf-8")

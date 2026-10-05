@@ -174,8 +174,12 @@ uv run invoke build
 uv run invoke start
 ```
 
-`start` waits until every service is healthy, then prints the Sync API address, its bearer
-token, and the Prefect UI address.
+`start` waits until every service is healthy, then connects the worker to Infrahub's Docker
+network, `infrahub_default`, and prints
+`The worker is on infrahub_default; it reaches Infrahub at http://infrahub-server:8000`,
+followed by the Sync API address, its bearer token, and the Prefect UI address. The network
+name comes from the project name `infrahub` you gave `docker compose -p` in
+[Start Infrahub](#start-infrahub).
 
 3. Point the CLI at the Sync API and check the service:
 
@@ -190,7 +194,8 @@ authenticates the CLI to the Sync API. It is separate from
 `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, which the worker uses to access Infrahub.
 
 If you change either credential later, export the new value and run `uv run invoke start`
-again. It recreates the worker with the new environment.
+again. It recreates the worker with the new environment and connects it to Infrahub's
+network again.
 
 For the addresses, the image rebuild after a code change, and the other stack commands, see
 [Local development stack](../development-stack.mdx#run-from-source).
@@ -204,19 +209,17 @@ A sync project is a directory containing a `package.yml` file. Its `configuratio
 
 ```bash
 mkdir -p .netbox
-sed 's#url: "http://localhost:8000"#url: "http://host.docker.internal:8000"#' \
+sed 's#url: "http://localhost:8000"#url: "http://infrahub-server:8000"#' \
   examples/netbox_to_infrahub/package.yml > .netbox/from-netbox.yml
 grep -n 'url:' .netbox/from-netbox.yml
 ```
 
 The `grep` prints the two addresses: `https://demo.netbox.dev` for the source and
-`http://host.docker.internal:8000` for the destination.
+`http://infrahub-server:8000` for the destination.
 
 The worker runs in a container, and inside a container `localhost` is the container itself,
-not your machine. Docker Desktop and OrbStack resolve `host.docker.internal` to your machine,
-where Infrahub publishes port 8000. On Linux, the worker's Compose service maps
-`host.docker.internal` to the host's internal IP address (Docker's `host-gateway` value);
-this route has not been tested on Linux yet.
+not your machine. On Infrahub's network, which the worker joined at `invoke start`, Infrahub's
+API container answers at its service name, `infrahub-server`, on port 8000.
 
 The worker reads `source.settings.url` and `destination.settings.url` from the registered
 package itself, not from the environment. `INFRAHUB_ADDRESS` is used only by `infrahubctl`.
@@ -412,6 +415,10 @@ The same pattern applies to larger migrations: start with a clear schema, map a 
 
 Stopping and deleting are separate steps, so you can keep the imported data for later.
 
+Stop the Sync service first. While the worker is connected to Infrahub's network,
+`docker compose -p infrahub down` cannot remove that network and reports
+`Resource is still in use`.
+
 To remove the Sync service and its data (registered packages, runs, and plans), from the
 `infrahub-sync` directory:
 
@@ -457,6 +464,17 @@ uv run invoke start
 ```
 
 This error names whichever adapter (NetBox or Infrahub) is missing its variables — the same message is raised for either one.
+
+### A run cannot reach `infrahub-server`
+
+The flow run's error names `infrahub-server` and says the name or service is not known.
+The worker is not connected to Infrahub's network. That happens when Infrahub was started
+after the Sync service, when a `docker compose up` recreated the worker without
+`invoke start`, or when Infrahub runs under another Compose project name.
+
+Run `uv run invoke start` again; it connects the worker to `infrahub_default` when that
+network exists. For another project name, set `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` to its
+network, for example `lab_default` for `docker compose -p lab`, before you run it.
 
 ### A plan run reports destination models missing from the schema
 

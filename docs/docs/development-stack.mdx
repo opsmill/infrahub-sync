@@ -78,7 +78,8 @@ from the repository root.
 
 1. Start a local Infrahub with Infrahub's own Compose file. Put it in a directory outside
    the checkout, because the checkout's root already holds a `docker-compose.yml`, the Sync
-   operator deployment:
+   operator deployment. Keep the project name `infrahub`: it names the Docker network,
+   `infrahub_default`, that the worker joins in step 5.
 
     ```bash
     mkdir -p ~/infrahub-local && cd ~/infrahub-local
@@ -131,14 +132,16 @@ from the repository root.
     uv run invoke start
     ```
 
-   The worker joins NetBox's Docker network, and `start` prints
-   `it reads NetBox at http://netbox:8080`. The NetBox tasks and `start` connect the
-   worker again each time either one is recreated.
+   The worker joins NetBox's and Infrahub's Docker networks, and `start` prints
+   `it reads NetBox at http://netbox:8080` and `it reaches Infrahub at http://infrahub-server:8000`.
+   `start` connects the worker again each time the worker is recreated, and the NetBox
+   tasks do the same when NetBox is recreated. If Infrahub's project has another name, set
+   `INFRAHUB_SYNC_DEV_INFRAHUB_NETWORK` to its network before `start`.
 
 6. Write a copy of the example package for this stack, and register it:
 
     ```bash
-    uv run invoke netbox.demo-package --dev-stack --infrahub-url http://host.docker.internal:8000
+    uv run invoke netbox.demo-package --dev-stack
     export INFRAHUB_SYNC_API_URL=http://127.0.0.1:8030
     export INFRAHUB_SYNC_API_TOKEN=infrahub-sync-dev-token
     uv run infrahub-sync configs register .netbox/from-netbox.local.yml \
@@ -147,15 +150,10 @@ from the repository root.
 
    The copy, `.netbox/from-netbox.local.yml`, is `examples/netbox_to_infrahub/package.yml`
    with two URLs changed: the source is `http://netbox:8080`, and the destination is
-   `http://host.docker.internal:8000`. Inside the worker container, `localhost` is the
-   container itself. The worker uses the URLs in the registered package; environment
-   variables such as `INFRAHUB_ADDRESS` do not change them.
-
-   Docker Desktop resolves `host.docker.internal` to your machine. On Linux, the worker's
-   `extra_hosts` entry maps it to the host's internal IP address (Docker's `host-gateway`
-   value), and Infrahub's Compose file
-   publishes port 8000 on every interface, so the same address applies. This route has
-   not been tested on Linux yet.
+   `http://infrahub-server:8000`. These are the service names on the two networks the
+   worker joined in step 5. Inside the worker container, `localhost` is the container
+   itself. The worker uses the URLs in the registered package; environment variables such
+   as `INFRAHUB_ADDRESS` do not change them.
 
    Record the `config_id` from the output. If you change the package later, register
    the change with `configs version <config-id> <package>`. Registering changed content
@@ -193,7 +191,9 @@ from the repository root.
    with `admin` and `infrahub`, and select the `netbox-import` branch to browse the
    imported objects.
 
-To stop everything and delete its data:
+To stop everything and delete its data, stop the Sync stack first. While the worker is
+connected to Infrahub's network, `docker compose -p infrahub down` cannot remove that
+network and reports `Resource is still in use`.
 
 ```bash
 uv run invoke destroy
