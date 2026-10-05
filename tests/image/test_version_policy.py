@@ -28,7 +28,7 @@ LOCK = REPO_ROOT / "uv.lock"
 # digest alone tells a reader nothing about which Python they are running.
 RUNTIME_BASE_TAG = "python:3.13-slim-bookworm"
 RUNTIME_PYTHON_FLOOR = Version("3.13.14")
-PCRE2_SECURITY_RELEASE = "10.42-1+deb12u1"
+PCRE2_SECURITY_RELEASE = "10.42-1+deb12u2"
 OPENSSL_SECURITY_RELEASE = "3.0.22-1~deb12u1"
 
 PYARROW_FIX = Version("23.0.1")
