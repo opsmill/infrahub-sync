@@ -133,7 +133,7 @@ uv run rumdl fmt .     # fix
 
 ## Changelog
 
-Release notes are written by contributors, not generated from PR titles. Every pull request into `main` must add a news fragment under `changelog/`, and `changelog-check.yml` fails the PR if it does not.
+Release notes are written by contributors, not generated from PR titles. Every pull request into `main` must add a news fragment under `changelog/`. The `changelog-check.yml` workflow that enforces this is disabled at present: its `pull_request` trigger is commented out, and a manual dispatch fails because it has no pull request to check. Reviewers check for the fragment.
 
 Create one with towncrier, naming it after the issue or PR number:
 
@@ -145,7 +145,7 @@ The file must be a direct child of `changelog/` named `<id>.<type>.md`. The seve
 
 `security`, `removed`, `deprecated`, `added`, `changed`, `fixed`, `housekeeping`
 
-Use `+` as the id for a change with no issue number (`+short-slug.housekeeping.md`). Nested paths and unknown types are ignored by towncrier, so the check rejects them rather than let an entry vanish at release time. A fragment that is empty or whitespace-only fails the release build, which names the file.
+Use `+` as the id for a change with no issue number (`+short-slug.housekeeping.md`). Nested paths and unknown types are ignored by towncrier, so reviewers reject them rather than let an entry vanish at release time (`changelog-check.yml` rejects them too once its trigger is restored). A fragment that is empty or whitespace-only fails the release build, which names the file.
 
 Label a pull request `ci/skip-changelog` when it genuinely needs no entry — a dependency bump or a typo fix. Dependabot applies that label itself.
 

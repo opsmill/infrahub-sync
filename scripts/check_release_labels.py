@@ -23,6 +23,8 @@ RELEASE_PR_AUTHOR = "opsmill-bot"
 # Mirrors the version check in trigger-push-stable.yml, which names the branch
 # `release/${VERSION}` with a bare (not `v`-prefixed) version.
 RELEASE_BRANCH_PATTERN = re.compile(r"release/[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z.-]+)?")
+# A character that would extend the version, so the title names a different one.
+VERSION_CONTINUATION = re.compile(r"[0-9A-Za-z.-]")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,12 +39,30 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def title_names_version(title: str, version: str) -> bool:
+    """Return whether the title is `chore(release): <version>`, optionally with a suffix.
+
+    trigger-push-stable.yml sets the title to exactly `chore(release): ${VERSION}`.
+    A maintainer may append text after the version (for example ` (edited)`), but
+    the version must end there: `1.2.30` or `1.2.3-rc1` does not name `1.2.3`.
+    """
+    expected = f"{RELEASE_PR_PREFIX} {version}"
+    if not title.startswith(expected):
+        return False
+    suffix = title[len(expected) :]
+    return not suffix or VERSION_CONTINUATION.match(suffix) is None
+
+
 def is_generated_release_pr(pull_request: dict[str, Any], repository: str) -> bool:
-    """Return whether the pull request is the one trigger-push-stable.yml opens."""
+    """Return whether the pull request is the one trigger-push-stable.yml opens.
+
+    The title must name the same version as the `release/<version>` head ref.
+    """
     head = pull_request.get("head") or {}
+    ref = str(head.get("ref", ""))
     return (
-        str(pull_request.get("title", "")).startswith(RELEASE_PR_PREFIX)
-        and RELEASE_BRANCH_PATTERN.fullmatch(str(head.get("ref", ""))) is not None
+        RELEASE_BRANCH_PATTERN.fullmatch(ref) is not None
+        and title_names_version(str(pull_request.get("title", "")), ref.removeprefix("release/"))
         and (pull_request.get("user") or {}).get("login") == RELEASE_PR_AUTHOR
         and (head.get("repo") or {}).get("full_name") == repository
     )
