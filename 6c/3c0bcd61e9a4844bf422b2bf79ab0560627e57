@@ -1,0 +1,21 @@
+docs/docs/running-a-sync.mdx
+  s_b49d0b79aa3886::t_c3dcc2bb13fd65 244-251
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_b49d0b79aa3886::t_dcad3bd9a8a07f 341-345
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c3c0bcd61e9a4844bf422b2bf79ab0560627e57",
+  "prompts": {},
+  "sessions": {
+    "s_b49d0b79aa3886": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "449f9b38-87d0-464b-8686-20851ebbf841",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
