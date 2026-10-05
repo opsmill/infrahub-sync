@@ -53,6 +53,13 @@ const config: Config = {
             to: '/contributing',
           },
         ],
+        // The developer pages moved from /develop/ to /development/; keep the old URLs working.
+        createRedirects(existingPath: string) {
+          if (existingPath.startsWith('/development/')) {
+            return [existingPath.replace('/development/', '/develop/')];
+          }
+          return undefined;
+        },
       },
     ],
   ],

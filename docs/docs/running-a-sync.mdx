@@ -216,6 +216,44 @@ no longer writable, or a planned value would be dropped, apply refuses the write
 the kind and the field. Create and review a new plan in that case. Operations applied before
 a refusal stay applied.
 
+The check does not compare a value with the choices of a Dropdown attribute. A plan can
+therefore hold a value the destination schema does not offer, such as a NetBox device status
+`planned` for a `status` attribute whose choices are `active`, `provisioning`, `maintenance`,
+`deprecated`, and `reserved`. Infrahub rejects that write during the apply, and the apply stops
+there. Translate such values with a transform in the package; see the
+[Schema mapping reference](./reference/schema-mapping.mdx).
+
+## Find why a run failed
+
+`diff`, `sync`, and `apply` print the final phase and outcome of a failed run, such as
+`phase: plan-failed`. For a failed apply they also print `apply failed: <ErrorClass>`. The
+error message itself is recorded on the run's Prefect flow run:
+
+1. Run `runs show RUN_ID`. The output includes `flow_run_id`.
+2. Open `<prefect-ui>/runs/flow-run/FLOW_RUN_ID` in a browser. The state message of the failed
+   flow run contains the error. The Prefect UI is at `http://127.0.0.1:4200` on a Compose
+   deployment with the default port, and at `http://127.0.0.1:4230` on the
+   [local development stack](./development-stack.mdx).
+
+The same error is in the worker's log: `docker compose logs sync-worker` from the deployment
+directory, or `docker compose -f development/docker-compose.dev.yml logs sync-worker` from a
+checkout running the local development stack.
+
+### Recover from an interrupted apply
+
+An apply can stop after it has written earlier operations. Nothing is rolled back: those
+writes stay written. How the run ends depends on what the service knows about the operation
+that failed:
+
+- If the failed operation is known not to have written, the run ends with
+  `phase: apply-failed` and `outcome: failed`.
+- If the service cannot tell whether it wrote, the run ends with `phase: apply-interrupted`
+  and `outcome: ambiguous`, and the failed operation may have written part of its change.
+
+Remove the cause first, in the source data or in the package. Then create a new plan for the
+same branch with `diff`, review it, and apply it. The new plan compares the source with what
+the destination now holds, so it contains only what is still missing or different.
+
 ## Change a registered package
 
 A registered version never changes. To change a package, edit the file and register it as a
@@ -271,8 +309,10 @@ approve the exact operations before they are written, use `diff`, `runs plan`, a
 
 `diff`, `sync`, and `apply` wait for the run by default. They poll the service every
 2 seconds for at most 30 minutes. `--poll-interval` and `--wait-timeout` change these
-values, in seconds. A large apply needs a longer wait. For example, one apply of the NetBox
-demo package, with about 1,700 operations, took 11 minutes.
+values, in seconds. A large apply needs a longer wait, and how long it takes depends on the
+destination. For example, applies of the NetBox demo package took 11 minutes for about 1,700
+operations on 2026-09-29, and 46 seconds for 1,609 operations on 2026-10-05, against different
+local Infrahub instances.
 
 `--no-wait` returns after the service accepts the request. The output includes the run ID
 and the retry key. Check the run later with `runs show RUN_ID` or `runs plan RUN_ID`.

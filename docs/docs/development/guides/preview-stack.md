@@ -1,0 +1,251 @@
+---
+title: "Run the preview stack"
+---
+
+## Run the preview stack
+
+The preview stack runs Infrahub, PostgreSQL and MinIO for the service's own records and
+artifacts, and a dedicated Prefect server in containers. The Sync HTTP API and its Prefect
+worker run on your host, from your checkout. Use it to work on `infrahub_sync/service/`
+itself and to run the smoke suite. To try Sync or run a first sync, use the
+[local development stack](../../development-stack.mdx) instead.
+
+**Verified 2026-09-16 against source revision
+[`61b6a1b9dccae637b522084f563858dfcd5e31a9`](https://github.com/opsmill/infrahub-sync/tree/61b6a1b9dccae637b522084f563858dfcd5e31a9).** The commands, ports,
+paths and restart behavior below were derived by reading, at that exact revision,
+[`tasks/preview.py`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/tasks/preview.py) and
+[`development/preview.env`](https://github.com/opsmill/infrahub-sync/blob/61b6a1b9dccae637b522084f563858dfcd5e31a9/development/preview.env). They were not established by a live
+replay of the stack.
+
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `uv run invoke preview.up` | Start the containers and the host processes. Writes nothing to Infrahub. |
+| `uv run invoke preview.seed` | Write the smoke dataset into Infrahub. |
+| `uv run invoke preview.smoke` | Seed, then run the smoke suite, which creates and applies real runs. |
+| `uv run invoke preview.status` | Show container, host process, and endpoint state. |
+| `uv run invoke preview.logs` | Print the tail of a host process log. |
+| `uv run invoke preview.down` | Stop the host processes and the containers, keeping the data. |
+| `uv run invoke preview.down --volumes` | Stop everything and delete every data volume. |
+
+`preview.logs` prints the Sync API log by default; pass `-n prefect-worker` for the
+worker's, and `--lines` for how much of it to print.
+
+### Starting the stack writes nothing
+
+`preview.up` brings the stack up and stops there. It loads no schema, creates no branch
+or node, and admits no run, so starting it again against an environment you are already
+using changes none of your data.
+
+Two commands write, and each says what it will write before writing:
+
+- `preview.seed` loads the example schema from
+  `examples/prefect_remote_run/schemas/infra_device.yml`, creates the `InfraDevice` named
+  `core01` on `main`, and then forks the `preview-smoke` branch from it. It changes
+  nothing on an environment that already holds that branch.
+- `preview.smoke` seeds, then runs the smoke suite. That suite mutates `core01` on `main`
+  and drives real plan and apply runs against `preview-smoke`.
+
+A clean `preview.up` followed by `preview.smoke` therefore works without a separate seed.
+
+## The service development loop
+
+This is the loop for working on `infrahub_sync/service/` itself: start the stack, drive it,
+change code, get the change running, and tear it down.
+
+### Start
+
+```bash
+uv sync --extra dev --extra prefect --extra service
+uv run invoke preview.up
+```
+
+`preview.up` starts the containers and waits for Infrahub and Prefect to answer, refuses if it
+finds retired state, creates the Prefect work pool, starts the Prefect worker, applies the
+service deployment, starts the Sync API, and waits for it to serve its OpenAPI document. It
+then prints the addresses, the bearer principals, the configuration directory and the runtime
+state directory.
+
+Two details of that startup shape the rest of the loop:
+
+- **The worker runs from its own empty directory**, `.preview/worker-cwd`. Prefect puts the
+  working directory at the front of `sys.path` when it resolves a deployment's module
+  entrypoint, so a worker started at the repository root would import your checkout instead of
+  the installed distribution. Starting it from an empty directory is what proves the service resolves its
+  flow as an installed module.
+- **The configuration directory the Sync API reads is the repository's `examples/` directory.**
+  That is where it looks for configurations, so the example packages are available without
+  copying anything.
+
+### Inspect
+
+```bash
+uv run invoke preview.status                     # containers, host processes, endpoints
+uv run invoke preview.logs                       # the Sync API log, last 50 lines
+uv run invoke preview.logs -n prefect-worker     # the worker's log
+uv run invoke preview.logs -n prefect-worker --lines 500
+```
+
+`preview.status` prints each container, then each host process as `running (pid N)` or
+`stopped`, then the three addresses. The two host processes are `sync-api` and
+`prefect-worker`; their logs and process identifiers live under `.preview/`.
+
+### Edit and restart
+
+A code change does not reach the running preview stack by itself. The Sync API runs
+under `uvicorn` without `--reload`, and `preview.up` leaves a process that is already
+running in place (it prints `already running`). To run changed service code, stop and
+start the stack:
+
+```bash
+uv run invoke preview.down
+uv run invoke preview.up
+```
+
+This keeps the data volumes, so you do not need to seed again.
+
+### Stop and restart, and the one destructive reset
+
+| Command | Host processes | Containers | Data volumes |
+| --- | --- | --- | --- |
+| `uv run invoke preview.down` | Stopped | Stopped | **Kept** |
+| `uv run invoke preview.down --volumes` | Stopped | Stopped | **Deleted** |
+
+`--volumes` is the destructive form. It deletes every data volume in the stack, so the
+Infrahub instance, the service records and the artifacts are all gone and the next `preview.up`
+starts empty. Use it when you want a clean slate or when the startup refusal on retired state
+tells you to — not as part of the ordinary edit cycle.
+
+### Smoke
+
+```bash
+uv run invoke preview.smoke
+```
+
+Seeds, then runs the smoke suite against the running stack. It writes: see
+[Starting the stack writes nothing](#starting-the-stack-writes-nothing) above for exactly what.
+Every test in the suite skips when the stack is unreachable, so read the collection summary
+before you treat a passing run as evidence. [Testing tiers](../guidelines/testing-tiers.md)
+covers what each suite proves.
+
+### Change a port or a token
+
+Put the override in `development/preview.local.env`, which the tasks read after the shipped
+`development/preview.env` and which Git ignores. Never edit `preview.env` for a personal
+change. Overrides take effect at the next `preview.up`, so stop the stack first if it is
+running.
+
+### Tear the stack down
+
+```bash
+uv run invoke preview.down --volumes
+```
+
+Removes everything the stack created. The `.preview/` directory keeps its logs.
+
+## Preview stack addresses
+
+| Service | Address | Runs as |
+| --- | --- | --- |
+| Infrahub | `http://localhost:8080` | Container |
+| Prefect | `http://localhost:4210` | Container |
+| Sync HTTP API | `http://127.0.0.1:8010` | Host process |
+| PostgreSQL | `127.0.0.1:5439` | Container |
+| MinIO | `http://127.0.0.1:9010` | Container |
+
+Every container port is published on `127.0.0.1` only, so nothing in the stack, with
+its published development credentials, is reachable from another machine. Only
+Infrahub's address can change, through `PREVIEW_INFRAHUB_BIND_ADDRESS` in
+`development/preview.local.env`, for example to the Docker bridge gateway so that a worker
+container on Linux can reach it. Do not set it to `0.0.0.0` on a machine others can reach.
+
+The defaults avoid ports 8000 and 4200, so an Infrahub development stack or a Prefect
+server you already run keeps working alongside. To change any of them, put the override
+in `development/preview.local.env`, which the tasks read after the shipped
+`development/preview.env`. Git ignores that local file.
+
+Runtime state — process identifiers, logs, and caches — lives under `.preview/` at the
+repository root, which Git also ignores.
+
+## Every credential is a development default
+
+Nothing the stack uses is a secret. These are public development defaults, and the Infrahub
+ones also authenticate against any other Infrahub instance that still uses the same defaults:
+
+- `development/preview.env` ships the MinIO access key and secret key, the Infrahub admin
+  token, and the Sync API bearer principal.
+- `development/docker-compose.infrahub.yml` is based on the official Infrahub Compose
+  file at `https://infrahub.opsmill.io/<VERSION>` for the `VERSION` in
+  `development/preview.env`. This repository adds image digest pins to it; when
+  refreshing from upstream, restore and verify those pins. Its Infrahub admin
+  token, agent token, and security key defaults are the upstream published values.
+
+Do not reuse them in a deployment, and do not leave an Infrahub that still uses them
+reachable from other machines. Mint your own tokens in `development/preview.local.env` if
+you need different ones.
+
+When updating an Infrahub or Prefect image in the preview, change its tag and
+matching `@sha256:` digest together in `development/preview.env`. Inspect the
+tag with `docker buildx imagetools inspect name:tag`, copy the top-level index
+digest, and check that it includes both linux/amd64 and linux/arm64. Compose
+would still pull the old image after a tag-only change, so the preview tasks
+refuse one, including a Prefect tag exported in the shell. The shipped
+`preview.env` value takes precedence over an unrelated shell `VERSION`. An
+Infrahub image-name-only override in `development/preview.local.env` or the
+shell drops the shipped digest so a local build can run. To use a registry mirror, set its digest
+explicitly; the mirror may use the same digest as the shipped image. When using
+Docker Compose directly, an image-name override drops the shipped digest even
+without `VERSION` or an env file. With that override, an empty
+`INFRAHUB_DOCKER_IMAGE_DIGEST` leaves the image unpinned. A digest-only override
+keeps the shipped Infrahub tag and replaces its digest.
+
+## The preview stack refuses to start on retired state
+
+`preview.up` starts the containers and waits for Infrahub and Prefect to answer, then
+reads Prefect and the host process list before it starts the worker, the deployment, and
+the Sync API. It refuses at that point when it finds state left under the names this
+service used before its rename: the `infrahub-sync-managed` deployment, a work pool or
+worker whose name starts with it, or a host process running `infrahub_sync.managed.serve`
+or `infrahub_sync.managed.worker`.
+
+The refusal names its own fix:
+
+```bash
+uv run invoke preview.down --volumes
+```
+
+That reset is destructive. It deletes every data volume in the stack, so the Infrahub
+instance, the service records, and the artifacts all go. It also stops a retired host
+process it can identify without ambiguity; where more than one running process matches a
+retired name, it stops none of them and asks you to stop them by hand.
+
+`preview.down` without `--volumes` does neither. It leaves the data volumes and any
+retired process in place, so it does not clear the refusal.
+
+## Running the tests
+
+The smoke suite lives in `tests/preview/` and is opt-in:
+
+```bash
+uv run pytest -m preview tests/preview -q
+```
+
+Run it in a single process. Its modules share one Infrahub branch and one Prefect
+deployment, and a collection hook orders the run-creating modules ahead of the module
+that observes their Prefect flow runs. Under `pytest-xdist` that ordering would apply
+only within one worker, and the shared branch would take concurrent writes.
+
+Every test in the suite skips, rather than fails, when the stack is not reachable.
+
+The rest of the test suite needs no stack. Run the offline default, which deselects every
+marker that writes to one:
+
+```bash
+uv run invoke tests.tests-unit
+```
+
+Use that form while the stack is up. A plain `pytest -q` would collect the smoke suite against
+your running environment, and the `integration` tests write to whatever Infrahub instance the
+ambient settings name. [Testing tiers](../guidelines/testing-tiers.md) is the single
+description of each suite, its prerequisites and what a skip means.

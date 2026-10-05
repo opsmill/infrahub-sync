@@ -502,7 +502,7 @@ Contributing or the preview tasks, run the unmarked set directly as a fast pre-c
 uv run pytest -q -m "not preview" tests/preview
 ```
 
-[Local development stack](../../development-stack.mdx) is the full procedure for the stack
+[Run the preview stack](../guides/preview-stack.md) is the full procedure for the stack
 itself.
 
 #### Image smoke
