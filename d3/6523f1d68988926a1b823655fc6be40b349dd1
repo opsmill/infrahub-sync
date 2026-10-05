@@ -1,0 +1,42 @@
+tests/service/test_run_records.py
+  s_08a08909ed3ec7::t_54d5ed069ac6e1 267,269-270,275-276,280,283-284
+  s_08a08909ed3ec7::t_fe2db4304de84c 268,271-274,277-279,281-282,285-286
+changelog/+infrahub-task-manager.changed.md
+  s_08a08909ed3ec7::t_fc8e32b795e3cb 3-12
+dev/specs/008-infrahub-platform-alignment/contracts/task-manager.md
+  s_08a08909ed3ec7::t_12a635e31e35c3 34-48
+docs/docs/compose-deployment.mdx
+  s_08a08909ed3ec7::t_7f82ba3733d15a 81-83
+docs/docs/develop/knowledge/orchestration-prefect.md
+  s_08a08909ed3ec7::t_3646109dadb84a 54,64,68-73
+infrahub_sync/service/flow.py
+  s_08a08909ed3ec7::t_5fadcde11c800f 22,68,382,840-846,856,858-863
+infrahub_sync/service/orchestration.py
+  s_08a08909ed3ec7::t_6b0440cc6d058d 78-103,185-187,211-220,225,231
+infrahub_sync/service/service.py
+  s_08a08909ed3ec7::t_23681ddbad3f41 250-251,1030-1031
+tests/service/test_flow_and_prefect.py
+  s_08a08909ed3ec7::t_1f24eb38de424d 254,885,887,889,935,944
+tests/service/test_http_api.py
+  s_08a08909ed3ec7::t_3fed78855bee9c 239,413
+tests/service/test_orchestration_tags.py
+  s_08a08909ed3ec7::t_bb0cc58f12e1e3 1,14-15,42,48,52-53,171-224
+tests/service/test_registered_schema_guard.py
+  s_08a08909ed3ec7::t_b79261e4564929 591
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d36523f1d68988926a1b823655fc6be40b349dd1",
+  "prompts": {},
+  "sessions": {
+    "s_08a08909ed3ec7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21445c9c-5a8d-449e-b739-c09c874959d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
