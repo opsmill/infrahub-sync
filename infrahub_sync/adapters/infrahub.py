@@ -113,6 +113,7 @@ def update_node(
     attrs: Mapping[str, Any],
     client: InfrahubClientSync,
     node_schema: MainSchemaTypesAPI,
+    schemas: Mapping[str, MainSchemaTypesAPI],
     source: str | None = None,
     owner: str | None = None,
 ) -> InfrahubNodeSync:
@@ -125,12 +126,13 @@ def update_node(
     Args:
         node: The node to update.
         attrs: The attributes and relationships to update.
-        client: The client that owns `node`, used for schema and store lookups.
+        client: The client that owns `node`, used for store lookups.
         node_schema: The schema of `node`, read once by the caller.
+        schemas: The adapter's loaded schema mapping, used to look up relationship peers
+            without a schema request.
         source: Optional source ID to set on updated attributes and relationships.
         owner: Optional owner ID to set on updated attributes and relationships.
     """
-    schemas: Mapping[str, MainSchemaTypesAPI] = client.schema.all(branch=node.get_branch())
     for attr_name, attr_value in attrs.items():
         if attr_name in node_schema.attribute_names:
             attr = getattr(node, attr_name)
@@ -656,6 +658,7 @@ class InfrahubModel(DiffSyncModelMixin, DiffSyncModel):
             attrs=attrs,
             client=adapter.client,
             node_schema=node_schema,
+            schemas=adapter.schema,
             source=source_id,
             owner=owner_id,
         )
