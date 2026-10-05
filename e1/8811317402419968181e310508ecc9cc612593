@@ -1,0 +1,22 @@
+dev/adr/README.md
+  s_f550e4de2eac84::t_d29856199f0eda 52-54
+dev/adr/0019-prefect-is-an-internal-component-of-sync.md
+  s_f550e4de2eac84::t_910fba7feec403 12-15
+  s_f550e4de2eac84::t_3351647e27575b 1-11,16-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e18811317402419968181e310508ecc9cc612593",
+  "prompts": {},
+  "sessions": {
+    "s_f550e4de2eac84": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce89e452-14cf-4761-9166-7624cd0f01f1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
