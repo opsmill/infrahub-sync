@@ -164,7 +164,7 @@ Nonmatching numbers remain numeric. It re-serializes the document only when a va
 replaced. Every public artifact then gets a byte pass over the raw value and its JSON
 string forms, which `json_string_forms` derives. A secret that spans a number and
 following punctuation can still corrupt JSON during this byte pass; for example,
-`"7,"` can change `{"a":17,"b":2}` into invalid JSON. The recorded digest and size are
+`"234567,"` can change `{"a":1234567,"b":2}` into invalid JSON. The recorded digest and size are
 computed from the redacted bytes that are stored. Internal artifacts are never redacted; see
 [ADR 0011](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0011-internal-run-bundles-are-private-and-byte-stable.md).
 

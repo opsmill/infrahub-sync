@@ -3555,6 +3555,7 @@ def _is_json_media_type(media_type: str) -> bool:
 
 
 def _redacted_json_bytes(data: bytes, secrets: Sequence[str]) -> bytes:
+    """Redact decoded JSON values using original and normalized number spellings."""
     # A decoded string can itself hold JSON text, such as a field that stores a serialized
     # document, so it is matched against the JSON string forms as well as the raw value.
     forms = json_string_forms(secrets)
@@ -3563,19 +3564,23 @@ def _redacted_json_bytes(data: bytes, secrets: Sequence[str]) -> bytes:
         return data
     number_redacted = False
 
-    def redact_number(token: str, value: float) -> int | float | str:
+    def number_contains_secret(token: str, value: float) -> bool:
         """Check the document's number spelling before conversion loses it."""
         nonlocal number_redacted
         if redact_ordered(token, forms) != token or _redact_ordered_value(value, forms, numbers=True) == REDACTED:
             number_redacted = True
-            return REDACTED
-        return value
+            return True
+        return False
 
     def parse_integer(token: str) -> int | str:
-        return redact_number(token, int(token))
+        """Preserve integer values unless either spelling contains a secret."""
+        value = int(token)
+        return REDACTED if number_contains_secret(token, value) else value
 
     def parse_decimal(token: str) -> float | str:
-        return redact_number(token, float(token))
+        """Preserve float values unless either spelling contains a secret."""
+        value = float(token)
+        return REDACTED if number_contains_secret(token, value) else value
 
     try:
         document = json.loads(data, parse_int=parse_integer, parse_float=parse_decimal)

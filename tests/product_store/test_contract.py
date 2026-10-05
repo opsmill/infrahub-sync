@@ -3278,6 +3278,7 @@ def test_a_public_json_artifact_stays_valid_json_when_a_secret_is_a_number(
 def test_a_public_json_artifact_masks_the_complete_matching_number_token(
     data: bytes, secret: str, redaction_provider: ProductProjection
 ) -> None:
+    """Mask a matching original numeric token as a whole on every provider."""
     redaction_provider.create_run(_run())
 
     reference = redaction_provider.publish_artifact(
@@ -3300,6 +3301,7 @@ def test_a_public_json_artifact_masks_the_complete_matching_number_token(
 def test_a_public_json_artifact_preserves_nonmatching_numbers_and_boolean_values(
     redaction_provider: ProductProjection,
 ) -> None:
+    """Keep the original bytes when no numeric or boolean value matches a secret."""
     data = b'{ "number": -1e100, "precise": 123456789012345678901234.0, "flag": true, "empty": null }'
     redaction_provider.create_run(_run())
     redaction_provider.publish_artifact(
@@ -3314,12 +3316,14 @@ def test_a_public_json_artifact_preserves_nonmatching_numbers_and_boolean_values
     assert redaction_provider.lookup_artifact("run-001", "plan-review").value == data
 
 
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="The Sync service requires Python 3.11 or later.")
 def test_a_public_json_artifact_plan_with_a_matching_number_is_retrievable_through_authenticated_http(
     monkeypatch: pytest.MonkeyPatch, redaction_provider: ProductProjection
 ) -> None:
     """Use the worker's review serializer and publication method, then the real plan route."""
     pytest.importorskip("prefect")
     pytest.importorskip("fastapi")
+    pytest.importorskip("psycopg")
     from fastapi.testclient import TestClient
 
     from infrahub_sync.plan.identity import operation_id
