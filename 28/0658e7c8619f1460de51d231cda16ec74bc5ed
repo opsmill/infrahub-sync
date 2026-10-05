@@ -1,0 +1,99 @@
+infrahub_sync/service/service.py
+  s_08a08909ed3ec7::t_bbd353e88e9bfc 392-398
+  s_08a08909ed3ec7::t_872fbd219f6251 447-460
+  s_08a08909ed3ec7::t_7a6abdd02d2980 349-355
+  s_08a08909ed3ec7::t_ddec139d63d74a 461
+  s_a2e68195f9dede::t_ca7a8266bf9614 443-444
+tests/service/test_run_records.py
+  s_08a08909ed3ec7::t_e2ae9d144da519 418-498
+infrahub_sync/service/config_routes.py
+  s_08a08909ed3ec7::t_c7fe2ec4bb1802 25
+  s_08a08909ed3ec7::t_7322a8a2be2f40 207-219
+  s_08a08909ed3ec7::t_c77c666c161c10 42-45
+  s_08a08909ed3ec7::t_b5f58847cc0ba1 202-203
+  s_08a08909ed3ec7::t_35c2ddd2e1d90c 237-239,244
+  s_08a08909ed3ec7::t_90ceb628b66e62 220
+  s_a2e68195f9dede::t_840625ba4d8130 13
+tests/platform/test_client.py
+  s_08a08909ed3ec7::t_43399935e3764f 108-110
+  s_08a08909ed3ec7::t_30dbde084c379e 8,19-20
+  s_08a08909ed3ec7::t_bc0ef2b0173b6a 111-125,130-157
+  s_08a08909ed3ec7::t_7eabc687b84db3 126-129
+  s_08a08909ed3ec7::t_c3ca13fbef20cf 158-159
+docs/docs/develop/knowledge/sync-architecture.md
+  s_08a08909ed3ec7::t_0a1f9aa8fb963f 72-81
+  s_08a08909ed3ec7::t_eb2b519b5cb4f1 57-64
+tests/service/test_service_startup.py
+  s_08a08909ed3ec7::t_a5b1acb130b21a 145-165
+  s_08a08909ed3ec7::t_f342b5e12b38cb 166-167
+  s_a2e68195f9dede::t_ff4d419a0475b2 13
+docs/docs/reference/sync-http-api.mdx
+  s_08a08909ed3ec7::t_372a94fec2b25a 82-83
+  s_08a08909ed3ec7::t_a9472287842ca4 387
+  s_08a08909ed3ec7::t_af09ee8dc80191 79-81
+  s_08a08909ed3ec7::t_5056dd83f0e8d8 386
+  s_a2e68195f9dede::t_89bfc130e6d012 73,75-78
+infrahub_sync/service/infrahub_records.py
+  s_08a08909ed3ec7::t_583ee76922c683 50
+  s_a2e68195f9dede::t_c4f9fa68ad651d 43-46,48
+tests/service/test_liveness_policy.py
+  s_08a08909ed3ec7::t_a800ae463ab109 1055-1056
+  s_a2e68195f9dede::t_a0f7b9474dcd1c 1022-1028
+docs/docs/develop/guides/adding-an-adapter.md
+  s_08a08909ed3ec7::t_f55b392d65efe5 24-30
+tests/service/test_infrahub_auth.py
+  s_08a08909ed3ec7::t_8d4b17f7f4361d 11,22
+  s_08a08909ed3ec7::t_a74a4b08f46fe5 298-303,320,322
+  s_08a08909ed3ec7::t_c3646ff367e52d 304-319
+  s_08a08909ed3ec7::t_63fef434a2d0b2 295-297
+  s_a2e68195f9dede::t_353e14b6a8190b 63-65,69-71
+docs/docs/compose-deployment.mdx
+  s_08a08909ed3ec7::t_403a99af1a86e6 561
+  s_08a08909ed3ec7::t_6e722073a173c0 562-563
+  s_a2e68195f9dede::t_23a3f3ead0a6d8 126-127,181
+infrahub_sync/service/liveness.py
+  s_08a08909ed3ec7::t_cc3e89769b1779 181,186-189
+  s_a2e68195f9dede::t_ee8743b1a448d6 146-148
+infrahub_sync/platform/client.py
+  s_08a08909ed3ec7::t_e4626f1b5f9be2 108
+  s_08a08909ed3ec7::t_caee0d1c31b073 109-113,116,121,126,137-140,144-147
+  s_08a08909ed3ec7::t_938459b81502c5 29
+  s_08a08909ed3ec7::t_0a9757b02b09ce 82-92
+  s_08a08909ed3ec7::t_fa5e579e10228b 10-13,20,30,93
+docs/docs/development-stack.mdx
+  s_08a08909ed3ec7::t_e236903c96dc1b 260-264
+docker-compose.yml
+  s_a2e68195f9dede::t_739e3726982216 267-268
+docs/docs/operations/compose-troubleshooting.mdx
+  s_a2e68195f9dede::t_b6c454470dd318 53-58
+infrahub_sync/service/auth.py
+  s_a2e68195f9dede::t_5d5114c73aac8f 203-205
+infrahub_sync/service/worker.py
+  s_a2e68195f9dede::t_6042bd508ceb7d 557-559,562-566
+tests/preview/conftest.py
+  s_a2e68195f9dede::t_1ff67cfc334848 84-85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "280658e7c8619f1460de51d231cda16ec74bc5ed",
+  "prompts": {},
+  "sessions": {
+    "s_08a08909ed3ec7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21445c9c-5a8d-449e-b739-c09c874959d5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    },
+    "s_a2e68195f9dede": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ab203cf98a072209d",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
