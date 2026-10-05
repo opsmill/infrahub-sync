@@ -38,6 +38,12 @@ from development.netbox.datasets.change_netbox import expected_text, plan_change
 from tasks import bench
 
 
+@pytest.fixture(autouse=True)
+def isolated_runner_lock(monkeypatch, tmp_path) -> None:
+    """Keep unit callers separate from benchmarks running on the host."""
+    monkeypatch.setattr(bench, "RUNNER_LOCK", tmp_path / "shared-runner.lock")
+
+
 @pytest.fixture
 def mapping() -> dict[str, list[str]]:
     package = yaml.safe_load(bench.netbox.SHIPPED_PACKAGE.read_text(encoding="utf-8"))
@@ -832,6 +838,123 @@ def test_stopped_development_worker_requires_destroy(monkeypatch) -> None:
     with pytest.raises(BenchmarkError, match=r"invoke destroy.*removes volumes"):
         stack.start_sync()
     assert stack.started_sync is False
+
+
+@pytest.mark.parametrize(
+    ("name", "value"), [("COMPOSE_PROJECT_NAME", "existing-development"), ("COMPOSE_FILE", "other-compose.yaml")]
+)
+def test_conflicting_compose_environment_is_refused_before_mutation(monkeypatch, name, value) -> None:
+    stack = bench.CellStack()
+    monkeypatch.setenv(name, value)
+    monkeypatch.setattr(stack.context, "run", lambda *_args, **_kwargs: pytest.fail("must refuse before Docker"))
+    monkeypatch.setattr(bench.netbox, "restore", lambda *_args, **_kwargs: pytest.fail("must not reset NetBox"))
+    with pytest.raises(BenchmarkError, match=f"unset conflicting {name}"):
+        stack.reset("S")
+    stack.close()
+    assert not stack.started_sync
+    assert not stack.started_netbox
+    assert not stack.started_destination
+
+
+@pytest.mark.parametrize("phase", ["build", "start-empty", "start-created", "ready"])
+def test_sync_cleanup_only_owns_created_containers_and_pins_compose(monkeypatch, phase) -> None:
+    stack = bench.CellStack()
+    commands = []
+    created = False
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", bench.netbox.DEV_STACK_PROJECT)
+    monkeypatch.setenv("COMPOSE_FILE", str(bench.ROOT / "compose.yaml"))
+    monkeypatch.setattr(bench.dev, "attach_dev_worker", lambda *_args: False)
+    monkeypatch.setattr(bench.netbox, "dev_worker_containers", lambda _context: ["worker"])
+
+    def docker(command, **_kwargs: object):
+        nonlocal created
+        commands.append(shlex.split(command))
+        if "ps" in commands[-1]:
+            return SimpleNamespace(stdout="container" if created else "")
+        if "build" in commands[-1] and phase == "build":
+            msg = "build failed"
+            raise BenchmarkError(msg)
+        if "up" in commands[-1]:
+            created = phase != "start-empty"
+            if phase != "ready":
+                msg = "start failed"
+                raise BenchmarkError(msg)
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(stack.context, "run", docker)
+    if phase == "ready":
+        stack.start_sync()
+    else:
+        with pytest.raises(BenchmarkError, match="failed"):
+            stack.start_sync()
+    stack.close()
+    assert stack.started_sync == (phase in {"start-created", "ready"})
+    lifecycle = [command for command in commands if command[:2] == ["docker", "compose"]]
+    assert all(
+        command[2:6] == ["--project-name", bench.netbox.DEV_STACK_PROJECT, "-f", str(bench.ROOT / "compose.yaml")]
+        for command in lifecycle
+    )
+    assert any("down" in command for command in lifecycle) == stack.started_sync
+    assert commands[0] == [
+        "docker",
+        "ps",
+        "--all",
+        "--quiet",
+        "--filter",
+        f"label=com.docker.compose.project={bench.netbox.DEV_STACK_PROJECT}",
+    ]
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 to 3.13")
+def test_runner_lock_excludes_other_checkouts_before_reset_and_releases(monkeypatch, tmp_path, interrupted) -> None:
+    import fcntl
+
+    roots = [tmp_path / "checkout-one", tmp_path / "checkout-two"]
+    for root in roots:
+        root.mkdir()
+        (root / "pyproject.toml").write_text('[project]\nversion = "3"\n', encoding="utf-8")
+    events = []
+
+    class Stack:
+        @staticmethod
+        def reset(_tier) -> None:
+            events.append(("reset", bench.ROOT))
+            with monkeypatch.context() as other:
+                other.setattr(bench, "ROOT", roots[1])
+                other.setattr(bench, "STATE", roots[1] / ".netbox/bench")
+                with pytest.raises(BenchmarkError, match="another benchmark cell is running"):
+                    bench.run_cell.body(Context())
+            if interrupted:
+                raise KeyboardInterrupt
+            msg = "setup failed"
+            raise BenchmarkError(msg)
+
+        @staticmethod
+        def remaining() -> int:
+            return 10
+
+        @staticmethod
+        def close() -> None:
+            events.append(("close", bench.ROOT))
+            # The lock must cover cleanup too, until Docker mutations finish.
+            with bench.RUNNER_LOCK.open("a") as contender, pytest.raises(BlockingIOError):
+                fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    monkeypatch.setattr(bench, "ROOT", roots[0])
+    monkeypatch.setattr(bench, "STATE", roots[0] / ".netbox/bench")
+    monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
+    monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
+    monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "commit")
+    monkeypatch.setattr(bench, "CellStack", Stack)
+    if interrupted:
+        with pytest.raises(KeyboardInterrupt):
+            bench.run_cell.body(Context())
+    else:
+        bench.run_cell.body(Context())
+    assert events == [("reset", roots[0]), ("close", roots[0])]
+    with bench.RUNNER_LOCK.open("a") as contender:
+        fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 @pytest.mark.parametrize("phase", ["compose", "after-compose", "cleanup"])

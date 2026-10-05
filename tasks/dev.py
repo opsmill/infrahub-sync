@@ -8,6 +8,8 @@ start it, and remove it again.
 
 from __future__ import annotations
 
+import shlex
+
 from invoke import Context, task
 
 from .netbox import attach_dev_worker, load_netbox_env
@@ -22,24 +24,42 @@ API_TOKEN = "infrahub-sync-dev-token"  # noqa: S105 -- a local-only development 
 WAIT_TIMEOUT_SECONDS = 420
 
 
+def compose_command(project: str, compose_file: str) -> str:
+    """Allow lifecycle callers to select a project and file explicitly."""
+    command = "docker compose"
+    if project:
+        command += f" --project-name {shlex.quote(project)}"
+    if compose_file:
+        command += f" -f {shlex.quote(compose_file)}"
+    return command
+
+
 @task(name="build")
-def build(context: Context, no_cache: bool = False) -> None:  # noqa: FBT001, FBT002 -- Invoke boolean flag idiom
+def build(
+    context: Context,
+    no_cache: bool = False,  # noqa: FBT001, FBT002 -- Invoke boolean flag idiom
+    project: str = "",
+    compose_file: str = "",
+) -> None:
     """Build the local development image from the current working tree."""
     arguments = " --no-cache" if no_cache else ""
     with context.cd(ESCAPED_REPO_PATH):
-        context.run(f"docker compose build{arguments}", pty=True)
+        context.run(f"{compose_command(project, compose_file)} build{arguments}", pty=True)
     print(f" - [{NAMESPACE}] Built infrahub-sync:dev; start it with `uv run invoke start`")
 
 
 @task(name="start")
-def start(context: Context) -> None:
+def start(context: Context, project: str = "", compose_file: str = "") -> None:
     """Start the local development stack, building the image first if it is absent.
 
     When the local NetBox (`invoke netbox.up` or `netbox.seed`) is running, the worker also
     joins NetBox's network, so a package can read NetBox at `http://netbox:8080`.
     """
     with context.cd(ESCAPED_REPO_PATH):
-        context.run(f"docker compose up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", pty=True)
+        context.run(
+            f"{compose_command(project, compose_file)} up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}",
+            pty=True,
+        )
     # `up` recreates the worker whenever its settings change, which drops a network it
     # was connected to afterwards. Reconnect it to the local NetBox, if that is running.
     attach_dev_worker(context, load_netbox_env())
@@ -50,7 +70,7 @@ def start(context: Context) -> None:
 
 
 @task(name="destroy")
-def destroy(context: Context) -> None:
+def destroy(context: Context, project: str = "", compose_file: str = "") -> None:
     """Remove the local development stack, along with its data volumes.
 
     Destructive by design: the Postgres databases and the object store's buckets go with
@@ -58,6 +78,6 @@ def destroy(context: Context) -> None:
     working tree built is kept, so that start does not rebuild.
     """
     with context.cd(ESCAPED_REPO_PATH):
-        context.run("docker compose down --volumes --remove-orphans", pty=True)
+        context.run(f"{compose_command(project, compose_file)} down --volumes --remove-orphans", pty=True)
     print(f" - [{NAMESPACE}] Removed the stack and its data; infrahub-sync:dev is kept")
     print(f" - [{NAMESPACE}] Start again with `uv run invoke start`")

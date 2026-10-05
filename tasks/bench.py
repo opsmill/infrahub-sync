@@ -12,7 +12,7 @@ import shlex
 import shutil
 import sys
 import time
-from typing import TYPE_CHECKING
+from pathlib import Path
 from uuid import uuid4
 
 import structlog
@@ -57,14 +57,13 @@ from infrahub_sync.client import (
 
 from . import dev, netbox, preview
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 ROOT = netbox.REPO_ROOT
 STATE = netbox.STATE_DIR / "bench"
 RESULTS = netbox.STATE_DIR / "benchmarks" / "results.jsonl"
 INFRAHUB_VERSION = "1.11.3"
 INFRAHUB_IMAGE = "registry.opsmill.io/opsmill/infrahub"
+# Fixed outside any checkout: every runner mutates the same Docker projects.
+RUNNER_LOCK = Path("/tmp/infrahub-sync-benchmark-infrahub-sync-dev-netbox.lock")  # noqa: S108 -- machine-wide lock
 log = structlog.get_logger()
 
 
@@ -185,12 +184,24 @@ class CellStack:
 
     def require_exclusive_sync(self) -> None:
         """Refuse any existing development container before changing either database."""
+        project = os.environ.get("COMPOSE_PROJECT_NAME")
+        compose_file = os.environ.get("COMPOSE_FILE")
+        if project and project != netbox.DEV_STACK_PROJECT:
+            msg = "unset conflicting COMPOSE_PROJECT_NAME before benchmarking"
+            raise BenchmarkError(msg)
+        if compose_file and (ROOT / compose_file).resolve() != ROOT / "compose.yaml":
+            msg = "unset conflicting COMPOSE_FILE before benchmarking"
+            raise BenchmarkError(msg)
         # The existing dev task owns its fixed project. Refuse another caller's stack.
-        if self.context.run(
-            f"docker ps --all --quiet --filter label=com.docker.compose.project={netbox.DEV_STACK_PROJECT}"
-        ).stdout.strip():
+        if self.sync_containers():
             msg = "the development Sync stack has existing containers; run uv run invoke destroy before benchmarking (removes volumes)"
             raise BenchmarkError(msg)
+
+    def sync_containers(self) -> str:
+        """Inspect the same project used by every Sync lifecycle command."""
+        return self.context.run(
+            f"docker ps --all --quiet --filter label=com.docker.compose.project={netbox.DEV_STACK_PROJECT}"
+        ).stdout.strip()
 
     def start_sync(self) -> None:
         """Build the current checkout and start the existing API/worker tasks quietly."""
@@ -201,9 +212,17 @@ class CellStack:
         }
         self.context.config.run.env = env
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            self.started_sync = True
-            dev.build(self.context)
-            dev.start(self.context)
+            dev.build(self.context, project=netbox.DEV_STACK_PROJECT, compose_file=str(ROOT / "compose.yaml"))
+            try:
+                dev.start(self.context, project=netbox.DEV_STACK_PROJECT, compose_file=str(ROOT / "compose.yaml"))
+            finally:
+                # A failed up may still have created containers; a failed build owns none.
+                deadline = self.context.deadline
+                self.context.deadline = time.monotonic() + 5
+                try:
+                    self.started_sync = bool(self.sync_containers())
+                finally:
+                    self.context.deadline = deadline
         workers = netbox.dev_worker_containers(self.context)
         if len(workers) != 1:
             msg = "expected exactly one benchmark worker"
@@ -263,7 +282,7 @@ class CellStack:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             try:
                 if self.started_sync:
-                    dev.destroy(self.context)
+                    dev.destroy(self.context, project=netbox.DEV_STACK_PROJECT, compose_file=str(ROOT / "compose.yaml"))
             finally:
                 try:
                     if self.started_destination:
@@ -435,7 +454,7 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
     STATE.mkdir(parents=True, exist_ok=True)
     import fcntl  # noqa: PLC0415 -- Linux benchmark host
 
-    with (STATE / "runner.lock").open("w") as lock:
+    with RUNNER_LOCK.open("a", encoding="utf-8") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

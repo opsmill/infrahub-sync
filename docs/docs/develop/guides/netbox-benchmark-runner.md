@@ -53,6 +53,11 @@ restoring NetBox or rebuilding Infrahub. For v3, the runner builds the Sync imag
 this checkout and uses the existing start tasks for its API and worker. v3 requires
 `INFRAHUB_SYNC_API_TOKEN` in your environment, matching the local stack's API principal.
 v2 uses its isolated release environment and does not require the Sync API or its token.
+Sync lifecycle commands explicitly select `infrahub-sync-dev` and this checkout's
+`compose.yaml`. Unset `COMPOSE_PROJECT_NAME` and `COMPOSE_FILE` if they select a different
+project or file; the runner refuses those overrides before changing either database.
+One host lock covers the shared Docker projects across checkouts, including cleanup.
+Starting another cell while that lock is held fails before any database reset.
 The runner creates an isolated destination stack from the preview Compose files, pinned to
 Infrahub 1.11.3. It uses the preview connection settings and local NetBox settings,
 including personal connection overrides. The runner enforces the OpsMill image repository
