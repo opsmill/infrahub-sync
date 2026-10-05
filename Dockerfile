@@ -13,7 +13,7 @@ FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b60333
 # to the vulnerable releases.
 RUN apt-get update \
  && apt-get install --yes --no-install-recommends \
-    libpcre2-8-0=10.42-1+deb12u1 \
+    libpcre2-8-0=10.42-1+deb12u2 \
     libssl3=3.0.22-1~deb12u1 \
     openssl=3.0.22-1~deb12u1 \
  && rm -rf /var/lib/apt/lists/*
