@@ -1,0 +1,1 @@
+Clarify the "Run from source" first-sync steps: keep both tokens exported for `invoke start`, change an occupied Infrahub port, find the `config_id` line, and note that `invoke build` replaces the shared `infrahub-sync:dev` image.
