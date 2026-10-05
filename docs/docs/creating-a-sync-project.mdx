@@ -78,11 +78,13 @@ The sections below explain each part. For the package format itself, see
 - `url` is the address that the Sync worker uses. The worker runs in a container on a Compose
   deployment and on the [local development stack](./development-stack.mdx), and there
   `localhost` refers to the worker container, so use an address that the container can reach.
-  For a service published on the same machine, that is usually
-  `http://host.docker.internal:<port>`, which Docker Desktop resolves to your machine. The
-  local development stack also connects its worker to the Compose networks of a local
+  The local development stack connects its worker to the Compose networks of a local
   Infrahub and a local NetBox, where they answer at `http://infrahub-server:8000` and
-  `http://netbox:8080`.
+  `http://netbox:8080`. For another service published on the same machine, the development
+  stack's worker has a `host-gateway` route for `host.docker.internal`, so use
+  `http://host.docker.internal:<port>`. The root `docker-compose.yml` adds no such route, so on
+  a Compose deployment use an address the worker can reach on your network, or add the route
+  yourself. Docker Desktop resolves the name without a route; Docker Engine on Linux does not.
 - A token or password is a `$credential` reference, never a literal value.
 
 A registered run can write only to Infrahub, so `destination.name` is `infrahub`.

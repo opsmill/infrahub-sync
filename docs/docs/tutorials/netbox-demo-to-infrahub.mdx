@@ -51,6 +51,13 @@ docker compose -p infrahub up -d --wait
 
 The first start takes a few minutes while Docker downloads the container images.
 
+Infrahub's Compose file publishes port 8000 on every network interface of your machine, and
+this tutorial uses Infrahub's published default admin token and `admin` / `infrahub` login.
+On a machine that other people can reach, export `INFRAHUB_INITIAL_ADMIN_TOKEN` and
+`INFRAHUB_INITIAL_ADMIN_PASSWORD` with values of your own before this first start, because
+Infrahub creates the admin account only when it initializes its database. Use your token
+wherever this tutorial shows the default token, and your password to log in.
+
 2. Open your browser and go to [http://localhost:8000](http://localhost:8000).
 
 3. Log in from the bottom-left corner using the default credentials:
@@ -341,9 +348,11 @@ each one means.
 
 ### When an apply stops partway
 
-An apply that fails after it has started writing ends with `phase: apply-interrupted` and
-`outcome: ambiguous`. Nothing is rolled back: the operations written before the failure stay
-written on the branch, and the failed operation may have written part of its change.
+An apply can stop after it has written earlier operations. Nothing is rolled back: those
+writes stay on the branch. The run ends with `phase: apply-failed` when the failed operation
+is known not to have written, and with `phase: apply-interrupted` and `outcome: ambiguous`
+when the service cannot tell, in which case the failed operation may have written part of its
+change.
 
 To finish the import, remove the cause, then run `diff` again on the same branch and apply
 the new plan. The new plan compares NetBox with what the branch now holds, so it contains only
@@ -373,7 +382,7 @@ The imported data lives on the `netbox-import` branch, not on `main`. Open [the 
    :::info This is a minimal mapping
    Some records and relationships may be missing — that doesn't mean the sync failed.
 
-   Three exclusions keep this mapping working against the current demo data. VLAN names in
+   Three mapping adjustments keep this mapping working against the current demo data. VLAN names in
    NetBox are only unique within a VLAN group, but Infrahub's `IpamVLAN` identifies a VLAN by
    name alone. The mapping puts the VLAN group's name and its length before the VLAN name
    (for example, `Data` in group `Site A` becomes `6:Site A:Data`). The length keeps pairs
