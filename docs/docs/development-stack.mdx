@@ -90,6 +90,12 @@ from the repository root.
    The first start takes a few minutes while Docker downloads the images. Infrahub then
    answers on `http://localhost:8000`.
 
+   Infrahub's Compose file publishes port 8000 on every network interface of your machine,
+   and the admin token in step 2 is a published default. On a machine that other people can
+   reach, export `INFRAHUB_INITIAL_ADMIN_TOKEN` with a value of your own before this first
+   start, because Infrahub creates the admin token only when it initializes its database. Then
+   use that value for `INFRAHUB_API_TOKEN` in step 2.
+
 2. Set the Infrahub address and token. The token is the default admin token that
    Infrahub's Compose file creates (`INFRAHUB_INITIAL_ADMIN_TOKEN`):
 

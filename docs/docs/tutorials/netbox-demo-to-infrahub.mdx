@@ -51,6 +51,12 @@ docker compose -p infrahub up -d --wait
 
 The first start takes a few minutes while Docker downloads the container images.
 
+Infrahub's Compose file publishes port 8000 on every network interface of your machine, and
+this tutorial uses Infrahub's published default admin token. On a machine that other people
+can reach, export `INFRAHUB_INITIAL_ADMIN_TOKEN` with a value of your own before this first
+start, because Infrahub creates the admin token only when it initializes its database. Use the
+same value wherever this tutorial shows the default token.
+
 2. Open your browser and go to [http://localhost:8000](http://localhost:8000).
 
 3. Log in from the bottom-left corner using the default credentials:
