@@ -1,0 +1,19 @@
+tests/adapters/test_infrahub_schema_source.py
+  s_d50d484cdcca4f::t_05103c204b7e4b 144-181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2dc29d0b999d290fdce6885263bf975a863d188b",
+  "prompts": {},
+  "sessions": {
+    "s_d50d484cdcca4f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e1a616b8-b081-465e-b5ee-e4345f32cc7a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
