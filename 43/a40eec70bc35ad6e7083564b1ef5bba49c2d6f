@@ -1,0 +1,519 @@
+dev/specs/008-infrahub-platform-alignment/tasks.md
+  s_08a08909ed3ec7::t_5786faee34e210 1-153,166-193
+  s_08a08909ed3ec7::t_5c1996c1a3d9e2 154-165
+docker-compose.yml
+  s_08a08909ed3ec7::t_e476ca184c36ca 188,227-228,238
+  s_08a08909ed3ec7::t_ccebeade37f58f 19-29,33-38,55-61,66,68-75,78-81,85,87-91,101-104,116,128,130,139-140,161-162,174,176,183-184,217,221,226,239-249,264-265,267-277,280,282-288
+tests/service/test_orchestration_tags.py
+  s_08a08909ed3ec7::t_ec572bf70e2ecf 5-6,37,39,42-45,55-56,60,62-63,66-67,70-71,83-85,92,94-97,99-117,123-126
+  s_08a08909ed3ec7::t_0227492ab71c7f 1-4,7-21,23-36,38,40-41,46-54,57-59,61,64-65,68-69,72-82,86-91,93,98,118-122
+  s_08a08909ed3ec7::t_ca1dd86eab8362 22,127-173
+dev/adr/0018-configurations-live-in-infrahub-and-infrahub-identifies-callers.md
+  s_08a08909ed3ec7::t_1ea675def67d03 1-86
+infrahub_sync/platform/files.py
+  s_08a08909ed3ec7::t_3babca3258c876 1-12,16-21,23-24,26-47,63-69,107-112,115-120,128-129,138-139,142-145,149-169,171-178,180,183,186-187,188-190,195-200
+infrahub_sync/platform/retention.py
+  s_08a08909ed3ec7::t_cc53642e0713b4 1-5,13-22,25-36,39,43-46,48-54,60-80,84-87,98-99,120-122,138-146,148-150
+tests/integration/test_plan_files_in_infrahub.py
+  s_08a08909ed3ec7::t_002e5cdaed820f 177-178
+  s_08a08909ed3ec7::t_fad02ab8ee5f6f 169-172
+  s_08a08909ed3ec7::t_b25f4cd1ff0f8b 1-10,13-28,31-33,35-37,39-168,173-176,179-341
+tests/test_prefect_alignment.py
+  s_08a08909ed3ec7::t_3149064e5da7b8 1-46,48-60,120
+  s_08a08909ed3ec7::t_b670ff7a97a2d9 118-119
+  s_08a08909ed3ec7::t_e0010fae1c4421 47
+  s_08a08909ed3ec7::t_9db8893b6bf0b1 61-63,115-117
+  s_08a08909ed3ec7::t_e538079a0f4994 121-122
+  s_59720a15da2c59::t_064e3f052b98f3 64-114
+dev/specs/008-infrahub-platform-alignment/checklists/requirements.md
+  s_08a08909ed3ec7::t_251255c1450dd1 1-37
+  s_08a08909ed3ec7::t_d38f685d109ce9 38-42
+changelog/+configurations-in-infrahub.changed.md
+  s_08a08909ed3ec7::t_c4f71771951e78 1
+tasks/preview.py
+  s_08a08909ed3ec7::t_194845f0742508 187-191,534
+  s_08a08909ed3ec7::t_17149deae3f944 3-8,30,50,71-77,192,205,207-211,516-520,527-528,535-539,589-591,594
+infrahub_sync/platform/schema_check.py
+  s_08a08909ed3ec7::t_58f729be015ea9 1-123
+  s_08a08909ed3ec7::t_6c2b4760ff4570 124-135
+tests/infrahub_records.py
+  s_08a08909ed3ec7::t_332080cae9a105 1-58
+dev/specs/008-infrahub-platform-alignment/spec.md
+  s_08a08909ed3ec7::t_fb45784c650bcd 172-174
+  s_08a08909ed3ec7::t_803bb0e9d3448f 223
+  s_08a08909ed3ec7::t_5c82cb4b45258d 101-105
+  s_08a08909ed3ec7::t_80727254669186 25-27
+  s_08a08909ed3ec7::t_e3b39c622e0a8c 36
+  s_08a08909ed3ec7::t_84e954d1e4fa3f 167-170
+  s_08a08909ed3ec7::t_e798cfd79170e1 74-77
+  s_08a08909ed3ec7::t_905e8678c3f5e0 33
+  s_08a08909ed3ec7::t_6edb1d21b149ad 237-238
+  s_08a08909ed3ec7::t_e489abf9b7f8c2 181-182
+  s_08a08909ed3ec7::t_0cb0ff4e8f6ed5 219-222
+  s_08a08909ed3ec7::t_f6c4d388f11d6e 1-13,39-48,52-65,68-73,78-88,100,106-109,114-149,152-166,171,180,187-190,194-201,216-218,224-236,239-264
+  s_08a08909ed3ec7::t_0e710b08a43944 202-203,207-209,214-215
+  s_08a08909ed3ec7::t_a05263fae4a897 28-30
+  s_08a08909ed3ec7::t_98e600a71d7539 89-98
+  s_08a08909ed3ec7::t_1a5704159187d6 14-24
+  s_08a08909ed3ec7::t_0e471007f042c5 99
+  s_08a08909ed3ec7::t_54dea8a2382ad0 210-213
+  s_08a08909ed3ec7::t_732e68e7108ce0 31-32
+  s_08a08909ed3ec7::t_c190465d55d694 183-186
+  s_08a08909ed3ec7::t_80a4ccda2ca029 265-270
+  s_08a08909ed3ec7::t_ba4c5df44d8c66 49-51
+  s_08a08909ed3ec7::t_a0448ae59b50ff 66-67
+  s_08a08909ed3ec7::t_ccf7d1baa4d01e 37-38
+  s_08a08909ed3ec7::t_6ae350fd891b0a 112-113
+  s_08a08909ed3ec7::t_6d841731d88503 150-151
+  s_08a08909ed3ec7::t_4ff49c5555af58 175-179
+dev/specs/008-infrahub-platform-alignment/contracts/sync-http-api.md
+  s_08a08909ed3ec7::t_6646de96ebbec6 1-16,20-67
+  s_08a08909ed3ec7::t_6d9fe8fb69dc3b 68-69,71-73
+  s_08a08909ed3ec7::t_fa4a9ded1f843c 17-19
+  s_08a08909ed3ec7::t_47e58604dadb93 70
+dev/specs/008-infrahub-platform-alignment/research.md
+  s_08a08909ed3ec7::t_61d520b3193bc7 1-87,92-163,167-171
+  s_08a08909ed3ec7::t_ce51a2a4518666 172-203
+development/docker-compose.preview.yml
+  s_08a08909ed3ec7::t_702991b004a93e 19,21-22
+  s_08a08909ed3ec7::t_7ec9a9967c247b 23,27,51-61
+  s_08a08909ed3ec7::t_e3dff266502214 12-14
+  s_08a08909ed3ec7::t_4fb27a3d7aa9b3 3,7-11,15,17,25,29,31-35,37,39-50,62-64
+tests/preview/test_preview_configuration.py
+  s_08a08909ed3ec7::t_c10de6ac38264e 200-202
+  s_08a08909ed3ec7::t_585ba1d2a307c8 26-28,128,131-132,135,137-139,142,150,171-172,174-177,186,196-199,203,242-245,247-250,283,505-507,511,536-541
+  s_08a08909ed3ec7::t_5e3dbe942f34e3 148-149
+  s_08a08909ed3ec7::t_0d49878a79c1d0 508-510
+  s_08a08909ed3ec7::t_a4ca4c11e818a4 187
+infrahub_sync/platform/__init__.py
+  s_08a08909ed3ec7::t_efa84f9e268618 1-6
+dev/specs/008-infrahub-platform-alignment/quickstart.md
+  s_08a08909ed3ec7::t_c6d7e3922ecc82 63-114,120-167
+  s_08a08909ed3ec7::t_4f06803085abb9 1-12,16-29,34-58,62,115-119
+  s_08a08909ed3ec7::t_15c8e5803169db 13-15
+  s_08a08909ed3ec7::t_f8080b61b14962 59-61
+  s_08a08909ed3ec7::t_0d3fa602f0a6a3 30-33
+infrahub_sync/platform/client.py
+  s_08a08909ed3ec7::t_e5a6ddfe8d29ce 1-9,14-19,21-28,31-81,94-107,114-115,117-120,122-125,127-136
+  s_08a08909ed3ec7::t_9459e9ce738a91 141-143
+tests/service/test_infrahub_auth.py
+  s_08a08909ed3ec7::t_59a1c9947df2d0 1-10,12-21,23-62,66-68,72-238
+  s_08a08909ed3ec7::t_a361f74b96b6b9 239-294,321,323-328
+tests/preview/test_config_lifecycle.py
+  s_08a08909ed3ec7::t_7cfb1e940bcc49 1-13,19,24-27,30-38,45-46,52-55,62-66,68-72,76-77,79,81-90,94,98,100-101,103-104,109,113,115-118,121,124,126-139,170,181,184,189,192,194-195,214,217,219-225,238-256,265,281-284,296,299,302,310-311,313,315-317,320,322-340,346-347,358-361
+  s_08a08909ed3ec7::t_922a28c06f1b3f 362-363,370
+docs/docs/operations/day-2-operations.mdx
+  s_08a08909ed3ec7::t_e75b3a2c0377fe 90-94
+  s_08a08909ed3ec7::t_540d76c20ca7cf 40,44-45,58,70,74-76,78-79
+infrahub_sync/platform/records.py
+  s_08a08909ed3ec7::t_289140af8e1374 1-45,51-152,156-159,165-193,195-216,220-274
+  s_08a08909ed3ec7::t_b6954e1fa21653 275-291,295-335,339-346,348-355,359-373
+schema/sync.yml
+  s_08a08909ed3ec7::t_4b69d278cdeb6b 281-282
+  s_08a08909ed3ec7::t_46546297e15272 1-27,30-76,78,80-186,189-191,195-197,200-201,203,206-231,235,240,243,245,247-248,250,252-255,257,259,261,263,265,267,269-275,279,286,289,291,293-294,296,298-301,303,305,307,309,311,313,315-321
+  s_619a92f4a964d9::t_190bfa6b8bed4f 28-29,77,79,187-188,192-194,198-199,202,204-205,232-234,236-239,241-242,244,246,249,251,256,258,260,262,264,266,268,276-278,280,283-285,287-288,290,292,295,297,302,304,306,308,310,312,314,322
+tests/integration/test_configurations_in_infrahub.py
+  s_08a08909ed3ec7::t_c1a1c9a153abc5 1-247
+tests/preview/conftest.py
+  s_08a08909ed3ec7::t_a4ce8ed169523c 83
+  s_25c14c8f9534e0::t_1da73c64ee63f9 77-78
+tests/preview/test_smoke_request_shapes.py
+  s_08a08909ed3ec7::t_ad72b38df8f554 37-44
+tests/platform/test_files.py
+  s_08a08909ed3ec7::t_64fb6d297daba2 1-4,7-11,14-18,20-25,61-67,71-174,214-246
+  s_08a08909ed3ec7::t_61d902ae59c90e 247-248
+dev/specs/008-infrahub-platform-alignment/plan.md
+  s_08a08909ed3ec7::t_f646a239d18c2f 1-10,19-27,30-84,87-99,101-106,108-150
+  s_08a08909ed3ec7::t_63dbfa0a48b5c4 100
+  s_08a08909ed3ec7::t_961de92e9271ab 85-86
+  s_08a08909ed3ec7::t_b91a99a78f7974 107
+  s_08a08909ed3ec7::t_5fbc151c48e502 28-29
+  s_08a08909ed3ec7::t_4b3f907b43e1ab 17-18
+  s_08a08909ed3ec7::t_63b46f2e3ad230 11-16
+tests/platform/test_retention.py
+  s_08a08909ed3ec7::t_2eec2deae31b56 1-8,10-13,15-19,21-26,36,38-43,50-58,60,62-64,67-70,72-133,190-196,201-204,206-208
+tests/service/test_prefect_server.py
+  s_08a08909ed3ec7::t_12b86e03a6cddb 1-4,6,9-12,14,16,18,20,21,23-26,28,30-36,57-71,79,81-84,86-106,127,129,201,206
+  s_08a08909ed3ec7::t_8265eefd27aa04 52
+  s_08a08909ed3ec7::t_829deab169d3d6 5,8,15,17,19,22,27,29,38-51,54-56,72-78,80,85,122-126,128,130-170,172,175-177,179-180,183-187,190-192,194
+  s_08a08909ed3ec7::t_36ec4fb70a6526 107-121,182
+  s_08a08909ed3ec7::t_2d010e96a26171 13
+  s_08a08909ed3ec7::t_dbf9243ed4f0d4 7,37,53,171,173-174,178,181,188-189,193,195-200,202-205,207-254
+  s_08a08909ed3ec7::t_b06fe1f948d0da 255-279
+dev/specs/008-infrahub-platform-alignment/data-model.md
+  s_08a08909ed3ec7::t_da8fe9aa80e974 1-14,16-128
+  s_08a08909ed3ec7::t_585ac75fcc520b 129-132
+tests/service/test_compose_bootstrap.py
+  s_08a08909ed3ec7::t_1e9e6bb0754d05 171
+  s_08a08909ed3ec7::t_8ac1ffff5faae8 15
+  s_08a08909ed3ec7::t_ad46f794ad6c64 167-170,172-218,325
+  s_08a08909ed3ec7::t_e2a337d1248d82 25,27,47,52,71-74,120,222,302,319-324,326-342,443-463
+  s_08a08909ed3ec7::t_507012bc9459c6 33-37
+  s_08a08909ed3ec7::t_4b60a3b9a1cb13 343-354,356-374,376-380,382-442
+  s_08a08909ed3ec7::t_68b6032361e49c 355
+  s_08a08909ed3ec7::t_4bbc506fc4abde 375,381
+changelog/+infrahub-task-manager.changed.md
+  s_08a08909ed3ec7::t_302554f13d954f 1-4
+  s_08a08909ed3ec7::t_e9be2eb0f5d148 10-12
+  s_08a08909ed3ec7::t_8ce423061ed4ed 5-9
+tests/preview/evidence.py
+  s_08a08909ed3ec7::t_c794b17770da36 23-25,29,31,33
+dev/adr/0017-sync-runs-on-infrahubs-task-manager.md
+  s_08a08909ed3ec7::t_e69f809bba3801 1-12,14-24,28-66
+  s_08a08909ed3ec7::t_5b43de6d9fcd0d 13
+  s_08a08909ed3ec7::t_25d1e441eedab1 25-27
+infrahub_sync/service/serve.py
+  s_08a08909ed3ec7::t_6b3049a726dc4f 142-144
+  s_08a08909ed3ec7::t_d2ee26531d31b6 32
+  s_08a08909ed3ec7::t_6b03c73179e681 5
+  s_08a08909ed3ec7::t_ff207258b0eb1e 7,11-12,16-24,27,29,37-38,61-93,98,102-103,108-109,114-121,127-128,135,137,141
+tests/service/test_run_records.py
+  s_08a08909ed3ec7::t_a531fcccd59778 1-135
+  s_08a08909ed3ec7::t_8282b3ab1cdcc7 136-417,499-510
+tests/preview/test_evidence.py
+  s_08a08909ed3ec7::t_96025656d4aab9 60-70
+docs/docs/quickstart-compose.mdx
+  s_08a08909ed3ec7::t_7a53296030ad30 60-62
+  s_08a08909ed3ec7::t_85ad57d0256bc9 37,57-59,63-74,87,91,93,96,100-105,143,162-163
+  s_08a08909ed3ec7::t_13afe9affb4531 77-83
+tests/platform/test_records.py
+  s_08a08909ed3ec7::t_f3fa3b6b8a7c8b 1-102,104-300
+  s_08a08909ed3ec7::t_8b55af21baa14c 301-373
+infrahub_sync/service/prefect_server.py
+  s_08a08909ed3ec7::t_84c86e897a7827 110-114,117,122-124
+  s_08a08909ed3ec7::t_218d226af26346 16,18,30-31,33-39,42,45-46,49,52-56,61,66-69,81-85,98-100,102,109,128-129,131-133,135,139-147,149-162
+  s_08a08909ed3ec7::t_4514f21c19d0f0 130
+  s_08a08909ed3ec7::t_164405ad3830d5 1-15,17,19-21,24-29,32,40-41,43-44,48,51,57-60,62-65,86-97,101,103-108,125-127,134,136-138
+  s_08a08909ed3ec7::t_5c837f7ad6489a 22-23,47,148,163-177,179,185-199
+  s_08a08909ed3ec7::t_ecd6b22d36f1b0 115-116,118-121
+  s_08a08909ed3ec7::t_16aab492db2bff 70-80
+  s_08a08909ed3ec7::t_c18ab0331afc6d 178,180-184
+  s_08a08909ed3ec7::t_ec74c2ae3a8ff0 50
+dev/specs/008-infrahub-platform-alignment/contracts/task-manager.md
+  s_08a08909ed3ec7::t_cd7d3f1853710c 1-4,7-43
+  s_08a08909ed3ec7::t_1687c443462616 5-6
+  s_08a08909ed3ec7::t_b32688225d91f6 44-45
+tasks/prefect_alignment.py
+  s_08a08909ed3ec7::t_73dcac4250c9ef 1-92
+  s_08a08909ed3ec7::t_4ac024d59ce4d2 93-125
+CLAUDE.md
+  s_08a08909ed3ec7::t_5b1110c701a308 6-10
+.github/workflows/workflow-linter.yml
+  s_08a08909ed3ec7::t_5961d608ed7c45 132-144,147,149-153
+  s_08a08909ed3ec7::t_3e84e6cc67682e 145-146,148
+tests/integration/test_task_manager_runs.py
+  s_08a08909ed3ec7::t_c8804811d43e6d 1-94
+  s_08a08909ed3ec7::t_52f8c76fd77f29 95-102
+tests/service/worker_fakes.py
+  s_08a08909ed3ec7::t_f87a8e0e2e0550 1-46
+  s_08a08909ed3ec7::t_9be60c12000f0d 47-50
+.github/scripts/nightly_e2e.py
+  s_08a08909ed3ec7::t_6a5b872dc6e28e 22,55-57,152-164,166-170,172,174
+.github/scripts/update_infrahub.py
+  s_08a08909ed3ec7::t_21b7eb9446a16b 32,35,43-47
+.github/workflows/workflow-tests.yml
+  s_08a08909ed3ec7::t_028a802a7432c1 162
+README.md
+  s_08a08909ed3ec7::t_4929f56f77991b 87-89,93,96-100,124-127,130-131,134-136,138,140,147,150,204-205,211-212,218,227
+changelog/+prefect-access-boundary.security.md
+  s_08a08909ed3ec7::t_d862ed85bbc53e 3,5
+dev/adr/0019-run-artifacts-are-infrahub-file-objects.md
+  s_08a08909ed3ec7::t_e7ba1138503aa8 1-35,40-48,54-67
+dev/adr/README.md
+  s_08a08909ed3ec7::t_1bc177b9ea78ce 52-60
+development/README.md
+  s_08a08909ed3ec7::t_7b8fd07a68066e 4,63
+development/docker-compose.dev.yml
+  s_08a08909ed3ec7::t_96a7dfe0fcc265 17-28,48,50-61,64-67,71,75,77,82-84,86,89-90,94,96,100-123,129-131,143,150-152,172,186
+development/docker-compose.infrahub.yml
+  s_08a08909ed3ec7::t_ec91da16a4c3c3 254,287,333
+development/preview.env
+  s_08a08909ed3ec7::t_de01b1f9bcfa34 24-25,42-43
+docs/docs/adapters/infrahub.mdx
+  s_08a08909ed3ec7::t_cc73771d17f1a8 11,121
+docs/docs/compose-deployment.mdx
+  s_08a08909ed3ec7::t_907dc03d16acbf 5-6,9-11,38-44,61-62,68-92,98-99,104-126,129-162,177,179,184,191,197-202,217,219,221,232-234,238,242,244,247,250-251,290-292,336,344-345,368-371,373-375,377-381,386,424-439,443-446,448-451,467-468,472-473,560-564,581-584,586,588-591,593-594,597-600,607,619,625-626,631-634,637-640,642-646,651-671,692,723,735,756,832,845-846,862,868,876-879,882-886,889-897,899-905,909-912,914-917,922-926,934-937
+  s_08a08909ed3ec7::t_3565cb09fb072a 128
+  s_08a08909ed3ec7::t_d96257df32d98c 7-8
+  s_08a08909ed3ec7::t_170ef9cff161fe 773
+docs/docs/configuration-package.mdx
+  s_08a08909ed3ec7::t_cb5a6b1b9a6db9 5-8,65-66,70,73,78,80-108,111,114-116,118,120,122-123,125-131,133-136,138-147,149-152,155-157,160,165-168,180,182-185,187-190,194,202-203
+docs/docs/creating-a-sync-project.mdx
+  s_08a08909ed3ec7::t_5d31e4f0eee830 157,159-160
+docs/docs/develop/guidelines/secret-redaction.md
+  s_08a08909ed3ec7::t_261043dcfc256e 166-173
+docs/docs/develop/guidelines/testing-tiers.md
+  s_08a08909ed3ec7::t_112b02fb5a4f9e 107,120,248,261-262,320-321,378-384,388-396,398-399,402-403,407-408
+  s_08a08909ed3ec7::t_aab0dbbbfe84d1 156-161
+  s_08a08909ed3ec7::t_6a333fb3da33a6 108
+docs/docs/develop/guides/adding-an-adapter.md
+  s_08a08909ed3ec7::t_9099cc1e3a320e 39-41,47-48,396,407-409,413,416-419,422,425,427-428,431,437,462,466,474-475,482-488,574
+docs/docs/develop/knowledge/orchestration-prefect.md
+  s_08a08909ed3ec7::t_e1a4680c6ff4da 35-46,204,210,212-216
+docs/docs/develop/knowledge/repository-tour.md
+  s_08a08909ed3ec7::t_a0858368dce165 82-89,91,98-100,105-120,157-165,245-248,254-257
+docs/docs/develop/knowledge/sync-architecture.md
+  s_08a08909ed3ec7::t_8955fb5a5774cc 40,100-101
+  s_08a08909ed3ec7::t_b257099288f818 16-17,24
+  s_08a08909ed3ec7::t_a52ecbd388923e 98-99,104
+  s_08a08909ed3ec7::t_fd2d115615f347 18
+  s_08a08909ed3ec7::t_e5462343abc1df 47-49
+docs/docs/development-stack.mdx
+  s_08a08909ed3ec7::t_54125040fefa0c 12,65-67,73,76-92,104-106,140-142,164-165,169-177,179-180,186,200-202,208,241,272,283,285-288,316-318,377,402,404,436-438,442
+  s_08a08909ed3ec7::t_04f07b593a9291 254-255,257-258
+  s_08a08909ed3ec7::t_77751fd8c6b1c5 425
+  s_08a08909ed3ec7::t_f6e699b9d3bf09 263-265
+docs/docs/migrating-from-netbox-or-nautobot.mdx
+  s_08a08909ed3ec7::t_15fe8b9347a9fe 39-40,45,47-48,50,126,128,132-133,136-138
+docs/docs/operations/compose-troubleshooting.mdx
+  s_08a08909ed3ec7::t_171587ec1ed5c9 29,37-39,42,50-51,59-74
+docs/docs/orchestration.mdx
+  s_08a08909ed3ec7::t_2ef9455b10d9f7 105,111-114,120
+docs/docs/readme.mdx
+  s_08a08909ed3ec7::t_9fba81aa4063f2 53,55-59,66
+docs/docs/reference/cli.mdx
+  s_08a08909ed3ec7::t_a21d52f94037be 42,64,114-116,118-119,123-126,146-149,170,203,221,226,235-236
+docs/docs/reference/config.mdx
+  s_08a08909ed3ec7::t_a2f74e81ad9840 13-17,29,85-87,109-110
+docs/docs/reference/durable-product-records.mdx
+  s_08a08909ed3ec7::t_b97c66809a4862 12,18,30,32-35,37-53,57-65,144,149,154-155,174-177,184,188-191,267-273,275-276,280-310,324-328,482-483
+  s_08a08909ed3ec7::t_bd55f932ba850f 150
+docs/docs/reference/prefect-remote-run.mdx
+  s_08a08909ed3ec7::t_b7afcf896e2fa5 37
+docs/docs/reference/python-api.mdx
+  s_08a08909ed3ec7::t_ab506da705fbf0 3,11,15-18,20,26,29-30,40,44,46-47,50,53-57,60-68,70-71,75-77,139
+docs/docs/reference/schema-mapping.mdx
+  s_08a08909ed3ec7::t_b390ccf1f59567 248,251-252,275-276,461
+docs/docs/reference/sync-http-api.mdx
+  s_08a08909ed3ec7::t_b7b334e45df1d2 8-10,27,35-36,40,42-45,47,49-53,56-58,61-73,75,80,88-117,119-131,136-142,177,204-205,241-242,261-262,264,272,334-339,343-348,360-389,392,395,399,404,409-411,413-417,422-424,431,449,460,470-471,568-570,572-574
+  s_08a08909ed3ec7::t_11ded38864af93 74,78-79,81-84
+docs/docs/running-a-sync.mdx
+  s_08a08909ed3ec7::t_58100c5bb59133 8-11,15-16,21-40,51-52,58,62,65-68,76-77,79,81-84,86-88,90-92,94-95,97,103-104,111-112,118-121,123,132,141,149,156-164,199-215,257,259-262,271,278,283-284,315-319,327-332
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_08a08909ed3ec7::t_ebdff487d7f386 10,74-76,168,217,233,246-248,251-255,258-270,275,283,287-289,296,339,343
+docs/docs/tutorials/netbox-demo-to-infrahub.mdx
+  s_08a08909ed3ec7::t_89a8426cfac8aa 153-163,206,210,215,252-253,256,259,282-283,296-300,316-317,321,325-328,330,332-333,336-345,348-352,375,402,464
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_08a08909ed3ec7::t_44e4e68045f91f 10,63-65,146,152,160,202,220,234,247-249,252-256,259-271,276,284,288-290,297,340,344
+docs/docs/use-with-an-ai-agent.mdx
+  s_08a08909ed3ec7::t_df937aaefa5db3 9,141,170-173,183
+examples/custom_adapter/README.md
+  s_08a08909ed3ec7::t_a99bf22c150a31 10,12,14,16-19,34,36,40,45
+examples/netbox_to_infrahub/README.md
+  s_08a08909ed3ec7::t_8e91e99c774c33 5,19-20,23-26,29-33
+examples/netbox_to_infrahub/sync-configuration.yml
+  s_08a08909ed3ec7::t_0a25d87a575e20 1-76,79-753
+examples/prefect_remote_run/README.md
+  s_08a08909ed3ec7::t_5c36581e1f9fa4 73
+infrahub_sync/cli.py
+  s_08a08909ed3ec7::t_e92b96ca338298 22,136,139,281,330-350,362-366,389-393,406,431,442,444-447,451-454,456-460,525,626,662-664,695-697
+infrahub_sync/client/__init__.py
+  s_08a08909ed3ec7::t_28edc1a001ba35 21,51
+infrahub_sync/client/client.py
+  s_08a08909ed3ec7::t_cb0f4b40f0b858 31,57-58,68,99-100,110-114,117,267-291,524,595,600
+infrahub_sync/client/models.py
+  s_08a08909ed3ec7::t_8422007263008b 58-60,67-69,386-387,391-394,451-463
+infrahub_sync/product_store/__init__.py
+  s_08a08909ed3ec7::t_32ce233e97fa5a 19,37
+infrahub_sync/product_store/configs.py
+  s_08a08909ed3ec7::t_eeb75e906f8abf 54-58,915-942
+infrahub_sync/product_store/models.py
+  s_08a08909ed3ec7::t_2e5deb9130254a 362-364,368-369
+infrahub_sync/product_store/store.py
+  s_08a08909ed3ec7::t_d1832d8bbcd31b 2369-2371,2481,3023,3025-3026,3485-3499
+infrahub_sync/service/app.py
+  s_08a08909ed3ec7::t_47a973e1d1268b 8,18,47-51,55-58,81-94,98,101,103-105,109-116,121-133,216-218,223,228,232,239,243,254,265,276,281
+infrahub_sync/service/apply_guard.py
+  s_08a08909ed3ec7::t_edace3f7771f41 131-143
+infrahub_sync/service/auth.py
+  s_08a08909ed3ec7::t_42f2809919339f 1-10,17,19,22-26,30-33,35-39,45-103,112,171-202,206-227
+infrahub_sync/service/bootstrap.py
+  s_08a08909ed3ec7::t_c5b4e661f399c4 4,37,45,61,63,119-140,142,144,165,184-185,193,197,201-203,222-224
+  s_08a08909ed3ec7::t_be492502f7976f 148-164,166-183
+  s_08a08909ed3ec7::t_a5209364734161 62
+  s_08a08909ed3ec7::t_319d4a5c9ce28f 194-195,198-200
+  s_08a08909ed3ec7::t_d3e8a7fc329330 25,28,32,38-44
+infrahub_sync/service/config_routes.py
+  s_08a08909ed3ec7::t_14a1fea720f208 14,26,94,99-106,110-112,114,196-201,204-206,221-236,240-243,245-256,363-375,377-382,394,416,433,443,450,462,472,483-505
+infrahub_sync/service/flow.py
+  s_08a08909ed3ec7::t_9e371794e03d81 64,407,416,446-447,529,604,644,832-833,952-953
+infrahub_sync/service/infrahub_records.py
+  s_08a08909ed3ec7::t_37e00638ccfc94 1-6,8-14,15-49,56,58,60-89,97,106-108,118-120,123-126,128,130,132-135
+  s_08a08909ed3ec7::t_b80e5ce90e9b9d 54,98-104,116
+infrahub_sync/service/liveness.py
+  s_08a08909ed3ec7::t_5bd24d0a0667fa 11-12,139,149,161,163-168
+infrahub_sync/service/orchestration.py
+  s_08a08909ed3ec7::t_c5e01e570de809 5,9,29-33,60-77,154-161,179,182-230
+infrahub_sync/service/service.py
+  s_08a08909ed3ec7::t_bc287ea14052db 10,15-17,25-26,35,136-137,140-144,187-205,235-240,245,251-308,314,356,366-368,415,440-442,445-446,462-468,470,716-717,911,971-976
+infrahub_sync/service/storage.py
+  s_08a08909ed3ec7::t_37dce00250de06 1,12-13,20,23,168-183,195,200,210,213,217,219
+infrahub_sync/service/worker.py
+  s_08a08909ed3ec7::t_e282304670c22f 7,9-10,22-23,26,28-34,39-48,50,60-61,66-68,70-74,94-98,175-180,205-209,211-212,224-228,454,458-504,555-557,561-568,572-586,590-591
+  s_08a08909ed3ec7::t_04e6197957a94e 560
+pyproject.toml
+  s_08a08909ed3ec7::t_b4cef5620b1e6f 18,72,87-88
+tasks/__init__.py
+  s_08a08909ed3ec7::t_9c62819458d212 5,37
+tasks/dev.py
+  s_08a08909ed3ec7::t_6540f75195529b 19,24-25,42,51-53,63-64
+  s_08a08909ed3ec7::t_5734d2f6944b5b 65-67
+tests/cli/test_client_commands.py
+  s_08a08909ed3ec7::t_55c16e165bd6c2 19,235,764,983-1057
+tests/cli/test_parity_and_closure.py
+  s_08a08909ed3ec7::t_d2c14f9b443210 248-250,254,267-269,271,275
+tests/client/test_client.py
+  s_08a08909ed3ec7::t_ba9a02e9251b48 151-152,177,266,583-637
+tests/client/test_models.py
+  s_08a08909ed3ec7::t_edbb7112e05989 44
+tests/client/test_public_surface.py
+  s_08a08909ed3ec7::t_439c5ca809bdb3 46
+tests/compose/conftest.py
+  s_08a08909ed3ec7::t_2efb294e7a9b5a 37,153,156,312-319,377,390-394,403-408,413-414,423,463-476,478-483,499,506,515-518,537,539-546,553,562
+tests/compose/fixture-override.yaml
+  s_08a08909ed3ec7::t_ba68b45c69fa50 5
+tests/compose/lifecycle.py
+  s_08a08909ed3ec7::t_4d347ae45c3140 94,103-105,164-191,196-201,240,243,260-282,364-366,372-376,383-390,392-393,395-396,407-411,463,473,530,533,542-545,548,553,561,563
+tests/compose/test_bootstrap_idempotence.py
+  s_08a08909ed3ec7::t_656478a92530d8 5,22-32,50-51,55-56,58-64,66,76,93,117-118,120,122-124,127,130,156,163-173,175,177-179,181-191,193-195,197,202-203,205-206
+tests/compose/test_compose_contract.py
+  s_08a08909ed3ec7::t_6cbcedc4c090a8 53,55,67-83,109,112,114-124,144,161-162,183-184,192-193,196-197,199-200,202-258,260-282,335,342-345,395-396,399,447,450,453,455-456,591,603,660,675,688,813,915-933
+  s_08a08909ed3ec7::t_ed444f4e483380 346
+tests/compose/test_configuration_free_startup.py
+  s_08a08909ed3ec7::t_67e7704b2cc776 3-4,7-14,32,47-49,54-55,61,80,142-145,152,158-160,164,167,175,179-181,206-223,225-226,228,230,232,237-239,245-249,257-259,263-264,269
+tests/compose/test_container_cli.py
+  s_08a08909ed3ec7::t_454cc0c141e7ab 66,142,152,158,162,184-186
+tests/compose/test_documentation.py
+  s_08a08909ed3ec7::t_2180c6643adbcd 45,49-50,55-57,264,279,282-283,413-414,418-425
+tests/compose/test_fixture_prerequisites.py
+  s_08a08909ed3ec7::t_c4ce762293b6b2 39,136,160,164-166,170-171
+tests/compose/test_lifecycle.py
+  s_08a08909ed3ec7::t_20bdbe013c6539 41,53-54,71,73-74,92-93,140,156-157,160,166-168,172,176,186,190-192,236-238,253,384,417,419,452,464-465,467-469,473,478-480,485-486,488,493-494,498,510,514
+tests/compose/test_managed_run.py
+  s_08a08909ed3ec7::t_6842163801fef1 1,3-5,12,29-30,77-78,83-85,87-88,100-104
+tests/compose/test_redaction.py
+  s_08a08909ed3ec7::t_3adeaae5697a0f 53,98,170,247
+tests/dev_stack/test_loopback_publication.py
+  s_08a08909ed3ec7::t_1047e1063eb62d 3-4
+tests/dev_stack/test_task_manager_wiring.py
+  s_08a08909ed3ec7::t_3ad9d4d4ab2c3f 1-60
+tests/image/conftest.py
+  s_08a08909ed3ec7::t_436f67858d6da9 59,167-172,241-243,250-251
+tests/image/test_image_artifact.py
+  s_08a08909ed3ec7::t_fe2643c7be4766 17,129-150,152,154-155
+tests/integration/isolated_worker_program.py
+  s_08a08909ed3ec7::t_4e8b1fde9cb203 4-5
+tests/integration/test_isolated_worker_handoff_integration.py
+  s_08a08909ed3ec7::t_babfdf982c024b 5-6,15-16,21-22,43,50,52,55,61-62,84,86-87,89-91,417,443,471-473
+tests/integration/test_managed_write_guard_live.py
+  s_08a08909ed3ec7::t_802f5cf54a7193 1,68,141-142,153,156,167-168,170-172,174-176,210-213,508,578,605-606
+tests/integration/test_service_storage_integration.py
+  s_08a08909ed3ec7::t_3238265298ff92 13,18,24-25,30-34,38,40-41,43-44,48,114,117-118,163
+tests/platform/test_client.py
+  s_08a08909ed3ec7::t_a78811e44a8b71 1-7,9-18,21-107,160-169
+tests/platform/test_schema_check.py
+  s_08a08909ed3ec7::t_3034753207fa7d 1-107
+tests/preview/test_cli_client.py
+  s_08a08909ed3ec7::t_57c7b861084f70 1,36,67-68,130,136-137,139,143,145,148-149,151,153,155,175
+tests/preview/test_netbox_package.py
+  s_08a08909ed3ec7::t_d6fcbd69b04df3 1,4-9,31,108,111,113-114,122-126,131-132,134,136,139-140,142,144-150,155-156,168-180,182,194,196,212-213,234,238,247
+tests/preview/test_python_client.py
+  s_08a08909ed3ec7::t_71885785cfd291 1,4-8,23,29,45-46,51,53,56,67
+tests/preview/test_run_completion.py
+  s_08a08909ed3ec7::t_f31f6e91cc52e9 23,26,33,53-54,56,94,98,104,118,142,179,205,270
+tests/preview/test_run_review.py
+  s_08a08909ed3ec7::t_a0d0d6aa3ce8e0 8,23,26,31,73,78,84,165,170,178,214,279
+tests/preview/test_schema_drift.py
+  s_08a08909ed3ec7::t_dddabe2c749d9b 25,31,77,90
+tests/preview/test_service_api.py
+  s_08a08909ed3ec7::t_9cc6860ab8ad2c 1,3-6,34,45,62,104,108-114,120-122,156-157,162,195-197,199,202,214-245,309-310,322,324,327-328,375
+tests/product_store/test_configs_service.py
+  s_08a08909ed3ec7::t_b06b9b03f22776 730,732,740
+tests/product_store/test_contract.py
+  s_08a08909ed3ec7::t_1dfa78032a830d 29,58,64,223-224,226-228,231-232,234-236,238-242,245-246,248-250,253-262,281,689,706,2622,2628-2629,2659,2668,2671,2690,2696,2714-2715,2735,2740,2749,2758,2888,2894-2895,2907-2908,2927,2933,2952,2957,2963,2972-2974,3387,3395,3420,3427,3435,3453,3462,3478,3520,3527,3545,3550,3729,3736,3991
+tests/product_store/test_internal_artifacts.py
+  s_08a08909ed3ec7::t_b718a3da018ec5 7,11,25-26,36,46,50-54,226,229,233,241-242,383-385,388,405,486,489,505,510,513,524-525,569,572,575,583-584,593,596,599,607-608
+tests/service/test_config_routes.py
+  s_08a08909ed3ec7::t_54efe39e2a5b14 25,1084,1118-1119,1124-1125,1158-1159,1165-1168,1195-1197
+tests/service/test_environment_names.py
+  s_08a08909ed3ec7::t_4a14d8dcc6aea3 13,57-59,65,74-77,81
+tests/service/test_flow_and_prefect.py
+  s_08a08909ed3ec7::t_e204742024e817 874,883-887
+  s_08a08909ed3ec7::t_b08be65bf8d20e 939
+tests/service/test_installed_flow_identity.py
+  s_08a08909ed3ec7::t_ed0386fcae79b5 270-278
+  s_08a08909ed3ec7::t_5eff4b450debad 279-280
+tests/service/test_liveness_policy.py
+  s_08a08909ed3ec7::t_e601030e986fe8 1020-1021,1029-1054,1057-1062
+tests/service/test_service_startup.py
+  s_08a08909ed3ec7::t_38cc04b94eeeb5 1-6,8-13,15-137,141-143,169-246,260-263,272,274-280
+tests/service/test_service_worker.py
+  s_08a08909ed3ec7::t_f2d58c47225c78 31,156,379-380,448
+tests/service/test_service_worker_admission.py
+  s_08a08909ed3ec7::t_f461aea067c450 26,34,36,94-95,99-107,133,190-195,388,402-477
+tests/service/test_service_worker_identity_recovery.py
+  s_08a08909ed3ec7::t_e82047b84e9442 46,185
+tests/service/test_storage.py
+  s_08a08909ed3ec7::t_6363456d2c0114 8,10,12-13,16,21,24-26,29-31,33-36,38-40,42-44,46-47,49-54,57-58,61-64,66-69,71-76,78-79,82-83,92-94,98-101,104-106,109-111,113-117,120-124,127-129,131-132,134-141,165,167
+tests/service/test_validation_secret_containment.py
+  s_08a08909ed3ec7::t_72e590ec0e7ebf 284-288,297-300
+tests/service/test_worker_claim.py
+  s_08a08909ed3ec7::t_794c8a8b5615e6 10,21,39,114-123,134-154,156-158,160-161,167
+tests/test_netbox_example_object.py
+  s_08a08909ed3ec7::t_3d2d316bee6d18 1-35
+tests/test_nightly_e2e.py
+  s_08a08909ed3ec7::t_438c1d6afa8d2d 155
+  s_08a08909ed3ec7::t_430c769bc932dd 85-87,89
+  s_08a08909ed3ec7::t_667a4251a13dc6 7
+  s_08a08909ed3ec7::t_2c9a3f9d05befe 81-84,88,90-94
+tests/test_no_prefect_import.py
+  s_08a08909ed3ec7::t_8be73e31e98e25 25-26
+tests/test_service_storage_docs.py
+  s_08a08909ed3ec7::t_be4f8e342a35cf 11-13,16-17,22,26-28
+tests/test_vendoring_consistency.py
+  s_08a08909ed3ec7::t_d7be20331bae61 48,53-57
+uv.lock
+  s_08a08909ed3ec7::t_b20c524f033986 82,94,96,1234-1235,1242-1243,2061,2124,2126
+.github/workflows/update-infrahub.yml
+  s_08a08909ed3ec7::t_1fb139edf9c076 70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "43a40eec70bc35ad6e7083564b1ef5bba49c2d6f",
+  "prompts": {},
+  "sessions": {
+    "s_08a08909ed3ec7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21445c9c-5a8d-449e-b739-c09c874959d5",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_25c14c8f9534e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aus2-docs-a77d5715ba591835",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_59720a15da2c59": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ac044c6c5f2169e7b",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_619a92f4a964d9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2355d75a-2ee5-4850-b50c-14b9baa4e33a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
