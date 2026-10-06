@@ -984,23 +984,42 @@ def test_runner_lock_without_write_access_reports_the_unusable_lock(monkeypatch,
         bench.run_cell.body(Context())
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 to 3.13")
-def test_runner_lock_is_created_writable_for_every_user(monkeypatch, tmp_path) -> None:
-    """The lock file is left writable for others even under a restrictive umask."""
-    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "3"\n', encoding="utf-8")
-    monkeypatch.setattr(bench, "ROOT", tmp_path)
-    monkeypatch.setattr(bench, "STATE", tmp_path / ".netbox/bench")
-    monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
-    monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
-    monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "commit")
-    monkeypatch.setattr(bench, "CellStack", lambda: (_ for _ in ()).throw(BenchmarkError("stop")))
-    previous = os.umask(0o077)
+def process_running(pid: int) -> bool:
+    """Return whether the process is alive; a process that vanishes while being read has finished."""
     try:
-        with contextlib.suppress(BenchmarkError):
-            bench.run_cell.body(Context())
-    finally:
-        os.umask(previous)
-    assert bench.RUNNER_LOCK.stat().st_mode & 0o777 == 0o666
+        return Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split()[2] != "Z"
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 to 3.13")
+def test_runner_lock_refuses_a_symbolic_link_and_keeps_the_target_mode(monkeypatch, tmp_path) -> None:
+    """A link at the lock path is refused and the file it points to is not changed."""
+    target = tmp_path / "victim"
+    target.write_text("data", encoding="utf-8")
+    target.chmod(0o600)
+    link = tmp_path / "linked.lock"
+    link.symlink_to(target)
+    monkeypatch.setattr(bench, "STATE", tmp_path / ".netbox/bench")
+    monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
+    monkeypatch.setattr(bench, "RUNNER_LOCK", link)
+    with pytest.raises(BenchmarkError, match=r"cannot open .*linked\.lock"):
+        bench.run_cell.body(Context())
+    assert target.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 to 3.13")
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+def test_runner_lock_owned_by_another_user_gives_a_clear_error(monkeypatch, tmp_path) -> None:
+    """A lock file without write access for this user names the lock path."""
+    lock = tmp_path / "other-user.lock"
+    lock.write_text("", encoding="utf-8")
+    lock.chmod(0o444)
+    monkeypatch.setattr(bench, "STATE", tmp_path / ".netbox/bench")
+    monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
+    monkeypatch.setattr(bench, "RUNNER_LOCK", lock)
+    with pytest.raises(BenchmarkError, match=r"cannot open .*other-user\.lock"):
+        bench.run_cell.body(Context())
 
 
 @pytest.mark.parametrize("phase", ["compose", "after-compose", "cleanup"])
@@ -1084,11 +1103,11 @@ def test_real_invoke_deadline_kills_grandchild_in_command_group(monkeypatch, tmp
         assert time.monotonic() - started < 4
         assert child_pid.exists(), "the command must spawn its grandchild before the deadline"
         assert processes[0].returncode is not None
-        stat = Path(f"/proc/{int(child_pid.read_text())}/stat")
+        pid = int(child_pid.read_text())
         deadline = time.monotonic() + 1
-        while stat.exists() and stat.read_text(encoding="utf-8").split()[2] != "Z" and time.monotonic() < deadline:
+        while process_running(pid) and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert not stat.exists() or stat.read_text(encoding="utf-8").split()[2] == "Z", "grandchild is still running"
+        assert not process_running(pid), "grandchild is still running"
     finally:
         for process in processes:
             with contextlib.suppress(ProcessLookupError):
@@ -1245,10 +1264,9 @@ def test_interrupted_v2_sync_kills_session_and_reaps_process(monkeypatch, tmp_pa
         assert not (runtime.Path("/proc") / str(process.pid)).exists()
         pid = int(child_pid.read_text())
         deadline = time.monotonic() + 3
-        stat = runtime.Path(f"/proc/{pid}/stat")
-        while stat.exists() and stat.read_text().split()[2] != "Z" and time.monotonic() < deadline:
+        while process_running(pid) and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert not stat.exists() or stat.read_text().split()[2] == "Z"
+        assert not process_running(pid)
     finally:
         for process in processes:
             with contextlib.suppress(ProcessLookupError):
@@ -1357,8 +1375,7 @@ def test_setup_interrupt_stops_sleeping_grandchild_and_records_reason(monkeypatc
 
         @staticmethod
         def close() -> None:
-            stat = Path(f"/proc/{int(child_pid.read_text())}/stat")
-            assert not stat.exists() or stat.read_text(encoding="utf-8").split()[2] == "Z", "cleanup raced a live child"
+            assert not process_running(int(child_pid.read_text())), "cleanup raced a live child"
             assert processes[0].poll() is not None
 
     monkeypatch.setattr(subprocess, "Popen", popen)
@@ -1377,11 +1394,11 @@ def test_setup_interrupt_stops_sleeping_grandchild_and_records_reason(monkeypatc
         assert row["status"] == "failed"
         assert row["wall_seconds"] is None
         assert "interrupted by the user" in row["error"]
-        stat = Path(f"/proc/{int(child_pid.read_text())}/stat")
+        pid = int(child_pid.read_text())
         deadline = time.monotonic() + 2
-        while stat.exists() and stat.read_text(encoding="utf-8").split()[2] != "Z" and time.monotonic() < deadline:
+        while process_running(pid) and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert not stat.exists() or stat.read_text(encoding="utf-8").split()[2] == "Z"
+        assert not process_running(pid)
     finally:
         for process in processes:
             with contextlib.suppress(ProcessLookupError):
