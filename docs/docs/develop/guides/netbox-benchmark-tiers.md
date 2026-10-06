@@ -50,5 +50,5 @@ A marker in an existing tag's unmapped slug blocks a second mutation without add
 mapped tag. Restore before another run; `--force` reapplies the same updates and leaves
 already completed creates and deletes in place; its expected file describes the intended
 mutations, rather than new work on that rerun. A failed mutation leaves a `.partial.json`
-file and the marker, so restore the dump before retrying. The benchmark runner is a
-separate change.
+file and the marker, so restore the dump before retrying. Run cells with the
+[manual benchmark runner](netbox-benchmark-runner.md).
