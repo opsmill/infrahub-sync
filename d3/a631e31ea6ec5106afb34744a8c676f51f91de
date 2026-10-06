@@ -1,0 +1,25 @@
+changelog/+image-candidate-reuse.fixed.md
+  s_b6beafb210efc2::t_5d7db8fff1dbd5 4
+changelog/214.added.md
+  s_b6beafb210efc2::t_7d8976d0d477c3 5
+changelog/+container-image.added.md
+  s_b6beafb210efc2::t_55144681280866 5
+changelog/+local-dev-stack.added.md
+  s_b6beafb210efc2::t_a74f2ca40759c5 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d3a631e31ea6ec5106afb34744a8c676f51f91de",
+  "prompts": {},
+  "sessions": {
+    "s_b6beafb210efc2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63101565-9fbd-4a54-ace3-a114dcc54179",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
