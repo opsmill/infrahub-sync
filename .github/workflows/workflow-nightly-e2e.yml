@@ -34,7 +34,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Match the candidate workflow's exact-checkout and merged-ancestor guard.
+      # Test exactly the requested commit, and only one already merged into feature/v3-develop.
       - name: "Refuse an abbreviated, different, or unmerged commit"
         id: sha_guard
         env:
@@ -193,7 +193,7 @@ jobs:
     steps:
       - name: "Check out the requested commit"
         id: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           ref: ${{ inputs.sha }}
           fetch-depth: 0
@@ -229,7 +229,7 @@ jobs:
           fi
 
       - name: "Install uv"
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
           version: latest
           python-version: "3.13"
@@ -251,7 +251,7 @@ jobs:
 
       - name: "Upload the diagnostics of a failed Compose case"
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: nightly-compose-diagnostics
           path: .diagnostics/
