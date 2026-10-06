@@ -60,13 +60,13 @@ git init
 SYNC_AGENT_PROJECT="$(pwd -P)"
 mkdir -p .agents/skills drafts
 git clone --no-checkout https://github.com/opsmill/infrahub-sync.git source
-git -C source checkout --detach 77681ddc95c520438a97c1eab0241a6d8c0188da
+git -C source checkout --detach 50a37242007956f91553a2c9ecaee501b7a08022
 git -C source rev-parse HEAD
 export AGENT_SKILLS_DIR="$SYNC_AGENT_PROJECT/.agents/skills"
 cd source/deploy/compose
 ```
 
-Expect `77681ddc95c520438a97c1eab0241a6d8c0188da` from `rev-parse HEAD`.
+Expect `50a37242007956f91553a2c9ecaee501b7a08022` from `rev-parse HEAD`.
 Stop if a command fails or the revision differs. This revision contains both
 skill directories and their documentation.
 
@@ -113,7 +113,7 @@ configuration-package.mdx, reference/config.mdx, reference/schema-mapping.mdx,
 and tutorials/netbox-to-existing-infrahub.mdx. You may inspect the adapter
 setting declarations in
 OWNED_PROJECT_PATH/source/infrahub_sync/configuration/capabilities.py.
-This is source revision 77681ddc95c520438a97c1eab0241a6d8c0188da;
+This is source revision 50a37242007956f91553a2c9ecaee501b7a08022;
 report source checks separately from checks against my installed deployment.
 
 Use configuration name netbox-agent-draft. Source adapter: netbox, URL
@@ -185,4 +185,4 @@ review the saved plan. For approved destination writes, follow the
 [Compose operator sequence](./compose-deployment.mdx#the-operator-sequence).
 The agent's local draft is preparation for those checks, not a successful sync.
 
-[skills-install]: https://github.com/opsmill/infrahub-sync/blob/77681ddc95c520438a97c1eab0241a6d8c0188da/deploy/compose/skills/README.md#install
+[skills-install]: https://github.com/opsmill/infrahub-sync/blob/50a37242007956f91553a2c9ecaee501b7a08022/deploy/compose/skills/README.md#install

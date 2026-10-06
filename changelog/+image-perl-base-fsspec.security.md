@@ -1,0 +1,1 @@
+The Sync image now installs the fixed Debian `perl-base` release (5.36.0-7+deb12u4) and locks `fsspec` 2026.9.0 (the fix is in 2026.6.0), which clear the findings that failed the image vulnerability scan.

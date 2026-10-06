@@ -53,7 +53,9 @@ uv run invoke start
 
 `start` builds the image only when no `infrahub-sync:dev` image exists. If you already
 built one from an older checkout, `start` reuses it without a warning, so run `build`
-first whenever you test a new revision.
+first whenever you test a new revision. `build` always replaces the `infrahub-sync:dev`
+tag, including an image that another checkout built, so a second checkout that builds
+changes the image the first checkout starts.
 
 | Service | Address |
 | --- | --- |
@@ -81,6 +83,13 @@ is kept.
 This path imports the official NetBox demo data from a local NetBox into a local
 Infrahub branch. It takes about 30 minutes, most of it the apply. Run every command
 from the repository root.
+
+The steps use Infrahub on port 8080. If another process holds that port, set
+`PREVIEW_INFRAHUB_PORT` in `development/preview.local.env` (Git ignores it) before step 1.
+If the preview is already running, run `uv run invoke preview.down` first and
+`uv run invoke preview.up` after the change. Then use your port in place of `8080` in
+every host-side address and browser URL below. See
+[Change a port or a token](#change-a-port-or-a-token).
 
 1. Start a local Infrahub. `preview.up` also starts a second Prefect, PostgreSQL,
    object store, and Sync API on port 8010. This path uses only its Infrahub, on
@@ -127,7 +136,9 @@ from the repository root.
     ```
 
 5. Give the worker both tokens, then start the service again. `start` recreates the
-   API and worker with the new environment:
+   API and worker with the new environment. Keep both exports, the Infrahub token from
+   step 2 and the NetBox token here, in the shell that runs `invoke start`. If you use
+   another shell, export both again there:
 
     ```bash
     export INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN=nbt_devnetboxkey.devnetboxseedtoken0000000000000000000000
@@ -151,7 +162,12 @@ from the repository root.
 
    The copy, `.netbox/from-netbox.local.yml`, is `examples/netbox_to_infrahub/package.yml`
    with two URLs changed: the source is `http://netbox:8080`, and the destination is
-   `http://host.docker.internal:8080`. Inside the worker container, `localhost` is the
+   `http://host.docker.internal:8080`. With `--dev-stack`, the task reads
+   `PREVIEW_INFRAHUB_PORT` from the preview settings and writes that port in the
+   destination, so a port you set earlier gives `http://host.docker.internal:<port>`.
+   With loopback publication, those are the addresses the worker container uses. Your host uses
+   `http://localhost:<port>` for the same Infrahub. If you use the Linux gateway binding described
+   below, both addresses use that gateway and the chosen port. Inside the worker container, `localhost` is the
    container itself. The worker uses the URLs in the registered package; environment
    variables such as `INFRAHUB_ADDRESS` do not change them.
 
@@ -166,7 +182,14 @@ from the repository root.
    then answers on that address only, so the tasks and the host processes use
    `http://<gateway>:8080`, and you open the UI there instead of `localhost`.
 
-   Record the `config_id` from the output. If you change the package later, register
+   The output includes a `config_id` field. A synthetic example, in the format the command prints:
+
+   ```text
+   config_id: 20261005T1200-1234abcd
+   ```
+
+   Your own command prints a different value, and it is not the package name. Use the value your command
+   printed in place of `<config-id>` in the commands below. If you change the package later, register
    the change with `configs version <config-id> <package>`. Registering changed content
    with `configs register` creates a new configuration ID at version 1.
 
