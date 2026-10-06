@@ -54,8 +54,9 @@ this checkout and uses the existing start tasks for its API and worker. v3 requi
 `INFRAHUB_SYNC_API_TOKEN` in your environment, matching the local stack's API principal.
 v2 uses its isolated release environment and does not require the Sync API or its token.
 Sync lifecycle commands explicitly select `infrahub-sync-dev` and this checkout's
-`compose.yaml`. These explicit options take precedence over `COMPOSE_PROJECT_NAME`
-and `COMPOSE_FILE` in your environment.
+`compose.yaml`. The runner refuses to start a cell, before any Docker command or database
+reset, when `COMPOSE_PROJECT_NAME` or `COMPOSE_FILE` in your environment names a different
+project or Compose file. Unset them before you run a cell.
 One host lock covers the shared Docker projects across checkouts, including cleanup.
 Starting another cell while that lock is held fails before any database reset.
 The runner creates an isolated destination stack from the preview Compose files, pinned to
