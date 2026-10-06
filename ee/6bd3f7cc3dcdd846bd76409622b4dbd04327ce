@@ -1,0 +1,29 @@
+.github/workflows/ci-docker-image.yml
+  s_b6beafb210efc2::t_f684b302a22b31 89-91,93-94
+  s_b6beafb210efc2::t_2f48d49ebc5303 181-183
+  s_b6beafb210efc2::t_f2572c7c5e7aab 374
+  s_b6beafb210efc2::t_ed35b8d43ab876 369-370,373,375-377
+.github/file-filters.yml
+  s_b6beafb210efc2::t_f3cf642318e310 73-77,83-84,89
+tests/test_workflow_contracts.py
+  s_b6beafb210efc2::t_dc5eef301e5f6e 1968-2011
+  s_b6beafb210efc2::t_04e347ec11eb82 972-974
+  s_b6beafb210efc2::t_0fee392bf2213b 979-980
+  s_b6beafb210efc2::t_a79ef7b07270e9 897
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee6bd3f7cc3dcdd846bd76409622b4dbd04327ce",
+  "prompts": {},
+  "sessions": {
+    "s_b6beafb210efc2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63101565-9fbd-4a54-ace3-a114dcc54179",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
