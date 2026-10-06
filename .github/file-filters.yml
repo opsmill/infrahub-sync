@@ -28,6 +28,18 @@ development_files: &development_files
 # can break the unit or base-install jobs without touching `infrahub_sync/**`.
 examples_files: &examples_files
   - "examples/**"
+# Inputs to tests/test_release_label_contract.py, so a change to the label
+# gate or the configuration it asserts still runs the unit tests. This file is
+# listed too, so a change to the routing itself runs them.
+release_label_files: &release_label_files
+  - "scripts/check_release_labels.py"
+  - ".github/file-filters.yml"
+  - ".github/version-drafter.yml"
+  - ".github/labels.yml"
+  - ".github/dependabot.yml"
+  - ".github/workflows/release-label-check.yml"
+  - ".github/workflows/trigger-push-stable.yml"
+  - ".github/workflows/update-infrahub-sdk.yml"
 
 github_workflows: &github_workflows
   - ".github/workflows/*.yml"
@@ -49,6 +61,7 @@ sync_all:
   - *sync_files
   - *test_files
   - *development_files
+  - *release_label_files
   - *uv_files
   - *contract_declarations
   - *examples_files

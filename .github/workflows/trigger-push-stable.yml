@@ -220,14 +220,13 @@ jobs:
           # twenty-five pushes a month, and the pull-request gate does not in
           # fact guarantee a fragment exists: changelog-check.yml exempts
           # `ci/skip-changelog` and dependabot, and .github/dependabot.yml
-          # labels its pull requests `type/housekeeping`, which
-          # .github/version-drafter.yml counts as a patch bump. A week of
+          # labels its pull requests `changes/patch`. A week of
           # dependency updates therefore reaches this step with a new version
           # and no fragments, through no author's mistake — hard-failing would
           # redden every push to `main` until someone wrote a fragment nobody
           # owed. Nothing is lost by declining: no release pull request opens,
-          # so release-publish.yml has nothing to tag, and the next push after
-          # a real fragment lands prepares the release normally.
+          # so release-publish.yml has nothing to tag, and the next preparation
+          # after a real fragment lands proceeds normally.
           if [ ${#KEPT[@]} -eq 0 ]; then
             MSG="No news fragments under changelog/ — nothing to release, so"
             MSG="${MSG} no release pull request was prepared for ${VERSION}."

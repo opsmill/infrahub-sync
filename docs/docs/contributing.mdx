@@ -323,8 +323,9 @@ vale docs/docs/contributing.mdx
 Release notes are written by contributors rather than generated from pull request titles. Every pull request must add a news fragment under `changelog/`, including pull requests into `feature/v3-develop`.
 
 The `Changelog` workflow (`.github/workflows/changelog-check.yml`) checks this only for pull
-requests into `main`, and it is disabled at present: it runs only when dispatched manually.
-Reviewers check for the fragment.
+requests into `main`, and it is disabled at present: its `pull_request` trigger is commented
+out, and a manual dispatch fails because it has no pull request to check. Reviewers check for
+the fragment.
 
 Create one with towncrier, naming it after the issue or pull request number:
 
@@ -334,7 +335,7 @@ uv run --extra dev towncrier create -c "Short description of what changed." 123.
 
 The file must be a direct child of `changelog/` named `<id>.<type>.md`, where the type is one of `security`, `removed`, `deprecated`, `added`, `changed`, `fixed`, or `housekeeping`. Use `+` as the identifier when the change has no issue number, for example `+short-slug.housekeeping.md`.
 
-Nested paths and unknown types are ignored by towncrier, so the check rejects them rather than let your entry disappear at release time.
+Nested paths and unknown types are ignored by towncrier, so reviewers reject them rather than let your entry disappear at release time.
 
 If a change needs no entry, for example a dependency bump or a typo fix, a maintainer can label the pull request `ci/skip-changelog`.
 

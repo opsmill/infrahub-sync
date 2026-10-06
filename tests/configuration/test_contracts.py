@@ -2317,6 +2317,15 @@ def test_wrong_adapter_role_is_refused() -> None:
         validate_package_credentials(package)
 
 
+def test_peering_manager_destination_is_refused() -> None:
+    data = _package().model_dump(mode="json")
+    data["configuration"]["destination"] = {"name": "peeringmanager", "settings": {}}
+    package = ConfigurationPackage.model_validate(data)
+
+    with pytest.raises(CredentialConfigurationError, match="does not support the destination role"):
+        validate_package_credentials(package)
+
+
 def test_findings_use_deterministic_interface_order() -> None:
     findings = [
         ValidationFinding(code="optional-field", severity="error", location="/z", message="optional"),

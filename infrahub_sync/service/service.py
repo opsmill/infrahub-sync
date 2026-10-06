@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from infrahub_sync.cache.paths import generate_run_id
 from infrahub_sync.configuration import ConfigurationPackageParseError, parse_configuration_package
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
+from infrahub_sync.configuration.validation import credential_namespace_finding
 from infrahub_sync.execution import collect_secret_values, redact, sanitize_exception_chain
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.product_store import (
@@ -234,6 +235,14 @@ class RunService:
             raise self._error(503, "configuration-version-invalid", "the registered configuration version is invalid")
         if package.configuration.store is not None:
             raise self._error(422, UNSUPPORTED_STORE_REASON, UNSUPPORTED_STORE_MESSAGE)
+        for name, reference in package.credentials.items():
+            if (finding := credential_namespace_finding(name, reference, secrets=self._secrets)) is not None:
+                raise self._error(
+                    422,
+                    finding.code,
+                    f"{finding.message}; register a new version with prefixed identifiers "
+                    "and recreate saved plans against it",
+                )
         return package.configuration.name, stored.package_checksum
 
     async def verify_run(
