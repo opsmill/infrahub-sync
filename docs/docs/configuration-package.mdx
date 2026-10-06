@@ -63,6 +63,19 @@ set it in `.env` and run `docker compose up -d --wait`; see
 [Reading from NetBox or Nautobot](./compose-deployment.mdx#reading-from-netbox-or-nautobot).
 Registration refuses a package that contains a literal credential value.
 
+The API checks every `env` declaration in previously registered versions, including
+unused declarations. An invalid identifier returns HTTP 422 with error code
+`malformed-credential-reference` before a new run is created or worker execution is
+submitted. This check also applies to verification and apply of existing runs, even when
+only the source credential is invalid and apply would not read it. Retrying a request whose
+worker submission was not recorded as accepted also checks the version. Retrying an already
+accepted request with the same idempotency key returns its stored response.
+
+Register a new version with identifiers that start with `INFRAHUB_SYNC_CREDENTIAL_`
+followed by a nonempty name made only of ASCII letters, digits, and underscores. Recreate affected saved plans by planning from the new version
+before you verify or apply them. Existing versions and their saved plans are not rewritten.
+The API checks declarations without resolving credential values.
+
 ## Connection settings
 
 The worker connects to the URLs declared in the registered package. Environment variables

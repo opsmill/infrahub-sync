@@ -1,0 +1,1 @@
+Invalid environment credential declarations, including unused and source-only declarations, now prevent saved-plan verification, apply, and retries of unaccepted submissions (accepted responses still replay); register a new version with prefixed identifiers and recreate affected saved plans from that version.

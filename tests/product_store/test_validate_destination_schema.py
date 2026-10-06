@@ -262,9 +262,20 @@ def test_a_wrong_typed_opt_in_is_a_request_refusal(tmp_path: Path) -> None:
 
 def test_the_opt_in_against_a_non_declaring_destination_reports_both_gate_findings(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # No shipped adapter accepts the destination role without declaring schema validation and
+    # writes, so the destination is a patched declaration of infrahub that declares neither.
+    table = dict(BUILTIN_ADAPTER_CAPABILITIES)
+    table["infrahub"] = replace(
+        table["infrahub"],
+        supported_destination_write_operations=frozenset(),
+        destination_schema_validation=False,
+        destination_schema_accessor=None,
+    )
+    monkeypatch.setattr(validation_module, "BUILTIN_ADAPTER_CAPABILITIES", table)
+    monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
     data = package_data()
-    data["configuration"]["destination"]["name"] = "peeringmanager"
     config_id, projection = _registered(tmp_path, data)
 
     report = _validate(config_id, projection, destination_schema=DestinationSchemaOptions())
