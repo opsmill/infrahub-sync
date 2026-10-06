@@ -7,6 +7,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from diffsync import Adapter, DiffSyncModel
+from diffsync.exceptions import ObjectNotFound
 from infrahub_sdk import (
     Config,
     InfrahubClientSync,
@@ -526,8 +527,11 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             raise err
 
         unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
-        peer_item = self.store.get(model=peer_kind, identifier=unique_id)
-        if not peer_item:
+        try:
+            peer_item = self.store.get(model=peer_kind, identifier=unique_id)
+        except ObjectNotFound:
+            # The peer's kind is not loaded yet, for example the parent of a node in a
+            # hierarchy of the same kind: add the peer now, model_loader updates it later.
             peer_item = peer_model(**peer_data)
             self.update_or_add_model_instance(peer_item)
             self.client.store.set(key=unique_id, node=peer_node)
