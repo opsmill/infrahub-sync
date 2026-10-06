@@ -211,12 +211,24 @@ def _shared_validator_package_data() -> dict[str, Any]:
     """One package-level mapping defect judged by two adapters sharing one validator."""
     data = package_data()
     data["configuration"]["source"] = {"name": "genericrestapi", "settings": {"url": "https://api.example"}}
-    data["configuration"]["destination"] = {"name": "peeringmanager", "settings": {"url": "https://pm.example"}}
+    data["configuration"]["destination"] = {"name": "infrahub", "settings": {"url": "https://ih.example"}}
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": "https://evil.example/devices"}]
     return data
 
 
-def test_one_mapping_defect_judged_by_two_adapters_yields_one_finding() -> None:
+def _share_the_rest_validator(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the destination-capable infrahub adapter the validator genericrestapi uses.
+
+    No shipped adapter that accepts the destination role carries that validator, so the
+    shared-validator collision is built on a patched table.
+    """
+    declared = dict(BUILTIN_ADAPTER_CAPABILITIES)
+    declared["infrahub"] = replace(declared["infrahub"], validator=declared["genericrestapi"].validator)
+    monkeypatch.setattr(validation, "BUILTIN_ADAPTER_CAPABILITIES", declared)
+
+
+def test_one_mapping_defect_judged_by_two_adapters_yields_one_finding(monkeypatch: pytest.MonkeyPatch) -> None:
+    _share_the_rest_validator(monkeypatch)
     # _validate_relative_rest_mapping_endpoints is one function object serving both adapters and
     # it interpolates the adapter name, so the two findings differ only in message. The defect is
     # a package-level schema_mapping entry and is role-independent; first in execution order wins.
@@ -341,7 +353,7 @@ def test_the_narrow_unknown_adapter_type_is_raised_and_caught_in_one_module_only
 
 def _capabilities_with(
     validator: Callable[..., object],
-    adapter_name: str = "peeringmanager",
+    adapter_name: str = "infrahub",
 ) -> dict[str, AdapterConfigurationCapabilities]:
     declared = dict(BUILTIN_ADAPTER_CAPABILITIES)
     declared[adapter_name] = replace(declared[adapter_name], validator=validator)
@@ -350,9 +362,9 @@ def _capabilities_with(
 
 def _both_roles_package_data(mapping: str = "https://evil.example/devices") -> dict[str, Any]:
     data = package_data()
-    settings = {"url": "https://pm.example", "token": {"$credential": "netbox-token"}}
-    data["configuration"]["source"] = {"name": "peeringmanager", "settings": settings}
-    data["configuration"]["destination"] = {"name": "peeringmanager", "settings": dict(settings)}
+    settings = {"url": "https://ih.example", "token": {"$credential": "netbox-token"}}
+    data["configuration"]["source"] = {"name": "infrahub", "settings": settings}
+    data["configuration"]["destination"] = {"name": "infrahub", "settings": dict(settings)}
     data["configuration"]["schema_mapping"] = [{"name": "Device", "mapping": mapping}]
     return data
 
@@ -949,7 +961,8 @@ def _collision_prone_package_data() -> dict[str, Any]:
     return data
 
 
-def test_the_collision_prone_package_reports_each_defect_once() -> None:
+def test_the_collision_prone_package_reports_each_defect_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    _share_the_rest_validator(monkeypatch)
     assert _triples(_collision_prone_package_data()) == [
         ("unsafe-rest-request-endpoint", "/configuration/schema_mapping/0/mapping"),
         ("undeclared-setting", "/configuration/source/settings/api_key"),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import operator
 import re
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, ClassVar, Union
 
 import pydantic
@@ -48,6 +49,34 @@ class SandboxedNativeTemplate(NativeTemplate):
 
 
 SandboxedNativeEnvironment.template_class = SandboxedNativeTemplate
+
+
+def _reject_lazy_key(key: Any) -> None:
+    """Refuse a dictionary key that is, or holds, a lazy iterator: it cannot be consumed into a hashable key."""
+    if isinstance(key, Iterator):
+        msg = "a dictionary key is a lazy iterator; convert it to a hashable value, such as with the join filter"
+        raise TypeError(msg)
+    if isinstance(key, (tuple, frozenset)):
+        for nested in key:
+            _reject_lazy_key(nested)
+
+
+def _materialize_lazy(value: Any) -> Any:
+    """Consume lazy iterators, at any depth, into lists; keep list/tuple/dict container types; refuse them in sets."""
+    if isinstance(value, Iterator):
+        return [_materialize_lazy(nested) for nested in value]
+    if isinstance(value, dict):
+        for key in value:
+            _reject_lazy_key(key)
+        return {key: _materialize_lazy(nested) for key, nested in value.items()}
+    if isinstance(value, list):
+        return [_materialize_lazy(nested) for nested in value]
+    if isinstance(value, tuple):
+        return tuple(_materialize_lazy(nested) for nested in value)
+    if isinstance(value, (set, frozenset)):
+        for member in value:
+            _reject_lazy_key(member)
+    return value
 
 
 def _raise_if_undefined(value: Any) -> None:
@@ -389,6 +418,11 @@ class DiffSyncModelMixin:
 
             # Render with the item as context → returns a native Python value
             transformed_value = template.render(**item)
+
+            # Filters such as map and select return a lazy generator, possibly nested inside
+            # other results. Consume them here so a missing key raises inside this method and
+            # the field holds lists, not generators.
+            transformed_value = _materialize_lazy(transformed_value)
 
             # Native rendering returns a lone expression's value without str(), so a missing
             # key or a refused attribute comes back as an Undefined instead of raising.

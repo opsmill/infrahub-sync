@@ -204,9 +204,11 @@ def test_interrupted_reload_cannot_advance_cursor_against_retained_snapshot(
 
     rows["Device"][0]["description"] = "new"
     interrupt = interrupt_type("reload interrupted")
+    events: list[str] = []
 
     def reload() -> None:
         """Update the stored row and optionally interrupt extraction."""
+        events.append("load")
         row = rows["Device"][0]
         source.update_or_add_model_instance(
             _Device(name=row["name"], description=row["description"], local_id=row["local_id"])
@@ -218,19 +220,24 @@ def test_interrupted_reload_cannot_advance_cursor_against_retained_snapshot(
         """Interrupt snapshot writing before any bytes are written."""
         raise interrupt
 
+    def safe_cursor_before_load(_resource: str) -> CursorState:
+        """Record when the bound is taken and return one later than the saved bound."""
+        events.append("bound")
+        return CursorState(CursorTier.TIMESTAMP, (CHANGE_TIME + timedelta(seconds=10)).isoformat(), safe=True)
+
     with monkeypatch.context() as patch:
-        patch.setattr(
-            source,
-            "safe_cursor_before_load",
-            lambda _resource: CursorState(
-                CursorTier.TIMESTAMP, (CHANGE_TIME + timedelta(seconds=10)).isoformat(), safe=True
-            ),
-        )
+        patch.setattr(source, "safe_cursor_before_load", safe_cursor_before_load)
         patch.setattr(source, "load", reload)
         patch.setattr("infrahub_sync.cache.parquet_io.write_resource_side", interrupt_snapshot)
         with pytest.raises(interrupt_type) as caught:
             load()
         assert caught.value is interrupt
+
+    # A bound taken after the load would cover changes the snapshot never saw. At the
+    # load stage the interrupt arrives before such a bound exists, so only the order
+    # shows it; at the snapshot stage the bound comes first only when taken before.
+    assert events[0] == "bound"
+    assert events.index("load") > events.index("bound")
 
     first.persist_cursors_for_run(side=side)
     assert cursor_path.read_bytes() == saved_cursors
@@ -305,6 +312,8 @@ def test_partial_snapshot_write_keeps_the_old_cursor_usable(tmp_path: Path, monk
             first.source_load()
         assert caught.value is interrupt
     assert writes == ["Device"]
+    # Every resource's bound must be taken before the first query.
+    assert reloaded.calls[:2] == [("bound", "Device"), ("bound", "Empty")]
 
     first.persist_cursors_for_run(side="A")
     assert cursor_path.read_bytes() == saved_cursors

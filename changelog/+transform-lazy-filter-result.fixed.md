@@ -1,0 +1,1 @@
+Fix schema mapping transforms that return a lazy filter result, such as `map(attribute=...)` without `| list`: the result is now stored as a list, and a missing key fails the transform instead of surfacing later.

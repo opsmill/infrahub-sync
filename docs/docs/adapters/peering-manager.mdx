@@ -20,7 +20,7 @@ Peering Manager manages and documents the peering sessions and interconnections 
 
 - Peering Manager → Infrahub
 
-Peering Manager is a source only. A package can name `peeringmanager` as its destination and register, but the Sync worker refuses the run before it reads a schema: a registered run needs a destination that supports schema discovery, and only Infrahub does. The repository still contains an `examples/infrahub_to_peering-manager/` mapping, which a registered run cannot use.
+Peering Manager is a source only. Registration refuses a package that names `peeringmanager` as its destination, with the capability error. The repository still contains an `examples/infrahub_to_peering-manager/` mapping, which a registered run cannot use.
 
 ## Schema
 

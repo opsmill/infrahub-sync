@@ -11,7 +11,7 @@ import pytest
 from jinja2.exceptions import SecurityError
 from jinja2.sandbox import unsafe
 
-from infrahub_sync import DiffSyncModelMixin
+from infrahub_sync import DiffSyncModelMixin, _materialize_lazy  # noqa: PLC2701
 
 if TYPE_CHECKING:
     from jinja2 import Environment
@@ -61,6 +61,75 @@ def test_transform_refuses_a_missing_key(expression: str) -> None:
         DiffSyncModelMixin.apply_transform(item=item, transform_expr=expression, field="result")
 
     assert "result" not in item
+
+
+def test_transform_stores_a_lazy_filter_result_as_a_list() -> None:
+    item: dict[str, Any] = {"vlans": [{"vid": 10}, {"vid": 20}]}
+
+    DiffSyncModelMixin.apply_transform(item=item, transform_expr="{{ vlans | map(attribute='vid') }}", field="result")
+
+    assert item["result"] == [10, 20]
+    assert type(item["result"]) is list
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["{{ items | map(attribute='missing') }}", "{{ items | selectattr('missing') }}"],
+)
+def test_transform_refuses_a_lazy_filter_result_with_a_missing_key(expression: str) -> None:
+    item: dict[str, Any] = {"items": [{}]}
+
+    with pytest.raises(ValueError, match=r"Failed to transform 'result'.*no attribute 'missing'"):
+        DiffSyncModelMixin.apply_transform(item=item, transform_expr=expression, field="result")
+
+    assert "result" not in item
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["{{ items | map('map', attribute='missing') }}", "{{ items | map('selectattr', 'missing') }}"],
+)
+def test_transform_refuses_a_composed_lazy_filter_result_with_a_missing_key(expression: str) -> None:
+    item: dict[str, Any] = {"items": [[{}]]}
+
+    with pytest.raises(ValueError, match=r"Failed to transform 'result'.*no attribute 'missing'"):
+        DiffSyncModelMixin.apply_transform(item=item, transform_expr=expression, field="result")
+
+    assert "result" not in item
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "{{ {(items | map(attribute='missing')): 'value'} }}",
+        "{{ {(items | selectattr('missing')): 'value'} }}",
+    ],
+)
+def test_transform_refuses_a_lazy_filter_result_used_as_a_dictionary_key(expression: str) -> None:
+    item: dict[str, Any] = {"items": [{}], "result": "kept"}
+
+    with pytest.raises(ValueError, match=r"Failed to transform 'result'.*lazy iterator"):
+        DiffSyncModelMixin.apply_transform(item=item, transform_expr=expression, field="result")
+
+    assert item["result"] == "kept"
+
+
+@pytest.mark.parametrize("container", [set, frozenset])
+def test_materialize_lazy_refuses_a_lazy_iterator_inside_a_set(container: type) -> None:
+    """A lazy iterator held by a set cannot be consumed into a member, so it is refused."""
+    with pytest.raises(TypeError, match="lazy iterator"):
+        _materialize_lazy(container({iter([1])}))
+
+
+def test_transform_stores_a_composed_lazy_filter_result_as_nested_lists() -> None:
+    item: dict[str, Any] = {"items": [[{"vid": 10}], [{"vid": 20}]]}
+
+    DiffSyncModelMixin.apply_transform(
+        item=item, transform_expr="{{ items | map('map', attribute='vid') }}", field="result"
+    )
+
+    assert item["result"] == [[10], [20]]
+    assert type(item["result"][0]) is list
 
 
 def test_transform_keeps_model_custom_filters() -> None:

@@ -1,0 +1,1 @@
+Published plan reviews now mask the whole numeric value when its JSON spelling contains a collected secret, preventing numeric-token corruption and allowing you to retrieve plans that previously returned `plan-unavailable`.

@@ -86,11 +86,33 @@ def test_a_file_that_lost_its_pin_leaves_the_tree_untouched(bump: ModuleType, tr
     assert {relative: (tree / relative).read_text(encoding="utf-8") for relative in bump.PINNED_FILES} == before
 
 
-@pytest.mark.parametrize("version", ["", "latest", "1.11", "1.11.0; rm -rf /", "v1.11.0"])
+@pytest.mark.parametrize(
+    "version",
+    ["", "latest", "1.11", "1.11.0; rm -rf /", "v1.11.0", "1.11.0b1", "1.11.0-rc1", "1.11.0..x"],
+)
 def test_a_malformed_version_is_refused(bump: ModuleType, tree: Path, version: str) -> None:
     """Dispatch payloads are untrusted, so only a release version is accepted."""
     with pytest.raises(bump.UpdateError, match="not a release version"):
         bump.update(tree, version, resolve=lambda _version: NEW_DIGEST)
+
+
+def test_a_release_version_is_accepted(bump: ModuleType, tree: Path) -> None:
+    """A plain X.Y.Z release passes the version check."""
+    assert bump.VERSION_PATTERN.fullmatch("1.11.0")
+    assert bump.update(tree, "1.11.0", resolve=lambda _version: NEW_DIGEST)
+
+
+def test_a_digest_file_that_lost_its_version_leaves_the_tree_untouched(bump: ModuleType, tree: Path) -> None:
+    """A changed digest must not hide a missing version in the same file."""
+    old_version, _ = bump.current_pin(tree)
+    drifted = tree / "development/docker-compose.infrahub.yml"
+    drifted.write_text(drifted.read_text(encoding="utf-8").replace(old_version, "0.0.1"), encoding="utf-8")
+    before = {relative: (tree / relative).read_bytes() for relative in bump.PINNED_FILES}
+
+    with pytest.raises(bump.UpdateError, match="does not carry the pinned version"):
+        bump.update(tree, "99.1.0", resolve=lambda _version: NEW_DIGEST)
+
+    assert {relative: (tree / relative).read_bytes() for relative in bump.PINNED_FILES} == before
 
 
 @pytest.mark.parametrize(

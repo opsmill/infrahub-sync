@@ -551,7 +551,7 @@ BUILTIN_ADAPTER_CAPABILITIES = MappingProxyType(
         ),
         "peeringmanager": AdapterConfigurationCapabilities(
             adapter_name="peeringmanager",
-            roles=_BOTH,
+            roles=_SOURCE_ONLY,
             allowed_settings=_GENERIC_REST_SETTINGS,
             credential_setting_paths=("token", "username", "password"),
             validator=_validate_relative_rest_mapping_endpoints,

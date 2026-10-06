@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     from .capabilities import AdapterConfigurationCapabilities, AdapterRole
+    from .models import CredentialReference
 
 # Absolute settings name where to connect; relative ones name a path beneath it. Applying one
 # rule to both would refuse every legitimate relative endpoint.
@@ -250,6 +251,24 @@ def _unbounded_settings_pointer(prefix: str, path: str) -> str:
     return prefix + "".join(f"/{_unbounded_component(component)}" for component in path.split("."))
 
 
+def credential_namespace_finding(
+    name: str, reference: CredentialReference, *, secrets: Sequence[str] = ()
+) -> ValidationFinding | None:
+    """Check the env namespace without resolving values or exposing the identifier."""
+    if reference.provider != "env" or _ENV_CREDENTIAL_IDENTIFIER.fullmatch(reference.identifier) is not None:
+        return None
+    return _accumulated(
+        code=_CODE_MALFORMED_CREDENTIAL_REFERENCE,
+        location=f"/credentials/{_rendered_component(name, secrets)}",
+        unbounded_location=f"/credentials/{_unbounded_component(name)}",
+        message=(
+            f"credential reference {_rendered_component(name, secrets)!r} names an "
+            "environment identifier outside the credential namespace; it must start "
+            f"with {ENV_CREDENTIAL_PREFIX!r} followed by a name"
+        ),
+    ).finding
+
+
 def _accumulate_reference_declarations(
     package: ConfigurationPackage, secrets: Sequence[str]
 ) -> list[_AccumulatedFinding]:
@@ -283,22 +302,8 @@ def _accumulate_reference_declarations(
                     ),
                 )
             )
-        elif reference.provider == "env" and _ENV_CREDENTIAL_IDENTIFIER.fullmatch(reference.identifier) is None:
-            # The namespace is the env provider's rule. The identifier is left out of the
-            # message like the one above: a value pasted in place of a name is the ordinary
-            # way this goes wrong.
-            accumulated.append(
-                _accumulated(
-                    code=_CODE_MALFORMED_CREDENTIAL_REFERENCE,
-                    location=location,
-                    unbounded_location=unbounded,
-                    message=(
-                        f"credential reference {_rendered_component(name, secrets)!r} names an "
-                        f"environment identifier outside the credential namespace; it must start "
-                        f"with {ENV_CREDENTIAL_PREFIX!r} followed by a name"
-                    ),
-                )
-            )
+        elif (finding := credential_namespace_finding(name, reference, secrets=secrets)) is not None:
+            accumulated.append(_AccumulatedFinding(finding=finding, legacy_message=finding.message))
     return accumulated
 
 

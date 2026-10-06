@@ -3489,8 +3489,8 @@ def _redacted_baseline(baseline: BaselineWriteback | None, secrets: Sequence[str
 def _redact_value(value: Any, secrets: Sequence[str], *, numbers: bool = False) -> Any:
     """Redact every string, and every mapping key, reachable from `value`.
 
-    With `numbers`, a number whose JSON text carries a secret is replaced by that text
-    redacted. Only a published document asks for it: a stored record keeps its typed fields.
+    With `numbers`, a number whose JSON text carries a secret is masked whole.
+    Only a published document asks for it: a stored record keeps its typed fields.
     """
     return _redact_ordered_value(value, redaction_order(secrets), numbers=numbers)
 
@@ -3502,7 +3502,7 @@ def _redact_ordered_value(value: Any, ordered: Sequence[str], *, numbers: bool) 
     if numbers and isinstance(value, (int, float)) and not isinstance(value, bool):
         text = json.dumps(value)
         cleaned = redact_ordered(text, ordered)
-        return value if cleaned == text else cleaned
+        return value if cleaned == text else REDACTED
     if isinstance(value, Mapping):
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
@@ -3555,19 +3555,40 @@ def _is_json_media_type(media_type: str) -> bool:
 
 
 def _redacted_json_bytes(data: bytes, secrets: Sequence[str]) -> bytes:
+    """Redact decoded JSON values using original and normalized number spellings."""
     # A decoded string can itself hold JSON text, such as a field that stores a serialized
     # document, so it is matched against the JSON string forms as well as the raw value.
     forms = json_string_forms(secrets)
     if not forms:
         # With no secret there is nothing to replace, so the document is not decoded.
         return data
+    number_redacted = False
+
+    def number_contains_secret(token: str, value: float) -> bool:
+        """Check the document's number spelling before conversion loses it."""
+        nonlocal number_redacted
+        if redact_ordered(token, forms) != token or _redact_ordered_value(value, forms, numbers=True) == REDACTED:
+            number_redacted = True
+            return True
+        return False
+
+    def parse_integer(token: str) -> int | str:
+        """Preserve integer values unless either spelling contains a secret."""
+        value = int(token)
+        return REDACTED if number_contains_secret(token, value) else value
+
+    def parse_decimal(token: str) -> float | str:
+        """Preserve float values unless either spelling contains a secret."""
+        value = float(token)
+        return REDACTED if number_contains_secret(token, value) else value
+
     try:
-        document = json.loads(data)
+        document = json.loads(data, parse_int=parse_integer, parse_float=parse_decimal)
     except (ValueError, RecursionError):
         # Declared JSON that does not parse gets the byte pass alone.
         return data
     sanitized = _redact_ordered_value(document, forms, numbers=True)
-    if sanitized == document:
+    if not number_redacted and sanitized == document:
         return data
     return json.dumps(sanitized, ensure_ascii=False, separators=(",", ":")).encode()
 

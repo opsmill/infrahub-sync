@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import unicodedata
 from contextlib import contextmanager
 from enum import Enum
 from math import isfinite
@@ -53,25 +54,13 @@ VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": l
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
-# Characters a terminal acts on instead of printing: C0 and C1 controls (ESC, CR, and
-# newline among them), DEL, and the bidirectional overrides and isolates that reorder
-# the text after them. Zero-width characters, direction marks, and the line and
-# paragraph separators are included too, since they hide or break up what a reviewer
-# reads. Each is rendered as a visible escape so a value from a source or the server
-# cannot move the cursor, erase a line, or show a forged one.
-_DISPLAY_ESCAPES = {
-    code: f"\\x{code:02x}" if code <= 0xFF else f"\\u{code:04x}"
-    for code in (
-        *range(0x20),
-        *range(0x7F, 0xA0),
-        0x061C,
-        *range(0x200B, 0x2010),
-        *range(0x2028, 0x202F),
-        0x2060,
-        *range(0x2066, 0x206A),
-        0xFEFF,
-    )
-} | {ord("\t"): "\\t", ord("\n"): "\\n", ord("\r"): "\\r"}
+# Characters a terminal acts on or a reader cannot see: every code point in the Unicode
+# categories Cc (C0 and C1 controls, DEL), Cf (bidirectional overrides and isolates,
+# zero-width characters, direction marks, soft hyphen, tag characters), Zl and Zp (line
+# and paragraph separators). Each is rendered as a visible escape so a value from a source
+# or the server cannot move the cursor, erase a line, hide text, or show a forged one.
+_ESCAPED_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp"})
+_READABLE_ESCAPES = {"\t": "\\t", "\n": "\\n", "\r": "\\r"}
 
 app = typer.Typer(help="Synchronize registered configurations through the Sync API.")
 configs_app = typer.Typer(help="Register and inspect configuration packages.")
@@ -141,12 +130,28 @@ def _client(ctx: typer.Context) -> SyncClient:
     return client
 
 
+def _escape_character(character: str) -> str:
+    if character in _READABLE_ESCAPES:
+        return _READABLE_ESCAPES[character]
+    if unicodedata.category(character) not in _ESCAPED_CATEGORIES:
+        return character
+    code = ord(character)
+    if code <= 0xFF:
+        return f"\\x{code:02x}"
+    if code <= 0xFFFF:
+        return f"\\u{code:04x}"
+    return f"\\U{code:08x}"
+
+
 def _display(value: object) -> str:
-    """Render a value for a terminal with its control characters made visible.
+    """Render a value for a terminal with its control and invisible characters made visible.
 
     Only the display changes: the saved plan and every JSON rendering keep the real value.
     """
-    return str(value).translate(_DISPLAY_ESCAPES)
+    text = str(value)
+    if text.isascii() and text.isprintable():
+        return text
+    return "".join(map(_escape_character, text))
 
 
 def _echo_fields(fields: tuple[tuple[str, object], ...], *, err: bool = False) -> None:

@@ -41,7 +41,7 @@ PINNED_FILES = (
 )
 DIGEST_FILES = (Path("development/docker-compose.infrahub.yml"), PREVIEW_ENV)
 REQUIRED_PLATFORMS = frozenset({"linux/amd64", "linux/arm64"})
-VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[a-z0-9.-]*[a-z0-9])?")
+VERSION_PATTERN = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}")
 
 
@@ -111,15 +111,15 @@ def update(root: Path, version: str, resolve: Callable[[str], str] = resolve_dig
     rewritten: dict[Path, str] = {}
     for relative in PINNED_FILES:
         before = (root / relative).read_text(encoding="utf-8")
+        if not pattern.search(before):
+            msg = f"{relative} does not carry the pinned version {old_version}"
+            raise UpdateError(msg)
         after = pattern.sub(version, before)
         if relative in DIGEST_FILES:
             if old_digest not in after:
                 msg = f"{relative} does not carry the pinned digest {old_digest}"
                 raise UpdateError(msg)
             after = after.replace(old_digest, new_digest)
-        if after == before:
-            msg = f"{relative} does not carry the pinned version {old_version}"
-            raise UpdateError(msg)
         rewritten[relative] = after
     for relative, content in rewritten.items():
         (root / relative).write_text(content, encoding="utf-8")
