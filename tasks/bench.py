@@ -453,10 +453,14 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
     import fcntl  # noqa: PLC0415 -- Linux benchmark host
 
     try:
-        lock_file = RUNNER_LOCK.open("a", encoding="utf-8")
+        descriptor = os.open(RUNNER_LOCK, os.O_RDWR | os.O_CREAT, 0o666)
     except PermissionError:
-        msg = f"another benchmark cell is running: cannot open {RUNNER_LOCK}, which another user created"
+        msg = f"cannot open {RUNNER_LOCK}, which another user created without write access for others"
         raise BenchmarkError(msg) from None
+    with contextlib.suppress(PermissionError):
+        # The creating user's umask may have narrowed the mode; let every user take the lock later.
+        os.fchmod(descriptor, 0o666)
+    lock_file = os.fdopen(descriptor, "a", encoding="utf-8")
     with lock_file as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

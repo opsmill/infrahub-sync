@@ -980,23 +980,39 @@ def test_runner_lock_excludes_other_checkouts_before_reset_and_releases(monkeypa
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 to 3.13")
-def test_runner_lock_owned_by_another_user_reports_the_running_cell(monkeypatch, tmp_path) -> None:
+def test_runner_lock_without_write_access_reports_the_unusable_lock(monkeypatch, tmp_path) -> None:
+    """A lock file that this user cannot open for writing is reported by path."""
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "3"\n', encoding="utf-8")
     monkeypatch.setattr(bench, "ROOT", tmp_path)
     monkeypatch.setattr(bench, "STATE", tmp_path / ".netbox/bench")
     monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
 
-    class DeniedLock:
-        @staticmethod
-        def open(*_args: object, **_kwargs: object) -> NoReturn:
-            raise PermissionError
+    def denied(*_args: object, **_kwargs: object) -> NoReturn:
+        raise PermissionError
 
-        def __str__(self) -> str:
-            return "/tmp/denied.lock"  # noqa: S108 -- message text only
-
-    monkeypatch.setattr(bench, "RUNNER_LOCK", DeniedLock())
-    with pytest.raises(BenchmarkError, match=r"another benchmark cell is running.*/tmp/denied\.lock"):
+    monkeypatch.setattr(bench.os, "open", denied)
+    monkeypatch.setattr(bench, "RUNNER_LOCK", tmp_path / "denied.lock")
+    with pytest.raises(BenchmarkError, match=r"cannot open .*denied\.lock"):
         bench.run_cell.body(Context())
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 to 3.13")
+def test_runner_lock_is_created_writable_for_every_user(monkeypatch, tmp_path) -> None:
+    """The lock file is left writable for others even under a restrictive umask."""
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "3"\n', encoding="utf-8")
+    monkeypatch.setattr(bench, "ROOT", tmp_path)
+    monkeypatch.setattr(bench, "STATE", tmp_path / ".netbox/bench")
+    monkeypatch.setattr(bench, "RESULTS", tmp_path / "results.jsonl")
+    monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
+    monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "commit")
+    monkeypatch.setattr(bench, "CellStack", lambda: (_ for _ in ()).throw(BenchmarkError("stop")))
+    previous = os.umask(0o077)
+    try:
+        with contextlib.suppress(BenchmarkError):
+            bench.run_cell.body(Context())
+    finally:
+        os.umask(previous)
+    assert bench.RUNNER_LOCK.stat().st_mode & 0o777 == 0o666
 
 
 @pytest.mark.parametrize("phase", ["compose", "after-compose", "cleanup"])
