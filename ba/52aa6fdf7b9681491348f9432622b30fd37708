@@ -1,0 +1,22 @@
+.github/workflows/workflow-nightly-e2e.yml
+  s_b6beafb210efc2::t_cf6da9509b2488 37
+  s_b6beafb210efc2::t_8866f1add9ad73 196
+  s_b6beafb210efc2::t_5534f6cf9116ae 232
+  s_b6beafb210efc2::t_ad6195b6c86282 254
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ba52aa6fdf7b9681491348f9432622b30fd37708",
+  "prompts": {},
+  "sessions": {
+    "s_b6beafb210efc2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "63101565-9fbd-4a54-ace3-a114dcc54179",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
