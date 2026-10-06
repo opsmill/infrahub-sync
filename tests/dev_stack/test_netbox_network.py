@@ -136,6 +136,39 @@ def test_detach_disconnects_only_a_connected_worker(monkeypatch: pytest.MonkeyPa
     assert fake.changes() == [f"docker network disconnect {NETWORK} def"]
 
 
+def test_detach_disconnects_workers_from_every_attached_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Teardown finds default and custom project workers through the NetBox network."""
+    fake = FakeDocker(network_exists=True, workers=["default-worker"], attached={"default-worker", "custom-worker"})
+    context = _context(fake, monkeypatch)
+
+    def run(command: str, **kwargs: object) -> _Result:
+        """Simulate Docker filtering workers by project or attached network."""
+        result = fake.run(command, **kwargs)
+        if command.startswith("docker ps") and "label=com.docker.compose.project=" not in command:
+            assert f"--filter network={NETWORK}" in command
+            assert "--filter label=com.docker.compose.service=sync-worker" in command
+            return _Result("default-worker\ncustom-worker", ok=True)
+        return result
+
+    monkeypatch.setattr(context, "run", run)
+
+    netbox.detach_dev_worker(context, VALUES)
+
+    assert fake.changes() == [
+        f"docker network disconnect {NETWORK} default-worker",
+        f"docker network disconnect {NETWORK} custom-worker",
+    ]
+
+
+def test_detach_does_nothing_when_no_workers_are_attached(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Removing an absent network or a network without workers needs no disconnects."""
+    fake = FakeDocker(network_exists=False, workers=[], attached=set())
+
+    netbox.detach_dev_worker(_context(fake, monkeypatch), VALUES)
+
+    assert fake.changes() == []
+
+
 def test_netbox_down_disconnects_the_worker_before_removing_the_network(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: VALUES)

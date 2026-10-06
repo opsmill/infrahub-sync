@@ -243,13 +243,18 @@ def attach_dev_worker(context: Context, values: dict[str, str], project: str = D
 
 
 def detach_dev_worker(context: Context, values: dict[str, str]) -> None:
-    """Disconnect the dev stack's worker from NetBox's network before that network is removed.
+    """Disconnect attached Sync workers from every project before NetBox's network is removed.
 
     Docker refuses to remove a network that still has a connected container, so this runs
     before every `down`.
     """
     network = netbox_network(values)
-    for container in dev_worker_containers(context):
+    output = _docker_output(
+        context,
+        f"ps --all --quiet --filter {shlex.quote('network=' + network)} "
+        f"--filter label=com.docker.compose.service={DEV_STACK_WORKER_SERVICE}",
+    )
+    for container in output.split() if output else []:
         if network in _attached_networks(context, container):
             context.run(f"docker network disconnect {shlex.quote(network)} {shlex.quote(container)}", pty=False)
 
