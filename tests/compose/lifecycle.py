@@ -283,16 +283,47 @@ def await_phase(client: httpx.Client, run_id: str, phase: str, *, timeout: int =
         )
 
 
-# What a failed run needs answered, and nothing else. Every part comes back from
-# `Deployment.logs`, which is `--tail`-bounded and redacted at capture, so the
-# artifact is built from output that already passed the boundary.
-DIAGNOSTIC_SERVICES = ("sync-api", "sync-worker")
+# Container inspection selects state fields, and service logs are tail-bounded.
+# Both pass the capture redaction boundary before the artifact is swept.
+DIAGNOSTIC_SERVICES = (
+    "postgres",
+    "db-bootstrap",
+    "object-store-init",
+    "object-store",
+    "prefect-server",
+    "sync-bootstrap",
+    "sync-api",
+    "sync-worker",
+)
 DIAGNOSTIC_TAIL = 200
+
+
+def container_states(deployment: Deployment) -> str:
+    """Capture project containers, including one-offs, without their environment."""
+    found = docker(["ps", "--all", "--filter", f"label=com.docker.compose.project={deployment.project}", "--quiet"])
+    if found.returncode != 0:
+        return f"container enumeration failed: {found.output}"
+    identifiers = found.stdout.split()
+    if not identifiers:
+        return "no project containers"
+    # Select fields at the daemon boundary. Full inspection includes credentials
+    # in Config.Env and health-check output; neither belongs in this account.
+    fields = (
+        '"id":{{json .Id}},"name":{{json .Name}},"labels":{{json .Config.Labels}},'
+        '"status":{{json .State.Status}},"running":{{json .State.Running}},'
+        '"restarting":{{json .State.Restarting}},"dead":{{json .State.Dead}},'
+        '"exit_code":{{json .State.ExitCode}},"started_at":{{json .State.StartedAt}},'
+        '"finished_at":{{json .State.FinishedAt}}'
+    )
+    result = docker(["inspect", "--format", "{" + fields + "}", *identifiers])
+    # An auto-removed helper can disappear between enumeration and inspection.
+    # Keep any successful rows and the daemon's error rather than losing both.
+    return result.output
 
 
 def diagnostic_report(deployment: Deployment) -> str:
     """Return a bounded, redacted account of what the deployment's services said."""
-    sections = [f"instance {deployment.instance}", f"project {deployment.project}"]
+    sections = [f"instance {deployment.instance}", f"project {deployment.project}", container_states(deployment)]
     sections.extend(
         f"--- {service} (last {DIAGNOSTIC_TAIL} lines) ---\n{deployment.logs(service, tail=DIAGNOSTIC_TAIL).output}"
         for service in DIAGNOSTIC_SERVICES
@@ -300,7 +331,13 @@ def diagnostic_report(deployment: Deployment) -> str:
     return "\n\n".join(sections)
 
 
-def write_diagnostic(deployment: Deployment, destination: Path, *, named: Mapping[str, str]) -> str:
+def write_diagnostic(
+    deployment: Deployment,
+    destination: Path,
+    *,
+    named: Mapping[str, str],
+    observations: Sequence[str] = (),
+) -> str:
     """Write the diagnostic report, or withhold it, and return what happened.
 
     The sweep reads the bytes that would be retained rather than the parts they
@@ -309,7 +346,7 @@ def write_diagnostic(deployment: Deployment, destination: Path, *, named: Mappin
     file entirely -- an artifact nobody has is a result, and one that has left is
     not recoverable.
     """
-    report = diagnostic_report(deployment)
+    report = "\n\n".join((*observations, diagnostic_report(deployment)))
     names = SECRETS.leaked(report, named)
     registered = any(value in report for value in SECRETS.values())
     if names or registered:

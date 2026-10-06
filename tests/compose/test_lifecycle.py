@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import shutil
 import socket
+import subprocess  # noqa: S404 -- handling the capture boundary's timeout exception
 import time
 import uuid
 from pathlib import Path
@@ -26,7 +27,15 @@ import httpx
 import pytest
 
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
-from tests.compose.conftest import BUNDLE, DEFAULTS_FILE, FIXTURE_INFRAHUB_PORT, INSTANCE_LABEL
+from tests.compose.conftest import (
+    BUNDLE,
+    DEFAULTS_FILE,
+    DIAGNOSTIC_DIR,
+    DIAGNOSTIC_SAVED,
+    FAILED,
+    FIXTURE_INFRAHUB_PORT,
+    INSTANCE_LABEL,
+)
 from tests.compose.lifecycle import (
     DURABLE_STATE,
     GATEWAY_PROBE_IMAGE,
@@ -35,6 +44,7 @@ from tests.compose.lifecycle import (
     await_phase,
     await_verification,
     container_reachable_host,
+    container_states,
     docker,
     entry_point,
     idempotency,
@@ -46,6 +56,7 @@ from tests.compose.lifecycle import (
     smoke_package,
     wait_for,
     write_candidate_binding,
+    write_diagnostic,
 )
 from tests.compose.redaction import SECRETS, Captured
 
@@ -428,13 +439,59 @@ def test_a_stopped_worker_ages_into_degraded_while_the_api_stays_reachable(start
     )
 
 
-def test_a_stopped_deployment_reports_stopped_and_starts_again(started: Deployment) -> None:
+@pytest.fixture
+def stop_observations(started: Deployment, request: pytest.FixtureRequest) -> Iterator[list[str]]:
+    """Save the first failure before restoring the shared stopped deployment."""
+    observations: list[str] = []
+    yield observations
+    if not request.node.stash.get(FAILED, False):
+        return
+    try:
+        report = write_diagnostic(
+            started,
+            DIAGNOSTIC_DIR / f"{request.node.name}.log",
+            named=generated_credentials(started.bundle),
+            observations=observations,
+        )
+    except (OSError, subprocess.SubprocessError):
+        report = "diagnostic unavailable: evidence collection failed before recovery"
+    request.node.stash[DIAGNOSTIC_SAVED] = True
+    request.node.add_report_section("teardown", "compose diagnostic", report)
+    restored = False
+    try:
+        restarted = entry_point(started.bundle, "start")
+        restored = restarted.returncode == 0 and verdict(entry_point(started.bundle, "status")) == "READY"
+    except (OSError, subprocess.SubprocessError):
+        # The first failure is already retained. A transport failure or timeout
+        # while restoring still requires teardown, without rendering raw output.
+        pass
+    if restored:
+        return
+    started.down(volumes=True)
+    # The subsequent cases require this deployment. Stop the session after
+    # teardown rather than replacing one fault with a list of connection errors.
+    pytest.exit(f"the shared deployment could not be restored after stop; {report}", returncode=1)
+
+
+def test_a_stopped_deployment_reports_stopped_and_starts_again(
+    started: Deployment, stop_observations: list[str]
+) -> None:
     """Stop keeps containers and data; status then reports absence, not a fault."""
+    stop_observations.append(f"--- before stop ---\n{container_states(started)}")
     stopped = entry_point(started.bundle, "stop")
+    stop_observations.append(f"--- stop (exit {stopped.returncode}) ---\n{stopped.output}")
     assert stopped.returncode == 0, stopped.stderr
 
+    # Keep status immediately after stop, so collecting evidence does not add a
+    # settling delay that could conceal the intermittent stop/status failure.
     reported = entry_point(started.bundle, "status")
-    assert verdict(reported) == "STOPPED"
+    stop_observations.extend(
+        (
+            f"--- status (exit {reported.returncode}) ---\n{reported.output}",
+            f"--- after status ---\n{container_states(started)}",
+        )
+    )
+    assert verdict(reported) == "STOPPED", reported.output
     assert reported.returncode == 4, reported.stdout
 
     restarted = entry_point(started.bundle, "start")

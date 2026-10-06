@@ -101,6 +101,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 # Set for one test when its call phase failed, so a teardown can tell a failure
 # from a pass without re-deriving it from the report.
 FAILED = pytest.StashKey[bool]()
+# A test-specific recovery retains evidence before changing the deployment.
+DIAGNOSTIC_SAVED = pytest.StashKey[bool]()
 # Where a failed lifecycle run leaves what it saw. Git ignores it, and the gate
 # uploads it only when a job has already failed.
 DIAGNOSTIC_DIR = REPO_ROOT / ".diagnostics"
@@ -137,6 +139,8 @@ def _diagnostic_on_failure(request: pytest.FixtureRequest) -> Iterator[None]:
     """
     yield
     if not request.node.stash.get(FAILED, False):
+        return
+    if request.node.stash.get(DIAGNOSTIC_SAVED, False):
         return
     # Imported here: lifecycle imports this module, so the cycle only closes at call time.
     from tests.compose.lifecycle import write_diagnostic
