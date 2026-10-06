@@ -226,8 +226,9 @@ there. Translate such values with a transform in the package; see the
 ## Find why a run failed
 
 `diff`, `sync`, and `apply` print the final phase and outcome of a failed run, such as
-`phase: plan-failed`. When an `apply` command fails, it also prints `apply failed: <ErrorClass>`. The
-error message itself is recorded on the run's Prefect flow run:
+`phase: plan-failed`. When an `apply` command fails and the run recorded the class of the
+apply error, it also prints `apply failed: <ErrorClass>`. The error message itself is
+recorded on the run's Prefect flow run:
 
 1. Run `runs show RUN_ID`. The output includes `flow_run_id`.
 2. Open `<prefect-ui>/runs/flow-run/FLOW_RUN_ID` in a browser. The state message of the failed
