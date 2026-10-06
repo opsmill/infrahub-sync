@@ -1,11 +1,17 @@
 """Unit tests for InfrahubAdapter._resolve_peer_unique_id error and skip paths.
 
 The full adapter touches an Infrahub server, so these tests build a minimal
-stand-in adapter that reuses the real helper. We only care about three things:
+stand-in adapter that reuses the real helper. We only care about four things:
 
   1. Missing peer identifier keys raise PeerIdentifierError with rich context.
   2. continue_on_error=True logs a warning and returns None instead of raising.
   3. Successful path returns the peer's unique_id.
+  4. A peer that is not in the DiffSync store yet is added to it, and a peer
+     that is already there is reused.
+
+The stand-in adapter keeps DiffSync's real LocalStore, which raises
+ObjectNotFound for a missing object: a fake store that returned None hid the
+failure of point 4.
 """
 
 from __future__ import annotations
@@ -15,6 +21,8 @@ from types import SimpleNamespace
 from typing import Any, Protocol
 
 import pytest
+from diffsync import DiffSyncModel
+from diffsync.store.local import LocalStore
 
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError
 
@@ -41,18 +49,16 @@ class _FakeClient:
         self.store = _FakeStore()
 
 
-class _FakePeerModel:
+class _FakePeerModel(DiffSyncModel):
+    _modelname = "LocationGeneric"
     _identifiers = ("name", "organization")
 
-    def __init__(self, **kwargs: object) -> None:
-        self._kwargs = kwargs
+    name: str
+    organization: str
 
     @classmethod
-    def create_unique_id(cls, **kwargs: object) -> str:
-        return "|".join(str(kwargs[k]) for k in cls._identifiers)
-
-    def get_unique_id(self) -> str:
-        return type(self).create_unique_id(**self._kwargs)
+    def create_unique_id(cls, **identifiers: object) -> str:
+        return "|".join(str(identifiers[k]) for k in cls._identifiers)
 
 
 class _Harness(InfrahubAdapter):
@@ -60,15 +66,12 @@ class _Harness(InfrahubAdapter):
 
     def __init__(self, *, continue_on_error: bool = False) -> None:
         # bypass the parent chain entirely
-        self.client = _FakeClient()
-        self.store = _FakeStore()  # ty: ignore[invalid-assignment]
+        self.fake_client = _FakeClient()
+        self.client = self.fake_client
+        self.store = LocalStore(adapter=self)
         self.continue_on_error = continue_on_error
-        self._instances: list[object] = []
         # Register the fake peer model under its kind so getattr(self, kind) works.
         self.LocationGeneric = _FakePeerModel
-
-    def update_or_add_model_instance(self, item: object) -> None:  # ty: ignore[invalid-method-override]
-        self._instances.append(item)
 
     def infrahub_node_to_diffsync(self, node: object) -> dict[str, Any]:  # noqa: PLR6301
         # Return whatever fake data the test attached to the node.
@@ -128,3 +131,36 @@ def test_complete_peer_returns_unique_id() -> None:
     result = harness._resolve_peer_unique_id(parent_node=parent, rel_name="location", peer_node=peer)  # ty: ignore[invalid-argument-type]
 
     assert result == "dc-east|acme"
+
+
+def test_peer_not_in_store_is_added() -> None:
+    """The parent of a node in a tree of one kind is not loaded yet when the node is converted.
+
+    model_loader converts every node of a kind before it adds them to the store, so
+    the store lookup for the parent raises ObjectNotFound. The peer must be added
+    instead of failing the load.
+    """
+    harness = _Harness()
+    child = _make_node("LocationGeneric", "child-id", {})
+    peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east", "organization": "acme"})
+
+    result = harness._resolve_peer_unique_id(parent_node=child, rel_name="parent", peer_node=peer)  # ty: ignore[invalid-argument-type]
+
+    assert result == "dc-east|acme"
+    stored = harness.store.get(model="LocationGeneric", identifier="dc-east|acme")
+    assert stored.get_identifiers() == {"name": "dc-east", "organization": "acme"}
+    assert harness.fake_client.store.get(model="LocationGeneric", identifier="dc-east|acme") is peer
+
+
+def test_peer_already_in_store_is_reused() -> None:
+    harness = _Harness()
+    existing = _FakePeerModel(name="dc-east", organization="acme")
+    harness.store.add(obj=existing)
+    parent = _make_node("InfraDevice", "parent-id", {})
+    peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east", "organization": "acme"})
+
+    result = harness._resolve_peer_unique_id(parent_node=parent, rel_name="location", peer_node=peer)  # ty: ignore[invalid-argument-type]
+
+    assert result == "dc-east|acme"
+    assert harness.store.get(model="LocationGeneric", identifier="dc-east|acme") is existing
+    assert harness.fake_client.store.get(model="LocationGeneric", identifier="dc-east|acme") is None
