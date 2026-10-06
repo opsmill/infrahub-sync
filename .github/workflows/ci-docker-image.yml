@@ -86,9 +86,12 @@ permissions:
 # is never cancelled: stopping it between `merge` and `sign` would leave a pushed
 # tag with no signature or SBOM. Publishing runs get their own group, because a
 # build-only run arriving with `cancel-in-progress: true` cancels whatever is in
-# progress in its group, publishing runs included.
+# progress in its group, publishing runs included. Build-only groups also carry
+# the caller's event: a push or a dispatch and a pull request can build the same
+# commit at once, and neither may cancel the other's required check.
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.ref }}-${{ inputs.publish && 'publish' || 'build' }}
+  group: >-
+    ${{ github.workflow }}-${{ inputs.ref }}-${{ inputs.publish && 'publish' || format('build-{0}', github.event_name) }}
   cancel-in-progress: ${{ !inputs.publish }}
 
 jobs:
@@ -175,7 +178,9 @@ jobs:
         env:
           INFRAHUB_SYNC_DOCKER_IMAGE: infrahub-sync
           VERSION: smoke
-        run: uv run pytest -m docker tests/image/test_image_artifact.py
+        # `--no-sync`: the step above installed the environment, and the suite hashes
+        # the checkout's uv.lock against the image's, so nothing may re-lock it here.
+        run: uv run --no-sync pytest -m docker tests/image/test_image_artifact.py
 
       - name: Login to Harbor
         if: steps.check.outputs.skip == 'false' && inputs.publish
@@ -361,15 +366,15 @@ jobs:
           username: ${{ secrets.HARBOR_USERNAME }}
           password: ${{ secrets.HARBOR_PASSWORD }}
 
-      - name: Generate SBOM (SPDX)
+      # One scan writes both formats, so the image is pulled and catalogued once.
+      - name: Generate SBOMs (SPDX and CycloneDX)
         env:
           IMAGE: ${{ vars.HARBOR_HOST }}/${{ github.repository }}@${{ needs.merge.outputs.digest }}
-        run: syft "${IMAGE}" --output spdx-json=infrahub-sync-sbom.spdx.json
-
-      - name: Generate SBOM (CycloneDX)
-        env:
-          IMAGE: ${{ vars.HARBOR_HOST }}/${{ github.repository }}@${{ needs.merge.outputs.digest }}
-        run: syft "${IMAGE}" --output cyclonedx-json=infrahub-sync-sbom.cdx.json
+        run: |
+          set -euo pipefail
+          syft "${IMAGE}" \
+            --output spdx-json=infrahub-sync-sbom.spdx.json \
+            --output cyclonedx-json=infrahub-sync-sbom.cdx.json
 
       - name: Attest SBOMs
         env:

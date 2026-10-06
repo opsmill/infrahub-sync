@@ -894,7 +894,7 @@ DOCKER_IMAGE_INPUTS = {
 DOCKER_IMAGE_RUNNERS = {"linux/amd64": "ubuntu-24.04", "linux/arm64": "ubuntu-24.04-arm"}
 PUBLISH_ONLY_JOBS = ("merge", "sign", "sbom")
 SIGNING_JOBS = ("sign", "sbom")
-SMOKE_COMMAND = "uv run pytest -m docker tests/image/test_image_artifact.py"
+SMOKE_COMMAND = "uv run --no-sync pytest -m docker tests/image/test_image_artifact.py"
 SMOKE_IMAGE = "infrahub-sync:smoke"
 LOGIN_ACTION = "docker/login-action"
 BUILD_PUSH_ACTION = "docker/build-push-action"
@@ -969,12 +969,15 @@ def test_only_a_newer_run_for_the_same_ref_cancels_an_image_build() -> None:
 
     Only a build-only run is cancelled; a publishing one runs to its signature. A
     cancelling run cancels everything in progress in its group, so publishing
-    runs sit in a group no build-only run joins.
+    runs sit in a group no build-only run joins. Build-only groups also carry the
+    caller's event, so a dispatch or a push building a pull request's head cannot
+    cancel that pull request's run and fail its required check.
     """
     declared = load(DOCKER_IMAGE_WORKFLOW)["concurrency"]
 
     assert concurrency_group(DOCKER_IMAGE_WORKFLOW) == (
-        "${{ github.workflow }}-${{ inputs.ref }}-${{ inputs.publish && 'publish' || 'build' }}"
+        "${{ github.workflow }}-${{ inputs.ref }}-"
+        "${{ inputs.publish && 'publish' || format('build-{0}', github.event_name) }}"
     )
     assert declared.get("cancel-in-progress") == "${{ !inputs.publish }}", (
         "a publishing run cancelled between `merge` and `sign` leaves a pushed tag unsigned"
@@ -1960,6 +1963,50 @@ def test_the_image_call_runs_only_when_an_image_input_changes() -> None:
     assert list(_needs(job)) == [IMAGE_CHANGES_JOB]
     assert str(job.get("if", "")).strip() == f"needs.{IMAGE_CHANGES_JOB}.outputs.{IMAGE_INPUTS_FILTER} == 'true'"
     assert filter_patterns(IMAGE_INPUTS_FILTER), f"{IMAGE_INPUTS_FILTER} matches nothing"
+
+
+def build_context_inputs() -> set[str]:
+    """Return every path the Dockerfile copies out of the build context.
+
+    Read from the Dockerfile rather than listed here, so a file that joins the
+    build context is compared the moment it is added. `--from=` copies are
+    excluded because they come from another stage or another image.
+    """
+    found: set[str] = set()
+    # A `COPY` may continue across physical lines; join them so every source is read.
+    joined = re.sub(r"\\[ \t]*\n", " ", DOCKERFILE.read_text(encoding="utf-8"))
+    for line in joined.splitlines():
+        parts = line.split()
+        if not parts or parts[0].upper() != "COPY":
+            continue
+        arguments = [part for part in parts[1:] if not part.startswith("--")]
+        if any(part.startswith("--from=") for part in parts[1:]) or len(arguments) < 2:
+            continue
+        # `COPY dir/ ./` and `COPY dir ./` copy the same tree.
+        found.update(argument.rstrip("/") for argument in arguments[:-1])
+    return found
+
+
+def test_the_image_filter_covers_every_input_the_dockerfile_copies() -> None:
+    """A file the image is built from, that the filter does not name, skips the gate.
+
+    `README.md` and `LICENSE.txt` are copied into the wheel's build, so a pull
+    request touching only one of them changes the image.
+    """
+    patterns = set(filter_patterns(IMAGE_INPUTS_FILTER))
+    inputs = build_context_inputs()
+
+    assert inputs, "no COPY line in the Dockerfile reads from the build context"
+    uncovered = sorted(name for name in inputs if name not in patterns and f"{name}/**" not in patterns)
+    assert not uncovered, f"the image is built from {uncovered}, which {IMAGE_INPUTS_FILTER} does not name"
+
+
+def test_the_image_filter_covers_the_smoke_suite_and_its_image_helper() -> None:
+    """The smoke suite imports `tests/docker_image.py` to name the image it runs against."""
+    patterns = filter_patterns(IMAGE_INPUTS_FILTER)
+
+    assert routed(REPO_ROOT / "tests" / "docker_image.py", patterns)
+    assert routed(REPO_ROOT / "tests" / "image" / "test_image_artifact.py", patterns)
 
 
 def test_the_filter_job_reads_the_image_inputs_filter_and_the_version() -> None:

@@ -70,20 +70,23 @@ documentation_all:
   - *doc_files
   - *markdown_all
 
-# What the image gate (`ci-docker-image.yml`) rebuilds for: the build
-# context the Dockerfile copies, the dependency set it installs, the root
-# Compose file the smoke test starts, and the smoke suite itself. The last three
-# entries are the gate's own declarations, so re-aiming it faces the gate it
-# aims.
+# What the image gate (`ci-docker-image.yml`) rebuilds for: every build-context
+# input the Dockerfile copies (README.md and LICENSE.txt go into the wheel's
+# metadata), the dependency set it installs, the root Compose file, and the smoke
+# suite with the helper that names its image. The last three entries are the
+# gate's own declarations, so re-aiming it faces the gate it aims.
 image_inputs:
   - "Dockerfile"
   - ".dockerignore"
   - "pyproject.toml"
   - "uv.lock"
+  - "README.md"
+  - "LICENSE.txt"
   - "infrahub_sync/**"
   - "opsmill_prefect_extras/**"
   - "docker-compose.yml"
   - "tests/image/**"
+  - "tests/docker_image.py"
   - ".github/workflows/ci-docker-image.yml"
   - ".github/workflows/trigger-pr-develop.yml"
   - ".github/file-filters.yml"
