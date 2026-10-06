@@ -705,8 +705,7 @@ def test_the_staged_copy_is_removed_when_the_operator_interrupts(initialized: Pa
     """Ctrl-C is the ordinary way a long call ends, so it is a path that has to clean up."""
     record = tmp_path / "stage.log"
     package = _package(tmp_path)
-    # The entry point stages under `TMPDIR`; pointing it below `tmp_path` makes pytest
-    # remove a copy that a failed run leaves behind, after the assertions have looked.
+    # Confine staged files to `tmp_path`; pytest retains them after failures for inspection.
     stage_root = tmp_path / "stage-root"
     stage_root.mkdir()
     process = subprocess.Popen(  # noqa: S603 -- the entry point under test, with a fixed argv
