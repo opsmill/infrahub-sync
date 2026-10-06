@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
-import re
 import subprocess  # noqa: S404
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 import yaml
+from packaging.version import InvalidVersion, Version
 
 ROOT = Path(__file__).parents[1]
 CONFIG_PATH = ROOT / ".github" / "version-drafter.yml"
@@ -33,6 +35,16 @@ CONTRIBUTOR_PR = {
     "author_login": "contributor",
     "head_repository": "contributor/example",
 }
+
+
+def load_checker() -> ModuleType:
+    """Import the label checker script as a module."""
+    spec = importlib.util.spec_from_file_location("check_release_labels", CHECKER_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def run_checker(tmp_path: Path, labels: list[str], **overrides: str) -> subprocess.CompletedProcess[str]:
@@ -88,11 +100,45 @@ def test_exemption_mirrors_release_pull_request_naming() -> None:
     assert 'BRANCH="release/${VERSION}"' in workflow
     assert '--title "chore(release): ${VERSION}"' in workflow
 
-    version_check = re.search(r"grep -Eq '\^(?P<pattern>[^']+)\$'; then", workflow)
-    assert version_check is not None
-    checker = CHECKER_PATH.read_text()
-    expected = "release/" + version_check.group("pattern").replace("(", "(?:")
-    assert f'RELEASE_BRANCH_PATTERN = re.compile(r"{expected}")' in checker
+    # The workflow's rule, which `workflow_accepts_version` restates.
+    assert "str(parsed) == v and parsed.epoch == 0 and parsed.local is None" in workflow
+
+
+def workflow_accepts_version(version: str) -> bool:
+    """Restate the version check trigger-push-stable.yml runs before naming the branch."""
+    try:
+        parsed = Version(version)
+    except InvalidVersion:
+        return False
+    return str(parsed) == version and parsed.epoch == 0 and parsed.local is None
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "2.0.1",
+        "3.0",
+        "3.0.0a6",
+        "3.0.0b2",
+        "3.0.0rc1",
+        "3.0.0.dev1",
+        "3.0.0.post1",
+        "3.0.0rc1.post2.dev3",
+        "3.0.0-alpha6",
+        "3.0.0.rc1",
+        "3.0.0RC1",
+        "01.0.0",
+        "v3.0.0",
+        "1!3.0.0",
+        "3.0.0+local",
+        "3.0.0-",
+        "latest",
+    ],
+)
+def test_release_branch_exemption_matches_workflow_versions(version: str) -> None:
+    module = load_checker()
+    matched = module.RELEASE_BRANCH_PATTERN.fullmatch(f"release/{version}") is not None
+    assert matched == workflow_accepts_version(version)
 
 
 def test_workflow_never_checks_out_pull_request_code() -> None:
