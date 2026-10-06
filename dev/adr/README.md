@@ -49,9 +49,12 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
 - [0016 — The Compose deployment is one tag-pinned file](0016-the-compose-deployment-is-one-tag-pinned-file.md)
   — why the wrapper and digest binding became a root `docker-compose.yml` pinned by the
   release commit, and what was given up.
+- [0019 — Prefect is an internal component of Sync](0019-prefect-is-an-internal-component-of-sync.md)
+  — why Sync runs its own Prefect server and PostgreSQL server instead of Infrahub's task
+  manager and `task-manager-db`, and what that costs.
 
 ## Related
 
-- [Knowledge](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/develop/knowledge/index.md) — how the system works after these decisions.
-- [Guidelines](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/develop/guidelines/index.md) — the rules they imply for new code.
-- [Constitution](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/develop/constitution.md) — the principles they serve.
+- [Knowledge](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/development/knowledge/index.md) — how the system works after these decisions.
+- [Guidelines](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/development/guidelines/index.md) — the rules they imply for new code.
+- [Constitution](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/development/constitution.md) — the principles they serve.

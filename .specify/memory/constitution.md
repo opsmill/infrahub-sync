@@ -1,1 +1,1 @@
-../../docs/docs/develop/constitution.md
+../../docs/docs/development/constitution.md

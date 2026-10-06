@@ -16,16 +16,18 @@
 #
 # Destination: none. A deployment starts with an empty configuration registry
 # and reaches nothing until a package is registered. To sync against a local
-# Infrahub, run `uv run invoke preview.up` and start this stack with
-# INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN set; sync-worker already carries the
-# host route. A package's `env` credential identifiers must start with
+# Infrahub, start one from Infrahub's own Compose file (https://infrahub.opsmill.io)
+# with `docker compose -p infrahub`, and start this stack with
+# INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN set. `uv run invoke start` connects
+# sync-worker to Infrahub's network, `infrahub_default`, where the package names
+# Infrahub as http://infrahub-server:8000. A package's `env` credential identifiers must start with
 # INFRAHUB_SYNC_CREDENTIAL_, and these three are the ones this stack passes.
 #
 # Source: the local NetBox (`uv run invoke netbox.up` or `netbox.seed`) publishes
 # on the host's loopback address only, which no container can reach. The Invoke
 # tasks connect sync-worker to NetBox's own network instead, where it reads
 # NetBox at http://netbox:8080. `docker compose up` alone does not reconnect a
-# recreated worker; `uv run invoke start` does.
+# recreated worker to either network; `uv run invoke start` does.
 
 name: infrahub-sync-dev
 
@@ -98,7 +100,7 @@ services:
       retries: 30
 
   prefect-server:
-    image: "prefecthq/prefect:3.8.1-python3.12"
+    image: "prefecthq/prefect:3.8.6-python3.13@sha256:dec8d5b095e93bba1f3d7ebd7cfff13b61209b961382d92be88584c23de5d97a"  # yamllint disable-line rule:line-length
     command: ["prefect", "server", "start", "--host", "0.0.0.0", "--port", "4200"]
     depends_on:
       postgres:
@@ -184,8 +186,9 @@ services:
       INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN:-}"
       INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN:-}"
     # The only service that reaches a destination. The root `docker-compose.yml`
-    # carries no host route on purpose; a dev stack whose destination is `preview.up` on
-    # this laptop needs one, and it costs nothing when unused.
+    # carries no host route on purpose; here it lets a package reach a service published
+    # on this machine that has no Compose network to join, such as the preview stack's
+    # Infrahub, and it costs nothing when unused.
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

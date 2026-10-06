@@ -92,7 +92,7 @@ elsewhere first.
 
 ### Find your way around the tree
 
-[Repository tour](develop/knowledge/repository-tour.md) maps the current modules — the
+[Repository tour](development/knowledge/repository-tour.md) maps the current modules — the
 command-line client, configuration admission, the service and its worker, plans, product
 storage, adapters, the cache and the engine — and separates them from the material that is
 development-only or historical. Start there before changing code you have not touched before.
@@ -113,7 +113,7 @@ Pylint reports existing diagnostics on a clean checkout. The Pylint check compar
 recorded baseline and fails only on a new diagnostic code or a count above the recorded maximum.
 `ty` also prints warnings about unused suppression comments; they do not fail the check.
 
-See [Quality gates](develop/knowledge/quality-gates.md) for the complete lint and formatter
+See [Quality gates](development/knowledge/quality-gates.md) for the complete lint and formatter
 workflow.
 
 Also run `uv run invoke check-310` before you push. It runs the three CI checks that a
@@ -126,7 +126,7 @@ Python 3.11–3.13 environment does not cover:
 The task builds its environments under `.preview/check-310-venv` and does not change your
 `.venv`. If Python 3.10 is not installed, the task prints that it checked nothing and exits 0.
 Install it with `uv python install 3.10`, then run the task again. See
-[Testing tiers](develop/guidelines/testing-tiers.md).
+[Testing tiers](development/guidelines/testing-tiers.md).
 
 ### Validate the CLI
 
@@ -149,14 +149,15 @@ uv run invoke tests.tests-unit
 
 The run takes 10 to 20 minutes and ends with a pass count and no failures.
 
-See [Testing tiers](develop/guidelines/testing-tiers.md) for what each other tier needs, what
+See [Testing tiers](development/guidelines/testing-tiers.md) for what each other tier needs, what
 it writes, and why a skipped test does not count as a pass. See
-[Testing](develop/guidelines/testing.md) for the repository-wide rules about individual tests.
+[Testing](development/guidelines/testing.md) for the repository-wide rules about individual tests.
 
 ### Run the Sync service locally
 
 The repository has two local stacks. Both use development credentials and are disposable.
-[Local development stack](./development-stack.mdx) describes them in detail.
+[Local development stack](./development-stack.mdx) and
+[Run the preview stack](development/guides/preview-stack.md) describe them in detail.
 
 | Stack | Commands | Sync API | Use it to |
 | --- | --- | --- | --- |
@@ -342,14 +343,14 @@ Do not edit `CHANGELOG.md` or the version in `pyproject.toml` manually. Both are
 
 ## Adding a new adapter
 
-[Adding an adapter](develop/guides/adding-an-adapter.md) is the single procedure. It covers the
+[Adding an adapter](development/guides/adding-an-adapter.md) is the single procedure. It covers the
 connector itself, the capability declaration that makes a package naming it admissible, the two
 conformance tests that guard that declaration, the example and its registry envelope, the
 documentation page, and the read-only `diff` validation to run before any write.
 
 The registered Sync service runs only the adapters that ship in this repository. A package
 that names any other adapter is refused at registration. The guide explains this limit in
-[The current boundary for adapters outside the distribution](develop/guides/adding-an-adapter.md#the-current-boundary-for-adapters-outside-the-distribution).
+[The current boundary for adapters outside the distribution](development/guides/adding-an-adapter.md#the-current-boundary-for-adapters-outside-the-distribution).
 
 ## Invoke tasks
 

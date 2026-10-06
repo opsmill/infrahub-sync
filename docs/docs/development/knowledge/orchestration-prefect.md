@@ -32,7 +32,11 @@ module entrypoint, no pull steps, no job variables on the deployment or the flow
 process pool's default job template, and the default child command with no working
 directory. A refusal raises `ServiceFlowRunRefusedError` while the configuration is
 prepared, which Prefect records as a `Crashed` state before any process starts; its
-reason is fixed text and echoes no server value. The admitted child then loads the
+reason is fixed text and echoes no server value. An admitted run is marked as having a
+configured command, so Prefect starts it with its direct engine starter, which runs exactly
+the admitted command. Without that, Prefect 3.8.6 starts a workspace supervisor for a run
+with no configured command: it copies code from the deployment's storage into the run's
+workspace and can relaunch through `uv run`, and admission checks none of that. The admitted child then loads the
 deployment from the server again, so the check bounds what a run can execute only while
 no one else can write to the deployment; that is what the API authentication below
 provides. Anything the service applies to its own
@@ -46,7 +50,7 @@ records; Prefect records live execution state and logs. See
 [durable product records](../../reference/durable-product-records.mdx) for the distinction.
 
 ```python
-@flow(name="infrahub-sync-service")
+@flow(name="infrahub-sync-service", flow_run_name=_service_run_name)
 def service_sync_run(
     run_id: str,
     stage: Literal["plan", "verify", "apply", "sync"],
@@ -56,8 +60,16 @@ def service_sync_run(
     branch: str | None = None,
     expected_checksum: str | None = None,
     confirm_writes: bool = False,
+    configuration_name: str | None = None,
 ) -> dict[str, Any]: ...
 ```
+
+`configuration_name` is the configuration's readable name and serves only the run's
+title. The API sets the title when Prefect accepts the run, and `flow_run_name` sets it
+again when the run starts, for example `Plan sync of netbox-to-infrahub`, instead of the
+name Prefect generates. The title follows the rule Infrahub applies to its own flow runs:
+it says what the run does and leaves out the branch and any ID, which the run's page
+already shows.
 
 Registered execution supplies all three configuration fields: `config_id`,
 `registry_version` and `package_checksum`. The worker checks them against the product run
@@ -196,13 +208,13 @@ parameter therefore never reaches the flow body.
   on Prefect 3.5.0. The module omits `from __future__ import annotations`, and a test
   checks that the operation annotation resolves to `Literal["plan", "sync"]`.
   The tests also check refusal of an invalid operation during parameter validation on
-  Prefect 3.8.1.
+  Prefect 3.8.6.
 - **`PREFECT_LOCAL_STORAGE_PATH` does not follow `PREFECT_HOME`.** Redirecting
   `PREFECT_HOME` isolates the database but not persisted run results. Test isolation — and
   any operator who wants one directory — needs both variables set.
 - **`dataclasses.asdict()` cannot copy a `MappingProxyType` field** — construct the return
   dictionary explicitly, as shown above.
-- **Pinning the version is not optional here.** The extra pins `prefect==3.8.1` exactly,
+- **Pinning the version is not optional here.** The extra pins `prefect==3.8.6` exactly,
   because the base dependency set and Prefect's transitive `redis` requirement interact —
   see [ADR 8](https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/dev/adr/0008-declare-redis-directly-instead-of-the-diffsync-extra.md).
 

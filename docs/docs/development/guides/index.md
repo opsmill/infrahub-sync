@@ -18,8 +18,10 @@ how the system works, see [Knowledge](../knowledge/index.md).
 
 ### The development environment
 
-- [Local development stack](../../development-stack.mdx) — starting the disposable stack, the
-  service development loop, and the destructive reset.
+- [Local development stack](../../development-stack.mdx) — building the Sync image from your
+  checkout, starting it in containers, and running a first sync against a local NetBox.
+- [Run the preview stack](preview-stack.md) — the host-process stack for working on
+  `infrahub_sync/service/`, its development loop, the smoke suite, and the destructive reset.
 - [NetBox benchmark tiers](netbox-benchmark-tiers.md) — seeding, dumping, restoring, and changing
   the S, M, and L NetBox tiers.
 

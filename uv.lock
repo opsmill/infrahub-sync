@@ -79,7 +79,7 @@ wheels = [
 
 [[package]]
 name = "apprise"
-version = "1.12.0"
+version = "1.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -91,9 +91,9 @@ dependencies = [
     { name = "requests-oauthlib" },
     { name = "tzdata", marker = "sys_platform == 'win32' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ff/f7/95a52cda9355f32c5db9ef77bac18e85977472d29c555fafd825cf60c309/apprise-1.12.0.tar.gz", hash = "sha256:ffe9860d99cbde05fd156c610d4bcb49d953200c4ed3cb2db001ed50722fc142", size = 2477874, upload-time = "2026-07-04T16:15:36.67Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/81/44/5965c245998c72022297e2b515d9594281a97ed1442b3fa022c2c2324102/apprise-1.13.1.tar.gz", hash = "sha256:e7689dda71aaf739244d6c8690de13cb1361b8d0a79980fb48bb397455ca0bdd", size = 2520230, upload-time = "2026-08-31T02:12:01.472Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d3/e9/acfea54abdd66a059ff82995d3703eca3a27df3dc1bdc6afaf8a30a854fe/apprise-1.12.0-py3-none-any.whl", hash = "sha256:28edabfec5a9d5dbcd9aa28bdfd8928ecb68764e40214b6e648eab6d974b5a93", size = 1797824, upload-time = "2026-07-04T16:15:34.228Z" },
+    { url = "https://files.pythonhosted.org/packages/45/7d/6852bd3fc2eb48fa432cb22f5df11d1c902137dcecab93e0d8319b8c8e16/apprise-1.13.1-py3-none-any.whl", hash = "sha256:2ded6d00562dd2ae9eb6f1e6cc8d3fb66e06f7ede6efac0ad029031b633780f4", size = 1826431, upload-time = "2026-08-31T02:11:58.263Z" },
 ]
 
 [[package]]
@@ -1269,8 +1269,8 @@ requires-dist = [
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "netutils", specifier = ">=1.12,<2.0" },
     { name = "packaging", specifier = ">=22.0" },
-    { name = "prefect", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = "==3.8.1" },
-    { name = "prefect", marker = "extra == 'prefect'", specifier = "==3.8.1" },
+    { name = "prefect", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = "==3.8.6" },
+    { name = "prefect", marker = "extra == 'prefect'", specifier = "==3.8.6" },
     { name = "prek", marker = "extra == 'dev'", specifier = ">=0.5.0" },
     { name = "prometheus-client", marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=0.20,<1" },
     { name = "psycopg", extras = ["binary"], marker = "python_full_version >= '3.11' and extra == 'service'", specifier = ">=3.2,<4" },
@@ -2097,7 +2097,7 @@ wheels = [
 
 [[package]]
 name = "prefect"
-version = "3.8.1"
+version = "3.8.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiosqlite" },
@@ -2160,9 +2160,9 @@ dependencies = [
     { name = "websockets" },
     { name = "whenever", marker = "python_full_version >= '3.13' or (extra == 'extra-13-infrahub-sync-service' and extra == 'extra-13-infrahub-sync-slurpit')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e9/01/a8463ea2524dbe4bd3f7dde56dfcbfd3535cea5f63dae7180a2caf1e282e/prefect-3.8.1.tar.gz", hash = "sha256:7a0c8876f4c4efe9bc4c2a09c31374227d0b828ea176962e3f9dea92054408ec", size = 14205596, upload-time = "2026-07-30T21:46:02.912Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b3/9b/79ab0ea9eac4f93675033516b76ecf9e30309ff82369e84ce04b24364fea/prefect-3.8.6.tar.gz", hash = "sha256:46c71c36a46660fbfa9f21c4cdf7541d530706c55b2bc5b61bb9b5425761526c", size = 14721653, upload-time = "2026-09-15T00:34:46.881Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/55/7c/4860c837fbaa365bffbc319c12b57292a1733c5d11293e5aa930cc070d3b/prefect-3.8.1-py3-none-any.whl", hash = "sha256:e65d70fc5f6243150b3ad123de554e19b4db4c499c9d81596349f74854e85af2", size = 15145572, upload-time = "2026-07-30T21:46:00.046Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/78/96e76c84b8ce67647d7423269fa695775c30251b66a84b6f796b7a1daa97/prefect-3.8.6-py3-none-any.whl", hash = "sha256:4d2bba656e031bbb749966e0fca4f0c9311a62c520082e8e3e5514d9b47b034a", size = 15652543, upload-time = "2026-09-15T00:34:43.778Z" },
 ]
 
 [[package]]

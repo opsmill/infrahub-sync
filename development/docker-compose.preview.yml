@@ -8,7 +8,7 @@
 # publications the preview does not need, and
 # adds a dedicated Prefect server for Infrahub Sync's service execution path —
 # separate from Infrahub's internal task-manager, and pinned to the same Prefect
-# version as the `service` extra (prefect==3.8.1).
+# version as the `service` extra (prefect==3.8.6).
 # Refresh pins with `docker buildx imagetools inspect name:tag`: use the top-level
 # index Digest and check for linux/amd64 and linux/arm64 manifests. When changing
 # PREVIEW_PREFECT_IMAGE_TAG in the preview, set PREVIEW_PREFECT_IMAGE_DIGEST to its matching
@@ -68,7 +68,7 @@ services:
     ports: !reset []
 
   sync-prefect:
-    image: "prefecthq/prefect:${PREVIEW_PREFECT_IMAGE_TAG:-3.8.1-python3.12@sha256:2d647011130f4bb36ee07b8386921890f1da44a9b7fbf81cfa86a555b92f151e}${PREVIEW_PREFECT_IMAGE_DIGEST-}"  # yamllint disable-line rule:line-length
+    image: "prefecthq/prefect:${PREVIEW_PREFECT_IMAGE_TAG:-3.8.6-python3.13@sha256:dec8d5b095e93bba1f3d7ebd7cfff13b61209b961382d92be88584c23de5d97a}${PREVIEW_PREFECT_IMAGE_DIGEST-}"  # yamllint disable-line rule:line-length
     command: prefect server start --host 0.0.0.0 --port 4200
     depends_on:
       sync-minio-bootstrap:

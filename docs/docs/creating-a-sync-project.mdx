@@ -75,8 +75,16 @@ The sections below explain each part. For the package format itself, see
 
 - `name` selects a bundled adapter. See [Choose an adapter](./adapters/choosing-an-adapter.mdx)
   for the adapters and their settings.
-- `url` is the address that the Sync worker uses. On a Compose deployment, `localhost`
-  refers to the worker container, so use an address that the container can reach.
+- `url` is the address that the Sync worker uses. The worker runs in a container on a Compose
+  deployment and on the [local development stack](./development-stack.mdx), and there
+  `localhost` refers to the worker container, so use an address that the container can reach.
+  The local development stack connects its worker to the Compose networks of a local
+  Infrahub and a local NetBox, where they answer at `http://infrahub-server:8000` and
+  `http://netbox:8080`. For another service published on the same machine, the development
+  stack's worker has a `host-gateway` route for `host.docker.internal`, so use
+  `http://host.docker.internal:<port>`. The root `docker-compose.yml` adds no such route, so on
+  a Compose deployment use an address the worker can reach on your network, or add the route
+  yourself. Docker Desktop resolves the name without a route; Docker Engine on Linux does not.
 - A token or password is a `$credential` reference, never a literal value.
 
 A registered run can write only to Infrahub, so `destination.name` is `infrahub`.
@@ -86,7 +94,8 @@ A registered run can write only to Infrahub, so `destination.name` is `infrahub`
 The `credentials` block declares each `$credential` reference. `identifier` is the name of
 the environment variable that the Sync worker reads when a run starts. In this example, the
 worker needs `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN` and `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. On a Compose deployment, set them in
-the deployment's `.env`, then run `docker compose up -d --wait`. See
+the deployment's `.env`, then run `docker compose up -d --wait`. On the local development
+stack, export them in your shell, then run `uv run invoke start`. See
 [Credentials](./configuration-package.mdx#credentials).
 
 ## Schema mapping
@@ -105,6 +114,19 @@ Each `schema_mapping` entry maps one source path to one destination kind:
   device's `site` points to the `TestingSite` object whose `name` matches the device's
   Nautobot location. A reference needs both `mapping` and `reference`; a field with only
   `reference` is skipped.
+
+Two rules come from the destination schema rather than from the package, and a package that
+breaks either one registers without an error:
+
+- **Identifiers must stay unique under the kind's uniqueness constraint.** Two source records
+  that produce the same values for the destination kind's uniqueness constraint are one object
+  to Infrahub, and the plan refuses them. For example, the `DcimDevice` kind in the
+  `infrahub/traditional-infrastructure-sot` schema is unique by name, so two NetBox devices
+  with the same name in different sites stop the plan. Filter one of them out, or build a
+  unique name with a transform.
+- **A Dropdown attribute takes one of the schema's choices.** A source value outside them
+  reaches the plan unchanged, and Infrahub rejects it during the apply. Translate source values
+  to the schema's choices with a transform.
 
 For all mapping options, including filters and transforms, see the
 [Schema mapping reference](./reference/schema-mapping.mdx).

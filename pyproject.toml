@@ -69,7 +69,7 @@ infrahub-sync = "infrahub_sync.cli:app"
 # Optional orchestration integration. Only `infrahub_sync/orchestration/` imports
 # prefect; a base install never loads it.
 prefect = [
-    "prefect==3.8.1",
+    "prefect==3.8.6",
 ]
 # Sync HTTP service and worker profile (Python 3.11-3.13). Every runtime
 # imported directly by `infrahub_sync.service` is declared here; the reusable
@@ -86,7 +86,7 @@ service = [
     # placement leaves `infrahubctl` unable to start there for a missing
     # `ariadne_codegen`. The base install stays free of it.
     "infrahub-sdk[ctl]>=1.17,<2; python_version >= '3.11'",
-    "prefect==3.8.1; python_version >= '3.11'",
+    "prefect==3.8.6; python_version >= '3.11'",
     # prefect already resolves this transitively; declaring it directly is what lets
     # `infrahub_sync/adapters/prometheus.py` import `prometheus_client.parser`
     # outside a Prefect-bearing resolution too. The floor is where
@@ -236,7 +236,7 @@ testpaths = [
     "tests"
 ]
 markers = [
-    "integration: tests that require a running Infrahub instance. Skipped by default; opt in with -m integration. Each family skips when its settings are missing; see docs/docs/develop/guidelines/testing-tiers.md#integration. The remote-run test additionally needs a live Prefect server (PREFECT_API_URL) and a separately started served deployment (`python -m infrahub_sync.orchestration.serve`, from the repository root).",
+    "integration: tests that require a running Infrahub instance. Skipped by default; opt in with -m integration. Each family skips when its settings are missing; see docs/docs/development/guidelines/testing-tiers.md#integration. The remote-run test additionally needs a live Prefect server (PREFECT_API_URL) and a separately started served deployment (`python -m infrahub_sync.orchestration.serve`, from the repository root).",
     "preview: end-to-end smoke tests against a running preview environment (`invoke preview.up`). Opt in with -m preview; each test skips when the environment is not reachable.",
     "docker: image smoke tests; needs Docker, `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION`. Opt in with -m docker.",
     "compose: Compose deployment lifecycle; needs Docker. Opt in with -m compose. They share one session-scoped stack and run single-process.",
@@ -439,7 +439,7 @@ exclude = [
     ".codex/**",
     "changelog/**",
     # Archived spec artifacts are a historical record, and `rumdl fmt` loses text in
-    # them (see docs/docs/develop/knowledge/quality-gates.md). Excluded from BOTH `check` and `fmt`
+    # them (see docs/docs/development/knowledge/quality-gates.md). Excluded from BOTH `check` and `fmt`
     # so `invoke format` cannot rewrite them.
     "dev/specs/**",
     "docs/node_modules/**",
