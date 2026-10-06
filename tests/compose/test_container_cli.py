@@ -16,6 +16,7 @@ import re
 import shutil
 import signal
 import subprocess  # noqa: S404 -- the interrupt case drives the entry point directly
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -686,12 +687,36 @@ def test_the_staged_copy_is_removed_however_the_call_ends(
     assert not directory.exists(), f"the staged copy survived at {directory}"
 
 
+# Runs the entry point with the default `SIGINT` action, whatever pytest was started with.
+# A unit tier started as a background job runs with `SIGINT` ignored, and an ignored
+# signal survives `exec`; without this the child would sleep through the interrupt and
+# exit normally. A small launcher does it in the child, so no `preexec_fn` runs in the
+# forked child of a multithreaded pytest process.
+DEFAULT_SIGINT_LAUNCHER = (
+    "import os, signal, sys\nsignal.signal(signal.SIGINT, signal.SIG_DFL)\nos.execv(sys.argv[1], sys.argv[1:])\n"
+)
+
+# The status the entry point's interrupt trap exits with (128 + SIGINT).
+INTERRUPTED_STATUS = 130
+
+
 def test_the_staged_copy_is_removed_when_the_operator_interrupts(initialized: Path, shim: Path, tmp_path: Path) -> None:
     """Ctrl-C is the ordinary way a long call ends, so it is a path that has to clean up."""
     record = tmp_path / "stage.log"
     package = _package(tmp_path)
     process = subprocess.Popen(  # noqa: S603 -- the entry point under test, with a fixed argv
-        [str(initialized / ENTRY_POINT), "cli", "--package", str(package), "--", "configs", "list"],
+        [
+            sys.executable,
+            "-c",
+            DEFAULT_SIGINT_LAUNCHER,
+            str(initialized / ENTRY_POINT),
+            "cli",
+            "--package",
+            str(package),
+            "--",
+            "configs",
+            "list",
+        ],
         start_new_session=True,
         env={
             **os.environ,
@@ -711,12 +736,14 @@ def test_the_staged_copy_is_removed_when_the_operator_interrupts(initialized: Pa
         directory = _stage_directory(record)
         assert directory.exists()
         os.killpg(os.getpgid(process.pid), signal.SIGINT)
-        process.wait(timeout=60)
+        status = process.wait(timeout=60)
     finally:
         if process.poll() is None:
             process.kill()
             process.wait(timeout=30)
 
+    # A call that finished on its own removes the copy too, so only this status shows the interrupt arrived.
+    assert status == INTERRUPTED_STATUS, f"the call ended with status {status} rather than the interrupt's"
     assert not directory.exists(), f"an interrupted call left the staged copy at {directory}"
 
 
