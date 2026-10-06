@@ -1,11 +1,10 @@
-"""Version floors the image and its lock hold so the scan policy stays satisfiable.
+"""Version floors the image and its lock hold so known fixed findings stay fixed.
 
-The vulnerability policy fails a build on a high or critical finding that has a
-fix available, and there is no waiver file to fall back on. What keeps that gate
-passable is the floors below: each one is the first release carrying the fix for
-a finding the scan reported against this image. A lock refresh that drops under
-one of them puts the image back under the policy, so it fails here first, where
-the reason is legible, rather than in a scanner report.
+No build step scans the image any more: Harbor scans what is pushed, after it is
+published (ADR 15). Each floor below is the first release carrying the fix for a
+finding a scan reported against this image. A lock refresh that drops under one
+of them would ship that finding again, so it fails here, before anything is
+published, where the reason is legible.
 """
 
 from __future__ import annotations

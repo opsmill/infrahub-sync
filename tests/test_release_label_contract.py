@@ -38,12 +38,21 @@ CONTRIBUTOR_PR = {
 
 
 def load_checker() -> ModuleType:
-    """Import the label checker script as a module."""
+    """Import the label checker script as a module, without writing bytecode beside it.
+
+    A `scripts/__pycache__/*.pyc` left behind breaks
+    `tests/cli/test_parity_and_closure.py`, which reads every file under `scripts/` as text.
+    """
     spec = importlib.util.spec_from_file_location("check_release_labels", CHECKER_PATH)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    previous = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = previous
     return module
 
 
