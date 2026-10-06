@@ -1,0 +1,123 @@
+.github/workflows/update-infrahub-sdk.yml
+  s_b446495fc7c524::t_8d39b71de52604 87-89,95-96
+infrahub_sync/cli.py
+  s_b446495fc7c524::t_8d39b71de52604 8,57-63,133-145,147,151-154
+tests/adapters/test_infrahub_schema_source.py
+  s_b446495fc7c524::t_8d39b71de52604 21-27,35,140-176
+  s_b446495fc7c524::t_c02946648f4ca5 177
+tests/adapters/test_infrahub_node_to_diffsync.py
+  s_b446495fc7c524::t_8d39b71de52604 53
+changelog/+redact-complete-json-numbers.security.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+changelog/+pcre2-debian-pin.fixed.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+infrahub_sync/__init__.py
+  s_b446495fc7c524::t_8d39b71de52604 6,54-81,422-425
+  s_b446495fc7c524::t_299de630fa02f0 426
+tests/configuration/test_validation_core.py
+  s_b446495fc7c524::t_8d39b71de52604 214,219-231,356,365-367,964-965
+infrahub_sync/configuration/capabilities.py
+  s_b446495fc7c524::t_8d39b71de52604 554
+tests/test_schema_mapping_transforms.py
+  s_b446495fc7c524::t_8d39b71de52604 14,66-132
+  s_b446495fc7c524::t_5bb4ba6001a9a4 133-134
+docs/docs/contributing.mdx
+  s_b446495fc7c524::t_8d39b71de52604 326-328,338
+RELEASING.md
+  s_b446495fc7c524::t_8d39b71de52604 33-35,37,41-43,45,196-197
+changelog/+escape-invisible-unicode-cli.security.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+docs/docs/development-stack.mdx
+  s_b446495fc7c524::t_8d39b71de52604 50-52,136-138,169-176
+infrahub_sync/configuration/validation.py
+  s_b446495fc7c524::t_8d39b71de52604 50,254-271,305-306
+tests/product_store/test_contract.py
+  s_b446495fc7c524::t_8d39b71de52604 24,3266-3385
+changelog/+ai-agent-page-source-pin.housekeeping.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+docs/docs/configuration-package.mdx
+  s_b446495fc7c524::t_8d39b71de52604 66-78
+changelog/+peering-manager-source-only.fixed.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+docs/docs/adapters/peering-manager.mdx
+  s_b446495fc7c524::t_8d39b71de52604 23
+scripts/check_release_labels.py
+  s_b446495fc7c524::t_8d39b71de52604 1-114
+tests/test_update_infrahub.py
+  s_b446495fc7c524::t_8d39b71de52604 89-92,99-115
+  s_b446495fc7c524::t_d8d554cdd554d9 116-117
+changelog/+first-sync-guidance.changed.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+changelog/+legacy-credential-saved-plans.changed.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+changelog/+refresh-pcre2-security-pin.housekeeping.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+.github/file-filters.yml
+  s_b446495fc7c524::t_8d39b71de52604 31-42,64
+.github/version-drafter.yml
+  s_b446495fc7c524::t_8d39b71de52604 2-8
+changelog/+legacy-credential-run-admission.fixed.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+docs/docs/development/guidelines/secret-redaction.md
+  s_b446495fc7c524::t_8d39b71de52604 160-168
+infrahub_sync/product_store/store.py
+  s_b446495fc7c524::t_8d39b71de52604 3492-3493,3505,3558,3565-3584,3586,3591
+changelog/+pr364-review.fixed.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+tests/product_store/test_validate_destination_schema.py
+  s_b446495fc7c524::t_8d39b71de52604 265,267-277
+tests/test_release_label_contract.py
+  s_b446495fc7c524::t_8d39b71de52604 1-233
+docs/docs/use-with-an-ai-agent.mdx
+  s_b446495fc7c524::t_8d39b71de52604 63,69,116,188
+AGENTS.md
+  s_b446495fc7c524::t_8d39b71de52604 169,181,185-186,209
+.github/dependabot.yml
+  s_b446495fc7c524::t_8d39b71de52604 15,32
+docs/docs/development/constitution.md
+  s_b446495fc7c524::t_8d39b71de52604 182,205
+infrahub_sync/service/service.py
+  s_b446495fc7c524::t_8d39b71de52604 19,238-245
+.github/scripts/update_infrahub.py
+  s_b446495fc7c524::t_8d39b71de52604 44,114-116
+.github/workflows/release-label-check.yml
+  s_b446495fc7c524::t_8d39b71de52604 1-50
+changelog/+infrahub-pin-bump-strict-checks.housekeeping.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+changelog/+release-bump-label-contract.housekeeping.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+.github/labels.yml
+  s_b446495fc7c524::t_8d39b71de52604 151-165
+Dockerfile
+  s_b446495fc7c524::t_8d39b71de52604 20
+tests/configuration/test_contracts.py
+  s_b446495fc7c524::t_8d39b71de52604 2320-2328
+tests/cli/test_client_commands.py
+  s_b446495fc7c524::t_8d39b71de52604 6,8-9,18,49,185-198,758-810
+  s_b446495fc7c524::t_0a0ea80c8267f4 811-812
+tests/service/test_http_api.py
+  s_b446495fc7c524::t_8d39b71de52604 37,41,53,59,254-525
+  s_b446495fc7c524::t_7acf507c496dc2 526-527
+changelog/+transform-lazy-filter-result.fixed.md
+  s_b446495fc7c524::t_8d39b71de52604 1
+tests/image/test_version_policy.py
+  s_b446495fc7c524::t_8d39b71de52604 31
+.github/workflows/trigger-push-stable.yml
+  s_b446495fc7c524::t_8d39b71de52604 223,228-229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3bc72ce1d310994df64a9c4f0abcecb3119e1bab",
+  "prompts": {},
+  "sessions": {
+    "s_b446495fc7c524": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "71be32b1-8e1f-4a28-afbb-8130764cf642",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
