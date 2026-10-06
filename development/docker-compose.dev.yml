@@ -100,7 +100,7 @@ services:
       retries: 30
 
   prefect-server:
-    image: "prefecthq/prefect:3.8.6-python3.13"
+    image: "prefecthq/prefect:3.8.6-python3.13@sha256:dec8d5b095e93bba1f3d7ebd7cfff13b61209b961382d92be88584c23de5d97a"  # yamllint disable-line rule:line-length
     command: ["prefect", "server", "start", "--host", "0.0.0.0", "--port", "4200"]
     depends_on:
       postgres:
