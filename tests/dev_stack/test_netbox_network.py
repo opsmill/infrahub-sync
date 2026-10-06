@@ -229,7 +229,7 @@ def test_invoke_start_reconnects_a_recreated_worker(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.parametrize("project", ["", netbox.DEV_STACK_PROJECT, "selected-development"])
-def test_invoke_start_attaches_only_the_selected_project_worker(monkeypatch: pytest.MonkeyPatch, project: str) -> None:
+def test_pinned_start_attaches_only_the_selected_project_worker(monkeypatch: pytest.MonkeyPatch, project: str) -> None:
     """Worker lookup follows the explicit project while the default remains available."""
     selected = project or netbox.DEV_STACK_PROJECT
     fake = FakeDocker(network_exists=True, workers=[], attached=set())
@@ -248,7 +248,7 @@ def test_invoke_start_attaches_only_the_selected_project_worker(monkeypatch: pyt
     monkeypatch.setattr(context, "run", run)
     monkeypatch.setattr(dev, "load_netbox_env", lambda: VALUES)
 
-    cast("Task", dev.start).body(context, project=project)
+    dev._start(context, project=project)
 
     assert fake.changes() == [f"docker network connect {NETWORK} selected-worker"]
     assert f"label=com.docker.compose.project={selected} " in fake.commands[2]

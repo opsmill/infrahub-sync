@@ -14,7 +14,7 @@ from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import pytest
 import yaml
@@ -834,7 +834,7 @@ def test_runner_distinguishes_setup_timeout_from_cell_deadline(monkeypatch, tmp_
 def test_stopped_development_worker_requires_destroy(monkeypatch) -> None:
     stack = bench.CellStack()
     monkeypatch.setattr(stack.context, "run", lambda *_args, **_kwargs: SimpleNamespace(stdout="stopped-worker"))
-    monkeypatch.setattr(bench.dev, "build", lambda _context: pytest.fail("must not build over existing stack"))
+    monkeypatch.setattr(bench.dev, "_build", lambda _context: pytest.fail("must not build over existing stack"))
     with pytest.raises(BenchmarkError, match=r"invoke destroy.*removes volumes"):
         stack.start_sync()
     assert stack.started_sync is False
@@ -977,6 +977,26 @@ def test_runner_lock_excludes_other_checkouts_before_reset_and_releases(monkeypa
     assert events == [("reset", roots[0]), ("close", roots[0])]
     with bench.RUNNER_LOCK.open("a") as contender:
         fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="benchmark cells require Python 3.11 to 3.13")
+def test_runner_lock_owned_by_another_user_reports_the_running_cell(monkeypatch, tmp_path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "3"\n', encoding="utf-8")
+    monkeypatch.setattr(bench, "ROOT", tmp_path)
+    monkeypatch.setattr(bench, "STATE", tmp_path / ".netbox/bench")
+    monkeypatch.setattr(bench, "cell_options", lambda *_args: None)
+
+    class DeniedLock:
+        @staticmethod
+        def open(*_args: object, **_kwargs: object) -> NoReturn:
+            raise PermissionError
+
+        def __str__(self) -> str:
+            return "/tmp/denied.lock"  # noqa: S108 -- message text only
+
+    monkeypatch.setattr(bench, "RUNNER_LOCK", DeniedLock())
+    with pytest.raises(BenchmarkError, match=r"another benchmark cell is running.*/tmp/denied\.lock"):
+        bench.run_cell.body(Context())
 
 
 @pytest.mark.parametrize("phase", ["compose", "after-compose", "cleanup"])
@@ -1130,8 +1150,8 @@ def test_runner_rejects_existing_development_container_before_mutation(monkeypat
     monkeypatch.setattr(bench.netbox, "restore", destructive)
     monkeypatch.setattr(bench.netbox, "down", destructive)
     monkeypatch.setattr(bench.preview, "_compose", destructive)
-    monkeypatch.setattr(bench.dev, "build", destructive)
-    monkeypatch.setattr(bench.dev, "destroy", destructive)
+    monkeypatch.setattr(bench.dev, "_build", destructive)
+    monkeypatch.setattr(bench.dev, "_destroy", destructive)
     bench.run_cell.body(Context(), line=line, v2_ref="2.0.1")
     row = json.loads(bench.RESULTS.read_text())
     assert row["status"] == "failed"
@@ -1161,7 +1181,7 @@ def test_partial_setup_cleans_only_acquired_stacks(monkeypatch, failure) -> None
     monkeypatch.setattr(bench.netbox, "restore", restore)
     monkeypatch.setattr(bench.preview, "_compose", compose)
     monkeypatch.setattr(bench.netbox, "down", lambda _context: events.append("source"))
-    monkeypatch.setattr(bench.dev, "destroy", lambda _context: pytest.fail("unacquired Sync stack"))
+    monkeypatch.setattr(bench.dev, "_destroy", lambda _context: pytest.fail("unacquired Sync stack"))
     with pytest.raises(BenchmarkError):
         stack.reset("S")
     stack.close()

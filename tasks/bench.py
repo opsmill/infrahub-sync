@@ -204,9 +204,13 @@ class CellStack:
         }
         self.context.config.run.env = env
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            dev.build(self.context, project=netbox.DEV_STACK_PROJECT, compose_file=str(ROOT / "compose.yaml"))
+            dev._build(  # noqa: SLF001 -- pinned project is private to the runner
+                self.context, project=netbox.DEV_STACK_PROJECT, compose_file=str(ROOT / "compose.yaml")
+            )
             try:
-                dev.start(self.context, project=netbox.DEV_STACK_PROJECT, compose_file=str(ROOT / "compose.yaml"))
+                dev._start(  # noqa: SLF001 -- pinned project is private to the runner
+                    self.context, project=netbox.DEV_STACK_PROJECT, compose_file=str(ROOT / "compose.yaml")
+                )
             finally:
                 # A failed up may still have created containers; a failed build owns none.
                 deadline = self.context.deadline
@@ -274,7 +278,9 @@ class CellStack:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             try:
                 if self.started_sync:
-                    dev.destroy(self.context, project=netbox.DEV_STACK_PROJECT, compose_file=str(ROOT / "compose.yaml"))
+                    dev._destroy(  # noqa: SLF001 -- pinned project is private to the runner
+                        self.context, project=netbox.DEV_STACK_PROJECT, compose_file=str(ROOT / "compose.yaml")
+                    )
             finally:
                 try:
                     if self.started_destination:
@@ -446,7 +452,12 @@ def run_cell(  # noqa: PLR0913, PLR0917, PLR0912, PLR0914, PLR0915 -- one record
     STATE.mkdir(parents=True, exist_ok=True)
     import fcntl  # noqa: PLC0415 -- Linux benchmark host
 
-    with RUNNER_LOCK.open("a", encoding="utf-8") as lock:
+    try:
+        lock_file = RUNNER_LOCK.open("a", encoding="utf-8")
+    except PermissionError:
+        msg = f"another benchmark cell is running: cannot open {RUNNER_LOCK}, which another user created"
+        raise BenchmarkError(msg) from None
+    with lock_file as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
