@@ -1,0 +1,19 @@
+docs/docs/running-a-sync.mdx
+  s_b446495fc7c524::t_4287be8ab380f3 229-231
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd6d29eb5b6c535ec679a50ff631c10709f94654",
+  "prompts": {},
+  "sessions": {
+    "s_b446495fc7c524": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "71be32b1-8e1f-4a28-afbb-8130764cf642",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
