@@ -173,8 +173,8 @@ def _recorded_launches(monkeypatch: pytest.MonkeyPatch) -> LaunchRecorder:
     return LaunchRecorder().install(monkeypatch)
 
 
-def stub_child_start(_worker: ServiceProcessWorker) -> LaunchRecorder:
-    """Keep the child unspawned, so a start is observable without running one."""
+def stub_child_start() -> LaunchRecorder:
+    """Return this test's recorder, which records the starts of every worker in the test."""
     return LaunchRecorder.installed()
 
 
@@ -473,7 +473,7 @@ async def test_a_submission_that_meets_a_refresh_waits_through_it_and_starts(
     """
     async with worker:
         await worker.sync_with_backend()
-        runner = stub_child_start(worker)
+        runner = stub_child_start()
         configuration = prepared(worker)
         first = worker.backend_id
 
@@ -513,7 +513,7 @@ async def test_a_replacement_during_the_wait_still_refuses_the_stale_submission(
     """
     async with worker:
         await worker.sync_with_backend()
-        runner = stub_child_start(worker)
+        runner = stub_child_start()
         stale = prepared(worker)
         first = worker.backend_id
         reissued = uuid4()
@@ -549,7 +549,7 @@ async def test_refreshes_queued_behind_the_wait_do_not_admit_a_stale_submission(
     """
     async with worker:
         await worker.sync_with_backend()
-        runner = stub_child_start(worker)
+        runner = stub_child_start()
         stale = prepared(worker)
         reissued = uuid4()
 
@@ -586,7 +586,7 @@ async def test_a_queued_refresh_alone_does_not_refuse_a_current_submission(
     """
     async with worker:
         await worker.sync_with_backend()
-        runner = stub_child_start(worker)
+        runner = stub_child_start()
         configuration = prepared(worker)
         first = worker.backend_id
 
@@ -623,7 +623,7 @@ async def test_a_submission_cancelled_while_waiting_leaves_no_lease_held(
     """
     async with worker:
         await worker.sync_with_backend()
-        runner = stub_child_start(worker)
+        runner = stub_child_start()
 
         holding, release = pause_the_next_refresh(worker)
         refresh = asyncio.create_task(worker.sync_with_backend())
@@ -656,7 +656,7 @@ async def test_no_child_is_started_before_the_identity_is_validated(
     """
     async with worker:
         await worker.sync_with_backend()
-        runner = stub_child_start(worker)
+        runner = stub_child_start()
         foreign = worker.job_configuration()
         # Admitted, so what refuses it below is the identity gate and nothing else.
         foreign._admitted = True

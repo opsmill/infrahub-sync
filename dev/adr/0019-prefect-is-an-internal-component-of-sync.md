@@ -44,8 +44,10 @@ Prefect is an internal component of Sync, not an external dependency that Sync s
   so Infrahub's task list does not show them. #362's `infrahub.app` tags are dropped.
 - **Spec 008 user story 1 is reversed.** #362 is not merged. #363 is rebased off it, and its
   node tags no longer place runs in Infrahub's task views.
-- **Prefect internals.** The worker still starts admitted runs with Prefect's private
-  `EngineCommandStarter` (#357), which each Prefect upgrade has to re-verify.
+- **Prefect internals.** The worker sets Prefect's private
+  `ProcessJobConfiguration._command_configured` on each admitted run, so that Prefect starts
+  the run with its private `EngineCommandStarter` (#357). Each Prefect upgrade has to
+  re-verify both.
 
 ## Alternatives Considered
 
