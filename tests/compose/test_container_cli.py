@@ -9,6 +9,7 @@ nothing: the shim is what observes it while it exists.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -704,6 +705,10 @@ def test_the_staged_copy_is_removed_when_the_operator_interrupts(initialized: Pa
     """Ctrl-C is the ordinary way a long call ends, so it is a path that has to clean up."""
     record = tmp_path / "stage.log"
     package = _package(tmp_path)
+    # The entry point stages under `TMPDIR`; pointing it below `tmp_path` makes pytest
+    # remove a copy that a failed run leaves behind, after the assertions have looked.
+    stage_root = tmp_path / "stage-root"
+    stage_root.mkdir()
     process = subprocess.Popen(  # noqa: S603 -- the entry point under test, with a fixed argv
         [
             sys.executable,
@@ -721,6 +726,7 @@ def test_the_staged_copy_is_removed_when_the_operator_interrupts(initialized: Pa
         env={
             **os.environ,
             "PATH": f"{shim}{os.pathsep}{os.environ['PATH']}",
+            "TMPDIR": str(stage_root),
             "SHIM_COMPOSE_VERSION": MINIMUM_COMPOSE,
             "SHIM_STAGE_RECORD": str(record),
             "SHIM_CLI_HANG": "1",
@@ -738,9 +744,14 @@ def test_the_staged_copy_is_removed_when_the_operator_interrupts(initialized: Pa
         os.killpg(os.getpgid(process.pid), signal.SIGINT)
         status = process.wait(timeout=60)
     finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=30)
+        # The session leader is not the only member: the Docker shim and its `sleep` stay
+        # in the group, so the whole group is killed, then the leader reaped and pipes closed.
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=30)
+        for pipe in (process.stdout, process.stderr):
+            if pipe is not None:
+                pipe.close()
 
     # A call that finished on its own removes the copy too, so only this status shows the interrupt arrived.
     assert status == INTERRUPTED_STATUS, f"the call ended with status {status} rather than the interrupt's"
