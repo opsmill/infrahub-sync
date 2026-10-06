@@ -843,30 +843,52 @@ def test_stopped_development_worker_requires_destroy(monkeypatch) -> None:
 @pytest.mark.parametrize(
     ("name", "value"), [("COMPOSE_PROJECT_NAME", "existing-development"), ("COMPOSE_FILE", "other-compose.yaml")]
 )
-def test_conflicting_compose_environment_is_refused_before_mutation(monkeypatch, name, value) -> None:
+def test_reset_and_cleanup_pin_compose_despite_global_environment(monkeypatch, name, value) -> None:
+    """Global Compose settings cannot redirect NetBox or destination lifecycle commands."""
     stack = bench.CellStack()
+    commands = []
     monkeypatch.setenv(name, value)
-    monkeypatch.setattr(stack.context, "run", lambda *_args, **_kwargs: pytest.fail("must refuse before Docker"))
-    monkeypatch.setattr(bench.netbox, "restore", lambda *_args, **_kwargs: pytest.fail("must not reset NetBox"))
-    with pytest.raises(BenchmarkError, match=f"unset conflicting {name}"):
-        stack.reset("S")
+    monkeypatch.setattr(
+        stack.context,
+        "run",
+        lambda command, **_kwargs: commands.append(shlex.split(command)) or SimpleNamespace(stdout=""),
+    )
+
+    def restore(context, *, tier) -> None:
+        """Exercise NetBox's Compose helper without restoring a live database."""
+        assert tier == "S"
+        bench.netbox._compose(context, "down --volumes", stack.netbox_env)
+        bench.netbox._compose(context, "up --detach", stack.netbox_env)
+
+    monkeypatch.setattr(bench.netbox, "restore", restore)
+    monkeypatch.setattr(bench.netbox, "detach_dev_worker", lambda *_args: None)
+    monkeypatch.setattr(bench, "output", lambda *_args, **_kwargs: "")
+    stack.reset("S")
     stack.close()
+    lifecycle = [command for command in commands if command[:2] == ["docker", "compose"]]
+    projects = {stack.netbox_env["COMPOSE_PROJECT_NAME"], stack.preview_env["COMPOSE_PROJECT_NAME"]}
+    files = {str(bench.netbox.COMPOSE_FILE), *(str(path) for path in bench.preview.COMPOSE_FILES)}
+    assert len(lifecycle) == 6
+    assert {command[command.index("--project-name") + 1] for command in lifecycle} == projects
+    assert all(command[command.index("-f") + 1] in files for command in lifecycle)
     assert not stack.started_sync
-    assert not stack.started_netbox
-    assert not stack.started_destination
+    assert stack.started_netbox
+    assert stack.started_destination
 
 
 @pytest.mark.parametrize("phase", ["build", "start-empty", "start-created", "ready"])
 def test_sync_cleanup_only_owns_created_containers_and_pins_compose(monkeypatch, phase) -> None:
+    """Sync lifecycle pins its project and file and cleans up only containers it created."""
     stack = bench.CellStack()
     commands = []
     created = False
-    monkeypatch.setenv("COMPOSE_PROJECT_NAME", bench.netbox.DEV_STACK_PROJECT)
-    monkeypatch.setenv("COMPOSE_FILE", str(bench.ROOT / "compose.yaml"))
-    monkeypatch.setattr(bench.dev, "attach_dev_worker", lambda *_args: False)
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "existing-development")
+    monkeypatch.setenv("COMPOSE_FILE", "other-compose.yaml")
+    monkeypatch.setattr(bench.dev, "attach_dev_worker", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(bench.netbox, "dev_worker_containers", lambda _context: ["worker"])
 
     def docker(command, **_kwargs: object):
+        """Simulate container creation at each setup phase and record lifecycle commands."""
         nonlocal created
         commands.append(shlex.split(command))
         if "ps" in commands[-1]:

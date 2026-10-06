@@ -184,14 +184,6 @@ class CellStack:
 
     def require_exclusive_sync(self) -> None:
         """Refuse any existing development container before changing either database."""
-        project = os.environ.get("COMPOSE_PROJECT_NAME")
-        compose_file = os.environ.get("COMPOSE_FILE")
-        if project and project != netbox.DEV_STACK_PROJECT:
-            msg = "unset conflicting COMPOSE_PROJECT_NAME before benchmarking"
-            raise BenchmarkError(msg)
-        if compose_file and (ROOT / compose_file).resolve() != ROOT / "compose.yaml":
-            msg = "unset conflicting COMPOSE_FILE before benchmarking"
-            raise BenchmarkError(msg)
         # The existing dev task owns its fixed project. Refuse another caller's stack.
         if self.sync_containers():
             msg = "the development Sync stack has existing containers; run uv run invoke destroy before benchmarking (removes volumes)"

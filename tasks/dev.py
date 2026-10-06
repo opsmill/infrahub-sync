@@ -12,7 +12,7 @@ import shlex
 
 from invoke import Context, task
 
-from .netbox import attach_dev_worker, load_netbox_env
+from .netbox import DEV_STACK_PROJECT, attach_dev_worker, load_netbox_env
 from .utils import ESCAPED_REPO_PATH
 
 NAMESPACE = "INFRAHUB-SYNC-DEV"
@@ -62,7 +62,7 @@ def start(context: Context, project: str = "", compose_file: str = "") -> None:
         )
     # `up` recreates the worker whenever its settings change, which drops a network it
     # was connected to afterwards. Reconnect it to the local NetBox, if that is running.
-    attach_dev_worker(context, load_netbox_env())
+    attach_dev_worker(context, load_netbox_env(), project=project or DEV_STACK_PROJECT)
     print(f" - [{NAMESPACE}] Sync API    {API_URL}  (bearer {API_TOKEN})")
     print(f" - [{NAMESPACE}] Prefect UI  {PREFECT_URL}")
     print(f" - [{NAMESPACE}] After a code change: `uv run invoke build && uv run invoke start`")

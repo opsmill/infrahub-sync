@@ -202,11 +202,11 @@ def _docker_output(context: Context, arguments: str) -> str | None:
     return result.stdout.strip()
 
 
-def dev_worker_containers(context: Context) -> list[str]:
-    """The container IDs of the dev stack's worker, running or stopped."""
+def dev_worker_containers(context: Context, project: str = DEV_STACK_PROJECT) -> list[str]:
+    """Return worker container IDs in the selected project, running or stopped."""
     output = _docker_output(
         context,
-        f"ps --all --quiet --filter label=com.docker.compose.project={DEV_STACK_PROJECT} "
+        f"ps --all --quiet --filter {shlex.quote('label=com.docker.compose.project=' + project)} "
         f"--filter label=com.docker.compose.service={DEV_STACK_WORKER_SERVICE}",
     )
     return output.split() if output else []
@@ -222,8 +222,8 @@ def _attached_networks(context: Context, container: str) -> set[str]:
     return set(output.split()) if output else set()
 
 
-def attach_dev_worker(context: Context, values: dict[str, str]) -> bool:
-    """Connect the dev stack's worker to NetBox's network, when both exist.
+def attach_dev_worker(context: Context, values: dict[str, str], project: str = DEV_STACK_PROJECT) -> bool:
+    """Connect the selected project's worker to NetBox's network, when both exist.
 
     Safe to repeat: a worker that is already connected is left as it is. Returns whether
     a worker is connected when this returns. Does nothing when NetBox's network or the
@@ -232,7 +232,7 @@ def attach_dev_worker(context: Context, values: dict[str, str]) -> bool:
     network = netbox_network(values)
     if _docker_output(context, f"network inspect --format '{{{{.Name}}}}' {shlex.quote(network)}") is None:
         return False
-    containers = dev_worker_containers(context)
+    containers = dev_worker_containers(context, project=project)
     for container in containers:
         if network in _attached_networks(context, container):
             continue
