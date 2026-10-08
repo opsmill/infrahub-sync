@@ -16,6 +16,7 @@ from __future__ import annotations
 import gzip
 import json
 import re
+import sys
 import tarfile
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -29,8 +30,10 @@ from shutil import copyfile, rmtree
 from typing import Any, cast
 
 from invoke import Context, task
+from invoke.exceptions import Exit
 from packaging.version import InvalidVersion, Version
 
+from . import acceptance
 from .utils import ESCAPED_REPO_PATH, REPO_BASE
 
 NAMESPACE = "INFRAHUB-SYNC-RELEASE"
@@ -1010,3 +1013,26 @@ def _digest(path: Path) -> str:
         for chunk in iter(lambda: content.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+@task(name="validate-acceptance")
+def validate_acceptance(context: Context, manifest: str) -> None:
+    """Validate manifest consistency against the checked-out MVP contract."""
+    del context
+    try:
+        result = acceptance.validate_acceptance(Path(manifest))
+    except acceptance.AcceptanceTaskError as exc:
+        print(str(exc), file=sys.stderr)
+        raise Exit(str(exc), code=1) from None
+    print(f" - [{NAMESPACE}] Contract  v{result.contract_version} sha256:{result.contract_sha256}")
+    print(f" - [{NAMESPACE}] Selection {result.selection.mode.value}")
+    print(
+        f" - [{NAMESPACE}] Candidate {result.candidate_version} "
+        f"revision={result.source_revision} image={result.image_digest}"
+    )
+    print(f" - [{NAMESPACE}] Criteria  {result.passed_criteria}/{result.total_criteria} passed")
+    print(f" - [{NAMESPACE}] Evaluator {result.evaluator_identity} approved_at={result.evaluator_approved_at}")
+    print(f" - [{NAMESPACE}] Decision  {result.decision}")
+    print(f" - [{NAMESPACE}] consistent with selected contract: yes")
+    print(f" - [{NAMESPACE}] Artifact availability and byte verification remain a spec-014 gate")
+    print(f" - [{NAMESPACE}] Contract provenance and promotion decisions remain with spec 014")

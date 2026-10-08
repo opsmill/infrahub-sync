@@ -52,19 +52,19 @@ contradictory input. Neither result claims contract approval or release eligibil
 
 ### Tests for User Story 1
 
-- [ ] T006 [P] [US1] Add failing tests for version parsing, exact criterion-table parsing, content digesting, duplicate identifiers, malformed rows, unknown owners/classes, and empty cells in `tests/release/test_acceptance_contract.py`
-- [ ] T007 [P] [US1] Add failing tests for strict manifest structure, candidate and contract identities, exact criterion accounting, no waiver state, decision consistency, and generated-schema stability in `tests/release/test_acceptance_manifest.py`
-- [ ] T008 [P] [US1] Add failing tests for `release.validate-acceptance` selected-contract consistency, absence of approval or eligibility claims, non-zero refusal, bounded output, and next-action messages in `tests/release/test_acceptance_command.py`
+- [X] T006 [P] [US1] Add failing tests for version parsing, exact criterion-table parsing, content digesting, duplicate identifiers, malformed rows, unknown owners/classes, and empty cells in `tests/release/test_acceptance_contract.py`
+- [X] T007 [P] [US1] Add failing tests for strict manifest structure, candidate and contract identities, exact criterion accounting, no waiver state, decision consistency, and generated-schema stability in `tests/release/test_acceptance_manifest.py`
+- [X] T008 [P] [US1] Add failing tests for `release.validate-acceptance` selected-contract consistency, absence of approval or eligibility claims, non-zero refusal, bounded output, and next-action messages in `tests/release/test_acceptance_command.py`
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] Populate stable 009–014 criterion IDs, owner specs, classes, requirements, validation methods, and evidence types in `docs/docs/develop/knowledge/mvp-acceptance-contract.md`
-- [ ] T010 [US1] Implement fail-closed contract-version and criterion-table parsing plus byte-exact SHA-256 identity in `tasks/acceptance.py`
-- [ ] T011 [US1] Implement strict Pydantic contract, candidate, evaluator, criterion-result, locator, evidence, and qualification-manifest models in `tasks/acceptance.py`
-- [ ] T012 [US1] Implement exact criterion accounting, pass/fail derivation, selected-contract identity matching, timestamp ordering, and safe typed refusals in `tasks/acceptance.py`
-- [ ] T013 [US1] Generate and commit the runtime-model schema to `docs/static/schemas/infrahub-sync-mvp-qualification-manifest-v1.schema.json`
-- [ ] T014 [US1] Add the read-only `release.validate-acceptance --manifest` Invoke wrapper and bounded result rendering in `tasks/release.py`
-- [ ] T015 [US1] Run the User Story 1 tests in `tests/release/test_acceptance_contract.py`, `tests/release/test_acceptance_manifest.py`, and `tests/release/test_acceptance_command.py`
+- [X] T009 [US1] Populate stable 009–014 criterion IDs, owner specs, classes, requirements, validation methods, and evidence types in `docs/docs/develop/knowledge/mvp-acceptance-contract.md`
+- [X] T010 [US1] Implement fail-closed contract-version and criterion-table parsing plus byte-exact SHA-256 identity in `tasks/acceptance.py`
+- [X] T011 [US1] Implement strict Pydantic contract, candidate, evaluator, criterion-result, locator, evidence, and qualification-manifest models in `tasks/acceptance.py`
+- [X] T012 [US1] Implement exact criterion accounting, pass/fail derivation, selected-contract identity matching, timestamp ordering, and safe typed refusals in `tasks/acceptance.py`
+- [X] T013 [US1] Generate and commit the runtime-model schema to `docs/static/schemas/infrahub-sync-mvp-qualification-manifest-v1.schema.json`
+- [X] T014 [US1] Add the read-only `release.validate-acceptance --manifest` Invoke wrapper and bounded result rendering in `tasks/release.py`
+- [X] T015 [US1] Run the User Story 1 tests in `tests/release/test_acceptance_contract.py`, `tests/release/test_acceptance_manifest.py`, and `tests/release/test_acceptance_command.py`
 
 **Checkpoint**: A complete selected-contract manifest produces one deterministic consistency result;
 malformed, mismatched, incomplete, or contradictory input fails closed without exposing untrusted

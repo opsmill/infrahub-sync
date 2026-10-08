@@ -1,10 +1,20 @@
 """Safe, read-only boundaries shared by MVP acceptance validation tasks."""
 
+# Refusal text is curated at each validation branch and is intentionally constructed where the
+# relevant field and next action are known.
+# ruff: noqa: EM101, TRY003
+
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from enum import Enum
+from hashlib import sha256
 from pathlib import Path
+from typing import Annotated, Literal
+
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONTRACT_PATH = REPO_ROOT / "docs" / "docs" / "develop" / "knowledge" / "mvp-acceptance-contract.md"
@@ -80,3 +90,359 @@ class AcceptanceValidationResult:
     decision: str
     selection: ContractSelection
     consistent: bool = True
+
+
+CRITERION_TABLE_HEADER = "| ID | Owner spec | Class | Requirement | Validation | Evidence |"
+CRITERION_TABLE_SEPARATOR = "|---|---|---|---|---|---|"
+VERSION_PATTERN = re.compile(r"\*\*Contract version:\*\* ([1-9][0-9]*)")
+CRITERION_ID_PATTERN = re.compile(r"[A-Z][A-Z0-9-]*-[0-9]{3}")
+EVIDENCE_TYPE_PATTERN = re.compile(r"[a-z][a-z0-9-]*")
+CATALOG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+SHA256_PATTERN = r"^[0-9a-f]{64}$"
+OCI_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
+REVISION_PATTERN = r"^[0-9a-f]{40}$"
+CRITERION_RESULT_ID_PATTERN = r"^[A-Z][A-Z0-9-]*-[0-9]{3}$"
+ALLOWED_OWNERS = frozenset({"009", "010", "011", "012", "013", "014"})
+ALLOWED_CLASSES = frozenset({"safety", "integrity", "release"})
+CRITERION_CELL_COUNT = 6
+
+
+@dataclass(frozen=True)
+class MvpCriterion:
+    """One parsed row from the normative criterion table."""
+
+    criterion_id: str
+    owner_spec: str
+    safety_class: str
+    requirement: str
+    validation_method: str
+    evidence_types: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class AcceptanceContract:
+    """The selected normative contract and its exact byte identity."""
+
+    version: int
+    sha256: str
+    criteria: tuple[MvpCriterion, ...]
+
+
+def _contract_error(problem: str, *, field: str | None = None) -> ContractValidationError:
+    return ContractValidationError(
+        problem,
+        field=field,
+        next_action="Correct the normative contract structure and increment its version when semantics change",
+    )
+
+
+def _parse_criterion_row(line: str, seen: set[str]) -> MvpCriterion:
+    """Parse one exact six-cell row from the normative table."""
+    if not line.startswith("| ") or not line.endswith(" |"):
+        raise _contract_error("malformed criterion row", field="criteria")
+    cells = line[2:-2].split(" | ")
+    if len(cells) != CRITERION_CELL_COUNT:
+        raise _contract_error("malformed criterion row", field="criteria")
+    if any(not cell for cell in cells):
+        raise _contract_error("criterion row contains an empty cell", field="criteria")
+    criterion_id, owner, safety_class, requirement, validation, evidence_cell = cells
+    if not CRITERION_ID_PATTERN.fullmatch(criterion_id):
+        raise _contract_error("criterion identifier is invalid", field="criteria")
+    if criterion_id in seen:
+        raise _contract_error("duplicate criterion identifier", field=criterion_id)
+    if owner not in ALLOWED_OWNERS:
+        raise _contract_error("criterion owner is unknown", field=criterion_id)
+    if safety_class not in ALLOWED_CLASSES:
+        raise _contract_error("criterion class is unknown", field=criterion_id)
+    evidence_types = evidence_cell.split(", ")
+    if ", ".join(evidence_types) != evidence_cell or any(
+        not EVIDENCE_TYPE_PATTERN.fullmatch(item) for item in evidence_types
+    ):
+        raise _contract_error("criterion evidence types are invalid", field=criterion_id)
+    if len(set(evidence_types)) != len(evidence_types):
+        raise _contract_error("criterion evidence types are duplicated", field=criterion_id)
+    return MvpCriterion(
+        criterion_id=criterion_id,
+        owner_spec=owner,
+        safety_class=safety_class,
+        requirement=requirement,
+        validation_method=validation,
+        evidence_types=tuple(evidence_types),
+    )
+
+
+def parse_contract(content: bytes) -> AcceptanceContract:
+    """Parse exact contract bytes, refusing every ambiguous criterion catalog."""
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        raise _contract_error("contract is not valid UTF-8") from None
+    lines = text.splitlines()
+    versions = [(index, match) for index, line in enumerate(lines) if (match := VERSION_PATTERN.fullmatch(line))]
+    if len(versions) != 1:
+        raise _contract_error("expected exactly one positive contract version", field="contract_version")
+    version_index, version_match = versions[0]
+    first_heading = next((index for index, line in enumerate(lines) if line.startswith("## ")), len(lines))
+    if version_index >= first_heading:
+        raise _contract_error("contract version is misplaced", field="contract_version")
+
+    headings = [index for index, line in enumerate(lines) if line == "## Required MVP criteria"]
+    if len(headings) != 1:
+        raise _contract_error("expected exactly one required criterion section", field="criteria")
+    cursor = headings[0] + 1
+    while cursor < len(lines) and not lines[cursor]:
+        cursor += 1
+    if (
+        cursor + 1 >= len(lines)
+        or lines[cursor] != CRITERION_TABLE_HEADER
+        or lines[cursor + 1] != CRITERION_TABLE_SEPARATOR
+    ):
+        raise _contract_error("criterion table header does not match the contract grammar", field="criteria")
+    cursor += 2
+
+    criteria: list[MvpCriterion] = []
+    seen: set[str] = set()
+    while cursor < len(lines) and not lines[cursor].startswith("## "):
+        line = lines[cursor]
+        cursor += 1
+        if not line:
+            continue
+        criterion = _parse_criterion_row(line, seen)
+        criteria.append(criterion)
+        seen.add(criterion.criterion_id)
+    if not criteria:
+        raise _contract_error("criterion table is empty", field="criteria")
+    return AcceptanceContract(
+        version=int(version_match.group(1)), sha256=sha256(content).hexdigest(), criteria=tuple(criteria)
+    )
+
+
+class StrictModel(BaseModel):
+    """Strict immutable base for untrusted qualification input."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, str_strip_whitespace=False)
+
+
+class ContractIdentity(StrictModel):
+    """Exact normative-contract identity recorded by a manifest."""
+
+    version: Annotated[int, Field(ge=1)]
+    sha256: Annotated[str, Field(pattern=SHA256_PATTERN)]
+
+
+class CandidateIdentity(StrictModel):
+    """Immutable source and image identity for one candidate."""
+
+    version: Annotated[str, Field(min_length=1, max_length=128)]
+    source_revision: Annotated[str, Field(pattern=REVISION_PATTERN)]
+    image_digest: Annotated[str, Field(pattern=OCI_DIGEST_PATTERN)]
+
+
+class RelativePathLocator(StrictModel):
+    """A bundle-relative POSIX evidence path."""
+
+    kind: Literal["relative-path"]
+    value: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=1024,
+            pattern=r"^[A-Za-z0-9._/-]+$",
+        ),
+    ]
+
+    @field_validator("value")
+    @classmethod
+    def validate_relative_path(cls, value: str) -> str:
+        """Refuse absolute, traversing, or non-normalized paths."""
+        segments = value.split("/")
+        if value.startswith("/") or any(segment in {"", ".", ".."} for segment in segments):
+            raise ValueError("relative evidence path must be normalized")
+        return value
+
+
+class ArtifactIdLocator(StrictModel):
+    """A bounded opaque artifact identifier."""
+
+    kind: Literal["artifact-id"]
+    value: Annotated[str, Field(pattern=CATALOG_ID_PATTERN)]
+
+
+EvidenceLocator = Annotated[RelativePathLocator | ArtifactIdLocator, Field(discriminator="kind")]
+
+
+class EvidenceReference(StrictModel):
+    """Bounded immutable metadata for retained evidence bytes."""
+
+    evidence_type: Annotated[str, Field(pattern=r"^[a-z][a-z0-9-]*$", max_length=128)]
+    media_type: Annotated[str, Field(min_length=1, max_length=128)]
+    locator: EvidenceLocator
+    sha256: Annotated[str, Field(pattern=SHA256_PATTERN)]
+    producer: Annotated[str, Field(min_length=1, max_length=256)]
+    produced_at: Annotated[AwareDatetime, Field(strict=False)]
+    source_revision: Annotated[str, Field(pattern=REVISION_PATTERN)]
+    candidate_digest: Annotated[str, Field(pattern=OCI_DIGEST_PATTERN)]
+    contract_sha256: Annotated[str, Field(pattern=SHA256_PATTERN)]
+
+
+class EvaluatorApproval(StrictModel):
+    """Independent evaluator attestation recorded with the decision."""
+
+    identity: Annotated[str, Field(min_length=1, max_length=256)]
+    independent_from_implementation: bool
+    executed_qualified_journey: bool
+    approved: bool
+    approved_at: Annotated[AwareDatetime, Field(strict=False)]
+
+
+class CriterionResult(StrictModel):
+    """One pass/fail result for one selected-contract criterion."""
+
+    criterion_id: Annotated[str, Field(pattern=CRITERION_RESULT_ID_PATTERN)]
+    result: Literal["pass", "fail"]
+    evidence: list[Annotated[str, Field(pattern=CATALOG_ID_PATTERN)]]
+    note: Annotated[str, Field(min_length=1, max_length=1000)] | None = None
+
+    @model_validator(mode="after")
+    def validate_result_details(self) -> CriterionResult:
+        """Require evidence for passes, notes for failures, and unique references."""
+        if len(set(self.evidence)) != len(self.evidence):
+            raise ValueError("criterion evidence identifiers must be unique")
+        if self.result == "pass" and not self.evidence:
+            raise ValueError("passing criterion requires evidence")
+        if self.result == "fail" and self.note is None:
+            raise ValueError("failed criterion requires a note")
+        return self
+
+
+class QualificationManifest(StrictModel):
+    """Strict machine-readable consistency decision for one candidate and contract."""
+
+    schema_version: Literal[1]
+    contract: ContractIdentity
+    candidate: CandidateIdentity
+    evidence: dict[Annotated[str, Field(pattern=CATALOG_ID_PATTERN)], EvidenceReference]
+    qualification_record: Annotated[str, Field(pattern=CATALOG_ID_PATTERN)]
+    criteria: list[CriterionResult]
+    evaluator: EvaluatorApproval
+    decision: Literal["pass", "fail"]
+    decided_at: Annotated[AwareDatetime, Field(strict=False)]
+
+
+def qualification_manifest_schema() -> dict[str, object]:
+    """Return the deterministic JSON Schema generated from runtime models."""
+    return QualificationManifest.model_json_schema()
+
+
+def write_qualification_manifest_schema(path: Path = ACCEPTANCE_SCHEMA_PATH) -> Path:
+    """Regenerate the committed JSON Schema from the runtime manifest model."""
+    rendered = json.dumps(qualification_manifest_schema(), indent=2, sort_keys=True) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(rendered, encoding="utf-8")
+    return path
+
+
+def _manifest_error(problem: str, *, field: str | None = None, next_action: str) -> ManifestValidationError:
+    return ManifestValidationError(problem, field=field, next_action=next_action)
+
+
+def validate_manifest(document: object, contract_content: bytes) -> QualificationManifest:
+    """Validate structure and selected-contract consistency without fetching evidence."""
+    contract = parse_contract(contract_content)
+    try:
+        manifest = QualificationManifest.model_validate(document)
+    except ValidationError:
+        raise _manifest_error(
+            "manifest structure is invalid",
+            next_action="Regenerate the manifest from the documented template",
+        ) from None
+    if manifest.contract.version != contract.version or manifest.contract.sha256 != contract.sha256:
+        raise _manifest_error(
+            "contract identity does not match the selected bytes",
+            field="contract",
+            next_action="Select the contract used for qualification or requalify against the intended contract",
+        )
+    expected = {criterion.criterion_id for criterion in contract.criteria}
+    actual = [criterion.criterion_id for criterion in manifest.criteria]
+    if len(actual) != len(set(actual)):
+        raise _manifest_error(
+            "duplicate criterion result",
+            field="criteria",
+            next_action="Rebuild the manifest from the current criterion catalog",
+        )
+    if set(actual) != expected:
+        raise _manifest_error(
+            "criterion accounting does not match the selected contract",
+            field="criteria",
+            next_action="Rebuild the manifest from the current criterion catalog",
+        )
+    evaluator_passed = (
+        manifest.evaluator.independent_from_implementation
+        and manifest.evaluator.executed_qualified_journey
+        and manifest.evaluator.approved
+    )
+    derived = "pass" if all(item.result == "pass" for item in manifest.criteria) and evaluator_passed else "fail"
+    if manifest.decision != derived:
+        raise _manifest_error(
+            "overall decision is inconsistent with criterion and evaluator results",
+            field="decision",
+            next_action="Correct the decision to match criterion and evaluator results",
+        )
+    produced = [item.produced_at for item in manifest.evidence.values()]
+    if produced and manifest.evaluator.approved_at < max(produced):
+        raise _manifest_error(
+            "evaluator approval timestamp precedes evidence production",
+            field="evaluator.approved_at",
+            next_action="Approve the completed evidence set after it has been produced",
+        )
+    if manifest.decided_at < manifest.evaluator.approved_at:
+        raise _manifest_error(
+            "decision timestamp precedes evaluator approval",
+            field="decided_at",
+            next_action="Record the decision after evaluator approval",
+        )
+    return manifest
+
+
+def validate_acceptance(
+    manifest_path: Path,
+    *,
+    contract_path: Path | None = None,
+) -> AcceptanceValidationResult:
+    """Read and validate one manifest against selected contract bytes."""
+    selected = contract_path if contract_path is not None else DEFAULT_CONTRACT_PATH
+    selection = ContractSelection(
+        path=selected,
+        mode=ContractSelectionMode.RETAINED if contract_path is not None else ContractSelectionMode.CHECKED_OUT,
+    )
+    try:
+        contract_content = selected.read_bytes()
+    except OSError:
+        raise _contract_error("selected contract cannot be read") from None
+    contract = parse_contract(contract_content)
+    try:
+        loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        raise _manifest_error(
+            "manifest is unreadable JSON",
+            next_action="Regenerate the manifest from the documented template",
+        ) from None
+    if not isinstance(loaded, dict):
+        raise _manifest_error(
+            "manifest root is not an object",
+            next_action="Regenerate the manifest from the documented template",
+        )
+    manifest = validate_manifest(loaded, contract_content)
+    return AcceptanceValidationResult(
+        contract_version=contract.version,
+        contract_sha256=contract.sha256,
+        candidate_version=manifest.candidate.version,
+        source_revision=manifest.candidate.source_revision,
+        image_digest=manifest.candidate.image_digest,
+        passed_criteria=sum(item.result == "pass" for item in manifest.criteria),
+        total_criteria=len(manifest.criteria),
+        evaluator_identity=manifest.evaluator.identity,
+        evaluator_approved_at=manifest.evaluator.approved_at.isoformat(),
+        decision=manifest.decision,
+        selection=selection,
+    )

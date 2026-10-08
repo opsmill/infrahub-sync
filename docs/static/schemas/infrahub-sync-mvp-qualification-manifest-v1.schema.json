@@ -1,0 +1,332 @@
+{
+  "$defs": {
+    "ArtifactIdLocator": {
+      "additionalProperties": false,
+      "description": "A bounded opaque artifact identifier.",
+      "properties": {
+        "kind": {
+          "const": "artifact-id",
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "ArtifactIdLocator",
+      "type": "object"
+    },
+    "CandidateIdentity": {
+      "additionalProperties": false,
+      "description": "Immutable source and image identity for one candidate.",
+      "properties": {
+        "image_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Image Digest",
+          "type": "string"
+        },
+        "source_revision": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Source Revision",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "source_revision",
+        "image_digest"
+      ],
+      "title": "CandidateIdentity",
+      "type": "object"
+    },
+    "ContractIdentity": {
+      "additionalProperties": false,
+      "description": "Exact normative-contract identity recorded by a manifest.",
+      "properties": {
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "sha256"
+      ],
+      "title": "ContractIdentity",
+      "type": "object"
+    },
+    "CriterionResult": {
+      "additionalProperties": false,
+      "description": "One pass/fail result for one selected-contract criterion.",
+      "properties": {
+        "criterion_id": {
+          "pattern": "^[A-Z][A-Z0-9-]*-[0-9]{3}$",
+          "title": "Criterion Id",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "maxLength": 1000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "result": {
+          "enum": [
+            "pass",
+            "fail"
+          ],
+          "title": "Result",
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterion_id",
+        "result",
+        "evidence"
+      ],
+      "title": "CriterionResult",
+      "type": "object"
+    },
+    "EvaluatorApproval": {
+      "additionalProperties": false,
+      "description": "Independent evaluator attestation recorded with the decision.",
+      "properties": {
+        "approved": {
+          "title": "Approved",
+          "type": "boolean"
+        },
+        "approved_at": {
+          "format": "date-time",
+          "title": "Approved At",
+          "type": "string"
+        },
+        "executed_qualified_journey": {
+          "title": "Executed Qualified Journey",
+          "type": "boolean"
+        },
+        "identity": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Identity",
+          "type": "string"
+        },
+        "independent_from_implementation": {
+          "title": "Independent From Implementation",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "identity",
+        "independent_from_implementation",
+        "executed_qualified_journey",
+        "approved",
+        "approved_at"
+      ],
+      "title": "EvaluatorApproval",
+      "type": "object"
+    },
+    "EvidenceReference": {
+      "additionalProperties": false,
+      "description": "Bounded immutable metadata for retained evidence bytes.",
+      "properties": {
+        "candidate_digest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "title": "Candidate Digest",
+          "type": "string"
+        },
+        "contract_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Contract Sha256",
+          "type": "string"
+        },
+        "evidence_type": {
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "title": "Evidence Type",
+          "type": "string"
+        },
+        "locator": {
+          "discriminator": {
+            "mapping": {
+              "artifact-id": "#/$defs/ArtifactIdLocator",
+              "relative-path": "#/$defs/RelativePathLocator"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RelativePathLocator"
+            },
+            {
+              "$ref": "#/$defs/ArtifactIdLocator"
+            }
+          ],
+          "title": "Locator"
+        },
+        "media_type": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Media Type",
+          "type": "string"
+        },
+        "produced_at": {
+          "format": "date-time",
+          "title": "Produced At",
+          "type": "string"
+        },
+        "producer": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Producer",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "source_revision": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Source Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence_type",
+        "media_type",
+        "locator",
+        "sha256",
+        "producer",
+        "produced_at",
+        "source_revision",
+        "candidate_digest",
+        "contract_sha256"
+      ],
+      "title": "EvidenceReference",
+      "type": "object"
+    },
+    "RelativePathLocator": {
+      "additionalProperties": false,
+      "description": "A bundle-relative POSIX evidence path.",
+      "properties": {
+        "kind": {
+          "const": "relative-path",
+          "title": "Kind",
+          "type": "string"
+        },
+        "value": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._/-]+$",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "title": "RelativePathLocator",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Strict machine-readable consistency decision for one candidate and contract.",
+  "properties": {
+    "candidate": {
+      "$ref": "#/$defs/CandidateIdentity"
+    },
+    "contract": {
+      "$ref": "#/$defs/ContractIdentity"
+    },
+    "criteria": {
+      "items": {
+        "$ref": "#/$defs/CriterionResult"
+      },
+      "title": "Criteria",
+      "type": "array"
+    },
+    "decided_at": {
+      "format": "date-time",
+      "title": "Decided At",
+      "type": "string"
+    },
+    "decision": {
+      "enum": [
+        "pass",
+        "fail"
+      ],
+      "title": "Decision",
+      "type": "string"
+    },
+    "evaluator": {
+      "$ref": "#/$defs/EvaluatorApproval"
+    },
+    "evidence": {
+      "patternProperties": {
+        "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$": {
+          "$ref": "#/$defs/EvidenceReference"
+        }
+      },
+      "title": "Evidence",
+      "type": "object"
+    },
+    "qualification_record": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+      "title": "Qualification Record",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "contract",
+    "candidate",
+    "evidence",
+    "qualification_record",
+    "criteria",
+    "evaluator",
+    "decision",
+    "decided_at"
+  ],
+  "title": "QualificationManifest",
+  "type": "object"
+}
