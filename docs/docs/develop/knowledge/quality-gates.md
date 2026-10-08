@@ -43,6 +43,14 @@ cannot rewrite it. That exclusion covers `rumdl check` too: the archive is not l
 is not expected to be. Current documentation remains in scope. Review formatter diffs as
 usual; use `invoke linter.format` when you only mean to format Python.
 
+Installed Spec Kit command sources and templates under `.specify/extensions/`,
+`.specify/presets/`, and `.specify/templates/` are also excluded from both rumdl checks and
+formatting. Their upstream Markdown uses command-specific heading and placeholder syntax.
+The authored `specs/` documents and `.specify/memory/constitution.md` remain in scope.
+Yamllint likewise ignores the installed `.specify/` tree; repository-authored YAML remains
+checked by `invoke lint`. It also ignores `.worktrees/`, whose nested checkouts use their own
+repository configuration.
+
 Use `rumdl check .` and fix violations by hand. When you only want the Python formatters, run
 `invoke linter.format` — which is the *formatter* aggregate (`ruff format` + `ruff check
 --fix`), despite the name suggesting otherwise.

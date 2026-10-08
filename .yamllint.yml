@@ -15,6 +15,10 @@ ignore: |
   /.agents
   /.claude
   /.codex
+  # Installed Spec Kit manifests and extension fixtures retain upstream YAML style.
+  /.specify
+  # Local checkouts are independent repositories with their own lint profiles.
+  /.worktrees
 
 rules:
   new-lines: disable

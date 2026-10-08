@@ -448,6 +448,11 @@ exclude = [
     ".agents/**",
     ".claude/**",
     ".codex/**",
+    # Installed Spec Kit commands and templates retain upstream Markdown syntax.
+    # Check authored specs and the constitution instead of rewriting tool inputs.
+    ".specify/extensions/**",
+    ".specify/presets/**",
+    ".specify/templates/**",
     "changelog/**",
     # Archived spec artifacts are a historical record, and `rumdl fmt` loses text in
     # them (see docs/docs/develop/knowledge/quality-gates.md). Excluded from BOTH `check` and `fmt`
