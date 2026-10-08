@@ -60,7 +60,9 @@ rules see [Guidelines](../guidelines/index.md); for step-by-step procedures see
 ### Repository workflow
 
 - [MVP acceptance contract](mvp-acceptance-contract.md) — the normative release boundary,
-  required criterion grammar, owning specifications, and explicit post-MVP deferrals.
+  required criterion grammar, owning specifications, and explicit post-MVP deferrals. Tooling can
+  download its generated [qualification manifest JSON Schema]
+  (/schemas/infrahub-sync-mvp-qualification-manifest-v1.schema.json).
 - [Quality gates](quality-gates.md) — what `invoke lint` and `invoke format` actually run,
   the inherited pylint baseline, and how to measure a no-regression claim.
 - [Testing tiers](../guidelines/testing-tiers.md) — which test command covers which tier, what

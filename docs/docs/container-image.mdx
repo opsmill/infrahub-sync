@@ -182,6 +182,17 @@ Running `release.qualify` anywhere else refuses until you supply an artifact
 record of your own, and retaining a candidate for approval belongs to a manual
 run against an exact merged commit.
 
+The producer-side `.release/qualification.json` record remains unchanged. A final MVP acceptance
+manifest references that record and can be checked without changing it:
+
+```bash
+uv run invoke release.validate-acceptance --manifest /path/to/acceptance.json
+```
+
+This read-only check establishes consistency with the selected
+[MVP acceptance contract](develop/knowledge/mvp-acceptance-contract.md). It does not approve the
+contract or declare the candidate release-eligible.
+
 After qualification, restore the exported Linux amd64 image archive from the
 candidate image artifact and run `uv run invoke release.packet`. The task checks
 the image, bundle, and example package against their recorded SHA-256 values

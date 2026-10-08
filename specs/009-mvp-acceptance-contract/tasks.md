@@ -128,15 +128,15 @@ approval, evaluator authority, or release eligibility.
 
 **Purpose**: Close schema, compatibility, documentation, security, and repository quality gates.
 
-- [ ] T027 [P] Assert the committed JSON Schema is byte-equivalent to Pydantic generation and run the shared valid/invalid corpus through runtime validation in `tests/release/test_acceptance_manifest.py`
-- [ ] T028 [P] Add backward-compatibility coverage proving `.release/qualification.json` generation and parsing remain unchanged in `tests/release/test_qualification.py`
-- [ ] T029 [P] Add published-page and downloadable-schema discoverability coverage in `tests/test_developer_pages_sidebar.py`
-- [ ] T030 Execute every passing and fail-closed scenario in `specs/009-mvp-acceptance-contract/quickstart.md` and correct that file if observed output differs
-- [ ] T031 Run `uv run invoke format` and apply only formatter changes attributable to the 009 implementation
-- [ ] T032 Run `uv run invoke lint` and resolve all rumdl, Ruff, Pylint, yamllint, and ty findings attributable to the 009 implementation
-- [ ] T033 Run the offline unit tier with `uv run invoke tests.tests-unit` and record any unrelated pre-existing failure separately
-- [ ] T034 Run `uv run infrahub-sync --help`, `uv run infrahub-sync configs --help`, and `uv run infrahub-sync runs --help` as CLI sanity checks
-- [ ] T035 Run `uv run invoke docs.generate` and `uv run invoke docs.docusaurus` for the published contract and schema
+- [X] T027 [P] Assert the committed JSON Schema is byte-equivalent to Pydantic generation and run the shared valid/invalid corpus through runtime validation in `tests/release/test_acceptance_manifest.py`
+- [X] T028 [P] Add backward-compatibility coverage proving `.release/qualification.json` generation and parsing remain unchanged in `tests/release/test_qualification.py`
+- [X] T029 [P] Add published-page and downloadable-schema discoverability coverage in `tests/test_developer_pages_sidebar.py`
+- [X] T030 Execute every passing and fail-closed scenario in `specs/009-mvp-acceptance-contract/quickstart.md` and correct that file if observed output differs
+- [X] T031 Run `uv run invoke format` and apply only formatter changes attributable to the 009 implementation
+- [X] T032 Run `uv run invoke lint` and resolve all rumdl, Ruff, Pylint, yamllint, and ty findings attributable to the 009 implementation
+- [X] T033 Run the offline unit tier with `uv run invoke tests.tests-unit` and record any unrelated pre-existing failure separately
+- [X] T034 Run `uv run infrahub-sync --help`, `uv run infrahub-sync configs --help`, and `uv run infrahub-sync runs --help` as CLI sanity checks
+- [X] T035 Run `uv run invoke docs.generate` and `uv run invoke docs.docusaurus` for the published contract and schema
 
 ---
 

@@ -2,13 +2,15 @@
 
 import json
 from copy import deepcopy
+from pathlib import Path
 from typing import cast
 
 import pytest
 
 from tasks.acceptance import (
+    ACCEPTANCE_SCHEMA_PATH,
+    DEFAULT_CONTRACT_PATH,
     ManifestValidationError,
-    QualificationManifest,
     qualification_manifest_schema,
     validate_manifest,
 )
@@ -21,6 +23,8 @@ from tests.release.acceptance_fixtures import (
     evidence_reference,
     qualification_manifest,
 )
+
+FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "acceptance"
 
 
 def test_manifest_models_are_strict() -> None:
@@ -74,10 +78,25 @@ def test_manifest_decision_must_match_criterion_results() -> None:
         validate_manifest(manifest, contract_document())
 
 
-def test_generated_schema_is_stable() -> None:
-    first = json.dumps(qualification_manifest_schema(), indent=2, sort_keys=True) + "\n"
-    second = json.dumps(QualificationManifest.model_json_schema(), indent=2, sort_keys=True) + "\n"
-    assert first == second
+def test_committed_schema_is_byte_equivalent_to_runtime_generation() -> None:
+    generated = json.dumps(qualification_manifest_schema(), indent=2, sort_keys=True) + "\n"
+
+    assert ACCEPTANCE_SCHEMA_PATH.read_text(encoding="utf-8") == generated
+
+
+@pytest.mark.parametrize("fixture", sorted((FIXTURE_ROOT / "valid").glob("*.json")), ids=lambda path: path.stem)
+def test_valid_manifest_corpus_passes_runtime_validation(fixture: Path) -> None:
+    document = json.loads(fixture.read_text(encoding="utf-8"))
+
+    validate_manifest(document, DEFAULT_CONTRACT_PATH.read_bytes())
+
+
+@pytest.mark.parametrize("fixture", sorted((FIXTURE_ROOT / "invalid").glob("*.json")), ids=lambda path: path.stem)
+def test_invalid_manifest_corpus_fails_runtime_validation(fixture: Path) -> None:
+    document = json.loads(fixture.read_text(encoding="utf-8"))
+
+    with pytest.raises(ManifestValidationError):
+        validate_manifest(document, DEFAULT_CONTRACT_PATH.read_bytes())
 
 
 def test_approval_cannot_precede_evidence() -> None:

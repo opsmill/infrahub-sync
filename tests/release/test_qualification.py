@@ -9,6 +9,7 @@ left out a gate would read exactly like one whose gate had passed.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -128,6 +129,44 @@ def test_the_record_links_the_candidate_to_everything_it_is_made_of(candidate: P
     assert {result["gate"] for result in record["tests"]} == {"image-smoke", "compose-lifecycle"}
     assert record["retention_days"] == RETENTION_DAYS
     assert sorted(record["artifacts"]) == sorted(ARTIFACT_NAMES)
+
+
+def test_acceptance_manifest_support_does_not_change_legacy_qualification_record(candidate: Path) -> None:
+    """The new acceptance manifest stays separate from the producer qualification record."""
+    del candidate
+    release.qualify(Context())
+    generated = written()
+
+    assert generated == {
+        "artifacts": artifacts_document()["artifacts"],
+        "bundle": {"name": identity().bundle, "sha256": release._digest(release.BUNDLE_DIR / identity().bundle)},
+        "identity": identity().record(),
+        "image": {"index": INDEX, "platforms": DIGESTS},
+        "retention_days": RETENTION_DAYS,
+        "sboms": {
+            platform: {
+                "document": image.sbom_file(identity(), platform).name,
+                "sha256": release._digest(image.sbom_file(identity(), platform)),
+            }
+            for platform in PLATFORMS
+        },
+        "scan": {
+            "platforms": {
+                platform: {
+                    "blocking": 0,
+                    "report": image.scan_file(identity(), platform).name,
+                    "sha256": release._digest(image.scan_file(identity(), platform)),
+                }
+                for platform in PLATFORMS
+            },
+            "waivers_in_force": len(image.read_waivers(today=datetime.now(tz=timezone.utc).date())),
+        },
+        "schema_version": release.QUALIFICATION_SCHEMA_VERSION,
+        "tests": generated["tests"],
+    }
+    parsed = release._packet_document(release.QUALIFICATION_FILE)
+    assert parsed == generated
+    assert release.identity_from(parsed["identity"], str(release.QUALIFICATION_FILE)) == identity()
 
 
 def test_every_recorded_test_result_names_the_bytes_it_ran_against(candidate: Path) -> None:

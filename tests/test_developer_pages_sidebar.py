@@ -6,6 +6,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SIDEBAR = REPO_ROOT / "docs" / "sidebars.ts"
+ACCEPTANCE_PAGE = REPO_ROOT / "docs" / "docs" / "develop" / "knowledge" / "mvp-acceptance-contract.md"
+KNOWLEDGE_INDEX = REPO_ROOT / "docs" / "docs" / "develop" / "knowledge" / "index.md"
+ACCEPTANCE_SCHEMA = (
+    REPO_ROOT / "docs" / "static" / "schemas" / "infrahub-sync-mvp-qualification-manifest-v1.schema.json"
+)
 
 DOCUMENT_IDS = [
     "develop/knowledge/sync-architecture",
@@ -77,3 +82,13 @@ def test_every_previously_unreachable_page_is_listed_in_the_docs_sidebar() -> No
     sidebar = sync_sidebar()
     for document_id in DOCUMENT_IDS:
         assert f"'{document_id}'" in sidebar, document_id
+
+
+def test_mvp_acceptance_contract_and_schema_are_discoverable() -> None:
+    """The normative page is navigable and links the schema Docusaurus publishes."""
+    assert "'develop/knowledge/mvp-acceptance-contract'" in sync_sidebar()
+    assert ACCEPTANCE_PAGE.is_file()
+    assert ACCEPTANCE_SCHEMA.is_file()
+    assert "/schemas/infrahub-sync-mvp-qualification-manifest-v1.schema.json" in KNOWLEDGE_INDEX.read_text(
+        encoding="utf-8"
+    )

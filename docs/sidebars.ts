@@ -104,6 +104,7 @@ const sidebars: SidebarsConfig = {
             'develop/knowledge/configuration-foundation',
             'develop/knowledge/execution-surface',
             'develop/knowledge/orchestration-prefect',
+            'develop/knowledge/mvp-acceptance-contract',
             'develop/knowledge/quality-gates',
           ],
         },
