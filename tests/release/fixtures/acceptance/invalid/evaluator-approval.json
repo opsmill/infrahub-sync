@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "contract": {
+    "version": 1,
+    "sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+  },
+  "candidate": {
+    "version": "3.0.0a1",
+    "source_revision": "1111111111111111111111111111111111111111",
+    "image_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "evidence": {
+    "acceptance": {
+      "evidence_type": "acceptance-validation-report",
+      "media_type": "application/json",
+      "locator": {
+        "kind": "relative-path",
+        "value": "evidence/acceptance.json"
+      },
+      "sha256": "4000000000000000000000000000000000000000000000000000000000000000",
+      "producer": "acceptance-suite",
+      "produced_at": "2026-10-08T10:00:00+00:00",
+      "source_revision": "1111111111111111111111111111111111111111",
+      "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+    },
+    "secrets": {
+      "evidence_type": "secret-containment-report",
+      "media_type": "application/json",
+      "locator": {
+        "kind": "artifact-id",
+        "value": "secret-report-1"
+      },
+      "sha256": "5000000000000000000000000000000000000000000000000000000000000000",
+      "producer": "secret-suite",
+      "produced_at": "2026-10-08T10:00:00+00:00",
+      "source_revision": "1111111111111111111111111111111111111111",
+      "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+    },
+    "preflight": {
+      "evidence_type": "preflight-validation-report",
+      "media_type": "application/json",
+      "locator": {
+        "kind": "artifact-id",
+        "value": "preflight-report-1"
+      },
+      "sha256": "6000000000000000000000000000000000000000000000000000000000000000",
+      "producer": "preflight-suite",
+      "produced_at": "2026-10-08T10:00:00+00:00",
+      "source_revision": "1111111111111111111111111111111111111111",
+      "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+    },
+    "failure": {
+      "evidence_type": "failure-evidence-report",
+      "media_type": "application/json",
+      "locator": {
+        "kind": "artifact-id",
+        "value": "failure-report-1"
+      },
+      "sha256": "7000000000000000000000000000000000000000000000000000000000000000",
+      "producer": "failure-suite",
+      "produced_at": "2026-10-08T10:00:00+00:00",
+      "source_revision": "1111111111111111111111111111111111111111",
+      "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+    },
+    "lifecycle": {
+      "evidence_type": "lifecycle-parity-report",
+      "media_type": "application/json",
+      "locator": {
+        "kind": "artifact-id",
+        "value": "lifecycle-report-1"
+      },
+      "sha256": "8000000000000000000000000000000000000000000000000000000000000000",
+      "producer": "lifecycle-suite",
+      "produced_at": "2026-10-08T10:00:00+00:00",
+      "source_revision": "1111111111111111111111111111111111111111",
+      "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+    },
+    "qualification": {
+      "evidence_type": "qualification-record",
+      "media_type": "application/json",
+      "locator": {
+        "kind": "artifact-id",
+        "value": "qualification-record-1"
+      },
+      "sha256": "9000000000000000000000000000000000000000000000000000000000000000",
+      "producer": "qualification-suite",
+      "produced_at": "2026-10-08T10:00:00+00:00",
+      "source_revision": "1111111111111111111111111111111111111111",
+      "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+    }
+  },
+  "qualification_record": "qualification",
+  "criteria": [
+    {
+      "criterion_id": "MVP-009-001",
+      "result": "pass",
+      "evidence": [
+        "acceptance"
+      ]
+    },
+    {
+      "criterion_id": "MVP-010-001",
+      "result": "pass",
+      "evidence": [
+        "secrets"
+      ]
+    },
+    {
+      "criterion_id": "MVP-011-001",
+      "result": "pass",
+      "evidence": [
+        "preflight"
+      ]
+    },
+    {
+      "criterion_id": "MVP-012-001",
+      "result": "pass",
+      "evidence": [
+        "failure"
+      ]
+    },
+    {
+      "criterion_id": "MVP-013-001",
+      "result": "pass",
+      "evidence": [
+        "lifecycle"
+      ]
+    },
+    {
+      "criterion_id": "MVP-014-001",
+      "result": "pass",
+      "evidence": [
+        "qualification"
+      ]
+    }
+  ],
+  "evaluator": {
+    "identity": "independent-evaluator@example.test",
+    "independent_from_implementation": true,
+    "executed_qualified_journey": true,
+    "approved": false,
+    "approved_at": "2026-10-08T10:05:00+00:00"
+  },
+  "decision": "pass",
+  "decided_at": "2026-10-08T10:05:00+00:00"
+}

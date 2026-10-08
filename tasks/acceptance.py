@@ -305,9 +305,7 @@ class CriterionResult(StrictModel):
 
     @model_validator(mode="after")
     def validate_result_details(self) -> CriterionResult:
-        """Require evidence for passes, notes for failures, and unique references."""
-        if len(set(self.evidence)) != len(self.evidence):
-            raise ValueError("criterion evidence identifiers must be unique")
+        """Require evidence for passes and notes for failures."""
         if self.result == "pass" and not self.evidence:
             raise ValueError("passing criterion requires evidence")
         if self.result == "fail" and self.note is None:
@@ -346,6 +344,58 @@ def _manifest_error(problem: str, *, field: str | None = None, next_action: str)
     return ManifestValidationError(problem, field=field, next_action=next_action)
 
 
+def _validate_evidence_catalog(manifest: QualificationManifest, contract: AcceptanceContract) -> None:
+    """Resolve normalized evidence metadata and enforce its cross-entity invariants."""
+    criteria_by_id = {criterion.criterion_id: criterion for criterion in contract.criteria}
+    referenced_evidence = {manifest.qualification_record}
+    if manifest.qualification_record not in manifest.evidence:
+        raise _manifest_error(
+            "qualification record does not resolve in the evidence catalog",
+            field="qualification_record",
+            next_action="Rebuild the normalized evidence catalog and references",
+        )
+    for result in manifest.criteria:
+        if len(result.evidence) != len(set(result.evidence)):
+            raise _manifest_error(
+                "criterion evidence identifiers are not unique",
+                field=result.criterion_id,
+                next_action="Rebuild the normalized evidence catalog and references",
+            )
+        accepted_types = criteria_by_id[result.criterion_id].evidence_types
+        for evidence_id in result.evidence:
+            reference = manifest.evidence.get(evidence_id)
+            if reference is None:
+                raise _manifest_error(
+                    "evidence reference does not resolve in the catalog",
+                    field=result.criterion_id,
+                    next_action="Rebuild the normalized evidence catalog and references",
+                )
+            referenced_evidence.add(evidence_id)
+            if reference.evidence_type not in accepted_types:
+                raise _manifest_error(
+                    "referenced evidence type is not accepted by the criterion",
+                    field=result.criterion_id,
+                    next_action="Attach evidence of a type declared by that criterion",
+                )
+    if set(manifest.evidence) != referenced_evidence:
+        raise _manifest_error(
+            "evidence catalog contains a dangling entry",
+            field="evidence",
+            next_action="Rebuild the normalized evidence catalog and references",
+        )
+    for reference in manifest.evidence.values():
+        if (
+            reference.source_revision != manifest.candidate.source_revision
+            or reference.candidate_digest != manifest.candidate.image_digest
+            or reference.contract_sha256 != manifest.contract.sha256
+        ):
+            raise _manifest_error(
+                "evidence identity does not match the candidate and contract",
+                field="evidence",
+                next_action="Regenerate evidence for the named candidate",
+            )
+
+
 def validate_manifest(document: object, contract_content: bytes) -> QualificationManifest:
     """Validate structure and selected-contract consistency without fetching evidence."""
     contract = parse_contract(contract_content)
@@ -376,11 +426,18 @@ def validate_manifest(document: object, contract_content: bytes) -> Qualificatio
             field="criteria",
             next_action="Rebuild the manifest from the current criterion catalog",
         )
+    _validate_evidence_catalog(manifest, contract)
     evaluator_passed = (
         manifest.evaluator.independent_from_implementation
         and manifest.evaluator.executed_qualified_journey
         and manifest.evaluator.approved
     )
+    if manifest.decision == "pass" and not evaluator_passed:
+        raise _manifest_error(
+            "evaluator approval invariants are not satisfied",
+            field="evaluator",
+            next_action="Have a non-implementing evaluator execute and approve the journey",
+        )
     derived = "pass" if all(item.result == "pass" for item in manifest.criteria) and evaluator_passed else "fail"
     if manifest.decision != derived:
         raise _manifest_error(

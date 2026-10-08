@@ -1016,11 +1016,14 @@ def _digest(path: Path) -> str:
 
 
 @task(name="validate-acceptance")
-def validate_acceptance(context: Context, manifest: str) -> None:
-    """Validate manifest consistency against the checked-out MVP contract."""
+def validate_acceptance(context: Context, manifest: str, contract: str = "") -> None:
+    """Validate manifest consistency against checked-out or retained contract bytes."""
     del context
     try:
-        result = acceptance.validate_acceptance(Path(manifest))
+        result = acceptance.validate_acceptance(
+            Path(manifest),
+            contract_path=Path(contract) if contract else None,
+        )
     except acceptance.AcceptanceTaskError as exc:
         print(str(exc), file=sys.stderr)
         raise Exit(str(exc), code=1) from None
@@ -1035,4 +1038,4 @@ def validate_acceptance(context: Context, manifest: str) -> None:
     print(f" - [{NAMESPACE}] Decision  {result.decision}")
     print(f" - [{NAMESPACE}] consistent with selected contract: yes")
     print(f" - [{NAMESPACE}] Artifact availability and byte verification remain a spec-014 gate")
-    print(f" - [{NAMESPACE}] Contract provenance and promotion decisions remain with spec 014")
+    print(f" - [{NAMESPACE}] Contract approval and release eligibility remain spec-014 decisions")

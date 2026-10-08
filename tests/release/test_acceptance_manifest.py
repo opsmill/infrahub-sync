@@ -12,7 +12,15 @@ from tasks.acceptance import (
     qualification_manifest_schema,
     validate_manifest,
 )
-from tests.release.acceptance_fixtures import contract_document, criterion_result, qualification_manifest
+from tests.release.acceptance_fixtures import (
+    CANDIDATE_DIGEST,
+    SOURCE_REVISION,
+    contract_criterion,
+    contract_document,
+    criterion_result,
+    evidence_reference,
+    qualification_manifest,
+)
 
 
 def test_manifest_models_are_strict() -> None:
@@ -77,4 +85,141 @@ def test_approval_cannot_precede_evidence() -> None:
     evaluator = cast("dict[str, object]", manifest["evaluator"])
     evaluator["approved_at"] = "2026-10-08T09:59:00+00:00"
     with pytest.raises(ManifestValidationError, match="timestamp"):
+        validate_manifest(manifest, contract_document())
+
+
+def test_manifest_resolves_normalized_evidence_catalog() -> None:
+    manifest = qualification_manifest()
+
+    validated = validate_manifest(manifest, contract_document())
+
+    assert validated.qualification_record == "contract-test"
+    assert validated.criteria[0].evidence == ["contract-test"]
+    assert list(validated.evidence) == ["contract-test"]
+
+
+@pytest.mark.parametrize(
+    ("criterion_ids", "qualification_record", "catalog", "message"),
+    [
+        (("missing",), "contract-test", {"contract-test": evidence_reference()}, "evidence reference"),
+        (("contract-test",), "missing", {"contract-test": evidence_reference()}, "qualification_record"),
+        (
+            ("contract-test",),
+            "contract-test",
+            {"contract-test": evidence_reference(), "unused": evidence_reference()},
+            "dangling",
+        ),
+        (
+            ("contract-test", "contract-test"),
+            "contract-test",
+            {"contract-test": evidence_reference()},
+            "unique",
+        ),
+    ],
+    ids=("missing-criterion-reference", "missing-qualification-record", "dangling-entry", "duplicate-reference"),
+)
+def test_manifest_refuses_missing_dangling_or_duplicate_evidence_ids(
+    criterion_ids: tuple[str, ...],
+    qualification_record: str,
+    catalog: dict[str, dict[str, object]],
+    message: str,
+) -> None:
+    manifest = qualification_manifest(
+        criteria=[criterion_result(evidence_ids=criterion_ids)],
+        evidence=catalog,
+    )
+    manifest["qualification_record"] = qualification_record
+
+    with pytest.raises(ManifestValidationError, match=message):
+        validate_manifest(manifest, contract_document())
+
+
+def test_manifest_requires_declared_evidence_type_for_every_reference() -> None:
+    manifest = qualification_manifest(evidence={"contract-test": evidence_reference(evidence_type="other-report")})
+
+    with pytest.raises(ManifestValidationError, match="evidence type"):
+        validate_manifest(manifest, contract_document())
+
+
+def test_manifest_refuses_incompatible_cross_criterion_reuse() -> None:
+    criteria = (
+        contract_criterion(evidence=("shared-report",)),
+        contract_criterion(criterion_id="MVP-010-001", owner_spec="010", evidence=("other-report",)),
+    )
+    contract = contract_document(criteria)
+    results = (
+        criterion_result(evidence_ids=("shared",)),
+        criterion_result(criterion_id="MVP-010-001", evidence_ids=("shared",)),
+    )
+    manifest = qualification_manifest(
+        contract=contract,
+        criteria=results,
+        evidence={"shared": evidence_reference(evidence_type="shared-report")},
+    )
+    manifest["qualification_record"] = "shared"
+
+    with pytest.raises(ManifestValidationError, match="evidence type"):
+        validate_manifest(manifest, contract)
+
+
+@pytest.mark.parametrize(
+    ("kind", "value"),
+    [
+        ("relative-path", "/absolute/evidence.json"),
+        ("relative-path", "evidence/../secret.json"),
+        ("relative-path", "evidence//report.json"),
+        ("relative-path", r"evidence\report.json"),
+        ("relative-path", "https://example.test/report"),
+        ("relative-path", "evidence/report.json?token=canary"),
+        ("relative-path", "evidence/report.json#fragment"),
+        ("relative-path", "user@example.test/report"),
+        ("artifact-id", "artifact:canary"),
+    ],
+    ids=("absolute", "traversal", "empty-segment", "backslash", "scheme", "query", "fragment", "userinfo", "colon"),
+)
+def test_manifest_refuses_unsafe_evidence_locators(kind: str, value: str) -> None:
+    manifest = qualification_manifest(
+        evidence={"contract-test": evidence_reference(locator_kind=kind, locator_value=value)}
+    )
+
+    with pytest.raises(ManifestValidationError, match="manifest structure"):
+        validate_manifest(manifest, contract_document())
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source_revision", "a" * 40),
+        ("candidate_digest", "sha256:" + "b" * 64),
+        ("contract_sha256", "c" * 64),
+    ],
+    ids=("source-revision", "candidate-digest", "contract-digest"),
+)
+def test_manifest_refuses_evidence_identity_mismatches(field: str, value: str) -> None:
+    reference = evidence_reference(source_revision=SOURCE_REVISION, candidate_digest=CANDIDATE_DIGEST)
+    reference[field] = value
+    manifest = qualification_manifest(evidence={"contract-test": reference})
+
+    with pytest.raises(ManifestValidationError, match="evidence identity"):
+        validate_manifest(manifest, contract_document())
+
+
+def test_decision_cannot_precede_evaluator_approval() -> None:
+    manifest = qualification_manifest()
+    manifest["decided_at"] = "2026-10-08T10:04:59+00:00"
+
+    with pytest.raises(ManifestValidationError, match="decision timestamp"):
+        validate_manifest(manifest, contract_document())
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["independent_from_implementation", "executed_qualified_journey", "approved"],
+)
+def test_passing_manifest_requires_evaluator_approval_invariants(field: str) -> None:
+    manifest = qualification_manifest()
+    evaluator = cast("dict[str, object]", manifest["evaluator"])
+    evaluator[field] = False
+
+    with pytest.raises(ManifestValidationError, match="evaluator"):
         validate_manifest(manifest, contract_document())

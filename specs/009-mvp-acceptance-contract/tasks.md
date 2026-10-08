@@ -107,16 +107,16 @@ then prove unsafe locators and non-independent approvals are refused.
 
 ### Tests for User Story 3
 
-- [ ] T020 [P] [US3] Add failing tests for normalized evidence references, missing/dangling/duplicate IDs, declared evidence types, incompatible cross-criterion reuse, restricted locator grammar, identity mismatches, timestamp ordering, and evaluator approval in `tests/release/test_acceptance_manifest.py`
-- [ ] T021 [P] [US3] Add failing selected-versus-retained contract mode, no-approval-or-eligibility claim, metadata-only disclosure, safe-output, and credential-canary tests in `tests/release/test_acceptance_command.py`
-- [ ] T022 [P] [US3] Add one stable passing manifest and one focused file per refusal family under `tests/release/fixtures/acceptance/valid/` and `tests/release/fixtures/acceptance/invalid/`
+- [X] T020 [P] [US3] Add failing tests for normalized evidence references, missing/dangling/duplicate IDs, declared evidence types, incompatible cross-criterion reuse, restricted locator grammar, identity mismatches, timestamp ordering, and evaluator approval in `tests/release/test_acceptance_manifest.py`
+- [X] T021 [P] [US3] Add failing selected-versus-retained contract mode, no-approval-or-eligibility claim, metadata-only disclosure, safe-output, and credential-canary tests in `tests/release/test_acceptance_command.py`
+- [X] T022 [P] [US3] Add one stable passing manifest and one focused file per refusal family under `tests/release/fixtures/acceptance/valid/` and `tests/release/fixtures/acceptance/invalid/`
 
 ### Implementation for User Story 3
 
-- [ ] T023 [US3] Implement normalized evidence-catalog resolution, no-dangling-entry checks, evidence-type acceptance for every criterion reference, locator validation, identity binding, and evaluator invariants in `tasks/acceptance.py`
-- [ ] T024 [US3] Add `--contract` retained-contract validation, explicit selection-mode labeling, no approval or eligibility claim, metadata-only disclosure, and spec-014 boundary notices in `tasks/release.py`
-- [ ] T025 [US3] Document selected- and retained-contract consistency, evidence-type reuse, safe evidence locators, and the spec-014 approval, eligibility, and byte-verification boundaries in `docs/docs/develop/knowledge/mvp-acceptance-contract.md`
-- [ ] T026 [US3] Run the User Story 3 manifest and command tests in `tests/release/test_acceptance_manifest.py` and `tests/release/test_acceptance_command.py`
+- [X] T023 [US3] Implement normalized evidence-catalog resolution, no-dangling-entry checks, evidence-type acceptance for every criterion reference, locator validation, identity binding, and evaluator invariants in `tasks/acceptance.py`
+- [X] T024 [US3] Add `--contract` retained-contract validation, explicit selection-mode labeling, no approval or eligibility claim, metadata-only disclosure, and spec-014 boundary notices in `tasks/release.py`
+- [X] T025 [US3] Document selected- and retained-contract consistency, evidence-type reuse, safe evidence locators, and the spec-014 approval, eligibility, and byte-verification boundaries in `docs/docs/develop/knowledge/mvp-acceptance-contract.md`
+- [X] T026 [US3] Run the User Story 3 manifest and command tests in `tests/release/test_acceptance_manifest.py` and `tests/release/test_acceptance_command.py`
 
 **Checkpoint**: Every criterion is traceable through compatible, safe immutable metadata, and
 neither selected- nor retained-contract validation overclaims artifact availability, contract

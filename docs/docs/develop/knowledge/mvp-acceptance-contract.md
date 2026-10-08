@@ -97,3 +97,32 @@ changes. In particular, approving specs 010–014 with refined evidence obligati
 contract increment. Purely editorial changes that preserve all obligations need not increment the
 number, although their different byte digest still identifies them exactly. After any newly approved
 contract revision, requalify the candidate against that revision; never rewrite an earlier manifest.
+
+## Validating acceptance evidence
+
+Run `uv run invoke release.validate-acceptance --manifest <path>` to compare a manifest with the
+checked-out contract bytes. The result labels this as `checked-out` selection. For an immutable
+historical decision, pass `--contract <retained-contract-path>`; the result labels that selection as
+`retained`. Both modes apply the same criterion, identity, evidence, timestamp, and evaluator
+consistency checks. Retained mode does not compare the supplied bytes with the current checkout and
+does not make an older decision current.
+
+Evidence descriptions belong in the manifest's top-level catalog and criteria reference them by
+identifier. Each identifier must resolve exactly once, the qualification-record identifier must
+also resolve, and every catalog entry must be used. One evidence item may support multiple criteria
+only when its declared evidence type appears in every referencing criterion's `Evidence` cell. Its
+source revision, candidate digest, and contract digest must match the manifest identities.
+
+Use only these safe evidence locators:
+
+- `relative-path`: a normalized, relative POSIX path with no empty, `.` or `..` segment, backslash,
+  URI scheme, user information, query, or fragment;
+- `artifact-id`: 1–128 ASCII letters, digits, periods, underscores, or hyphens, beginning with an
+  alphanumeric character and containing no colon.
+
+The validator reads evidence metadata only. It neither retrieves evidence bodies nor proves that
+the referenced artifact exists or matches its recorded digest. Spec 014 owns artifact availability
+and byte verification, approved-contract provenance, authentication of evaluator authority, and
+the final release-eligibility decision. A successful result therefore says only that the manifest
+is consistent with the selected bytes; it does not say that the contract is approved or that the
+candidate is release-eligible.
