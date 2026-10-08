@@ -1,0 +1,38 @@
+.agents/skills/speckit-specify/SKILL.md
+  s_e2e1eee606671e::t_d6365eefd3d2d1 152,156,158,163,165,174,176,181,183,208,210,212,214,221
+.specify/scripts/bash/check-prerequisites.sh
+  s_e2e1eee606671e::t_d6365eefd3d2d1 60,63,66,179,185
+.agents/skills/speckit-implement/SKILL.md
+  s_e2e1eee606671e::t_d6365eefd3d2d1 52,154
+.specify/scripts/bash/setup-plan.sh
+  s_e2e1eee606671e::t_d6365eefd3d2d1 11-12,14,18,20-21,80
+specs/009-mvp-acceptance-contract/opsmill-implement-report.md
+  s_e2e1eee606671e::t_d6365eefd3d2d1 3-6
+.agents/skills/speckit-tasks/SKILL.md
+  s_e2e1eee606671e::t_d6365eefd3d2d1 52,163
+.agents/commands/speckit.review.types.md
+  s_e2e1eee606671e::t_d6365eefd3d2d1 78,81,84
+.agents/skills/speckit-review-types/SKILL.md
+  s_e2e1eee606671e::t_d6365eefd3d2d1 77,80,83
+.specify/extensions/review/commands/types.md
+  s_e2e1eee606671e::t_d6365eefd3d2d1 74,77,80
+.specify/scripts/bash/create-new-feature.sh
+  s_e2e1eee606671e::t_9e5ae64d3aefe5 112
+  s_e2e1eee606671e::t_d6365eefd3d2d1 97,138,141,144,150,161,166,222,227,230
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a61fe671f7f162b7ca96abd3c51b4f4d319166fc",
+  "prompts": {},
+  "sessions": {
+    "s_e2e1eee606671e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11b67-8fd8-70e1-9ea7-39dfcf16bc67",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
