@@ -1,0 +1,57 @@
+specs/011-configuration-preflight/spec.md
+  s_e2e1eee606671e::t_ed83baf96055e2 1-2,6-101
+  s_e2e1eee606671e::t_2367a80c76cc64 3-5
+dev/guides/README.md
+  s_e2e1eee606671e::t_d9fea0f4594658 1-5
+dev/guidelines/README.md
+  s_e2e1eee606671e::t_d9fea0f4594658 1-5
+dev/specs/2026-10-08-mvp-delivery-path-design.md
+  s_e2e1eee606671e::t_2367a80c76cc64 3-4
+  s_e2e1eee606671e::t_617669169de4dd 1-2,5-65
+specs/012-run-failure-evidence/checklists/requirements.md
+  s_e2e1eee606671e::t_f41170e1a82dfe 1-2,5-28
+  s_e2e1eee606671e::t_2367a80c76cc64 3-4
+specs/013-run-inspection-review/checklists/requirements.md
+  s_e2e1eee606671e::t_f41170e1a82dfe 1-2,5-28
+  s_e2e1eee606671e::t_2367a80c76cc64 3-4
+specs/010-secret-containment/spec.md
+  s_e2e1eee606671e::t_2367a80c76cc64 3-5
+  s_e2e1eee606671e::t_ed83baf96055e2 1-2,6-97
+specs/011-configuration-preflight/checklists/requirements.md
+  s_e2e1eee606671e::t_2367a80c76cc64 3-4
+  s_e2e1eee606671e::t_f41170e1a82dfe 1-2,5-28
+specs/013-run-inspection-review/spec.md
+  s_e2e1eee606671e::t_2367a80c76cc64 3-5
+  s_e2e1eee606671e::t_ed83baf96055e2 1-2,6-100
+dev/knowledge/README.md
+  s_e2e1eee606671e::t_d9fea0f4594658 1-5
+specs/014-mvp-release-qualification/checklists/requirements.md
+  s_e2e1eee606671e::t_f41170e1a82dfe 1-2,5-28
+  s_e2e1eee606671e::t_2367a80c76cc64 3-4
+specs/014-mvp-release-qualification/spec.md
+  s_e2e1eee606671e::t_2367a80c76cc64 3-5
+  s_e2e1eee606671e::t_f41170e1a82dfe 77-78,103
+  s_e2e1eee606671e::t_ed83baf96055e2 1-2,6-76,79-102
+specs/010-secret-containment/checklists/requirements.md
+  s_e2e1eee606671e::t_f41170e1a82dfe 1-2,5-28
+  s_e2e1eee606671e::t_2367a80c76cc64 3-4
+specs/012-run-failure-evidence/spec.md
+  s_e2e1eee606671e::t_2367a80c76cc64 3-5
+  s_e2e1eee606671e::t_ed83baf96055e2 1-2,6-98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d923646b30f9f8b2c5d20a6407a1cc880e1a851c",
+  "prompts": {},
+  "sessions": {
+    "s_e2e1eee606671e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11b67-8fd8-70e1-9ea7-39dfcf16bc67",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
