@@ -32,9 +32,9 @@ evidence traceability can be validated independently.
 
 **⚠️ CRITICAL**: Complete this phase before implementing any user story.
 
-- [ ] T003 Create the version declaration, exact criterion-table header, scope headings, and knowledge-index link in `docs/docs/develop/knowledge/mvp-acceptance-contract.md` and `docs/docs/develop/knowledge/index.md`
-- [ ] T004 Define acceptance paths, safe public error types, and validation-result carriers in `tasks/acceptance.py`
-- [ ] T005 [P] Create deterministic contract, candidate, evaluator, criterion, and evidence fixture builders in `tests/release/acceptance_fixtures.py`
+- [X] T003 Create the version declaration, exact criterion-table header, scope headings, and knowledge-index link in `docs/docs/develop/knowledge/mvp-acceptance-contract.md` and `docs/docs/develop/knowledge/index.md`
+- [X] T004 Define acceptance paths, safe public error types, and validation-result carriers in `tasks/acceptance.py`
+- [X] T005 [P] Create deterministic contract, candidate, evaluator, criterion, and evidence fixture builders in `tests/release/acceptance_fixtures.py`
 
 **Checkpoint**: The normative document has one parseable skeleton, tests can build deterministic
 inputs, and later failures have a safe typed boundary.
