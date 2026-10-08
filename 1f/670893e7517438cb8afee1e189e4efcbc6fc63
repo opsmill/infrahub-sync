@@ -1,0 +1,50 @@
+docs/docs/develop/knowledge/mvp-acceptance-contract.md
+  s_e2e1eee606671e::t_6d680cbac5ec89 100-128
+tasks/release.py
+  s_e2e1eee606671e::t_cedcd72ec75b66 1019-1020,1023-1026,1041
+tests/release/fixtures/acceptance/invalid/missing-evidence-id.json
+  s_e2e1eee606671e::t_2bfc87dac07a36 1-152
+tests/release/test_acceptance_manifest.py
+  s_e2e1eee606671e::t_183828538d9c60 15-23,89-225
+tests/release/fixtures/acceptance/invalid/evidence-identity-mismatch.json
+  s_e2e1eee606671e::t_2bfc87dac07a36 1-152
+tests/release/fixtures/acceptance/invalid/timestamp-order.json
+  s_e2e1eee606671e::t_2bfc87dac07a36 1-152
+tests/release/fixtures/acceptance/invalid/unsafe-locator.json
+  s_e2e1eee606671e::t_2bfc87dac07a36 1-152
+tests/release/fixtures/acceptance/invalid/evaluator-approval.json
+  s_e2e1eee606671e::t_2bfc87dac07a36 1-152
+specs/009-mvp-acceptance-contract/tasks.md
+  s_e2e1eee606671e::t_c79f74535ce2d4 110-112,116-119
+tests/release/test_acceptance_command.py
+  s_e2e1eee606671e::t_ae6d27bdb097ca 5,95-101
+  s_e2e1eee606671e::t_0758b0cfd12113 12,51-94,102-134
+  s_e2e1eee606671e::t_0a7342bd7dd022 135-136
+tests/release/fixtures/acceptance/invalid/duplicate-evidence-id.json
+  s_e2e1eee606671e::t_2bfc87dac07a36 1-153
+tests/release/fixtures/acceptance/valid/passing.json
+  s_e2e1eee606671e::t_9ac92db876cffe 1-152
+tests/release/fixtures/acceptance/invalid/incompatible-evidence-type.json
+  s_e2e1eee606671e::t_2bfc87dac07a36 1-152
+tasks/acceptance.py
+  s_e2e1eee606671e::t_cedcd72ec75b66 308,349-396,435-440
+  s_e2e1eee606671e::t_52d5338f8b2aef 347-348,397-398,429
+tests/release/fixtures/acceptance/invalid/dangling-evidence-id.json
+  s_e2e1eee606671e::t_2bfc87dac07a36 1-166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f670893e7517438cb8afee1e189e4efcbc6fc63",
+  "prompts": {},
+  "sessions": {
+    "s_e2e1eee606671e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11b67-8fd8-70e1-9ea7-39dfcf16bc67",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
