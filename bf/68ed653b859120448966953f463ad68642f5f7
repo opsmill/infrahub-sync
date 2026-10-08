@@ -1,0 +1,53 @@
+specs/009-mvp-acceptance-contract/tasks.md
+  s_e2e1eee606671e::t_8b4420f78c2e5a 55-57,61-67
+tests/release/test_acceptance_manifest.py
+  s_e2e1eee606671e::t_8c5fe0c6271d47 6
+  s_e2e1eee606671e::t_e5641698d256df 9-14
+  s_e2e1eee606671e::t_0512a3956d2499 1-4,7-8,15-32,34-36,38-49,51-68,70-76,78-80
+  s_e2e1eee606671e::t_12c0be252cf570 5,37,77
+  s_e2e1eee606671e::t_189e0af6af929e 33,50
+  s_e2e1eee606671e::t_94259e0044f5e6 69
+tests/release/test_acceptance_contract.py
+  s_e2e1eee606671e::t_0512a3956d2499 1-27,29-40,42-54
+  s_e2e1eee606671e::t_189e0af6af929e 28
+  s_e2e1eee606671e::t_12c0be252cf570 41
+tasks/release.py
+  s_e2e1eee606671e::t_e5641698d256df 1034
+  s_e2e1eee606671e::t_fcc5c66b26d57d 19,1025
+  s_e2e1eee606671e::t_13846cb4732f97 1036
+  s_e2e1eee606671e::t_027785be25091d 33,36,1016-1024,1026-1033,1035,1037-1038
+tasks/acceptance.py
+  s_e2e1eee606671e::t_f3017b63672d9a 287
+  s_e2e1eee606671e::t_e5641698d256df 195-199
+  s_e2e1eee606671e::t_fcc5c66b26d57d 326
+  s_e2e1eee606671e::t_2aede9c072b104 337-344
+  s_e2e1eee606671e::t_40b60470b6dc5a 9-10,13,15,93-106,108-138,174-194,200-209,213-249,251-252,262-281,283-286,288-294,296-325,327-328,330-336,345-448
+  s_e2e1eee606671e::t_12c0be252cf570 107,139-173,210-212
+  s_e2e1eee606671e::t_5e64c0437e73ef 250,253-261
+  s_e2e1eee606671e::t_e1821568262ef5 17,282,295,329
+  s_e2e1eee606671e::t_94259e0044f5e6 3-6
+  s_e2e1eee606671e::t_63606f33cc5e7e 16
+docs/static/schemas/infrahub-sync-mvp-qualification-manifest-v1.schema.json
+  s_e2e1eee606671e::t_9970ae2906801d 1-332
+tests/release/test_acceptance_command.py
+  s_e2e1eee606671e::t_94259e0044f5e6 6,23,26,30,38,42,44,46-47
+  s_e2e1eee606671e::t_0512a3956d2499 1-5,7-22,24-25,27-29,31-37,39-41,43,45,48-49
+docs/docs/develop/knowledge/mvp-acceptance-contract.md
+  s_e2e1eee606671e::t_aa42923f3d80cb 13-18
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bf68ed653b859120448966953f463ad68642f5f7",
+  "prompts": {},
+  "sessions": {
+    "s_e2e1eee606671e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11b67-8fd8-70e1-9ea7-39dfcf16bc67",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
