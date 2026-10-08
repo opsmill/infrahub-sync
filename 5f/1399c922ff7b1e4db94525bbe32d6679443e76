@@ -1,0 +1,25 @@
+tests/release/fixtures/acceptance/README.md
+  s_e2e1eee606671e::t_30f0035af6a0c5 1-26
+changelog/+mvp-acceptance-contract.added.md
+  s_e2e1eee606671e::t_30f0035af6a0c5 1-4
+specs/009-mvp-acceptance-contract/tasks.md
+  s_e2e1eee606671e::t_415394b0186477 50-51,57,64,69-71,110-111,116-118,121-123,164,217
+  s_e2e1eee606671e::t_3704b346ac4d83 1-23,26-49,52-56,58-63,65-68,72-109,112-115,119-120,124-163,165-216,218-229
+  s_e2e1eee606671e::t_30f0035af6a0c5 24-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5f1399c922ff7b1e4db94525bbe32d6679443e76",
+  "prompts": {},
+  "sessions": {
+    "s_e2e1eee606671e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11b67-8fd8-70e1-9ea7-39dfcf16bc67",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
