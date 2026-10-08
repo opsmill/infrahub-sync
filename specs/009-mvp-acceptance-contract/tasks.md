@@ -83,13 +83,13 @@ set.
 
 ### Tests for User Story 2
 
-- [ ] T016 [US2] Add failing scope tests for complete 009–014 ownership, the explicit larger-v3 deferral set, no criterion/deferral overlap, and superseded standalone-write requirements in `tests/release/test_acceptance_contract.py`
+- [X] T016 [US2] Add failing scope tests for complete 009–014 ownership, the explicit larger-v3 deferral set, no criterion/deferral overlap, and superseded standalone-write requirements in `tests/release/test_acceptance_contract.py`
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] Complete the MVP scope mapping, service-first boundary, downstream contract-increment rule, and explicit post-MVP deferrals in `docs/docs/develop/knowledge/mvp-acceptance-contract.md`
-- [ ] T018 [US2] Add product-owner guidance for classifying new requirements and changing the contract version in `docs/docs/develop/knowledge/mvp-acceptance-contract.md`
-- [ ] T019 [US2] Run the User Story 2 scope tests in `tests/release/test_acceptance_contract.py`
+- [X] T017 [US2] Complete the MVP scope mapping, service-first boundary, downstream contract-increment rule, and explicit post-MVP deferrals in `docs/docs/develop/knowledge/mvp-acceptance-contract.md`
+- [X] T018 [US2] Add product-owner guidance for classifying new requirements and changing the contract version in `docs/docs/develop/knowledge/mvp-acceptance-contract.md`
+- [X] T019 [US2] Run the User Story 2 scope tests in `tests/release/test_acceptance_contract.py`
 
 **Checkpoint**: Required and deferred work are exhaustive, disjoint, readable without Jira, and
 testable from the normative document alone.
