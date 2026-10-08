@@ -1,9 +1,9 @@
 # OpsMill Implementation Report: MVP Acceptance Contract
 
-**Status:** DONE  
-**Spec directory:** `/Users/bkohler/automation/opsmill/infrahub-sync/specs/009-mvp-acceptance-contract`  
-**Base commit:** `09ff444c94aa57461dca618bf003932b1ea6873f`  
-**Head before this report:** `77a4ee828523067b0f018ab4d7f5766d7bf734b1`  
+**Status:** DONE
+**Spec directory:** `/Users/bkohler/automation/opsmill/infrahub-sync/specs/009-mvp-acceptance-contract`
+**Base commit:** `09ff444c94aa57461dca618bf003932b1ea6873f`
+**Head before this report:** `77a4ee828523067b0f018ab4d7f5766d7bf734b1`
 **Wall-clock time:** approximately 1 hour 15 minutes, including one daemon restart.
 
 ## Chunk ledger
