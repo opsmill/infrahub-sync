@@ -1,0 +1,34 @@
+tests/release/test_acceptance_manifest.py
+  s_e2e1eee606671e::t_6ed06c37ade0e3 5,11-12,27-28,81-99
+tests/test_developer_pages_sidebar.py
+  s_e2e1eee606671e::t_dd4807d2d33516 92
+  s_e2e1eee606671e::t_6ed06c37ade0e3 9,11-13,85-91,93-94
+  s_e2e1eee606671e::t_c9aca4c135aa36 10
+specs/009-mvp-acceptance-contract/tasks.md
+  s_e2e1eee606671e::t_f4f8d6e1ec4d40 131-139
+docs/docs/container-image.mdx
+  s_e2e1eee606671e::t_2d4b2d874ff0aa 185-195
+tests/release/test_qualification.py
+  s_e2e1eee606671e::t_6ed06c37ade0e3 134-161,163-171
+  s_e2e1eee606671e::t_a6eb20422abe65 12,162
+docs/docs/develop/knowledge/index.md
+  s_e2e1eee606671e::t_c9aca4c135aa36 63-65
+docs/sidebars.ts
+  s_e2e1eee606671e::t_6ed06c37ade0e3 107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a025cafb47358ab624a64ed1a15e6d62265d9778",
+  "prompts": {},
+  "sessions": {
+    "s_e2e1eee606671e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11b67-8fd8-70e1-9ea7-39dfcf16bc67",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
