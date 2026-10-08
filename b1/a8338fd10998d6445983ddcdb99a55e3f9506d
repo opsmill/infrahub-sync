@@ -1,0 +1,51 @@
+specs/009-mvp-acceptance-contract/spec.md
+  s_e2e1eee606671e::t_5cc3762ab8a7d4 73-74,116-118,155-157,186-187,196-197
+  s_e2e1eee606671e::t_ed83baf96055e2 1-2,6-7,24-30,34-47,51-59,63-70,75-86,91-92,95-98,101-104,150-152,166-175,188-193
+  s_e2e1eee606671e::t_b0d5b394b5a59b 21-22,87-90,114-115,184-185
+  s_e2e1eee606671e::t_a8cab433254045 3-5
+  s_e2e1eee606671e::t_d8b2078c176b30 154
+  s_e2e1eee606671e::t_db6c219c202d41 19-20,112-113,162-163,182-183
+  s_e2e1eee606671e::t_3abae1b63a7a02 14-15,105-108,160-161,178-179
+  s_e2e1eee606671e::t_805aeb352db0e1 31-33,48-50,60-62,72,93-94,119-149,153,158,164-165,176-177,194-195,198-207
+  s_e2e1eee606671e::t_f5df172171df47 16-18,109-111,180-181
+  s_e2e1eee606671e::t_196b0f2d1dc164 8-13,23,71,99-100,159
+specs/009-mvp-acceptance-contract/checklists/requirements.md
+  s_e2e1eee606671e::t_a8cab433254045 3-4
+  s_e2e1eee606671e::t_f41170e1a82dfe 1-2,5-8,13-15,17,23-26
+  s_e2e1eee606671e::t_805aeb352db0e1 9-12,16,18-22,27-35
+specs/009-mvp-acceptance-contract/research.md
+  s_e2e1eee606671e::t_d8b2078c176b30 7
+  s_e2e1eee606671e::t_9a2c9da37d3c78 25-26
+  s_e2e1eee606671e::t_e3286aaa274f86 80-85,110,113-119
+  s_e2e1eee606671e::t_e8f361bb94ec5b 19-21,28-31,46,48-50,52-54,56-58,62-64,72-75,79,91-94,109,111-112,120-124
+  s_e2e1eee606671e::t_d74d227b79746f 1-6,8-18,22-24,27,32-45,47,51,55,59-61,65-71,76-78,86-90,95-108
+specs/009-mvp-acceptance-contract/critiques/critique-20261008-191220.md
+  s_e2e1eee606671e::t_ca47acb08adbba 1-181
+specs/009-mvp-acceptance-contract/critiques/critique-20261008-191733.md
+  s_e2e1eee606671e::t_15827594fe6812 1-166
+specs/009-mvp-acceptance-contract/contracts/acceptance-validation.md
+  s_e2e1eee606671e::t_e86686e76d52be 17-19
+  s_e2e1eee606671e::t_31b2287fe02157 11-15,20-22,32-34,36,49,54
+  s_e2e1eee606671e::t_4e63d8919665ff 1-7,9-10,16,24-31,37-48,50-52,56-60,70-73,77-80
+  s_e2e1eee606671e::t_4c31f2b5227e27 8,23,35,53,55,61-69,74-76
+specs/009-mvp-acceptance-contract/quickstart.md
+  s_e2e1eee606671e::t_37ec398f0f7729 1-17,19-26,29-30,35,50-60,67-93
+  s_e2e1eee606671e::t_4c31f2b5227e27 34,36-45,49,61-64
+  s_e2e1eee606671e::t_415394b0186477 18,27-28,31-33,46-48,65-66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b1a8338fd10998d6445983ddcdb99a55e3f9506d",
+  "prompts": {},
+  "sessions": {
+    "s_e2e1eee606671e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11b67-8fd8-70e1-9ea7-39dfcf16bc67",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
