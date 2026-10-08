@@ -1,0 +1,100 @@
+docs/docs/develop/knowledge/mvp-acceptance-contract.md
+  s_e2e1eee606671e::t_8d9563abb2072a 3
+  s_e2e1eee606671e::t_817b723f6dc7dd 112-124
+tests/release/fixtures/acceptance/invalid/evaluator-approval.json
+  s_e2e1eee606671e::t_baf61cf571bdce 4-5,25,39,53,67,81,95
+tests/release/fixtures/acceptance/invalid/timestamp-order.json
+  s_e2e1eee606671e::t_baf61cf571bdce 4-5,25,39,53,67,81,95
+tests/release/fixtures/acceptance/invalid/qualification-record-type.json
+  s_e2e1eee606671e::t_a77beef4d0a053 1-152
+tests/release/fixtures/acceptance/invalid/duplicate-evidence-id.json
+  s_e2e1eee606671e::t_baf61cf571bdce 4-5,25,39,53,67,81,95
+tests/release/fixtures/acceptance/invalid/evidence-identity-mismatch.json
+  s_e2e1eee606671e::t_baf61cf571bdce 4-5,25,39,53,67,81,95
+tests/release/fixtures/acceptance/invalid/unsafe-locator.json
+  s_e2e1eee606671e::t_baf61cf571bdce 4-5,25,39,53,67,81,95
+tests/release/test_acceptance_manifest.py
+  s_e2e1eee606671e::t_6614fb152df61c 9,97-103,163,167-168,171-172,174,176-178,181-182,311-326,328-341
+  s_e2e1eee606671e::t_f80f134403ae84 29-35,93
+  s_e2e1eee606671e::t_86d46030e789b5 105-114,116-131
+  s_e2e1eee606671e::t_ac8c7d4d9c3f8e 169
+  s_e2e1eee606671e::t_b6f354554ef7d7 170
+  s_e2e1eee606671e::t_658af99fe8aa42 179-180,183
+  s_e2e1eee606671e::t_218a3c3bc79216 173,175
+  s_e2e1eee606671e::t_ccd2e37bfc6a07 104,115,327
+  s_e2e1eee606671e::t_a41ef6e7a3b5f0 94-96
+  s_e2e1eee606671e::t_9fb9d473bc960d 184-185
+  s_e2e1eee606671e::t_75da02678e2a6a 342
+tests/release/test_acceptance_contract.py
+  s_e2e1eee606671e::t_666a82241a05e3 27-32,39,86-111,137-146
+  s_e2e1eee606671e::t_901ab0b722bb0e 33-38
+  s_e2e1eee606671e::t_d9cd29e7f0cee9 147-148
+specs/009-mvp-acceptance-contract/contracts/qualification-manifest.schema.json
+  s_e2e1eee606671e::t_af5be6fd04fcfa 3,5,7-23,25,27,29-52,54,56,58-66,68-74,76,78-116,118-161,163-201,203,205-269,281-282,284,286,288-291,293-298,300,302-303,305-362,364-377
+  s_e2e1eee606671e::t_31b2287fe02157 271
+  s_e2e1eee606671e::t_a6fc8524d8bf35 1-2,4,6,24,26,28,53,55,57,67,75,77,117,162,202,204,270,272-280,283,285,287,292,299,301,304,363,378
+docs/static/schemas/infrahub-sync-mvp-qualification-manifest-v1.schema.json
+  s_e2e1eee606671e::t_10f4d8a3a73674 41,78-115,129-130,173,184,249,296,327,348-349
+  s_e2e1eee606671e::t_046c3117731b04 350
+specs/009-mvp-acceptance-contract/plan.md
+  s_e2e1eee606671e::t_a0af79eae1e069 30-32
+  s_e2e1eee606671e::t_e8f361bb94ec5b 13-14,20,28-29,45-46,49,68,111-113,119-122,138-139,142-144,147-148,150-151,160-165,170,185-186
+  s_e2e1eee606671e::t_e86686e76d52be 149,152-159,166-169
+  s_e2e1eee606671e::t_1088e5250c57ad 102-104,115
+  s_e2e1eee606671e::t_0733ef0ee57e70 21-22,50-51,140-141,171-174,183-184
+  s_e2e1eee606671e::t_d74d227b79746f 1-12,15-19,23-27,33-44,47-48,52-67,69-101,105-110,114,116-118,123-137,145-146,175-182,187-190
+specs/009-mvp-acceptance-contract/data-model.md
+  s_e2e1eee606671e::t_d8b2078c176b30 55
+  s_e2e1eee606671e::t_817b723f6dc7dd 74,83-86,100,147
+  s_e2e1eee606671e::t_a0af79eae1e069 78,120,151
+  s_e2e1eee606671e::t_d00131f274e3b8 125
+  s_e2e1eee606671e::t_e86686e76d52be 22,25-31,37-40
+  s_e2e1eee606671e::t_4e63d8919665ff 1-13,19,46-54,56-70,72,76-77,79-82,87-90,93-99,101-107,109-114,116,118-119,121-124,142-146,148-150,152-157,164-167,169-177
+  s_e2e1eee606671e::t_80e48308f2e403 20-21,23-24,32-36,41,73,108,117,129-141
+  s_e2e1eee606671e::t_551c5f543e3bfe 14-18,42-45,71,75,91-92,115,126-128,158-163,168
+tasks/acceptance.py
+  s_e2e1eee606671e::t_9789f535ef1b88 374-383,392,565-573
+  s_e2e1eee606671e::t_4bad6550438867 103
+  s_e2e1eee606671e::t_e0c5dd49e1e885 12,16,107-113,163-164,198-201,203-204,206,255,318,371,373,384-391,393-395,400-424
+  s_e2e1eee606671e::t_0744dcfed975d7 17,21-23,121-122,449
+  s_e2e1eee606671e::t_675c0cb4094213 585-588,590-593,595-598,600-603,611-614,616-619,621-624,626-643
+  s_e2e1eee606671e::t_2bddceb3d6c7a0 306-313,324-331,364-370,398,450-454,497-498,559-564,574-584,589,594,599,604-610,615,620,625,657,659
+  s_e2e1eee606671e::t_bfa0aac66b5ec0 205
+  s_e2e1eee606671e::t_6d4f603727bb6c 396-397
+tasks/release.py
+  s_e2e1eee606671e::t_d3f7355bc9c3f9 1029
+tests/release/fixtures/acceptance/invalid/missing-evidence-id.json
+  s_e2e1eee606671e::t_baf61cf571bdce 4-5,25,39,53,67,81,95
+pyproject.toml
+  s_e2e1eee606671e::t_b370cc1144b81c 149-151
+tests/release/test_acceptance_command.py
+  s_e2e1eee606671e::t_ccd2e37bfc6a07 4-5,245,247-248
+  s_e2e1eee606671e::t_73b36a9849a82c 139-202,211-244,246,249-264
+  s_e2e1eee606671e::t_86d46030e789b5 203-210
+tests/release/fixtures/acceptance/invalid/dangling-evidence-id.json
+  s_e2e1eee606671e::t_baf61cf571bdce 4-5,25,39,53,67,81,95,109
+tests/release/fixtures/acceptance/invalid/incompatible-evidence-type.json
+  s_e2e1eee606671e::t_baf61cf571bdce 4-5,25,39,53,67,81,95
+tests/release/acceptance_fixtures.py
+  s_e2e1eee606671e::t_d3f7355bc9c3f9 32,134
+tests/release/fixtures/acceptance/valid/passing.json
+  s_e2e1eee606671e::t_baf61cf571bdce 4-5,25,39,53,67,81,95
+uv.lock
+  s_e2e1eee606671e::t_b45169e966cfdc 1217,1271
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77a4ee828523067b0f018ab4d7f5766d7bf734b1",
+  "prompts": {},
+  "sessions": {
+    "s_e2e1eee606671e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11b67-8fd8-70e1-9ea7-39dfcf16bc67",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
