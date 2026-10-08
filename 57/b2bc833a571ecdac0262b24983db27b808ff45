@@ -1,0 +1,34 @@
+docs/docs/develop/knowledge/mvp-acceptance-contract.md
+  s_e2e1eee606671e::t_14e076299390f8 2-8,10-13,20-23,25-26
+  s_e2e1eee606671e::t_8b15cac1a4a14b 1,9,19,24
+  s_e2e1eee606671e::t_10363b3e8bc36a 14-18
+docs/docs/develop/knowledge/index.md
+  s_e2e1eee606671e::t_14e076299390f8 62-63
+specs/009-mvp-acceptance-contract/tasks.md
+  s_e2e1eee606671e::t_14e076299390f8 35-37
+tasks/acceptance.py
+  s_e2e1eee606671e::t_14e076299390f8 1-82
+tests/release/acceptance_fixtures.py
+  s_e2e1eee606671e::t_14e076299390f8 1-10,12-21,23-24,26-51,59-69,74-131,133-177,179-182
+  s_e2e1eee606671e::t_8b15cac1a4a14b 25,52-53,56-58,132,178
+  s_e2e1eee606671e::t_928499c599bcdb 54
+  s_e2e1eee606671e::t_1adc4281b173ab 11,55
+  s_e2e1eee606671e::t_7ddd2dfe5c5bb0 22
+  s_e2e1eee606671e::t_10363b3e8bc36a 70-73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "57b2bc833a571ecdac0262b24983db27b808ff45",
+  "prompts": {},
+  "sessions": {
+    "s_e2e1eee606671e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11b67-8fd8-70e1-9ea7-39dfcf16bc67",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
