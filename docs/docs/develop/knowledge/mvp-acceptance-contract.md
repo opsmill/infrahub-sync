@@ -1,6 +1,6 @@
 # MVP acceptance contract
 
-**Contract version:** 1
+**Contract version:** 2
 
 This document is the normative, version-controlled definition of the Infrahub Sync MVP boundary.
 The checked-out bytes define the criteria used for consistency validation; approval provenance and
@@ -109,9 +109,19 @@ does not make an older decision current.
 
 Evidence descriptions belong in the manifest's top-level catalog and criteria reference them by
 identifier. Each identifier must resolve exactly once, the qualification-record identifier must
-also resolve, and every catalog entry must be used. One evidence item may support multiple criteria
-only when its declared evidence type appears in every referencing criterion's `Evidence` cell. Its
-source revision, candidate digest, and contract digest must match the manifest identities.
+resolve specifically to an entry declared as `qualification-record`, and every catalog entry must
+be used. The pointer is type-bound but need not also be referenced by `MVP-014-001`: criterion
+evidence and the producer-record pointer are separate accounting roles, while the MVP-014 criterion
+already accepts `qualification-record` when that record supports its result. One evidence item may
+support multiple criteria only when its declared evidence type appears in every referencing
+criterion's `Evidence` cell. Its source revision, candidate digest, and contract digest must match
+the manifest identities.
+
+Candidate versions use a bounded ASCII version grammar, and evaluator identities are bounded to one
+printable ASCII line. Evidence, approval, and decision timestamps must carry an explicit zero UTC
+offset. These restrictions keep every value rendered by the Invoke command safe from terminal and
+line injection. After validation, callers receive a distinct deeply immutable result wrapper;
+criteria tuples and the evidence map cannot be mutated and confused with raw parsed input.
 
 Use only these safe evidence locators:
 

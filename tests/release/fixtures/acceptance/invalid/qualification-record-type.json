@@ -81,7 +81,7 @@
       "contract_sha256": "8007afad26f0e6d67b695151115396d4be7d32c97eba4a690ed76ea4a2faf28f"
     },
     "qualification": {
-      "evidence_type": "qualification-record",
+      "evidence_type": "acceptance-validation-report",
       "media_type": "application/json",
       "locator": {
         "kind": "artifact-id",
@@ -144,7 +144,7 @@
     "identity": "independent-evaluator@example.test",
     "independent_from_implementation": true,
     "executed_qualified_journey": true,
-    "approved": false,
+    "approved": true,
     "approved_at": "2026-10-08T10:05:00+00:00"
   },
   "decision": "pass",

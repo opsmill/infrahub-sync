@@ -29,7 +29,7 @@ def contract_criterion(  # noqa: PLR0913 — one argument per criterion-table ce
     safety_class: str = "integrity",
     requirement: str = "The contract defines one deterministic criterion catalog.",
     validation: str = "Parse the normative criterion table.",
-    evidence: Sequence[str] = ("contract-test",),
+    evidence: Sequence[str] = ("qualification-record",),
 ) -> dict[str, object]:
     """Build one criterion-table row as named cell values."""
     return {
@@ -131,7 +131,7 @@ def criterion_result(
 
 def evidence_reference(  # noqa: PLR0913 — one argument per evidence-reference field
     *,
-    evidence_type: str = "contract-test",
+    evidence_type: str = "qualification-record",
     locator_kind: str = "relative-path",
     locator_value: str = "evidence/contract-test.json",
     digest: str = EVIDENCE_DIGEST,

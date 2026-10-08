@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "contract": {
-    "version": 1,
-    "sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+    "version": 2,
+    "sha256": "8007afad26f0e6d67b695151115396d4be7d32c97eba4a690ed76ea4a2faf28f"
   },
   "candidate": {
     "version": "3.0.0a1",
@@ -22,7 +22,7 @@
       "produced_at": "2026-10-08T10:00:00+00:00",
       "source_revision": "1111111111111111111111111111111111111111",
       "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+      "contract_sha256": "8007afad26f0e6d67b695151115396d4be7d32c97eba4a690ed76ea4a2faf28f"
     },
     "secrets": {
       "evidence_type": "secret-containment-report",
@@ -36,7 +36,7 @@
       "produced_at": "2026-10-08T10:00:00+00:00",
       "source_revision": "1111111111111111111111111111111111111111",
       "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+      "contract_sha256": "8007afad26f0e6d67b695151115396d4be7d32c97eba4a690ed76ea4a2faf28f"
     },
     "preflight": {
       "evidence_type": "preflight-validation-report",
@@ -50,7 +50,7 @@
       "produced_at": "2026-10-08T10:00:00+00:00",
       "source_revision": "1111111111111111111111111111111111111111",
       "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+      "contract_sha256": "8007afad26f0e6d67b695151115396d4be7d32c97eba4a690ed76ea4a2faf28f"
     },
     "failure": {
       "evidence_type": "failure-evidence-report",
@@ -64,7 +64,7 @@
       "produced_at": "2026-10-08T10:00:00+00:00",
       "source_revision": "1111111111111111111111111111111111111111",
       "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+      "contract_sha256": "8007afad26f0e6d67b695151115396d4be7d32c97eba4a690ed76ea4a2faf28f"
     },
     "lifecycle": {
       "evidence_type": "lifecycle-parity-report",
@@ -78,7 +78,7 @@
       "produced_at": "2026-10-08T10:00:00+00:00",
       "source_revision": "1111111111111111111111111111111111111111",
       "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+      "contract_sha256": "8007afad26f0e6d67b695151115396d4be7d32c97eba4a690ed76ea4a2faf28f"
     },
     "qualification": {
       "evidence_type": "qualification-record",
@@ -92,7 +92,7 @@
       "produced_at": "2026-10-08T10:00:00+00:00",
       "source_revision": "1111111111111111111111111111111111111111",
       "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+      "contract_sha256": "8007afad26f0e6d67b695151115396d4be7d32c97eba4a690ed76ea4a2faf28f"
     },
     "unused": {
       "evidence_type": "acceptance-validation-report",
@@ -106,7 +106,7 @@
       "produced_at": "2026-10-08T10:00:00+00:00",
       "source_revision": "1111111111111111111111111111111111111111",
       "candidate_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-      "contract_sha256": "4d50a2e1515733c7eb1b04238eff265bf4d62823c04b6721287b02570202b20f"
+      "contract_sha256": "8007afad26f0e6d67b695151115396d4be7d32c97eba4a690ed76ea4a2faf28f"
     }
   },
   "qualification_record": "qualification",

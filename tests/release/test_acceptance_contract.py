@@ -24,6 +24,19 @@ EXPECTED_DEFERRALS = {
     "production-operations",
     "operator-web-interface",
 }
+EXPECTED_CRITERIA = {
+    "MVP-009-001": ("009", "integrity", ("acceptance-validation-report",), "accounts for every criterion"),
+    "MVP-010-001": ("010", "safety", ("secret-containment-report",), "Credentials and secret values"),
+    "MVP-011-001": ("011", "safety", ("preflight-validation-report",), "refused before planning"),
+    "MVP-012-001": ("012", "safety", ("failure-evidence-report",), "operator reconciliation and a new plan"),
+    "MVP-013-001": ("013", "integrity", ("lifecycle-parity-report",), "REST, Python SDK, and CLI"),
+    ("MVP-014-001"): (
+        "014",
+        "release",
+        ("qualification-record", "evaluator-attestation"),
+        "non-implementing evaluator",
+    ),
+}
 
 
 def _contract_text() -> str:
@@ -70,6 +83,32 @@ def test_contract_refuses_duplicate_identifiers() -> None:
         parse_contract(contract_document((criterion, criterion)))
 
 
+@pytest.mark.parametrize(
+    "document",
+    [
+        contract_document().replace(
+            b"# MVP acceptance contract\n\n**Contract version:** 1",
+            b"# MVP acceptance contract\n\nIntervening prose.\n\n**Contract version:** 1",
+        ),
+        contract_document().replace(
+            b"**Contract version:** 1",
+            b"**Contract version:** 1\n\nContract version: two",
+        ),
+    ],
+    ids=("intervening-prose", "second-version-like-declaration"),
+)
+def test_contract_requires_one_version_declaration_immediately_below_title(document: bytes) -> None:
+    with pytest.raises(ContractValidationError, match="contract version"):
+        parse_contract(document)
+
+
+def test_contract_refuses_html_in_criterion_cells() -> None:
+    criterion = contract_criterion(requirement="Run <script>unsafe()</script> validation.")
+
+    with pytest.raises(ContractValidationError, match="HTML"):
+        parse_contract(contract_document((criterion,)))
+
+
 @pytest.mark.parametrize(("field", "value"), [("owner_spec", "015"), ("class", "optional")])
 def test_contract_refuses_unknown_owner_or_class(field: str, value: str) -> None:
     criterion = contract_criterion()
@@ -93,6 +132,18 @@ def test_normative_contract_maps_every_mvp_spec_exactly_once() -> None:
 
     assert {criterion.owner_spec for criterion in contract.criteria} == EXPECTED_SCOPE_OWNERS
     assert _bullet_keys(mapping) == EXPECTED_SCOPE_OWNERS
+
+
+def test_normative_criterion_catalog_is_pinned() -> None:
+    contract = parse_contract(CONTRACT_PATH.read_bytes())
+
+    assert set(EXPECTED_CRITERIA) == {criterion.criterion_id for criterion in contract.criteria}
+    for criterion in contract.criteria:
+        owner, safety_class, evidence_types, obligation = EXPECTED_CRITERIA[criterion.criterion_id]
+        assert criterion.owner_spec == owner
+        assert criterion.safety_class == safety_class
+        assert criterion.evidence_types == evidence_types
+        assert obligation in criterion.requirement
 
 
 def test_normative_contract_lists_the_complete_larger_v3_deferral_set() -> None:

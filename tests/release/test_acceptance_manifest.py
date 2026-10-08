@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from tasks.acceptance import (
     ACCEPTANCE_SCHEMA_PATH,
@@ -25,6 +26,13 @@ from tests.release.acceptance_fixtures import (
 )
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "acceptance"
+DESIGN_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "specs"
+    / "009-mvp-acceptance-contract"
+    / "contracts"
+    / "qualification-manifest.schema.json"
+)
 
 
 def test_manifest_models_are_strict() -> None:
@@ -82,6 +90,45 @@ def test_committed_schema_is_byte_equivalent_to_runtime_generation() -> None:
     generated = json.dumps(qualification_manifest_schema(), indent=2, sort_keys=True) + "\n"
 
     assert ACCEPTANCE_SCHEMA_PATH.read_text(encoding="utf-8") == generated
+    assert DESIGN_SCHEMA_PATH.read_text(encoding="utf-8") == generated
+
+
+@pytest.mark.parametrize("fixture", sorted((FIXTURE_ROOT / "valid").glob("*.json")), ids=lambda path: path.stem)
+def test_valid_manifest_corpus_passes_published_json_schema(fixture: Path) -> None:
+    document = json.loads(fixture.read_text(encoding="utf-8"))
+    schema = json.loads(ACCEPTANCE_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER).validate(document)
+
+
+@pytest.mark.parametrize("name", ["duplicate-evidence-id", "unsafe-locator"])
+def test_schema_expressible_invalid_corpus_fails_published_json_schema(name: str) -> None:
+    fixture = FIXTURE_ROOT / "invalid" / f"{name}.json"
+    document = json.loads(fixture.read_text(encoding="utf-8"))
+    schema = json.loads(ACCEPTANCE_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    assert list(Draft202012Validator(schema).iter_errors(document))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["unsafe-evidence-key", "passing-without-evidence", "failure-without-note"],
+)
+def test_published_json_schema_encodes_runtime_invariants(mutation: str) -> None:
+    document = qualification_manifest()
+    if mutation == "unsafe-evidence-key":
+        catalog = cast("dict[str, object]", document["evidence"])
+        catalog["unsafe key"] = catalog.pop("contract-test")
+        document["qualification_record"] = "unsafe key"
+    else:
+        criteria = cast("list[dict[str, object]]", document["criteria"])
+        criteria[0]["evidence"] = []
+        if mutation == "failure-without-note":
+            criteria[0]["result"] = "fail"
+            document["decision"] = "fail"
+    schema = json.loads(ACCEPTANCE_SCHEMA_PATH.read_text(encoding="utf-8"))
+
+    assert list(Draft202012Validator(schema).iter_errors(document))
 
 
 @pytest.mark.parametrize("fixture", sorted((FIXTURE_ROOT / "valid").glob("*.json")), ids=lambda path: path.stem)
@@ -113,8 +160,27 @@ def test_manifest_resolves_normalized_evidence_catalog() -> None:
     validated = validate_manifest(manifest, contract_document())
 
     assert validated.qualification_record == "contract-test"
-    assert validated.criteria[0].evidence == ["contract-test"]
+    assert validated.criteria[0].evidence == ("contract-test",)
     assert list(validated.evidence) == ["contract-test"]
+
+
+def test_validated_manifest_is_deeply_immutable() -> None:
+    validated = validate_manifest(qualification_manifest(), contract_document())
+    evidence_catalog = cast("dict[str, object]", validated.evidence)
+    criterion_evidence = cast("list[str]", validated.criteria[0].evidence)
+
+    with pytest.raises(TypeError):
+        evidence_catalog["replacement"] = validated.evidence["contract-test"]
+    with pytest.raises(AttributeError):
+        criterion_evidence.append("replacement")
+
+
+def test_qualification_record_requires_qualification_record_evidence_fixture() -> None:
+    fixture = FIXTURE_ROOT / "invalid" / "qualification-record-type.json"
+    manifest = json.loads(fixture.read_text(encoding="utf-8"))
+
+    with pytest.raises(ManifestValidationError, match="wrong evidence type"):
+        validate_manifest(manifest, DEFAULT_CONTRACT_PATH.read_bytes())
 
 
 @pytest.mark.parametrize(
@@ -241,4 +307,36 @@ def test_passing_manifest_requires_evaluator_approval_invariants(field: str) -> 
     evaluator[field] = False
 
     with pytest.raises(ManifestValidationError, match="evaluator"):
+        validate_manifest(manifest, contract_document())
+
+
+def test_fail_decision_can_be_caused_only_by_evaluator_rejection() -> None:
+    manifest = qualification_manifest()
+    evaluator = cast("dict[str, object]", manifest["evaluator"])
+    evaluator["approved"] = False
+    manifest["decision"] = "fail"
+
+    validated = validate_manifest(manifest, contract_document())
+
+    assert validated.decision == "fail"
+    assert all(result.result == "pass" for result in validated.criteria)
+
+
+@pytest.mark.parametrize(
+    ("container", "field"),
+    [("evidence", "produced_at"), ("evaluator", "approved_at"), ("manifest", "decided_at")],
+    ids=("evidence", "approval", "decision"),
+)
+def test_manifest_requires_zero_offset_utc_timestamps(container: str, field: str) -> None:
+    manifest = qualification_manifest()
+    if container == "evidence":
+        catalog = cast("dict[str, dict[str, object]]", manifest["evidence"])
+        catalog["contract-test"][field] = "2026-10-08T12:00:00+02:00"
+    elif container == "evaluator":
+        evaluator = cast("dict[str, object]", manifest["evaluator"])
+        evaluator[field] = "2026-10-08T12:05:00+02:00"
+    else:
+        manifest[field] = "2026-10-08T12:05:00+02:00"
+
+    with pytest.raises(ManifestValidationError, match="manifest structure"):
         validate_manifest(manifest, contract_document())

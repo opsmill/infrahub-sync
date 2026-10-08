@@ -1026,7 +1026,7 @@ def validate_acceptance(context: Context, manifest: str, contract: str = "") -> 
         )
     except acceptance.AcceptanceTaskError as exc:
         print(str(exc), file=sys.stderr)
-        raise Exit(str(exc), code=1) from None
+        raise Exit(code=1) from None
     print(f" - [{NAMESPACE}] Contract  v{result.contract_version} sha256:{result.contract_sha256}")
     print(f" - [{NAMESPACE}] Selection {result.selection.mode.value}")
     print(

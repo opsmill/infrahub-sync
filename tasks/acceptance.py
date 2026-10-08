@@ -9,12 +9,17 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import Enum
 from hashlib import sha256
 from pathlib import Path
-from typing import Annotated, Literal
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONTRACT_PATH = REPO_ROOT / "docs" / "docs" / "develop" / "knowledge" / "mvp-acceptance-contract.md"
@@ -95,9 +100,17 @@ class AcceptanceValidationResult:
 CRITERION_TABLE_HEADER = "| ID | Owner spec | Class | Requirement | Validation | Evidence |"
 CRITERION_TABLE_SEPARATOR = "|---|---|---|---|---|---|"
 VERSION_PATTERN = re.compile(r"\*\*Contract version:\*\* ([1-9][0-9]*)")
+VERSION_LIKE_PATTERN = re.compile(r"^\s*\**contract\s+version\**\s*:", re.IGNORECASE)
 CRITERION_ID_PATTERN = re.compile(r"[A-Z][A-Z0-9-]*-[0-9]{3}")
 EVIDENCE_TYPE_PATTERN = re.compile(r"[a-z][a-z0-9-]*")
 CATALOG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+CANDIDATE_VERSION_PATTERN = r"^[A-Za-z0-9](?:[A-Za-z0-9._+-]{0,126}[A-Za-z0-9])?$"
+PRINTABLE_LINE_PATTERN = r"^[\x20-\x7e]+$"
+RELATIVE_PATH_SCHEMA_PATTERN = (
+    r"^(?!/)(?!.*(?:^|/)\.{1,2}(?:/|$))(?!.*//)(?!.*[\\:?#@])"
+    r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$"
+)
+UTC_TIMESTAMP_SCHEMA_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]00:00)$"
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
 OCI_DIGEST_PATTERN = r"^sha256:[0-9a-f]{64}$"
 REVISION_PATTERN = r"^[0-9a-f]{40}$"
@@ -105,6 +118,8 @@ CRITERION_RESULT_ID_PATTERN = r"^[A-Z][A-Z0-9-]*-[0-9]{3}$"
 ALLOWED_OWNERS = frozenset({"009", "010", "011", "012", "013", "014"})
 ALLOWED_CLASSES = frozenset({"safety", "integrity", "release"})
 CRITERION_CELL_COUNT = 6
+VERSION_LINE_INDEX = 2
+MINIMUM_CONTRACT_LINES = 3
 
 
 @dataclass(frozen=True)
@@ -145,6 +160,8 @@ def _parse_criterion_row(line: str, seen: set[str]) -> MvpCriterion:
         raise _contract_error("malformed criterion row", field="criteria")
     if any(not cell for cell in cells):
         raise _contract_error("criterion row contains an empty cell", field="criteria")
+    if any("<" in cell or ">" in cell for cell in cells):
+        raise _contract_error("criterion row contains HTML", field="criteria")
     criterion_id, owner, safety_class, requirement, validation, evidence_cell = cells
     if not CRITERION_ID_PATTERN.fullmatch(criterion_id):
         raise _contract_error("criterion identifier is invalid", field="criteria")
@@ -178,13 +195,15 @@ def parse_contract(content: bytes) -> AcceptanceContract:
     except UnicodeDecodeError:
         raise _contract_error("contract is not valid UTF-8") from None
     lines = text.splitlines()
-    versions = [(index, match) for index, line in enumerate(lines) if (match := VERSION_PATTERN.fullmatch(line))]
-    if len(versions) != 1:
+    if not lines or lines[0] != "# MVP acceptance contract":
+        raise _contract_error("contract title does not match the contract grammar")
+    version_like = [(index, line) for index, line in enumerate(lines) if VERSION_LIKE_PATTERN.search(line)]
+    if len(version_like) != 1:
         raise _contract_error("expected exactly one positive contract version", field="contract_version")
-    version_index, version_match = versions[0]
-    first_heading = next((index for index, line in enumerate(lines) if line.startswith("## ")), len(lines))
-    if version_index >= first_heading:
-        raise _contract_error("contract version is misplaced", field="contract_version")
+    version_index, version_line = version_like[0]
+    version_match = VERSION_PATTERN.fullmatch(version_line)
+    if version_index != VERSION_LINE_INDEX or len(lines) < MINIMUM_CONTRACT_LINES or lines[1] or version_match is None:
+        raise _contract_error("contract version must immediately follow the H1 title", field="contract_version")
 
     headings = [index for index, line in enumerate(lines) if line == "## Required MVP criteria"]
     if len(headings) != 1:
@@ -233,7 +252,7 @@ class ContractIdentity(StrictModel):
 class CandidateIdentity(StrictModel):
     """Immutable source and image identity for one candidate."""
 
-    version: Annotated[str, Field(min_length=1, max_length=128)]
+    version: Annotated[str, Field(pattern=CANDIDATE_VERSION_PATTERN, max_length=128)]
     source_revision: Annotated[str, Field(pattern=REVISION_PATTERN)]
     image_digest: Annotated[str, Field(pattern=OCI_DIGEST_PATTERN)]
 
@@ -284,15 +303,31 @@ class EvidenceReference(StrictModel):
     candidate_digest: Annotated[str, Field(pattern=OCI_DIGEST_PATTERN)]
     contract_sha256: Annotated[str, Field(pattern=SHA256_PATTERN)]
 
+    @field_validator("produced_at")
+    @classmethod
+    def require_utc_production_time(cls, value: datetime) -> datetime:
+        """Require an explicit zero-offset evidence timestamp."""
+        if value.utcoffset() != timedelta(0):
+            raise ValueError("evidence timestamp must use UTC")
+        return value
+
 
 class EvaluatorApproval(StrictModel):
     """Independent evaluator attestation recorded with the decision."""
 
-    identity: Annotated[str, Field(min_length=1, max_length=256)]
+    identity: Annotated[str, Field(pattern=PRINTABLE_LINE_PATTERN, min_length=1, max_length=256)]
     independent_from_implementation: bool
     executed_qualified_journey: bool
     approved: bool
     approved_at: Annotated[AwareDatetime, Field(strict=False)]
+
+    @field_validator("approved_at")
+    @classmethod
+    def require_utc_approval_time(cls, value: datetime) -> datetime:
+        """Require an explicit zero-offset evaluator timestamp."""
+        if value.utcoffset() != timedelta(0):
+            raise ValueError("approval timestamp must use UTC")
+        return value
 
 
 class CriterionResult(StrictModel):
@@ -326,10 +361,67 @@ class QualificationManifest(StrictModel):
     decision: Literal["pass", "fail"]
     decided_at: Annotated[AwareDatetime, Field(strict=False)]
 
+    @field_validator("decided_at")
+    @classmethod
+    def require_utc_decision_time(cls, value: datetime) -> datetime:
+        """Require an explicit zero-offset decision timestamp."""
+        if value.utcoffset() != timedelta(0):
+            raise ValueError("decision timestamp must use UTC")
+        return value
 
-def qualification_manifest_schema() -> dict[str, object]:
+
+@dataclass(frozen=True)
+class ValidatedCriterionResult:
+    """Immutable criterion result exposed by validated manifests."""
+
+    criterion_id: str
+    result: Literal["pass", "fail"]
+    evidence: tuple[str, ...]
+    note: str | None
+
+
+@dataclass(frozen=True)
+class ValidatedQualificationManifest:
+    """Deeply immutable manifest returned only after all consistency checks pass."""
+
+    schema_version: int
+    contract: ContractIdentity
+    candidate: CandidateIdentity
+    evidence: Mapping[str, EvidenceReference]
+    qualification_record: str
+    criteria: tuple[ValidatedCriterionResult, ...]
+    evaluator: EvaluatorApproval
+    decision: Literal["pass", "fail"]
+    decided_at: datetime
+
+
+def qualification_manifest_schema() -> dict[str, Any]:
     """Return the deterministic JSON Schema generated from runtime models."""
-    return QualificationManifest.model_json_schema()
+    schema = QualificationManifest.model_json_schema()
+    definitions = schema["$defs"]
+    relative_path = definitions["RelativePathLocator"]["properties"]["value"]
+    relative_path["pattern"] = RELATIVE_PATH_SCHEMA_PATTERN
+    criterion = definitions["CriterionResult"]
+    criterion["properties"]["evidence"]["uniqueItems"] = True
+    criterion["allOf"] = [
+        {
+            "if": {"properties": {"result": {"const": "pass"}}, "required": ["result"]},
+            "then": {"properties": {"evidence": {"minItems": 1}}},
+        },
+        {
+            "if": {"properties": {"result": {"const": "fail"}}, "required": ["result"]},
+            "then": {"required": ["note"]},
+        },
+    ]
+    evidence_map = schema["properties"]["evidence"]
+    evidence_map["propertyNames"] = {"pattern": CATALOG_ID_PATTERN}
+    for model_name, field_name in (
+        ("EvidenceReference", "produced_at"),
+        ("EvaluatorApproval", "approved_at"),
+    ):
+        definitions[model_name]["properties"][field_name]["pattern"] = UTC_TIMESTAMP_SCHEMA_PATTERN
+    schema["properties"]["decided_at"]["pattern"] = UTC_TIMESTAMP_SCHEMA_PATTERN
+    return schema
 
 
 def write_qualification_manifest_schema(path: Path = ACCEPTANCE_SCHEMA_PATH) -> Path:
@@ -353,6 +445,12 @@ def _validate_evidence_catalog(manifest: QualificationManifest, contract: Accept
             "qualification record does not resolve in the evidence catalog",
             field="qualification_record",
             next_action="Rebuild the normalized evidence catalog and references",
+        )
+    if manifest.evidence[manifest.qualification_record].evidence_type != "qualification-record":
+        raise _manifest_error(
+            "qualification record has the wrong evidence type",
+            field="qualification_record",
+            next_action="Reference catalog evidence declared as qualification-record",
         )
     for result in manifest.criteria:
         if len(result.evidence) != len(set(result.evidence)):
@@ -396,8 +494,8 @@ def _validate_evidence_catalog(manifest: QualificationManifest, contract: Accept
             )
 
 
-def validate_manifest(document: object, contract_content: bytes) -> QualificationManifest:
-    """Validate structure and selected-contract consistency without fetching evidence."""
+def validate_manifest(document: object, contract_content: bytes) -> ValidatedQualificationManifest:
+    """Return a deeply immutable wrapper after complete consistency validation."""
     contract = parse_contract(contract_content)
     try:
         manifest = QualificationManifest.model_validate(document)
@@ -458,7 +556,91 @@ def validate_manifest(document: object, contract_content: bytes) -> Qualificatio
             field="decided_at",
             next_action="Record the decision after evaluator approval",
         )
-    return manifest
+    return ValidatedQualificationManifest(
+        schema_version=manifest.schema_version,
+        contract=manifest.contract,
+        candidate=manifest.candidate,
+        evidence=MappingProxyType(dict(manifest.evidence)),
+        qualification_record=manifest.qualification_record,
+        criteria=tuple(
+            ValidatedCriterionResult(
+                criterion_id=item.criterion_id,
+                result=item.result,
+                evidence=tuple(item.evidence),
+                note=item.note,
+            )
+            for item in manifest.criteria
+        ),
+        evaluator=manifest.evaluator,
+        decision=manifest.decision,
+        decided_at=manifest.decided_at,
+    )
+
+
+def _read_contract(path: Path) -> bytes:
+    """Read selected contract bytes with safe, actionable refusal categories."""
+    try:
+        return path.read_bytes()
+    except FileNotFoundError:
+        raise ContractValidationError(
+            "selected contract path does not exist",
+            next_action="Select an existing regular contract file",
+        ) from None
+    except IsADirectoryError:
+        raise ContractValidationError(
+            "selected contract path is a directory",
+            next_action="Select a regular contract file rather than a directory",
+        ) from None
+    except PermissionError:
+        raise ContractValidationError(
+            "permission denied while reading selected contract",
+            next_action="Grant read permission to the selected contract file",
+        ) from None
+    except OSError:
+        raise ContractValidationError(
+            "selected contract could not be read because of an I/O error",
+            next_action="Check the contract file and storage, then retry",
+        ) from None
+
+
+def _read_manifest(path: Path) -> object:
+    """Read manifest JSON with safe, actionable refusal categories."""
+    try:
+        content = path.read_bytes()
+    except FileNotFoundError:
+        raise _manifest_error(
+            "manifest path does not exist",
+            next_action="Select an existing regular manifest file",
+        ) from None
+    except IsADirectoryError:
+        raise _manifest_error(
+            "manifest path is a directory",
+            next_action="Select a regular manifest file rather than a directory",
+        ) from None
+    except PermissionError:
+        raise _manifest_error(
+            "permission denied while reading manifest",
+            next_action="Grant read permission to the manifest file",
+        ) from None
+    except OSError:
+        raise _manifest_error(
+            "manifest could not be read because of an I/O error",
+            next_action="Check the manifest file and storage, then retry",
+        ) from None
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        raise _manifest_error(
+            "manifest is not valid UTF-8",
+            next_action="Regenerate the manifest as UTF-8 JSON",
+        ) from None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        raise _manifest_error(
+            "manifest contains malformed JSON",
+            next_action="Regenerate the manifest from the documented template",
+        ) from None
 
 
 def validate_acceptance(
@@ -472,18 +654,9 @@ def validate_acceptance(
         path=selected,
         mode=ContractSelectionMode.RETAINED if contract_path is not None else ContractSelectionMode.CHECKED_OUT,
     )
-    try:
-        contract_content = selected.read_bytes()
-    except OSError:
-        raise _contract_error("selected contract cannot be read") from None
+    contract_content = _read_contract(selected)
     contract = parse_contract(contract_content)
-    try:
-        loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        raise _manifest_error(
-            "manifest is unreadable JSON",
-            next_action="Regenerate the manifest from the documented template",
-        ) from None
+    loaded = _read_manifest(manifest_path)
     if not isinstance(loaded, dict):
         raise _manifest_error(
             "manifest root is not an object",

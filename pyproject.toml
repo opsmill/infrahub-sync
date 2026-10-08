@@ -146,6 +146,9 @@ dev = [
     "pytest-cov>=7,<8",
     "pytest-xdist>=3.8",
     "pytest-timeout>=2.3",
+    # Test-only: validate the published acceptance schema against the same fixture
+    # corpus as the runtime validator; release validation does not import it.
+    "jsonschema>=4.23,<5",
     "ty==0.0.32",
     "types-python-slugify>=8.0.2.20240310",
     "towncrier>=24.8,<27",
