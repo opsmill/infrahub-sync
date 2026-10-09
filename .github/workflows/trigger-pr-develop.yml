@@ -65,10 +65,9 @@ jobs:
   uv-checker:
     uses: ./.github/workflows/workflow-uv-check.yml
 
-  # No `needs` on the lint calls above. Holding the tests behind them would put
-  # their ninety seconds on the critical path of every run, including every run
-  # that was going to pass. They still block a merge: `qualification-required`
-  # below waits for them and refuses a head where any of them failed.
+  # Tests run alongside lint so lint is not on their critical path. The image
+  # build below waits for lint to avoid spending build time on a failing head.
+  # `qualification-required` still waits for every check before allowing a merge.
   tests:
     uses: ./.github/workflows/workflow-tests.yml
 
@@ -76,7 +75,7 @@ jobs:
   # `secrets` are passed, so a fork's pull request runs exactly what an internal
   # branch runs.
   image:
-    needs: ["image-changes"]
+    needs: ["image-changes", "linter"]
     if: needs.image-changes.outputs.image_inputs == 'true'
     # `id-token: write` is granted for one reason: GitHub checks every job of a
     # called workflow against what its caller grants, the skipped publish-only

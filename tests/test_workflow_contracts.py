@@ -770,19 +770,15 @@ def test_a_merge_into_the_branch_this_gate_guards_re_qualifies_it() -> None:
     )
 
 
-def test_the_fast_tier_starts_beside_the_lint_it_used_to_wait_for() -> None:
-    """Ninety seconds on the critical path of every run, for an ordering nothing needs.
-
-    Lint still blocks a merge, through the required job; what it no longer does
-    is hold the tests and the image gate behind it.
-    """
+def test_tests_start_beside_lint_but_the_image_waits_for_it() -> None:
+    """Run tests in parallel, but avoid building an image for a failing lint run."""
     graph = develop_jobs()
     linting = {name for name, job in graph.items() if "linter" in str(job.get("uses", ""))}
     needs = {name: _needs(job) for name, job in graph.items()}
 
     assert linting, f"{DEVELOP_CALLER.name} runs no linter"
-    for name in ("tests", "image"):
-        assert not linting & _ancestors(name, needs), f"{name} still waits for {sorted(linting)}"
+    assert not linting & _ancestors("tests", needs), "tests should run beside lint"
+    assert linting <= _ancestors("image", needs), "image build should wait for lint"
 
 
 @pytest.mark.parametrize("declaration", [WORKFLOWS, FILE_FILTERS, DOCKERFILE], ids=lambda path: path.name)
@@ -1960,7 +1956,7 @@ def test_the_pull_request_image_labels_name_the_commit_it_builds() -> None:
 def test_the_image_call_runs_only_when_an_image_input_changes() -> None:
     job = pr_job(PR_IMAGE_JOB)
 
-    assert list(_needs(job)) == [IMAGE_CHANGES_JOB]
+    assert list(_needs(job)) == [IMAGE_CHANGES_JOB, "linter"]
     assert str(job.get("if", "")).strip() == f"needs.{IMAGE_CHANGES_JOB}.outputs.{IMAGE_INPUTS_FILTER} == 'true'"
     assert filter_patterns(IMAGE_INPUTS_FILTER), f"{IMAGE_INPUTS_FILTER} matches nothing"
 
