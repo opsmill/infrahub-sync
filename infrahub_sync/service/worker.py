@@ -38,7 +38,7 @@ _IDENTITY_ERROR = "service worker identity is unavailable"
 _WORKER_NAME_PREFIX = "infrahub-sync-service"
 _WORKER_PAGE_SIZE = 200
 _NOT_ADMITTED = "flow run was not admitted as the service deployment"
-# What Prefect 3.8.1's process job configuration resolves an unset command to.
+# What Prefect 3.8.6's process job configuration resolves an unset command to.
 _SERVICE_CHILD_COMMAND = command_to_string([get_sys_executable(), "-m", "prefect.engine"])
 _SUBMISSION_IDENTITY: ContextVar[tuple[bool, int | None]] = ContextVar(
     "service_worker_submission_identity",
@@ -130,7 +130,8 @@ def _admission_refusal(
             "work pool job template is not the process default",
         ),
         # Implied by the two checks above; stated because these two fields are
-        # exactly what a child's command line and import root are made of.
+        # exactly what a child's command line and import root are made of, once
+        # `prepare_for_flow_run` sends the admitted run through the direct starter.
         (
             configuration.command == _SERVICE_CHILD_COMMAND and configuration.working_dir is None,
             "resolved child command is not the service default",
@@ -171,6 +172,15 @@ class ServiceProcessJobConfiguration(ProcessJobConfiguration):
         refusal = _admission_refusal(self, flow_run, deployment, flow, work_pool)
         if refusal is not None:
             raise ServiceFlowRunRefusedError(refusal)
+        # The admitted command is the one the child runs. With no command configured,
+        # Prefect starts a workspace supervisor instead: it reads the deployment again,
+        # copies code from the deployment's storage into the run's workspace, and can
+        # relaunch through `uv run` when that workspace holds a project. None of that is
+        # admitted above, and storage is server data like everything else. Marking the
+        # command configured sends the run through Prefect's direct engine starter,
+        # which runs exactly `_SERVICE_CHILD_COMMAND`; for a module-path entrypoint the
+        # engine then imports the installed flow and pulls no storage.
+        self._command_configured = True
         self._admitted = True
         bound, generation = _SUBMISSION_IDENTITY.get()
         self._identity_generation = generation if bound else None
@@ -432,9 +442,9 @@ def neutral_working_directory() -> Iterator[Path]:
     """Run this parent from a fresh empty directory, and remove it on the way out.
 
     Prefect prepends the process working directory to ``sys.path`` every time it resolves
-    a deployment's module entrypoint, and this parent does resolve it: a ``ProcessWorker``
-    builds a ``Runner`` in this process, and that runner imports the flow to run
-    ``on_crashed`` hooks once a child dies. A parent started inside a source tree would
+    a deployment's module entrypoint, and this parent does resolve it: the direct engine
+    starter that admitted runs use leaves Prefect's hook runner in this process, and that
+    runner imports the flow to run ``on_crashed`` hooks once a child dies. A parent started inside a source tree would
     import that copy of the package rather than the installed distribution, which is the
     checkout dependence this service does not have. An empty directory holds nothing to
     import, so the installed distribution is the only answer available -- for the whole

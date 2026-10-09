@@ -14,13 +14,19 @@ FROM python:3.13-slim-bookworm@sha256:ed86c82274b3c69b52fb5820f358f0bd7df0b60333
 # CVE-2026-48959, CVE-2026-48962, CVE-2026-57432, CVE-2026-7017). Pin the
 # fixed packages too, so rebuilds cannot silently fall back to the vulnerable
 # releases.
+#
+# The base's own pip is removed as well. uv builds the venv and the venv does not
+# see the system site-packages, so nothing in this image can run that pip, yet its
+# vendored copies (setuptools, msgpack, urllib3) are what image scanners report.
 RUN apt-get update \
  && apt-get install --yes --no-install-recommends \
     libpcre2-8-0=10.42-1+deb12u2 \
     libssl3=3.0.22-1~deb12u1 \
     openssl=3.0.22-1~deb12u1 \
     perl-base=5.36.0-7+deb12u4 \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && python -m pip uninstall --yes --no-cache-dir pip \
+ && rm -f /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.13
 
 # ---------------------------------------------------------------------------
 # Build stage: resolve nothing, install the committed lock, keep uv out of the

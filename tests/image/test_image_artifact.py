@@ -15,6 +15,7 @@ from packaging.version import Version
 from tests.image.conftest import (
     BUNDLED_SOURCE_ADAPTERS,
     EXCLUDED_MODULES,
+    INJECTED_SECRETS,
     READ_ONLY_ROOTS,
     REPO_ROOT,
     RUNTIME_GID,
@@ -35,10 +36,13 @@ EXPECTED_LABELS = {
     "org.opencontainers.image.source": "https://github.com/opsmill/infrahub-sync",
     "org.opencontainers.image.licenses": "Apache-2.0",
 }
-PROVENANCE_LABELS = (
+# FR-007: what a puller reads to trace an image back to its release and commit.
+# The publishing workflow passes these through `labels`, overriding the empty
+# defaults the Dockerfile declares.
+REQUIRED_LABELS = (
+    "org.opencontainers.image.source",
     "org.opencontainers.image.version",
     "org.opencontainers.image.revision",
-    "org.opencontainers.image.created",
 )
 
 WRITE_PROBE = """
@@ -116,10 +120,21 @@ def test_only_the_declared_roots_are_writable_under_a_read_only_root(image_ref: 
 
 def test_the_default_command_serves_the_sync_api(started_container: str) -> None:
     """The image needs no argument to be the API; every other form is an override."""
-    info = wait_for_api(started_container)
+    served = wait_for_api(started_container)
 
-    assert info["title"] == "Infrahub Sync API"
-    assert info["version"] == installed_version("infrahub-sync")
+    assert served["server_version"] == installed_version("infrahub-sync")
+
+
+def test_the_api_logs_none_of_the_secrets_it_was_started_with(started_container: str) -> None:
+    """Principle VI: a bearer token, database password or S3 key never reaches the logs."""
+    wait_for_api(started_container)
+
+    logs = docker(["logs", started_container])
+
+    assert logs.returncode == 0, logs.stderr
+    output = logs.stdout + logs.stderr
+    leaked = [index for index, secret in enumerate(INJECTED_SECRETS) if secret in output]
+    assert not leaked, f"injected secrets #{leaked} appear in the API container's logs"
 
 
 def test_the_worker_command_form_is_available(image_ref: str) -> None:
@@ -160,18 +175,23 @@ def test_the_python_command_form_imports_the_installed_distribution(image_ref: s
     assert "site-packages" in location, location
 
 
-def test_the_image_carries_the_source_provenance_of_a_real_commit(image_ref: str) -> None:
-    """`created` comes from the commit, so two builds of one commit agree on it."""
+@pytest.mark.parametrize("label", REQUIRED_LABELS)
+def test_the_image_carries_every_required_oci_label(image_ref: str, label: str) -> None:
+    labels = image_config(image_ref)["Labels"] or {}
+
+    assert str(labels.get(label, "")).strip(), f"{label} is missing or empty"
+
+
+def test_the_image_carries_the_source_provenance_of_the_commit_it_was_built_from(image_ref: str) -> None:
+    """The revision label names the commit checked out for the build, not just any commit."""
     labels = image_config(image_ref)["Labels"]
     assert isinstance(labels, dict)
 
-    assert {key: labels[key] for key in EXPECTED_LABELS} == EXPECTED_LABELS
-    assert set(labels) == set(EXPECTED_LABELS) | set(PROVENANCE_LABELS)
+    assert {key: labels.get(key) for key in EXPECTED_LABELS} == EXPECTED_LABELS
     revision = labels["org.opencontainers.image.revision"]
     assert re.fullmatch(r"[0-9a-f]{40}", revision), revision
     assert git("cat-file", "-t", f"{revision}^{{commit}}") == "commit"
-    assert labels["org.opencontainers.image.created"] == git("show", "-s", "--format=%cI", revision)
-    assert labels["org.opencontainers.image.version"] == installed_version("infrahub-sync")
+    assert revision == git("rev-parse", "HEAD"), "the image was labelled with a commit other than the one checked out"
 
 
 @pytest.mark.parametrize("module", [*SERVICE_RUNTIMES, *RUNTIME_TOOLS])

@@ -47,7 +47,7 @@ and adding one means adding the adapter to the distribution.
 
 For the current command forms and the worked register → validate → plan → review → apply →
 verify flow, follow
-[Adding an adapter](../../docs/docs/develop/guides/adding-an-adapter.md), which teaches the
+[Adding an adapter](../../docs/docs/development/guides/adding-an-adapter.md), which teaches the
 supported in-repository route and records the reproduction of the refusal above.
 [Run a sync](../../docs/docs/running-a-sync.mdx) covers wait, idempotency, delete and failure
 behavior for a package that can be registered.

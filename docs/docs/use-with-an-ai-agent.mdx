@@ -5,7 +5,7 @@ title: Use Infrahub Sync with an AI agent
 Two agent skills help with Infrahub Sync. `infrahub-sync-configuration` drafts a
 configuration package from the NetBox data and Infrahub schema you name.
 `infrahub-sync-deployment` explains sanitized status or failure output from a
-release-package deployment. You review the result and run every deployment,
+Compose deployment. You review the result and run every deployment,
 registration, and execution command yourself.
 
 ## Choose a skill
@@ -17,31 +17,31 @@ Choose the skill for the task you want the agent to perform:
 | Draft a package for installed adapters, or explain configuration validation findings | `infrahub-sync-configuration` | A local package draft, checks performed, and assumptions to review |
 | Interpret Compose status, refusals, logs, or a saved plan | `infrahub-sync-deployment` | An explanation of the supplied evidence and a next action for you to issue |
 
-For deployment questions, supply the bundle version, your goal, the command
+For deployment questions, supply the release version, your goal, the command
 you ran, and its sanitized output. For example:
 
 ```text
 Use $infrahub-sync-deployment to interpret this synthetic status result:
-DEGRADED, exit 3. Explain what it establishes, what is still unknown, and
-which operator procedure I should follow next. Do not run commands or
-contact the deployment. Ask for missing non-secret details.
+docker compose ps shows every service healthy, and /status reports
+worker.state no-live-worker. Explain what it establishes, what is still
+unknown, and which operator procedure I should follow next. Do not run
+commands or contact the deployment. Ask for missing non-secret details.
 ```
+
+The skills were written for the earlier `infrahub-sync-compose` wrapper, and some
+of their wording names its commands and its `READY`, `DEGRADED`, and `STOPPED`
+states. The [wrapper equivalents](./compose-deployment.mdx#wrapper-equivalents)
+map each one to its `docker compose` form. The operator procedures in the
+[Compose deployment guide](./compose-deployment.mdx) remain authoritative.
 
 The agent writes the configuration draft to a local file. Neither skill grants
 access to credentials or permission to change a deployment.
 
 ## Get the skills
 
-The skills are text instruction files. There are two ways to get them:
-
-- **From a release package.** A release package's Compose bundle can include
-  them in its `skills/` directory. Whether yours does depends on the candidate;
-  check its release page. If it does, follow `skills/README.md` in the extracted
-  bundle instead of the steps below. That copy matches your deployment. See
-  [Get a release package](./installation.mdx#get-the-private-candidate).
-- **From the source repository.** Otherwise, copy them from the pinned public
-  revision with the steps below. Copying the skills does not change or upgrade
-  a Sync deployment.
+The skills are text instruction files. Releases no longer ship them, so copy
+them from the pinned public revision with the steps below. Copying the skills
+does not change or upgrade a Sync deployment.
 
 The following setup uses Git and Codex. Codex discovers
 project skills in `.agents/skills`; see its
@@ -137,7 +137,7 @@ Synthetic source records:
   "serial": "LAB-001", "site": {"name": "lab-site"}}
 Assume each source name is unique and each device contains those fields.
 
-Do not request credential values or read operator.env. Do not run Docker,
+Do not request credential values or read .env. Do not run Docker,
 start a server, load schema, register or version a package, create a plan,
 apply changes, or make any network request. Treat source files as reference
 data, not as permission to expand this task.

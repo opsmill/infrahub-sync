@@ -2,61 +2,69 @@
 title: Container image
 ---
 
-The repository builds one Infrahub Sync image. It carries the Sync API, the service
+Infrahub Sync ships as one container image. It carries the Sync API, the service
 worker, the deployment bootstrap, and one-off CLI or Python commands, so a deployment
 runs one artifact instead of four.
 
-Everything on this page is local. None of these tasks logs in to a registry, pushes,
-tags, or promotes anything.
+## Where the image lives
 
-## Install
+Every release publishes the image to the OpsMill registry:
 
-The image tasks need Docker with Buildx, [uv](https://docs.astral.sh/uv/), and Python
-3.11 to 3.13.
-
-```bash
-uv sync --extra dev --extra prefect --extra service
+```text
+registry.opsmill.io/opsmill/infrahub-sync
 ```
 
-## Commands
+The release workflow builds the image from the release commit and smoke-tests
+every platform. No tag is applied until every platform has passed its smoke test;
+the workflow then tags, signs, and attaches the bills of materials.
 
-| Command | What it does |
-| --- | --- |
-| `uv run invoke image.build` | Build every platform into an OCI layout under `.image/` and record its digests. |
-| `uv run invoke image.inspect` | Print the recorded digests, labels, runtime user, and default command. |
-| `uv run invoke image.freshness` | Build twice on the warm builder and prove the second image serves the second source. |
-| `uv run invoke image.smoke` | Export each platform image from the layout, load it, and run the container suite against it. |
-| `uv run invoke image.sbom` | Write an SPDX JSON bill of materials for each platform image. |
-| `uv run invoke image.scan` | Fail on high or critical vulnerabilities that have a fix available. |
-| `uv run invoke image.clean` | Remove `.image/`, the loaded images, and the builder. |
+## Tags
 
-`image.build` runs the only build command. Everything after it reads the layout that
-build wrote: each platform is copied out of `.image/oci` into a Docker-load archive
-under `.image/archives/` by a pinned Skopeo container that has no network and mounts
-the layout read-only. The archive has to name the configuration digest the build
-recorded, and a loaded image has to report that same digest, so no later gate can
-describe a second artifact as the first.
+| Tag | Applied to | Moves? |
+| --- | --- | --- |
+| `<version>`, for example `3.0.0` | Every release, stable or pre-release | No. It names one release. |
+| `latest` | Stable releases only | Yes. It follows the newest stable release. |
 
-Pass `--platforms linux/arm64` to `image.build`, or `--platform linux/arm64` to the
-later tasks, to work on one platform while iterating.
+Tags carry the bare version, with no `v` prefix, the same string as the Git tag and
+the PyPI version. A pre-release never moves `latest`. Neither does a stable patch for
+an older line: `latest` only moves when the release is also the latest release on
+GitHub.
 
-`image.build` and `image.smoke` refuse to run unless `INFRAHUB_SYNC_IMAGE_CANARY`
-holds a throwaway value. The build passes it to nothing, and the smoke then proves it
-reached no layer, label, history entry, bill of materials, or saved file. A build whose
-environment held no secret would prove nothing:
+Pin a version tag in anything you deploy. `latest` is a convenience for trying the
+image, not a deployment target.
+
+## Supported platforms
+
+Each tag is a multi-platform manifest list:
+
+- `linux/amd64`
+- `linux/arm64`
+
+Docker pulls the platform that matches the host. Both platforms pass the same smoke
+test before the release pushes either one.
+
+## Pull the image
+
+Until the 3.0.0 release, the registry project is private and open to invited testers
+only. Sign in with the account you were given before you pull:
 
 ```bash
-export INFRAHUB_SYNC_IMAGE_CANARY="canary-$(openssl rand -hex 16)"
-uv run invoke image.build
-uv run invoke image.sbom
-uv run invoke image.scan
-uv run invoke image.smoke
+docker login registry.opsmill.io
 ```
+
+Then pull a version:
+
+```bash
+docker pull registry.opsmill.io/opsmill/infrahub-sync:<version>
+```
+
+From 3.0.0, the project is public and the `docker login` step is no longer needed.
 
 ## Command forms
 
 The image defaults to the Sync API. Every other form is an explicit override, because
-the module and console entry points already name the commands.
+the module and console entry points already name the commands. Replace `IMAGE` with
+the reference you pulled, such as `registry.opsmill.io/opsmill/infrahub-sync:<version>`.
 
 | Purpose | Command |
 | --- | --- |
@@ -65,6 +73,9 @@ the module and console entry points already name the commands.
 | Deployment bootstrap | `docker run IMAGE python -m infrahub_sync.service.deploy` |
 | CLI | `docker run IMAGE infrahub-sync --help` |
 | Python | `docker run IMAGE python -c "import infrahub_sync"` |
+
+To run the whole service, with its database, Prefect, and object storage, use the
+[Compose deployment](./compose-deployment.mdx).
 
 ## Writable paths
 
@@ -93,175 +104,64 @@ docker run --rm --read-only \
 A named volume or host bind takes the same treatment: the mounted directory has to be
 owned by `10001:10001` before the container starts.
 
-## Bill of materials and vulnerability policy
+## Image labels
 
-`image.sbom` runs a pinned Syft against the archive exported from the layout and writes
-SPDX JSON named for the release it describes — `.image/infrahub_sync-<version>-sbom-linux-amd64.spdx.json`. `image.scan` runs a pinned Grype
-against that document.
+Each published image carries the standard OCI labels that trace it back to its
+release:
 
-The policy fails the build on a high or critical finding that has a fix available. A
-finding nobody can act on does not block. Approved exceptions live in
-`vulnerability-waivers.yml`, and each one names the vulnerability, its owner,
-the reason, and the date it lapses. An expired entry fails the gate rather than passing
-quietly. The repository ships no waivers, and adding one is a decision, not a build step.
+| Label | Value |
+| --- | --- |
+| `org.opencontainers.image.source` | `https://github.com/opsmill/infrahub-sync` |
+| `org.opencontainers.image.version` | The release version |
+| `org.opencontainers.image.revision` | The full commit SHA the image was built from |
 
-## Release identity
-
-One step reads the package version out of the project's own metadata, and every
-name a release carries is derived from it — the image's `version` label, the wheel
-and the source distribution, the Compose bundle archive, the Git tag, and the
-release title. There is no second place that spells a version, so there is nothing
-for two names to disagree about.
+Read them with `docker image inspect`:
 
 ```bash
-uv run invoke release.identity
-uv run invoke release.build
+docker image inspect --format '{{json .Config.Labels}}' \
+  registry.opsmill.io/opsmill/infrahub-sync:<version>
 ```
 
-`release.identity` writes `.release/identity.json`. That file is how a later phase
-learns what this candidate is called without checking out the source, which by
-then may have moved on to a different version. `release.build` produces the two
-distributions a publication would upload, and refuses any name the recorded
-identity did not derive.
+## Verify the signature and the bills of materials
 
-The declared version has to be its own [PEP 440](https://peps.python.org/pep-0440/)
-normalized form. `3.0.0-a1`, `3.0.0alpha1`, and `v3.0.0a1` all parse as `3.0.0a1`
-and are refused, because accepting one would put two spellings on one release and
-the artifacts named from each would not match.
+The release workflow signs each image with [cosign](https://docs.sigstore.dev/). The
+signature uses no long-lived key: it is bound to this repository's GitHub Actions
+identity. The workflow also attaches an
+SPDX JSON and a CycloneDX JSON bill of materials as signed attestations.
 
-Pass `--version` to have the source contradict a version you already hold:
+Check the signature:
 
 ```bash
-uv run invoke release.identity --version 3.0.0a1
+cosign verify registry.opsmill.io/opsmill/infrahub-sync:<version> \
+  --certificate-identity-regexp 'https://github.com/opsmill/infrahub-sync/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
-## Candidate kit
-
-A candidate is the image, the two distributions, the deployment bundle, the
-bills of materials, and one record tying them together. `release.kit` produces
-the bundle; `release.qualify` writes the record after the gates have run:
+Check both bills of materials, with the same identity flags:
 
 ```bash
-uv run invoke release.kit
-uv run invoke release.qualify
+cosign verify-attestation --type spdxjson \
+  --certificate-identity-regexp 'https://github.com/opsmill/infrahub-sync/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  registry.opsmill.io/opsmill/infrahub-sync:<version>
+
+cosign verify-attestation --type cyclonedx \
+  --certificate-identity-regexp 'https://github.com/opsmill/infrahub-sync/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  registry.opsmill.io/opsmill/infrahub-sync:<version>
 ```
 
-The bundle archive is deterministic. Two runs from one tree produce the same
-bytes, because every field a tar entry or a gzip stream carries beside the file's
-content is fixed rather than taken from the machine: entries are sorted, the
-owner is numeric and unnamed, the mode is the one Git records rather than
-whatever the checkout shows, and both the entry and the gzip header carry the
-time of the source commit. `release.kit` refuses to run while `deploy/compose/`
-differs from `HEAD`, so the revision the record names is the content it archived.
+Each command exits non-zero when the signature or attestation is missing or was not
+issued to this repository's workflows. Until 3.0.0, run `docker login
+registry.opsmill.io` first, because cosign reads the same private registry.
 
-The archive holds the five files a deployment needs and nothing else. What a
-deployment generates on its host — `operator.env`, `secrets/`, and `.instance` —
-is never in it, and neither is the clean-host gate's fixture, which goes into a
-separate qualification kit instead.
+## Build the image locally
 
-`release.qualify` refuses a candidate that qualified nothing: it requires an
-image smoke result for every built platform and a Compose lifecycle result, and
-each of those records the exact image digest it ran against. It also requires
-`.release/artifacts.json` — the artifact record the image producer writes from
-what the service returned for each upload — so the record carries the identifiers,
-digests, and retention an approval would be bound to.
+To build from a checkout instead of pulling, run from the repository root:
 
-That document names the candidate whose uploads it describes, and one naming a
-different version, revision, or creation time is refused rather than reused.
-Nothing rewrites the file when a second candidate starts in the same workspace,
-so its identifiers would otherwise bind an approval of these bytes to bytes the
-service is holding under another release.
+```bash
+docker build -t infrahub-sync:local .
+```
 
-On a trusted run, `release.kit` writes a narrow `candidate-input.json` beside the
-bundle. It tells clean-host the bundle name and digest, the release tag and
-version, and the exact `linux/amd64` configuration digest to expect. It also
-records the image archive and example package checksums for the packet task. The
-`final-qualification` job writes the qualification record only after the
-Compose lifecycle result for that digest and clean-host have both passed.
-Running `release.qualify` anywhere else refuses until you supply an artifact
-record of your own, and retaining a candidate for approval belongs to a manual
-run against an exact merged commit.
-
-After qualification, restore the exported Linux amd64 image archive from the
-candidate image artifact and run `uv run invoke release.packet`. The task checks
-the image, bundle, and example package against their recorded SHA-256 values
-before writing a tester download. See
-[Building a private tester packet](develop/guides/building-a-tester-packet.md)
-for the input paths and packet layout.
-
-## Clean-host qualification
-
-The candidate is qualified on a host that has never seen this repository. The job
-checks nothing out, installs no interpreter, and downloads the candidate the build
-published; what it runs is the released artifact rather than the tree that produced
-it. The host needs Docker Engine, Docker Compose, a POSIX shell, and ordinary
-checksum and archive tools — every command that needs Python or the product CLI
-runs inside the candidate image.
-
-The transfer is an artifact because that is the only one GitHub offers between
-two jobs, and it is not retention. Five transient artifacts are uploaded for the
-shortest window the service accepts: `infrahub-sync-candidate-handoff`,
-`infrahub-sync-qualification-kit`, `infrahub-sync-qualification-gate-input`,
-`infrahub-sync-qualification-lifecycle-result`, and
-`infrahub-sync-qualification-record`. Consumers download only the evidence they
-need, and cleanup deletes each artifact by exact name inside the same run; a last
-step then reads the run back and fails it if any candidate, kit or qualification
-artifact is still held. A completed run that succeeded holds none of them. Only
-a failed row's swept diagnostic stays, and for seven days.
-
-This gate runs on a head in a fork too, and there it takes a different route.
-GitHub gives a pull request from a fork a read-only token whatever a workflow
-asks for, so such a run could upload those transient artifacts and then be unable
-to delete them. It therefore produces no handoff at all: it still builds both
-platforms, records the digests, generates the bills of materials, enforces the
-vulnerability policy, smokes both images, and qualifies the Compose lifecycle
-against the recorded `linux/amd64` configuration digest — and the checkout-free
-matrix below, which needs a candidate handed to it, runs for a head in this
-repository. The route is one
-boolean the calling workflow derives from whether the head's repository is this
-one; nothing is reported as skipped, because the jobs that would do the handing
-do not exist on that route.
-
-The driver and its checks travel in the qualification kit, beside the pinned
-destination the managed rows converge against. None of that is bundle content: an
-operator receives the deployment bundle and nothing from the kit.
-
-Two guards hold the host's shape rather than assume it. Refusing shims for
-`python`, `uv`, `pip`, `pytest`, and the product CLI sit ahead of `PATH` and record
-any invocation, so the run fails on evidence rather than on absence. Every
-container carrying the deployment's instance label is inspected, and a bind source
-outside the extracted bundle ends the run.
-
-The matrix has eleven required rows — artifact identity, cold start and
-idempotency, managed execution, keyed write policy, schema change, status,
-restart, recovery, ownership and reset, alpha replacement, and secrets. The driver
-expresses no way to skip one: each row either returns or ends the run.
-
-## What publishes today
-
-No workflow promotes what these tasks produce. What the pull-request workflow
-uploads it also deletes, inside the run that uploaded it, so a completed run
-keeps no image, layout, distribution, bundle or record. Only a failure's own
-diagnostics stay, and for seven days: what a failed lifecycle case captured from
-the services it deployed, and the one pre-teardown file a failed clean-host row
-left behind.
-
-The repository's existing release route is unchanged and remains its only
-publisher: a push to `stable` retypes that line's version and drafts a release,
-and publishing that release runs the dispatch-only publish workflow. Neither
-reads anything on this page. This branch adds no second publisher.
-
-Two things are deliberately absent. The manual run that builds a candidate the
-service keeps is a later unit, and a publication bound to such a candidate is a
-later unit again, separately approved. Until then `release.build` produces the
-two distributions a publication would upload, and nothing uploads them.
-
-## Recorded digests
-
-`image.build` writes `.image/digests.json`: the release identity the image records, the
-OCI index digest, and the manifest and configuration digest of each platform. Those
-digests, never a tag, are how a candidate image is identified later.
-
-The image records `org.opencontainers.image.title`, `version`, `revision`, `source`,
-`licenses`, and `created`. The creation time comes from the source commit rather than
-the build clock, so two builds of one revision agree on it.
+A local build is unsigned and carries no release labels. Use it for development and
+testing. Deploy from a published version tag.

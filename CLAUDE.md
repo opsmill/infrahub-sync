@@ -2,5 +2,9 @@
 
 @AGENTS.md
 
-Specifications under `dev/specs/**` are a historical record, not active work. Current developer
-guidance lives in `docs/docs/develop/` and the decision records in `dev/adr/`.
+<!-- SPECKIT START -->
+No spec is currently active. Completed specs are archived under `dev/specs/archive/`; their
+durable output lives in `docs/docs/development/knowledge/`, `docs/docs/development/guidelines/`,
+`docs/docs/development/guides/`, and `dev/adr/`. When a spec is active, read its `plan.md` for
+technologies, project structure, and shell commands.
+<!-- SPECKIT END -->

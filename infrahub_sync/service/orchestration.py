@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from math import isfinite
-from typing import Any, Protocol, cast
+from typing import Any, Final, Protocol, cast
 from uuid import UUID
 
 import httpx
@@ -24,6 +25,8 @@ from prefect.client.schemas.responses import (
 )
 from prefect.exceptions import ObjectNotFound
 from prefect.states import Cancelling
+
+logger = logging.getLogger(__name__)
 
 SERVICE_FLOW_NAME = "infrahub-sync-service"
 SERVICE_DEPLOYMENT_NAME = "run"
@@ -49,6 +52,31 @@ SERVICE_DEFINITION = WorkflowDefinition(
     entrypoint=_SERVICE_FLOW_ENTRYPOINT,
     tags=("infrahub-sync", "service"),
 )
+
+
+# The title Prefect's UI shows for a run, instead of the name Prefect generates for a
+# flow run. It follows the rule Infrahub applies to its own flow runs (`dev/guides/
+# backend/creating-async-tasks.md` in Infrahub): say what the run does, and leave out
+# the branch and any ID, which the run's page already shows.
+_RUN_NAMES: Final = {
+    "plan": "Plan sync of {configuration}",
+    "verify": "Verify sync plan of {configuration}",
+    "apply": "Apply sync plan of {configuration}",
+    "sync": "Sync {configuration}",
+}
+_UNNAMED_RUNS: Final = {"plan": "Plan sync", "verify": "Verify sync plan", "apply": "Apply sync plan", "sync": "Sync"}
+
+
+def run_name(stage: object, configuration_name: object) -> str:
+    """Return the title of one stage's run: what it does, and to which configuration.
+
+    The configuration is named by its readable name, never by its ID.
+    """
+    if not isinstance(stage, str) or stage not in _RUN_NAMES:
+        return "Sync run"
+    if isinstance(configuration_name, str) and configuration_name:
+        return _RUN_NAMES[stage].format(configuration=configuration_name)
+    return _UNNAMED_RUNS[stage]
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +155,12 @@ class ServiceOrchestration(Protocol):
     async def cancel(self, flow_run_id: str) -> CancellationResult: ...
 
 
+class _NamingClient(Protocol):
+    """The Prefect client method that titles an accepted flow run."""
+
+    async def update_flow_run(self, flow_run_id: UUID, *, name: str) -> httpx.Response: ...
+
+
 class _PoolClient(Protocol):
     """Pinned Prefect client methods used only by the service liveness adapter."""
 
@@ -144,7 +178,30 @@ class PrefectOrchestration:
 
     async def submit(self, parameters: dict[str, object], *, idempotency_key: str) -> Submission:
         handle = await self._executor.submit(SERVICE_DEFINITION, parameters, idempotency_key=idempotency_key)
+        await self._title(handle.id, parameters)
         return Submission(flow_run_id=handle.id, state=await handle.status())
+
+    async def _title(self, flow_run_id: str, parameters: dict[str, object]) -> None:
+        """Give the accepted flow run its title before a worker starts it.
+
+        The vendored executor creates the flow run under a name Prefect generates. The
+        flow sets the same title again when it starts; setting it here as well means a
+        run waiting for a worker is listed under its title too. A failure leaves the
+        generated name, never an unsubmitted run: Prefect has accepted the run and it
+        will execute.
+        """
+        name = run_name(parameters.get("stage"), parameters.get("configuration_name"))
+        client = cast("_NamingClient", self._client)
+        try:
+            await client.update_flow_run(UUID(flow_run_id), name=name)
+        except Exception as error:  # noqa: BLE001  # pylint: disable=broad-exception-caught
+            response = getattr(error, "response", None)
+            logger.warning(
+                "flow run %s was accepted but not titled (%s, status=%s); it still runs",
+                flow_run_id,
+                type(error).__name__,
+                getattr(response, "status_code", None),
+            )
 
     async def observe(self, flow_run_id: str) -> Observation:
         try:

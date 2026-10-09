@@ -21,6 +21,8 @@ from prefect import __version__ as prefect_version
 from prefect.client.schemas.objects import WorkerStatus
 from prefect.logging.handlers import APILogHandler
 from prefect.server.schemas.actions import LogCreate as ServerLogCreate
+from prefect.utilities.processutils import command_to_string, get_sys_executable
+from prefect.workers import process as prefect_process
 from prefect.workers.process import ProcessWorker
 
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
@@ -28,6 +30,7 @@ from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.orchestration import SERVICE_DEFINITION
 from infrahub_sync.service.worker import ServiceProcessWorker, ServiceWorkerIdentityError, service_worker_name
 from tests.service.execution_fixtures import append_execution
+from tests.service.prefect_launch import LaunchRecorder
 
 if TYPE_CHECKING:
     from prefect.client.schemas.objects import FlowRun, WorkPool
@@ -140,19 +143,8 @@ def _flow_run() -> SimpleNamespace:
     )
 
 
-class _Runner:
-    def __init__(self) -> None:
-        self.child_environments: list[dict[str, str | None]] = []
-
-    async def execute_flow_run(self, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401
-        self.child_environments.append(kwargs["env"])
-        kwargs["task_status"].started(42)
-        return SimpleNamespace(returncode=0, pid=42)
-
-
-def _stub_submission(worker: ServiceProcessWorker) -> _Runner:
-    runner = _Runner()
-    worker._runner = cast("Any", runner)
+def _stub_submission(worker: ServiceProcessWorker, monkeypatch: pytest.MonkeyPatch) -> LaunchRecorder:
+    runner = LaunchRecorder().install(monkeypatch)
     worker._emit_flow_run_submitted_event = cast("Any", lambda _configuration: None)  # type: ignore[method-assign]
     worker._give_worker_labels_to_flow_run = cast("Any", AsyncMock())  # type: ignore[method-assign]
     worker._propose_submitting_state = cast("Any", AsyncMock())  # type: ignore[method-assign]
@@ -264,7 +256,7 @@ async def test_polling_submission_refuses_when_refresh_changes_identity_to_none(
 ) -> None:
     worker = _worker("service-a", [_record("service-a", FIRST_WORKER_ID)])
     await worker._refresh_worker_identity()
-    runner = _stub_submission(worker)
+    runner = _stub_submission(worker, monkeypatch)
     poll_started = asyncio.Event()
     release_poll = asyncio.Event()
     refresh_cleared_identity = asyncio.Event()
@@ -312,7 +304,7 @@ async def test_polling_submission_refuses_when_refresh_rebinds_to_a_new_uuid(
 ) -> None:
     worker = _worker("service-a", [_record("service-a", FIRST_WORKER_ID)])
     await worker._refresh_worker_identity()
-    runner = _stub_submission(worker)
+    runner = _stub_submission(worker, monkeypatch)
     poll_started = asyncio.Event()
     release_poll = asyncio.Event()
 
@@ -375,18 +367,42 @@ async def test_recurring_sync_clears_readiness_until_identity_is_refreshed(
     assert worker._has_successfully_synced
 
 
-async def test_prefect_381_injects_the_resolved_worker_uuid_into_the_actual_child_environment() -> None:
-    assert prefect_version == "3.8.1"
+async def test_prefect_386_injects_the_resolved_worker_uuid_into_the_actual_child_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert prefect_version == "3.8.6"
     worker = _worker("service-a", [_record("service-a", FIRST_WORKER_ID)])
     await worker._refresh_worker_identity()
     flow_run = cast("FlowRun", _flow_run())
-    runner = _stub_submission(worker)
+    runner = _stub_submission(worker, monkeypatch)
     result = await worker._submit_run_and_capture_errors(flow_run)
 
     assert not isinstance(result, Exception)
     assert result.status_code == 0
     assert runner.child_environments[0]["PREFECT__WORKER_ID"] == str(FIRST_WORKER_ID)
     assert runner.child_environments[0]["PREFECT__WORKER_NAME"] == "service-a"
+
+
+async def test_an_admitted_run_starts_the_engine_directly_not_a_workspace_supervisor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The child runs the admitted command; nothing re-reads the deployment to choose another.
+
+    Prefect 3.8.6 starts a workspace supervisor for a run with no configured command. It
+    copies code from the deployment's storage and can relaunch through `uv run`, none of
+    which admission checks, so an admitted run must reach the direct engine starter.
+    """
+    worker = _worker("service-a", [_record("service-a", FIRST_WORKER_ID)])
+    await worker._refresh_worker_identity()
+    runner = _stub_submission(worker, monkeypatch)
+
+    result = await worker._submit_run_and_capture_errors(cast("FlowRun", _flow_run()))
+
+    assert not isinstance(result, Exception)
+    assert len(runner.starters) == 1
+    starter = runner.starters[0]
+    assert type(starter) is prefect_process.EngineCommandStarter
+    assert starter._command == command_to_string([get_sys_executable(), "-m", "prefect.engine"])
 
 
 async def test_child_refuses_stale_identity_after_start_before_claim(
@@ -414,37 +430,28 @@ async def test_child_refuses_stale_identity_after_start_before_claim(
 
     worker = _worker("service-a", [_record("service-a", FIRST_WORKER_ID)])
     await worker._refresh_worker_identity()
-    _stub_submission(worker)
     registry = _FlowWorkerRegistryClient([_record("service-a", FIRST_WORKER_ID)])
     child_started = asyncio.Event()
     release_claim = asyncio.Event()
     claim_errors: list[RuntimeError] = []
     post_claim_work: list[bool] = []
 
-    class _ClaimRunner:
-        async def execute_flow_run(self, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401, PLR6301
-            child_environment = kwargs["env"]
-            kwargs["task_status"].started(42)
-            child_started.set()
-            await release_claim.wait()
-            with monkeypatch.context() as child:
-                child.setenv("PREFECT__WORKER_ID", child_environment["PREFECT__WORKER_ID"])
-                child.setenv("PREFECT__WORKER_NAME", child_environment["PREFECT__WORKER_NAME"])
-                child.setattr(service_flow, "get_client", lambda **_kwargs: registry, raising=False)
-                child.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
-                child.setattr(service_flow, "_prefect_flow_run_id", lambda: str(FLOW_ID))
+    async def _claiming_child(starter: Any) -> None:  # noqa: ANN401 -- Prefect's private starter type
+        child_started.set()
+        await release_claim.wait()
+        with monkeypatch.context() as child:
+            child.setenv("PREFECT__WORKER_ID", starter._env["PREFECT__WORKER_ID"])
+            child.setenv("PREFECT__WORKER_NAME", starter._env["PREFECT__WORKER_NAME"])
+            child.setattr(service_flow, "get_client", lambda **_kwargs: registry, raising=False)
+            child.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
+            child.setattr(service_flow, "_prefect_flow_run_id", lambda: str(FLOW_ID))
+            child.setattr(service_flow, "_execute_stage", lambda *_args, **_kwargs: post_claim_work.append(True))
+            try:
+                service_flow.service_sync_run.fn(run_id, "plan")
+            except RuntimeError as exc:
+                claim_errors.append(exc)
 
-                def _post_claim(*_args: object, **_kwargs: object) -> None:
-                    post_claim_work.append(True)
-
-                child.setattr(service_flow, "_execute_stage", _post_claim)
-                try:
-                    service_flow.service_sync_run.fn(run_id, "plan")
-                except RuntimeError as exc:
-                    claim_errors.append(exc)
-            return SimpleNamespace(returncode=0, pid=42)
-
-    worker._runner = cast("Any", _ClaimRunner())
+    _stub_submission(worker, monkeypatch).child = _claiming_child
 
     async def _base_sync(self: ProcessWorker) -> None:
         await self._initialize_after_sync()

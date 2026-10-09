@@ -117,7 +117,7 @@ For a registered package, the SDK validates the declared destination URL. An inv
 A registered package declares its own connection settings:
 
 - The worker connects to the `url` declared in the package, for data and for the destination schema read. `INFRAHUB_ADDRESS` and `INFRAHUB_URL` in the worker environment do not replace it.
-- The worker reads the token from the environment variable that the package's `credentials` entry names, for example `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. Set that variable in the worker environment. On a Compose deployment, set it in `operator.env`.
+- The worker reads the token from the environment variable that the package's `credentials` entry names, for example `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. Set that variable in the worker environment. On a Compose deployment, set it in `.env`.
 - To change a URL or a branch, edit the package and register it as a new version with `configs version`. Then plan with the new version.
 
 ### Direct adapter use
@@ -230,7 +230,7 @@ This allows you to:
 
 ### Authentication errors
 
-- Check that the worker environment sets the variable that the package's token credential names, for example `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. On a Compose deployment, run `./infrahub-sync-compose start` after you change `operator.env`.
+- Check that the worker environment sets the variable that the package's token credential names, for example `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`. On a Compose deployment, run `docker compose up -d --wait` after you change `.env`.
 - Check that the token has permission to read and write the target branch.
 - Check the `url` in the registered package with `configs show <config-id> --version <version>`. The worker does not read `INFRAHUB_ADDRESS`.
 

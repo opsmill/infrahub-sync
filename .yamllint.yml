@@ -9,9 +9,10 @@ ignore: |
   # Downloaded schemas and the generated package for the local NetBox demo check;
   # gitignored and not authored here.
   /.netbox
-  # Agent tooling trees: the agent source-of-truth plus the Claude and Codex
-  # aliases that point at it. Managed by the agentic structure, not
-  # hand-authored here, so they follow their own formatting conventions.
+  # Vendored/agentic tooling trees (spec-kit engine + agent source-of-truth +
+  # adapters). Managed by spec-kit / the agentic structure, not hand-authored
+  # here, so they follow their own formatting conventions.
+  /.specify
   /.agents
   /.claude
   /.codex

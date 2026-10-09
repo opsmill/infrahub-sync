@@ -22,7 +22,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DOCS_ROOT = REPO_ROOT / "docs" / "docs"
-EXCLUDED_DIRS = (DOCS_ROOT / "release-notes", DOCS_ROOT / "develop")
+EXCLUDED_DIRS = (DOCS_ROOT / "release-notes", DOCS_ROOT / "development")
 GUIDE_SUFFIXES = frozenset({".mdx", ".md"})
 
 CANDIDATE_VERSION = re.compile(
@@ -42,14 +42,12 @@ CONTAINER_IMAGE_ALLOWED_VERSIONS = ("3.0.0-a1", "3.0.0alpha1", "v3.0.0a1", "3.0.
 
 
 def guide_pages() -> list[Path]:
-    """Every user-facing docs page plus the bundled skills README, not excluded above."""
-    pages = sorted(
+    """Every user-facing docs page, not excluded above."""
+    return sorted(
         path
         for path in DOCS_ROOT.rglob("*")
         if path.suffix in GUIDE_SUFFIXES and not any(excluded in path.parents for excluded in EXCLUDED_DIRS)
     )
-    pages.append(REPO_ROOT / "deploy" / "compose" / "skills" / "README.md")
-    return pages
 
 
 def _text_to_check(page: Path) -> str:

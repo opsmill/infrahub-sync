@@ -43,9 +43,18 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   time and a create by proving its own payload, and what plan format 3 carries. Closes AD067.
 - [0014 — V3 writes through saved-plan apply](0014-v3-writes-through-saved-plan-apply.md)
   — why the direct DiffSync write path is removed from v3.
+- [0015 — Images publish to Harbor through one reusable workflow](0015-images-publish-to-harbor-through-one-reusable-workflow.md)
+  — why the artifact handoff became a Harbor build-and-push workflow, how a tag waits for every
+  platform's smoke test, and when `latest` moves.
+- [0016 — The Compose deployment is one tag-pinned file](0016-the-compose-deployment-is-one-tag-pinned-file.md)
+  — why the wrapper and digest binding became a root `docker-compose.yml` pinned by the
+  release commit, and what was given up.
+- [0019 — Prefect is an internal component of Sync](0019-prefect-is-an-internal-component-of-sync.md)
+  — why Sync runs its own Prefect server and PostgreSQL server instead of Infrahub's task
+  manager and `task-manager-db`, and what that costs.
 
 ## Related
 
-- [Knowledge](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/develop/knowledge/index.md) — how the system works after these decisions.
-- [Guidelines](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/develop/guidelines/index.md) — the rules they imply for new code.
-- [Constitution](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/develop/constitution.md) — the principles they serve.
+- [Knowledge](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/development/knowledge/index.md) — how the system works after these decisions.
+- [Guidelines](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/development/guidelines/index.md) — the rules they imply for new code.
+- [Constitution](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/docs/docs/development/constitution.md) — the principles they serve.

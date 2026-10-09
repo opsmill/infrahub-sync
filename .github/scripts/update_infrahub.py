@@ -36,7 +36,7 @@ PINNED_FILES = (
     Path("development/docker-compose.preview.yml"),
     Path("tests/compose/conftest.py"),
     Path("tests/compose/fixture-override.yaml"),
-    Path("tests/compose/test_bundle_contract.py"),
+    Path("tests/compose/test_compose_contract.py"),
     Path("tests/preview/test_preview_configuration.py"),
 )
 DIGEST_FILES = (Path("development/docker-compose.infrahub.yml"), PREVIEW_ENV)

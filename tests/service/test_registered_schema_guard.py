@@ -588,6 +588,7 @@ def test_no_worker_parameter_offers_a_schema_override() -> None:
         "branch",
         "expected_checksum",
         "confirm_writes",
+        "configuration_name",
     )
 
 

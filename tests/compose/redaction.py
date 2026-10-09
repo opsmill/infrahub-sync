@@ -98,12 +98,15 @@ FORMS: tuple[tuple[re.Pattern[str], str], ...] = (
     # `"NAME=value"` -- one entry of a `docker inspect` environment array, whose
     # value is a whole JSON string however much punctuation it contains.
     (re.compile(rf"(?i)\"(?P<name>{SECRET_NAME})=(?:\\.|[^\"\\])*\""), rf'"\g<name>={REDACTED}"'),
-    # `scheme://role:credential@host` -- every connection string this bundle uses.
+    # `scheme://role:credential@host` -- every connection string this deployment uses.
     (re.compile(r"(?P<lead>[a-zA-Z][\w+.-]*://[^\s/:@\"']+:)[^\s/@\"']+@"), rf"\g<lead>{REDACTED}@"),
     # An HTTP authorization header, however it was quoted.
     (re.compile(r"(?i)(?P<lead>\bbearer\s+)[^\s\"',}\\]+"), rf"\g<lead>{REDACTED}"),
-    # `NAME=value` -- an unquoted environment entry in a shell line.
-    (re.compile(rf"(?i)(?P<lead>\b{SECRET_NAME}=)[^\s\"']+"), rf"\g<lead>{REDACTED}"),
+    # `NAME=value` -- an unquoted environment entry in a shell line. A backslash
+    # ends the value: inside a JSON string it starts an escape, and taking it
+    # would leave the quote it escapes bare -- `password=\"$${...}` in the
+    # rendered bootstrap script is a reference, and must stay parseable.
+    (re.compile(rf"(?i)(?P<lead>\b{SECRET_NAME}=)[^\s\"'\\]+"), rf"\g<lead>{REDACTED}"),
     # `NAME: value` -- the YAML `docker compose config` prints without `--format json`.
     (re.compile(rf"(?im)^(?P<lead>\s*{SECRET_NAME}:[ \t]+)\S.*$"), rf"\g<lead>{REDACTED}"),
 )

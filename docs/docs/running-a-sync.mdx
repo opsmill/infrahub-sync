@@ -23,14 +23,15 @@ The commands on this page are the same for both ways to run V3. Only the command
 differs:
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
-  Run each command as `./infrahub-sync-compose cli <command>` from the extracted Compose
-  deployment directory. The wrapper supplies the Sync API URL and token.
+  Run each command as `docker compose run --rm --no-deps -T cli <command>` from the
+  directory that holds `docker-compose.yml` and `.env`. The `cli` service supplies the Sync
+  API URL and token.
 
-  A command that reads a file from your machine needs `--package <file>` and `--` before the
-  CLI command. The wrapper copies that one file into the container as `/input/package.yaml`
-  for the duration of the command. See
+  A command that reads a file from your machine needs that file mounted read-only at
+  `/input/package.yaml`, with `-v "$PWD/package.yml:/input/package.yaml:ro"` before `cli`.
+  The image runs as UID 10001, so the file must be readable by other users. See
   [Registering a package](./compose-deployment.mdx#registering-a-package).
 
   </TabItem>
@@ -59,11 +60,11 @@ the previous command printed, and `BRANCH` with the destination branch.
 ## Register the package
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  ./infrahub-sync-compose cli --package ./package.yml -- \
-    configs register /input/package.yaml --reason "register inventory import"
+  docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
+    cli configs register /input/package.yaml --reason "register inventory import"
   ```
 
   </TabItem>
@@ -84,11 +85,11 @@ not read again. For what registration checks and returns, see
 ## Validate the registered version
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  ./infrahub-sync-compose cli configs validate CONFIG_ID 1
-  ./infrahub-sync-compose cli configs show CONFIG_ID --version 1
+  docker compose run --rm --no-deps -T cli configs validate CONFIG_ID 1
+  docker compose run --rm --no-deps -T cli configs show CONFIG_ID --version 1
   ```
 
   </TabItem>
@@ -121,10 +122,10 @@ To inspect what is registered, use `configs list`, `configs show CONFIG_ID`, and
 ## Create a plan
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  ./infrahub-sync-compose cli diff --config-id CONFIG_ID --version 1 \
+  docker compose run --rm --no-deps -T cli diff --config-id CONFIG_ID --version 1 \
     --branch BRANCH --reason "review inventory import"
   ```
 
@@ -147,11 +148,11 @@ by kind.
 ## Review the plan
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  ./infrahub-sync-compose cli runs plan RUN_ID --detail
-  ./infrahub-sync-compose cli runs plan RUN_ID --detail --kind <destination-kind>
+  docker compose run --rm --no-deps -T cli runs plan RUN_ID --detail
+  docker compose run --rm --no-deps -T cli runs plan RUN_ID --detail --kind <destination-kind>
   ```
 
   </TabItem>
@@ -185,12 +186,12 @@ See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 Pass the checksum that the review printed, and the same `--branch` that you gave `diff`:
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  ./infrahub-sync-compose cli apply RUN_ID --expected-checksum CHECKSUM \
+  docker compose run --rm --no-deps -T cli apply RUN_ID --expected-checksum CHECKSUM \
     --branch BRANCH --reason "apply reviewed inventory import"
-  ./infrahub-sync-compose cli runs show RUN_ID
+  docker compose run --rm --no-deps -T cli runs show RUN_ID
   ```
 
   </TabItem>
@@ -215,17 +216,56 @@ no longer writable, or a planned value would be dropped, apply refuses the write
 the kind and the field. Create and review a new plan in that case. Operations applied before
 a refusal stay applied.
 
+The check does not compare a value with the choices of a Dropdown attribute. A plan can
+therefore hold a value the destination schema does not offer, such as a NetBox device status
+`planned` for a `status` attribute whose choices are `active`, `provisioning`, `maintenance`,
+`deprecated`, and `reserved`. Infrahub rejects that write during the apply, and the apply stops
+there. Translate such values with a transform in the package; see the
+[Schema mapping reference](./reference/schema-mapping.mdx).
+
+## Find why a run failed
+
+`diff`, `sync`, and `apply` print the final phase and outcome of a failed run, such as
+`phase: plan-failed`. When an `apply` command fails and the run recorded the class of the
+apply error, it also prints `apply failed: <ErrorClass>`. The error message itself is
+recorded on the run's Prefect flow run:
+
+1. Run `runs show RUN_ID`. The output includes `flow_run_id`.
+2. Open `<prefect-ui>/runs/flow-run/FLOW_RUN_ID` in a browser. The state message of the failed
+   flow run contains the error. The Prefect UI is at `http://127.0.0.1:4200` on a Compose
+   deployment with the default port, and at `http://127.0.0.1:4230` on the
+   [local development stack](./development-stack.mdx).
+
+The same error is in the worker's log: `docker compose logs sync-worker` from the deployment
+directory, or `docker compose -f development/docker-compose.dev.yml logs sync-worker` from a
+checkout running the local development stack.
+
+### Recover from an interrupted apply
+
+An apply can stop after it has written earlier operations. Nothing is rolled back: those
+writes stay written. How the run ends depends on what the service knows about the operation
+that failed:
+
+- If the failed operation is known not to have written, the run ends with
+  `phase: apply-failed` and `outcome: failed`.
+- If the service cannot tell whether it wrote, the run ends with `phase: apply-interrupted`
+  and `outcome: ambiguous`, and the failed operation may have written part of its change.
+
+Remove the cause first, in the source data or in the package. Then create a new plan for the
+same branch with `diff`, review it, and apply it. The new plan compares the source with what
+the destination now holds, so it contains only what is still missing or different.
+
 ## Change a registered package
 
 A registered version never changes. To change a package, edit the file and register it as a
 new version of the same configuration:
 
 <Tabs groupId="sync-client">
-  <TabItem value="compose" label="Run a release package" default>
+  <TabItem value="compose" label="Run the container image" default>
 
   ```bash
-  ./infrahub-sync-compose cli --package ./package.yml -- \
-    configs version CONFIG_ID /input/package.yaml --reason "update inventory mapping"
+  docker compose run --rm --no-deps -T -v "$PWD/package.yml:/input/package.yaml:ro" \
+    cli configs version CONFIG_ID /input/package.yaml --reason "update inventory mapping"
   ```
 
   </TabItem>
@@ -253,10 +293,10 @@ uv run infrahub-sync sync --config-id CONFIG_ID --version 1 --branch BRANCH \
   --reason "scheduled synchronization"
 ```
 
-Run a release package:
+Run the container image:
 
 ```bash
-./infrahub-sync-compose cli sync --config-id CONFIG_ID --version 1 --branch BRANCH \
+docker compose run --rm --no-deps -T cli sync --config-id CONFIG_ID --version 1 --branch BRANCH \
   --reason "scheduled synchronization"
 ```
 
@@ -270,8 +310,10 @@ approve the exact operations before they are written, use `diff`, `runs plan`, a
 
 `diff`, `sync`, and `apply` wait for the run by default. They poll the service every
 2 seconds for at most 30 minutes. `--poll-interval` and `--wait-timeout` change these
-values, in seconds. A large apply needs a longer wait. For example, one apply of the NetBox
-demo package, with about 1,700 operations, took 11 minutes.
+values, in seconds. A large apply needs a longer wait, and how long it takes depends on the
+destination. For example, applies of the NetBox demo package took 11 minutes for about 1,700
+operations on 2026-09-29, and 46 seconds for 1,609 operations on 2026-10-05, against different
+local Infrahub instances.
 
 `--no-wait` returns after the service accepts the request. The output includes the run ID
 and the retry key. Check the run later with `runs show RUN_ID` or `runs plan RUN_ID`.

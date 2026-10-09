@@ -1,0 +1,356 @@
+---
+# The supported single-host Infrahub Sync deployment.
+#
+# Run it in three steps, with Docker Compose 2.24 or later (this file carries the
+# database bootstrap script as a top-level `configs` entry with inline `content`):
+#
+#   1. Fetch this file for the release you want:
+#        curl -fsSLO https://raw.githubusercontent.com/opsmill/infrahub-sync/<version>/docker-compose.yml
+#   2. Write a `.env` beside it that sets every required credential below. Compose
+#      stops before any container starts, naming the first one that is missing.
+#   3. docker compose up -d
+#
+# Every Sync service runs `${INFRAHUB_SYNC_DOCKER_IMAGE}:${VERSION}`. `VERSION`
+# defaults to this file's release; `INFRAHUB_SYNC_DOCKER_IMAGE` defaults to
+# `registry.opsmill.io/opsmill/infrahub-sync`. The release tasks keep the `VERSION`
+# pin in step with the package version. Every other image carries its digest, so a re-pointed
+# tag cannot change what this file runs.
+#
+# Two properties this file exists to hold:
+#
+#   * the API and the worker share no mount, no writable volume, and no scratch
+#     directory. Run state crosses between them through PostgreSQL and the
+#     object store, never through a filesystem.
+#   * only PostgreSQL and the object store keep data across a restart. Every
+#     other writable path is tmpfs and disappears with its container.
+#
+# Nothing here defaults a credential. The connection strings are built from the
+# role, database and password settings, and stay overridable as a whole; a
+# password used in them must be URL-safe, or the matching URL must be set instead.
+
+# The image's three declared writable roots. A tmpfs mount takes its own
+# ownership, so a bare mount would arrive root-owned and the runtime user could
+# not write to it however the image created the directory underneath.
+x-sync-scratch: &sync-scratch
+  - "/var/lib/infrahub-sync:uid=10001,gid=10001,mode=0700"
+  - "/var/lib/infrahub-sync/prefect:uid=10001,gid=10001,mode=0700"
+  - "/tmp/infrahub-sync:uid=10001,gid=10001,mode=0700"
+
+# Everything a Sync process needs to reach its durable state. The API, the
+# worker, and the bootstrap job resolve these independently: they are given the
+# same endpoints, never the same filesystem.
+x-sync-storage: &sync-storage
+  INFRAHUB_SYNC_DATABASE_URL: "${INFRAHUB_SYNC_DATABASE_URL:-postgresql://\
+    ${INFRAHUB_SYNC_PRODUCT_ROLE:-infrahub_sync}:\
+    ${INFRAHUB_SYNC_PRODUCT_PASSWORD:?INFRAHUB_SYNC_PRODUCT_PASSWORD is required}\
+    @postgres:5432/${INFRAHUB_SYNC_PRODUCT_DATABASE:-infrahub_sync}}"
+  INFRAHUB_SYNC_S3_BUCKET: "${INFRAHUB_SYNC_S3_BUCKET:-infrahub-sync}"
+  INFRAHUB_SYNC_S3_PREFIX: "${INFRAHUB_SYNC_S3_PREFIX:-infrahub-sync}"
+  INFRAHUB_SYNC_S3_ENDPOINT_URL: "http://object-store:9000"
+  INFRAHUB_SYNC_S3_REGION: "${INFRAHUB_SYNC_S3_REGION:-us-east-1}"
+  AWS_ACCESS_KEY_ID: "${INFRAHUB_SYNC_S3_ACCESS_KEY:?INFRAHUB_SYNC_S3_ACCESS_KEY is required}"
+  AWS_SECRET_ACCESS_KEY: "${INFRAHUB_SYNC_S3_SECRET_KEY:?INFRAHUB_SYNC_S3_SECRET_KEY is required}"
+  INFRAHUB_SYNC_SERVICE_WORK_POOL: "${INFRAHUB_SYNC_WORK_POOL:-infrahub-sync}"
+  PREFECT_API_URL: "http://prefect-server:4200/api"
+  # The Prefect server refuses every API call without this value, because a
+  # caller that can create a deployment in the work pool decides what the worker
+  # runs. Each Sync process presents it; the CLI service is not given it.
+  PREFECT_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
+
+services:
+  postgres:
+    image: "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: "${INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE:-postgres}"
+      POSTGRES_PASSWORD: "${INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD:?INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD is required}"
+      POSTGRES_DB: "${INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE:-postgres}"
+    volumes:
+      - "postgres-data:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Separate owner roles and separate databases, created before anything
+  # connects as an owner. Run twice it observes both and changes nothing.
+  db-bootstrap:
+    image: "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: "postgres"
+      PGUSER: "${INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE:-postgres}"
+      PGDATABASE: "${INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE:-postgres}"
+      PGPASSWORD: "${INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD:?INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD is required}"
+      INFRAHUB_SYNC_PRODUCT_DATABASE: "${INFRAHUB_SYNC_PRODUCT_DATABASE:-infrahub_sync}"
+      INFRAHUB_SYNC_PRODUCT_ROLE: "${INFRAHUB_SYNC_PRODUCT_ROLE:-infrahub_sync}"
+      INFRAHUB_SYNC_PRODUCT_PASSWORD: "${INFRAHUB_SYNC_PRODUCT_PASSWORD:?INFRAHUB_SYNC_PRODUCT_PASSWORD is required}"
+      INFRAHUB_SYNC_PREFECT_DATABASE: "${INFRAHUB_SYNC_PREFECT_DATABASE:-prefect}"
+      INFRAHUB_SYNC_PREFECT_ROLE: "${INFRAHUB_SYNC_PREFECT_ROLE:-prefect}"
+      INFRAHUB_SYNC_PREFECT_PASSWORD: "${INFRAHUB_SYNC_PREFECT_PASSWORD:?INFRAHUB_SYNC_PREFECT_PASSWORD is required}"
+    configs:
+      - source: db-bootstrap-script
+        target: /usr/local/bin/databases.sh
+    entrypoint: ["/bin/sh", "/usr/local/bin/databases.sh"]
+
+  # The former image wrote as root. Repair its volume once in a short-lived
+  # service so the long-running server never needs root, even during startup.
+  object-store-init:
+    image: >-
+      cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
+    restart: "no"
+    user: "0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        if [ "$$(stat -c %u:%g /data)" != "65532:65532" ]; then
+          chown -R 65532:65532 /data;
+        fi
+    network_mode: "none"
+    read_only: true
+    cap_drop: ["ALL"]
+    cap_add: ["CHOWN"]
+    volumes:
+      - "object-store-data:/data"
+
+  object-store:
+    # Temporary Chainguard build while a maintained S3 store is selected; the old MinIO image requires authentication.
+    image: >-
+      cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
+    restart: unless-stopped
+    user: "65532:65532"
+    command: ["server", "/data"]
+    depends_on:
+      object-store-init:
+        condition: service_completed_successfully
+    environment:
+      MINIO_ROOT_USER: "${INFRAHUB_SYNC_S3_ACCESS_KEY:?INFRAHUB_SYNC_S3_ACCESS_KEY is required}"
+      MINIO_ROOT_PASSWORD: "${INFRAHUB_SYNC_S3_SECRET_KEY:?INFRAHUB_SYNC_S3_SECRET_KEY is required}"
+      # The browser console is a second published surface this topology does not
+      # offer, so it is not started rather than merely left unpublished.
+      MINIO_BROWSER: "off"
+    volumes:
+      - "object-store-data:/data"
+    healthcheck:
+      test:
+        - "CMD"
+        - "wget"
+        - "--quiet"
+        - "--tries=1"
+        - "--output-document=/dev/null"
+        - "http://localhost:9000/minio/health/live"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  prefect-server:
+    image: "prefecthq/prefect:3.8.6-python3.13@sha256:dec8d5b095e93bba1f3d7ebd7cfff13b61209b961382d92be88584c23de5d97a"
+    restart: unless-stopped
+    command: ["prefect", "server", "start", "--host", "0.0.0.0", "--port", "4200"]
+    depends_on:
+      db-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      # PostgreSQL, not the container-local SQLite Prefect would otherwise use:
+      # this server keeps no state of its own, which is why it needs no volume
+      # and why a replacement container resumes from the same records.
+      PREFECT_SERVER_DATABASE_CONNECTION_URL: "${INFRAHUB_SYNC_PREFECT_DATABASE_URL:-postgresql+asyncpg://\
+        ${INFRAHUB_SYNC_PREFECT_ROLE:-prefect}:\
+        ${INFRAHUB_SYNC_PREFECT_PASSWORD:?INFRAHUB_SYNC_PREFECT_PASSWORD is required}\
+        @postgres:5432/${INFRAHUB_SYNC_PREFECT_DATABASE:-prefect}}"
+      PREFECT_SERVER_API_HOST: "0.0.0.0"
+      PREFECT_SERVER_API_PORT: "4200"
+      PREFECT_SERVER_UI_API_URL: >-
+        http://${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_PREFECT_PORT:-4200}/api
+      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+      # Basic authentication on the whole API, the UI's calls included: the UI
+      # asks for this value once and sends it with each request. Prefect leaves
+      # only the health and readiness probes open, which the check below uses.
+      PREFECT_SERVER_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
+    # Both published surfaces bind to loopback by default: external exposure and
+    # TLS termination are outside the supported single-host shape.
+    ports:
+      - "${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_PREFECT_PORT:-4200}:4200"
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health', timeout=5)"
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  # One completion-style job converges everything durable this deployment needs:
+  # the product schema, the artifact bucket, the process work pool, and the
+  # installed deployment. It is safe to repeat, and it is the only place any of
+  # that is created -- an API or a worker that converged bootstrap state on
+  # startup would make every restart a write.
+  #
+  # It registers nothing. A started deployment holds an empty configuration
+  # registry until an operator registers a package through the API, so this job
+  # takes no configuration input and reaches no destination.
+  sync-bootstrap:
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    restart: "no"
+    command: ["python", "-m", "infrahub_sync.service.bootstrap"]
+    depends_on:
+      db-bootstrap:
+        condition: service_completed_successfully
+      object-store:
+        condition: service_healthy
+      prefect-server:
+        condition: service_healthy
+    environment:
+      <<: *sync-storage
+    read_only: true
+    tmpfs: *sync-scratch
+
+  sync-api:
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    restart: unless-stopped
+    depends_on:
+      sync-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      <<: *sync-storage
+      # Loopback belongs to the host publication below. A container listening on
+      # loopback alone would be unreachable from its own published port.
+      INFRAHUB_SYNC_SERVICE_HOST: "0.0.0.0"
+      # A JSON object of API principals, for example
+      # {"operator": {"token": "<random>", "administrator": true}}.
+      INFRAHUB_SYNC_SERVICE_BEARER_TOKENS: >-
+        ${INFRAHUB_SYNC_SERVICE_BEARER_TOKENS:?INFRAHUB_SYNC_SERVICE_BEARER_TOKENS is required}
+      INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS:-300}"
+      PREFECT_WORKER_QUERY_SECONDS: "${PREFECT_WORKER_QUERY_SECONDS:-10}"
+      # Optional, and empty when unset: a deployment starts before any package is
+      # registered, so there is no destination to hold a credential for yet. A
+      # run that selects an absent value fails that run, not this start.
+      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
+    read_only: true
+    tmpfs: *sync-scratch
+    ports:
+      - "${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import httpx; httpx.get('http://127.0.0.1:8000/version', timeout=5).raise_for_status()"
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  sync-worker:
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    restart: unless-stopped
+    # A registered run reads its declared configuration from PostgreSQL and
+    # resolves both adapters from installed code, so this container is given no
+    # configuration mount at all -- there is nothing on a worker filesystem for
+    # a run to depend on.
+    command:
+      - "python"
+      - "-m"
+      - "infrahub_sync.service.worker"
+      - "--pool"
+      - "${INFRAHUB_SYNC_WORK_POOL:-infrahub-sync}"
+    depends_on:
+      sync-bootstrap:
+        condition: service_completed_successfully
+    environment:
+      <<: *sync-storage
+      INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS:-300}"
+      PREFECT_WORKER_QUERY_SECONDS: "${PREFECT_WORKER_QUERY_SECONDS:-10}"
+      # The API ages a worker out of the live set after three missed heartbeats
+      # or thirty seconds, whichever is longer. Ten seconds puts a stopped or
+      # paused worker at that thirty-second floor instead of Prefect's ninety.
+      PREFECT_WORKER_HEARTBEAT_SECONDS: "${PREFECT_WORKER_HEARTBEAT_SECONDS:-10}"
+      # Optional for the same reason as on the API above.
+      INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
+      # The source credentials the bundled NetBox and Nautobot adapters resolve,
+      # and the only service given either: a run is what consumes one, and the
+      # worker is what runs one. Optional rather than required, because a
+      # deployment that syncs neither source must still start -- and because a
+      # token nothing selects has no reason to exist here. When a registered
+      # package does select one, the resolver refuses an absent or empty value
+      # by name, so an unset token fails that run rather than this container.
+      INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN:-}"
+    read_only: true
+    tmpfs: *sync-scratch
+
+  # The operator's client, in the same image, behind a profile so no ordinary
+  # start creates it. Call it as `docker compose run --rm --no-deps -T cli ...`:
+  # it publishes nothing, waits for nothing, and keeps no volume. It reaches the
+  # Sync API and nothing else, so it is given no storage, Prefect, source or
+  # destination credential -- and no Docker socket, so no command run through it
+  # can change the deployment it belongs to.
+  #
+  # The image's own non-root user runs it; nothing here overrides that.
+  cli:
+    image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
+    profiles: ["cli"]
+    restart: "no"
+    entrypoint: ["infrahub-sync"]
+    environment:
+      # The API on the deployment's own network, and the token of a principal in
+      # INFRAHUB_SYNC_SERVICE_BEARER_TOKENS. Empty when unset, so a call against
+      # an authenticated deployment refuses at the API rather than failing here.
+      INFRAHUB_SYNC_API_URL: "http://sync-api:8000"
+      INFRAHUB_SYNC_API_TOKEN: "${INFRAHUB_SYNC_API_TOKEN:-}"
+    read_only: true
+    tmpfs: *sync-scratch
+
+configs:
+  # Converge the two owner roles and the two databases this deployment needs, as
+  # the PostgreSQL administrator. Safe to repeat: a second run finds both roles
+  # and both databases and changes nothing.
+  #
+  # Compose interpolates this content, so every shell `$` is written `$$`: the
+  # script reads its values from the container environment at run time, and no
+  # value is baked into the rendered file.
+  db-bootstrap-script:
+    content: |
+      #!/bin/sh
+      set -eu
+
+      # `psql -c` interpolates nothing, so every operator-supplied value crosses
+      # into SQL through a bound variable and PostgreSQL's own quoting functions.
+      # A role name or password carrying a quote is then a value, never syntax.
+      psql --set=ON_ERROR_STOP=1 --quiet \
+        --set=role="$${INFRAHUB_SYNC_PRODUCT_ROLE}" \
+        --set=password="$${INFRAHUB_SYNC_PRODUCT_PASSWORD}" \
+        --set=database="$${INFRAHUB_SYNC_PRODUCT_DATABASE}" \
+        --file=/dev/stdin <<'SQL'
+      SELECT format(
+        'CREATE ROLE %I LOGIN PASSWORD %L', :'role', :'password'
+      ) WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') \gexec
+      SELECT format(
+        'CREATE DATABASE %I OWNER %I', :'database', :'role'
+      ) WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'database') \gexec
+      SQL
+
+      psql --set=ON_ERROR_STOP=1 --quiet \
+        --set=role="$${INFRAHUB_SYNC_PREFECT_ROLE}" \
+        --set=password="$${INFRAHUB_SYNC_PREFECT_PASSWORD}" \
+        --set=database="$${INFRAHUB_SYNC_PREFECT_DATABASE}" \
+        --file=/dev/stdin <<'SQL'
+      SELECT format(
+        'CREATE ROLE %I LOGIN PASSWORD %L', :'role', :'password'
+      ) WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') \gexec
+      SELECT format(
+        'CREATE DATABASE %I OWNER %I', :'database', :'role'
+      ) WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'database') \gexec
+      SQL
+
+      echo "infrahub-sync: product and Prefect roles and databases are present"
+
+volumes:
+  postgres-data:
+  object-store-data:

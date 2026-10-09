@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.compose.conftest import BUNDLE, COMPOSE_FILE, DEFAULTS_FILE, compose
+from tests.compose.conftest import COMPOSE_FILE, REPO_ROOT, compose
 from tests.compose.redaction import REDACTED, SECRETS, Captured, SecretRegistry, capture, redact
 
 if TYPE_CHECKING:
@@ -96,7 +96,7 @@ def test_a_redacted_json_document_is_still_a_json_document() -> None:
                 "environment": {
                     "INFRAHUB_SYNC_DATABASE_URL": f"postgresql://infrahub_sync:{PLANTED}@postgres:5432/db",
                     "AWS_SECRET_ACCESS_KEY": PLANTED,
-                    "INFRAHUB_SYNC_SERVICE_HOST": "0.0.0.0",  # noqa: S104 -- the container listener the bundle sets
+                    "INFRAHUB_SYNC_SERVICE_HOST": "0.0.0.0",  # noqa: S104 -- the container listener the file sets
                 }
             }
         }
@@ -186,7 +186,7 @@ def raw_compose_config(environment: Mapping[str, str]) -> str:
             "docker",
             "compose",
             "--env-file",
-            str(DEFAULTS_FILE),
+            os.devnull,
             "--file",
             str(COMPOSE_FILE),
             "config",
@@ -197,7 +197,7 @@ def raw_compose_config(environment: Mapping[str, str]) -> str:
         text=True,
         check=False,
         timeout=120,
-        cwd=BUNDLE,
+        cwd=REPO_ROOT,
         env=dict(environment),
     )
     return completed.stdout + completed.stderr
@@ -243,7 +243,9 @@ def test_a_failing_compose_command_renders_no_credential(
     """
     del compose_version
 
-    refused = compose(["config", "--format", "json"], environment={**leaking_environment, "INFRAHUB_SYNC_IMAGE": ""})
+    refused = compose(
+        ["config", "--format", "json"], environment={**leaking_environment, "INFRAHUB_SYNC_PREFECT_PASSWORD": ""}
+    )
 
     assert refused.returncode != 0
     assert PLANTED not in refused.output

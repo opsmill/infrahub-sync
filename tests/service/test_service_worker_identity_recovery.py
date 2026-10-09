@@ -43,6 +43,7 @@ from infrahub_sync.service.worker import (
     ServiceWorkerIdentityError,
     service_worker_name,
 )
+from tests.service.prefect_launch import LaunchRecorder
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -166,23 +167,15 @@ def pause_the_next_refresh(
     return holding, release
 
 
-class _StubRunner:
-    """Stand in for the child process, and count the starts that were reached."""
-
-    def __init__(self) -> None:
-        self.starts: list[dict[str, str | None]] = []
-
-    async def execute_flow_run(self, **kwargs: Any) -> SimpleNamespace:  # noqa: ANN401 - pinned Prefect runner shape.
-        self.starts.append(kwargs["env"])
-        kwargs["task_status"].started(42)
-        return SimpleNamespace(returncode=0, pid=42)
+@pytest.fixture(autouse=True)
+def _recorded_launches(monkeypatch: pytest.MonkeyPatch) -> LaunchRecorder:
+    """Keep every child unspawned in this module; a start is recorded instead."""
+    return LaunchRecorder().install(monkeypatch)
 
 
-def stub_child_start(worker: ServiceProcessWorker) -> _StubRunner:
-    """Keep the child unspawned, so a start is observable without running one."""
-    runner = _StubRunner()
-    worker._runner = cast("Any", runner)
-    return runner
+def stub_child_start() -> LaunchRecorder:
+    """Return this test's recorder, which records the starts of every worker in the test."""
+    return LaunchRecorder.installed()
 
 
 def a_flow_run() -> Any:  # noqa: ANN401 - Prefect reads only the identifier here.
@@ -480,7 +473,7 @@ async def test_a_submission_that_meets_a_refresh_waits_through_it_and_starts(
     """
     async with worker:
         await worker.sync_with_backend()
-        runner = stub_child_start(worker)
+        runner = stub_child_start()
         configuration = prepared(worker)
         first = worker.backend_id
 
@@ -492,7 +485,7 @@ async def test_a_submission_that_meets_a_refresh_waits_through_it_and_starts(
         during = await waiting_submission(worker, configuration)
 
         assert not during.done(), "the submission refused inside the refresh instead of waiting for it"
-        assert len(runner.starts) == 1, "a child started while the refresh held the identity lock"
+        assert len(runner.starters) == 1, "a child started while the refresh held the identity lock"
 
         release.set()
         result = await during
@@ -504,7 +497,7 @@ async def test_a_submission_that_meets_a_refresh_waits_through_it_and_starts(
         assert before.status_code == 0
         assert result.status_code == 0, "the submission that waited did not start its child"
         assert after.status_code == 0
-        assert len(runner.starts) == 3, "before, during and after did not each start exactly one child"
+        assert len(runner.starters) == 3, "before, during and after did not each start exactly one child"
 
 
 async def test_a_replacement_during_the_wait_still_refuses_the_stale_submission(
@@ -520,7 +513,7 @@ async def test_a_replacement_during_the_wait_still_refuses_the_stale_submission(
     """
     async with worker:
         await worker.sync_with_backend()
-        runner = stub_child_start(worker)
+        runner = stub_child_start()
         stale = prepared(worker)
         first = worker.backend_id
         reissued = uuid4()
@@ -540,7 +533,7 @@ async def test_a_replacement_during_the_wait_still_refuses_the_stale_submission(
         assert first is not None
         assert worker.backend_id == reissued, "the reissued identifier was not installed"
         assert worker.backend_id != first, "the identity did not change, so this proves nothing"
-        assert runner.starts == [], "a child was started for a superseded identity"
+        assert runner.starters == [], "a child was started for a superseded identity"
 
 
 async def test_refreshes_queued_behind_the_wait_do_not_admit_a_stale_submission(
@@ -556,7 +549,7 @@ async def test_refreshes_queued_behind_the_wait_do_not_admit_a_stale_submission(
     """
     async with worker:
         await worker.sync_with_backend()
-        runner = stub_child_start(worker)
+        runner = stub_child_start()
         stale = prepared(worker)
         reissued = uuid4()
 
@@ -572,7 +565,7 @@ async def test_refreshes_queued_behind_the_wait_do_not_admit_a_stale_submission(
         await asyncio.gather(first, *queued)
 
         assert worker.backend_id == reissued
-        assert runner.starts == [], "a stale configuration was admitted while refreshes were queued"
+        assert runner.starters == [], "a stale configuration was admitted while refreshes were queued"
 
 
 async def test_a_queued_refresh_alone_does_not_refuse_a_current_submission(
@@ -593,7 +586,7 @@ async def test_a_queued_refresh_alone_does_not_refuse_a_current_submission(
     """
     async with worker:
         await worker.sync_with_backend()
-        runner = stub_child_start(worker)
+        runner = stub_child_start()
         configuration = prepared(worker)
         first = worker.backend_id
 
@@ -614,7 +607,7 @@ async def test_a_queued_refresh_alone_does_not_refuse_a_current_submission(
 
         assert worker.backend_id == first, "the heartbeats resolved a different record"
         assert result.status_code == 0
-        assert len(runner.starts) == 1, "the submission was refused for a heartbeat that changed nothing"
+        assert len(runner.starters) == 1, "the submission was refused for a heartbeat that changed nothing"
 
 
 async def test_a_submission_cancelled_while_waiting_leaves_no_lease_held(
@@ -630,7 +623,7 @@ async def test_a_submission_cancelled_while_waiting_leaves_no_lease_held(
     """
     async with worker:
         await worker.sync_with_backend()
-        runner = stub_child_start(worker)
+        runner = stub_child_start()
 
         holding, release = pause_the_next_refresh(worker)
         refresh = asyncio.create_task(worker.sync_with_backend())
@@ -644,12 +637,12 @@ async def test_a_submission_cancelled_while_waiting_leaves_no_lease_held(
             await submission
 
         assert not worker._identity_lock.locked(), "a cancelled wait left the identity lock held"
-        assert runner.starts == [], "a cancelled submission started a child"
+        assert runner.starters == [], "a cancelled submission started a child"
 
         result = await worker.run(a_flow_run(), prepared(worker))
 
         assert result.status_code == 0, "a later submission could not proceed after the cancelled wait"
-        assert len(runner.starts) == 1
+        assert len(runner.starters) == 1
 
 
 async def test_no_child_is_started_before_the_identity_is_validated(
@@ -663,7 +656,7 @@ async def test_no_child_is_started_before_the_identity_is_validated(
     """
     async with worker:
         await worker.sync_with_backend()
-        runner = stub_child_start(worker)
+        runner = stub_child_start()
         foreign = worker.job_configuration()
         # Admitted, so what refuses it below is the identity gate and nothing else.
         foreign._admitted = True
@@ -673,9 +666,9 @@ async def test_no_child_is_started_before_the_identity_is_validated(
         with pytest.raises(ServiceWorkerIdentityError):
             await worker.run(a_flow_run(), foreign)
 
-        assert runner.starts == [], "a child process was started for a configuration that was refused"
+        assert runner.starters == [], "a child process was started for a configuration that was refused"
 
         result = await worker.run(a_flow_run(), prepared(worker))
 
         assert result.status_code == 0
-        assert len(runner.starts) == 1, "the accepted submission did not start exactly one child"
+        assert len(runner.starters) == 1, "the accepted submission did not start exactly one child"

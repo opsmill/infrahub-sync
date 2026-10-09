@@ -258,14 +258,13 @@ def test_netbox_tutorial_starts_and_authenticates_the_service_boundary() -> None
     text = (ROOT / "docs/docs/tutorials/netbox-demo-to-infrahub.mdx").read_text(encoding="utf-8")
 
     required = (
-        "infrahub-sync[service]",
-        "prefect server start",
-        "infrahub_sync.service.deploy",
-        "infrahub_sync.service.worker --pool",
-        "infrahub_sync.service.serve",
-        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",
+        "uv sync --extra dev --extra prefect --extra service",
+        "uv run invoke build",
+        "uv run invoke start",
+        "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
+        "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN",
         "INFRAHUB_SYNC_API_URL",
         "INFRAHUB_SYNC_API_TOKEN",
-        "The worker, not the CLI, reads the NetBox",
+        "The worker reads both credentials from its environment",
     )
     assert not [token for token in required if token not in text]

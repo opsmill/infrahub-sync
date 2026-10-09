@@ -1,10 +1,10 @@
 """The local development stack's Compose file is valid on its own.
 
-`compose.yaml` at the repository root is the zero-ceremony local stack: it builds the
+`development/docker-compose.dev.yml` is the zero-ceremony local stack: it builds the
 image from the working tree and runs it. Nothing else checks it, because the Compose
-contract suite in `tests/compose` asserts the shipped bundle's properties -- digest-
-pinned images, tmpfs scratch roots, no shared mounts -- and this file deliberately has
-none of them.
+contract suite in `tests/compose` asserts the operator file's properties -- the
+registry image reference, required credentials, no host mounts -- and this file
+deliberately has none of them.
 
 What is checked here is the one property a developer depends on: the file resolves when
 none of its optional settings are set. Every value it needs is either inlined or carries
@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COMPOSE_FILE = REPO_ROOT / "compose.yaml"
+COMPOSE_FILE = REPO_ROOT / "development" / "docker-compose.dev.yml"
 
 # The settings the file reads from the environment, all optional. Removed from the
 # caller's own environment rather than merely left alone, so a developer who exports one
@@ -78,8 +78,8 @@ def test_resolves_without_its_optional_settings() -> None:
 def test_optional_settings_resolve_to_empty(setting: str) -> None:
     """An unset source credential leaves an empty value rather than refusing to resolve.
 
-    The shipped bundle guards its required settings with `${VAR:?}`. These three stay
-    optional there too, and they have to stay optional here: the stack starts before any
+    The root `docker-compose.yml` guards its required settings with `${VAR:?}`. These
+    three stay optional there too, and they have to stay optional here: the stack starts before any
     configuration package is registered, so there is no destination to hold a credential
     for yet.
     """

@@ -1,0 +1,1 @@
+The Sync image is now published to `registry.opsmill.io/opsmill/infrahub-sync` for linux/amd64 and linux/arm64, signed, with SBOMs attached. The Compose deployment is the root `docker-compose.yml` of each release. The `infrahub-sync-compose` wrapper and the release bundle are removed. Until 3.0.0, pulling the image needs a registry login.

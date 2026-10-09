@@ -20,6 +20,10 @@ dist/
 # Local benchmark artifacts
 bench-results.csv
 .bench-filtered-config.yml
+# spec-kit transient download cache (extensions/presets)
+.specify/**/.cache/
+# spec-kit per-feature working state
+.specify/feature.json
 # Virtual environments
 .venv/
 venv/
@@ -27,9 +31,6 @@ venv/
 *.pem
 *.key
 credentials.json
-# Container image build outputs: OCI layout, recorded digests, SBOM, scan report.
-.image/
-.release/
 # Preview environment runtime state and local overrides. The shipped defaults
 # file must stay tracked despite the repository-wide *.env rule above — it
 # contains no secrets and `invoke preview.up` depends on it from a fresh clone.
@@ -42,11 +43,6 @@ development/preview.local.env
 development/netbox/netbox.local.env
 # The downloaded NetBox demo SQL and the generated local `from-netbox` package.
 .netbox/
-# Compose bundle operator state. The shipped defaults are `defaults.conf`
-# rather than a `*.env` name so the rule above cannot swallow them; everything
-# an operator owns is named here explicitly, because a credential this file
-# missed would be a credential the next `git add .` commits.
-deploy/compose/operator.env
-deploy/compose/secrets/
-deploy/compose/.instance
+# The operator deployment's credentials live in a `.env` beside the root
+# `docker-compose.yml`; the `*.env` rule above already ignores it.
 .diagnostics/

@@ -36,6 +36,9 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+
       - name: Decide whether this push is a release
         id: decide
         env:
@@ -51,8 +54,20 @@ jobs:
           VERSION=$(awk -F'"' '/^version = / { print $2; exit }' pyproject.toml)
 
           # An empty or malformed read would otherwise tag the empty string.
-          if ! printf '%s' "${VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
-            echo "::error::Could not read a usable version from pyproject.toml (got '${VERSION}')."
+          # Canonical PEP 440 only, the rule the Compose pin tasks apply.
+          if ! VERSION="${VERSION}" uv run --no-project --with packaging python -c '
+          import os, sys
+          from packaging.version import InvalidVersion, Version
+          v = os.environ["VERSION"]
+          try:
+              parsed = Version(v)
+          except InvalidVersion:
+              sys.exit(1)
+          # No epoch and no local part: Docker image tags allow neither ! nor +.
+          sys.exit(0 if str(parsed) == v and parsed.epoch == 0 and parsed.local is None else 1)
+          '; then
+            MSG="Could not read a canonical PEP 440 version an image can be tagged with"
+            echo "::error::${MSG} from pyproject.toml (got '${VERSION}')."
             exit 1
           fi
 
@@ -123,14 +138,79 @@ jobs:
           echo "Release body:"
           cat /tmp/release-body.md
 
+      # Alpha, beta, release-candidate and dev versions are published as GitHub
+      # pre-releases. trigger-release.yml reads that flag back from the release
+      # event, and workflow-publish.yml keeps such a release off the image's
+      # `latest` tag. PEP 440 decides, not a pattern match on the string.
+      - name: Decide whether this version is a pre-release
+        id: prerelease
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv run --no-project --with packaging python -c '
+          import os
+          from packaging.version import Version
+          v = Version(os.environ["VERSION"])
+          print("prerelease=" + str(v.is_prerelease or v.is_devrelease).lower())
+          ' | tee -a "$GITHUB_OUTPUT"
+
+      # The root docker-compose.yml names the release's image by version. A tag
+      # whose Compose file pins any other version would point operators at an
+      # image this release does not publish. The dev extra is what installs `invoke`.
+      - name: Refuse a Compose file pinned to another version
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv sync --frozen --extra dev
+          uv run --no-sync invoke release.validate-docker-compose --version "${VERSION}"
+
+      # A stable backport (2.0.3 after 3.0.0) must not take GitHub's `latest`:
+      # workflow-publish.yml moves the image's `latest` tag to whatever GitHub
+      # calls latest, so it would move backwards. Pre-release tags are ignored.
+      - name: Decide whether this release is the newest stable one
+        id: newest
+        if: steps.decide.outputs.publish == 'true'
+        env:
+          VERSION: ${{ steps.decide.outputs.version }}
+        run: |
+          set -euo pipefail
+          git tag --list | uv run --no-project --with packaging python -c '
+          import os, sys
+          from packaging.version import InvalidVersion, Version
+          v = Version(os.environ["VERSION"])
+          stable = []
+          for line in sys.stdin:
+              try:
+                  tag = Version(line.strip())
+              except InvalidVersion:
+                  continue
+              if not (tag.is_prerelease or tag.is_devrelease):
+                  stable.append(tag)
+          print("newest=" + str(not stable or v >= max(stable)).lower())
+          ' | tee -a "$GITHUB_OUTPUT"
+
       - name: Create the tag and the GitHub Release
         if: steps.decide.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_INFRAHUB_BOT_TOKEN }}
           VERSION: ${{ steps.decide.outputs.version }}
+          PRERELEASE: ${{ steps.prerelease.outputs.prerelease }}
+          NEWEST: ${{ steps.newest.outputs.newest }}
         run: |
           set -euo pipefail
+          if [ "${PRERELEASE}" = "true" ]; then
+            FLAGS=(--prerelease --latest=false)
+          elif [ "${NEWEST}" = "true" ]; then
+            FLAGS=(--latest)
+          else
+            FLAGS=(--latest=false)
+          fi
           gh release create "${VERSION}" \
             --target "${GITHUB_SHA}" \
             --title "${VERSION}" \
-            --notes-file /tmp/release-body.md
+            --notes-file /tmp/release-body.md \
+            "${FLAGS[@]}"
