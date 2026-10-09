@@ -1,0 +1,25 @@
+tests/test_workflow_contracts.py
+  s_585b9f5191ded9::t_e5d3caa05fee97 773-774,780-781,1959
+docs/docs/development/knowledge/image-publishing.md
+  s_585b9f5191ded9::t_e5d3caa05fee97 57-60
+changelog/+image-after-lint.housekeeping.md
+  s_585b9f5191ded9::t_e5d3caa05fee97 1-2
+.github/workflows/trigger-pr-develop.yml
+  s_585b9f5191ded9::t_e5d3caa05fee97 68-70,78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0f1a00ea36b0c97e5fad2d05d60d5fa26cf49860",
+  "prompts": {},
+  "sessions": {
+    "s_585b9f5191ded9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a120a2-0d93-7d03-aa80-49b4fd2a8c35",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
