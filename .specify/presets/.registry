@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "presets": {
+    "taskstoissues-jira": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:b3a4613ef72f755b05d5bc39a82e2e4fb9a65e677e47338f2e89ed46e6fa96d0",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "agy": [
+          "speckit.taskstoissues"
+        ],
+        "amp": [
+          "speckit.taskstoissues"
+        ],
+        "claude": [
+          "speckit.taskstoissues"
+        ],
+        "codex": [
+          "speckit.taskstoissues"
+        ]
+      },
+      "registered_skills": [
+        "speckit-taskstoissues"
+      ],
+      "installed_at": "2026-06-22T10:45:32.741623+00:00"
+    }
+  }
+}

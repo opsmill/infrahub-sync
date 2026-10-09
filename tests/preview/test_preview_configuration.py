@@ -596,10 +596,7 @@ def test_the_smoke_task_leaves_an_unreachable_environment_to_pytest(monkeypatch:
 def test_netbox_tutorial_uses_one_checkout_for_code_and_configuration() -> None:
     tutorial = (REPO_ROOT / "docs/docs/tutorials/netbox-demo-to-infrahub.mdx").read_text(encoding="utf-8")
 
-    assert (
-        "git clone --branch feature/v3-develop https://github.com/opsmill/infrahub-sync.git ../infrahub-sync"
-        in tutorial
-    )
-    assert 'uv add --editable "../infrahub-sync[service]"' in tutorial
-    assert "cp ../infrahub-sync/examples/netbox_to_infrahub/package.yml" in tutorial
+    assert "git clone --branch feature/v3-develop https://github.com/opsmill/infrahub-sync.git" in tutorial
+    assert "examples/netbox_to_infrahub/package.yml > .netbox/from-netbox.yml" in tutorial
+    assert "configs register .netbox/from-netbox.yml" in tutorial
     assert "v3-preview.1" not in tutorial

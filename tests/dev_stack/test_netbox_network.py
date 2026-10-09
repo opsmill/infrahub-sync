@@ -1,9 +1,10 @@
 """The dev stack's worker joins the local NetBox's network, so it can read NetBox.
 
 NetBox publishes its port on the host's loopback address only, which a container cannot
-reach. The tasks connect the worker (`compose.yaml`, service `sync-worker`) to NetBox's
-Compose network instead, where NetBox answers at `http://netbox:8080`. These cases check
-the Docker commands the tasks run, with a fake runner and no daemon.
+reach. The tasks connect the worker (`development/docker-compose.dev.yml`, service
+`sync-worker`) to NetBox's Compose network instead, where NetBox answers at
+`http://netbox:8080`. These cases check the Docker commands the tasks run, with a fake
+runner and no daemon.
 """
 
 from __future__ import annotations
@@ -222,10 +223,13 @@ def test_invoke_start_reconnects_a_recreated_worker(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(context, "run", lambda command, **_kwargs: events.append(command.split(" ", 2)[1]))
     monkeypatch.setattr(dev, "load_netbox_env", lambda: VALUES)
     monkeypatch.setattr(dev, "attach_dev_worker", lambda _context, _values, **_kwargs: events.append("attach") or False)
+    monkeypatch.setattr(
+        dev, "attach_dev_worker_to_infrahub", lambda _context, **_kwargs: events.append("infrahub") or False
+    )
 
     cast("Task", dev.start).body(context)
 
-    assert events == ["compose", "attach"]
+    assert events == ["compose", "attach", "infrahub"]
 
 
 @pytest.mark.parametrize("project", ["", netbox.DEV_STACK_PROJECT, "selected-development"])
@@ -234,6 +238,7 @@ def test_pinned_start_attaches_only_the_selected_project_worker(monkeypatch: pyt
     selected = project or netbox.DEV_STACK_PROJECT
     fake = FakeDocker(network_exists=True, workers=[], attached=set())
     context = _context(fake, monkeypatch)
+    infrahub_projects: list[str] = []
 
     def run(command: str, **kwargs: object) -> _Result:
         """Return a different worker for the default and selected project filters."""
@@ -247,29 +252,41 @@ def test_pinned_start_attaches_only_the_selected_project_worker(monkeypatch: pyt
 
     monkeypatch.setattr(context, "run", run)
     monkeypatch.setattr(dev, "load_netbox_env", lambda: VALUES)
+    monkeypatch.setattr(
+        dev,
+        "attach_dev_worker_to_infrahub",
+        lambda _context, *, project: infrahub_projects.append(project) or False,
+    )
 
     dev._start(context, project=project)
 
     assert fake.changes() == [f"docker network connect {NETWORK} selected-worker"]
     assert f"label=com.docker.compose.project={selected} " in fake.commands[2]
+    assert infrahub_projects == [selected]
     if project:
-        assert f"--project-name {project} up" in fake.commands[0]
+        assert f"--project-name {project} -f {dev.DEV_COMPOSE_FILE} up" in fake.commands[0]
 
 
+@pytest.mark.parametrize(
+    ("infrahub_url", "expected"),
+    [
+        ("", "http://infrahub-server:8000"),
+        ("http://infrahub.example.invalid:8000", "http://infrahub.example.invalid:8000"),
+    ],
+    ids=["default-infrahub-network", "explicit-url"],
+)
 def test_demo_package_for_the_dev_stack_writes_the_worker_addresses(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, infrahub_url: str, expected: str
 ) -> None:
+    """The worker reads NetBox and writes to Infrahub over the networks it joins at `invoke start`."""
     destination = tmp_path / "from-netbox.local.yml"
     monkeypatch.setattr(netbox, "load_netbox_env", lambda: VALUES)
-    monkeypatch.setattr(netbox, "load_preview_env", lambda: {"PREVIEW_INFRAHUB_PORT": "8080"})
-    monkeypatch.setattr(
-        netbox, "preview_urls", lambda values: {"infrahub": f"http://localhost:{values['PREVIEW_INFRAHUB_PORT']}"}
-    )
+    monkeypatch.setattr(netbox, "load_preview_env", lambda: pytest.fail("the dev stack does not read the preview"))
     monkeypatch.setattr(netbox, "STATE_DIR", destination.parent)
     monkeypatch.setattr(netbox, "LOCAL_PACKAGE", destination)
 
-    cast("Task", netbox.demo_package).body(Context(), dev_stack=True)
+    cast("Task", netbox.demo_package).body(Context(), infrahub_url=infrahub_url, dev_stack=True)
 
     written = yaml.safe_load(destination.read_text(encoding="utf-8"))
     assert written["configuration"]["source"]["settings"]["url"] == "http://netbox:8080"
-    assert written["configuration"]["destination"]["settings"]["url"] == "http://host.docker.internal:8080"
+    assert written["configuration"]["destination"]["settings"]["url"] == expected

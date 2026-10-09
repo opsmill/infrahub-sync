@@ -21,8 +21,13 @@ RELEASE_PR_PREFIX = "chore(release):"
 # The PAT user trigger-push-stable.yml opens the release pull request as.
 RELEASE_PR_AUTHOR = "opsmill-bot"
 # Mirrors the version check in trigger-push-stable.yml, which names the branch
-# `release/${VERSION}` with a bare (not `v`-prefixed) version.
-RELEASE_BRANCH_PATTERN = re.compile(r"release/[0-9]+\.[0-9]+\.[0-9]+(?:[.-][0-9A-Za-z.-]+)?")
+# `release/${VERSION}` with a bare (not `v`-prefixed) version that is canonical
+# PEP 440 with no epoch and no local part (`2.0.1`, `3.0.0a6`, `3.0.0rc1`,
+# `3.0.0.dev1`). Spelled as a regex so this script stays standard-library only.
+_NUMBER = r"(?:0|[1-9][0-9]*)"
+RELEASE_BRANCH_PATTERN = re.compile(
+    rf"release/{_NUMBER}(?:\.{_NUMBER})*(?:(?:a|b|rc){_NUMBER})?(?:\.post{_NUMBER})?(?:\.dev{_NUMBER})?"
+)
 # A character that would extend the version, so the title names a different one.
 VERSION_CONTINUATION = re.compile(r"[0-9A-Za-z.-]")
 

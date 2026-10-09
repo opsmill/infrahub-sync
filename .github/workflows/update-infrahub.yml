@@ -71,7 +71,7 @@ jobs:
             development/docker-compose.preview.yml
             tests/compose/conftest.py
             tests/compose/fixture-override.yaml
-            tests/compose/test_bundle_contract.py
+            tests/compose/test_compose_contract.py
             tests/preview/test_preview_configuration.py
           name: opsmill-bot
           email: github-bot@opsmill.com

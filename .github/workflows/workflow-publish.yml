@@ -2,6 +2,14 @@
 # yamllint disable rule:truthy
 name: Publish Infrahub Sync Package
 
+# Ships one release: the package to PyPI, then the container image to the OpsMill
+# registry through ci-docker-image.yml. Shaped like infrahub-mcp's file of the
+# same name. Nothing leaves the runner unless `publish` is true.
+#
+# Image tags: the version on every release, plus `latest` only for a stable
+# release that GitHub also reports as its latest one, so a backport for an older
+# line never drags `latest` back.
+
 on:
   workflow_dispatch:
     inputs:
@@ -17,7 +25,12 @@ on:
         default: ''
       publish:
         type: boolean
-        description: Whether to publish the package to Pypi
+        description: Whether to publish the package to PyPI and the image to the registry
+        required: false
+        default: false
+      prerelease:
+        type: boolean
+        description: Whether the release is a pre-release (never tags the image `latest`)
         required: false
         default: false
   workflow_call:
@@ -34,9 +47,17 @@ on:
         default: ''
       publish:
         type: boolean
-        description: Whether to publish the package to Pypi
+        description: Whether to publish the package to PyPI and the image to the registry
         required: false
         default: false
+      prerelease:
+        type: boolean
+        description: Whether the release is a pre-release (never tags the image `latest`)
+        required: false
+        default: false
+
+permissions:
+  contents: read
 
 jobs:
   publish_to_pypi:
@@ -52,7 +73,34 @@ jobs:
           version: "latest"
 
       - name: "Set up Python"
-        run: uv python install 3.12
+        run: uv python install 3.13
+
+      # Before anything is uploaded: PyPI goes first and the image second, so a
+      # version the image step cannot tag would leave a package with no image.
+      # The version must be the one this checkout's package declares, and one a
+      # Docker tag can hold (no epoch, no local part).
+      - name: "Refuse to publish a version the image cannot carry"
+        if: inputs.publish
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # Python 3.13, the interpreter installed above: tomllib needs 3.11 or later.
+          if ! uv run --no-project --python 3.13 --with packaging python -c '
+          import os, sys, tomllib
+          from packaging.version import InvalidVersion, Version
+          v = os.environ["VERSION"]
+          with open("pyproject.toml", "rb") as handle:
+              declared = tomllib.load(handle)["project"]["version"]
+          try:
+              parsed = Version(v)
+          except InvalidVersion:
+              sys.exit(1)
+          sys.exit(0 if v == declared == str(parsed) and parsed.epoch == 0 and parsed.local is None else 1)
+          '; then
+            echo "::error::publishing needs 'version' set to the package's own canonical version (got '${VERSION}')"
+            exit 1
+          fi
 
       - name: "Build package"
         run: uv build
@@ -61,6 +109,83 @@ jobs:
         run: "ls -la dist/"
 
       - name: "Publish to PyPI"
+        if: inputs.publish
         run: uv publish
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+
+  docker_meta:
+    name: Compute docker image metadata
+    runs-on: ubuntu-24.04
+    needs: publish_to_pypi
+    outputs:
+      tags: ${{ steps.meta.outputs.tags }}
+      labels: ${{ steps.meta.outputs.labels }}
+      ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      # The image is built from this commit and labelled with it: the smoke test
+      # in ci-docker-image.yml refuses a revision label that names another one.
+      - name: Set GIT ref
+        id: ref
+        run: echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether this release moves latest
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          LATEST=false
+          if [ "${PRERELEASE}" != "true" ]; then
+            # Only a 404 means "no latest release yet", which reads as "not latest".
+            # Any other failure (auth, rate limit, outage) stops the run: guessing
+            # would publish the image with the wrong `latest` decision.
+            API_ERROR=$(mktemp)
+            if LATEST_TAG=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq .tag_name 2>"${API_ERROR}"); then
+              :
+            elif grep -q 'HTTP 404' "${API_ERROR}"; then
+              LATEST_TAG=""
+            else
+              echo "::error::could not read the latest GitHub release: $(tr '\n' ' ' < "${API_ERROR}")"
+              exit 1
+            fi
+            if [ -n "${LATEST_TAG}" ] && [ "${LATEST_TAG}" = "${VERSION}" ]; then
+              LATEST=true
+            fi
+            echo "GitHub latest release: ${LATEST_TAG:-<none>}; publishing ${VERSION}; latest=${LATEST}"
+          else
+            echo "${VERSION} is a pre-release; latest=false"
+          fi
+          echo "latest=${LATEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Set docker image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302  # v6.2.0
+        with:
+          images: |
+            ${{ vars.HARBOR_HOST }}/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ inputs.version }}
+          flavor: |
+            latest=${{ steps.latest.outputs.latest }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ inputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  publish_docker_image:
+    name: Build and publish container image
+    needs: docker_meta
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/ci-docker-image.yml
+    secrets: inherit
+    with:
+      publish: ${{ inputs.publish }}
+      version: ${{ inputs.version }}
+      ref: ${{ needs.docker_meta.outputs.ref }}
+      tags: ${{ needs.docker_meta.outputs.tags }}
+      labels: ${{ needs.docker_meta.outputs.labels }}

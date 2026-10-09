@@ -24,7 +24,7 @@ DEVELOPMENT = REPO_ROOT / "development"
 LOOPBACK = "127.0.0.1"
 # Each stack, and the environment file its tasks hand Compose.
 STACKS = {
-    REPO_ROOT / "compose.yaml": None,
+    DEVELOPMENT / "docker-compose.dev.yml": None,
     DEVELOPMENT / "docker-compose.infrahub.yml": DEVELOPMENT / "preview.env",
     DEVELOPMENT / "docker-compose.preview.yml": DEVELOPMENT / "preview.env",
     DEVELOPMENT / "netbox" / "docker-compose.netbox.yml": DEVELOPMENT / "netbox" / "netbox.env",

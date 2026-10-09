@@ -1,0 +1,42 @@
+---
+title: "Developer guides"
+---
+
+## Developer guides
+
+Step-by-step procedures for adapter development, local service development, and release
+qualification. For coding and testing rules, see [Guidelines](../guidelines/index.md); for
+how the system works, see [Knowledge](../knowledge/index.md).
+
+### Adapters
+
+- [Adding an adapter](adding-an-adapter.md) — the end-to-end procedure for connecting a new
+  source or destination system: the connector, its capability declaration, the conformance
+  tests, and the register-to-apply flow.
+- [Testing an adapter](testing-an-adapter.md) — how to write and run an adapter's unit and
+  integration tests.
+
+### The development environment
+
+- [Local development stack](../../development-stack.mdx) — building the Sync image from your
+  checkout, starting it in containers, and running a first sync against a local NetBox.
+- [Run the preview stack](preview-stack.md) — the host-process stack for working on
+  `infrahub_sync/service/`, its development loop, the smoke suite, and the destructive reset.
+- [NetBox benchmark tiers](netbox-benchmark-tiers.md) — seeding, dumping, restoring, and changing
+  the S, M, and L NetBox tiers.
+- [Run a NetBox benchmark cell](netbox-benchmark-runner.md) — comparing v2 and v3 syncs
+  and reading validated result records.
+
+### Releases
+
+- [Publishing an image by hand](publishing-an-image.md) — when and how to dispatch the image
+  workflow for a chosen commit and tags, how to verify the pushed image, and why a dispatch
+  leaves `latest` alone.
+
+### Related
+
+- [Knowledge](../knowledge/index.md) — how the sync engine, service, and adapters work.
+- [Repository tour](../knowledge/repository-tour.md) — where to find the code for each part of the system.
+- [Guidelines](../guidelines/index.md) — adapter rules, repository-wide testing, and secret redaction.
+- [Testing tiers](../guidelines/testing-tiers.md) — which test command to run after a step.
+- [Constitution](../constitution.md) — the principles these guides serve.

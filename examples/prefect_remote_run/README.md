@@ -70,7 +70,7 @@ pip install -e '.[prefect]'
 Check what you got — the extra pins exactly one version:
 
 ```bash
-uv run python -c "import prefect; print(prefect.__version__)"    # 3.8.1
+uv run python -c "import prefect; print(prefect.__version__)"    # 3.8.6
 ```
 
 Installing the extra changes nothing about ordinary CLI use: `infrahub-sync` never

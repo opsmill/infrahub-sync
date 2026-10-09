@@ -1,0 +1,418 @@
+---
+# yamllint disable rule:truthy rule:line-length
+name: Build And Push Docker image
+run-name: "Image ${{ inputs.ref }} (publish=${{ inputs.publish }})"
+
+# Reusable Harbor build-and-push workflow, shaped like infrahub-mcp's file of the
+# same name. Every platform is built, loaded and smoke-tested; no tag is applied
+# until every platform has passed its smoke test. `merge`, `sign` and `sbom` only
+# run when publishing.
+#
+# A caller that publishes passes `secrets: inherit`. A build-only caller, such as
+# the pull-request gate, passes no secrets.
+
+on:
+  workflow_call:
+    inputs:
+      publish:
+        type: boolean
+        description: Whether to publish the image to the OpsMill registry
+        required: false
+        default: false
+      version:
+        type: string
+        required: false
+        description: The version recorded in the SBOM artifact name
+        default: ''
+      ref:
+        type: string
+        required: true
+        description: The Git ref from which the image will be built
+      tags:
+        type: string
+        required: true
+        description: Newline-separated full image references (registry/repository:tag) to apply when publishing
+      labels:
+        type: string
+        required: true
+        description: Newline-separated OCI labels for the image
+      platforms:
+        type: string
+        required: false
+        description: Comma separated platform list to build the image for
+        default: "linux/amd64,linux/arm64"
+    outputs:
+      digest:
+        description: The published manifest-list digest, empty when not publishing
+        value: ${{ jobs.merge.outputs.digest }}
+  workflow_dispatch:
+    inputs:
+      publish:
+        type: boolean
+        description: Whether to publish the image to the OpsMill registry
+        required: false
+        default: false
+      version:
+        type: string
+        required: false
+        description: The version recorded in the SBOM artifact name
+        default: ''
+      ref:
+        type: string
+        required: true
+        description: The Git ref from which the image will be built
+      tags:
+        type: string
+        required: true
+        description: Newline-separated full image references (registry/repository:tag) to apply when publishing
+      labels:
+        type: string
+        required: true
+        description: Newline-separated OCI labels for the image
+      platforms:
+        type: string
+        required: false
+        description: Comma separated platform list to build the image for
+        default: "linux/amd64,linux/arm64"
+
+# Scoped per job. GitHub checks every job of a called workflow against what the
+# caller grants, skipped ones included, so a pull request that only builds still
+# has to grant `id-token: write` for `sign` and `sbom`. Nothing else is asked for:
+# Harbor is reached with its own credentials, so no job needs `packages`.
+permissions:
+  contents: read
+
+# A newer build-only run cancels an older one for the same ref. A publishing run
+# is never cancelled: stopping it between `merge` and `sign` would leave a pushed
+# tag with no signature or SBOM. Publishing runs get their own group, because a
+# build-only run arriving with `cancel-in-progress: true` cancels whatever is in
+# progress in its group, publishing runs included. Build-only groups also carry
+# the caller's event: a push or a dispatch and a pull request can build the same
+# commit at once, and neither may cancel the other's required check.
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{ inputs.ref }}-${{ inputs.publish && 'publish' || format('build-{0}', github.event_name) }}
+  cancel-in-progress: ${{ !inputs.publish }}
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      # An empty HARBOR_HOST would point docker/login-action at Docker Hub, with
+      # the Harbor credentials, so a publish without one stops here.
+      - name: Refuse to publish without a tag or a registry
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          TAGS: ${{ inputs.tags }}
+          HARBOR_HOST: ${{ vars.HARBOR_HOST }}
+        run: |
+          set -euo pipefail
+          if [ "${PUBLISH}" != "true" ]; then
+            exit 0
+          fi
+          if ! printf '%s\n' "${TAGS}" | grep -q '[^[:space:]]'; then
+            echo "::error::publishing needs at least one tag"
+            exit 1
+          fi
+          if [ -z "${HARBOR_HOST//[[:space:]]/}" ]; then
+            echo "::error::publishing needs the HARBOR_HOST variable; without it the login would go to Docker Hub"
+            exit 1
+          fi
+
+      - name: Check if platform is requested
+        id: check
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          if [[ ",${PLATFORMS// /}," != *",${PLATFORM},"* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.skip == 'false'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+      - name: Build and load for the smoke test
+        if: steps.check.outputs.skip == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          tags: infrahub-sync:smoke
+          labels: ${{ inputs.labels }}
+
+      - name: Install uv
+        if: steps.check.outputs.skip == 'false'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+
+      - name: Install the test environment
+        if: steps.check.outputs.skip == 'false'
+        run: uv sync --frozen --extra dev
+
+      - name: Smoke-test the loaded image
+        if: steps.check.outputs.skip == 'false'
+        env:
+          INFRAHUB_SYNC_DOCKER_IMAGE: infrahub-sync
+          VERSION: smoke
+        # `--no-sync`: the step above installed the environment, and the suite hashes
+        # the checkout's uv.lock against the image's, so nothing may re-lock it here.
+        run: uv run --no-sync pytest -m docker tests/image/test_image_artifact.py
+
+      - name: Login to Harbor
+        if: steps.check.outputs.skip == 'false' && inputs.publish
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ${{ vars.HARBOR_HOST }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Push by digest
+        if: steps.check.outputs.skip == 'false' && inputs.publish
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        id: push
+        with:
+          context: .
+          file: Dockerfile
+          provenance: false  # avoids cross-platform "unknown" entries
+          platforms: ${{ matrix.platform }}
+          labels: ${{ inputs.labels }}
+          outputs: type=image,name=${{ vars.HARBOR_HOST }}/${{ github.repository }},push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        if: steps.check.outputs.skip == 'false' && inputs.publish
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::the push returned no digest"
+            exit 1
+          fi
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        if: steps.check.outputs.skip == 'false' && inputs.publish
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: digests-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: build
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.inspect.outputs.digest }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+      - name: Login to Harbor
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ${{ vars.HARBOR_HOST }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        env:
+          REPOSITORY: ${{ vars.HARBOR_HOST }}/${{ github.repository }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          SOURCES=()
+          for digest in *; do
+            SOURCES+=("${REPOSITORY}@sha256:${digest}")
+          done
+          if [ "${#SOURCES[@]}" -eq 0 ]; then
+            echo "::error::no platform digest was downloaded; refusing to create an empty manifest list"
+            exit 1
+          fi
+          TAG_ARGS=()
+          while IFS= read -r tag; do
+            tag="${tag//[[:space:]]/}"
+            [ -z "$tag" ] && continue
+            TAG_ARGS+=(--tag "$tag")
+          done <<< "${TAGS}"
+          docker buildx imagetools create "${TAG_ARGS[@]}" "${SOURCES[@]}"
+
+      - name: Inspect manifest
+        id: inspect
+        env:
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -euo pipefail
+          FIRST_TAG=""
+          while IFS= read -r tag; do
+            tag="${tag//[[:space:]]/}"
+            [ -z "$tag" ] && continue
+            FIRST_TAG="$tag"
+            break
+          done <<< "${TAGS}"
+          if [ -z "${FIRST_TAG}" ]; then
+            echo "::error::no tag to inspect"
+            exit 1
+          fi
+          digest=$(docker buildx imagetools inspect "$FIRST_TAG" \
+            --format '{{json .Manifest}}' | jq -r '.digest')
+          if ! [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::${FIRST_TAG} resolved to '${digest}', which is not a manifest digest"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+  sign:
+    needs: merge
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write  # keyless signing
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
+      - name: Login to Harbor
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ${{ vars.HARBOR_HOST }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Sign manifest
+        env:
+          IMAGE: ${{ vars.HARBOR_HOST }}/${{ github.repository }}@${{ needs.merge.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # cosign gives up after two internal attempts when a Sigstore transparency
+          # log write fails, so retry the whole command: three attempts with a
+          # growing backoff. The sbom job carries a verbatim copy of this function
+          # (separate runners); keep the two copies identical.
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "${attempt}" -lt 3 ]; then
+                echo "::warning::${1} ${2} failed (attempt ${attempt}/3), retrying in $((attempt * 30))s"
+                sleep $((attempt * 30))
+              fi
+            done
+            echo "::error::${1} ${2} failed after 3 attempts"
+            return 1
+          }
+
+          retry cosign sign --yes --recursive \
+            --new-bundle-format=false --use-signing-config=false \
+            "${IMAGE}"
+
+  sbom:
+    needs: merge
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write  # keyless attestation
+    steps:
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26  # v0.24.2
+
+      - name: Login to Harbor
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ${{ vars.HARBOR_HOST }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      # One scan writes both formats, so the image is pulled and catalogued once.
+      - name: Generate SBOMs (SPDX and CycloneDX)
+        env:
+          IMAGE: ${{ vars.HARBOR_HOST }}/${{ github.repository }}@${{ needs.merge.outputs.digest }}
+        run: |
+          set -euo pipefail
+          syft "${IMAGE}" \
+            --output spdx-json=infrahub-sync-sbom.spdx.json \
+            --output cyclonedx-json=infrahub-sync-sbom.cdx.json
+
+      - name: Attest SBOMs
+        env:
+          IMAGE: ${{ vars.HARBOR_HOST }}/${{ github.repository }}@${{ needs.merge.outputs.digest }}
+        run: |
+          set -euo pipefail
+          # Same transparency-log flakiness the sign job guards against; this is a
+          # verbatim copy of that job's retry function. Keep the two copies identical.
+          retry() {
+            local attempt
+            for attempt in 1 2 3; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "${attempt}" -lt 3 ]; then
+                echo "::warning::${1} ${2} failed (attempt ${attempt}/3), retrying in $((attempt * 30))s"
+                sleep $((attempt * 30))
+              fi
+            done
+            echo "::error::${1} ${2} failed after 3 attempts"
+            return 1
+          }
+
+          retry cosign attest --yes \
+            --type spdxjson \
+            --predicate infrahub-sync-sbom.spdx.json \
+            "${IMAGE}"
+
+          retry cosign attest --yes \
+            --type cyclonedx \
+            --predicate infrahub-sync-sbom.cdx.json \
+            "${IMAGE}"
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sbom-${{ inputs.version }}
+          path: |
+            infrahub-sync-sbom.spdx.json
+            infrahub-sync-sbom.cdx.json
+          retention-days: 90

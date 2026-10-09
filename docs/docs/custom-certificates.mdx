@@ -29,7 +29,7 @@ The worker opens the connections that matter for a sync: to the source (NetBox, 
 
 In this release, you cannot configure a custom CA for the Sync worker of a Compose deployment:
 
-- **Run a release package:** the `sync-worker` service of the Compose bundle has a fixed `environment` list, a read-only root filesystem, and only `tmpfs` mounts. `operator.env` has no CA setting, so none of the variables above reaches the worker, and no CA file can be mounted.
-- **Run from source:** the `sync-worker` service of the development stack in `compose.yaml` also has a fixed `environment` list without these variables and no CA file mount.
+- **Run the container image:** the `sync-worker` service of the root `docker-compose.yml` has a fixed `environment` list, a read-only root filesystem, and only `tmpfs` mounts. That list has no CA setting, so none of the variables above reaches the worker from `.env`, and no CA file is mounted.
+- **Run from source:** the `sync-worker` service of the development stack in `development/docker-compose.dev.yml` also has a fixed `environment` list without these variables and no CA file mount.
 
 A worker on either deployment trusts only the certificate authorities in the image's default trust store. If a source or the destination uses a certificate that those authorities did not sign, the worker cannot verify it. `verify_ssl: false` turns off verification for the Infrahub destination and for adapters that support that setting. It does not establish trust, so use it only for development.

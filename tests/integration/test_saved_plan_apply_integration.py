@@ -45,7 +45,7 @@ whose constraints leave a filtered component free runs the whole test rather tha
 
 A local, disposable source NetBox for this test — seeded with exactly the dataset below — is
 provisioned by `development/netbox/` (see `development/README.md` and
-[Testing tiers](../../docs/docs/develop/guidelines/testing-tiers.md#integration)):
+[Testing tiers](../../docs/docs/development/guidelines/testing-tiers.md#integration)):
 
     uv run invoke netbox.seed        # starts NetBox, resets it, and loads the `seed` dataset
 
