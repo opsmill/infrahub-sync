@@ -1,0 +1,62 @@
+Dockerfile
+  s_905e1993f0015c::t_1632211dd1506a 12-16,26
+tasks/dev.py
+  s_905e1993f0015c::t_d035f31912e72b 17,21,29,42-43,45,51-74,78-79,82-89,93,106,121
+  s_905e1993f0015c::t_7afc3f933d8bf1 75-77,80-81
+tasks/__init__.py
+  s_905e1993f0015c::t_1632211dd1506a 5,36
+tests/dev_stack/test_netbox_network.py
+  s_905e1993f0015c::t_4f3463f8d57944 140-172,225,235-240,242-254,260-264,266,268-269
+  s_905e1993f0015c::t_90806812c16ed3 226-228,241,255-259,265
+  s_905e1993f0015c::t_7afc3f933d8bf1 267
+tasks/netbox.py
+  s_905e1993f0015c::t_1632211dd1506a 208-209,212,228-229,237,245-246,248,255,261-266
+changelog/+image-perl-base-fsspec.security.md
+  s_905e1993f0015c::t_ae6ad2a867e8cb 1
+changelog/+netbox-benchmark-runner.changed.md
+  s_905e1993f0015c::t_a900f58ca4bd29 1
+changelog/+netbox-worker-teardown.fixed.md
+  s_905e1993f0015c::t_b9735671cef369 1
+changelog/+safe-watermark-capture-order-tests.housekeeping.md
+  s_905e1993f0015c::t_54b7d2bab230d8 1
+development/bench/__init__.py
+  s_905e1993f0015c::t_7aa517d4dac9f8 1
+development/bench/records.py
+  s_905e1993f0015c::t_aa16b659bfdea4 1-309
+development/bench/runtime.py
+  s_905e1993f0015c::t_505200bb21a357 1-213
+development/bench/v2.py
+  s_905e1993f0015c::t_1129033c8e64ae 1-47
+docs/docs/development/guides/index.md
+  s_905e1993f0015c::t_727b9b61517556 27-28
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_905e1993f0015c::t_cb33c269c0cde0 1-175
+docs/docs/development/guides/netbox-benchmark-tiers.md
+  s_905e1993f0015c::t_91baed2eb4869c 53-54
+tasks/bench.py
+  s_905e1993f0015c::t_588688d18aed61 1-653
+tests/cache/test_safe_watermarks.py
+  s_905e1993f0015c::t_9c5fd4d3f4bb08 207,211,223-227,229,236-241,315-316
+tests/image/test_version_policy.py
+  s_905e1993f0015c::t_453c88c6410754 32,42,98-102
+tests/test_benchmark_runner.py
+  s_905e1993f0015c::t_ab3984c6f7e384 1-1429
+uv.lock
+  s_905e1993f0015c::t_afc34ad7de676d 918,920,922
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "14d82f2cf2c99c5bc7e41923f1cb0bddf556c50b",
+  "prompts": {},
+  "sessions": {
+    "s_905e1993f0015c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11fd6-2229-7310-a9b2-8d9387dd71da",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
