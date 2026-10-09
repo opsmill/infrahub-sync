@@ -29,6 +29,7 @@ RUNTIME_BASE_TAG = "python:3.13-slim-bookworm"
 RUNTIME_PYTHON_FLOOR = Version("3.13.14")
 PCRE2_SECURITY_RELEASE = "10.42-1+deb12u2"
 OPENSSL_SECURITY_RELEASE = "3.0.22-1~deb12u1"
+PERL_BASE_SECURITY_RELEASE = "5.36.0-7+deb12u4"
 
 PYARROW_FIX = Version("23.0.1")
 
@@ -38,6 +39,7 @@ PYARROW_FIX = Version("23.0.1")
 FIX_RANGES = {
     "cryptography": SpecifierSet(">=50.0.0"),
     "dulwich": SpecifierSet(">=1.2.5"),
+    "fsspec": SpecifierSet(">=2026.6.0"),
     "pyarrow": SpecifierSet(">=23.0.1,<24"),
     "ujson": SpecifierSet(">=5.12.1,<6"),
     "urllib3": SpecifierSet(">=2.7.0"),
@@ -91,6 +93,11 @@ def test_the_runtime_installs_the_pcre2_security_release() -> None:
 def test_the_runtime_installs_the_openssl_security_release(package: str) -> None:
     """The pinned base predates the Debian security update for CVE-2026-75803 and three related findings."""
     assert f"{package}={OPENSSL_SECURITY_RELEASE}" in base_stage_install_step()
+
+
+def test_the_runtime_installs_the_perl_base_security_release() -> None:
+    """The pinned base predates the Debian security update for ten perl-base findings."""
+    assert f"perl-base={PERL_BASE_SECURITY_RELEASE}" in base_stage_install_step()
 
 
 @pytest.mark.parametrize(("package", "accepted"), sorted(FIX_RANGES.items()))

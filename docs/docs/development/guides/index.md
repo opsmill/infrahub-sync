@@ -24,6 +24,8 @@ how the system works, see [Knowledge](../knowledge/index.md).
   `infrahub_sync/service/`, its development loop, the smoke suite, and the destructive reset.
 - [NetBox benchmark tiers](netbox-benchmark-tiers.md) — seeding, dumping, restoring, and changing
   the S, M, and L NetBox tiers.
+- [Run a NetBox benchmark cell](netbox-benchmark-runner.md) — comparing v2 and v3 syncs
+  and reading validated result records.
 
 ### Releases
 

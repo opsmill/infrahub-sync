@@ -14,10 +14,11 @@ is `infrahub_default`, the network of Infrahub's own Compose file started with
 from __future__ import annotations
 
 import os
+import shlex
 
 from invoke import Context, task
 
-from .netbox import WORKER_INFRAHUB_URL, attach_dev_worker, connect_dev_worker, load_netbox_env
+from .netbox import DEV_STACK_PROJECT, WORKER_INFRAHUB_URL, attach_dev_worker, connect_dev_worker, load_netbox_env
 from .utils import ESCAPED_REPO_PATH
 
 NAMESPACE = "INFRAHUB-SYNC-DEV"
@@ -25,7 +26,7 @@ NAMESPACE = "INFRAHUB-SYNC-DEV"
 API_URL = "http://127.0.0.1:8030"
 PREFECT_URL = "http://127.0.0.1:4230"
 # The development stack's Compose file, relative to the repository root.
-DEV_COMPOSE = "docker compose -f development/docker-compose.dev.yml"
+DEV_COMPOSE_FILE = "development/docker-compose.dev.yml"
 # The dev stack's constant principal, the same value docker-compose.dev.yml inlines.
 API_TOKEN = "infrahub-sync-dev-token"  # noqa: S105 -- a local-only development credential
 WAIT_TIMEOUT_SECONDS = 420
@@ -38,21 +39,58 @@ def infrahub_network() -> str:
     return os.environ.get(INFRAHUB_NETWORK_VARIABLE) or DEFAULT_INFRAHUB_NETWORK
 
 
-def attach_dev_worker_to_infrahub(context: Context) -> bool:
-    """Connect the dev stack's worker to the local Infrahub's network, when both exist."""
+def attach_dev_worker_to_infrahub(context: Context, project: str = DEV_STACK_PROJECT) -> bool:
+    """Connect the selected project's worker to the local Infrahub's network, when both exist."""
     network = infrahub_network()
-    connected = connect_dev_worker(context, network)
+    connected = connect_dev_worker(context, network, project=project)
     if connected:
         print(f" - [{NAMESPACE}] The worker is on {network}; it reaches Infrahub at {WORKER_INFRAHUB_URL}")
     return connected
 
 
+def _compose_command(project: str, compose_file: str) -> str:
+    """Return the Compose command, optionally pinned to a project and file (benchmark runner only)."""
+    command = "docker compose"
+    if project:
+        command += f" --project-name {shlex.quote(project)}"
+    command += f" -f {shlex.quote(compose_file or DEV_COMPOSE_FILE)}"
+    return command
+
+
+def _build(context: Context, *, no_cache: bool = False, project: str = "", compose_file: str = "") -> None:
+    """Build the image; the public task passes no project or file, the benchmark runner pins both."""
+    arguments = " --no-cache" if no_cache else ""
+    with context.cd(ESCAPED_REPO_PATH):
+        context.run(f"{_compose_command(project, compose_file)} build{arguments}", pty=True)
+
+
+def _start(context: Context, *, project: str = "", compose_file: str = "") -> None:
+    """Start the stack and reattach the worker; the public task passes no project or file."""
+    with context.cd(ESCAPED_REPO_PATH):
+        context.run(
+            f"{_compose_command(project, compose_file)} up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}",
+            pty=True,
+        )
+    # `up` recreates the worker whenever its settings change, which drops a network it
+    # was connected to afterwards. Reconnect it to local NetBox and, for the
+    # development stack, Infrahub. The benchmark runner connects its own preview
+    # destination network after starting its pinned Compose file.
+    selected_project = project or DEV_STACK_PROJECT
+    attach_dev_worker(context, load_netbox_env(), project=selected_project)
+    if not compose_file:
+        attach_dev_worker_to_infrahub(context, project=selected_project)
+
+
+def _destroy(context: Context, *, project: str = "", compose_file: str = "") -> None:
+    """Remove the stack and its volumes; the public task passes no project or file."""
+    with context.cd(ESCAPED_REPO_PATH):
+        context.run(f"{_compose_command(project, compose_file)} down --volumes --remove-orphans", pty=True)
+
+
 @task(name="build")
 def build(context: Context, no_cache: bool = False) -> None:  # noqa: FBT001, FBT002 -- Invoke boolean flag idiom
     """Build the local development image from the current working tree."""
-    arguments = " --no-cache" if no_cache else ""
-    with context.cd(ESCAPED_REPO_PATH):
-        context.run(f"{DEV_COMPOSE} build{arguments}", pty=True)
+    _build(context, no_cache=no_cache)
     print(f" - [{NAMESPACE}] Built infrahub-sync:dev; start it with `uv run invoke start`")
 
 
@@ -65,13 +103,7 @@ def start(context: Context) -> None:
     local Infrahub started from Infrahub's own Compose file is running, the worker joins its
     network too, so a package can write to Infrahub at `http://infrahub-server:8000`.
     """
-    with context.cd(ESCAPED_REPO_PATH):
-        context.run(f"{DEV_COMPOSE} up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS}", pty=True)
-    # `up` recreates the worker whenever its settings change, which drops a network it
-    # was connected to afterwards. Reconnect it to the local NetBox and the local
-    # Infrahub, for each one that is running.
-    attach_dev_worker(context, load_netbox_env())
-    attach_dev_worker_to_infrahub(context)
+    _start(context)
     print(f" - [{NAMESPACE}] Sync API    {API_URL}  (bearer {API_TOKEN})")
     print(f" - [{NAMESPACE}] Prefect UI  {PREFECT_URL}")
     print(f" - [{NAMESPACE}] After a code change: `uv run invoke build && uv run invoke start`")
@@ -86,7 +118,6 @@ def destroy(context: Context) -> None:
     it, which is what makes the next `invoke start` a first start again. The image the
     working tree built is kept, so that start does not rebuild.
     """
-    with context.cd(ESCAPED_REPO_PATH):
-        context.run(f"{DEV_COMPOSE} down --volumes --remove-orphans", pty=True)
+    _destroy(context)
     print(f" - [{NAMESPACE}] Removed the stack and its data; infrahub-sync:dev is kept")
     print(f" - [{NAMESPACE}] Start again with `uv run invoke start`")
