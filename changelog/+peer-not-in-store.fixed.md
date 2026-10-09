@@ -1,1 +1,1 @@
-Loading the Infrahub side of a sync no longer fails with `ObjectNotFound` when a relationship points to a node of the same kind that is not loaded yet, such as the parent of a node in a hierarchy.
+Loading the Infrahub side of a sync now resolves relationships to nodes of the same kind before they are loaded, without including nodes excluded by filters.
