@@ -1,0 +1,28 @@
+changelog/+peer-not-in-store.fixed.md
+  s_5b260dbb935e80::t_8cc45b7ec98aa3 1
+tests/adapters/test_infrahub_peer_identifier.py
+  s_5b260dbb935e80::t_41f3f3275ede5e 54-57,77,200,202-204,222-229
+  s_5b260dbb935e80::t_046da800fe99f9 25,28,61
+  s_5b260dbb935e80::t_2c37d0c36b29df 86
+  s_5b260dbb935e80::t_8afcd6d5646602 9-10,150,154,163-165,207-221
+  s_5b260dbb935e80::t_9025c624c54136 13-14
+  s_5b260dbb935e80::t_f68c84c9eb3d26 52,58,60,67,88-92,180-199,201,205-206
+infrahub_sync/adapters/infrahub.py
+  s_5b260dbb935e80::t_e72d42c84410c7 528-530
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd4dabc39b1bbdf91cf22a3c8d167a4d8b77dde2",
+  "prompts": {},
+  "sessions": {
+    "s_5b260dbb935e80": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a12104-731a-7aa3-84d2-a89e41b7904f",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
