@@ -13,6 +13,7 @@ from .sync_models import (
     InterfaceVirtual,
     IpamAggregate,
     IpamIPAddress,
+    IpamNamespace,
     IpamPrefix,
     IpamRouteTarget,
     IpamVLAN,
@@ -37,6 +38,7 @@ _AdapterBaseClass = PluginLoader().resolve("netbox")
 # -------------------------------------------------------
 class NetboxSync(_AdapterBaseClass):
     BuiltinTag = BuiltinTag
+    IpamNamespace = IpamNamespace
     DcimCircuit = DcimCircuit
     DcimDeviceType = DcimDeviceType
     DcimPlatform = DcimPlatform
