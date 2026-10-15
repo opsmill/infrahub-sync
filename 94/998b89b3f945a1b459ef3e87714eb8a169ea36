@@ -1,0 +1,21 @@
+dev/specs/010-second-sync-plan-speed/checklists/requirements.md
+  s_47078ea83e766d::t_77a25b9d830f71 1-41
+dev/specs/010-second-sync-plan-speed/spec.md
+  s_47078ea83e766d::t_9fcde90ce0211f 1-391
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "94998b89b3f945a1b459ef3e87714eb8a169ea36",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
