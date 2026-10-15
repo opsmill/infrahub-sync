@@ -60,8 +60,8 @@ edits `infrahub_sync/failure_cause.py`, the redaction helpers in `infrahub_sync/
 
 **Purpose**: confirm the starting point before any change.
 
-- [ ] T001 Install the full development profile and run `uv run invoke tests.tests-unit` at the starting commit; record the pass count in the pull request notes (no file change; files read: `pyproject.toml`, `uv.lock`)
-- [ ] T002 Build `infrahub-sync:compose-test` from `Dockerfile` and run the compose lifecycle tier once locally (`INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose -n 0`), as described in `docs/docs/development/guidelines/testing-tiers.md` ("Compose (opt-in)"); keep the summary for T004
+- [X] T001 Install the full development profile and run `uv run invoke tests.tests-unit` at the starting commit; record the pass count in the pull request notes (no file change; files read: `pyproject.toml`, `uv.lock`)
+- [X] T002 Build `infrahub-sync:compose-test` from `Dockerfile` and run the compose lifecycle tier once locally (`INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose -n 0`), as described in `docs/docs/development/guidelines/testing-tiers.md` ("Compose (opt-in)"); keep the summary for T004
 
 ---
 
