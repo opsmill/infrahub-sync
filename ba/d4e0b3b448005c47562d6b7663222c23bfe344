@@ -1,0 +1,21 @@
+dev/specs/013-compose-images/tasks.md
+  s_47078ea83e766d::t_8a1104aceca7ea 43-46
+  s_47078ea83e766d::t_dbdab56e1c8ecd 51-55,248
+  s_47078ea83e766d::t_942241af034308 1-42,47-50,56-247,249-373
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bad4e0b3b448005c47562d6b7663222c23bfe344",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
