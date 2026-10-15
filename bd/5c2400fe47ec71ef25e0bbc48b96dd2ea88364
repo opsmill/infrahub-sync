@@ -1,0 +1,54 @@
+tests/compose/test_lifecycle.py
+  s_47078ea83e766d::t_6059c84c911241 82-92,476-480
+  s_47078ea83e766d::t_a25998578e0498 481
+tests/compose/test_prefect_server_upgrade.py
+  s_47078ea83e766d::t_0bfb3b7e887ba7 9-12,52,97-98,103,113-114
+  s_47078ea83e766d::t_80f72f583ddbe1 1-8,13-26,28-51,53-96,104-112,115-236
+  s_47078ea83e766d::t_f8beec7e2e3bb5 27
+  s_47078ea83e766d::t_f9029b614deda4 99-101
+  s_47078ea83e766d::t_16ccf0e473daec 102
+dev/specs/013-compose-images/tasks.md
+  s_47078ea83e766d::t_8da2fe5d5d4d71 109-113,117-122
+docker-compose.yml
+  s_47078ea83e766d::t_3e593f80aad2a6 160-162,164,166-168
+tests/image/test_image_artifact.py
+  s_47078ea83e766d::t_dd696d2b45f7f8 9,29,259-291,295-340
+  s_47078ea83e766d::t_9430eb77095b46 292-294
+docs/docs/compose-deployment.mdx
+  s_47078ea83e766d::t_ed6ec4d070ec61 55
+infrahub_sync/service/prefect_server.py
+  s_47078ea83e766d::t_8bfd988d5b48b1 14,29-32,36-41
+  s_47078ea83e766d::t_d4c21fd334c447 1-12,15-23,25-28,33-35,42-46
+  s_47078ea83e766d::t_a88c9b24168b2a 13,24
+tests/service/test_prefect_server.py
+  s_47078ea83e766d::t_f8fc63adedf1fe 12,78
+  s_47078ea83e766d::t_4de7a6728b18f5 1-11,13-45,48-50,53-54,62-77,79-145
+  s_47078ea83e766d::t_20b903ede3e889 46-47,51-52,55-61
+  s_47078ea83e766d::t_234471c213b9d3 146-180
+tests/compose/test_compose_contract.py
+  s_47078ea83e766d::t_0db5a32648b647 477-504,508-542
+  s_47078ea83e766d::t_2c167c74ff12a7 44-47,182-183,188,190,226-227,231,233,613,827
+  s_47078ea83e766d::t_f9029b614deda4 505-507
+Dockerfile
+  s_47078ea83e766d::t_3e593f80aad2a6 104
+docs/docs/operations/day-2-operations.mdx
+  s_47078ea83e766d::t_ed6ec4d070ec61 62-70
+dev/specs/013-compose-images/implementation-notes.md
+  s_47078ea83e766d::t_8da2fe5d5d4d71 54-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd5c2400fe47ec71ef25e0bbc48b96dd2ea88364",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
