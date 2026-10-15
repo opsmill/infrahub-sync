@@ -12,6 +12,11 @@ on:
         description: "The full 40-character commit merged into feature/v3-develop"
         required: true
         type: string
+      compose_repeat:
+        description: "How many times each architecture runs the Compose deployment suite"
+        required: false
+        type: number
+        default: 1
 
 permissions:
   contents: read
@@ -187,9 +192,18 @@ jobs:
           done
 
   compose-suite:
-    name: "Compose deployment suite against a locally built image"
-    runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    name: "Compose deployment suite against a locally built image (${{ matrix.arch }})"
+    runs-on: ${{ matrix.runner }}
+    # Repeated runs measure how often the suite fails; one run keeps the nightly bound.
+    timeout-minutes: ${{ inputs.compose_repeat > 1 && 360 || 120 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: "Check out the requested commit"
         id: checkout
@@ -243,18 +257,93 @@ jobs:
       - name: "Build the image under test"
         run: docker build -t infrahub-sync:compose-test .
 
+      # Every iteration runs the whole suite, even after an earlier one failed, so
+      # a repeated dispatch counts failures instead of stopping at the first.
+      # Each iteration keeps its pytest output and its .diagnostics/ directory
+      # under .compose-iterations/compose-<arch>-<N>/.
       - name: "Run the Compose deployment suite"
+        id: compose
         env:
           INFRAHUB_SYNC_DOCKER_IMAGE: infrahub-sync
           VERSION: compose-test
-        run: uv run --no-sync pytest -m compose tests/compose -x --compose-zero-skip
+          COMPOSE_REPEAT: ${{ inputs.compose_repeat }}
+          COMPOSE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -uo pipefail
+          case $COMPOSE_REPEAT in
+            ''|*[!0-9]*|0)
+              echo "compose_repeat must be a positive whole number, not $COMPOSE_REPEAT" >&2
+              exit 1
+              ;;
+          esac
+          mkdir -p .compose-iterations
+          failed=0
+          for n in $(seq 1 "$COMPOSE_REPEAT"); do
+            out=".compose-iterations/compose-$COMPOSE_ARCH-$n"
+            rm -rf .diagnostics
+            mkdir -p "$out"
+            echo "::group::iteration $n"
+            if uv run --no-sync pytest -m compose tests/compose --compose-zero-skip \
+              --junitxml="$out/junit.xml" 2>&1 | tee "$out/pytest.log"; then
+              result=pass
+            else
+              result=fail
+              failed=$((failed + 1))
+            fi
+            echo "::endgroup::"
+            if [ -d .diagnostics ]; then
+              mv .diagnostics "$out/diagnostics"
+            fi
+            echo "iteration $n: $result" | tee -a .compose-iterations/summary.txt
+          done
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
 
-      - name: "Upload the diagnostics of a failed Compose case"
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - name: "Install the artifact client"
+        if: always() && steps.compose.outcome != 'skipped'
+        run: >-
+          npm install --prefix "$RUNNER_TEMP/artifact-client" --no-save --ignore-scripts
+          --no-audit --no-fund @actions/artifact@2.3.2
+
+      # upload-artifact names one artifact per step, and the number of iterations
+      # is an input, so the uploads go through the same client that action uses.
+      - name: "Upload each iteration's diagnostics"
+        if: always() && steps.compose.outcome != 'skipped'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8.0.0
         with:
-          name: nightly-compose-diagnostics
-          path: .diagnostics/
-          include-hidden-files: true
-          if-no-files-found: ignore
-          retention-days: 7
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const { DefaultArtifactClient } = require(
+              path.join(process.env.RUNNER_TEMP, 'artifact-client/node_modules/@actions/artifact'),
+            );
+            const client = new DefaultArtifactClient();
+            const root = path.resolve('.compose-iterations');
+            const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+              const full = path.join(dir, entry.name);
+              return entry.isDirectory() ? walk(full) : [full];
+            });
+            const iterations = fs.existsSync(root)
+              ? fs.readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory())
+              : [];
+            for (const iteration of iterations) {
+              const dir = path.join(root, iteration.name);
+              const files = walk(dir);
+              if (files.length === 0) continue;
+              await client.uploadArtifact(iteration.name, files, dir, { retentionDays: 7 });
+              core.info(`uploaded ${iteration.name} (${files.length} files)`);
+            }
+
+      - name: "Fail the job if an iteration failed"
+        if: always()
+        env:
+          COMPOSE: ${{ steps.compose.outcome }}
+          FAILED: ${{ steps.compose.outputs.failed }}
+          COMPOSE_REPEAT: ${{ inputs.compose_repeat }}
+        run: |
+          if [ -f .compose-iterations/summary.txt ]; then
+            cat .compose-iterations/summary.txt
+          fi
+          if [ "$COMPOSE" != success ] || [ "${FAILED:-1}" != 0 ]; then
+            echo "${FAILED:-unknown} of $COMPOSE_REPEAT Compose iterations failed" >&2
+            exit 1
+          fi
