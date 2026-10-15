@@ -6,6 +6,10 @@
 
 **Status**: Draft
 
+**Release**: MVP (the testing release). Every requirement in this specification belongs to the MVP.
+Work it names as out of scope belongs to 3.0 or 3.x, as listed in
+[V3 release scope](../v3-release-scope.md).
+
 **Input**: User description: "A basic operator UI for the V3 testing release, plus the API endpoints it needs. The UI is standalone, served by the sync-api container on the same origin as the Sync HTTP API, and uses only the public API (so anything it does a script can do). It is not part of the Infrahub UI. A customer team can: list configurations with their versions; list runs with status, counts and duration; open one run's plan and view its summary by kind, its operations filterable by kind, its problems and its left-out records (from spec 009); start a plan; approve and apply a plan, including confirming the left-out count; view why a run failed or stopped. It does not edit configurations (YAML stays in the CLI or git), manage schedules, manage users (it uses the same API token as the CLI), or draw a graph of the plan. New API: GET /runs (list, with filters and paging) and plan detail returned in pages so the 16 MiB client response limit no longer blocks plan review; at tier M (10,207 mapped objects) a first-sync plan opens in the UI. Success: a customer team completes the P1 journey (first import from their NetBox, reviewed, applied) in the UI alone, without OpsMill running a command for them. This moves the UI (INFP-664, AD-5 said 'after recovery and operations') into the testing release; AD-5 needs an amendment. Scope = brief FR-006, FR-007, SC-002 (UI part), SC-006."
 
 ## Summary

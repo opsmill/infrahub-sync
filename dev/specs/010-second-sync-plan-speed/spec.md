@@ -6,6 +6,10 @@
 
 **Status**: Draft
 
+**Release**: MVP (the testing release). Every requirement in this specification belongs to the MVP.
+Work it names as out of scope belongs to 3.0 or 3.x, as listed in
+[V3 release scope](../v3-release-scope.md).
+
 **Input**: User description: "Second sync shows only real changes, and planning stays fast at tier M, for the V3 testing release. After a first import, a second plan with no change in the source gives zero operations, and after a change it gives only that change. Fix: interface-to-LAG relationships crash or break the second sync (GitHub #167, PR #177; in 2.0.1 15 out of 15 runs failed), stale peers remain in many-cardinality relationships (#168, PR #172), and the built-in `default` IPAM namespace shows as a delete on every plan. Planning speed: at tier M (10,207 mapped NetBox objects) a plan with no changes takes about 20 minutes today versus about 4.5 minutes for the first-sync plan on the same data (infrahub-sync-process product/metrics.md); which part of the plan step takes the time is not known, so the spec must first require measuring the plan step by phase, then require a no-change or ~100-change plan to take no longer than the first-sync plan. Also at tier M a first sync completes with no size limits changed in the code. Scope = brief FR-005, P2, SC-001, SC-002 (the sync part; the UI part is spec 011). Tier L and the 64 MiB / 16 MiB limits are out of scope (3.0)."
 
 ## Summary

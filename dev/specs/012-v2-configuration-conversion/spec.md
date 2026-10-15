@@ -6,6 +6,10 @@
 
 **Status**: Draft
 
+**Release**: MVP (the testing release). Every requirement in this specification belongs to the MVP.
+Work it names as out of scope belongs to 3.0 or 3.x, as listed in
+[V3 release scope](../v3-release-scope.md).
+
 **Input**: User description: "Move a v1 or v2 user to V3 for the testing release. Today
 docs/docs/v2-to-v3.mdx says a V2 config.yml must be brought into the V3 package envelope by
 hand, and that the first V3 plan reads objects a V2 run wrote. (1) A CLI command, for example

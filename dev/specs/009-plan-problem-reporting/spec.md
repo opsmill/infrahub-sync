@@ -6,6 +6,10 @@
 
 **Status**: Draft
 
+**Release**: MVP (the testing release). Every requirement in this specification belongs to the MVP.
+Work it names as out of scope belongs to 3.0 or 3.x, as listed in
+[V3 release scope](../v3-release-scope.md).
+
 **Input**: User description: "Plan problem reporting for the V3 testing release. A plan checks every source record and lists every problem (Dropdown value outside its choices, duplicate source records, two source objects with the same destination HFID, wrong value type, required peer excluded by a filter, same-named objects that would silently merge) with the record, kind and reason, instead of stopping at the first one. Records with problems and every record that depends on them are left out of the plan and counted (isolate policy, AD-12 plan stage); apply requires the person to confirm the left-out count in CLI and API. Every failed or stopped run shows its cause (Infrahub rejection message and code, unreachable system, rejected token) in the CLI and the API. A stopped apply shows the operations written and the one that failed, and a new plan contains only the remaining operations (no resume). Scope = brief FR-001 to FR-004, journeys P1 scenarios 1-2, SC-003, SC-005. The UI is a separate spec (011); state the API/CLI contract the UI will consume."
 
 ## Summary
