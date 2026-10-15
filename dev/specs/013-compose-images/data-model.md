@@ -1,7 +1,9 @@
 # Data model: Fewer images in the Compose deployment
 
 This change adds no database table, no API field and no stored record. The entities below are
-deployment entities: what the Compose files declare and what a process builds at start.
+deployment entities: what the Compose files declare and what a process builds at start. The
+only object Sync writes for this change is the short-lived create-only check key, deleted by the
+same bootstrap run.
 
 ## Sync image
 
@@ -21,21 +23,50 @@ deployment entities: what the Compose files declare and what a process builds at
 - **State**: none of its own. PostgreSQL database `prefect` in the root and development stacks;
   SQLite under `PREFECT_HOME` in the preview stack, as today.
 - **Credentials held**: Prefect database connection string (root and development), Prefect API
-  credential (root).
+  credential (root). Nothing else.
 - **Writable paths**: the three tmpfs scratch roots (root). The UI files go to
   `/var/lib/infrahub-sync/prefect/ui/v1` and `/v2`.
 - **Lifecycle**: on each start it migrates the database, registers block types, copies the UI
   files, starts the background services, then serves.
 
-## Object store image
+## Bundled object store
 
-- **Reference**: `pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46`.
+- **Reference**: `cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba`
+  (unchanged; multi-architecture index for linux/amd64 and linux/arm64).
 - **Used by**: `object-store-init`, `object-store` (root); `object-store` (development);
   `sync-minio`, `sync-minio-bootstrap` (preview).
 - **Run as**: UID and GID 65532 for the server; root only in the one-shot volume repair
   `object-store-init`, which has `network_mode: none`, a read-only root and only `CHOWN`.
-- **Volume**: `object-store-data`, unchanged; data written by the current Chainguard build stays
-  readable (research R5).
+- **Volume**: `object-store-data`, unchanged.
+- **States** (root file): **running** (`INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` unset or `1`) and
+  **left out** (`0`; no container, the volume stays on the host until removed).
+
+## Object store settings
+
+Read by `build_s3_client` in `infrahub_sync/service/storage.py` in `sync-bootstrap`, `sync-api`
+and `sync-worker`:
+
+| Field | Source | Validation |
+| --- | --- | --- |
+| endpoint | `INFRAHUB_SYNC_S3_ENDPOINT_URL` | absolute `http` or `https` URL without user name or password (`storage.py:193-205`) |
+| region | `INFRAHUB_SYNC_S3_REGION` | optional |
+| addressing style | `INFRAHUB_SYNC_S3_ADDRESSING_STYLE` | `path` or `virtual`; default `path` |
+| bucket | `INFRAHUB_SYNC_S3_BUCKET` | required (`storage.py:218`) |
+| prefix | `INFRAHUB_SYNC_S3_PREFIX` | default `infrahub-sync`, `/` stripped |
+| credential | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | read by boto3 only; never formatted into text |
+
+A validation failure raises a fixed message that names the setting and not its value.
+
+## Bootstrap object store convergence
+
+Steps, in order, each ending in success or one fixed failure family:
+
+1. guard: external endpoint while `object-store` resolves → `bundled-object-store-not-left-out`
+2. build the client → `object-store-unavailable` on failure
+3. `HeadBucket`: 2xx present; 404 absent → `CreateBucket`; 403 → `object-store-access-refused`;
+   other → `object-store-unavailable`
+4. create-only check on `<prefix>/.infrahub-sync/bootstrap-check/<uuid4>`: second write refused →
+   continue; accepted → `object-store-unsupported`; the key is deleted on every path
 
 ## Worker credential variable
 
@@ -52,26 +83,28 @@ deployment entities: what the Compose files declare and what a process builds at
 | Field | Value |
 | --- | --- |
 | Host setting | `INFRAHUB_SYNC_CA_CERTIFICATES`: absolute path or `./` path of a directory |
-| Container path | `/etc/infrahub-sync/ca`, read-only, in `sync-api` and `sync-worker` |
+| Container path | `/etc/infrahub-sync/ca`, read-only, in `sync-bootstrap`, `sync-api` and `sync-worker` |
 | Placeholder | named volume `sync-ca-certificates`, empty, used when the setting is unset |
 | Files read | `*.pem` and `*.crt`, in name order; other files are ignored |
 | Bundle file | `$TMPDIR/infrahub-sync-ca-bundle.pem` (tmpfs), mode `0600` |
 | Bundle content | `certifi.where()` content, then each operator file |
-| Variables set | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `INFRAHUB_TLS_CA_FILE`, each only when not already set |
+| Variables set | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE`, `INFRAHUB_TLS_CA_FILE`, each only when not already set |
 
 Validation rules:
 
-- each file must load with `ssl.SSLContext.load_verify_locations(cafile=...)`;
-- a file that fails stops the process at start with an error that names the file;
+- a file that contains a `PRIVATE KEY` PEM block stops the process; the error names the file and
+  holds none of its content;
+- each file must load with `ssl.SSLContext.load_verify_locations(cafile=...)`; a file that fails
+  stops the process with an error that names the file and the `ssl` error class;
 - a directory with no matching file, or no directory, changes nothing.
 
 States: **absent** (no directory or no file; nothing changes) → **installed** (bundle written,
-variables set). There is no other state; the bundle is rebuilt at each process start.
+variables set). The bundle is rebuilt at each process start.
 
 ## Prefect opt-in file
 
 - **Name**: `prefect-ui.yml`, written by an OpsMill engineer beside `docker-compose.yml`, not
   shipped.
-- **Content**: one `ports` entry on `prefect-server`, bound to `127.0.0.1`.
+- **Content**: one `ports` entry on `prefect-server`, bound to `127.0.0.1`. No credential.
 - **States**: **closed** (default; `docker compose up` without `-f prefect-ui.yml`) and **open**
   (`docker compose -f docker-compose.yml -f prefect-ui.yml up`). Each `up` decides the state.

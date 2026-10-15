@@ -15,7 +15,7 @@
     - view the run history, in a basic UI
   - **3.0** lets a v2 customer replace v2 in production, and adds deletes limited to the objects a configuration created.
 - **Not decided yet.**
-  - whether MinIO is replaced (AD-3)
+  - whether a different S3 server replaces the bundled MinIO, in 3.0 or later (AD-3)
   - whether Infrahub's `is_protected` blocks updates from a second configuration
   - product sign-off on five changes to earlier decisions: the UI in the MVP (AD-5), records
     left out at the plan stage (AD-12), failure messages in run records (#369), deletes in 3.0,
@@ -45,7 +45,7 @@ where 3.0 is complete when every card linked to
 | [010 Second sync and plan speed](010-second-sync-plan-speed/spec.md) | Plan again after a change and view only that change, at tier M in no more time than the first-sync plan | Second sync shows only real changes; plan time at tier M |
 | [011 Operator UI](011-operator-ui/spec.md) | Review, approve and apply a plan, and view runs, in a browser on the `sync-api` host; list and cancel runs in the CLI | UI served by `sync-api`; `GET /runs`; plan detail in pages; each peer identity shown once; `runs list` and `runs cancel` |
 | [012 v2 configuration conversion](012-v2-configuration-conversion/spec.md) | Convert a v2 `config.yml`, and view a first V3 plan with no false changes on data v2 wrote | Conversion command; no-false-updates check |
-| [013 Compose images](013-compose-images/spec.md) | Deploy with fewer images, pass any bundled adapter's credentials and a custom CA to the worker, and pull a released image by digest | Prefect server from the Sync image as its own service, port not published; MinIO image pinned by digest; worker credentials and CA; reliable lifecycle tests; image digest and SBOM |
+| [013 Compose images](013-compose-images/spec.md) | Deploy with fewer images, store run files in their own S3-compatible store or the bundled MinIO, pass any bundled adapter's credentials and a custom CA to the worker, and pull a released image by digest | Prefect server from the Sync image as its own service, port not published; current MinIO build kept, pinned by digest; external S3-compatible store; worker credentials and CA; reliable lifecycle tests; image digest and SBOM |
 
 Suggested order: 009, 010, 011, 012, 013. Specification 011 uses the API that 009 defines.
 
@@ -54,8 +54,9 @@ Suggested order: 009, 010, 011, 012, 013. Specification 011 uses the API that 00
 [path-to-3.0.md](https://github.com/opsmill/infrahub-sync-process/blob/main/product/path-to-3.0.md)
 names these problems for the MVP cards. Each one now has an owner:
 
-- Short credentials and credentials with JSON separators can appear in errors and plans
-  (SYNC-82, SYNC-262): specification 009, FR-027 and FR-028.
+- Short credentials and masking that corrupts JSON (SYNC-82, SYNC-262): specification 009,
+  FR-027 and FR-028, by keeping credentials out of causes, problem reasons and plan files;
+  removing the existing masking pass on published plans is a follow-up after the MVP.
 - The NetBox example package fails on data that real NetBox instances hold
   ([#374](https://github.com/opsmill/infrahub-sync/issues/374)): specification 009, FR-031,
   because its success criteria run on that example.
@@ -68,6 +69,9 @@ names these problems for the MVP cards. Each one now has an owner:
 - The CLI cannot list or cancel runs (SYNC-211, SYNC-254): specification 011, FR-040 and FR-041.
 - Compose passes credentials for only three adapters to the worker, and has no custom CA
   (INFP-692): specification 013, FR-023 to FR-025.
+- Compose can store plans and run files only in its bundled MinIO, not in an S3-compatible
+  store the customer already runs (product owner decision of 2026-10-15): specification 013,
+  FR-028 to FR-034.
 - The Compose lifecycle tests fail at random, and the image digest and SBOM are not tied to a
   release (INFP-692): specification 013, FR-026 and FR-027.
 
@@ -85,7 +89,8 @@ These decision records need amendments:
 - The rule that a run's failure record holds a class name and never a message
   ([#369](https://github.com/opsmill/infrahub-sync/issues/369);
   [`flow.py`](../../infrahub_sync/service/flow.py), lines 722-725). Specification 009 shows
-  Infrahub's message, with secrets replaced, and FR-030 requires a decision record.
+  Infrahub's message and the cause fields, built only from allowlisted fields, and FR-030
+  requires a decision record.
 
 Each of these changes needs product sign-off before the work that depends on it ships.
 
@@ -195,15 +200,17 @@ The cards are listed with their status on 2026-10-06:
 | Q4. Can the team cancel a run from the UI? | 011, FR-024 | Yes, through the existing `POST /runs/{run_id}/cancel` route |
 | Q5. Who can reach the UI? | 011, FR-031 | The `sync-api` host only, on loopback; a person on another computer uses a tunnel they set up. Access from other computers over TLS through a reverse proxy is 3.0 (INFP-663) |
 | Q6. What happens to a v2 setting that a registered package does not accept? | 012, FR-010 | Refuse the conversion and list every such setting |
-| Q7. If the new MinIO image cannot read the old volume, may operators reset the object store? | 013, FR-019 | Yes, stated in the release notes. The alpha already requires a reset on upgrade |
+| Q7. If the new MinIO image cannot read the old volume, may operators reset the object store? | 013, FR-019 | No longer applies: on 2026-10-15 the product owner kept the current MinIO build, so the update keeps the data with no reset |
 
 Benoit Kohler answered these questions on 2026-10-15.
 
 ## Other open questions
 
 - **AD-3.** AD-3 keeps run files in S3-compatible storage, based on bundles of about 3 MB for
-  88,000 objects (VAL-18). A tier L plan measured 66.5 MiB. Whether Compose replaces MinIO with
-  a shared volume or PostgreSQL will be decided later.
+  88,000 objects (VAL-18). A tier L plan measured 66.5 MiB. On 2026-10-15 the product owner kept
+  the current MinIO build for the MVP, with no replacement S3 server, and required Sync to work
+  with a customer's own S3-compatible store. Whether a different S3 server, a shared volume or
+  PostgreSQL replaces the bundled MinIO, in 3.0 or later, will be decided later.
 - **`is_protected`.** Does `is_protected=True` stop a second configuration from updating a value
   that another configuration owns? This affects the 3.0 delete rules.
 - **Product sign-off** on five changes to earlier decisions:
