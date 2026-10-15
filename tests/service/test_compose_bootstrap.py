@@ -320,3 +320,36 @@ def test_a_real_client_context_failure_stays_behind_the_work_pool_family(
     assert result == 1
     assert "work-pool-unavailable" in caplog.text
     assert PROVIDER_CANARY not in caplog.text
+
+
+KEY_CANARY = "bootstrap-ca-directory-key-canary"
+
+
+def test_the_trust_store_is_installed_before_anything_converges(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(bootstrap, "install_custom_ca_bundle", lambda: calls.append("trust store"))
+    monkeypatch.setattr(bootstrap, "_converge", lambda: calls.append("converge"))
+
+    assert bootstrap.main() == 0
+    assert calls == ["trust store", "converge"]
+
+
+def test_a_private_key_in_the_ca_directory_stops_the_bootstrap_without_its_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "operator.pem").write_text(
+        f"-----BEGIN PRIVATE KEY-----\n{KEY_CANARY}\n-----END PRIVATE KEY-----\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("INFRAHUB_SYNC_CA_DIRECTORY", str(directory))
+    converged: list[bool] = []
+    monkeypatch.setattr(bootstrap, "_converge", lambda: converged.append(True))
+
+    assert bootstrap.main() == 1
+
+    captured = capsys.readouterr()
+    assert "CA certificate file operator.pem holds a private key" in captured.err
+    assert KEY_CANARY not in captured.err + captured.out
+    assert "Traceback" not in captured.err
+    assert converged == []

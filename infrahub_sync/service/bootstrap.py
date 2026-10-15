@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 from typing import Any
 
 import boto3
@@ -39,6 +40,7 @@ from .storage import (
     S3_REGION_ENV,
     service_product_projection,
 )
+from .trust_store import CustomCertificateError, install_custom_ca_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +183,11 @@ def _converge() -> None:
 
 def main() -> int:
     """Converge this deployment's durable objects, reporting only a family on failure."""
+    try:
+        install_custom_ca_bundle()
+    except CustomCertificateError as error:
+        sys.stderr.write(f"{error}\n")
+        return 1
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | infrahub-sync bootstrap | %(message)s")
     try:
         _converge()

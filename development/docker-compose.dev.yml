@@ -48,6 +48,12 @@ x-sync-env: &sync-env
   INFRAHUB_SYNC_SERVICE_WORK_POOL: "infrahub-sync"
   PREFECT_API_URL: "http://prefect-server:4200/api"
 
+# The CA certificates the Sync services trust in addition to the public roots:
+# set INFRAHUB_SYNC_CA_CERTIFICATES to a directory of `*.pem` or `*.crt` files (a
+# `./` path resolves under `development/`). Unset, the source is an empty volume.
+x-sync-ca-certificates: &sync-ca-certificates
+  - "${INFRAHUB_SYNC_CA_CERTIFICATES:-sync-ca-certificates}:/etc/infrahub-sync/ca:ro"
+
 services:
   postgres:
     image: "postgres:16-alpine"
@@ -140,6 +146,8 @@ services:
         condition: service_healthy
     environment:
       <<: *sync-env
+      INFRAHUB_SYNC_CA_DIRECTORY: "/etc/infrahub-sync/ca"
+    volumes: *sync-ca-certificates
 
   sync-api:
     image: *sync-image
@@ -149,6 +157,7 @@ services:
         condition: service_completed_successfully
     environment:
       <<: *sync-env
+      INFRAHUB_SYNC_CA_DIRECTORY: "/etc/infrahub-sync/ca"
       INFRAHUB_SYNC_SERVICE_HOST: "0.0.0.0"
       # Required: the API refuses to construct its principal resolver without
       # one, and rejects a token shorter than 16 characters.
@@ -157,6 +166,7 @@ services:
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "300"
       PREFECT_WORKER_QUERY_SECONDS: "10"
       INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
+    volumes: *sync-ca-certificates
     ports:
       - "127.0.0.1:8030:8000"
     healthcheck:
@@ -179,12 +189,14 @@ services:
         condition: service_completed_successfully
     environment:
       <<: *sync-env
+      INFRAHUB_SYNC_CA_DIRECTORY: "/etc/infrahub-sync/ca"
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "300"
       PREFECT_WORKER_QUERY_SECONDS: "10"
       PREFECT_WORKER_HEARTBEAT_SECONDS: "10"
       INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
       INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN:-}"
       INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN:-}"
+    volumes: *sync-ca-certificates
     # The only service that reaches a destination. The root `docker-compose.yml`
     # carries no host route on purpose; here it lets a package reach a service published
     # on this machine that has no Compose network to join, such as the preview stack's
@@ -204,3 +216,4 @@ configs:
 volumes:
   postgres-data:
   object-store-data:
+  sync-ca-certificates:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from typing import TYPE_CHECKING, Any
 
 import uvicorn
@@ -17,6 +18,7 @@ from .liveness import LivenessPolicy, RunLivenessReconciler
 from .orchestration import CancellationResult, Observation, PoolStatus, PrefectOrchestration, Submission
 from .service import RunService
 from .storage import service_product_projection
+from .trust_store import CustomCertificateError, install_custom_ca_bundle
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -76,6 +78,11 @@ def build_app(
 
 def main() -> None:
     """Serve the Sync API; Prefect workers and deployments are separate."""
+    try:
+        install_custom_ca_bundle()
+    except CustomCertificateError as error:
+        sys.stderr.write(f"{error}\n")
+        raise SystemExit(1) from None
     uvicorn.run(build_app(), host=os.environ.get("INFRAHUB_SYNC_SERVICE_HOST", "127.0.0.1"), port=8000)
 
 

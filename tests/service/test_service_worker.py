@@ -27,6 +27,7 @@ from prefect.workers.process import ProcessWorker
 
 from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_product_projection
 from infrahub_sync.service import flow as service_flow
+from infrahub_sync.service import worker as service_worker
 from infrahub_sync.service.orchestration import SERVICE_DEFINITION
 from infrahub_sync.service.worker import ServiceProcessWorker, ServiceWorkerIdentityError, service_worker_name
 from tests.service.execution_fixtures import append_execution
@@ -479,3 +480,42 @@ async def test_child_refuses_stale_identity_after_start_before_claim(
     link = stored.prefect_executions[0]
     assert link.claimed_at is None
     assert link.claiming_worker_id is None
+
+
+KEY_CANARY = "worker-ca-directory-key-canary"
+
+
+def test_the_worker_installs_the_trust_store_before_it_reads_its_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def stop_at_the_pool(_argv: object) -> str:
+        calls.append("pool argument")
+        raise SystemExit(0)
+
+    monkeypatch.setattr(service_worker, "install_custom_ca_bundle", lambda: calls.append("trust store"))
+    monkeypatch.setattr(service_worker, "_pool_argument", stop_at_the_pool)
+
+    with pytest.raises(SystemExit):
+        service_worker.main(["--pool", POOL_NAME])
+
+    assert calls == ["trust store", "pool argument"]
+
+
+def test_a_private_key_in_the_ca_directory_stops_the_worker_without_its_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "operator.crt").write_text(
+        f"-----BEGIN PRIVATE KEY-----\n{KEY_CANARY}\n-----END PRIVATE KEY-----\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("INFRAHUB_SYNC_CA_DIRECTORY", str(directory))
+    started: list[bool] = []
+    monkeypatch.setattr(service_worker, "ServiceProcessWorker", lambda **_settings: started.append(True))
+
+    assert service_worker.main(["--pool", POOL_NAME]) == 1
+
+    captured = capsys.readouterr()
+    assert "CA certificate file operator.crt holds a private key" in captured.err
+    assert KEY_CANARY not in captured.err + captured.out
+    assert started == []

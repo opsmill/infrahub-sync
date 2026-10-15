@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -11,6 +11,9 @@ pytest.importorskip("fastapi")
 pytest.importorskip("prefect")
 
 from infrahub_sync.service import auth, deploy, serve
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 RETIRED_NAMES = (
     "INFRAHUB_SYNC_MANAGED_BEARER_TOKENS",
@@ -82,3 +85,41 @@ def test_a_retired_host_name_is_ignored_by_the_server(monkeypatch: pytest.Monkey
 def test_the_retired_product_cache_setting_is_gone() -> None:
     with pytest.raises(ModuleNotFoundError):
         __import__("infrahub_sync.service._settings")
+
+
+KEY_CANARY = "serve-ca-directory-key-canary"
+
+
+def test_the_server_installs_the_trust_store_before_it_builds_the_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(serve, "install_custom_ca_bundle", lambda: calls.append("trust store"))
+    monkeypatch.setattr(serve, "build_app", lambda: calls.append("build app"))
+    monkeypatch.setattr(serve.uvicorn, "run", lambda *_arguments, **_settings: calls.append("run"))
+
+    serve.main()
+
+    assert calls == ["trust store", "build app", "run"]
+
+
+def test_a_private_key_in_the_ca_directory_stops_the_server_without_its_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "operator.pem").write_text(
+        f"-----BEGIN RSA PRIVATE KEY-----\n{KEY_CANARY}\n-----END RSA PRIVATE KEY-----\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("INFRAHUB_SYNC_CA_DIRECTORY", str(directory))
+    started: list[bool] = []
+    monkeypatch.setattr(serve, "build_app", lambda: started.append(True))
+    monkeypatch.setattr(serve.uvicorn, "run", lambda *_arguments, **_settings: started.append(True))
+
+    with pytest.raises(SystemExit) as raised:
+        serve.main()
+
+    assert raised.value.code == 1
+    assert raised.value.__context__ is None or raised.value.__suppress_context__
+    captured = capsys.readouterr()
+    assert "CA certificate file operator.pem holds a private key" in captured.err
+    assert KEY_CANARY not in captured.err + captured.out
+    assert started == []

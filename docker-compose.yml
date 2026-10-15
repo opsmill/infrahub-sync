@@ -18,9 +18,11 @@
 #
 # Two properties this file exists to hold:
 #
-#   * the API and the worker share no mount, no writable volume, and no scratch
-#     directory. Run state crosses between them through PostgreSQL and the
-#     object store, never through a filesystem.
+#   * the Sync services share no writable mount, no writable volume, and no
+#     scratch directory. Run state crosses between them through PostgreSQL and
+#     the object store, never through a filesystem. The one mount a Sync service
+#     takes is the CA directory below, read-only, on the bootstrap job, the API
+#     and the worker.
 #   * only PostgreSQL and the object store keep data across a restart. Every
 #     other writable path is tmpfs and disappears with its container.
 #
@@ -35,6 +37,14 @@ x-sync-scratch: &sync-scratch
   - "/var/lib/infrahub-sync:uid=10001,gid=10001,mode=0700"
   - "/var/lib/infrahub-sync/prefect:uid=10001,gid=10001,mode=0700"
   - "/tmp/infrahub-sync:uid=10001,gid=10001,mode=0700"
+
+# The operator's CA certificates (`*.pem`, `*.crt`), trusted in addition to the
+# public roots. Set INFRAHUB_SYNC_CA_CERTIFICATES in `.env` to a directory, as an
+# absolute path or one that starts with `./`. Unset, the source is an empty
+# named volume and nothing changes. The directory holds public certificates
+# only: a Sync process refuses to start when a file in it holds a private key.
+x-sync-ca-certificates: &sync-ca-certificates
+  - "${INFRAHUB_SYNC_CA_CERTIFICATES:-sync-ca-certificates}:/etc/infrahub-sync/ca:ro"
 
 # Everything a Sync process needs to reach its durable state. The API, the
 # worker, and the bootstrap job resolve these independently: they are given the
@@ -208,8 +218,10 @@ services:
         condition: service_healthy
     environment:
       <<: *sync-storage
+      INFRAHUB_SYNC_CA_DIRECTORY: "/etc/infrahub-sync/ca"
     read_only: true
     tmpfs: *sync-scratch
+    volumes: *sync-ca-certificates
 
   sync-api:
     image: "${INFRAHUB_SYNC_DOCKER_IMAGE:-registry.opsmill.io/opsmill/infrahub-sync}:${VERSION:-3.0.0a5}"
@@ -219,6 +231,7 @@ services:
         condition: service_completed_successfully
     environment:
       <<: *sync-storage
+      INFRAHUB_SYNC_CA_DIRECTORY: "/etc/infrahub-sync/ca"
       # Loopback belongs to the host publication below. A container listening on
       # loopback alone would be unreachable from its own published port.
       INFRAHUB_SYNC_SERVICE_HOST: "0.0.0.0"
@@ -234,6 +247,7 @@ services:
       INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
     read_only: true
     tmpfs: *sync-scratch
+    volumes: *sync-ca-certificates
     ports:
       - "${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_API_PORT:-8000}:8000"
     healthcheck:
@@ -265,6 +279,7 @@ services:
         condition: service_completed_successfully
     environment:
       <<: *sync-storage
+      INFRAHUB_SYNC_CA_DIRECTORY: "/etc/infrahub-sync/ca"
       INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS: "${INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS:-300}"
       PREFECT_WORKER_QUERY_SECONDS: "${PREFECT_WORKER_QUERY_SECONDS:-10}"
       # The API ages a worker out of the live set after three missed heartbeats
@@ -284,6 +299,7 @@ services:
       INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN:-}"
     read_only: true
     tmpfs: *sync-scratch
+    volumes: *sync-ca-certificates
 
   # The operator's client, in the same image, behind a profile so no ordinary
   # start creates it. Call it as `docker compose run --rm --no-deps -T cli ...`:
@@ -354,3 +370,6 @@ configs:
 volumes:
   postgres-data:
   object-store-data:
+  # The CA directory's placeholder when INFRAHUB_SYNC_CA_CERTIFICATES is unset:
+  # empty, mounted read-only, never written.
+  sync-ca-certificates:

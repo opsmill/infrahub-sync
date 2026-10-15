@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import sys
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ from prefect.workers.process import ProcessJobConfiguration, ProcessWorker, Proc
 from pydantic import PrivateAttr
 
 from .orchestration import SERVICE_DEFINITION
+from .trust_store import CustomCertificateError, install_custom_ca_bundle
 
 if TYPE_CHECKING:
     import logging
@@ -462,6 +464,11 @@ def neutral_working_directory() -> Iterator[Path]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Start one fail-closed service process worker."""
+    try:
+        install_custom_ca_bundle()
+    except CustomCertificateError as error:
+        sys.stderr.write(f"{error}\n")
+        return 1
     pool = _pool_argument(argv)
     # Entered before the worker exists, so nothing this parent imports later -- the
     # runner, its crash hooks, or an adapter -- can resolve out of a source tree.

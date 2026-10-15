@@ -120,6 +120,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
 | `PREFECT_WORKER_QUERY_SECONDS`, `PREFECT_WORKER_HEARTBEAT_SECONDS` | `10` | The worker's polling and heartbeat intervals. |
+| `INFRAHUB_SYNC_CA_CERTIFICATES` | unset | A host directory of PEM CA certificates (`*.pem`, `*.crt`) that `sync-bootstrap`, `sync-api` and `sync-worker` trust in addition to the public roots. Write it as an absolute path or a path that starts with `./`. See [Use custom CA certificates](custom-certificates). |
 
 ### An example `.env`
 

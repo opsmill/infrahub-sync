@@ -75,6 +75,15 @@ PREVIEW_ENV = DEVELOPMENT_COMPOSE / "preview.env"
 PERSISTENT_VOLUMES = {"postgres-data", "object-store-data"}
 PERSISTENT_SERVICES = {"postgres", "object-store-init", "object-store"}
 
+# The one read-only mount a Sync service takes: the operator's CA certificates,
+# trusted in addition to the public roots. With the setting unset its source is
+# an empty named volume that nothing writes.
+CA_SETTING = "INFRAHUB_SYNC_CA_CERTIFICATES"
+CA_TARGET = "/etc/infrahub-sync/ca"
+CA_VOLUME = "sync-ca-certificates"
+CA_DIRECTORY_SETTING = "INFRAHUB_SYNC_CA_DIRECTORY"
+CA_SERVICES = {"sync-bootstrap", "sync-api", "sync-worker"}
+
 # The test-only override, and the host route it adds -- in the form Compose
 # resolves it to, since the file writes `name:value` and the model renders
 # `name=value`. One service reaches the declared destination: the worker that
@@ -123,35 +132,50 @@ def published(definition: Mapping[str, Any]) -> list[dict[str, Any]]:
     return [dict(entry) for entry in definition.get("ports") or []]
 
 
+def is_ca_mount(mount: Mapping[str, Any]) -> bool:
+    """Whether a resolved mount is the read-only CA directory."""
+    return mount.get("target") == CA_TARGET and mount.get("read_only") is True
+
+
+def writable_mounts(definition: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return the mounts of one resolved service that are not read-only."""
+    return [dict(mount) for mount in definition.get("volumes") or [] if mount.get("read_only") is not True]
+
+
 # ---------------------------------------------------------------------------
 # Filesystem isolation
 # ---------------------------------------------------------------------------
 
 
-def test_the_api_and_the_worker_share_no_mount_source(model: dict[str, Any]) -> None:
-    """A shared source is a channel run state could cross without the object store.
+def test_the_api_and_the_worker_share_no_writable_mount_source(model: dict[str, Any]) -> None:
+    """A shared writable source is a channel run state could cross without the object store.
 
     The deployment's whole isolation claim is that a submitter and the worker that
-    serves it have no filesystem in common, so the intersection is the thing to
-    assert — not that each one's list happens to look right today.
+    serves it have no writable filesystem in common, so the intersection is the
+    thing to assert — not that each one's list happens to look right today. The
+    read-only CA directory they both mount carries public certificates in one
+    direction only, from the operator, and neither side can write to it.
     """
-    api = mount_sources(service(model, "sync-api"))
-    worker = mount_sources(service(model, "sync-worker"))
+    api = mount_sources({"volumes": writable_mounts(service(model, "sync-api"))})
+    worker = mount_sources({"volumes": writable_mounts(service(model, "sync-worker"))})
 
     assert api & worker == set(), f"sync-api and sync-worker both mount {sorted(api & worker)}"
 
 
-@pytest.mark.parametrize("name", SYNC_SERVICES)
-def test_a_sync_service_mounts_nothing_at_all(model: dict[str, Any], name: str) -> None:
-    """Not even a private mount: a writable path that survives its container is state.
+@pytest.mark.parametrize("name", ALL_SYNC_SERVICES)
+def test_a_sync_service_mounts_only_the_read_only_ca_directory(cli_model: dict[str, Any], name: str) -> None:
+    """Not even a private writable mount: a writable path that survives its container is state.
 
     Disjoint mounts would still leave each side a place to keep a cache or a run
     directory across a restart, which is the second half of what the object-store
-    transport exists to replace.
+    transport exists to replace. The one exception is the read-only CA directory,
+    on the three services that build clients at start.
     """
-    definition = service(model, name)
+    definition = service(cli_model, name)
+    targets = [(mount.get("target"), mount.get("read_only") is True) for mount in definition.get("volumes") or []]
+    expected = [(CA_TARGET, True)] if name in CA_SERVICES else []
 
-    assert definition.get("volumes") in (None, []), f"{name} mounts {definition['volumes']}"
+    assert targets == expected, f"{name} mounts {targets}"
 
 
 @pytest.mark.parametrize("name", SYNC_SERVICES)
@@ -169,16 +193,27 @@ def test_a_sync_service_runs_read_only_over_the_image_declared_scratch(model: di
 
 
 def test_only_postgresql_and_the_object_store_keep_a_named_volume(model: dict[str, Any]) -> None:
-    """The one-shot owner repair shares only the object store's durable volume."""
+    """The one-shot owner repair shares only the object store's durable volume.
+
+    The empty CA placeholder is the only other declared volume, and every service
+    that mounts it does so read-only, so it never keeps data.
+    """
     declared = set(model.get("volumes") or {})
     holders = {
         name
         for name, definition in services(model).items()
-        if any(mount.get("type") == "volume" for mount in definition.get("volumes") or [])
+        if any(mount.get("type") == "volume" for mount in writable_mounts(definition))
+    }
+    placeholder_holders = {
+        name
+        for name, definition in services(model).items()
+        for mount in definition.get("volumes") or []
+        if mount.get("type") == "volume" and mount.get("source") == CA_VOLUME
     }
 
-    assert declared == PERSISTENT_VOLUMES, f"the file declares the volumes {sorted(declared)}"
-    assert holders == PERSISTENT_SERVICES, f"named volumes are held by {sorted(holders)}"
+    assert declared == PERSISTENT_VOLUMES | {CA_VOLUME}, f"the file declares the volumes {sorted(declared)}"
+    assert holders == PERSISTENT_SERVICES, f"writable named volumes are held by {sorted(holders)}"
+    assert placeholder_holders == CA_SERVICES, f"{CA_VOLUME} is mounted by {sorted(placeholder_holders)}"
 
 
 def test_prefect_keeps_no_state_of_its_own(model: dict[str, Any]) -> None:
@@ -208,10 +243,12 @@ def test_the_worker_is_given_no_configuration_directory(model: dict[str, Any]) -
 
 
 def test_no_service_mounts_a_host_path(cli_model: dict[str, Any]) -> None:
-    """One self-contained file: nothing it runs reads a path beside it on the host.
+    """One self-contained file: with the CA setting unset, nothing it runs reads a host path.
 
     An equality over every service, the opt-in CLI included, so a bind mount
     added to any of them fails here. A named volume or a tmpfs is not a host path.
+    The contract environment leaves `INFRAHUB_SYNC_CA_CERTIFICATES` unset, so the
+    CA directory resolves to its empty named volume.
     """
     binds = sorted(
         f"{name}: {mount.get('source')}"
@@ -221,6 +258,53 @@ def test_no_service_mounts_a_host_path(cli_model: dict[str, Any]) -> None:
     )
 
     assert binds == [], f"these services mount a host path: {binds}"
+
+
+def test_the_ca_directory_is_mounted_read_only_on_exactly_the_three_sync_services(cli_model: dict[str, Any]) -> None:
+    """Only the services that build clients at start trust the operator's CA."""
+    holders = {
+        name: [
+            bool(mount.get("read_only"))
+            for mount in definition.get("volumes") or []
+            if mount.get("target") == CA_TARGET
+        ]
+        for name, definition in services(cli_model).items()
+    }
+    mounted = {name for name, flags in holders.items() if flags}
+
+    assert mounted == CA_SERVICES, f"{CA_TARGET} is mounted by {sorted(mounted)}"
+    assert all(holders[name] == [True] for name in CA_SERVICES), f"{CA_TARGET} mounts: {holders}"
+
+
+def test_the_ca_directory_setting_reaches_exactly_the_three_sync_services(cli_model: dict[str, Any]) -> None:
+    receivers = {
+        name: (definition.get("environment") or {}).get(CA_DIRECTORY_SETTING)
+        for name, definition in services(cli_model).items()
+        if CA_DIRECTORY_SETTING in (definition.get("environment") or {})
+    }
+
+    assert receivers == dict.fromkeys(CA_SERVICES, CA_TARGET), f"{CA_DIRECTORY_SETTING} reaches {receivers}"
+
+
+def _ca_sources(model: Mapping[str, Any]) -> dict[str, tuple[str | None, str | None]]:
+    return {
+        name: (mount.get("type"), mount.get("source"))
+        for name, definition in services(model).items()
+        for mount in definition.get("volumes") or []
+        if is_ca_mount(mount)
+    }
+
+
+def test_without_the_ca_setting_the_source_is_the_empty_named_volume(model: dict[str, Any]) -> None:
+    assert _ca_sources(model) == dict.fromkeys(CA_SERVICES, ("volume", CA_VOLUME))
+
+
+def test_the_ca_setting_binds_the_operator_directory(contract_environment: dict[str, str]) -> None:
+    """A `./` path resolves beside the file, the way an operator's `.env` writes it."""
+    bound = resolve({**contract_environment, CA_SETTING: "./ca-certificates"})
+    expected = str(COMPOSE_FILE.parent / "ca-certificates")
+
+    assert _ca_sources(bound) == dict.fromkeys(CA_SERVICES, ("bind", expected))
 
 
 def test_the_bootstrap_script_comes_from_an_inline_config(model: dict[str, Any]) -> None:
@@ -663,12 +747,15 @@ def test_no_sync_service_takes_a_filesystem_input(model: dict[str, Any]) -> None
 
     An equality over every Sync service, not the absence of one known mount: a
     configuration handed back to any of them would restore a startup that decides
-    what the deployment runs before the operator has registered anything.
+    what the deployment runs before the operator has registered anything. The
+    read-only CA directory holds certificates, not configuration, and is the one
+    mount allowed.
     """
     readers = {
-        name: definition.get("volumes") or []
+        name: other
         for name, definition in services(model).items()
-        if name.startswith("sync-") and (definition.get("volumes") or [])
+        if name.startswith("sync-")
+        and (other := [mount for mount in definition.get("volumes") or [] if not is_ca_mount(mount)])
     }
 
     assert readers == {}, f"Sync services taking a filesystem input: {sorted(readers)}"
