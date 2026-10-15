@@ -1,0 +1,28 @@
+dev/specs/010-second-sync-plan-speed/spec.md
+  s_47078ea83e766d::t_25ff35ffddd9d2 9-12
+dev/specs/012-v2-configuration-conversion/spec.md
+  s_47078ea83e766d::t_25ff35ffddd9d2 9-12
+dev/specs/009-plan-problem-reporting/spec.md
+  s_47078ea83e766d::t_25ff35ffddd9d2 9-12
+dev/specs/011-operator-ui/spec.md
+  s_47078ea83e766d::t_25ff35ffddd9d2 9-12
+dev/specs/v3-release-scope.md
+  s_47078ea83e766d::t_656f5544e5b5a2 1-115,117-129,131-169
+  s_47078ea83e766d::t_a359f8cc07d09d 116,130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6a3d205c31f1b651248345d0611e76f29ef6475d",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
