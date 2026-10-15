@@ -1,0 +1,45 @@
+tests/compose/test_documentation.py
+  s_47078ea83e766d::t_386819be79cfa7 23,419-427
+dev/specs/013-compose-images/tasks.md
+  s_47078ea83e766d::t_70300d21c163c5 138-139,143-147
+tests/compose/lifecycle.py
+  s_47078ea83e766d::t_0f495f10ca1694 29-32,100,336,362-364
+docs/docs/operations/compose-troubleshooting.mdx
+  s_47078ea83e766d::t_4d8374c28fc1ae 29
+tests/compose/test_compose_contract.py
+  s_47078ea83e766d::t_04e0d8cf788677 26
+  s_47078ea83e766d::t_ea8d3428f8639f 393-394,397-437
+tests/compose/test_prefect_server_upgrade.py
+  s_47078ea83e766d::t_4787bc8eab9245 55
+tests/compose/conftest.py
+  s_47078ea83e766d::t_2a544e4c9819f4 46-58
+tests/compose/test_configuration_free_startup.py
+  s_47078ea83e766d::t_b429b2dd0e263c 189-205
+  s_47078ea83e766d::t_4787bc8eab9245 43
+tests/compose/test_lifecycle.py
+  s_47078ea83e766d::t_4787bc8eab9245 53
+docs/docs/quickstart-compose.mdx
+  s_47078ea83e766d::t_4d8374c28fc1ae 35
+  s_47078ea83e766d::t_3d006e37ae8aaa 36-37
+docs/docs/compose-deployment.mdx
+  s_47078ea83e766d::t_4d8374c28fc1ae 35-36,113,115,303-306,359-401
+docker-compose.yml
+  s_47078ea83e766d::t_05731519accbae 255-256
+  s_47078ea83e766d::t_8d1237a0571d6f 182-186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b34f5f7f6ac513709e6efc494e7d60abcd53d4fb",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
