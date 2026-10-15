@@ -31,8 +31,11 @@
 
 ## Notes
 
-- Answered by the product owner on 2026-10-15, so no marker remains. FR-013: plan phase durations are shown to the customer team in
-  the run record, marked as subject to change in the API reference.
+- Answered by the product owner on 2026-10-15, so no marker remains. FR-013: the plan step
+  timings are shown to the customer team in the run record, marked as subject to change in the
+  API reference, and in the run view of the UI (spec 011 FR-038).
+- Revision of 2026-10-15 after the cross-spec review: "phase" was replaced by "plan step
+  timings" and "part of the plan step", because the Sync API uses `phase` for a run's state.
 - The spec names the Sync API, the CLI and the benchmark runner because they are the surfaces
   the customer team and OpsMill engineers use, as spec 009 does. It names no language,
   framework or storage technology.

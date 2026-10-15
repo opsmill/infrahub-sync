@@ -33,8 +33,13 @@
 
 ## Notes
 
-- Answered by the product owner on 2026-10-15, so no marker remains. FR-010: the command refuses the conversion and lists every
-  adapter setting that a registered package does not accept.
+- Answered by the product owner on 2026-10-15, so no marker remains. FR-010: the command
+  refuses the conversion and lists every adapter setting that a registered package does not
+  accept.
+- Revision of 2026-10-15 after the cross-spec review: FR-013 and SC-003 now depend on spec 013
+  FR-023, which passes every bundled adapter's credential variables to the Compose worker. The
+  v2 `owner` kept by FR-017 is recorded as an open point for the 3.0 delete design on the scope
+  page; no MVP requirement changed for it.
 - The spec names the CLI command, configuration keys and file paths. These are the customer's
   interface (the command they run and the file they register), not implementation choices, so
   the "no implementation details" items pass.

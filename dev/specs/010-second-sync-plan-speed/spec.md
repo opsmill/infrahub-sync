@@ -40,13 +40,13 @@ slow:
 What is needed: after a first import, a second plan with no change in the source holds zero
 operations, and a plan after a change holds only that change. At tier M, a plan with no change
 or with about 100 changes takes no longer than the first-sync plan on the same data. To reach
-that, the plan step is first measured phase by phase, and the measurement is recorded before
-any change meant to speed it up. A first sync at tier M keeps completing with no size limit
-changed in the code.
+that, the time of each part of the plan step (the plan step timings) is measured first, and the
+measurement is recorded before any change meant to speed it up. A first sync at tier M keeps
+completing with no size limit changed in the code.
 
-Not decided yet: whether the time of each plan phase is shown to the customer team in the run
-record, or recorded only for OpsMill engineers and the benchmark. It is marked in the
-requirements below.
+Decided by the product owner on 2026-10-15: the plan step timings are shown to the customer
+team in the run record, marked as fields that may change (FR-013). In this specification,
+"phase" is not used for these timings, because the Sync API uses `phase` for a run's state.
 
 This specification covers requirement FR-005, journey P2, and the sync part of success criteria
 SC-001 and SC-002 of the V3 idea brief (2026-10-15). Opening a tier M plan in the UI, and the
@@ -161,33 +161,33 @@ measurement in User Story 4.
 
 ---
 
-### User Story 4 - Measure which phase of the plan step takes the time (Priority: P2)
+### User Story 4 - Measure which part of the plan step takes the time (Priority: P2)
 
 Before anyone changes the plan step to make it faster, an OpsMill engineer runs the tier M
-benchmark and views how long each phase of the plan step took in each run: waiting for a worker,
-reading the source, reading Infrahub, comparing the two, checking the plan, and saving and
-publishing the plan for review. The result is recorded next to the existing tier M results, so
-the speed change in User Story 3 addresses the phase that takes the time.
+benchmark and views the plan step timings of each run: how long waiting for a worker, reading
+the source, reading Infrahub, comparing the two, checking the plan, and saving and publishing
+the plan for review each took. The result is recorded next to the existing tier M results, so
+the speed change in User Story 3 addresses the part that takes the time.
 
 **Why this priority**: the cause of the 20-minute plan is not known ("Not known yet" in the
-metrics). A fix chosen without a measurement may address the wrong phase.
+metrics). A fix chosen without a measurement may address the wrong part of the plan step.
 
-**Independent Test**: run one tier S plan and check that the run reports a duration for each
-phase, and that the phase durations add up to the plan step's duration within a small
+**Independent Test**: run one tier S plan and check that the run reports a timing for each part
+of the plan step, and that the timings add up to the plan step's duration within a small
 remainder.
 
 **Acceptance Scenarios**:
 
-1. **Given** any plan run, **When** it completes, **Then** a duration is recorded for each phase
+1. **Given** any plan run, **When** it completes, **Then** a timing is recorded for each part
    of the plan step listed in FR-009.
 2. **Given** the tier M first-sync, no-change and 102-change scenarios, **When** the benchmark
-   runs them, **Then** each result holds the duration of each plan phase, next to the existing
-   plan and apply times.
+   runs them, **Then** each result holds the plan step timings, next to the existing plan and
+   apply times.
 3. **Given** a recorded tier M measurement, **When** an engineer views it, **Then** it names the
-   phase or phases that account for the difference between the first-sync plan and the
-   no-change plan.
+   part or parts of the plan step that account for the difference between the first-sync plan
+   and the no-change plan.
 4. **Given** a plan run that fails, **When** the team or an engineer views it, **Then** the
-   durations of the phases that completed before the failure are recorded.
+   timings of the parts that completed before the failure are recorded.
 
 ---
 
@@ -271,25 +271,28 @@ commit and check that it completes and passes the runner's checks.
   relationships involved, and MUST be checked on the NetBox example configuration and the
   benchmark tier configuration.
 
-#### The plan step is measured by phase
+#### Plan step timings
 
-- **FR-009**: Every plan run MUST record how long each phase of the plan step took:
+- **FR-009**: Every plan run MUST record its plan step timings, that is how long each of these
+  parts of the plan step took:
   - waiting for a worker to start the run
   - reading the source
   - reading Infrahub
   - comparing the source with Infrahub to derive the operations
   - checking the plan before it is saved
   - saving the plan and publishing it for review
-- **FR-010**: A plan run that fails MUST record the durations of the phases that completed and
-  the phase in which it failed.
-- **FR-011**: The benchmark results MUST hold the duration of each plan phase for every v3 run,
-  next to the plan and apply times it records today.
-- **FR-012**: The tier M first-sync, no-change and 102-change scenarios MUST be measured by phase
-  with three runs each, and the result MUST be recorded next to the existing tier M results,
-  before any change meant to speed up planning is merged.
-- **FR-013**: The phase durations of a plan run MUST be
-  shown to the customer team in the run record that the CLI and the Sync API return, and so in
-  the UI of spec 011. The API reference MUST mark these fields as subject to change.
+- **FR-010**: A plan run that fails MUST record the timings of the parts that completed and the
+  part in which it failed.
+- **FR-011**: The benchmark results MUST hold the plan step timings for every v3 run, next to
+  the plan and apply times it records today.
+- **FR-012**: The plan step timings of the tier M first-sync, no-change and 102-change scenarios
+  MUST be measured with three runs each, and the result MUST be recorded next to the existing
+  tier M results, before any change meant to speed up planning is merged.
+- **FR-013**: The plan step timings of a plan run MUST be shown to the customer team in the run
+  record that the CLI and the Sync API return, and in the run view of the UI (spec 011 FR-038).
+  The API reference MUST mark these fields as subject to change. They MUST NOT use the name
+  `phase`, which the run record already uses for the run's state
+  (`infrahub_sync/client/models.py:186`).
 
 #### Planning time at tier M (brief SC-001)
 
@@ -321,10 +324,10 @@ commit and check that it completes and passes the runner's checks.
   created, such as the `default` IP namespace. A plan never proposes to delete it.
 - **Relationship that holds several peers**: a relationship of a node, such as the tagged VLANs
   of an interface, whose set of peers in Infrahub must equal the set in the source after apply.
-- **Plan phase duration**: for one plan run, the name of a phase of the plan step and how long it
-  took. The phases are listed in FR-009.
+- **Plan step timing**: for one plan run, the name of a part of the plan step and how long it
+  took. The parts are listed in FR-009.
 - **Benchmark result**: for one benchmark run, the tier, the scenario, the version and commit,
-  the plan and apply times, and, after this specification, the plan phase durations and the size
+  the plan and apply times, and, after this specification, the plan step timings and the size
   of the saved plan.
 
 ## Success Criteria *(mandatory)*
@@ -346,8 +349,9 @@ commit and check that it completes and passes the runner's checks.
   and a plan after applying it holds zero operations.
 - **SC-005**: in a test where the source replaces peer `B` with `C` in a relationship that holds
   `A` and `B`, Infrahub holds `A` and `C` after one plan and apply, in 100% of runs.
-- **SC-006**: the recorded tier M measurement names the plan phase or phases that account for at
-  least 80% of the difference between the first-sync plan time and the no-change plan time.
+- **SC-006**: the recorded tier M measurement names the part or parts of the plan step that
+  account for at least 80% of the difference between the first-sync plan time and the no-change
+  plan time.
 - **SC-007**: the benchmark runner no longer needs to exclude the built-in `default` IP namespace
   delete by name to accept a no-change run as having zero operations.
 
@@ -370,9 +374,9 @@ commit and check that it completes and passes the runner's checks.
   the second-sync plans. The 10% allowance in FR-016 is chosen because the three 3.0.0a5 runs
   differed by about 1 second, so 10% allows for machine variation but not for a deliberate
   slowdown.
-- Tier S is measured and reported with the same phases, but has no speed target in the testing
-  release. At tier S the no-change plan took about 2 minutes against about 35 seconds for the
-  first-sync plan.
+- Tier S is measured and reported with the same plan step timings, but has no speed target in the
+  testing release. At tier S the no-change plan took about 2 minutes against about 35 seconds for
+  the first-sync plan.
 - The cause of the slow no-change plan can be fixed within the testing release (idea brief,
   "Assumptions"). If the measurement shows otherwise, the result is reported to the product
   owner before FR-014 and FR-015 are changed.

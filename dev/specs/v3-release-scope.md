@@ -17,7 +17,11 @@
 - **Not decided yet.**
   - whether MinIO is replaced (AD-3)
   - whether Infrahub's `is_protected` blocks updates from a second configuration
-  - product sign-off on three changes to earlier decisions
+  - product sign-off on five changes to earlier decisions: the UI in the MVP (AD-5), records
+    left out at the plan stage (AD-12), failure messages in run records (#369), deletes in 3.0,
+    and the new definition of 3.0
+  - how the 3.0 delete rules treat objects that a converted v2 configuration wrote with its
+    `owner`
 
 Benoit Kohler set this scope on 2026-10-15. It replaces the definition in
 [path-to-3.0.md](https://github.com/opsmill/infrahub-sync-process/blob/main/product/path-to-3.0.md),
@@ -37,13 +41,35 @@ where 3.0 is complete when every card linked to
 
 | Specification | What the customer team can do | Requirements from the scope decision |
 | --- | --- | --- |
-| [009 Plan problem reporting](009-plan-problem-reporting/spec.md) | View every bad source record in one plan, apply the rest after confirming the count left out, view why a run failed, plan again after a stopped apply | Plan collects every problem; records with problems are left out; failure causes shown; recovery by planning again |
+| [009 Plan problem reporting](009-plan-problem-reporting/spec.md) | View every bad source record in one plan, apply the rest after confirming the count left out, view why a run failed, plan again after a stopped apply, check a configuration against the destination schema before a run | Plan collects every problem; records with problems are left out; failure causes shown; recovery by planning again; credential masking; NetBox example on real data; `configs validate` checks |
 | [010 Second sync and plan speed](010-second-sync-plan-speed/spec.md) | Plan again after a change and view only that change, at tier M in no more time than the first-sync plan | Second sync shows only real changes; plan time at tier M |
-| [011 Operator UI](011-operator-ui/spec.md) | Review, approve and apply a plan, and view runs, in a browser | UI served by `sync-api`; `GET /runs`; plan detail in pages |
+| [011 Operator UI](011-operator-ui/spec.md) | Review, approve and apply a plan, and view runs, in a browser on the `sync-api` host; list and cancel runs in the CLI | UI served by `sync-api`; `GET /runs`; plan detail in pages; each peer identity shown once; `runs list` and `runs cancel` |
 | [012 v2 configuration conversion](012-v2-configuration-conversion/spec.md) | Convert a v2 `config.yml`, and view a first V3 plan with no false changes on data v2 wrote | Conversion command; no-false-updates check |
-| [013 Compose images](013-compose-images/spec.md) | Deploy with fewer images: the Prefect server runs from the Sync image | Prefect server from the Sync image as its own service, port not published; MinIO image pinned by digest |
+| [013 Compose images](013-compose-images/spec.md) | Deploy with fewer images, pass any bundled adapter's credentials and a custom CA to the worker, and pull a released image by digest | Prefect server from the Sync image as its own service, port not published; MinIO image pinned by digest; worker credentials and CA; reliable lifecycle tests; image digest and SBOM |
 
 Suggested order: 009, 010, 011, 012, 013. Specification 011 uses the API that 009 defines.
+
+### MVP blockers assigned to specifications
+
+[path-to-3.0.md](https://github.com/opsmill/infrahub-sync-process/blob/main/product/path-to-3.0.md)
+names these problems for the MVP cards. Each one now has an owner:
+
+- Short credentials and credentials with JSON separators can appear in errors and plans
+  (SYNC-82, SYNC-262): specification 009, FR-027 and FR-028.
+- The NetBox example package fails on data that real NetBox instances hold
+  ([#374](https://github.com/opsmill/infrahub-sync/issues/374)): specification 009, FR-031,
+  because its success criteria run on that example.
+- `configs validate` cannot reach the destination schema check or the credential check, and
+  validation and planning can disagree (INFP-651, INFP-652, SYNC-107, SYNC-147): specification
+  009, FR-032 to FR-035, because these are problems found before a plan.
+- Each peer's identity is printed twice in plan detail
+  ([#373](https://github.com/opsmill/infrahub-sync/issues/373), SYNC-259): specification 011,
+  FR-039.
+- The CLI cannot list or cancel runs (SYNC-211, SYNC-254): specification 011, FR-040 and FR-041.
+- Compose passes credentials for only three adapters to the worker, and has no custom CA
+  (INFP-692): specification 013, FR-023 to FR-025.
+- The Compose lifecycle tests fail at random, and the image digest and SBOM are not tied to a
+  release (INFP-692): specification 013, FR-026 and FR-027.
 
 ### MVP work that is not a specification
 
@@ -53,12 +79,15 @@ These decision records need amendments:
   Prefect server (specification 013).
 - AD-12 in
   [decisions.md](https://github.com/opsmill/infrahub-sync-process/blob/main/product/decisions.md):
-  at the plan stage, records with problems are left out and counted (specification 009).
+  at the plan stage, records with problems are left out and counted (specification 009, FR-029).
 - AD-5 in the same file: the UI moves into the MVP. AD-5 said "built after recovery and
-  operations" (specification 011).
+  operations" (specification 011, FR-037).
 - The rule that a run's failure record holds a class name and never a message
-  ([#369](https://github.com/opsmill/infrahub-sync/issues/369)). Specification 009 shows
-  Infrahub's message, with secrets replaced.
+  ([#369](https://github.com/opsmill/infrahub-sync/issues/369);
+  [`flow.py`](../../infrahub_sync/service/flow.py), lines 722-725). Specification 009 shows
+  Infrahub's message, with secrets replaced, and FR-030 requires a decision record.
+
+Each of these changes needs product sign-off before the work that depends on it ships.
 
 ### Not in the MVP
 
@@ -67,6 +96,9 @@ These decision records need amendments:
 - schedules
 - custom adapters
 - resuming a stopped apply
+- an option that applies a plan with records left out without review
+- opening the UI from other computers over TLS (a person on another computer uses a tunnel they
+  set up themselves)
 - Kubernetes
 - editing configurations in the UI
 - running Prefect inside the `sync-api` container (not planned in any release)
@@ -87,7 +119,9 @@ status on 2026-10-06 according to
   [INFP-656](https://opsmill.atlassian.net/browse/INFP-656), IN PLANNING.
 - **Recovery:**
   - crash-safe or resumable apply
-  - the AD-12 policy for runs that nobody watches
+  - the AD-12 policy for runs that nobody watches, including any option that applies a plan
+    with records left out without a person confirming the count (the MVP stops a `sync` run
+    after such a plan, specification 009 FR-012)
   - [INFP-650](https://opsmill.atlassian.net/browse/INFP-650), IN PLANNING
 - **Tier L** with the 64 MiB and 16 MiB limits removed:
   [INFP-659](https://opsmill.atlassian.net/browse/INFP-659), IN PLANNING.
@@ -97,6 +131,9 @@ status on 2026-10-06 according to
   [INFP-655](https://opsmill.atlassian.net/browse/INFP-655), IN PLANNING.
 - **Health checks and documentation** for Compose: the rest of INFP-663, and
   [INFP-665](https://opsmill.atlassian.net/browse/INFP-665), In Development.
+- **Access to the UI and the Sync API from other computers over TLS**, through a documented
+  reverse proxy with a certificate the customer supplies: part of INFP-663. In the MVP, the UI
+  is reachable from the `sync-api` host only (specification 011 FR-031).
 - **Deletes**, under the rules below. Card:
   [INFP-660](https://opsmill.atlassian.net/browse/INFP-660), IN PLANNING.
   - v2 never deletes from Infrahub, according to
@@ -129,6 +166,13 @@ The Infrahub adapter sets `source`, `owner` and `is_protected=True` on every cre
 ([`adapters/infrahub.py`](../../infrahub_sync/adapters/infrahub.py), in `apply_planned_operation`).
 Rule 1 requires updates to stop sending `owner`.
 
+Open point for the 3.0 delete design: specification 012 FR-017 keeps the v2 `source` and
+`owner` settings when it converts a v2 configuration, so V3 writes carry the same lineage as v2
+writes. Specification 012 also states that v2 sets `owner` on its writes. Under rule 1, a
+converted configuration could then delete objects that v2 wrote with that `owner`. Rule 7
+covers only objects that v2 wrote without lineage. The 3.0 delete design decides whether
+objects that v2 wrote with an `owner` can be deleted by the converted configuration. The MVP does not change, because deletes are not executed in the MVP.
+
 ## 3.x: after 3.0
 
 The cards are listed with their status on 2026-10-06:
@@ -146,10 +190,10 @@ The cards are listed with their status on 2026-10-06:
 | Question | Specification | Answer |
 | --- | --- | --- |
 | Q1. Is a record that refers to a left-out record only through an optional relationship also left out? | 009, FR-005 | No. Keep it without that relationship, and list it in the plan |
-| Q2. Does `sync` (plan and apply in one request) stop when its plan leaves out records? | 009, FR-012 | Yes. Stop after the plan, so a person confirms the count before a write. An explicit option, such as `--accept-left-out`, applies the rest without that stop |
+| Q2. Does `sync` (plan and apply in one request) stop when its plan leaves out records? | 009, FR-012 | Yes. Stop after the plan, so a person confirms the count before a write. The MVP has no option that skips that stop; the policy for runs that nobody watches, including any such option, is 3.0 |
 | Q3. Who views the time each plan phase takes? | 010, FR-013 | The customer team, in the run record, marked as a field that may change |
 | Q4. Can the team cancel a run from the UI? | 011, FR-024 | Yes, through the existing `POST /runs/{run_id}/cancel` route |
-| Q5. Who can reach the UI? | 011, FR-031 | Same host by default; other computers through a documented reverse proxy with TLS |
+| Q5. Who can reach the UI? | 011, FR-031 | The `sync-api` host only, on loopback; a person on another computer uses a tunnel they set up. Access from other computers over TLS through a reverse proxy is 3.0 (INFP-663) |
 | Q6. What happens to a v2 setting that a registered package does not accept? | 012, FR-010 | Refuse the conversion and list every such setting |
 | Q7. If the new MinIO image cannot read the old volume, may operators reset the object store? | 013, FR-019 | Yes, stated in the release notes. The alpha already requires a reset on upgrade |
 
@@ -162,7 +206,11 @@ Benoit Kohler answered these questions on 2026-10-15.
   a shared volume or PostgreSQL will be decided later.
 - **`is_protected`.** Does `is_protected=True` stop a second configuration from updating a value
   that another configuration owns? This affects the 3.0 delete rules.
-- **Product sign-off** on three changes to earlier decisions:
-  - the UI in the MVP (AD-5)
+- **Product sign-off** on five changes to earlier decisions:
+  - the UI in the MVP (AD-5, specification 011 FR-037)
+  - records left out at the plan stage (AD-12, specification 009 FR-029)
+  - failure messages in run records instead of class names only (#369, specification 009
+    FR-030)
   - deletes in 3.0 (the 2026-09-19 decision)
   - the new definition of 3.0
+- **Owner of objects that v2 wrote.** See the open point under "Delete rules for 3.0".

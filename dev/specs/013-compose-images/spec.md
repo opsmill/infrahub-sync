@@ -29,9 +29,20 @@ What is needed for the testing release:
 - The operator deployment no longer publishes the Prefect port on the host. The customer team
   uses the Sync UI (spec 011) and the CLI. OpsMill engineers keep an opt-in to open the Prefect UI.
 - The object store runs a maintained MinIO-compatible image, pinned by digest.
+- The worker receives the credential variables of every bundled adapter and a custom CA
+  certificate bundle, without an edit to the shipped file.
+- The compose lifecycle tier passes reliably, and each release publishes the Sync image digest
+  and its SBOM.
 
-Not decided yet: whether the testing release may ask operators to reset the object store if no
-maintained image reads the existing data volume (FR-019).
+The last two items are MVP blockers that `infrahub-sync-process/product/path-to-3.0.md` lists
+under INFP-692: "An operator using Compose cannot add a custom CA or pass credentials for most
+adapters to the worker", "Engineering cannot rely on the Compose lifecycle qualification as a
+regression gate while it fails at random", and that an evaluator can neither pull the Sync image
+by digest nor be sure the SBOM is published with the release.
+
+Decided by the product owner on 2026-10-15: if no maintained image reads the existing data
+volume, the update may require operators to reset the object store, stated in the release notes
+(FR-019). The alpha already requires a reset on upgrade.
 
 Decisions confirmed by the product owner and not reopened here (idea brief of 2026-10-15,
 FR-009 and FR-010):
@@ -152,6 +163,35 @@ each stack; the server reports the new version with no other file changed.
    host reach it.
 3. **Given** `development/preview.env`, **When** an engineer reads it, **Then** it holds no
    Prefect image tag or digest setting.
+
+---
+
+### User Story 5 - Pass every adapter's credentials and a custom CA to the worker (Priority: P1)
+
+A customer team converted its v2 configuration for a bundled adapter other than NetBox, such as
+Cisco ACI (spec 012). The convert command printed the credential variables to set. The team
+sets them in `.env`, and adds the certificate of the CA that signed their NetBox and Infrahub
+certificates. They start the deployment, register the package and plan, without editing
+`docker-compose.yml`.
+
+**Why this priority**: the root compose file passes only the Infrahub, NetBox and Nautobot
+tokens to `sync-worker` (`docker-compose.yml:275-284`), so a package for any other bundled
+adapter cannot run, and a source behind a private CA cannot be reached.
+
+**Independent Test**: set the ACI credential variables and a test CA bundle in `.env`, start the
+root compose file, and check that the worker reads both and that a plan reaches a test server
+that uses a certificate from that CA.
+
+**Acceptance Scenarios**:
+
+1. **Given** `.env` with `INFRAHUB_SYNC_CREDENTIAL_ACI_USERNAME` and
+   `INFRAHUB_SYNC_CREDENTIAL_ACI_PASSWORD`, **When** the team starts the deployment, **Then**
+   `sync-worker` holds both variables and a run of an ACI package resolves both references.
+2. **Given** a CA certificate bundle that the team names in `.env`, **When** a run connects to a
+   source or to Infrahub that presents a certificate signed by that CA, **Then** the connection
+   succeeds without turning off certificate checks.
+3. **Given** no CA bundle in `.env`, **When** the team starts the deployment, **Then** every
+   service starts as it does today.
 
 ### Edge Cases
 
@@ -297,6 +337,33 @@ each stack; the server reports the new version with no other file changed.
 - **FR-022**: The change MUST add a news fragment under `changelog/` that names the removed Prefect
   image, the unpublished Prefect port, and the new object store image.
 
+#### Worker credentials and custom CA (INFP-692)
+
+- **FR-023**: In the root compose file, every `INFRAHUB_SYNC_CREDENTIAL_` variable that a
+  package for a bundled adapter can reference (the identifiers of spec 012 FR-005 and FR-006)
+  MUST reach `sync-worker` when the operator sets it in `.env`, without an edit to the shipped
+  `docker-compose.yml`. The plan MUST state which other services receive these variables, and
+  MUST keep the Prefect database credential rule of FR-002. ADR 0016 keeps the operator
+  deployment to one self-contained file, so the plan MUST state how this fits that decision.
+- **FR-024**: The operator MUST be able to name a CA certificate bundle in `.env` that
+  `sync-worker` trusts for TLS connections to sources and to Infrahub, in addition to the
+  image's default trust store, without an edit to the shipped `docker-compose.yml` and without
+  turning off certificate checks.
+- **FR-025**: `docs/docs/compose-deployment.mdx` MUST list the credential variables of each
+  bundled adapter and describe how to add a CA certificate bundle.
+
+#### Compose lifecycle reliability and published image (INFP-692)
+
+- **FR-026**: The causes of the random failures of the compose lifecycle tier
+  (`uv run pytest -m compose tests/compose`) MUST be found and fixed or removed, so that the tier
+  can be used as a regression gate for the MVP release. Each cause found MUST be recorded in the
+  plan of this specification.
+- **FR-027**: The MVP release MUST publish the Sync image for linux/amd64 and linux/arm64 with
+  its multi-architecture digest and its SBOM, through the existing image workflow
+  (`.github/workflows/ci-docker-image.yml`, which already merges, signs and attaches an SBOM),
+  and the release notes MUST name the digest, so that an evaluator can pull the image by digest
+  and find the SBOM of that release.
+
 ### Key Entities
 
 - **Sync image**: the one image that runs `sync-bootstrap`, `sync-api`, `sync-worker`, `cli`, and
@@ -325,6 +392,15 @@ each stack; the server reports the new version with no other file changed.
   read again, unless FR-019 is answered with a documented reset.
 - **SC-007**: An OpsMill engineer opens the Prefect UI through the opt-in by following the
   documentation alone, in under 5 minutes.
+- **SC-008**: For every bundled adapter, a package whose credential variables are set in `.env`
+  resolves every credential reference in `sync-worker` on the root compose file, with no edit to
+  `docker-compose.yml`.
+- **SC-009**: A run reaches a source that presents a certificate from a private CA once that CA
+  bundle is named in `.env`, with certificate checks on.
+- **SC-010**: The compose lifecycle tier passes 10 runs in a row on linux/amd64 and on
+  linux/arm64 in CI.
+- **SC-011**: The release notes of the MVP release name the Sync image digest, and that digest
+  pulls the image and its SBOM from the registry.
 
 ## Assumptions
 
@@ -352,9 +428,11 @@ each stack; the server reports the new version with no other file changed.
   Chainguard build was chosen "while a maintained S3 store is selected" (comment in
   `docker-compose.yml`). The sources do not say which property of that build fails the
   "maintained" test; FR-013 states the conditions the replacement must meet.
-- The Sync UI from spec 011 replaces the Prefect UI for customer teams. Spec 011 leaves open
-  whether the Sync UI can be opened from other computers (its FR-031). The Prefect opt-in stays on
-  loopback whatever that answer is.
+- The Sync UI from spec 011 replaces the Prefect UI for customer teams. In the MVP the Sync UI
+  is reachable from the `sync-api` host only, on loopback (spec 011 FR-031), so FR-007 and FR-017
+  keep `sync-api` as the only service that publishes a host port. The Prefect opt-in also stays
+  on loopback.
+- The 10-run threshold of SC-010 is chosen for this specification; no source sets one.
 
 ## Out of scope
 
@@ -370,6 +448,7 @@ each stack; the server reports the new version with no other file changed.
 - `docker-compose.yml`, `development/docker-compose.dev.yml`, `development/docker-compose.preview.yml`,
   `development/preview.env`, `Dockerfile`
 - `tests/compose/test_compose_contract.py`, `tests/compose/lifecycle.py`, `tests/compose/conftest.py`
+- `.github/workflows/ci-docker-image.yml`
 - `dev/adr/0016-the-compose-deployment-is-one-tag-pinned-file.md`,
   `dev/adr/0019-prefect-is-an-internal-component-of-sync.md`
 - `docs/docs/compose-deployment.mdx`, `docs/docs/operations/compose-troubleshooting.mdx`,

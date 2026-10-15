@@ -38,13 +38,25 @@ The person confirms that count when they approve the apply. Every failed or stop
 its cause in the CLI and in the Sync API. A stopped apply shows what it wrote and which operation
 failed, and a new plan contains only the operations that remain.
 
-Not decided yet: whether a record that refers to a left-out record through an optional
-relationship is also left out, and whether a `sync` run (plan and apply in one request) may write
-when records are left out. Both are marked in the requirements below.
+Decided by the product owner on 2026-10-15: a record that refers to a left-out record only
+through an optional relationship is kept and written without that relationship (FR-005). A
+`sync` run (plan and apply in one request) whose plan leaves out records stops after the plan,
+and the MVP has no option that skips that stop (FR-012).
+
+Not decided yet: product sign-off on the two decision record changes this specification needs
+(FR-029 and FR-030).
 
 This specification covers requirements FR-001 to FR-004, journey P1 scenarios 1 and 2, and
-success criteria SC-003 and SC-005 of the V3 idea brief (2026-10-15). The UI that consumes the
-information described here is specified separately (spec 011).
+success criteria SC-003 and SC-005 of the V3 idea brief (2026-10-15). It also owns these MVP
+blockers from `infrahub-sync-process/product/path-to-3.0.md`:
+
+- credential values that can still appear in errors and plans (SYNC-82, SYNC-262)
+- the NetBox example package that fails on data real NetBox instances hold
+  ([#374](https://github.com/opsmill/infrahub-sync/issues/374))
+- `configs validate`, which cannot reach the destination schema check or the credential check
+  (INFP-651, INFP-652, SYNC-107, SYNC-147)
+
+The UI that consumes the information described here is specified separately (spec 011).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -86,6 +98,10 @@ those records and their dependents, and writes nothing to Infrahub.
    plan as creates or updates.
 6. **Given** a source with no problems, **When** the team starts a plan, **Then** the summary
    shows zero records left out and the problem list is empty.
+7. **Given** a source where a device has a problem and a valid IP address refers to that device
+   only through an optional relationship, **When** the team starts a plan, **Then** the plan
+   keeps the IP address without that relationship, and the kept list names the IP address, the
+   relationship and the left-out device.
 
 ---
 
@@ -116,15 +132,18 @@ the plan.
    no confirmation of a left-out count is asked for.
 5. **Given** a completed apply, **When** the team views the run, **Then** the run shows the
    count of operations written and the count of records the plan left out.
+6. **Given** a `sync` run whose plan leaves out records, **When** the plan finishes, **Then** the
+   run stops before any write with the plan saved, and the team applies it only by approving it
+   with the confirmed count.
 
 ---
 
 ### User Story 3 - View why a run failed or stopped (Priority: P1)
 
-A plan, a verification or an apply fails or stops. Without access to the worker container log or
-the orchestration server, the team views the cause in the CLI output and in the run record that
-the Sync API returns: Infrahub's rejection code, the node kind and attribute it rejected and its
-message; or the system that could not be reached; or the system that rejected a token.
+A `plan`, `verify`, `apply` or `sync` run fails or stops. Without access to the worker container
+log or the orchestration server, the team views the cause in the CLI output and in the run record
+that the Sync API returns: Infrahub's rejection code, the node kind and attribute it rejected and
+its message; or the system that could not be reached; or the system that rejected a token.
 
 **Why this priority**: a run that fails without a reason forces the team to ask OpsMill to read
 container logs, which blocks a customer test (idea brief, SC-005).
@@ -203,8 +222,10 @@ equals the original count minus the operations written.
 - The cause text from Infrahub or from a source holds a value that matches a collected secret:
   the secret is replaced before the text is stored, returned or printed.
 - The problem list is very long, for example several thousand problems at tier M: the list is
-  returned in pages, under the same rule as the plan operations (idea brief FR-007, another
-  specification).
+  returned in pages, under the same rule as the plan operations (spec 011 FR-014).
+- A credential value is shorter than six characters, or holds characters that JSON escapes: it
+  is still replaced in every cause, problem reason and published plan, and the published plan
+  stays valid JSON (FR-027, FR-028).
 
 ## Requirements *(mandatory)*
 
@@ -256,10 +277,9 @@ equals the original count minus the operations written.
 - **FR-011**: An apply of a plan that leaves out no records MUST NOT ask for that confirmation.
 - **FR-012**: A `sync` run (plan and apply in one request) whose plan leaves out records MUST
   stop after the plan, with the plan saved, and wait for the team to review it and apply it with
-  the confirmed count. The CLI and the Sync API MUST also offer an explicit option, for example
-  `--accept-left-out`, with which a `sync` run applies the remaining operations without that
-  stop. The run record MUST then state that the left-out count was accepted without review, and
-  give the count.
+  the confirmed count of FR-010. The MVP offers no option that skips that stop. A policy for runs
+  that nobody watches, including any such option, belongs to 3.0
+  ([V3 release scope](../v3-release-scope.md), "Recovery").
 - **FR-013**: Infrahub rejecting a write during apply MUST still stop the apply. The plan's
   left-out policy does not apply during apply.
 
@@ -276,11 +296,14 @@ equals the original count minus the operations written.
 - **FR-017**: When the source or Infrahub cannot be reached, does not answer in time, or rejects
   a token, the cause MUST name the system (source or destination, and the adapter) and the type
   of failure.
-- **FR-018**: Every other failure of a plan, verification or apply MUST record the failure type
-  and its message.
-- **FR-019**: Every cause text MUST have collected secrets replaced, and MUST be limited in
-  length, before it is stored, returned by the Sync API, or printed. A token MUST never appear in
-  a cause.
+- **FR-018**: Every other failure of a `plan`, `verify`, `apply` or `sync` run MUST record the
+  failure type and its message.
+- **FR-019**: Every cause text MUST have secrets replaced under FR-027 and FR-028, and MUST be
+  limited in length, before it is stored, returned by the Sync API, or printed. A credential
+  value that the configuration references MUST never appear in a cause. A value collected only
+  because its variable name looks like a secret keeps the six-character floor of the
+  [secret redaction guideline](../../../docs/docs/development/guidelines/secret-redaction.md)
+  ("Drop values below a length floor").
 
 #### A stopped apply and the next plan (brief FR-004)
 
@@ -300,6 +323,8 @@ equals the original count minus the operations written.
   - the plan summary with the counts of FR-007
   - the problem list of FR-003
   - the left-out list of FR-006
+  - the kept list of FR-005: each record kept without an optional relationship, with its kind,
+    its source record identity, the relationship and the left-out record it names
 
   It MUST return them with the same authentication as the existing run and plan information,
   so that the UI of spec 011 uses only the public Sync API.
@@ -307,7 +332,8 @@ equals the original count minus the operations written.
   so that the CLI, the UI and scripts can filter problems by type.
 - **FR-025**: The Sync API run record MUST return the cause of FR-014 to FR-020 in a structured
   form, with separate fields for:
-  - the stage that failed (plan, verification or apply)
+  - the stage that failed, with the values the Sync API already uses for a run's operation:
+    `plan`, `verify`, `apply` or `sync` (`infrahub_sync/client/models.py:11`)
   - the failure type
   - the system involved
   - Infrahub's error code
@@ -319,6 +345,66 @@ equals the original count minus the operations written.
 - **FR-026**: The apply request in the Sync API MUST carry the confirmed left-out count of
   FR-010, next to the reviewed checksum it already carries.
 
+#### Credential values in causes, problem lists and plan files (SYNC-82, SYNC-262)
+
+`path-to-3.0.md` lists SYNC-82 and SYNC-262 as needed for INFP-648, INFP-649 and INFP-653:
+short credentials and credentials that contain JSON separators can still appear in errors and
+plans, or break a published plan.
+
+- **FR-027**: Every credential value that a configuration references through `$credential` MUST
+  be replaced, whatever its length, in every cause, problem reason, left-out or kept entry,
+  published plan and run log, before it is stored, returned by the Sync API or printed.
+- **FR-028**: A credential value that holds characters that JSON escapes MUST be replaced in the
+  form it takes in a published plan and in a Sync API response, and the replacement MUST leave
+  that plan or response valid JSON.
+
+#### Decision records this specification changes (product sign-off needed)
+
+- **FR-029**: Product decision AD-12 in `infrahub-sync-process/product/decisions.md` MUST be
+  amended before this work ships: at the plan stage, records with problems and the records that
+  depend on them are left out and counted, and apply needs the confirmed count. The policy for
+  runs that nobody watches stays open for 3.0.
+- **FR-030**: A decision record in `dev/adr/` MUST replace the rule that a run's failure record
+  holds an error class name and never a message
+  ([#369](https://github.com/opsmill/infrahub-sync/issues/369); the rule is stated in
+  `infrahub_sync/service/flow.py:722-725`, and ADR 0005 places failure translation at the remote
+  boundary). The new rule: the failure record holds the message, with secrets replaced under
+  FR-027 and FR-028 and limited in length. The code comment and the
+  [secret redaction guideline](../../../docs/docs/development/guidelines/secret-redaction.md)
+  MUST be updated to match. FR-014 to FR-019 MUST NOT ship before the product owner signs off
+  this change.
+
+#### The NetBox example package on data real NetBox instances hold (#374)
+
+- **FR-031**: The shipped NetBox example package (`examples/netbox_to_infrahub/package.yml`)
+  MUST plan the pinned NetBox `demo` dataset with no run failure caused by its own mapping. The
+  three cases in [#374](https://github.com/opsmill/infrahub-sync/issues/374) MUST be handled:
+  - a device status outside the five choices of the destination Dropdown, such as `planned`
+  - a rack position that is not an integer, such as `2.5`
+  - two devices with the same name at two sites
+
+  Each case MUST either be written by a changed mapping or schema, or be reported as a plan
+  problem of FR-002. The plan chooses which, and the example documentation states it.
+
+#### Problems found before a plan, with `configs validate` (INFP-651, INFP-652)
+
+`path-to-3.0.md` states that `configs validate` cannot reach the destination schema check, and
+that a credential missing from the worker is found only when the run fails in the worker.
+
+- **FR-032**: `infrahub-sync configs validate` and
+  `POST /configs/{config_id}/versions/{registry_version}/validate` MUST run the destination
+  schema check against the Infrahub branch the team names: every mapped kind, attribute and
+  relationship exists, and every Dropdown value that the mapping sets literally is one of the
+  attribute's choices.
+- **FR-033**: The same check MUST report each `$credential` reference whose variable is not set
+  in the worker environment, by name, without reading or showing its value.
+- **FR-034**: The check and the plan MUST agree on whether a kind that has no writable
+  human-friendly ID can be created (SYNC-147). A kind that validation accepts MUST NOT be
+  refused by the plan for that reason, and the reverse.
+- **FR-035**: The response to `configs register` MUST NOT show redacted package content next to
+  the checksum of the original content (SYNC-107). It MUST show either the checksum alone or
+  content and checksum that match.
+
 ### Key Entities
 
 - **Plan problem**: one problem found in one source record. It holds the kind, the source
@@ -326,10 +412,14 @@ equals the original count minus the operations written.
   involved.
 - **Left-out record**: a source record that the plan leaves out. It holds the kind, the source
   record identity, and either its own problems or the record it depends on.
+- **Kept record**: a source record that the plan keeps without an optional relationship,
+  because the peer of that relationship is left out. It holds the kind, the source record
+  identity, the relationship and the left-out record.
 - **Plan summary**: the counts of creates, updates, deletes not executed and records left out,
   by action and by kind.
-- **Run failure cause**: the stage, the failure type, the system involved, Infrahub's error code,
-  the node kind and attribute, and the message with secrets replaced.
+- **Run failure cause**: the stage (`plan`, `verify`, `apply` or `sync`), the failure type, the
+  system involved, Infrahub's error code, the node kind and attribute, and the message with
+  secrets replaced.
 - **Apply progress**: for a stopped apply, the operations written, the operation that failed,
   and whether that operation may have written part of its change.
 
@@ -351,6 +441,13 @@ equals the original count minus the operations written.
   collected secret.
 - **SC-006**: 100% of apply attempts on a plan with records left out are refused when the
   left-out count is missing or wrong.
+- **SC-007**: in tests with a referenced credential of five characters and a referenced
+  credential that holds `"`, `\` and `,`, neither value appears in a cause, a problem reason, a
+  published plan, a Sync API response or a run log, and every published plan parses as JSON.
+- **SC-008**: the NetBox example package plans the pinned NetBox `demo` dataset with no run
+  failure, and each of the three #374 cases is either written or listed as a plan problem.
+- **SC-009**: on a configuration that maps an attribute missing from the destination schema and
+  references an unset credential, `configs validate` reports both before any run is started.
 
 ## Assumptions
 
@@ -359,9 +456,9 @@ equals the original count minus the operations written.
 - A problem in a record that already exists in Infrahub leaves the Infrahub node as it is. The
   plan proposes no update and no delete for it.
 - Source values may appear in problem reasons and in Infrahub's message, as they already do in
-  the plan operations the team reviews. Secrets do not appear, under the existing secret
-  redaction rules. This replaces today's rule that a run's failure record holds an error class
-  name and never a message (#369), so the change needs a decision record.
+  the plan operations the team reviews. Secrets do not appear, under FR-027 and FR-028. This
+  replaces today's rule that a run's failure record holds an error class name and never a
+  message (#369). FR-030 requires the decision record and the product owner's sign-off.
 - Infrahub 1.11 and later return an error code, the node kind and the attribute name with a
   rejection (#370). For older versions, the cause shows Infrahub's message without a code.
 - The Dropdown check needs the attribute choices in the record of the destination schema that a
@@ -370,12 +467,13 @@ equals the original count minus the operations written.
 - A plan failure that is not tied to one record, such as an unreachable system, a rejected token
   or an invalid transform, still fails the whole plan. Only the six problem types of FR-002 leave
   records out.
-- The problem list and the left-out list follow the paging rule for plan details that another
-  testing-release specification defines (idea brief FR-007).
+- The problem list, the left-out list and the kept list follow the paging rule for plan
+  details that spec 011 defines (FR-013 to FR-016 there; idea brief FR-007).
 - The testing release supports only the adapters that Sync bundles, and up to about 10,000
   mapped objects (idea brief, "Assumptions"). The six problem types are checked for every bundled
   source adapter, not only NetBox.
 - The UI that shows this information is out of scope here (spec 011). This specification
   defines what the CLI shows and what the Sync API returns.
-- Resume of a stopped apply, deletes executed, and the AD-12 policy for runs nobody watches are
-  not part of the testing release.
+- Resume of a stopped apply, deletes executed, and the AD-12 policy for runs nobody watches
+  (including any option that applies a plan with records left out without review) are not part
+  of the testing release.

@@ -37,14 +37,23 @@ What is needed:
 - With both, a customer team completes journey P1 (first import from their NetBox, reviewed,
   applied) in the UI, without OpsMill running a command for them.
 
-Not decided yet:
+Decided by the product owner on 2026-10-15:
 
-- Whether the testing release supports opening the UI from a computer other than the
-  `sync-api` host, and how the connection is protected (FR-031).
-- Whether the UI can cancel a run in progress (FR-024).
+- The UI can cancel a plan or an apply in progress (FR-024).
+- In the MVP, the UI is reachable from the `sync-api` host only, on loopback. A person on another
+  computer uses a tunnel they set up themselves. Access from other computers over TLS, through a
+  reverse proxy, belongs to 3.0 (INFP-663) (FR-031).
 
-Product decision AD-5 places the UI "after recovery and operations". This specification moves a
-basic UI into the testing release, so AD-5 needs an amendment before this work ships.
+This specification also owns these MVP blockers from
+`infrahub-sync-process/product/path-to-3.0.md`:
+
+- each peer's identity is printed twice per operation, so a full import cannot be reviewed
+  ([#373](https://github.com/opsmill/infrahub-sync/issues/373), SYNC-259)
+- the CLI has no command to list runs or to cancel a run (SYNC-211, SYNC-254)
+
+Not decided yet: product sign-off on the UI in the MVP. Product decision AD-5 places the UI
+"after recovery and operations". This specification moves a basic UI into the testing release,
+so AD-5 needs an amendment before this work ships (FR-037).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -53,7 +62,8 @@ basic UI into the testing release, so AD-5 needs an amendment before this work s
 The customer team has registered a NetBox configuration with the CLI. In the UI, they open the
 list of configurations, select the configuration and version, enter the Infrahub branch and a
 reason, and start a plan. When the plan finishes, they open it and view the counts by action and
-by kind, the records left out, and the problems. They filter the operations by kind and read
+by kind, the records left out, the records kept without a relationship, and the problems. They
+filter the operations by kind and read
 the operations of one kind, page by page.
 
 **Why this priority**: reviewing the plan before anything is written is the main gain of V3 over
@@ -66,8 +76,8 @@ left-out record that the Sync API returns for that plan.
 **Acceptance Scenarios**:
 
 1. **Given** a registered configuration, **When** the team starts a plan from the UI with a
-   branch and a reason, **Then** the UI shows the new run with its status, and updates that
-   status until the plan finishes or fails.
+   branch and a reason, **Then** the UI shows the new run with its phase, and updates the
+   phase and outcome until the plan finishes or fails.
 2. **Given** a finished plan, **When** the team opens it, **Then** the UI shows the counts of
    creates, updates, deletes not executed and records left out, in total and by kind.
 3. **Given** a finished plan that holds problems (spec 009), **When** the team opens its problem
@@ -76,6 +86,11 @@ left-out record that the Sync API returns for that plan.
 4. **Given** a finished plan that leaves out records, **When** the team opens the left-out list,
    **Then** each entry shows the kind, the source record identity, and either its own problems
    or the record it depends on.
+6. **Given** a finished plan that keeps records without an optional relationship (spec 009
+   FR-005), **When** the team opens the kept list, **Then** each entry shows the kind, the source
+   record identity, the relationship and the left-out record it names.
+7. **Given** an update or a create with relationships, **When** the team reads the operation,
+   **Then** each peer's identity appears once.
 5. **Given** a first-sync plan at tier M (10,207 mapped objects), **When** the team opens it in
    the UI, **Then** the summary appears, and the team can read every operation of any kind page
    by page, without an error about the response size.
@@ -142,8 +157,9 @@ run in the UI and check that each part of the cause appears without reading cont
 ### User Story 4 - Find earlier runs and configurations (Priority: P2)
 
 The team opens the run list to find an earlier plan or apply. They view each run's
-configuration and version, operation, status, counts, start time and duration. They filter the
-list by configuration, operation and status, and move through it page by page. They also open
+configuration and version, operation, phase and outcome, counts, start time and duration. They
+filter the list by configuration, operation, phase and outcome, and move through it page by
+page. They also open
 the list of configurations and view each configuration's registered versions.
 
 **Why this priority**: a recorded run history is one of the four gains of V3 over v2. It is P2
@@ -161,7 +177,7 @@ on exactly one page.
    the UI shows the following runs with no run repeated or missing, even if new runs started
    in between.
 3. **Given** a run in progress, **When** the team views the run list, **Then** the run shows its
-   current status and the time elapsed so far.
+   current phase and the time elapsed so far.
 4. **Given** registered configurations, **When** the team opens the configuration list, **Then**
    the UI shows each configuration with its versions, and for each version its number,
    registration time and package checksum.
@@ -202,7 +218,7 @@ the saved plan.
   last data it showed, marked as possibly out of date.
 - A plan with zero operations: the UI states that the branch already matches the source and
   offers no apply.
-- A plan that is still running when the team opens it: the UI shows the run status and offers
+- A plan that is still running when the team opens it: the UI shows the run phase and offers
   the plan review only when the plan is saved.
 - The team applies, and the request result is lost (network failure): the UI sends the retry with
   the same idempotency key, so the Sync API does not create a second apply.
@@ -245,10 +261,11 @@ the saved plan.
 #### Run list (brief FR-007, `GET /runs`)
 
 - **FR-007**: The Sync HTTP API MUST provide `GET /runs`, which lists runs newest first. Each
-  entry MUST hold the run ID, the configuration ID and version, the operation (plan or sync),
-  the phase and outcome, the target branch, the actor who started it, the start and finish
-  times, and the plan counts of spec 009 FR-007 (creates, updates, deletes not executed,
-  records left out) when the run has a plan.
+  entry MUST hold the run ID, the configuration ID and version, the operation (`plan`, `verify`,
+  `apply` or `sync`, as in `infrahub_sync/client/models.py:11`), the `phase` and `outcome` fields
+  that the run record already uses (`infrahub_sync/client/models.py:186-187`), the target branch,
+  the actor who started it, the start and finish times, and the plan counts of spec 009 FR-007
+  (creates, updates, deletes not executed, records left out) when the run has a plan.
 - **FR-008**: `GET /runs` MUST accept filters by configuration ID, configuration version,
   operation, phase and outcome, and MUST combine filters so that a run is listed only when it
   matches all of them.
@@ -256,10 +273,11 @@ the saved plan.
   and a reference to the next page. Moving through the pages MUST list every run that existed
   at the first request exactly once, even when new runs start between page requests.
 - **FR-010**: The UI MUST show the run list with each run's configuration and version,
-  operation, status, counts, start time and duration. For a run in progress, the duration is the
-  time elapsed so far.
-- **FR-011**: The UI MUST update the status of runs in progress, in the run list and in the run
-  view, at least every 10 seconds while the page is open, without the team reloading the page.
+  operation, phase and outcome, counts, start time and duration. For a run in progress, the
+  duration is the time elapsed so far.
+- **FR-011**: The UI MUST update the phase and outcome of runs in progress, in the run list and
+  in the run view, at least every 10 seconds while the page is open, without the team reloading
+  the page.
 
 #### Plan detail in pages (brief FR-007, brief SC-002 UI part)
 
@@ -269,13 +287,14 @@ the saved plan.
 - **FR-013**: The Sync HTTP API MUST return a plan's operations in pages, filterable by kind and
   by action. Each page MUST stay below the client's response size limit at the maximum page
   size.
-- **FR-014**: The Sync HTTP API MUST return a plan's problem list and left-out list (spec 009
-  FR-023) in pages, the problem list filterable by problem type and by kind.
-- **FR-015**: Every page of a plan's operations, problems or left-out records MUST name the
-  checksum of the plan it comes from. A page request MUST be refused when the plan it refers to
-  is no longer the plan stored for that run.
-- **FR-016**: The order of operations, problems and left-out records MUST be stable across page
-  requests for the same plan, so that the pages together hold every entry exactly once.
+- **FR-014**: The Sync HTTP API MUST return a plan's problem list, left-out list and kept list
+  (spec 009 FR-023) in pages, the problem list filterable by problem type and by kind.
+- **FR-015**: Every page of a plan's operations, problems, left-out records or kept records
+  MUST name the checksum of the plan it comes from. A page request MUST be refused when the plan
+  it refers to is no longer the plan stored for that run.
+- **FR-016**: The order of operations, problems, left-out records and kept records MUST be
+  stable across page requests for the same plan, so that the pages together hold every entry
+  exactly once.
 - **FR-017**: `infrahub-sync runs plan --detail` MUST read the operations through the paged
   routes, so that the CLI shows a tier M first-sync plan without reaching the 16 MiB limit.
 - **FR-018**: The existing `GET /runs/{run_id}/plan` route MAY remain for plans that fit in one
@@ -289,8 +308,9 @@ the saved plan.
   page. For each operation it MUST show the action, the kind, the identity, and the values and
   relationships the operation writes, as the Sync API returns them. For an update, it MUST show
   the destination node the update names.
-- **FR-021**: The UI MUST list a plan's problems and its left-out records with the fields of
-  spec 009 FR-003 and FR-006, filterable by problem type and by kind.
+- **FR-021**: The UI MUST list a plan's problems, its left-out records and its kept records
+  with the fields of spec 009 FR-003, FR-006 and FR-023, the problems filterable by problem type
+  and by kind.
 - **FR-022**: The UI MUST NOT draw a graph of the plan or of the dependencies between records.
 
 #### Starting a plan and applying it
@@ -318,9 +338,9 @@ the saved plan.
 
 - **FR-029**: For every run that failed, stopped, was cancelled or ended as `ambiguous`, the UI
   MUST show each part of the structured cause that the Sync API returns (spec 009 FR-025): the
-  stage, the failure type, the system involved, Infrahub's error code, the node kind and
-  attribute, the message, the operations written and the operation that failed. It MUST also
-  show whether the run needs reconciliation.
+  stage (`plan`, `verify`, `apply` or `sync`), the failure type, the system involved, Infrahub's
+  error code, the node kind and attribute, the message, the operations written and the operation
+  that failed. It MUST also show whether the run needs reconciliation.
 
 #### Token handling and browser security
 
@@ -329,11 +349,12 @@ the saved plan.
   such a value as markup or code. The UI MUST load no script, style or font from another origin.
   The `sync-api` container MUST send a content security policy with the UI that allows scripts
   only from its own origin.
-- **FR-031**: The testing release MUST support opening the UI
-  from the `sync-api` host itself by default: the API stays published on loopback only. The
-  Compose deployment MUST also offer an optional, documented reverse proxy that serves the UI
-  and the API to other computers over TLS, with a certificate the customer supplies. While that
-  option is not enabled, nothing is published beyond loopback.
+- **FR-031**: In the MVP, the UI MUST be reachable from the `sync-api` host only: the API and
+  the UI stay published on loopback, and the Compose deployment adds no service or port for the
+  UI (spec 013 FR-007 and FR-017). The user documentation MUST state that a person on another
+  computer reaches the UI through a tunnel they set up themselves, such as an SSH port
+  forward. Access from other computers over TLS, through a reverse proxy, belongs to 3.0
+  (INFP-663).
 - **FR-032**: The UI MUST ask for the Sync API token when it has none, and MUST keep the token
   only in the browser tab's session storage. It MUST NOT store the token in a cookie, in
   persistent browser storage, in a URL or in a log. Closing the tab, or a "sign out" action in
@@ -343,6 +364,29 @@ the saved plan.
   it again.
 - **FR-034**: The UI MUST NOT show which principal or role the token belongs to beyond the actor
   name the Sync API returns on runs. It does not create, change or list tokens or principals.
+
+#### Plan step timings in the run view (spec 010 FR-013)
+
+- **FR-038**: For a plan, `sync` run or failed plan, the UI MUST show the plan step timings that
+  the run record returns (spec 010 FR-009 and FR-010), in the run view, labelled as values that
+  may change between releases. It MUST NOT show them under the name "phase", which the UI uses
+  for the run's state.
+
+#### Peer identities in plan detail (#373, SYNC-259)
+
+- **FR-039**: The paged plan routes, the UI and `infrahub-sync runs plan --detail` MUST show
+  each peer of an operation's relationships once, with its identity
+  ([#373](https://github.com/opsmill/infrahub-sync/issues/373): today the CLI prints each
+  peer's full identity twice per operation, so a full import cannot be reviewed).
+
+#### CLI commands for runs (SYNC-211, SYNC-254)
+
+- **FR-040**: The CLI MUST provide `infrahub-sync runs list`, which reads `GET /runs` with the
+  same filters and paging as FR-008 and FR-009 and prints each run's ID, configuration and
+  version, operation, phase, outcome, start time and duration.
+- **FR-041**: The CLI MUST provide `infrahub-sync runs cancel <run_id>`, which calls the existing
+  `POST /runs/{run_id}/cancel` route with an idempotency key, as the other CLI commands that
+  change state do (`infrahub_sync/cli.py:266`).
 
 #### Documentation and decision records
 
@@ -361,8 +405,8 @@ the saved plan.
   keeps the order stable while new runs start.
 - **Plan summary**: the checksum, checksum verification state, target branch, schema
   fingerprint, and counts by action, by kind, of deletes not executed and of records left out.
-- **Plan page**: an ordered set of operations, problems or left-out records of one plan, with
-  the checksum of that plan and a reference to the next page.
+- **Plan page**: an ordered set of operations, problems, left-out records or kept records of
+  one plan, with the checksum of that plan and a reference to the next page.
 - **Operator session**: the browser tab in which a person entered the Sync API token. It holds
   the token until the tab closes or the person signs out.
 
@@ -378,8 +422,8 @@ the saved plan.
   in the UI, and every operation of the plan can be read in the UI page by page, with no limit
   changed in the code.
 - **SC-003**: at tier M, on the benchmark host, the plan summary appears in the UI within 5
-  seconds of opening a finished plan, and each page of operations, problems or left-out records
-  appears within 2 seconds.
+  seconds of opening a finished plan, and each page of operations, problems, left-out records or
+  kept records appears within 2 seconds.
 - **SC-004**: for 100% of the failure types in the spec 009 test suite, the UI shows the cause
   without the team reading container logs or the orchestration server.
 - **SC-005**: an automated check confirms that every request the UI sends goes to a documented
@@ -389,6 +433,10 @@ the saved plan.
   suite holds the Sync API token.
 - **SC-007**: reading every page of a tier M first-sync plan through the API returns the same
   operations, in count and checksum, as the saved plan.
+- **SC-008**: in the plan detail of the NetBox example first sync, read through the UI, the paged
+  routes and `runs plan --detail`, no peer identity appears twice in one operation.
+- **SC-009**: `infrahub-sync runs list` lists every run that `GET /runs` returns for the same
+  filters, and `infrahub-sync runs cancel` cancels a plan in progress, in 100% of CLI tests.
 
 ## Assumptions
 
@@ -410,18 +458,25 @@ the saved plan.
   no administrator route.
 - The supported deployment remains the single-host compose file. The `sync-api` port binds to
   loopback by default, and the compose file states that external exposure and TLS termination
-  are outside the supported single-host shape. FR-031 decides whether the testing release
-  changes that for the UI.
+  are outside the supported single-host shape. FR-031 keeps that shape for the UI in the MVP.
 - The UI supports the current versions of Chrome, Firefox, Edge and Safari on a desktop or
   laptop screen. Phone layouts are not required.
 - The UI shows times in the browser's time zone and durations in hours, minutes and seconds.
-- The structured failure cause, the problem list, the left-out list, the plan counts and the
-  confirmed left-out count in the apply request come from spec 009. This specification adds
-  only the paging of the problem and left-out lists. If spec 009 is not delivered, User Story 3
-  and FR-021, FR-026 and FR-029 cannot be met.
+- The structured failure cause, the problem list, the left-out list, the kept list, the plan
+  counts and the confirmed left-out count in the apply request come from spec 009. This
+  specification adds only the paging of those lists. If spec 009 is not delivered, User Story 3
+  and FR-021, FR-026 and FR-029 cannot be met. The plan step timings come from spec 010
+  (FR-038).
 - Spec 010 delivers a tier M first sync with no size limit changed (spec 010 FR-018). This
   specification covers opening that plan in the UI. The 64 MiB bundle limit stays as released;
   removing it is part of 3.0 (INFP-659).
+- The size of a tier M plan is not known. `product/metrics.md` records a 66.5 MiB plan at tier L
+  only; scaled by object count, a tier M plan would be about 7.7 MiB, below the 16 MiB client
+  limit, but that is an estimate. The Sync API also parses the whole retained plan on each
+  request today (`infrahub_sync/service/service.py:861-870`). Paging stays in scope. The plan
+  for this specification MUST use the tier M plan size that spec 010 FR-019 records before it
+  chooses how plan pages are stored and read, and MUST record that choice in a decision record
+  when it changes the retained plan artifact (ADR 0001, ADR 0011).
 - The run list includes runs started from the CLI, scripts and the UI alike. Runs are listed as
   long as the product store keeps them; this specification adds no retention rule.
 - Verification (`POST /runs/{run_id}/verify`) stays available in the CLI and the API. The UI does

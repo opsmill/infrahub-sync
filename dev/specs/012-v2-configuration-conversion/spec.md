@@ -38,8 +38,13 @@ What is needed for the testing release:
 - A release gate: on the NetBox example, the first V3 plan against an Infrahub that v2 synced from
   the same unchanged NetBox holds zero creates and zero updates.
 
-Not decided yet: what the command does with an adapter setting that V3 does not accept (see
-FR-010).
+Decided by the product owner on 2026-10-15: the command refuses a configuration with an adapter
+setting that V3 does not accept, and lists every such setting (FR-010).
+
+The converted package registers with no edit only when the Sync worker receives the credential
+variables that the command names. On the Compose deployment, spec 013 FR-023 makes that true
+for every bundled adapter; today `docker-compose.yml:275-284` passes only the Infrahub, NetBox
+and Nautobot tokens to the worker.
 
 Out of the testing release: custom adapters (INFP-654, 3.0), deletes, and moving any v2 state,
 cache or generated files.
@@ -230,7 +235,8 @@ Count the creates and updates.
   every reason it found in the file.
 - **FR-013**: Before it writes the file, the command MUST run every check that registration runs
   that needs no connection to the Sync API, the source or Infrahub. A package that passes these
-  checks MUST register with no edit when the worker's credential variables are set.
+  checks MUST register with no edit when the worker's credential variables are set. On the
+  Compose deployment, the worker receives those variables under spec 013 FR-023.
 - **FR-014**: The command MUST NOT replace an existing file unless the team passes an explicit
   option to replace it.
 - **FR-015**: The command MUST refuse an input that already holds `format_version`, and say that
@@ -301,9 +307,10 @@ Count the creates and updates.
   plan against an Infrahub that v2 synced, with no change in NetBox, holds 0 creates and 0 updates.
 - **SC-002** (brief FR-008 verification): the v2 NetBox example from `main` converts and registers
   with no edit to the package.
-- **SC-003**: every v2 example on `main` that uses only bundled adapters converts, and its package
-  passes the checks of FR-013. Every v2 example that uses a custom adapter is refused with a named
-  reason.
+- **SC-003**: every v2 example on `main` that uses only bundled adapters converts, its package
+  passes the checks of FR-013, and it registers on a Compose deployment that has spec 013 FR-023
+  once the printed credential variables are set. Every v2 example that uses a custom adapter is
+  refused with a named reason.
 - **SC-004**: in 100% of the conversion tests, no credential value from the input appears in the
   package, the command output or the logs.
 - **SC-005**: a team member converts and registers the NetBox configuration in under 5 minutes,
@@ -323,7 +330,9 @@ Count the creates and updates.
   (`examples/netbox_to_infrahub/package.yml`) is not part of the gate.
 - Lineage (`source` and `owner`) and `is_protected` are set on Infrahub writes on both lines
   (`infrahub_sync/adapters/infrahub.py`). This spec relies on that only to keep the plan free of
-  false updates; it does not change how lineage is used. Deletes are out of scope (3.0).
+  false updates; it does not change how lineage is used. Deletes are out of scope (3.0). The
+  [V3 release scope](../v3-release-scope.md) records, as an open point for the 3.0 delete design,
+  that FR-017 keeps the v2 `owner` on converted packages.
 - Spec 010 removes the built-in `default` IP namespace delete and the second-sync defects (#167,
   #168, #177). This spec depends on that work for the V3-to-V3 case and covers only the v2-to-V3
   case.

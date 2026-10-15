@@ -31,8 +31,13 @@
 
 ## Notes
 
-- Answered by the product owner on 2026-10-15, so no marker remains. FR-019: if no maintained image reads the current data volume,
-  the update may require a reset of the object store, stated in the release notes.
+- Answered by the product owner on 2026-10-15, so no marker remains. FR-019: if no maintained
+  image reads the current data volume, the update may require a reset of the object store,
+  stated in the release notes.
+- Revision of 2026-10-15 after the cross-spec review: User Story 5 and FR-023 to FR-027 assign
+  the remaining INFP-692 MVP blockers to this specification (worker credentials for every
+  bundled adapter, a custom CA, compose lifecycle reliability, image digest and SBOM). Spec 011
+  FR-031 no longer adds a reverse proxy, so FR-007 and FR-017 have no conflict with it.
 - The feature is a deployment change, so the spec names compose services, images and settings.
   These are the operator's own vocabulary (they edit `.env` and read `docker-compose.yml`), not
   implementation choices. The factory module name in FR-003 comes from the confirmed idea brief
