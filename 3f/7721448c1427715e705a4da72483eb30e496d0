@@ -1,0 +1,21 @@
+dev/specs/013-compose-images/checklists/requirements.md
+  s_47078ea83e766d::t_3f3567f90dc920 1-42
+dev/specs/013-compose-images/spec.md
+  s_47078ea83e766d::t_00526f042977f7 1-379
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3f7721448c1427715e705a4da72483eb30e496d0",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
