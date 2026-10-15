@@ -1,0 +1,22 @@
+dev/specs/011-operator-ui/spec.md
+  s_47078ea83e766d::t_18ad25b1282933 185-186
+  s_47078ea83e766d::t_7fd72bf2e6d2e8 1-184,187-424
+dev/specs/011-operator-ui/checklists/requirements.md
+  s_47078ea83e766d::t_2b25db8154238e 1-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a8d1a3aa1994c13aeb05fb131ab053bb7767b15",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
