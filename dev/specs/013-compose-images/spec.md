@@ -6,6 +6,10 @@
 
 **Status**: Draft
 
+**Release**: MVP (the testing release). Every requirement in this specification belongs to the MVP.
+Work it names as out of scope belongs to 3.0 or 3.x, as listed in
+[V3 release scope](../v3-release-scope.md).
+
 **Input**: User description: "Fewer images in the Compose deployment for the V3 testing release. (1) Prefect server from the Sync image: every compose file (root docker-compose.yml operator deployment, development/docker-compose.dev.yml, the preview stack development/docker-compose.preview.yml) runs the Prefect server from the Sync image instead of the stock prefecthq/prefect:3.8.6 image, as a separate service, through a factory module (for example infrahub_sync.service.prefect_server, wrapping Prefect's create_app) started with uvicorn. This follows Infrahub's pattern: since commit 7a22217bf (2025-01-22, 'use infrahub image to run prefect server', reason: avoid client/server version incompatibility and CI workarounds) Infrahub's task-manager runs the Infrahub image with `uvicorn --factory infrahub.prefect_server.app:create_infrahub_prefect` (../infrahub/docker-compose.yml:281-295, backend/infrahub/prefect_server/app.py). Client and server Prefect versions can then never drift. The Prefect port is no longer published on the host by default (the Sync UI of spec 011 replaces the Prefect UI for the customer); an opt-in remains for OpsMill engineers. Prefect never runs inside the sync-api container, because that would put the Prefect database credentials in the API container (root docker-compose.yml lines ~19-25 isolate them) and needs a process supervisor. ADR 0019 gets an amendment recording which image the server uses. (2) MinIO: replace the temporary MinIO build that INFP-692 lists as open with a maintained MinIO-compatible image pinned by digest. Verification: compose contract tests find no prefecthq/prefect image and every non-Sync image pinned by digest; the compose lifecycle tier passes. Scope = brief FR-009, FR-010."
 
 ## Summary
