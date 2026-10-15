@@ -1,0 +1,35 @@
+dev/specs/013-compose-images/quickstart.md
+  s_47078ea83e766d::t_29f83ad7adb7f3 1-142
+dev/specs/013-compose-images/data-model.md
+  s_47078ea83e766d::t_f14c71d0261d56 1-77
+dev/specs/013-compose-images/research.md
+  s_47078ea83e766d::t_d68879d77a7b76 441-442
+  s_47078ea83e766d::t_0653813865abce 1-440,443-479
+dev/specs/013-compose-images/contracts/compose-services.md
+  s_47078ea83e766d::t_b46d19f9f12c27 1-69
+dev/specs/013-compose-images/contracts/ports.md
+  s_47078ea83e766d::t_31f2bf4ec88c1c 1-41
+dev/specs/013-compose-images/plan.md
+  s_47078ea83e766d::t_0e00662c9d2f63 1,3,5,9-29,32-34,36-38,40-41,43-45,47-48,50,52-53,55,57-62,64-67,69,75-87,94-103,109-130,132-141,144-240,248-268,270-293,297
+  s_47078ea83e766d::t_d5b4a750e033f4 241-247
+  s_47078ea83e766d::t_d245882fb4e427 2,4,6-8,30-31,35,39,42,46,49,51,54,56,63,68,70-74,88-93,104-108,131,142-143,294-296
+  s_47078ea83e766d::t_69d733316bea0d 269
+dev/specs/013-compose-images/contracts/environment-variables.md
+  s_47078ea83e766d::t_42b161b8898f9b 1-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "54fda4c5fb5eb80979a257504ec089ecb7962ce6",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
