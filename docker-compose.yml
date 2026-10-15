@@ -56,7 +56,11 @@ x-sync-storage: &sync-storage
     @postgres:5432/${INFRAHUB_SYNC_PRODUCT_DATABASE:-infrahub_sync}}"
   INFRAHUB_SYNC_S3_BUCKET: "${INFRAHUB_SYNC_S3_BUCKET:-infrahub-sync}"
   INFRAHUB_SYNC_S3_PREFIX: "${INFRAHUB_SYNC_S3_PREFIX:-infrahub-sync}"
-  INFRAHUB_SYNC_S3_ENDPOINT_URL: "http://object-store:9000"
+  # The bundled MinIO by default. A team that uses its own S3-compatible store
+  # names it here and sets INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0 in `.env`.
+  INFRAHUB_SYNC_S3_ENDPOINT_URL: "${INFRAHUB_SYNC_S3_ENDPOINT_URL:-http://object-store:9000}"
+  # `path` or `virtual`: how a request names the bucket, in the path or in the host name.
+  INFRAHUB_SYNC_S3_ADDRESSING_STYLE: "${INFRAHUB_SYNC_S3_ADDRESSING_STYLE:-path}"
   INFRAHUB_SYNC_S3_REGION: "${INFRAHUB_SYNC_S3_REGION:-us-east-1}"
   AWS_ACCESS_KEY_ID: "${INFRAHUB_SYNC_S3_ACCESS_KEY:?INFRAHUB_SYNC_S3_ACCESS_KEY is required}"
   AWS_SECRET_ACCESS_KEY: "${INFRAHUB_SYNC_S3_SECRET_KEY:?INFRAHUB_SYNC_S3_SECRET_KEY is required}"
@@ -109,9 +113,11 @@ services:
 
   # The former image wrote as root. Repair its volume once in a short-lived
   # service so the long-running server never needs root, even during startup.
+  # Like `object-store`, it does not start when INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0.
   object-store-init:
     image: >-
       cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
+    scale: ${INFRAHUB_SYNC_BUNDLED_OBJECT_STORE:-1}
     restart: "no"
     user: "0"
     entrypoint: ["/bin/sh", "-ec"]
@@ -128,9 +134,13 @@ services:
       - "object-store-data:/data"
 
   object-store:
-    # Temporary Chainguard build while a maintained S3 store is selected; the old MinIO image requires authentication.
+    # The bundled object store: a Chainguard MinIO build, pinned by digest. A
+    # team can use its own S3-compatible store instead: set the endpoint in
+    # `.env` and INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0, and neither this service
+    # nor `object-store-init` starts. A later release may bundle a different server.
     image: >-
       cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba
+    scale: ${INFRAHUB_SYNC_BUNDLED_OBJECT_STORE:-1}
     restart: unless-stopped
     user: "65532:65532"
     command: ["server", "/data"]
@@ -216,8 +226,11 @@ services:
     depends_on:
       db-bootstrap:
         condition: service_completed_successfully
+      # Waited for while it runs; with the bundled store left out, there is
+      # nothing to wait for, and the job checks the team's own store itself.
       object-store:
         condition: service_healthy
+        required: false
       prefect-server:
         condition: service_healthy
     environment:

@@ -125,6 +125,22 @@ PREFECT_SERVER_CREDENTIAL = "PREFECT_SERVER_API_AUTH_STRING"
 PREFECT_CLIENT_CREDENTIAL = "PREFECT_API_AUTH_STRING"
 PREFECT_CREDENTIAL_RECEIVERS = {"sync-bootstrap", "sync-api", "sync-worker"}
 
+# Where the object store is and how its buckets are addressed: the three Sync
+# processes read both, and unset they name the bundled MinIO with path-style
+# addressing. The setting that leaves the bundled store out, and the two
+# services it scales. The S3 credential reaches the Sync processes and, as its
+# root credential, the bundled server.
+OBJECT_STORE_SETTINGS = ("INFRAHUB_SYNC_S3_ENDPOINT_URL", "INFRAHUB_SYNC_S3_ADDRESSING_STYLE")
+OBJECT_STORE_RECEIVERS = ("sync-bootstrap", "sync-api", "sync-worker")
+BUNDLED_OBJECT_STORE_DEFAULTS = {
+    "INFRAHUB_SYNC_S3_ENDPOINT_URL": "http://object-store:9000",
+    "INFRAHUB_SYNC_S3_ADDRESSING_STYLE": "path",
+}
+BUNDLED_OBJECT_STORE_SETTING = "INFRAHUB_SYNC_BUNDLED_OBJECT_STORE"
+BUNDLED_OBJECT_STORE_SERVICES = ("object-store-init", "object-store")
+OBJECT_STORE_CREDENTIALS = ("INFRAHUB_SYNC_S3_ACCESS_KEY", "INFRAHUB_SYNC_S3_SECRET_KEY")
+OBJECT_STORE_CREDENTIAL_RECEIVERS = {"sync-bootstrap", "sync-api", "sync-worker", "object-store"}
+
 
 def services(model: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     return dict(model["services"])
@@ -1071,3 +1087,109 @@ def test_a_declared_source_credential_reaches_only_the_worker(
     }
     assert carriers == SOURCE_TOKEN_RECEIVERS, f"{setting} value reached {sorted(carriers)}"
     assert service(resolved, "sync-worker")["environment"][setting] == planted
+
+
+# ---------------------------------------------------------------------------
+# The object store: bundled or the team's own
+# ---------------------------------------------------------------------------
+
+
+def _env_file(directory: Path, settings: Mapping[str, str]) -> Path:
+    """Write a `.env` the way an operator does, one `NAME=value` line per setting."""
+    path = directory / ".env"
+    path.write_text("".join(f"{name}={value}\n" for name, value in settings.items()), encoding="utf-8")
+    return path
+
+
+def _storage_settings(model: Mapping[str, Any]) -> dict[str, dict[str, str | None]]:
+    """The endpoint and the addressing style each service receives, by service."""
+    return {
+        name: {setting: (definition.get("environment") or {}).get(setting) for setting in OBJECT_STORE_SETTINGS}
+        for name, definition in services(model).items()
+        if any(setting in (definition.get("environment") or {}) for setting in OBJECT_STORE_SETTINGS)
+    }
+
+
+def test_the_object_store_settings_reach_the_three_sync_services_with_the_bundled_defaults(
+    model: dict[str, Any],
+) -> None:
+    """FR-028: unset, every Sync process reaches the bundled MinIO with path-style addressing."""
+    assert _storage_settings(model) == dict.fromkeys(OBJECT_STORE_RECEIVERS, BUNDLED_OBJECT_STORE_DEFAULTS)
+
+
+def test_the_object_store_settings_follow_the_env_file(
+    compose_version: str, contract_environment: dict[str, str], tmp_path: Path
+) -> None:
+    """A team's own store is named in `.env`, and all three Sync processes are given it."""
+    del compose_version
+    external = {
+        "INFRAHUB_SYNC_S3_ENDPOINT_URL": "https://s3.example.test:9443",
+        "INFRAHUB_SYNC_S3_ADDRESSING_STYLE": "virtual",
+    }
+    result = compose(
+        ["config", "--format", "json"],
+        environment=contract_environment,
+        env_files=(_env_file(tmp_path, external),),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _storage_settings(json.loads(result.stdout)) == dict.fromkeys(OBJECT_STORE_RECEIVERS, external)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "scale"),
+    [
+        pytest.param({}, 1, id="unset"),
+        pytest.param({BUNDLED_OBJECT_STORE_SETTING: "1"}, 1, id="bundled"),
+        pytest.param({BUNDLED_OBJECT_STORE_SETTING: "0"}, 0, id="left-out"),
+    ],
+)
+def test_the_bundled_object_store_setting_scales_both_object_store_services(
+    compose_version: str, contract_environment: dict[str, str], overrides: dict[str, str], scale: int
+) -> None:
+    """FR-029: `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0` starts neither MinIO service."""
+    del compose_version
+    resolved = resolve({**contract_environment, **overrides})
+
+    scales = {name: service(resolved, name).get("scale") for name in BUNDLED_OBJECT_STORE_SERVICES}
+    assert scales == dict.fromkeys(BUNDLED_OBJECT_STORE_SERVICES, scale), scales
+
+
+@pytest.mark.parametrize("bundled", [None, "0"])
+def test_the_bootstrap_job_does_not_require_the_bundled_object_store(
+    compose_version: str, contract_environment: dict[str, str], bundled: str | None
+) -> None:
+    """Left out, the bundled store is a dependency `sync-bootstrap` may start without.
+
+    Still declared, so a deployment that runs it waits for it to be healthy first.
+    """
+    del compose_version
+    environment = dict(contract_environment)
+    if bundled is not None:
+        environment[BUNDLED_OBJECT_STORE_SETTING] = bundled
+    dependency = service(resolve(environment), "sync-bootstrap")["depends_on"]["object-store"]
+
+    assert dependency["condition"] == "service_healthy"
+    assert dependency["required"] is False
+
+
+@pytest.mark.parametrize("setting", OBJECT_STORE_CREDENTIALS)
+def test_the_object_store_credential_reaches_exactly_the_sync_services_and_the_bundled_store(
+    compose_version: str, contract_environment: dict[str, str], setting: str
+) -> None:
+    """The S3 credential is given to the three Sync processes and to the MinIO server, and nothing else.
+
+    Compared privately on raw output, because the credential is redacted by name:
+    the assertion reports service names, never the value.
+    """
+    del compose_version
+    planted = f"contract-{setting.lower().replace('_', '-')}-9c31e0"
+
+    resolved = resolve_privately({**contract_environment, setting: planted})
+
+    carriers = {
+        name
+        for name, definition in services(resolved).items()
+        if any(planted in str(value) for value in (definition.get("environment") or {}).values())
+    }
+    assert carriers == OBJECT_STORE_CREDENTIAL_RECEIVERS, f"{setting} value reached {sorted(carriers)}"

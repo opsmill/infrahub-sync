@@ -118,6 +118,9 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_PREFECT_DATABASE`, `INFRAHUB_SYNC_PREFECT_ROLE` | `prefect` | The Prefect database and its owner role. |
 | `INFRAHUB_SYNC_S3_BUCKET`, `INFRAHUB_SYNC_S3_PREFIX` | `infrahub-sync` | The artifact bucket and key prefix. |
 | `INFRAHUB_SYNC_S3_REGION` | `us-east-1` | The object store region. |
+| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | `http://object-store:9000` | The address of the object store. The default is the bundled MinIO. |
+| `INFRAHUB_SYNC_S3_ADDRESSING_STYLE` | `path` | How a request names the bucket: `path` or `virtual`. |
+| `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` | `1` | Set it to `0` to leave out `object-store` and `object-store-init` when you use your own S3-compatible store. |
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
 | `PREFECT_WORKER_QUERY_SECONDS`, `PREFECT_WORKER_HEARTBEAT_SECONDS` | `10` | The worker's polling and heartbeat intervals. |

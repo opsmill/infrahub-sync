@@ -29,7 +29,9 @@ services:
       retries: 20
 
   sync-minio:
-    # Temporary Chainguard build while a maintained S3 store is selected; the old MinIO image requires authentication.
+    # The bundled object store: a Chainguard MinIO build, pinned by digest, as in the
+    # root `docker-compose.yml`. A team can use its own S3-compatible store instead;
+    # a later release may bundle a different server.
     image: "cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba"  # yamllint disable-line rule:line-length
     command: server /data --console-address ":9001"
     environment:
@@ -44,7 +46,8 @@ services:
       retries: 20
 
   sync-minio-bootstrap:
-    # The temporary Chainguard image also includes mc for bucket creation.
+    # The same MinIO build as `sync-minio`, pinned by digest, which also carries `mc`,
+    # creates the bucket.
     image: "cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba"  # yamllint disable-line rule:line-length
     depends_on:
       sync-minio:

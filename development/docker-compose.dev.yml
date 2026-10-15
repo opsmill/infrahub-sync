@@ -41,7 +41,8 @@ x-sync-env: &sync-env
   INFRAHUB_SYNC_DATABASE_URL: "postgresql://postgres:devpassword@postgres:5432/infrahub_sync"
   INFRAHUB_SYNC_S3_BUCKET: "infrahub-sync"
   INFRAHUB_SYNC_S3_PREFIX: "infrahub-sync"
-  INFRAHUB_SYNC_S3_ENDPOINT_URL: "http://object-store:9000"
+  INFRAHUB_SYNC_S3_ENDPOINT_URL: "${INFRAHUB_SYNC_S3_ENDPOINT_URL:-http://object-store:9000}"
+  INFRAHUB_SYNC_S3_ADDRESSING_STYLE: "${INFRAHUB_SYNC_S3_ADDRESSING_STYLE:-path}"
   INFRAHUB_SYNC_S3_REGION: "us-east-1"
   AWS_ACCESS_KEY_ID: "devaccesskey"
   AWS_SECRET_ACCESS_KEY: "devsecretkey"
@@ -88,9 +89,9 @@ services:
       retries: 30
 
   object-store:
-    # The same temporary Chainguard build the root `docker-compose.yml` and the
-    # preview stack pin: the quay.io MinIO image no longer allows anonymous pulls
-    # (since 2026-09-24).
+    # The bundled object store: the Chainguard MinIO build, pinned by digest, that
+    # the root `docker-compose.yml` and the preview stack also run. A team can use
+    # its own S3-compatible store instead; a later release may bundle a different server.
     image: "cgr.dev/chainguard/minio:latest-dev@sha256:d7c906993247627c19f37fc1fa302c34cf2d209ae0e7dc7d52fb0be6ac2849ba"  # yamllint disable-line rule:line-length
     command: ["server", "/data"]
     environment:

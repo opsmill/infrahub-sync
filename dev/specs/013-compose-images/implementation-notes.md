@@ -66,3 +66,16 @@ are written later in `plan.md`, section "Lifecycle failure causes".
   version and revision labels: `test_the_image_carries_every_required_oci_label[...version]`,
   `[...revision]` and `test_the_image_carries_the_source_provenance_of_the_commit_it_was_built_from`.
   The publishing workflow passes these labels. No file of this phase changes them.
+
+## User Story 3 (T034, T035, T040 to T042)
+
+- T040 adds `INFRAHUB_SYNC_S3_ENDPOINT_URL`, `INFRAHUB_SYNC_S3_ADDRESSING_STYLE` and
+  `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` to `docker-compose.yml`. So that
+  `tests/compose/test_documentation.py::test_the_page_documents_every_variable_the_compose_file_reads`
+  keeps passing, the same commit adds one short row for each of them to the optional settings
+  table of `docs/docs/compose-deployment.mdx`. T043 extends these three rows; it does not add
+  new ones.
+- `docker compose config` renders `scale` as a number, `1` when
+  `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` is unset and `0` when it is `0`. Both the installed
+  Compose and the pinned 2.24.0 release do so, and both render `required: false` on
+  `sync-bootstrap`'s dependency on `object-store`.

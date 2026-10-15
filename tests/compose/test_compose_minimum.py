@@ -53,6 +53,10 @@ REQUIRED_FLAGS = ("--wait", "--wait-timeout", "--quiet-pull", "--detach")
 FIXTURE_WAIT_SECONDS = 120
 FIXTURE_PROCESS_CUSHION_SECONDS = 60
 
+# The setting that leaves the bundled object store out, and the two services it scales.
+BUNDLED_OBJECT_STORE_SETTING = "INFRAHUB_SYNC_BUNDLED_OBJECT_STORE"
+BUNDLED_OBJECT_STORE_SERVICES = ("object-store-init", "object-store")
+
 # The host platforms the release publishes a binary for. A host that is not one
 # of them cannot run the pinned release as a process at all, and the only
 # alternative would put the Docker socket inside a container.
@@ -232,3 +236,31 @@ def test_the_pinned_release_starts_a_local_image_with_an_inline_config_and_a_com
         assert "after" in state.stdout, state.stdout
     finally:
         host_minimum_compose(pinned_binary, [*base, "down", "--remove-orphans", "--volumes"])
+
+
+@pytest.mark.parametrize("bundled", [None, "0"], ids=["unset", "left-out"])
+def test_the_minimum_release_accepts_an_interpolated_scale_and_an_optional_dependency(
+    docker_daemon: None, contract_environment: dict[str, str], bundled: str | None
+) -> None:
+    """`INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` is read by the floor release, not only by a newer one.
+
+    The setting reaches `scale` through interpolation, so the parser has to cast
+    it to a number, and `required: false` on a dependency has to be a key it
+    knows rather than one it refuses.
+    """
+    del docker_daemon
+    environment = dict(contract_environment)
+    if bundled is not None:
+        environment[BUNDLED_OBJECT_STORE_SETTING] = bundled
+    result = minimum_compose(
+        ["--env-file", "/dev/null", "--file", "docker-compose.yml", "config", "--format", "json"],
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stderr
+    measured = json.loads(result.stdout)["services"]
+    expected = 0 if bundled == "0" else 1
+    assert {name: measured[name].get("scale") for name in BUNDLED_OBJECT_STORE_SERVICES} == dict.fromkeys(
+        BUNDLED_OBJECT_STORE_SERVICES, expected
+    )
+    assert measured["sync-bootstrap"]["depends_on"]["object-store"]["required"] is False
