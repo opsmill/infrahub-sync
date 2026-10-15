@@ -246,15 +246,33 @@ adds any cause it finds.
 
 | # | Candidate cause | Evidence at planning | Confirmed | Fix |
 | --- | --- | --- | --- | --- |
-| C1 | Fixed host ports shared by test modules | code reading, `tests/compose/lifecycle.py:28-33` | to measure | Prefect ports removed; API port chosen free per deployment |
-| C2 | Image pulls from three registries in every `up` | code reading, `tests/compose/conftest.py:215` | to measure | session-wide pull with retries; `prefecthq/prefect` removed |
-| C3 | One 420-second readiness bound for cold starts | code reading, `tests/compose/lifecycle.py:41` | to measure | per-service start times in diagnostics; bound from measurements |
-| C4 | Leftover projects from an aborted session | code reading, `tests/compose/lifecycle.py:98` | to measure | remove labelled leftover projects at session start |
-| C5 | No linux/arm64 run | `workflow-nightly-e2e.yml:191` | not applicable | arm64 leg added |
+| C1 | Fixed host ports shared by test modules | code reading, `tests/compose/lifecycle.py:28-33` | not observed in 20 iterations on [run 38806056523](https://github.com/opsmill/infrahub-sync/actions/runs/38806056523) | Prefect ports removed; API port chosen free per deployment |
+| C2 | Image pulls from three registries in every `up` | code reading, `tests/compose/conftest.py:215` | not observed in 20 iterations on [run 38806056523](https://github.com/opsmill/infrahub-sync/actions/runs/38806056523) | session-wide pull with retries; `prefecthq/prefect` removed |
+| C3 | One 420-second readiness bound for cold starts | code reading, `tests/compose/lifecycle.py:41` | not observed in 20 iterations on [run 38806056523](https://github.com/opsmill/infrahub-sync/actions/runs/38806056523); the slowest test, which holds the session's first cold `up`, took 167.6 s to 220.5 s on amd64 and 121.7 s to 186.1 s on arm64 | per-service start times in diagnostics; bound from measurements |
+| C4 | Leftover projects from an aborted session | code reading, `tests/compose/lifecycle.py:98` | not observed in 20 iterations on [run 38806056523](https://github.com/opsmill/infrahub-sync/actions/runs/38806056523) | remove labelled leftover projects at session start |
+| C5 | No linux/arm64 run | `workflow-nightly-e2e.yml:191` | not observed: the new arm64 leg passed 10 of 10 iterations on [run 38806056523](https://github.com/opsmill/infrahub-sync/actions/runs/38806056523) | arm64 leg added |
 
 Measurement procedure: dispatch `workflow-nightly-e2e.yml` with a new `compose_repeat` input of
 10, on both legs, before and after the changes. A compose lifecycle run is not a tier M
 measurement.
+
+Measured on 2026-10-15: amd64 10/10, arm64 10/10, run
+<https://github.com/opsmill/infrahub-sync/actions/runs/38806056523>.
+
+- Code under test: `feature/v3-develop` at `8dc921b9`. The workflow definition came from the
+  measurement branch `ci/compose-repeat-measure` (T003 only). The run did not test the code of
+  `013-compose-images`.
+- Every iteration on both legs ended with "37 passed, 216 deselected". No test failed, was
+  skipped or was run again, and the run found no new cause, so no C6 row is added.
+- Suite time per iteration: amd64 692 s to 752 s, arm64 602 s to 679 s. The first iteration was
+  the slowest on both legs.
+- The diagnostics artifact of each iteration holds `pytest.log` and `junit.xml` only. It holds no
+  per-service start times, so the C3 figures above are test times from `junit.xml`, which include
+  fixture setup.
+- Effect on Phase 8: no failure in 20 iterations is evidence for C1 to C4. T064, T065 and T067
+  have no measured failure to fix. T066 keeps its diagnostics half, because the run measured no
+  per-service start times; its readiness bound has only the test times above to go on. T068 has
+  no cause to fix. Twenty passing iterations do not show that the causes cannot occur.
 
 ## Tests
 
