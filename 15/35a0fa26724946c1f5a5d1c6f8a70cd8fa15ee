@@ -1,0 +1,61 @@
+docs/docs/operations/compose-troubleshooting.mdx
+  s_47078ea83e766d::t_13537b731e071b 34-35
+docs/docs/compose-deployment.mdx
+  s_47078ea83e766d::t_b620189c8670e2 127
+  s_47078ea83e766d::t_cd43c025c38908 187-190
+  s_47078ea83e766d::t_a71096223f5b25 216-245
+  s_47078ea83e766d::t_1b32c13b0c9808 108
+tests/compose/test_compose_contract.py
+  s_47078ea83e766d::t_212693c01a5531 23-24
+  s_47078ea83e766d::t_2813d0c23152bf 1199
+  s_47078ea83e766d::t_022918bf23d8ba 107-171
+  s_47078ea83e766d::t_907c0a4b8097b4 1099-1105,1107,1110-1137,1139-1148,1153-1154,1158,1161
+  s_47078ea83e766d::t_fd2bc149120fd7 1179
+  s_47078ea83e766d::t_3ec5363fb16d28 172
+  s_47078ea83e766d::t_f40596e20acf74 1106
+  s_47078ea83e766d::t_6da731476fa233 1108-1109
+  s_47078ea83e766d::t_5db4070522a3d7 1138
+  s_06ac96af593975::t_93f4680f03076b 26
+tests/compose/test_source_credentials.py
+  s_47078ea83e766d::t_e75529ba8f1158 29,644
+  s_47078ea83e766d::t_6ab3b72eecd9b3 632-643,645-745
+dev/specs/013-compose-images/implementation-notes.md
+  s_47078ea83e766d::t_0d5bb81c190a24 96-119
+docs/docs/custom-certificates.mdx
+  s_47078ea83e766d::t_b1532d31976d3f 28,30,32-33,35-57
+dev/specs/013-compose-images/tasks.md
+  s_47078ea83e766d::t_0bcd0e33ad4057 200-202,206-211
+development/docker-compose.dev.yml
+  s_47078ea83e766d::t_63b0ef797a9fcf 24-25
+  s_06ac96af593975::t_efe0544921deca 201-214
+tests/compose/test_custom_ca.py
+  s_47078ea83e766d::t_896319462be149 23,331
+  s_47078ea83e766d::t_4c609ae8d4323d 1-22,24-51,54-61,63-330,332-411
+  s_47078ea83e766d::t_d7b97b060b7442 52-53,62
+docker-compose.yml
+  s_06ac96af593975::t_398eb88b7090bd 310-312,319-332
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1535a0fa26724946c1f5a5d1c6f8a70cd8fa15ee",
+  "prompts": {},
+  "sessions": {
+    "s_06ac96af593975": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aimpl-013-c7-23425f3077e9805e",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
