@@ -1,0 +1,34 @@
+dev/specs/009-plan-problem-reporting/quickstart.md
+  s_47078ea83e766d::t_63a331dc82910c 1-99
+dev/specs/009-plan-problem-reporting/plan.md
+  s_47078ea83e766d::t_ccd817a57d168a 78
+  s_47078ea83e766d::t_5d8cabff4b4063 2,5,7-8,18,24,33-34,36,40,44,47,50,52,55,59,62,65-67,69,79,83-87,100-104,141-142,157-158,221-222,228,230
+  s_47078ea83e766d::t_541b0ec1d26342 1,3-4,6,9-17,19-23,25-32,35,37-39,41-43,45-46,48-49,51,53-54,56-58,60-61,63-64,68,70-77,80-82,88-99,105-140,143-156,159-220,223-227,229,231-232
+dev/specs/009-plan-problem-reporting/research.md
+  s_47078ea83e766d::t_632849618f9116 48-51
+  s_47078ea83e766d::t_a53ac44a6b6d31 1-47,52-406
+dev/specs/009-plan-problem-reporting/contracts/sync-api.md
+  s_47078ea83e766d::t_59687e21bfe614 1-142
+dev/specs/009-plan-problem-reporting/contracts/cli.md
+  s_47078ea83e766d::t_d5cfe06ffbfa5e 1-71
+dev/specs/009-plan-problem-reporting/contracts/plan-artifact-format-4.md
+  s_47078ea83e766d::t_a2035c5212fba7 1-52
+dev/specs/009-plan-problem-reporting/data-model.md
+  s_47078ea83e766d::t_e073a29c624945 1-144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4995c4223a49ba60f07750968b7aecfc68333b5e",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
