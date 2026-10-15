@@ -714,15 +714,48 @@ def test_nightly_suites_report_independently_and_clean_up() -> None:
     assert ".github/scripts/nightly_e2e.py" in filter_patterns("sync_all")
 
 
+COMPOSE_JOB = "compose-suite"
+COMPOSE_SUITE = "pytest -m compose tests/compose --compose-zero-skip"
+COMPOSE_REPEAT_INPUT = "compose_repeat"
+COMPOSE_LEGS = {"amd64": "ubuntu-22.04", "arm64": "ubuntu-24.04-arm"}
+
+
+def _job_text(workflow: Path, name: str) -> str:
+    """Return the raw lines of one top-level job, comments included, which YAML parsing drops."""
+    lines = workflow.read_text(encoding="utf-8").splitlines()
+    start = lines.index(f"  {name}:")
+    end = next(
+        (index for index in range(start + 1, len(lines)) if re.match(r"^ {2}\S", lines[index])),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+def _shell_words(script: str) -> list[str]:
+    """Split a run script into words, joining backslash-continued lines first."""
+    return script.replace("\\\n", " ").split()
+
+
 def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
     """The opt-in Compose suite keeps running: nightly, on the exact merged commit.
 
-    It builds the image locally and names it through the two settings the root
-    `docker-compose.yml` reads, so the run proves the operator file against this
-    commit's image without pulling anything. `--compose-zero-skip` turns a skipped
-    case into a failure, so a run that skipped everything cannot report green.
+    Each architecture leg builds the image locally and names it through the two
+    settings the root `docker-compose.yml` reads, so the run proves the operator
+    file against this commit's image without pulling anything. `--compose-zero-skip`
+    turns a skipped case into a failure, so a run that skipped everything cannot
+    report green. The suite runs `compose_repeat` times without `-x`, so a repeated
+    dispatch counts every failing iteration, and a final step fails the job when
+    any iteration failed.
     """
-    steps = jobs(NIGHTLY_WORKFLOW)["compose-suite"]["steps"]
+    declared = triggers_of(NIGHTLY_WORKFLOW)["workflow_dispatch"]["inputs"][COMPOSE_REPEAT_INPUT]
+    assert declared["type"] == "number"
+    assert declared["default"] == 1
+    job = job_of(NIGHTLY_WORKFLOW, COMPOSE_JOB)
+    assert job["runs-on"] == "${{ matrix.runner }}"
+    assert job["strategy"]["fail-fast"] is False
+    legs = {leg["arch"]: leg["runner"] for leg in job["strategy"]["matrix"]["include"]}
+    assert legs == COMPOSE_LEGS
+    steps = job["steps"]
     checkout = next(step for step in steps if str(step.get("uses", "")).startswith(CHECKOUT_ACTION))
     assert checkout["with"] == {
         "ref": f"${{{{ inputs.{SHA_INPUT} }}}}",
@@ -733,14 +766,29 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
     assert ANCESTRY_CHECK in guard
     assert HEAD_READBACK in guard
     runs = [str(step.get("run", "")) for step in steps]
-    build = next(index for index, run in enumerate(runs) if run == "docker build -t infrahub-sync:compose-test .")
-    suite = next(
-        index
-        for index, run in enumerate(runs)
-        if run == "uv run --no-sync pytest -m compose tests/compose -x --compose-zero-skip"
+    build = next(
+        index for index, run in enumerate(runs) if run.strip() == "docker build -t infrahub-sync:compose-test ."
     )
+    suite = next(index for index, run in enumerate(runs) if COMPOSE_SUITE in " ".join(_shell_words(run)))
     assert build < suite
-    assert steps[suite]["env"] == {"INFRAHUB_SYNC_DOCKER_IMAGE": "infrahub-sync", "VERSION": "compose-test"}
+    suite_step = steps[suite]
+    assert suite_step["env"]["INFRAHUB_SYNC_DOCKER_IMAGE"] == "infrahub-sync"
+    assert suite_step["env"]["VERSION"] == "compose-test"
+    assert suite_step["env"]["COMPOSE_REPEAT"] == f"${{{{ inputs.{COMPOSE_REPEAT_INPUT} }}}}"
+    words = _shell_words(suite_step["run"])
+    assert "-x" not in words
+    assert "--exitfirst" not in words
+    script = " ".join(words)
+    assert 'for n in $(seq 1 "$COMPOSE_REPEAT"); do' in script
+    assert "failed=$((failed + 1))" in script
+    verdict = steps[-1]
+    assert verdict["if"] == "always()"
+    assert verdict["env"]["FAILED"] == f"${{{{ steps.{suite_step['id']}.outputs.failed }}}}"
+    assert "exit 1" in verdict["run"]
+    uses = [line for line in _job_text(NIGHTLY_WORKFLOW, COMPOSE_JOB).splitlines() if "uses:" in line]
+    assert uses
+    unpinned = [line.strip() for line in uses if not PINNED_USES.match(line)]
+    assert not unpinned, f"these actions are not pinned to a commit: {unpinned}"
 
 
 def develop_jobs() -> dict[str, dict]:
