@@ -179,17 +179,16 @@ services:
         @postgres:5432/${INFRAHUB_SYNC_PREFECT_DATABASE:-prefect}}"
       PREFECT_SERVER_API_HOST: "0.0.0.0"
       PREFECT_SERVER_API_PORT: "4200"
-      PREFECT_SERVER_UI_API_URL: >-
-        http://${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_PREFECT_PORT:-4200}/api
+      # This server publishes no host port. An engineer who needs the UI names a
+      # `prefect-ui.yml` override with `-f`, which publishes it on
+      # 127.0.0.1:${INFRAHUB_SYNC_PREFECT_PORT}; the browser then calls the API
+      # at that address. The deployment documentation holds the override.
+      PREFECT_SERVER_UI_API_URL: "http://127.0.0.1:${INFRAHUB_SYNC_PREFECT_PORT:-4200}/api"
       PREFECT_SERVER_ANALYTICS_ENABLED: "false"
       # Basic authentication on the whole API, the UI's calls included: the UI
       # asks for this value once and sends it with each request. Prefect leaves
       # only the health and readiness probes open, which the check below uses.
       PREFECT_SERVER_API_AUTH_STRING: "${INFRAHUB_SYNC_PREFECT_AUTH_STRING:?the Prefect API credential is required}"
-    # Both published surfaces bind to loopback by default: external exposure and
-    # TLS termination are outside the supported single-host shape.
-    ports:
-      - "${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_PREFECT_PORT:-4200}:4200"
     healthcheck:
       test:
         - "CMD"
@@ -253,6 +252,8 @@ services:
     read_only: true
     tmpfs: *sync-scratch
     volumes: *sync-ca-certificates
+    # The one published surface, on loopback by default: external exposure and
+    # TLS termination are outside the supported single-host shape.
     ports:
       - "${INFRAHUB_SYNC_BIND_ADDRESS:-127.0.0.1}:${INFRAHUB_SYNC_API_PORT:-8000}:8000"
     healthcheck:

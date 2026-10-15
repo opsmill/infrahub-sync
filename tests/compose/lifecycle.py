@@ -26,11 +26,11 @@ if TYPE_CHECKING:
 
 FIXTURE_OVERRIDE = Path(__file__).resolve().parent / "fixture-override.yaml"
 
-# Every published surface the suite drives is on loopback, and the two ports
-# below are deliberately not the file's own defaults: a developer's stack must
-# be able to keep running while this suite has one of its own.
+# The one published surface the suite drives is on loopback, and its port is
+# deliberately not the file's own default: a developer's stack must be able to
+# keep running while this suite has one of its own. Prefect publishes no port;
+# the suite reaches it at `http://prefect-server:4200` inside the deployment.
 API_PORT = 8061
-PREFECT_PORT = 4261
 
 # The deployment's own PostgreSQL image, reused as a probe so no fourth external
 # image has to be pinned for a two-command question.
@@ -92,16 +92,14 @@ class Deployment:
         compose_file: Path = COMPOSE_FILE,
         destination: str = "",
         api_port: int = API_PORT,
-        prefect_port: int = PREFECT_PORT,
     ) -> None:
         self.instance = instance
         self.project = f"infrahub-sync-{instance}"
         # The address its declared configuration names.
         self.destination = destination
-        # Each deployment publishes on its own loopback ports, so more than one
+        # Each deployment publishes on its own loopback port, so more than one
         # can be up at a time and no probe can reach the wrong one.
         self.api_port = api_port
-        self.prefect_port = prefect_port
         self.environment_file = environment_file
         self._files = (compose_file, *overrides)
 
@@ -194,10 +192,6 @@ class Deployment:
     @property
     def api(self) -> str:
         return f"http://127.0.0.1:{self.api_port}"
-
-    @property
-    def prefect(self) -> str:
-        return f"http://127.0.0.1:{self.prefect_port}"
 
 
 # The dependencies whose health is an answer from the service -- a PostgreSQL
@@ -339,7 +333,7 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
     destination_token: str,
     canaries: Mapping[str, str],
     api_port: int = API_PORT,
-    prefect_port: int = PREFECT_PORT,
+    prefect_port: int | None = None,
 ) -> Path:
     """Write the `.env` one deployment runs on, and return it.
 
@@ -355,7 +349,6 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
         "INFRAHUB_SYNC_DOCKER_IMAGE": repository,
         "VERSION": version,
         "INFRAHUB_SYNC_API_PORT": str(api_port),
-        "INFRAHUB_SYNC_PREFECT_PORT": str(prefect_port),
         "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD": canaries["administrator"],
         "INFRAHUB_SYNC_PRODUCT_PASSWORD": canaries["product"],
         "INFRAHUB_SYNC_PREFECT_PASSWORD": canaries["prefect"],
@@ -366,6 +359,9 @@ def operator_environment(  # noqa: PLR0913 -- every input of one `.env` varies i
         "INFRAHUB_SYNC_API_TOKEN": canaries["principal"],
         "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN": destination_token,
     }
+    if prefect_port is not None:
+        # Only for a compose file older than this one, which still publishes Prefect.
+        values["INFRAHUB_SYNC_PREFECT_PORT"] = str(prefect_port)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / ".env"
     path.write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")

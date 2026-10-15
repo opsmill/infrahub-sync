@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from typer.testing import CliRunner
 
 from infrahub_sync.client import SyncClient
-from tests.compose.conftest import REPO_ROOT
+from tests.compose.conftest import PREFECT_UI_CLOSE, PREFECT_UI_OPEN, PREFECT_UI_OVERRIDE, REPO_ROOT
 
 DOCUMENT_ID = "compose-deployment"
 PAGE = REPO_ROOT / "docs" / "docs" / f"{DOCUMENT_ID}.mdx"
@@ -416,3 +416,12 @@ def test_the_troubleshooting_page_covers_an_operator_file_without_the_cli_token(
     assert "`operator.env`" in troubleshooting
     assert "INFRAHUB_SYNC_API_TOKEN" in troubleshooting
     assert "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" in troubleshooting
+
+
+def test_the_page_prints_the_prefect_ui_override_and_its_two_commands() -> None:
+    """Prefect publishes no port by default, so the page is where an engineer finds the opt-in."""
+    text = page()
+
+    assert f"```yaml\n{PREFECT_UI_OVERRIDE}```" in text
+    assert PREFECT_UI_OPEN in text
+    assert PREFECT_UI_CLOSE in text

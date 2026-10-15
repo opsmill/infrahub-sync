@@ -23,6 +23,7 @@ import pytest
 from tests.compose.conftest import (
     COMPOSE_FILE,
     CONTRACT_ENVIRONMENT,
+    PREFECT_UI_OVERRIDE,
     SCRATCH_OPTIONS,
     SYNC_SCRATCH_ROOTS,
     SYNC_SERVICES,
@@ -389,10 +390,51 @@ def test_a_missing_credential_stops_compose_naming_it(compose_version: str, name
 # ---------------------------------------------------------------------------
 
 
-def test_only_the_api_and_prefect_publish_a_host_port(model: dict[str, Any]) -> None:
-    """PostgreSQL, the object store, the worker, and every job stay on the private network."""
+def test_only_the_api_publishes_a_host_port(model: dict[str, Any]) -> None:
+    """Prefect, PostgreSQL, the object store, the worker, and every job stay on the private network."""
     publishers = {name for name, definition in services(model).items() if published(definition)}
 
+    assert publishers == {"sync-api"}, f"host ports are published by {sorted(publishers)}"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        pytest.param({}, "http://127.0.0.1:4200/api", id="default"),
+        pytest.param({"INFRAHUB_SYNC_PREFECT_PORT": "4310"}, "http://127.0.0.1:4310/api", id="port-setting"),
+        pytest.param({"INFRAHUB_SYNC_BIND_ADDRESS": "0.0.0.0"}, "http://127.0.0.1:4200/api", id="bind-address"),  # noqa: S104
+    ],
+)
+def test_the_prefect_ui_calls_its_api_on_the_opt_in_loopback_port(
+    compose_version: str, contract_environment: dict[str, str], overrides: dict[str, str], expected: str
+) -> None:
+    """The browser reaches the API where `prefect-ui.yml` publishes it, which is never the bind address."""
+    del compose_version
+    resolved = resolve({**contract_environment, **overrides})
+
+    assert service(resolved, "prefect-server")["environment"]["PREFECT_SERVER_UI_API_URL"] == expected
+
+
+@pytest.mark.parametrize("bind_address", [None, "127.0.0.1", "0.0.0.0"])  # noqa: S104
+def test_the_prefect_ui_override_publishes_prefect_on_loopback_only(
+    compose_version: str, contract_environment: dict[str, str], tmp_path: Path, bind_address: str | None
+) -> None:
+    """The documented `prefect-ui.yml` adds one loopback port, whatever the API's bind address is."""
+    del compose_version
+    override = tmp_path / "prefect-ui.yml"
+    override.write_text(PREFECT_UI_OVERRIDE, encoding="utf-8")
+    environment = dict(contract_environment)
+    if bind_address is not None:
+        environment["INFRAHUB_SYNC_BIND_ADDRESS"] = bind_address
+
+    resolved = resolve(environment, files=(COMPOSE_FILE, override))
+    prefect = [
+        (entry.get("host_ip"), entry.get("published"), entry.get("target"))
+        for entry in published(service(resolved, "prefect-server"))
+    ]
+
+    assert prefect == [("127.0.0.1", "4200", 4200)]
+    publishers = {name for name, definition in services(resolved).items() if published(definition)}
     assert publishers == {"sync-api", "prefect-server"}, f"host ports are published by {sorted(publishers)}"
 
 

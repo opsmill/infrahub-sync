@@ -52,6 +52,7 @@ PREVIOUS_REF_SETTING = "INFRAHUB_SYNC_PREVIOUS_COMPOSE_REF"
 STOCK_PREFECT_IMAGE = "prefecthq/prefect"
 RELEASE_TAG = re.compile(r"^v?(?P<major>[0-9]+)\.[0-9]+\.[0-9]+(?:(?:a|b|rc)[0-9]+)?$")
 API_PORT = 8071
+# The previous file still publishes Prefect, so it gets a port of its own too.
 PREFECT_PORT = 4271
 READY_SECONDS = 420
 
@@ -144,7 +145,6 @@ def upgraded_project(
         "environment_file": environment_file,
         "destination": destination,
         "api_port": API_PORT,
-        "prefect_port": PREFECT_PORT,
     }
     previous = Deployment(compose_file=previous_compose_file, **shared)
     current = Deployment(compose_file=COMPOSE_FILE, **shared)

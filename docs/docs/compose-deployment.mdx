@@ -32,7 +32,8 @@ flow, and for the configuration and reviewed-run procedure that follows it.
 - A registry login. Until the 3.0.0 release, the registry project is open to
   invited testers only, so run `docker login registry.opsmill.io` before the
   first start. See [Install Infrahub Sync](./installation.mdx#run-the-container-image).
-- Ports 8000 and 4200 free on `127.0.0.1`, or other ports set in `.env`.
+- Port 8000 free on `127.0.0.1` for the Sync API, or another port set with
+  `INFRAHUB_SYNC_API_PORT` in `.env`. The deployment publishes no other port.
 
 ## Get the file
 
@@ -109,9 +110,9 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_DOCKER_IMAGE` | `registry.opsmill.io/opsmill/infrahub-sync` | The repository of the Sync image. |
 | `INFRAHUB_SYNC_DATABASE_URL` | composed | The product database connection string, as a whole. |
 | `INFRAHUB_SYNC_PREFECT_DATABASE_URL` | composed | The Prefect database connection string, as a whole. |
-| `INFRAHUB_SYNC_BIND_ADDRESS` | `127.0.0.1` | The address both published ports bind to. |
+| `INFRAHUB_SYNC_BIND_ADDRESS` | `127.0.0.1` | The address the Sync API port binds to. |
 | `INFRAHUB_SYNC_API_PORT` | `8000` | The published Sync API port. |
-| `INFRAHUB_SYNC_PREFECT_PORT` | `4200` | The published Prefect port. |
+| `INFRAHUB_SYNC_PREFECT_PORT` | `4200` | The Prefect UI port on `127.0.0.1`, used only when you name `prefect-ui.yml`. See [Open the Prefect UI](#open-the-prefect-ui). |
 | `INFRAHUB_SYNC_POSTGRES_ADMIN_ROLE` | `postgres` | The PostgreSQL administrator role. |
 | `INFRAHUB_SYNC_PRODUCT_DATABASE`, `INFRAHUB_SYNC_PRODUCT_ROLE` | `infrahub_sync` | The product database and its owner role. |
 | `INFRAHUB_SYNC_PREFECT_DATABASE`, `INFRAHUB_SYNC_PREFECT_ROLE` | `prefect` | The Prefect database and its owner role. |
@@ -299,12 +300,10 @@ registry, no credentials set, and no reachable destination. Whether a registered
 package is valid is answered by `configs validate`, and whether its destination
 answers is answered by the first run against it.
 
-Both published surfaces bind to loopback by default:
-
-| Surface | Address |
-| --- | --- |
-| Sync API | `http://127.0.0.1:8000` |
-| Prefect UI and API | `http://127.0.0.1:4200` |
+The Sync API at `http://127.0.0.1:8000` is the only published surface, and it
+binds to loopback by default. Prefect, PostgreSQL and the object store publish
+no port: the services reach them over the Compose network. To open the Prefect
+UI, see [Open the Prefect UI](#open-the-prefect-ui).
 
 External exposure and TLS termination are not part of this topology.
 
@@ -357,10 +356,49 @@ reads the deployment from Prefect again, so this check relies on the Prefect
 credential above: anyone who holds it could change the deployment between the
 check and the start.
 
-To open the Prefect UI, browse to `http://127.0.0.1:4200`. It asks for a
-password once per browser: enter the whole value of
-`INFRAHUB_SYNC_PREFECT_AUTH_STRING`. Read it from `.env` in a text editor or with
-`sed -n 's/^INFRAHUB_SYNC_PREFECT_AUTH_STRING=//p' .env`; never `source` the file.
+### Open the Prefect UI
+
+The Prefect server publishes no host port by default. To open its UI, write a
+file named `prefect-ui.yml` in the directory that holds `docker-compose.yml` and
+`.env`:
+
+```yaml
+services:
+  prefect-server:
+    ports:
+      - "127.0.0.1:${INFRAHUB_SYNC_PREFECT_PORT:-4200}:4200"
+```
+
+No release ships this file. Then recreate `prefect-server` with the port:
+
+```bash
+docker compose -f docker-compose.yml -f prefect-ui.yml up -d --wait
+```
+
+Browse to `http://127.0.0.1:4200`, or to the port you set with
+`INFRAHUB_SYNC_PREFECT_PORT`. The UI asks for a password once per browser: enter
+the whole value of `INFRAHUB_SYNC_PREFECT_AUTH_STRING`. Read it from `.env` in a
+text editor or with `sed -n 's/^INFRAHUB_SYNC_PREFECT_AUTH_STRING=//p' .env`;
+never `source` the file.
+
+The port binds to `127.0.0.1`, which the file writes itself.
+`INFRAHUB_SYNC_BIND_ADDRESS` does not change it. From another computer, forward
+the port through SSH and browse to `http://127.0.0.1:4200` on that computer:
+
+```bash
+ssh -N -L 4200:127.0.0.1:4200 <user>@<docker-host>
+```
+
+To close the UI again, run the root file alone. Compose recreates
+`prefect-server` without the port:
+
+```bash
+docker compose up -d --wait
+```
+
+If you upgrade from an earlier alpha, the Prefect server no longer publishes
+port 4200, and `INFRAHUB_SYNC_PREFECT_PORT` in `.env` has no effect until you
+name `prefect-ui.yml`. The setting then chooses the port on `127.0.0.1`.
 
 ## Wrapper equivalents
 

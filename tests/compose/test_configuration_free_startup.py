@@ -40,10 +40,9 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.compose
 
-# This module's own loopback ports, so it can run beside every other deployment
+# This module's own loopback port, so it can run beside every other deployment
 # this suite starts.
 API_PORT = "8051"
-PREFECT_PORT = "4251"
 
 # Addresses that resolve to nothing and a credential nothing sets. A registration
 # admits declared content, so this package is registrable and unusable — which is
@@ -153,13 +152,11 @@ def started(
         destination_token="",
         canaries=canaries,
         api_port=int(API_PORT),
-        prefect_port=int(PREFECT_PORT),
     )
     deployment = Deployment(
         instance=f"startup{uuid.uuid4().hex[:12]}",
         environment_file=environment_file,
         api_port=int(API_PORT),
-        prefect_port=int(PREFECT_PORT),
     )
     launched = deployment.up()
     assert launched.returncode == 0, launched.stderr[-3000:]
@@ -187,6 +184,23 @@ def test_a_deployment_with_no_configuration_reaches_ready(started: Deployment) -
     assert probe_json(started, SCHEMA_TABLES) > 0, "the deployment came back with no product schema"
     assert probe_json(started, REGISTRY) == [], "a start registered something"
     assert probe_json(started, AUDIT) == [], "a start recorded an audit event"
+
+
+def test_a_started_deployment_publishes_only_the_sync_api(started: Deployment) -> None:
+    """`docker compose ps` shows one publisher: the API, on loopback, at this module's port."""
+    listed = started.compose(["ps", "--format", "json"])
+    assert listed.returncode == 0, listed.stderr[-3000:]
+    text = listed.stdout.strip()
+    # Compose prints one object per line, or one array on versions before 2.21.
+    rows = json.loads(text) if text.startswith("[") else [json.loads(line) for line in text.splitlines()]
+    published = {
+        (row["Service"], entry["URL"], entry["PublishedPort"])
+        for row in rows
+        for entry in row.get("Publishers") or []
+        if entry.get("PublishedPort")
+    }
+
+    assert published == {("sync-api", "127.0.0.1", int(API_PORT))}, published
 
 
 def test_a_repeated_up_keeps_the_registry_empty(started: Deployment) -> None:

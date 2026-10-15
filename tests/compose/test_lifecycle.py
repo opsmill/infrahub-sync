@@ -50,9 +50,8 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.compose
 
-# Its own ports, so this deployment and the shared one can both be up.
+# Its own API port, so this deployment and the shared one can both be up.
 API_PORT = "8031"
-PREFECT_PORT = "4231"
 BUSY_OBSERVATION_SECONDS = 30
 # The tail an operator asks `docker compose logs` for, per service.
 LOG_TAIL = 200
@@ -180,14 +179,12 @@ def started(
         destination_token=infrahub_fixture["token"],
         canaries=canaries,
         api_port=int(API_PORT),
-        prefect_port=int(PREFECT_PORT),
     )
     deployment = Deployment(
         instance=f"lifecycle{uuid.uuid4().hex[:12]}",
         environment_file=environment_file,
         destination=destination,
         api_port=int(API_PORT),
-        prefect_port=int(PREFECT_PORT),
     )
     # Started here rather than in the first case, so every case below runs
     # against a deployment that exists however few of them are selected.

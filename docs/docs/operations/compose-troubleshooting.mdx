@@ -26,7 +26,7 @@ The message wording can change; the code stays the same.
 | Compose fails to parse `configs.db-bootstrap-script.content` | Compose is older than 2.24. Upgrade it; check with `docker compose version --short`. |
 | `<NAME> is required` | A required credential is missing from `.env`. Compose prints this before any container starts, from `docker compose config --quiet` or `up`. Add the named variable. |
 | A pull error naming `registry.opsmill.io/opsmill/infrahub-sync:<version>` | The image cannot be pulled. Check `docker login registry.opsmill.io`, which is needed until 3.0.0, then `VERSION` and `INFRAHUB_SYNC_DOCKER_IMAGE`. See [Choose an image](../compose-deployment#choose-an-image). |
-| `up` fails on a port publication | Another process holds the port. Set `INFRAHUB_SYNC_API_PORT` or `INFRAHUB_SYNC_PREFECT_PORT` in `.env`. |
+| `up` fails on a port publication | Another process holds the Sync API port. Set `INFRAHUB_SYNC_API_PORT` in `.env`. When you named `prefect-ui.yml` to open the Prefect UI, the port can also be the Prefect port: set `INFRAHUB_SYNC_PREFECT_PORT` in `.env`. |
 | The services run an unexpected image | A `VERSION` or `INFRAHUB_SYNC_DOCKER_IMAGE` exported in your shell overrides `.env`. Unset it, then run `docker compose up -d --wait`. |
 
 ## Failures after the start

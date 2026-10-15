@@ -43,6 +43,19 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # file a release tag carries and an operator fetches.
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 
+# The file an engineer writes beside `docker-compose.yml` to open the Prefect UI,
+# as the deployment page prints it. No release ships it: the page holds it, so
+# the contract tests render this text and the documentation tests find it there.
+PREFECT_UI_OVERRIDE = """\
+services:
+  prefect-server:
+    ports:
+      - "127.0.0.1:${INFRAHUB_SYNC_PREFECT_PORT:-4200}:4200"
+"""
+# Name the file, then return to the root file alone to close the UI again.
+PREFECT_UI_OPEN = "docker compose -f docker-compose.yml -f prefect-ui.yml up -d --wait"
+PREFECT_UI_CLOSE = "docker compose up -d --wait"
+
 # Turns a skipped Compose test into a failure, so a run that skipped everything
 # cannot pass as green. The nightly `compose-suite` job passes it.
 ZERO_SKIP_OPTION = "--compose-zero-skip"

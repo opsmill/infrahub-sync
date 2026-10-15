@@ -32,9 +32,9 @@ in before the first start, as described in
 docker login registry.opsmill.io
 ```
 
-Ports 8000 and 4200 on `127.0.0.1` must be available. Docker needs registry
-access to pull the service images, and enough space for the images and the
-persistent deployment data.
+Port 8000 on `127.0.0.1` must be available for the Sync API, the only port the
+deployment publishes. Docker needs registry access to pull the service images,
+and enough space for the images and the persistent deployment data.
 
 Run the remaining commands on the Docker host. For a remote host, connect
 through SSH.
