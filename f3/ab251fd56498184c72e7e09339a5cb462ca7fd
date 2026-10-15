@@ -1,0 +1,39 @@
+dev/specs/v3-release-scope.md
+  s_47078ea83e766d::t_23161bf409a1ca 144,146,149,154,156
+dev/specs/009-plan-problem-reporting/checklists/requirements.md
+  s_47078ea83e766d::t_fc271051070aa8 18,36-40
+dev/specs/009-plan-problem-reporting/spec.md
+  s_47078ea83e766d::t_7e1233147cfd04 240-243,258-262
+dev/specs/010-second-sync-plan-speed/checklists/requirements.md
+  s_47078ea83e766d::t_ee995d88f7cc40 16,34-35
+dev/specs/010-second-sync-plan-speed/spec.md
+  s_47078ea83e766d::t_b07d79a4a25954 291-292
+dev/specs/011-operator-ui/checklists/requirements.md
+  s_47078ea83e766d::t_86ac43a6f95f69 16,38-41
+dev/specs/011-operator-ui/spec.md
+  s_47078ea83e766d::t_201d8dcf9ba709 302-303,333-336
+dev/specs/012-v2-configuration-conversion/checklists/requirements.md
+  s_47078ea83e766d::t_59b048e3d1c077 18,36-37
+dev/specs/012-v2-configuration-conversion/spec.md
+  s_47078ea83e766d::t_6cce6455e73561 222-224
+dev/specs/013-compose-images/checklists/requirements.md
+  s_47078ea83e766d::t_54befffc216765 16,34-35
+dev/specs/013-compose-images/spec.md
+  s_47078ea83e766d::t_ccbcb51e5c68b4 284-286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f3ab251fd56498184c72e7e09339a5cb462ca7fd",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
