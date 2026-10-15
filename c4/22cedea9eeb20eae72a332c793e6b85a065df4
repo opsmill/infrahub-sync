@@ -1,0 +1,24 @@
+dev/specs/013-compose-images/tasks.md
+  s_47078ea83e766d::t_bade865090a02f 78
+.github/workflows/workflow-nightly-e2e.yml
+  s_47078ea83e766d::t_2465e7dd1d3762 15-19
+  s_47078ea83e766d::t_2e99bb6e419355 272
+  s_47078ea83e766d::t_2fca29c9238a9f 260-263,265,269-271,273-299,301-311,313-349
+  s_47078ea83e766d::t_401ae28ef06fea 195-206
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c422cedea9eeb20eae72a332c793e6b85a065df4",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
