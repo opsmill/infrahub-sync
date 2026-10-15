@@ -26,6 +26,7 @@ failure reports names.
 from __future__ import annotations
 
 import os
+import secrets
 import socket
 import sys
 from dataclasses import dataclass
@@ -628,3 +629,117 @@ def test_a_missing_source_token_fails_the_run_inside_the_container(
     assert names_expected_identifier, "the refusal did not name the expected environment identifier"
     assert "CredentialConfigurationError" in result.output
     assert "PKG-R1-CONTAINER PASS" not in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Every bundled adapter's credentials, in the worker of the root file
+# ---------------------------------------------------------------------------
+# SC-008. One package per bundled adapter, as its source, with every credential
+# setting the capability registry declares for it as a `$credential` reference,
+# resolved by the resolver a run uses. The comparison happens inside the
+# container; only identifiers and a verdict cross the boundary.
+
+EVERY_ADAPTER_PROBE = """
+import os
+import secrets
+
+from infrahub_sync.configuration import parse_configuration_package
+from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
+from infrahub_sync.configuration.runtime import resolve_runtime_instance
+
+DESTINATION = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
+
+
+def variable(adapter, setting):
+    if (adapter, setting) == ("infrahub", "token"):
+        return DESTINATION
+    return f"INFRAHUB_SYNC_CREDENTIAL_{adapter.upper()}_{setting.upper()}"
+
+
+failed = []
+for adapter, capabilities in sorted(BUILTIN_ADAPTER_CAPABILITIES.items()):
+    settings = capabilities.credential_setting_paths
+    credentials = {f"{adapter}-{setting}": {"provider": "env", "identifier": variable(adapter, setting)}
+                   for setting in settings}
+    credentials["destination-token"] = {"provider": "env", "identifier": DESTINATION}
+    package = parse_configuration_package({
+        "format_version": 1,
+        "configuration": {
+            "name": f"sc-008-{adapter}",
+            "source": {"name": adapter, "settings": {
+                "url": "http://source.invalid",
+                **{setting: {"$credential": f"{adapter}-{setting}"} for setting in settings}}},
+            "destination": {"name": "infrahub", "settings": {
+                "url": "http://infrahub.invalid:8000", "token": {"$credential": "destination-token"}}},
+            "schema_mapping": [{"name": "BuiltinTag", "mapping": "tags", "identifiers": ["name"],
+                                "fields": [{"name": "name", "mapping": "name"}]}],
+        },
+        "credentials": credentials,
+    })
+    instance = resolve_runtime_instance(package, directory="/tmp/infrahub-sync/sc-008")
+    resolved = instance.source.settings or {}
+    for setting in settings:
+        name = variable(adapter, setting)
+        if resolved.get(setting) == os.environ[name]:
+            print("RESOLVED", adapter, name)
+        else:
+            failed.append(name)
+    if (instance.destination.settings or {}).get("token") != os.environ[DESTINATION]:
+        failed.append(DESTINATION)
+for name in failed:
+    print("UNRESOLVED", name)
+print("SC-008 PASS" if not failed else "SC-008 FAIL")
+"""
+
+# The 17 names of spec 013's environment contract, the variables the probe reads.
+ADAPTER_CREDENTIAL_VARIABLES = (
+    "INFRAHUB_SYNC_CREDENTIAL_ACI_USERNAME",
+    "INFRAHUB_SYNC_CREDENTIAL_ACI_PASSWORD",
+    "INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_TOKEN",
+    "INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_USERNAME",
+    "INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_PASSWORD",
+    "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN",
+    "INFRAHUB_SYNC_CREDENTIAL_IPFABRICSYNC_AUTH",
+    "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN",
+    "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
+    "INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_TOKEN",
+    "INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_USERNAME",
+    "INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_PASSWORD",
+    "INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN",
+    "INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME",
+    "INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD",
+    "INFRAHUB_SYNC_CREDENTIAL_SLURPITSYNC_API_KEY",
+    "INFRAHUB_SYNC_CREDENTIAL_SLURPITSYNC_TOKEN",
+)
+
+
+@pytest.mark.compose
+def test_the_worker_resolves_every_credential_of_every_bundled_adapter(
+    docker_daemon: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Each of the 17 variables reaches the worker from `.env` and resolves for its adapter.
+
+    The values are generated here and given to Compose only through the
+    operator's `.env`. The probe prints the identifiers it resolved, so the case
+    can name a missing variable without any value reaching retained output.
+    """
+    del docker_daemon
+    values = {name: f"sc-008-{secrets.token_hex(12)}" for name in ADAPTER_CREDENTIAL_VARIABLES}
+    SECRETS.register(*values.values())
+    for name in ADAPTER_CREDENTIAL_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+
+    environment = container_environment()
+    # The contract environment's destination token is replaced by the generated one.
+    environment.pop("INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN", None)
+    result = compose(
+        ["run", "--rm", "--no-deps", "-T", "sync-worker", "python", "-c", EVERY_ADAPTER_PROBE],
+        environment=environment,
+        env_files=(operator_file(tmp_path, **values),),
+    )
+
+    resolved = {line.split()[2] for line in result.stdout.splitlines() if line.startswith("RESOLVED ")}
+    assert result.returncode == 0, result.output
+    assert sorted(set(ADAPTER_CREDENTIAL_VARIABLES) - resolved) == [], result.output
+    assert "SC-008 PASS" in result.stdout, result.output
+    assert SECRETS.leaked(result.unredacted(), values) == []

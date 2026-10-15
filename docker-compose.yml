@@ -307,15 +307,29 @@ services:
       PREFECT_WORKER_HEARTBEAT_SECONDS: "${PREFECT_WORKER_HEARTBEAT_SECONDS:-10}"
       # Optional for the same reason as on the API above.
       INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN:-}"
-      # The source credentials the bundled NetBox and Nautobot adapters resolve,
-      # and the only service given either: a run is what consumes one, and the
-      # worker is what runs one. Optional rather than required, because a
+      # The source credentials of every bundled adapter, under the names a
+      # package's `env` reference uses, and the only service given any of them:
+      # a run is what consumes one, and the worker is what runs one. Optional rather than required, because a
       # deployment that syncs neither source must still start -- and because a
       # token nothing selects has no reason to exist here. When a registered
       # package does select one, the resolver refuses an absent or empty value
       # by name, so an unset token fails that run rather than this container.
       INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN:-}"
       INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_ACI_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_ACI_USERNAME:-}"
+      INFRAHUB_SYNC_CREDENTIAL_ACI_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_ACI_PASSWORD:-}"
+      INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_USERNAME:-}"
+      INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_PASSWORD:-}"
+      INFRAHUB_SYNC_CREDENTIAL_IPFABRICSYNC_AUTH: "${INFRAHUB_SYNC_CREDENTIAL_IPFABRICSYNC_AUTH:-}"
+      INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_USERNAME:-}"
+      INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_PASSWORD:-}"
+      INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN:-}"
+      INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME: "${INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME:-}"
+      INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD: "${INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD:-}"
+      INFRAHUB_SYNC_CREDENTIAL_SLURPITSYNC_API_KEY: "${INFRAHUB_SYNC_CREDENTIAL_SLURPITSYNC_API_KEY:-}"
+      INFRAHUB_SYNC_CREDENTIAL_SLURPITSYNC_TOKEN: "${INFRAHUB_SYNC_CREDENTIAL_SLURPITSYNC_TOKEN:-}"
     read_only: true
     tmpfs: *sync-scratch
     volumes: *sync-ca-certificates

@@ -93,3 +93,27 @@ are written later in `plan.md`, section "Lifecycle failure causes".
   finalizer removes only the container and the network. The endpoint host, the bucket and the
   credential are registered with `SECRETS`, so no retained output renders them.
 - T046: `docs.docusaurus` built with no broken link or anchor warning.
+
+## User Story 5 (T047 to T055)
+
+- T047: `tests/compose/test_compose_contract.py` builds the 17 names from
+  `BUILTIN_ADAPTER_CAPABILITIES` with `<prefix><ADAPTER>_<SETTING>` and the one exception
+  `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`, and compares them with a literal copy of the
+  contract's list. The receiver test plants a value per credential and searches each service's
+  whole resolved definition with the `cli` profile named, because some credentials arrive inside
+  another value, such as the product password inside `INFRAHUB_SYNC_DATABASE_URL`.
+- T048: the case runs `docker compose run --rm --no-deps sync-worker` on the root file with the
+  17 values given only through the `.env` file, rather than starting the whole deployment. Inside
+  the container it parses one package per bundled adapter and resolves it with
+  `resolve_runtime_instance`, the resolver runs use, and prints only identifiers and a verdict.
+  It fails against the root file of the previous commit.
+- T049: the HTTPS source is a small `http.server` started from the Sync image with a
+  certificate from a test CA, on its own network, which only `sync-worker` joins through a
+  test-only override. The package uses the `genericrestapi` adapter, reading `/api/v0/devices`
+  into the fixture Infrahub's smoke branch. One deployment runs the cases in order: no setting,
+  where the services start and the plan run fails; the setting, where the same package reaches
+  `planned` and each of the three services logs `custom CA bundle installed` with one
+  certificate; a directory that also holds a private key, where `docker compose run` of each
+  service exits non-zero, names the file, and prints no line of the key. Spec 009 is not merged,
+  so the failed run's type is not checked.
+- T052 to T054: `docs.docusaurus` built with no broken link or anchor warning.

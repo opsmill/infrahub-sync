@@ -105,7 +105,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | --- | --- | --- |
 | `INFRAHUB_SYNC_API_TOKEN` | empty | The token the `cli` service presents. It must equal a principal's `token` in `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS`. Empty, every `cli` call is refused. |
 | `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | empty | The destination Infrahub token, for a package that references it. |
-| `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`, `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN` | empty | Source tokens, for a package that references them. Only the worker receives them. |
+| The 16 source credential variables, such as `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` | empty | Source credentials, for a package that references them. Only `sync-worker` receives them. See [Credential variables of the bundled adapters](#credential-variables-of-the-bundled-adapters). |
 | `VERSION` | the release the file was taken from | The tag of the Sync image. See [Choose an image](#choose-an-image). |
 | `INFRAHUB_SYNC_DOCKER_IMAGE` | `registry.opsmill.io/opsmill/infrahub-sync` | The repository of the Sync image. |
 | `INFRAHUB_SYNC_DATABASE_URL` | composed | The product database connection string, as a whole. |
@@ -124,7 +124,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
 | `PREFECT_WORKER_QUERY_SECONDS`, `PREFECT_WORKER_HEARTBEAT_SECONDS` | `10` | The worker's polling and heartbeat intervals. |
-| `INFRAHUB_SYNC_CA_CERTIFICATES` | unset | A host directory of PEM CA certificates (`*.pem`, `*.crt`) that `sync-bootstrap`, `sync-api` and `sync-worker` trust in addition to the public roots. Write it as an absolute path or a path that starts with `./`. See [Use custom CA certificates](custom-certificates). |
+| `INFRAHUB_SYNC_CA_CERTIFICATES` | unset | A host directory of PEM CA certificates (`*.pem`, `*.crt`) that `sync-bootstrap`, `sync-api` and `sync-worker` trust in addition to the public roots, for sources, Infrahub and the object store. Write it as an absolute path or a path that starts with `./`. Unset, the services start as before. A file in the directory that holds a private key stops the three services. See [Use custom CA certificates](custom-certificates). |
 
 ### An example `.env`
 
@@ -184,6 +184,10 @@ Handle `.env` as the secret it is:
 - Never `source` it: it holds every credential of the deployment.
 - Nothing in the deployment prints a credential value. A refusal names the
   variable, never its value.
+- Two Docker commands do print credential values: `docker compose config`
+  without `--quiet`, and `docker inspect` on a container. Do not share their
+  output. To check that the file resolves, run `docker compose config --quiet`.
+  To read the file without values, run `docker compose config --no-interpolate`.
 
 :::warning
 A variable exported in your shell overrides the same name in `.env`. An exported
@@ -208,6 +212,36 @@ credentials:
 An `env` identifier must start with `INFRAHUB_SYNC_CREDENTIAL_`; validation refuses any
 other identifier, so a package cannot name the deployment's own storage, database, or
 Prefect settings.
+
+### Credential variables of the bundled adapters
+
+The file passes these 17 variables, each empty unless you set it in `.env`. Name
+them as the `identifier` of an `env` credential. A package that names another
+identifier gets no value on the Compose deployment, and its run fails with a
+message that names the identifier.
+
+| Adapter | Setting | Variable | Received by |
+| --- | --- | --- | --- |
+| `aci` | `username` | `INFRAHUB_SYNC_CREDENTIAL_ACI_USERNAME` | `sync-worker` |
+| `aci` | `password` | `INFRAHUB_SYNC_CREDENTIAL_ACI_PASSWORD` | `sync-worker` |
+| `genericrestapi` | `token` | `INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_TOKEN` | `sync-worker` |
+| `genericrestapi` | `username` | `INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_USERNAME` | `sync-worker` |
+| `genericrestapi` | `password` | `INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_PASSWORD` | `sync-worker` |
+| `infrahub` | `token` | `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` | `sync-api`, `sync-worker` |
+| `ipfabricsync` | `auth` | `INFRAHUB_SYNC_CREDENTIAL_IPFABRICSYNC_AUTH` | `sync-worker` |
+| `nautobot` | `token` | `INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN` | `sync-worker` |
+| `netbox` | `token` | `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN` | `sync-worker` |
+| `peeringmanager` | `token` | `INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_TOKEN` | `sync-worker` |
+| `peeringmanager` | `username` | `INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_USERNAME` | `sync-worker` |
+| `peeringmanager` | `password` | `INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_PASSWORD` | `sync-worker` |
+| `prometheus` | `token` | `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN` | `sync-worker` |
+| `prometheus` | `username` | `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME` | `sync-worker` |
+| `prometheus` | `password` | `INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD` | `sync-worker` |
+| `slurpitsync` | `api_key` | `INFRAHUB_SYNC_CREDENTIAL_SLURPITSYNC_API_KEY` | `sync-worker` |
+| `slurpitsync` | `token` | `INFRAHUB_SYNC_CREDENTIAL_SLURPITSYNC_TOKEN` | `sync-worker` |
+
+`sync-api` receives the Infrahub token because it reads the destination schema
+when you validate a package. No other service receives an adapter credential.
 
 If you upgrade from an earlier alpha, move to the prefixed names:
 

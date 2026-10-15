@@ -20,7 +20,10 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
+from infrahub_sync.configuration.credentials import ENV_CREDENTIAL_PREFIX
 from tests.compose.conftest import (
+    CLI_PROFILE,
     COMPOSE_FILE,
     CONTRACT_ENVIRONMENT,
     PREFECT_UI_OVERRIDE,
@@ -95,18 +98,77 @@ FIXTURE_OVERRIDE = Path(__file__).resolve().parent / "fixture-override.yaml"
 HOST_ROUTE = "host.docker.internal=host-gateway"
 ROUTED_SERVICES = {"sync-worker"}
 
-# The source credentials the bundled adapters resolve. Only a run consumes one,
-# and only the worker runs one, so the worker is the only service that may be
-# given either. Naming them here rather than deriving them from the file keeps
-# this a statement of the contract instead of a restatement of the YAML.
-SOURCE_TOKEN_SETTINGS = ("INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN", "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN")
-SOURCE_TOKEN_RECEIVERS = {"sync-worker"}
-
 # The destination credential, and the two services that resolve one. The API
 # resolves it for the destination schema reads it serves; the worker resolves it
 # for a run. Nothing else has a destination to reach.
 DESTINATION_CREDENTIAL = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
 DESTINATION_CREDENTIAL_RECEIVERS = {"sync-api", "sync-worker"}
+
+# The credential variables of the bundled adapters, as
+# `contracts/environment-variables.md` of spec 013 lists them. Written out, so a
+# change to an adapter's declared credential settings fails here until the
+# contract, the file and the documentation follow it.
+CONTRACT_ADAPTER_CREDENTIALS = frozenset(
+    {
+        "INFRAHUB_SYNC_CREDENTIAL_ACI_USERNAME",
+        "INFRAHUB_SYNC_CREDENTIAL_ACI_PASSWORD",
+        "INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_TOKEN",
+        "INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_USERNAME",
+        "INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_PASSWORD",
+        "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN",
+        "INFRAHUB_SYNC_CREDENTIAL_IPFABRICSYNC_AUTH",
+        "INFRAHUB_SYNC_CREDENTIAL_NAUTOBOT_TOKEN",
+        "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN",
+        "INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_TOKEN",
+        "INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_USERNAME",
+        "INFRAHUB_SYNC_CREDENTIAL_PEERINGMANAGER_PASSWORD",
+        "INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_TOKEN",
+        "INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_USERNAME",
+        "INFRAHUB_SYNC_CREDENTIAL_PROMETHEUS_PASSWORD",
+        "INFRAHUB_SYNC_CREDENTIAL_SLURPITSYNC_API_KEY",
+        "INFRAHUB_SYNC_CREDENTIAL_SLURPITSYNC_TOKEN",
+    }
+)
+# The one name that does not follow `<prefix><ADAPTER>_<SETTING>`: the Infrahub
+# token kept the name it had before the rule existed.
+CREDENTIAL_NAME_EXCEPTIONS = {("infrahub", "token"): DESTINATION_CREDENTIAL}
+
+
+def credential_variable(adapter: str, setting: str) -> str:
+    """Return the environment variable a package names for one adapter credential setting."""
+    exception = CREDENTIAL_NAME_EXCEPTIONS.get((adapter, setting))
+    if exception is not None:
+        return exception
+    return f"{ENV_CREDENTIAL_PREFIX}{adapter.upper()}_{setting.upper()}"
+
+
+# Built from the capability registry, the declaration the configuration checks enforce.
+ADAPTER_CREDENTIALS = frozenset(
+    credential_variable(adapter, setting)
+    for adapter, capabilities in BUILTIN_ADAPTER_CAPABILITIES.items()
+    for setting in capabilities.credential_setting_paths
+)
+
+# The source credentials. Only a run consumes one, and only the worker runs one,
+# so the worker is the only service that may be given any of them.
+SOURCE_CREDENTIAL_SETTINGS = tuple(sorted(CONTRACT_ADAPTER_CREDENTIALS - {DESTINATION_CREDENTIAL}))
+SOURCE_CREDENTIAL_RECEIVERS = {"sync-worker"}
+
+# Every credential an operator's `.env` holds, and the exact services it reaches,
+# as the contract's "Receivers of each credential" table lists them for the
+# default deployment, which runs the bundled object store.
+CREDENTIAL_RECEIVERS: dict[str, frozenset[str]] = {
+    "INFRAHUB_SYNC_POSTGRES_ADMIN_PASSWORD": frozenset({"postgres", "db-bootstrap"}),
+    "INFRAHUB_SYNC_PRODUCT_PASSWORD": frozenset({"db-bootstrap", "sync-bootstrap", "sync-api", "sync-worker"}),
+    "INFRAHUB_SYNC_PREFECT_PASSWORD": frozenset({"db-bootstrap", "prefect-server"}),
+    "INFRAHUB_SYNC_PREFECT_AUTH_STRING": frozenset({"prefect-server", "sync-bootstrap", "sync-api", "sync-worker"}),
+    "INFRAHUB_SYNC_S3_ACCESS_KEY": frozenset({"sync-bootstrap", "sync-api", "sync-worker", "object-store"}),
+    "INFRAHUB_SYNC_S3_SECRET_KEY": frozenset({"sync-bootstrap", "sync-api", "sync-worker", "object-store"}),
+    "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS": frozenset({"sync-api"}),
+    "INFRAHUB_SYNC_API_TOKEN": frozenset({"cli"}),
+    DESTINATION_CREDENTIAL: frozenset(DESTINATION_CREDENTIAL_RECEIVERS),
+    **dict.fromkeys(SOURCE_CREDENTIAL_SETTINGS, frozenset(SOURCE_CREDENTIAL_RECEIVERS)),
+}
 
 # The opt-in client, and the profile that is the only way to resolve it.
 CLI_SERVICE = "cli"
@@ -1034,20 +1096,69 @@ def test_the_cli_service_runs_the_cli_in_the_image_the_deployment_runs(cli_model
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("setting", SOURCE_TOKEN_SETTINGS)
+def test_the_adapter_credentials_follow_the_naming_rule_and_match_the_contract() -> None:
+    """The registry's credential settings name exactly the contract's 17 variables.
+
+    A new credential setting on a bundled adapter fails here, so it cannot ship
+    without a variable the worker receives.
+    """
+    assert len(CONTRACT_ADAPTER_CREDENTIALS) == 17
+    assert sorted(ADAPTER_CREDENTIALS - CONTRACT_ADAPTER_CREDENTIALS) == [], (
+        "registry names a variable the contract lacks"
+    )
+    assert sorted(CONTRACT_ADAPTER_CREDENTIALS - ADAPTER_CREDENTIALS) == [], (
+        "contract names a variable no adapter reads"
+    )
+
+
+def _privately_resolved_with_profile(environment: Mapping[str, str]) -> dict[str, Any]:
+    """The resolved file with the CLI profile named, from raw output, for value-level checks.
+
+    The same obligation as `resolve_privately`: compare privately, report names.
+    """
+    result = compose(["--profile", CLI_PROFILE, "config", "--format", "json"], environment=environment)
+    if result.returncode != 0:
+        pytest.fail(f"docker compose config refused the file: {result.stderr.strip()}")
+    return json.loads(result.unredacted())
+
+
+@pytest.mark.parametrize("setting", sorted(CREDENTIAL_RECEIVERS))
+def test_each_credential_reaches_exactly_its_listed_receivers(
+    compose_version: str, contract_environment: dict[str, str], setting: str
+) -> None:
+    """A planted value is found in the listed services' definitions and in no other.
+
+    The whole resolved definition is searched, not one variable name, because a
+    credential also arrives inside another value, such as the product password
+    inside `INFRAHUB_SYNC_DATABASE_URL`. The bearer-token setting is JSON, so its
+    planted value sits inside a well-formed document.
+    """
+    del compose_version
+    planted = f"receiver-{setting.lower().replace('_', '-')}-8c31d5"
+    value = (
+        json.dumps({"receiver": {"token": planted}}) if setting == "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS" else planted
+    )
+
+    resolved = _privately_resolved_with_profile({**contract_environment, setting: value})
+
+    carriers = {name for name, definition in services(resolved).items() if planted in json.dumps(definition)}
+    assert carriers == CREDENTIAL_RECEIVERS[setting], f"{setting} value reached {sorted(carriers)}"
+
+
+@pytest.mark.parametrize("setting", SOURCE_CREDENTIAL_SETTINGS)
 def test_only_the_worker_is_given_a_source_credential(model: dict[str, Any], setting: str) -> None:
     """A secret with no receiver is a secret that cannot leak from one.
 
     An equality over every service, not a check that the worker has it: a source
-    token added to the API, the bootstrap job, or Prefect would fail here even
-    though the worker still worked.
+    credential added to the API, the bootstrap job, or Prefect would fail here
+    even though the worker still worked.
     """
     holders = {name for name, definition in services(model).items() if setting in (definition.get("environment") or {})}
 
-    assert holders == SOURCE_TOKEN_RECEIVERS, f"{setting} is given to {sorted(holders)}"
+    assert holders == SOURCE_CREDENTIAL_RECEIVERS, f"{setting} is given to {sorted(holders)}"
 
 
-@pytest.mark.parametrize("setting", SOURCE_TOKEN_SETTINGS)
+@pytest.mark.parametrize("setting", SOURCE_CREDENTIAL_SETTINGS)
 def test_a_source_credential_is_optional_and_resolves_empty_when_unset(
     contract_environment: dict[str, str], compose_version: str, setting: str
 ) -> None:
@@ -1065,7 +1176,7 @@ def test_a_source_credential_is_optional_and_resolves_empty_when_unset(
     assert not environment[setting], f"{setting} resolved to a value with no operator input"
 
 
-@pytest.mark.parametrize("setting", SOURCE_TOKEN_SETTINGS)
+@pytest.mark.parametrize("setting", SOURCE_CREDENTIAL_SETTINGS)
 def test_a_declared_source_credential_reaches_only_the_worker(
     contract_environment: dict[str, str], compose_version: str, setting: str
 ) -> None:
@@ -1085,7 +1196,7 @@ def test_a_declared_source_credential_reaches_only_the_worker(
         for name, definition in services(resolved).items()
         if planted in (definition.get("environment") or {}).values()
     }
-    assert carriers == SOURCE_TOKEN_RECEIVERS, f"{setting} value reached {sorted(carriers)}"
+    assert carriers == SOURCE_CREDENTIAL_RECEIVERS, f"{setting} value reached {sorted(carriers)}"
     assert service(resolved, "sync-worker")["environment"][setting] == planted
 
 
