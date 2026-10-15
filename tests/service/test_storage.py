@@ -330,7 +330,10 @@ def test_service_storage_factory_validates_settings_and_hides_startup_details() 
     assert result is not None
     assert captured["bucket"] == "sync-artifacts"
     assert captured["prefix"] == "stable"
-    assert captured["sdk"] == {"service": "s3", "endpoint_url": "https://s3.test", "region_name": None}
+    sdk = cast("dict[str, object]", captured["sdk"])
+    config = sdk.pop("config")
+    assert sdk == {"service": "s3", "endpoint_url": "https://s3.test", "region_name": None}
+    assert getattr(config, "s3", None) == {"addressing_style": "path"}
 
     for name, value in (
         ("INFRAHUB_SYNC_DATABASE_URL", ""),
@@ -641,3 +644,139 @@ def test_psycopg_adapter_marks_cursor_transaction_and_cleanup_failures() -> None
     ):
         with pytest.raises(storage.ProductStoreProviderError):
             operation()
+
+
+# ---------------------------------------------------------------------------
+# The one S3 client builder every Sync service and the bootstrap share
+# ---------------------------------------------------------------------------
+
+
+class _RecordingBuilder:
+    """Record the one construction call `build_s3_client` makes."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def __call__(self, *args: object, **kwargs: object) -> object:
+        self.calls.append((args, kwargs))
+        return object()
+
+
+@pytest.mark.parametrize(
+    ("settings", "style"),
+    [
+        ({}, "path"),
+        ({"INFRAHUB_SYNC_S3_ADDRESSING_STYLE": "path"}, "path"),
+        ({"INFRAHUB_SYNC_S3_ADDRESSING_STYLE": "virtual"}, "virtual"),
+    ],
+    ids=["default", "path", "virtual"],
+)
+def test_build_s3_client_passes_endpoint_region_and_addressing_style(settings: dict[str, str], style: str) -> None:
+    from botocore.config import Config
+
+    from infrahub_sync.service import storage
+
+    builder = _RecordingBuilder()
+    storage.build_s3_client(
+        {
+            storage.S3_ENDPOINT_ENV: "https://s3.example.test:9443",
+            storage.S3_REGION_ENV: "eu-west-3",
+            **settings,
+        },
+        builder=builder,
+    )
+
+    [(args, kwargs)] = builder.calls
+    assert args == ("s3",)
+    config = kwargs.pop("config")
+    assert kwargs == {"endpoint_url": "https://s3.example.test:9443", "region_name": "eu-west-3"}
+    assert isinstance(config, Config)
+    assert getattr(config, "s3", None) == {"addressing_style": style}
+
+
+def test_build_s3_client_leaves_endpoint_and_region_unset_when_absent() -> None:
+    from infrahub_sync.service import storage
+
+    builder = _RecordingBuilder()
+    storage.build_s3_client({}, builder=builder)
+
+    [(_args, kwargs)] = builder.calls
+    assert kwargs["endpoint_url"] is None
+    assert kwargs["region_name"] is None
+    assert "verify" not in kwargs
+
+
+@pytest.mark.parametrize("style", ["auto", "PATH", "virtual-secret-canary", " "])
+def test_build_s3_client_refuses_another_addressing_style_by_name_only(style: str) -> None:
+    from infrahub_sync.service import storage
+
+    builder = _RecordingBuilder()
+    with pytest.raises(ValueError) as error:
+        storage.build_s3_client({"INFRAHUB_SYNC_S3_ADDRESSING_STYLE": style}, builder=builder)
+
+    assert "INFRAHUB_SYNC_S3_ADDRESSING_STYLE" in str(error.value)
+    assert "secret-canary" not in str(error.value)
+    assert not style.strip() or style not in str(error.value)
+    assert builder.calls == []
+
+
+@pytest.mark.parametrize("endpoint", ["http://user@s3.example.test", "https://user:secret-canary@s3.example.test"])
+def test_build_s3_client_refuses_an_endpoint_with_userinfo(endpoint: str) -> None:
+    from infrahub_sync.service import storage
+
+    builder = _RecordingBuilder()
+    with pytest.raises(ValueError) as error:
+        storage.build_s3_client({storage.S3_ENDPOINT_ENV: endpoint}, builder=builder)
+
+    assert str(error.value) == f"{storage.S3_ENDPOINT_ENV} must be an absolute http or https URL without userinfo"
+    assert builder.calls == []
+
+
+def test_build_s3_client_hides_sdk_construction_failures() -> None:
+    from infrahub_sync.service import storage
+
+    def sdk_failure(*_args: object, **_kwargs: object) -> NoReturn:
+        message = "driver-secret-canary at https://endpoint-secret-canary"
+        raise RuntimeError(message)
+
+    with pytest.raises(storage.ServiceStorageStartupError) as error:
+        storage.build_s3_client({storage.S3_ENDPOINT_ENV: "https://endpoint-secret-canary"}, builder=sdk_failure)
+
+    assert "secret-canary" not in str(error.value)
+    assert error.value.__cause__ is None
+
+
+def test_service_product_projection_builds_its_client_through_build_s3_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from infrahub_sync.service import storage
+
+    built: list[tuple[object, object]] = []
+    sdk = object()
+
+    def build(values: object, builder: object) -> object:
+        built.append((values, builder))
+        return sdk
+
+    def builder(*_args: object, **_kwargs: object) -> object:
+        return object()
+
+    received: dict[str, object] = {}
+
+    def projection_builder(**kwargs: object) -> ProductProjection:
+        received.update(kwargs)
+        return cast("ProductProjection", object())
+
+    monkeypatch.setattr(storage, "build_s3_client", build)
+    values = {storage.DATABASE_URL_ENV: "postgresql://db/sync", storage.S3_BUCKET_ENV: "bucket"}
+    storage.service_product_projection(
+        environ=values,
+        database_connect=object,
+        s3_client_builder=builder,
+        projection_builder=projection_builder,
+    )
+
+    assert built == [(values, builder)]
+    s3_client = received["s3_client"]
+    assert isinstance(s3_client, storage.Boto3S3Client)
+    assert getattr(s3_client, "_client", None) is sdk

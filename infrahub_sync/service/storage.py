@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import boto3
 import psycopg
+from botocore.config import Config
 from botocore.exceptions import ClientError
 from psycopg import conninfo
 from pydantic import AnyHttpUrl, TypeAdapter, ValidationError
@@ -29,6 +30,8 @@ S3_BUCKET_ENV = "INFRAHUB_SYNC_S3_BUCKET"
 S3_PREFIX_ENV = "INFRAHUB_SYNC_S3_PREFIX"
 S3_ENDPOINT_ENV = "INFRAHUB_SYNC_S3_ENDPOINT_URL"
 S3_REGION_ENV = "INFRAHUB_SYNC_S3_REGION"
+S3_ADDRESSING_STYLE_ENV = "INFRAHUB_SYNC_S3_ADDRESSING_STYLE"
+_ADDRESSING_STYLES = frozenset({"path", "virtual"})
 _ENDPOINT_URL_ADAPTER = TypeAdapter(AnyHttpUrl)
 
 
@@ -205,6 +208,36 @@ def _endpoint(values: Mapping[str, str]) -> str | None:
     return endpoint
 
 
+def _addressing_style(values: Mapping[str, str]) -> str:
+    """Return `path` or `virtual`, refusing any other value without reflecting it."""
+    style = _optional_setting(values, S3_ADDRESSING_STYLE_ENV) or "path"
+    if style not in _ADDRESSING_STYLES:
+        msg = f"{S3_ADDRESSING_STYLE_ENV} must be path or virtual"
+        raise ValueError(msg)
+    return style
+
+
+def build_s3_client(values: Mapping[str, str], builder: Callable[..., Any] = boto3.client) -> Any:
+    """Build the one S3 client every Sync service and the bootstrap use.
+
+    A setting the operator got wrong raises `ValueError` naming the setting only. A
+    failure inside the SDK raises the fixed startup error, because the SDK renders the
+    endpoint into its own text. Certificate verification is never turned off here.
+    """
+    endpoint = _endpoint(values)
+    region = _optional_setting(values, S3_REGION_ENV)
+    style = _addressing_style(values)
+    try:
+        return builder(
+            "s3",
+            endpoint_url=endpoint,
+            region_name=region,
+            config=Config(s3={"addressing_style": style}),
+        )
+    except Exception:  # noqa: BLE001  # SDK construction is one fixed startup boundary.
+        raise ServiceStorageStartupError from None
+
+
 def service_product_projection(
     *,
     environ: Mapping[str, str] | None = None,
@@ -217,13 +250,8 @@ def service_product_projection(
     database_url = _database_url(values)
     bucket = _required_setting(values, S3_BUCKET_ENV)
     prefix = (_optional_setting(values, S3_PREFIX_ENV) or "infrahub-sync").strip("/")
-    endpoint = _endpoint(values)
-    region = _optional_setting(values, S3_REGION_ENV)
+    client = Boto3S3Client(build_s3_client(values, s3_client_builder))
     connect = database_connect or (lambda: PsycopgConnectionFactory()(database_url))
-    try:
-        client = Boto3S3Client(s3_client_builder("s3", endpoint_url=endpoint, region_name=region))
-    except Exception:  # noqa: BLE001  # SDK construction is one fixed startup boundary.
-        raise ServiceStorageStartupError from None
     try:
         return projection_builder(connect=connect, s3_client=client, bucket=bucket, prefix=prefix)
     except ProductStoreProviderError:

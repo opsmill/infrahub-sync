@@ -20,27 +20,38 @@ them.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
+import socket
 import sys
-from typing import Any
+import uuid
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
-import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from prefect.client.orchestration import get_client
 from prefect.client.schemas.actions import WorkPoolCreate
 from prefect.exceptions import ObjectNotFound
 from prefect.workers.process import ProcessWorker
 
+from infrahub_sync.product_store import DuplicateArtifactError
+
 from .deploy import WORK_POOL_ENV
 from .deploy import main as apply_deployment
 from .storage import (
     S3_BUCKET_ENV,
     S3_ENDPOINT_ENV,
+    S3_PREFIX_ENV,
     S3_REGION_ENV,
+    Boto3S3Client,
+    build_s3_client,
     service_product_projection,
 )
 from .trust_store import CustomCertificateError, install_custom_ca_bundle
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +64,24 @@ PROCESS_POOL_TYPE = "process"
 # other client error is a real failure, and is reported as one.
 _BUCKET_PRESENT = frozenset({"BucketAlreadyOwnedByYou", "BucketAlreadyExists"})
 
+# The S3 API's default region takes no location constraint; any other region needs one.
+_DEFAULT_REGION = "us-east-1"
+
+# The Compose service name of the bundled object store. An endpoint that names
+# another host while this name resolves means the bundled store was not left out.
+BUNDLED_OBJECT_STORE_HOST = "object-store"
+
+# Where the create-only check writes, under the deployment's own key prefix.
+_CHECK_PATH = ".infrahub-sync/bootstrap-check"
+
 
 # Every way this job can fail, named. The family is the whole public message:
 # each input it reads is an endpoint or a credential, and the providers
 # underneath render both into their own exception text.
 OBJECT_STORE_UNAVAILABLE = "object-store-unavailable"
+OBJECT_STORE_ACCESS_REFUSED = "object-store-access-refused"
+OBJECT_STORE_UNSUPPORTED = "object-store-unsupported"
+BUNDLED_OBJECT_STORE_NOT_LEFT_OUT = "bundled-object-store-not-left-out"
 WORK_POOL_UNAVAILABLE = "work-pool-unavailable"
 WORK_POOL_CONFLICT = "work-pool-conflict"
 DEPLOYMENT_FAILED = "deployment-failed"
@@ -78,10 +102,56 @@ class BootstrapError(RuntimeError):
         self.family = family
 
 
-def converge_bucket(client: Any, bucket: str) -> bool:
-    """Create the artifact bucket when it is absent. Return whether this call made it."""
+def _status(error: ClientError) -> int | None:
+    """Return the response status of one SDK error, reading no message text."""
+    value = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return value if isinstance(value, int) else None
+
+
+def refuse_unused_bundled_object_store(endpoint: str | None) -> None:
+    """Stop when the endpoint names another store while the bundled one is running.
+
+    Compose cannot tie the endpoint setting to leaving out the bundled store. An
+    external endpoint with the bundled store still running would leave an unused
+    MinIO holding the external store's credential as its root credential.
+    """
     try:
-        client.create_bucket(Bucket=bucket)
+        host = urlsplit(endpoint).hostname if endpoint else None
+    except ValueError:
+        host = None
+    if host == BUNDLED_OBJECT_STORE_HOST:
+        return
+    try:
+        socket.getaddrinfo(BUNDLED_OBJECT_STORE_HOST, None)
+    except OSError:
+        return
+    raise BootstrapError(BUNDLED_OBJECT_STORE_NOT_LEFT_OUT)
+
+
+def converge_bucket(client: Any, bucket: str, region: str | None = None) -> bool:
+    """Create the artifact bucket only when the store reports it absent.
+
+    Check first, so a credential that may use the bucket but not create one still
+    bootstraps against a bucket the operator made. Return whether this call made it.
+    """
+    try:
+        client.head_bucket(Bucket=bucket)
+    except ClientError as error:
+        status = _status(error)
+        if status == 403:
+            raise BootstrapError(OBJECT_STORE_ACCESS_REFUSED) from None
+        if status != 404:
+            raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+    except BotoCoreError:
+        raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+    else:
+        return False
+
+    request: dict[str, Any] = {"Bucket": bucket}
+    if region and region != _DEFAULT_REGION:
+        request["CreateBucketConfiguration"] = {"LocationConstraint": region}
+    try:
+        client.create_bucket(**request)
     except ClientError as error:
         code = error.response.get("Error", {}).get("Code")
         if code in _BUCKET_PRESENT:
@@ -90,6 +160,37 @@ def converge_bucket(client: Any, bucket: str) -> bool:
     except BotoCoreError:
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
     return True
+
+
+@contextlib.contextmanager
+def _object_store_failures() -> Iterator[None]:
+    """Map every SDK failure inside the block to the unavailable family."""
+    try:
+        yield
+    except (ClientError, BotoCoreError):
+        raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+
+
+def check_create_only(store_client: Boto3S3Client, bucket: str, prefix: str) -> None:
+    """Check that the store refuses a second create-only write of one key.
+
+    A store that ignores the condition would let a second artifact write replace
+    a stored one. The check key is deleted on every path.
+    """
+    key = "/".join(part for part in (prefix, _CHECK_PATH, str(uuid.uuid4())) if part)
+    refusing = False
+    try:
+        with _object_store_failures():
+            store_client.put(bucket=bucket, key=key, data=b"", if_absent=True)
+            try:
+                store_client.put(bucket=bucket, key=key, data=b"", if_absent=True)
+            except DuplicateArtifactError:
+                refusing = True
+    finally:
+        with _object_store_failures():
+            store_client.delete(bucket=bucket, key=key)
+    if not refusing:
+        raise BootstrapError(OBJECT_STORE_UNSUPPORTED)
 
 
 async def converge_work_pool(client: Any, name: str) -> bool:
@@ -145,14 +246,14 @@ def _converge() -> None:
     and a loop already running here would leave the second unable to start one.
     """
     try:
-        client = boto3.client(
-            "s3",
-            endpoint_url=os.environ.get(S3_ENDPOINT_ENV) or None,
-            region_name=os.environ.get(S3_REGION_ENV) or None,
-        )
+        client = build_s3_client(os.environ)
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
-    created_bucket = converge_bucket(client, _required(S3_BUCKET_ENV))
+    refuse_unused_bundled_object_store(os.environ.get(S3_ENDPOINT_ENV))
+    bucket = _required(S3_BUCKET_ENV)
+    created_bucket = converge_bucket(client, bucket, os.environ.get(S3_REGION_ENV) or None)
+    prefix = (os.environ.get(S3_PREFIX_ENV) or "infrahub-sync").strip("/")
+    check_create_only(Boto3S3Client(client), bucket, prefix)
 
     try:
         created_pool = asyncio.run(_converge_pool(_required(WORK_POOL_ENV)))
@@ -176,6 +277,7 @@ def _converge() -> None:
         raise BootstrapError(PRODUCT_STORE_UNAVAILABLE) from None
 
     logger.info("bucket %s", "created" if created_bucket else "present")
+    logger.info("object store refuses a second create-only write")
     logger.info("work pool %s", "created" if created_pool else "present")
     logger.info("deployment applied")
     logger.info("product schema converged; the configuration registry is the operator's to fill")
