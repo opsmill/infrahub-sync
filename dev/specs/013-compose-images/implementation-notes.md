@@ -79,3 +79,17 @@ are written later in `plan.md`, section "Lifecycle failure causes".
   `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` is unset and `0` when it is `0`. Both the installed
   Compose and the pinned 2.24.0 release do so, and both render `required: false` on
   `sync-bootstrap`'s dependency on `object-store`.
+
+## User Story 3 (T036, T037, T043 to T046)
+
+- T036: no release tag of version 3 or later ships a root `docker-compose.yml`, so
+  `tests/compose/test_object_store_upgrade.py` reads the previous file with
+  `previous_compose_ref()` of `tests/compose/test_prefect_server_upgrade.py`, which honours
+  `INFRAHUB_SYNC_PREVIOUS_COMPOSE_REF`. The test plans one run, moves the project to the working
+  tree's file, and reads the run with `cli runs show` and its plan with `cli runs plan --detail`.
+- T037: the external MinIO joins the deployment through a test-only override written in
+  `tmp_path`, which adds a network to `sync-bootstrap`, `sync-api` and `sync-worker`. The store
+  has network aliases for `<host>` and `<bucket>.<host>`, and its data is a `tmpfs`, so the
+  finalizer removes only the container and the network. The endpoint host, the bucket and the
+  credential are registered with `SECRETS`, so no retained output renders them.
+- T046: `docs.docusaurus` built with no broken link or anchor warning.

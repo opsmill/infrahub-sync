@@ -52,7 +52,7 @@ carries its digest, so a re-pointed tag cannot change what the file runs.
 | --- | --- |
 | `postgres` | PostgreSQL. Holds the product database and the Prefect database. |
 | `db-bootstrap` | A short-lived job that creates both databases and their owner roles. |
-| `object-store-init`, `object-store` | S3-compatible object storage for plans and artifacts, and a short-lived job that prepares its volume. |
+| `object-store-init`, `object-store` | Optional. The bundled MinIO, which stores plans and artifacts, and a short-lived job that prepares its volume. Neither starts when you use your own S3-compatible store. See [Use your own S3-compatible store](#use-your-own-s3-compatible-store). |
 | `prefect-server` | The Prefect API and UI. It runs from the Sync image, so the Prefect server and the Sync worker always run the same Prefect version. |
 | `sync-bootstrap` | A short-lived job that creates the product schema, the bucket, the work pool, and the Prefect deployment. |
 | `sync-api` | The Sync API. |
@@ -86,8 +86,8 @@ required variable INFRAHUB_SYNC_PRODUCT_PASSWORD is missing a value: INFRAHUB_SY
 | `INFRAHUB_SYNC_PRODUCT_PASSWORD` | `db-bootstrap` and the Sync services: the product database role |
 | `INFRAHUB_SYNC_PREFECT_PASSWORD` | `db-bootstrap`, `prefect-server`: the Prefect database role |
 | `INFRAHUB_SYNC_PREFECT_AUTH_STRING` | `prefect-server` and the Sync services: the Prefect API credential. See [Prefect API authentication](#prefect-api-authentication). |
-| `INFRAHUB_SYNC_S3_ACCESS_KEY` | `object-store` and the Sync services |
-| `INFRAHUB_SYNC_S3_SECRET_KEY` | `object-store` and the Sync services |
+| `INFRAHUB_SYNC_S3_ACCESS_KEY` | the Sync services, and `object-store` only while the bundled store runs |
+| `INFRAHUB_SYNC_S3_SECRET_KEY` | the Sync services, and `object-store` only while the bundled store runs |
 | `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` | `sync-api`: a JSON object of API principals |
 
 `INFRAHUB_SYNC_SERVICE_BEARER_TOKENS` maps each principal name to its token, for
@@ -118,9 +118,9 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_PREFECT_DATABASE`, `INFRAHUB_SYNC_PREFECT_ROLE` | `prefect` | The Prefect database and its owner role. |
 | `INFRAHUB_SYNC_S3_BUCKET`, `INFRAHUB_SYNC_S3_PREFIX` | `infrahub-sync` | The artifact bucket and key prefix. |
 | `INFRAHUB_SYNC_S3_REGION` | `us-east-1` | The object store region. |
-| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | `http://object-store:9000` | The address of the object store. The default is the bundled MinIO. |
-| `INFRAHUB_SYNC_S3_ADDRESSING_STYLE` | `path` | How a request names the bucket: `path` or `virtual`. |
-| `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` | `1` | Set it to `0` to leave out `object-store` and `object-store-init` when you use your own S3-compatible store. |
+| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | `http://object-store:9000` | The address of the object store. The default is the bundled MinIO. An absolute `http` or `https` URL with no user name or password in it. Set it with `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0` to use your own store. See [Use your own S3-compatible store](#use-your-own-s3-compatible-store). |
+| `INFRAHUB_SYNC_S3_ADDRESSING_STYLE` | `path` | How a request names the bucket: `path` puts it in the URL path, `virtual` in the host name (`<bucket>.<host>`). Any other value stops the Sync services with a message that names the setting. |
+| `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` | `1` | Set it to `0` to leave out `object-store` and `object-store-init` when you use your own S3-compatible store. Nothing then waits for them, and the S3 credential reaches no MinIO process. |
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
 | `PREFECT_WORKER_QUERY_SECONDS`, `PREFECT_WORKER_HEARTBEAT_SECONDS` | `10` | The worker's polling and heartbeat intervals. |
@@ -277,6 +277,102 @@ That both adapters install and import is a packaging property of this release.
 It is not a statement that any particular NetBox or Nautobot server version has
 been qualified against it.
 :::
+
+## Use your own S3-compatible store {#use-your-own-s3-compatible-store}
+
+By default the deployment keeps plans and run files in the bundled MinIO,
+`object-store`. A team that runs its own S3-compatible store can keep them there
+instead. Set the store's settings in `.env`; the shipped `docker-compose.yml`
+stays as it is.
+
+Set `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0` together with
+`INFRAHUB_SYNC_S3_ENDPOINT_URL`. With that setting, Compose creates no
+`object-store-init` or `object-store` container, no service waits for them, and
+the S3 credential reaches no MinIO process. Without it, the bundled MinIO starts
+with your store's credential as its root credential, and `sync-bootstrap` stops
+with `bundled-object-store-not-left-out` before it sends any request to your
+store.
+
+```dotenv
+INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0
+INFRAHUB_SYNC_S3_ENDPOINT_URL=https://<your store host>
+INFRAHUB_SYNC_S3_BUCKET=<your bucket>
+INFRAHUB_SYNC_S3_REGION=<your region>
+INFRAHUB_SYNC_S3_ACCESS_KEY=<access key for the bucket>
+INFRAHUB_SYNC_S3_SECRET_KEY=<secret key for the bucket>
+# Optional
+# INFRAHUB_SYNC_S3_PREFIX=infrahub-sync
+# INFRAHUB_SYNC_S3_ADDRESSING_STYLE=virtual
+# INFRAHUB_SYNC_CA_CERTIFICATES=./ca
+```
+
+Then run `docker compose up -d --wait`, as in [Start the deployment](#after-the-first-start).
+
+### Store settings
+
+| Setting | Required for your own store | Default | Rule |
+| --- | --- | --- | --- |
+| `INFRAHUB_SYNC_S3_ENDPOINT_URL` | yes | `http://object-store:9000` | An absolute `http` or `https` URL. A user name or password in it is refused with the message "INFRAHUB_SYNC_S3_ENDPOINT_URL must be an absolute http or https URL without userinfo". |
+| `INFRAHUB_SYNC_S3_BUCKET` | yes | `infrahub-sync` | The bucket may already exist. |
+| `INFRAHUB_SYNC_S3_PREFIX` | no | `infrahub-sync` | The key prefix. A leading or trailing `/` is removed. |
+| `INFRAHUB_SYNC_S3_REGION` | yes | `us-east-1` | The client region. When `sync-bootstrap` creates the bucket in another region than `us-east-1`, it is also the bucket's location constraint. |
+| `INFRAHUB_SYNC_S3_ACCESS_KEY`, `INFRAHUB_SYNC_S3_SECRET_KEY` | yes | none, required | The credential Sync uses for the bucket. |
+| `INFRAHUB_SYNC_S3_ADDRESSING_STYLE` | no | `path` | `path` or `virtual`. Any other value stops the process with a message that names the setting. |
+| `INFRAHUB_SYNC_CA_CERTIFICATES` | when the store's certificate comes from a private CA | unset | See [Use custom CA certificates](custom-certificates). |
+
+Use an `https` endpoint for a store outside the deployment, because the
+credential and every plan and run file then cross the network encrypted. Each
+Sync service checks the store's certificate against the image's trust store and
+the CA certificates of `INFRAHUB_SYNC_CA_CERTIFICATES`. No setting turns that
+check off.
+
+With the `virtual` addressing style, every Sync service must resolve
+`<bucket>.<host>` of the endpoint, and the store's certificate must cover that
+name.
+
+The credential needs object operations on the bucket, and permission to check
+that the bucket exists. `sync-bootstrap` creates the bucket only when the store
+reports it absent, so a credential that cannot create buckets works with a
+bucket you created first.
+
+### S3 operations and behaviours Sync relies on {#s3-operations-sync-relies-on}
+
+| Operation | Required behaviour |
+| --- | --- |
+| `PutObject` | A single request with the whole body. The store accepts the default request checksums of botocore 1.43.83. |
+| `PutObject` with `If-None-Match: *` | The store refuses a write to an existing key with 412 `PreconditionFailed`. Sync retries a 409 `ConditionalRequestConflict`. |
+| `GetObject` | The store returns the body. A missing key answers `NoSuchKey` with status 404. |
+| `HeadObject` | The store returns `Content-Length`. A missing key answers status 404. |
+| `CopyObject` | The store copies a key within the bucket. |
+| `DeleteObject` | The store deletes one key. |
+| `HeadBucket` | The store answers 2xx for an existing bucket, 404 for an absent one, and 403 when the credential is refused. |
+| `CreateBucket` | Sync calls it only when `HeadBucket` answers 404. |
+| Authentication | Signature Version 4 with an access key and a secret key. |
+
+Sync does not list objects, use multipart uploads, presign URLs, or rely on
+versioning or object lock.
+
+At each start, `sync-bootstrap` writes one check key twice under
+`<prefix>/.infrahub-sync/bootstrap-check/` with `If-None-Match: *`, then deletes
+it. A store that accepts the second write would let a later write replace a
+stored artifact, so `sync-bootstrap` stops with `object-store-unsupported`. A
+`HeadBucket` refused with 403 stops it with `object-store-access-refused`. See
+[Compose troubleshooting](operations/compose-troubleshooting) for each failure
+name.
+
+### Stores OpsMill tests with
+
+OpsMill tests the deployment with the bundled MinIO build, and with a MinIO
+instance from the same image that runs outside the deployment, over HTTPS with a
+private CA, with both addressing styles. No other store is named as supported.
+
+### Moving from the bundled MinIO
+
+Moving from the bundled MinIO to your own store does not copy earlier plans and
+run files. Runs planned before the move keep their records in PostgreSQL, but
+their plans and artifacts stay in the `<project>_object-store-data` volume,
+where the deployment no longer reads them. Copy what you need before the move,
+or plan those runs again afterwards.
 
 ## Start the deployment {#after-the-first-start}
 
@@ -862,8 +958,10 @@ Prior run history, retained plans, registered configurations, and artifacts do
 not survive that. Keep anything you need outside the deployment before you
 reset, and register your package again afterwards.
 
-The object store image is a temporary, pinned MinIO build, while a maintained
-S3-compatible store is selected. On the first start after upgrading from the
+The bundled object store is a Chainguard MinIO build, pinned by digest. A team
+can use its own S3-compatible store instead; see
+[Use your own S3-compatible store](#use-your-own-s3-compatible-store). A later
+release may bundle a different server. On the first start after upgrading from the
 former root-running image, the short-lived `object-store-init` service changes the
 owner of the existing volume to UID 65532. The data stays in place. This first
 start can take longer for a large volume.

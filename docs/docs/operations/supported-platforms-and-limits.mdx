@@ -18,6 +18,30 @@ later on that host, because its `docker-compose.yml` carries the database bootst
 script as a top-level `configs` entry with inline `content`. An older Compose cannot
 parse the file.
 
+## Object stores
+
+The Compose deployment keeps plans and run files in an S3-compatible store: the
+bundled MinIO by default, or a team's own store. OpsMill tests the deployment
+with the bundled MinIO build, and with a MinIO instance from the same image that
+runs outside the deployment, over HTTPS with a private CA, with both the `path`
+and the `virtual` addressing style. No other store is named as supported.
+
+A team's own store must support these S3 operations and behaviours:
+
+- `PutObject` as a single request with the whole body, and with the default
+  request checksums of botocore 1.43.83
+- `PutObject` with `If-None-Match: *`, refused with 412 `PreconditionFailed`
+  when the key exists
+- `GetObject` and `HeadObject`, with status 404 for a missing key
+- `CopyObject` within the bucket, and `DeleteObject` of one key
+- `HeadBucket`, with 2xx for an existing bucket, 404 for an absent one and 403
+  for a refused credential, and `CreateBucket` when the bucket is absent
+- Signature Version 4 authentication with an access key and a secret key
+
+Sync does not list objects, use multipart uploads, presign URLs, or rely on
+versioning or object lock. The full table and the settings are in
+[S3 operations and behaviours Sync relies on](../compose-deployment.mdx#s3-operations-sync-relies-on).
+
 ## Other platforms, including Apple Silicon
 
 Docker Desktop on macOS runs the Linux `arm64` image, but a desktop host is not a
