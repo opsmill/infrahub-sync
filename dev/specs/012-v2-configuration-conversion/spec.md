@@ -219,9 +219,9 @@ Count the creates and updates.
   extraction.
 - **FR-010**: For a source or destination setting that the bundled adapter does not accept in a
   registered package, the command MUST
-  [NEEDS CLARIFICATION: drop the setting and print a warning that names it, so the package still
-  registers, or refuse the conversion and name the setting, because dropping it can change what
-  the adapter reads from the source?]
+  refuse the conversion and list every such setting in one message, with the reason for each.
+  The settings that FR-009 drops with a warning (`store`, `adapters_path`, `incremental`) are
+  not covered by this rule.
 - **FR-011**: The command MUST refuse a configuration whose source or destination is not an
   adapter that V3 bundles: a `name` that is not bundled, an `adapter:` value that is a filesystem
   path, a dotted Python path or an entry point, or a destination that is not `infrahub`. The

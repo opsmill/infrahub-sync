@@ -288,10 +288,8 @@ commit and check that it completes and passes the runner's checks.
   with three runs each, and the result MUST be recorded next to the existing tier M results,
   before any change meant to speed up planning is merged.
 - **FR-013**: The phase durations of a plan run MUST be
-  [NEEDS CLARIFICATION: shown to the customer team in the run record that the CLI and the Sync
-  API return (and so in the UI of spec 011), or recorded only in the worker log and the benchmark
-  results for OpsMill engineers? Showing them lets a customer report where a slow plan spends its
-  time, but adds fields to the run record that later releases must keep.]
+  shown to the customer team in the run record that the CLI and the Sync API return, and so in
+  the UI of spec 011. The API reference MUST mark these fields as subject to change.
 
 #### Planning time at tier M (brief SC-001)
 

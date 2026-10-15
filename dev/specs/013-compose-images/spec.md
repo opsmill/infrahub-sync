@@ -281,10 +281,9 @@ each stack; the server reports the new version with no other file changed.
   the Sync image starts the Prefect server with a read-only root filesystem and serves
   `/api/health`.
 - **FR-019**: An update from a deployment that runs the current object store build MUST keep the
-  data in `object-store-data`
-  [NEEDS CLARIFICATION: if no image that meets FR-013 reads a volume written by the current
-  Chainguard MinIO build, may the testing release ask operators to reset the object store, which
-  deletes stored plans and artifacts, or must the update copy the data?]
+  data in `object-store-data` when the new image reads that volume. If no image that meets FR-013 reads
+  it, the update MAY require operators to reset the object store, which deletes stored plans and
+  run files. The release notes MUST then say so and give the reset steps.
 - **FR-020**: ADR 0019 MUST get an amendment that records that the Prefect server runs from the
   Sync image, as a separate service, and why: the client and server versions cannot differ, and
   the Prefect database credential stays out of the API container. The amendment follows the

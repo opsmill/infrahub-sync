@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,8 @@
 
 ## Notes
 
-- One marker remains, on FR-019: whether the testing release may ask operators to reset the
-  object store if no maintained image reads the current data volume. It is a product decision
-  about data loss on update, so it is left for `/speckit-clarify`.
+- Answered by the product owner on 2026-10-15, so no marker remains. FR-019: if no maintained image reads the current data volume,
+  the update may require a reset of the object store, stated in the release notes.
 - The feature is a deployment change, so the spec names compose services, images and settings.
   These are the operator's own vocabulary (they edit `.env` and read `docker-compose.yml`), not
   implementation choices. The factory module name in FR-003 comes from the confirmed idea brief

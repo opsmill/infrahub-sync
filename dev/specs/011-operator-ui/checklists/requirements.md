@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -35,9 +35,9 @@
   browser's session storage. This is deliberate: the feature request defines new API routes, the
   UI must use only the public API (AD-5, AD-14), and the token storage location was requested as
   a security requirement. No UI framework, language or library is chosen.
-- Two [NEEDS CLARIFICATION] markers remain, both product questions for `/speckit-clarify`:
-  - FR-024: cancel of a run in progress in the UI, or left to the CLI and scripts.
-  - FR-031: UI access only from the `sync-api` host (loopback default, no TLS in the supported
-    shape), or from other computers over TLS.
+- Answered by the product owner on 2026-10-15, so no marker remains:
+  - FR-024: the UI can cancel a plan or an apply in progress.
+  - FR-031: loopback only by default, plus an optional, documented reverse proxy with TLS for
+    other computers.
 - Validation pass 1: one acceptance scenario in User Story 5 was unclear and was rewritten. All
   other items pass.

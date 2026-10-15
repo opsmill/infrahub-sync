@@ -237,10 +237,10 @@ equals the original count minus the operations written.
 
 - **FR-005**: A plan MUST leave out each record that has a problem, and every record that
   depends on it through a required relationship, at any depth.
-  [NEEDS CLARIFICATION: is a record that refers to a left-out record only through an optional
-  relationship also left out, or is it kept without that relationship? Leaving it out is safer,
-  because keeping it writes a node that the next plan changes again, but it leaves out more
-  records.]
+  A record that refers to a left-out record only through an optional relationship MUST be
+  kept and written without that relationship. The plan MUST list it as kept without that
+  relationship and name the left-out record. Once the left-out record is fixed, the next plan
+  sets the relationship.
 - **FR-006**: Each left-out record that has no problem of its own MUST name the record it
   depends on.
 - **FR-007**: The plan summary MUST show the count of records left out next to the counts of
@@ -255,9 +255,11 @@ equals the original count minus the operations written.
   the expected count.
 - **FR-011**: An apply of a plan that leaves out no records MUST NOT ask for that confirmation.
 - **FR-012**: A `sync` run (plan and apply in one request) whose plan leaves out records MUST
-  [NEEDS CLARIFICATION: stop after the plan and wait for the team to review and apply it, or
-  write the remaining operations and report the left-out count afterwards? Stopping keeps the
-  rule that a person confirms the count before a write.]
+  stop after the plan, with the plan saved, and wait for the team to review it and apply it with
+  the confirmed count. The CLI and the Sync API MUST also offer an explicit option, for example
+  `--accept-left-out`, with which a `sync` run applies the remaining operations without that
+  stop. The run record MUST then state that the left-out count was accepted without review, and
+  give the count.
 - **FR-013**: Infrahub rejecting a write during apply MUST still stop the apply. The plan's
   left-out policy does not apply during apply.
 

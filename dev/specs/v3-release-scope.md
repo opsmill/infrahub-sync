@@ -15,7 +15,6 @@
     - view the run history, in a basic UI
   - **3.0** lets a v2 customer replace v2 in production, and adds deletes limited to the objects a configuration created.
 - **Not decided yet.**
-  - seven questions in the MVP specifications, listed below
   - whether MinIO is replaced (AD-3)
   - whether Infrahub's `is_protected` blocks updates from a second configuration
   - product sign-off on three changes to earlier decisions
@@ -142,19 +141,19 @@ The cards are listed with their status on 2026-10-06:
 - a fuller UI with configuration editing: [INFP-664](https://opsmill.atlassian.net/browse/INFP-664)
 - the Python library: [INFP-646](https://opsmill.atlassian.net/browse/INFP-646), marked Duplicate
 
-## Open questions in the MVP specifications
+## Questions answered in the MVP specifications
 
-| Question | Specification | Proposed answer |
+| Question | Specification | Answer |
 | --- | --- | --- |
 | Q1. Is a record that refers to a left-out record only through an optional relationship also left out? | 009, FR-005 | No. Keep it without that relationship, and list it in the plan |
-| Q2. Does `sync` (plan and apply in one request) stop when its plan leaves out records? | 009, FR-012 | Yes. Stop after the plan, so a person confirms the count before a write |
+| Q2. Does `sync` (plan and apply in one request) stop when its plan leaves out records? | 009, FR-012 | Yes. Stop after the plan, so a person confirms the count before a write. An explicit option, such as `--accept-left-out`, applies the rest without that stop |
 | Q3. Who views the time each plan phase takes? | 010, FR-013 | The customer team, in the run record, marked as a field that may change |
 | Q4. Can the team cancel a run from the UI? | 011, FR-024 | Yes, through the existing `POST /runs/{run_id}/cancel` route |
 | Q5. Who can reach the UI? | 011, FR-031 | Same host by default; other computers through a documented reverse proxy with TLS |
 | Q6. What happens to a v2 setting that a registered package does not accept? | 012, FR-010 | Refuse the conversion and list every such setting |
-| Q7. If the new MinIO image cannot read the old volume, may operators reset the object store? | 013 | Yes, stated in the release notes. The alpha already requires a reset on upgrade |
+| Q7. If the new MinIO image cannot read the old volume, may operators reset the object store? | 013, FR-019 | Yes, stated in the release notes. The alpha already requires a reset on upgrade |
 
-The proposed answers are recommendations. The product owner has not yet confirmed them.
+Benoit Kohler answered these questions on 2026-10-15.
 
 ## Other open questions
 

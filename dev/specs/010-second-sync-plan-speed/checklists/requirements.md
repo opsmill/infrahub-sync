@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,8 @@
 
 ## Notes
 
-- One marker remains, in FR-013: whether plan phase durations are shown to the customer team in
-  the run record (CLI, Sync API and the UI of spec 011) or recorded only for OpsMill engineers.
-  It is a product decision; resolve it with `/speckit-clarify` before `/speckit-plan`.
+- Answered by the product owner on 2026-10-15, so no marker remains. FR-013: plan phase durations are shown to the customer team in
+  the run record, marked as subject to change in the API reference.
 - The spec names the Sync API, the CLI and the benchmark runner because they are the surfaces
   the customer team and OpsMill engineers use, as spec 009 does. It names no language,
   framework or storage technology.

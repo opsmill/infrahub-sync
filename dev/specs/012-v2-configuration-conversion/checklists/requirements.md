@@ -15,7 +15,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -33,10 +33,8 @@
 
 ## Notes
 
-- One `[NEEDS CLARIFICATION]` marker remains, in FR-010: whether the command drops an adapter
-  setting that V3 does not accept, with a warning, or refuses the conversion. The spec was
-  written without access to the product owner; resolve it with `/speckit-clarify` before
-  `/speckit-plan`.
+- Answered by the product owner on 2026-10-15, so no marker remains. FR-010: the command refuses the conversion and lists every
+  adapter setting that a registered package does not accept.
 - The spec names the CLI command, configuration keys and file paths. These are the customer's
   interface (the command they run and the file they register), not implementation choices, so
   the "no implementation details" items pass.

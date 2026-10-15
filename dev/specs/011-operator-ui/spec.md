@@ -299,7 +299,8 @@ the saved plan.
   a target branch and a reason, through `POST /runs` with the operation `plan`. The UI MUST NOT
   start a `sync` run (plan and apply in one request).
 - **FR-024**: The UI MUST
-  [NEEDS CLARIFICATION: let the team cancel a plan or an apply in progress through the existing `POST /runs/{run_id}/cancel` route, or leave cancel to the CLI and scripts in the testing release?]
+  let the team cancel a plan or an apply in progress through the existing
+  `POST /runs/{run_id}/cancel` route.
 - **FR-025**: The UI MUST let the team approve and apply a reviewed plan through
   `POST /runs/{run_id}/apply`. The request MUST carry the checksum of the plan the UI showed,
   the confirmation of writes, the target branch and a reason the team enters.
@@ -329,7 +330,10 @@ the saved plan.
   The `sync-api` container MUST send a content security policy with the UI that allows scripts
   only from its own origin.
 - **FR-031**: The testing release MUST support opening the UI
-  [NEEDS CLARIFICATION: only from the `sync-api` host itself or through a tunnel the customer sets up (the current loopback-only default, with no TLS in the supported shape), or also from other computers over the network, which needs TLS that the compose file or a documented reverse proxy provides?]
+  from the `sync-api` host itself by default: the API stays published on loopback only. The
+  Compose deployment MUST also offer an optional, documented reverse proxy that serves the UI
+  and the API to other computers over TLS, with a certificate the customer supplies. While that
+  option is not enabled, nothing is published beyond loopback.
 - **FR-032**: The UI MUST ask for the Sync API token when it has none, and MUST keep the token
   only in the browser tab's session storage. It MUST NOT store the token in a cookie, in
   persistent browser storage, in a URL or in a log. Closing the tab, or a "sign out" action in

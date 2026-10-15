@@ -15,7 +15,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -33,13 +33,12 @@
 
 ## Notes
 
-- Two `[NEEDS CLARIFICATION]` markers remain, both product questions for the product owner:
-  - FR-005: whether a record that refers to a left-out record only through an optional
-    relationship is also left out.
-  - FR-012: whether a `sync` run (plan and apply in one request) stops after a plan that leaves
-    out records, or writes the remaining operations.
+- Answered by the product owner on 2026-10-15, so no marker remains:
+  - FR-005: a record that refers to a left-out record only through an optional relationship is
+    kept and written without that relationship.
+  - FR-012: a `sync` run stops after a plan that leaves out records, unless an explicit option
+    such as `--accept-left-out` is given.
 - The Sync API and the CLI are named because the request asks for the contract the UI of spec 011
   consumes. The requirements state what each surface returns or shows, not how it is built.
 - Iteration 1 removed a source file reference and the term "schema fingerprint" from the
   Assumptions section.
-- Resolve the markers with `/speckit-clarify` before `/speckit-plan`.
