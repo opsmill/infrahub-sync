@@ -1,0 +1,50 @@
+tests/service/test_service_worker.py
+  s_47078ea83e766d::t_b77100058235e8 30,483-521
+infrahub_sync/service/bootstrap.py
+  s_47078ea83e766d::t_8a9ecb7f86ab55 43
+  s_47078ea83e766d::t_e1f5f124760fc3 25,186-190
+infrahub_sync/service/serve.py
+  s_47078ea83e766d::t_e1f5f124760fc3 6,21,81-85
+docs/docs/compose-deployment.mdx
+  s_47078ea83e766d::t_1b9900f558e633 123
+docker-compose.yml
+  s_47078ea83e766d::t_068a7bb68307d5 21-25,41-48,221,224,234,250,282,302,373-375
+tests/service/test_trust_store.py
+  s_47078ea83e766d::t_5a3da1b69281fc 30,163,167
+  s_47078ea83e766d::t_9c0c611f316406 124
+  s_47078ea83e766d::t_afcbba6a7b3788 11,128
+  s_47078ea83e766d::t_48cc567fdf9087 178
+  s_47078ea83e766d::t_6761ae35d10e17 1-10,12-29,31-123,125-127,129-162,164-166,168-177,179-225
+development/docker-compose.dev.yml
+  s_47078ea83e766d::t_ef9211969385b1 51-56,149-150,160,169,192,199,219
+tests/service/test_environment_names.py
+  s_47078ea83e766d::t_b77100058235e8 88-104,106-125
+  s_47078ea83e766d::t_afcbba6a7b3788 6,15-17,105
+tests/compose/test_compose_contract.py
+  s_47078ea83e766d::t_8a9ecb7f86ab55 266-270
+  s_47078ea83e766d::t_f1f26b3d9d57e4 78-86,135-144,150-151,154-157,159-160,165-167,171-172,174-176,178,196-200,205-211,214-216,246,250-251,263-265,271-309,750-752,755,757-758
+tests/service/test_compose_bootstrap.py
+  s_47078ea83e766d::t_b77100058235e8 323-355
+dev/specs/013-compose-images/tasks.md
+  s_47078ea83e766d::t_8f5b01472321f6 83-91
+infrahub_sync/service/worker.py
+  s_47078ea83e766d::t_e1f5f124760fc3 8,28,467-471
+infrahub_sync/service/trust_store.py
+  s_47078ea83e766d::t_7521f497af98db 1-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "374b377418a6654b6f9bec0f133acd1cdbd80fb7",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
