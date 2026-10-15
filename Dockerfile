@@ -101,6 +101,7 @@ COPY --chown=0:0 pyproject.toml uv.lock /opt/infrahub-sync/
 ENV PATH=/opt/infrahub-sync/venv/bin:$PATH \
     HOME=/var/lib/infrahub-sync \
     PREFECT_HOME=/var/lib/infrahub-sync/prefect \
+    PREFECT_UI_STATIC_DIRECTORY=/var/lib/infrahub-sync/prefect/ui \
     TMPDIR=/tmp/infrahub-sync
 
 USER 10001:10001

@@ -41,9 +41,10 @@ if TYPE_CHECKING:
 # which is the OCI configuration digest a build recorded, or a published
 # repository pinned to a manifest digest. A tag matches neither.
 IMMUTABLE_REFERENCE = re.compile(r"^(?:sha256:[0-9a-f]{64}|[^\s]+@sha256:[0-9a-f]{64})$")
-# Every Sync service, the opt-in CLI included, and the one image reference form
-# they all use: the registry repository and the release version, each overridable.
-ALL_SYNC_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker", "cli")
+# Every service that runs the Sync image, the Prefect server and the opt-in CLI
+# included, and the one image reference form they all use: the registry
+# repository and the release version, each overridable.
+ALL_SYNC_SERVICES = ("prefect-server", "sync-bootstrap", "sync-api", "sync-worker", "cli")
 SYNC_IMAGE_FORM = re.compile(
     r'^\s*image:\s*"\$\{INFRAHUB_SYNC_DOCKER_IMAGE:-registry\.opsmill\.io/opsmill/infrahub-sync\}'
     r':\$\{VERSION:-(?P<version>[0-9][0-9A-Za-z.+-]*)\}"\s*$'
@@ -178,14 +179,15 @@ def test_a_sync_service_mounts_only_the_read_only_ca_directory(cli_model: dict[s
     assert targets == expected, f"{name} mounts {targets}"
 
 
-@pytest.mark.parametrize("name", SYNC_SERVICES)
-def test_a_sync_service_runs_read_only_over_the_image_declared_scratch(model: dict[str, Any], name: str) -> None:
+@pytest.mark.parametrize("name", ALL_SYNC_SERVICES)
+def test_a_sync_service_runs_read_only_over_the_image_declared_scratch(cli_model: dict[str, Any], name: str) -> None:
     """The declared roots are tmpfs, handed to the runtime user, and nothing else is writable.
 
     A tmpfs mount takes its own ownership, so without the options a container
     running as 10001 finds a root-owned directory and fails on its first write.
+    The Prefect server copies its UI files under the Prefect scratch root.
     """
-    definition = service(model, name)
+    definition = service(cli_model, name)
     expected = [f"{root}:{SCRATCH_OPTIONS}" for root in SYNC_SCRATCH_ROOTS]
 
     assert definition.get("read_only") is True, f"{name} does not run on a read-only root filesystem"
@@ -221,12 +223,14 @@ def test_prefect_keeps_no_state_of_its_own(model: dict[str, Any]) -> None:
 
     Prefect defaults to a SQLite file inside its container. Left that way the
     server would hold deployment and work-pool state no other service could see,
-    and a restart that replaced the container would silently lose it.
+    and a restart that replaced the container would silently lose it. It mounts
+    no volume and no bind, not even the CA directory: it calls no TLS endpoint.
     """
     definition = service(model, "prefect-server")
     connection = definition["environment"]["PREFECT_SERVER_DATABASE_CONNECTION_URL"]
+    mounts = [(mount.get("type"), mount.get("target")) for mount in definition.get("volumes") or []]
 
-    assert definition.get("volumes") in (None, []), f"prefect-server mounts {definition.get('volumes')}"
+    assert mounts == [], f"prefect-server mounts {mounts}"
     assert connection.startswith("postgresql"), f"prefect-server is configured on {connection.split(':', 1)[0]}"
 
 
@@ -470,6 +474,72 @@ def test_the_bundle_refuses_to_resolve_without_the_prefect_credential(
     assert "Prefect API credential" in result.stderr
 
 
+def test_the_prefect_server_receives_only_its_database_and_api_credentials(
+    compose_version: str, contract_environment: dict[str, str]
+) -> None:
+    """US1 scenario 4: the Sync image holds S3 and source clients, the Prefect server none of their keys.
+
+    Checked by name and by value: no credential variable of another service is
+    declared on it, and no other operator credential's value reaches any of its
+    variables.
+    """
+    del compose_version
+    resolved = resolve_privately(contract_environment)
+    environment = service(resolved, "prefect-server").get("environment") or {}
+    credential_names = {
+        "POSTGRES_PASSWORD",
+        "PGPASSWORD",
+        "INFRAHUB_SYNC_DATABASE_URL",
+        "INFRAHUB_SYNC_PRODUCT_PASSWORD",
+        "INFRAHUB_SYNC_PREFECT_PASSWORD",
+        PREFECT_SERVER_CREDENTIAL,
+        PREFECT_CLIENT_CREDENTIAL,
+        "PREFECT_SERVER_DATABASE_CONNECTION_URL",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "MINIO_ROOT_USER",
+        "MINIO_ROOT_PASSWORD",
+        "INFRAHUB_SYNC_SERVICE_BEARER_TOKENS",
+        CLIENT_CREDENTIAL,
+    }
+    declared = {
+        name for name in environment if name in credential_names or name.startswith("INFRAHUB_SYNC_CREDENTIAL_")
+    }
+    carried = {
+        (variable, setting)
+        for setting, value in contract_environment.items()
+        for variable, resolved_value in environment.items()
+        if value and value in str(resolved_value)
+    }
+
+    assert declared == {"PREFECT_SERVER_DATABASE_CONNECTION_URL", PREFECT_SERVER_CREDENTIAL}, sorted(declared)
+    assert carried == {
+        ("PREFECT_SERVER_DATABASE_CONNECTION_URL", "INFRAHUB_SYNC_PREFECT_PASSWORD"),
+        (PREFECT_SERVER_CREDENTIAL, PREFECT_CREDENTIAL_SETTING),
+    }, sorted(variable for variable, _setting in carried)
+
+
+# ---------------------------------------------------------------------------
+# The Prefect server runs from the Sync image
+# ---------------------------------------------------------------------------
+
+
+def test_no_service_runs_the_stock_prefect_image(cli_model: dict[str, Any]) -> None:
+    """FR-001: the deployment pulls the Sync image, PostgreSQL and the object store, and nothing else."""
+    stock = sorted(
+        name
+        for name, definition in services(cli_model).items()
+        if str(definition["image"]).split("@", 1)[0].rsplit(":", 1)[0] == "prefecthq/prefect"
+    )
+
+    assert stock == [], f"these services run the prefecthq/prefect image: {stock}"
+
+
+def test_the_prefect_server_runs_the_sync_factory_module(model: dict[str, Any]) -> None:
+    """FR-003: Prefect's own application, started through the Sync module that builds it."""
+    assert service(model, "prefect-server")["command"] == ["python", "-m", "infrahub_sync.service.prefect_server"]
+
+
 # ---------------------------------------------------------------------------
 # Immutable image identity
 # ---------------------------------------------------------------------------
@@ -540,7 +610,7 @@ def test_every_sync_service_names_the_registry_image_and_the_release_version() -
 
     Read from the text, because the model only shows what the defaults resolved
     to. Every Sync service carries the same reference, so one `VERSION` moves
-    all four together.
+    all five together, the Prefect server included.
     """
     lines = sync_image_lines()
     versions = pinned_versions()
@@ -754,7 +824,7 @@ def test_no_sync_service_takes_a_filesystem_input(model: dict[str, Any]) -> None
     readers = {
         name: other
         for name, definition in services(model).items()
-        if name.startswith("sync-")
+        if name in ALL_SYNC_SERVICES
         and (other := [mount for mount in definition.get("volumes") or [] if not is_ca_mount(mount)])
     }
 

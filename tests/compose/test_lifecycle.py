@@ -79,6 +79,17 @@ GENERATED_SETTINGS = (
     "INFRAHUB_SYNC_API_TOKEN",
 )
 
+# The Prefect version the server reports, read inside the deployment's network.
+# The factory server logs nothing on a successful start, so its log cannot say it.
+PREFECT_SERVER_VERSION = """
+import base64, json, os, httpx
+PREFECT_AUTH = {"Authorization": "Basic " + base64.b64encode(os.environ["PREFECT_API_AUTH_STRING"].encode()).decode()}
+answer = httpx.get("http://prefect-server:4200/api/admin/version", headers=PREFECT_AUTH, timeout=30)
+answer.raise_for_status()
+print(json.dumps(answer.json()))
+"""
+WORKER_PREFECT_VERSION = ("python", "-c", "import prefect; print(prefect.__version__)")
+
 
 def generated_credentials(deployment: Deployment) -> dict[str, str]:
     """The credential values this deployment's `.env` carries."""
@@ -461,6 +472,12 @@ def test_a_plan_apply_and_separate_sync_run_through_the_replacement_worker(
         await_phase(client, sync_id, "applied")
 
     assert destination_device_type(infrahub_fixture) == planted
+
+    # SC-002: the worker that ran the plan and the server that scheduled it are one Prefect version.
+    imported = started.compose(["exec", "-T", "sync-worker", *WORKER_PREFECT_VERSION])
+    assert imported.returncode == 0, imported.output
+    worker_version = imported.stdout.strip().splitlines()[-1]
+    assert probe_json(started, PREFECT_SERVER_VERSION) == worker_version
 
 
 # ---------------------------------------------------------------------------

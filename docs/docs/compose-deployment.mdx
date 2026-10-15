@@ -52,7 +52,7 @@ carries its digest, so a re-pointed tag cannot change what the file runs.
 | `postgres` | PostgreSQL. Holds the product database and the Prefect database. |
 | `db-bootstrap` | A short-lived job that creates both databases and their owner roles. |
 | `object-store-init`, `object-store` | S3-compatible object storage for plans and artifacts, and a short-lived job that prepares its volume. |
-| `prefect-server` | The Prefect API and UI. |
+| `prefect-server` | The Prefect API and UI. It runs from the Sync image, so the Prefect server and the Sync worker always run the same Prefect version. |
 | `sync-bootstrap` | A short-lived job that creates the product schema, the bucket, the work pool, and the Prefect deployment. |
 | `sync-api` | The Sync API. |
 | `sync-worker` | The Sync worker that runs plans and applies. |

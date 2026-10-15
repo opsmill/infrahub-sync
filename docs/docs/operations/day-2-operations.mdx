@@ -59,7 +59,15 @@ to check that your registered packages are still available.
 
 Set `VERSION`, and optionally `INFRAHUB_SYNC_DOCKER_IMAGE`, in `.env`, then run
 `docker compose up -d --wait`. Compose recreates only the services whose image changed.
-See [Choose an image](../compose-deployment#choose-an-image). This release has no
+See [Choose an image](../compose-deployment#choose-an-image).
+
+`prefect-server` runs from the Sync image too, so `VERSION` changes the Prefect server
+together with the Sync API, the Sync worker, and the bootstrap job. The Prefect database
+keeps its work pool, deployment, and flow run history across the change. If you build
+your own Sync image, install the `service` extra in it: the Prefect server, the Sync API,
+and the Sync worker do not start without it.
+
+This release has no
 in-place state migration, so a release that needs a new state requires a fresh
 deployment.
 

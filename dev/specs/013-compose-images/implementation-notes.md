@@ -51,3 +51,18 @@ are written later in `plan.md`, section "Lifecycle failure causes".
   The workflow has no input to skip it, and its result is not part of this measurement.
 - Status at hand-back (2026-10-15T20:58:00Z): run in progress; both legs had passed the commit
   check and the image build and were running the repeated suite step.
+
+## User Story 1 (T014 to T024)
+
+- T018: no release tag of version 3 or later ships a root `docker-compose.yml` (checked
+  with `git tag` and `git ls-remote --tags origin` on 2026-10-15). Until one exists,
+  `tests/compose/test_prefect_server_upgrade.py` reads the previous file from the parent of
+  the newest commit that removed `prefecthq/prefect` from `docker-compose.yml`.
+  `INFRAHUB_SYNC_PREVIOUS_COMPOSE_REF` overrides the reference. The test skips only when
+  neither source exists; under `--compose-zero-skip` that skip fails the nightly job.
+- T022: `tasks/release.py` counts no fixed number of Sync image lines.
+  `uv run invoke release.validate-docker-compose --version 3.0.0a5` reports `sync_lines=5`.
+- T024: with a local `docker build`, three image tests fail because the build passes no OCI
+  version and revision labels: `test_the_image_carries_every_required_oci_label[...version]`,
+  `[...revision]` and `test_the_image_carries_the_source_provenance_of_the_commit_it_was_built_from`.
+  The publishing workflow passes these labels. No file of this phase changes them.

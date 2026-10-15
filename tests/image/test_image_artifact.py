@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import subprocess  # noqa: S404 -- fixed argv Git and Docker probes for the image gate
+import time
 from importlib.metadata import version as installed_version
 from typing import Any
 
@@ -25,6 +26,7 @@ from tests.image.conftest import (
     WRITABLE_ROOTS,
     docker,
     run_in_image,
+    tmpfs_arguments,
     wait_for_api,
 )
 from tests.image.test_version_policy import RUNTIME_PYTHON_FLOOR
@@ -254,3 +256,85 @@ def test_the_image_records_the_committed_lock_it_was_built_from(image_ref: str) 
     assert result.returncode == 0, result.stderr
     expected = hashlib.sha256((REPO_ROOT / "uv.lock").read_bytes()).hexdigest()
     assert result.stdout.strip().splitlines()[-1] == expected
+
+
+# --------------------------------------------------------------------------
+# The Prefect server command forms (FR-003, FR-018)
+# --------------------------------------------------------------------------
+# The server keeps its SQLite database at the default location under
+# `PREFECT_HOME`, a tmpfs scratch root, so no other container is needed.
+PREFECT_UI_STATIC_DIRECTORY = "/var/lib/infrahub-sync/prefect/ui"
+PREFECT_SERVER_READY_SECONDS = 180
+PREFECT_SERVER_PROBE = """
+import json, sys, httpx
+response = httpx.get("http://127.0.0.1:4200" + sys.argv[1], timeout=10)
+print(json.dumps({"status": response.status_code, "type": response.headers.get("content-type", ""), "body": response.text[:2000]}))
+"""
+
+
+def start_prefect_server(image_ref: str, argv: list[str]) -> str:
+    """Start one Prefect server command form the way the root compose file deploys it."""
+    command = ["run", "--detach", "--read-only", "--network=none", *tmpfs_arguments(WRITABLE_ROOTS), image_ref, *argv]
+    started = docker(command)
+    assert started.returncode == 0, started.stderr
+    return started.stdout.strip()
+
+
+def prefect_server_get(container: str, path: str) -> dict[str, Any]:
+    """Return the status, content type and start of the body of one request made inside the container."""
+    deadline = time.monotonic() + PREFECT_SERVER_READY_SECONDS
+    last = "no attempt made"
+    while time.monotonic() < deadline:
+        result = docker(["exec", container, "python", "-c", PREFECT_SERVER_PROBE, path], timeout=30)
+        if result.returncode == 0:
+            return json.loads(result.stdout.strip().splitlines()[-1])
+        last = result.stderr.strip()[-400:]
+        running = docker(["inspect", "--format", "{{.State.Running}}", container])
+        if running.stdout.strip() != "true":
+            break
+        time.sleep(2)
+    logs = docker(["logs", "--tail", "40", container])
+    pytest.fail(
+        f"the Prefect server did not answer GET {path} within {PREFECT_SERVER_READY_SECONDS}s: {last}\n"
+        f"{logs.stdout}{logs.stderr}"
+    )
+
+
+def test_the_image_puts_the_prefect_ui_files_on_a_writable_root(image_ref: str) -> None:
+    """R2: the UI copy cannot go into the root-owned package directory under a read-only root."""
+    assert f"PREFECT_UI_STATIC_DIRECTORY={PREFECT_UI_STATIC_DIRECTORY}" in image_config(image_ref)["Env"]
+
+
+def test_the_prefect_server_module_serves_the_api_and_the_ui_under_a_read_only_root(image_ref: str) -> None:
+    container = start_prefect_server(image_ref, ["python", "-m", "infrahub_sync.service.prefect_server"])
+    try:
+        health = prefect_server_get(container, "/api/health")
+        page = prefect_server_get(container, "/")
+    finally:
+        docker(["rm", "--force", container])
+
+    assert health["status"] == 200, health
+    assert page["status"] == 200, page["status"]
+    assert page["type"].startswith("text/html")
+    assert "<html" in page["body"].lower()
+
+
+def test_the_prefect_server_factory_runs_under_the_uvicorn_command(image_ref: str) -> None:
+    container = start_prefect_server(
+        image_ref,
+        [
+            "uvicorn",
+            "--factory",
+            "infrahub_sync.service.prefect_server:create_prefect_server",
+            "--host",
+            "0.0.0.0",  # noqa: S104 -- inside a container with no network
+            "--port",
+            "4200",
+        ],
+    )
+    try:
+        health = prefect_server_get(container, "/api/health")
+    finally:
+        docker(["rm", "--force", container])
+
+    assert health["status"] == 200, health
