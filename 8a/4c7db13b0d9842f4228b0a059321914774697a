@@ -1,0 +1,38 @@
+docs/docs/development/guides/preview-stack.md
+  s_47078ea83e766d::t_664216799bb5e8 8-10,154,190,195,203-204
+development/docker-compose.preview.yml
+  s_47078ea83e766d::t_a13f5b17ac2246 10-14,73-79,84-87
+tasks/preview.py
+  s_47078ea83e766d::t_a13f5b17ac2246 514-516
+tests/compose/test_compose_contract.py
+  s_47078ea83e766d::t_0c10f6e8b6ec96 888-889
+  s_47078ea83e766d::t_21cbb37ffca9f9 669-692,695,699-700,702-705,707-745
+  s_47078ea83e766d::t_be88388c91924c 775-777,779-783,787-790,793
+  s_47078ea83e766d::t_01cc13c1b04614 908
+  s_47078ea83e766d::t_703fa1a962793c 920
+  s_47078ea83e766d::t_b8df88c314739d 80-98
+  s_47078ea83e766d::t_e31ea5783cb664 18,31,41
+  s_47078ea83e766d::t_be5faf1c8137a7 1005,1011-1012
+dev/specs/013-compose-images/tasks.md
+  s_47078ea83e766d::t_1265d722c394ce 226-227,231-236
+tests/preview/test_preview_configuration.py
+  s_47078ea83e766d::t_669cf4c530bbeb 54,57,60,215-235,269
+development/docker-compose.dev.yml
+  s_47078ea83e766d::t_a13f5b17ac2246 110-111,113-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a4c7db13b0d9842f4228b0a059321914774697a",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
