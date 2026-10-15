@@ -1,0 +1,101 @@
+dev/specs/013-compose-images/checklists/requirements.md
+  s_47078ea83e766d::t_5307a17049130b 34-40
+dev/specs/009-plan-problem-reporting/checklists/requirements.md
+  s_47078ea83e766d::t_a020376af02337 39-45
+dev/specs/v3-release-scope.md
+  s_47078ea83e766d::t_64a58d282a94b8 196
+  s_47078ea83e766d::t_703c15da98457c 82,84,86-90
+  s_47078ea83e766d::t_613965bcf214fa 209-213,216
+  s_47078ea83e766d::t_ab595649193fbb 169-171,175
+  s_47078ea83e766d::t_e9c7f1f8526098 99-101
+  s_47078ea83e766d::t_ffb6c6d3e5bc1a 134-136
+  s_47078ea83e766d::t_c34c14c4e6f824 172-174
+  s_47078ea83e766d::t_0a69408917fda0 20-24
+  s_47078ea83e766d::t_a8d974df09d3c3 193
+  s_47078ea83e766d::t_3a0f94c922b898 122-124
+  s_47078ea83e766d::t_12f10c4cff1bc7 44,46,48,52-72
+  s_47078ea83e766d::t_ac26703dd65294 73
+dev/specs/012-v2-configuration-conversion/checklists/requirements.md
+  s_47078ea83e766d::t_ab432e362a311b 36-42
+dev/specs/010-second-sync-plan-speed/checklists/requirements.md
+  s_47078ea83e766d::t_02b197e3d9a99e 34-38
+dev/specs/012-v2-configuration-conversion/spec.md
+  s_47078ea83e766d::t_8a4105c3b1c7ee 310-313
+  s_47078ea83e766d::t_f9efcfdb6763a0 333-335
+  s_47078ea83e766d::t_c966f340a2ac5c 41-47
+  s_47078ea83e766d::t_0a8ce27cd02520 238-239
+dev/specs/013-compose-images/spec.md
+  s_47078ea83e766d::t_fc4708abb7a1c2 431-435
+  s_47078ea83e766d::t_167e2598ef2928 395-403
+  s_47078ea83e766d::t_735ba3278217ae 167-195
+  s_47078ea83e766d::t_d9d38a34ad9471 340-366
+  s_47078ea83e766d::t_58d7039edb36f7 32-35,37-45
+  s_47078ea83e766d::t_671855024f43a4 451
+dev/specs/011-operator-ui/checklists/requirements.md
+  s_47078ea83e766d::t_793db958c4f8a6 40-47
+dev/specs/011-operator-ui/spec.md
+  s_47078ea83e766d::t_053abca39e85f4 264-268,278-280,341-343
+  s_47078ea83e766d::t_2ea20626cd73e5 221
+  s_47078ea83e766d::t_955eb07c7c2e68 368-390
+  s_47078ea83e766d::t_9ee7ed75072312 79-80
+  s_47078ea83e766d::t_ce375399fc381b 425-426
+  s_47078ea83e766d::t_8b1e1d3b3868fb 160-162
+  s_47078ea83e766d::t_b0b389b5f19239 436-439
+  s_47078ea83e766d::t_839d843449497b 89-93
+  s_47078ea83e766d::t_d6d4f039d4eb01 408-409
+  s_47078ea83e766d::t_eb0fa16de69794 180
+  s_47078ea83e766d::t_ee041e568365ea 295
+  s_47078ea83e766d::t_868d8cfcf403db 311-313
+  s_47078ea83e766d::t_915af11404b76e 461
+  s_47078ea83e766d::t_92ec7e03e3fa47 290-291
+  s_47078ea83e766d::t_08dceb07745fea 65-66
+  s_47078ea83e766d::t_df0138e41c16e1 40,42-45,47-56
+  s_47078ea83e766d::t_aa9b93f7590aa5 465-469,473-479
+  s_47078ea83e766d::t_e1287cebbf27c6 352-357
+  s_47078ea83e766d::t_40ac62af124be2 276-277
+  s_47078ea83e766d::t_d9ea9e9d9860a4 292
+  s_47078ea83e766d::t_e28c3366487713 293-294,296-297
+dev/specs/009-plan-problem-reporting/spec.md
+  s_47078ea83e766d::t_8eb02a898f4c65 143
+  s_47078ea83e766d::t_6084feba16aca4 41-47,50-59
+  s_47078ea83e766d::t_3fabd3e46d3946 280-282
+  s_47078ea83e766d::t_5f4cf565a2f118 335-336
+  s_47078ea83e766d::t_ddbce78b5e2955 470-471
+  s_47078ea83e766d::t_07475615f4ff2d 459
+  s_47078ea83e766d::t_e712926f5033a7 225-228
+  s_47078ea83e766d::t_ccf281e19ed9d1 299-306
+  s_47078ea83e766d::t_2fa97826ed736d 477-479
+  s_47078ea83e766d::t_141def5407de15 101-104
+  s_47078ea83e766d::t_06e804665b8c8b 460-461
+  s_47078ea83e766d::t_626023d6c8416c 348-404,406-407
+  s_47078ea83e766d::t_053abca39e85f4 144-146,420-422
+  s_47078ea83e766d::t_b3eced4b53d91d 415-417
+  s_47078ea83e766d::t_e7310030ffec22 444-450
+  s_47078ea83e766d::t_af702be5cc6f64 135-137
+  s_47078ea83e766d::t_4b3d7f4562d151 326-327
+  s_47078ea83e766d::t_01d00010502086 405
+dev/specs/010-second-sync-plan-speed/spec.md
+  s_47078ea83e766d::t_3df7fd60e04442 352-354
+  s_47078ea83e766d::t_d038ed6bfa48d9 327-328,330
+  s_47078ea83e766d::t_f2253b4198e9b8 43-45,47-49
+  s_47078ea83e766d::t_053abca39e85f4 377-379
+  s_47078ea83e766d::t_551de883f64210 164,167-170,173,175-176,181,184-185,187-188,190
+  s_47078ea83e766d::t_f0a5a18940a23b 274,276-277
+  s_47078ea83e766d::t_7ff0bcb24ccfa0 284-295
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d9e83cb2506542c14f67c2221eea6ee0d393600d",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
