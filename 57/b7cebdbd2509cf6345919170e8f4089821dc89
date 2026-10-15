@@ -1,0 +1,21 @@
+dev/specs/009-plan-problem-reporting/checklists/requirements.md
+  s_47078ea83e766d::t_d4a4986df94def 1-45
+dev/specs/009-plan-problem-reporting/spec.md
+  s_47078ea83e766d::t_c6a91c84f5b56b 1-375
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "57b7cebdbd2509cf6345919170e8f4089821dc89",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
