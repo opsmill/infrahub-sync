@@ -49,6 +49,15 @@ in text afterwards. A cause is built only from named fields, never from the text
 raised by an adapter or an HTTP library (FR-019, FR-027, FR-028). The existing replacement of
 collected values stays as it is in the testing release.
 
+Decided by the product owner on 2026-10-15, third review:
+
+- A source record that refers to a peer that is not in the source at all is a plan problem, the
+  seventh type. It does not fail the plan. The record is left out when the relationship is
+  required, and kept without that relationship when it is optional (FR-002, FR-005).
+- Removing the existing replacement of values from published plans, which can make a plan
+  invalid JSON (SYNC-262), is follow-up work after the MVP. The replacement stays unchanged in
+  the MVP (FR-028).
+
 Not decided yet: product sign-off on the two decision record changes this specification needs
 (FR-029 and FR-030).
 
@@ -56,12 +65,14 @@ This specification covers requirements FR-001 to FR-004, journey P1 scenarios 1 
 success criteria SC-003 and SC-005 of the V3 idea brief (2026-10-15). It also owns these MVP
 blockers from `infrahub-sync-process/product/path-to-3.0.md`:
 
-- credential values that can still appear in errors and plans (SYNC-82), and the replacement of
-  values that can make a published plan invalid JSON (SYNC-262)
+- credential values that can still appear in errors and plans (SYNC-82)
 - the NetBox example package that fails on data real NetBox instances hold
   ([#374](https://github.com/opsmill/infrahub-sync/issues/374))
 - `configs validate`, which cannot reach the destination schema check or the credential check
   (INFP-651, INFP-652, SYNC-107, SYNC-147)
+
+The replacement of values that can make a published plan invalid JSON (SYNC-262) is not an MVP
+blocker of this specification. It is follow-up work after the MVP (FR-028).
 
 The UI that consumes the information described here is specified separately (spec 011).
 
@@ -82,14 +93,14 @@ Finding every bad record in one plan, before anything is written, is the gain V3
 for that step (idea brief, "Users and value").
 
 **Independent Test**: run one plan against a source fixture that holds one record of each of the
-six problem types and a set of valid records. The plan finishes, lists six problems, leaves out
+seven problem types and a set of valid records. The plan finishes, lists seven problems, leaves out
 those records and their dependents, and writes nothing to Infrahub.
 
 **Acceptance Scenarios**:
 
-1. **Given** a source that holds one record of each of the six problem types listed in FR-002,
+1. **Given** a source that holds one record of each of the seven problem types listed in FR-002,
    **When** the team starts a plan, **Then** the plan finishes and its problem list contains one
-   entry for each of the six records, each with its kind, its source record identity, the problem
+   entry for each of the seven records, each with its kind, its source record identity, the problem
    type and the reason.
 2. **Given** a source where a device has a problem and five interfaces belong to that device,
    **When** the team starts a plan, **Then** the plan leaves out the device and its five
@@ -109,6 +120,12 @@ those records and their dependents, and writes nothing to Infrahub.
    only through an optional relationship, **When** the team starts a plan, **Then** the plan
    keeps the IP address without that relationship, and the kept list names the IP address, the
    relationship and the left-out device.
+8. **Given** a source where a device refers to a site that the source does not return, through a
+   required relationship, and an IP address refers to a VRF that the source does not return,
+   through an optional relationship, **When** the team starts a plan, **Then** the plan
+   finishes, the problem list names the device and the IP address with the kind, the
+   relationship and the peer ID that is missing, the plan leaves out the device, and it keeps
+   the IP address without that relationship.
 
 ---
 
@@ -247,7 +264,7 @@ equals the original count minus the operations written.
 
 - **FR-001**: A plan MUST check every source record and MUST NOT stop at the first record that
   has a problem.
-- **FR-002**: A plan MUST detect and list these six problem types:
+- **FR-002**: A plan MUST detect and list these seven problem types:
   - a value outside the choices of a Dropdown attribute in the destination schema the plan read
     (#371)
   - two or more source records with the same source identity (for example duplicate IP
@@ -261,15 +278,22 @@ equals the original count minus the operations written.
   - two or more source objects with different mapping identities that Infrahub would store as
     one node, because the destination identity uses fewer fields than the mapping (#166; today a
     warning only)
+  - a reference to a peer that is not in the source at all, for example a device that refers
+    to a site the source does not return (today a NetBox, ACI or generic REST source fails the
+    whole plan, and a Nautobot source drops the reference with a warning)
 - **FR-003**: Each listed problem MUST hold the kind, the source record identity, the problem
   type, and a reason that names the attribute or relationship and the value or peer involved.
-  Problems of the identity types MUST also name the other records involved.
+  Problems of the identity types MUST also name the other records involved. A problem of a
+  peer that is not in the source MUST also name the relationship and the peer's source ID.
 - **FR-004**: A plan MUST NOT write to Infrahub, whether or not it finds problems.
 
 #### Records left out of a plan (brief FR-002, AD-12 plan stage)
 
 - **FR-005**: A plan MUST leave out each record that has a problem, and every record that
   depends on it through a required relationship, at any depth.
+  One exception: a record whose only problem is a reference to a peer that is not in the
+  source, through an optional relationship, MUST be kept and written without that
+  relationship. The plan MUST list it both as a problem and as kept without that relationship.
   A record that refers to a left-out record only through an optional relationship MUST be
   kept and written without that relationship. The plan MUST list it as kept without that
   relationship and name the left-out record. Once the left-out record is fixed, the next plan
@@ -363,12 +387,13 @@ equals the original count minus the operations written.
 - **FR-026**: The apply request in the Sync API MUST carry the confirmed left-out count of
   FR-010, next to the reviewed checksum it already carries.
 
-#### Credential values in causes, problem lists and plan files (SYNC-82, SYNC-262)
+#### Credential values in causes, problem lists and plan files (SYNC-82)
 
 `path-to-3.0.md` lists SYNC-82 and SYNC-262 as needed for INFP-648, INFP-649 and INFP-653:
 short credentials and credentials that contain JSON separators can still appear in errors and
 plans, or break a published plan. The product owner decided on 2026-10-15 to prevent credential
-values from entering this information, not to replace them afterwards.
+values from entering this information, not to replace them afterwards. In a later review the
+same day, the product owner moved SYNC-262 out of the MVP.
 
 - **FR-027**: A credential value, whatever its length or its characters, MUST NOT enter a cause,
   a problem reason, a left-out or kept entry, a plan file or a Sync API response. Sync uses a
@@ -377,8 +402,10 @@ values from entering this information, not to replace them afterwards.
 - **FR-028**: The protection of FR-027 MUST NOT depend on replacing values in text. This
   specification adds no replacement of values. The existing replacement of collected values
   in published artifacts, run records and the worker log stays as it is in the testing release.
-  Removing it from published plans, where it can make a plan invalid JSON (SYNC-262), is
-  follow-up work after the testing release.
+  Removing it from published plans, where it can make a plan invalid JSON (SYNC-262), is not
+  part of the MVP. It is follow-up work after the MVP. Because plan files no longer receive
+  credential values under FR-027, the replacement on plan files can then be removed without
+  exposing a credential.
 
 #### Decision records this specification changes (product sign-off needed)
 
@@ -431,13 +458,13 @@ that a credential missing from the worker is found only when the run fails in th
 ### Key Entities
 
 - **Plan problem**: one problem found in one source record. It holds the kind, the source
-  record identity, the problem type, the reason, and for identity problems the other records
-  involved.
+  record identity, the problem type, the reason, for identity problems the other records
+  involved, and for a peer that is not in the source the relationship and the peer's source ID.
 - **Left-out record**: a source record that the plan leaves out. It holds the kind, the source
   record identity, and either its own problems or the record it depends on.
 - **Kept record**: a source record that the plan keeps without an optional relationship,
-  because the peer of that relationship is left out. It holds the kind, the source record
-  identity, the relationship and the left-out record.
+  because the peer of that relationship is left out or is not in the source. It holds the kind,
+  the source record identity, the relationship, and the left-out record or the peer's source ID.
 - **Plan summary**: the counts of creates, updates, deletes not executed and records left out,
   by action and by kind.
 - **Run failure cause**: the stage (`plan`, `verify`, `apply` or `sync`), the failure type, the
@@ -452,8 +479,8 @@ that a credential missing from the worker is found only when the run fails in th
 
 - **SC-001** (brief SC-003): on the NetBox example data with planted bad records, one plan run
   lists every planted problem. On 2026-10-05 the same problems took five configuration versions.
-- **SC-002**: a fixture with one record of each of the six problem types gives one plan that
-  lists all six, and its apply writes only the valid records after the left-out count is
+- **SC-002**: a fixture with one record of each of the seven problem types gives one plan that
+  lists all seven, and its apply writes only the valid records after the left-out count is
   confirmed.
 - **SC-003** (brief SC-005): for 100% of failed or stopped runs in the test suite, the CLI and
   the Sync API show the cause without reading container logs or the orchestration server.
@@ -472,6 +499,9 @@ that a credential missing from the worker is found only when the run fails in th
   failure, and each of the three #374 cases is either written or listed as a plan problem.
 - **SC-009**: on a configuration that maps an attribute missing from the destination schema and
   references an unset credential, `configs validate` reports both before any run is started.
+- **SC-010**: for each bundled source adapter that resolves references while loading, a source
+  record that refers to a peer that is not in the source gives one listed problem, and the plan
+  finishes.
 
 ## Assumptions
 
@@ -488,23 +518,28 @@ that a credential missing from the worker is found only when the run fails in th
 - The worker container log and the orchestration log keep the full error text for OpsMill
   engineers, protected only by the existing replacement of collected values, which skips
   values shorter than six characters. A short credential can therefore still appear in those
-  two logs (the part of SYNC-82 that remains). They are not returned by the Sync API or
-  printed by the CLI.
+  two logs (the part of SYNC-82 that remains) until those logs record the structured cause
+  instead of the error text, which is follow-up work after the MVP. They are not returned by
+  the Sync API or printed by the CLI.
 - Infrahub 1.11 and later return an error code, the node kind and the attribute name with a
   rejection (#370). For older versions, the cause shows Infrahub's message without a code.
 - The Dropdown check needs the attribute choices in the record of the destination schema that a
   plan is bound to. Adding them changes that record, so plans saved by an earlier release must be
   planned again before they are applied (#371). This is accepted for the testing release.
 - A plan failure that is not tied to one record, such as an unreachable system, a rejected token
-  or an invalid transform, still fails the whole plan. Only the six problem types of FR-002 leave
+  or an invalid transform, still fails the whole plan. Only the seven problem types of FR-002 leave
   records out.
 - The problem list, the left-out list and the kept list follow the paging rule for plan
   details that spec 011 defines (FR-013 to FR-016 there; idea brief FR-007).
 - The testing release supports only the adapters that Sync bundles, and up to about 10,000
-  mapped objects (idea brief, "Assumptions"). The six problem types are checked for every bundled
+  mapped objects (idea brief, "Assumptions"). The seven problem types are checked for every bundled
   source adapter, not only NetBox.
 - The UI that shows this information is out of scope here (spec 011). This specification
   defines what the CLI shows and what the Sync API returns.
 - Resume of a stopped apply, deletes executed, and the AD-12 policy for runs nobody watches
   (including any option that applies a plan with records left out without review) are not part
   of the testing release.
+- These two follow-ups come after the MVP: removing the replacement of values from published
+  plans (SYNC-262), and recording the structured cause instead of the error text in the worker
+  and orchestration logs, so that a credential shorter than six characters no longer appears
+  there (the rest of SYNC-82).

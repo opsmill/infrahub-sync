@@ -18,7 +18,11 @@ How the plan finds problems without changing what DiffSync compares:
 
 - The adapter base class owns the per-record load loop. One admission step catches a record
   that cannot be built (a type the model refuses, a duplicate identity, a required peer removed
-  by a filter, a peer that was not loaded) and records it, then continues with the next record.
+  by a filter, a required peer that is not in the source, a peer that was not loaded) and
+  records it, then continues with the next record.
+- A reference to a peer that is not in the source at all is the seventh problem type,
+  `peer_not_found_in_source`, and no longer fails the plan. Through a required relationship the
+  record is left out; through an optional one it is kept without that relationship (R4).
   Adapters provide `list_records` and `record_to_data` and keep no loop of their own.
 - Every other record is loaded as the source holds it, references included. DiffSync's
   `diff_from` compares the stores as loaded, and operations are derived from that diff.
@@ -212,7 +216,7 @@ Agreed with `replan-013` on 2026-10-15, second round. One owner per shared item:
 | `docs/docs/operations/compose-troubleshooting.mdx` | 013 | 009 adds one section at the end, "A run failed: read its cause" |
 | `docs/docs/running-a-sync.mdx` | 009 | 013 changes only the sentence near line 235 that names the Prefect UI port |
 | `docs/docs/compose-deployment.mdx`, `custom-certificates.mdx`, `operations/day-2-operations.mdx` | 013 | 009 does not edit them |
-| `dev/specs/v3-release-scope.md` | 013 (this round) | 009 sent its wording for the SYNC-82 and SYNC-262 line and the #369 line; 013 edits the page |
+| `dev/specs/v3-release-scope.md` | 013 (this round) | 009 sent its wording for the SYNC-82 line and the #369 line; 013 edits the page. The product owner's decision to move SYNC-262 after the MVP was applied to the page with this revision |
 | Changelog fragments | each | 009 uses `+009-…`, 013 uses `+013-…` |
 | Tests | each | 013: `tests/compose/` (including the test-only `tests/compose/redaction.py`), `tests/image/`, `tests/service/test_prefect_server.py`, `tests/service/test_trust_store.py`. 009: the files listed under Project Structure. Neither edits the other's files. 013's `test_custom_ca.py` may assert `tls_certificate_rejected` once 009 is merged |
 | Decision record numbers | each | 009: 0020, 0021, 0022. 013: amendment to 0019, and 0023 |
@@ -232,17 +236,21 @@ Agreed with `replan-013` on 2026-10-15, second round. One owner per shared item:
 
 - Product sign-off of ADR 0020 with the AD-12 amendment, and of ADR 0021, is not given. The work
   they cover cannot ship before it (FR-029, FR-030).
-- SYNC-262 stays open in the testing release: the existing byte pass can still make a published
-  plan invalid JSON. Its removal is follow-up work under the product owner's rule (research
-  R14). The release scope page assigns SYNC-262 to the MVP; replan-013 updates that line.
+- SYNC-262 is not part of the MVP (product owner, 2026-10-15): the existing byte pass can still
+  make a published plan invalid JSON. Its removal is follow-up work after the MVP, listed under
+  3.0 on the release scope page. It can be removed safely because plan files no longer receive
+  credential values (research R13, R14).
 - Part of SYNC-82 stays: a credential shorter than six characters can appear in error text in
-  the worker log and the orchestration log, which are read only by OpsMill engineers (spec
-  assumption, research R14).
+  the worker log and the orchestration log, which are read only by OpsMill engineers, until
+  those logs record the structured cause instead of the error text. That is follow-up work
+  after the MVP (spec assumption, research R14).
 - Infrahub versions before 1.11 return no error code (#370). Whether every Infrahub 1.11
   rejection carries the node kind and attribute in `extensions` is not confirmed; the cause
   leaves them null when absent.
-- Behaviour change in Nautobot: a reference to a peer that is not found now fails the plan
-  instead of being dropped with a warning (`adapters/nautobot.py:286`, `:300`; research R4).
+- Behaviour change in four adapters: a reference to a peer that is not in the source is now
+  listed as the problem `peer_not_found_in_source`. NetBox, ACI and generic REST no longer fail
+  the plan on it, and Nautobot no longer drops the reference with only a warning
+  (`adapters/nautobot.py:286`, `:300`; research R4).
 - An adapter that overrides `model_loader` opts out of the admission step. The Infrahub adapter
   does so and calls `load_record` itself; duplicates from an Infrahub source are found only
   within one kind's records (research R3).

@@ -16,7 +16,14 @@ This is the second plan. The product owner rejected two parts of the first one o
 
 R2 to R8 replace the first design. R13 and R14 replace the masking.
 
-## R1. Where each of the six problem types is found today
+Revision of 2026-10-15, after two more product owner decisions:
+
+- A source record that refers to a peer that is not in the source is the seventh problem type,
+  `peer_not_found_in_source`. It no longer fails the plan (R1, R3, R4, R7, R11, R13).
+- SYNC-262 is follow-up work after the MVP, and the existing masking stays unchanged in the MVP
+  (R14).
+
+## R1. Where each of the seven problem types is found today
 
 | Problem type (stable name) | Where it stops a plan today | Where this plan finds it |
 | --- | --- | --- |
@@ -26,6 +33,7 @@ R2 to R8 replace the first design. R13 and R14 replace the masking.
 | `wrong_value_type` | Pydantic refuses the model at `model(**data)`, for example a rack position of `2.5` for an integer (`adapters/netbox.py:223`, #374) | Load: the record admission step (R3) |
 | `required_peer_excluded_by_filter` | `ValueError("Configured filter excluded all peers for required relationship …")` (`adapters/netbox.py:270-275`, `306-312`) | Load: the record admission step, through a typed exception of the base class (R4) |
 | `identities_merge_in_destination` | A warning only (`_warn_identity_finer_than_destination_key`, `plan/derive.py:791`; #166) and `refuse_source_identity_collisions` (`plan/keying.py:67`, called at `plan/derive.py:931`) | Problem pass, through the same checks changed to return the groups (R8) |
+| `peer_not_found_in_source` | NetBox, ACI and generic REST raise and fail the load (`netbox.py:276-277`, `aci.py:332-333`, `genericrestapi.py:217-218`). Nautobot logs "Unable to locate the node" and drops the reference (`nautobot.py:286`, `:300`) | Load: the peer resolution of the base class (R4), recorded by the record admission step (R3) |
 
 Today every load failure ends the whole load: `_load_side` wraps it into one `ValueError`
 (`potenda/__init__.py:488-501`).
@@ -123,6 +131,7 @@ on the source side catches exactly these exceptions per record:
 | `diffsync.exceptions.ObjectAlreadyExists` | `duplicate_source_identity`, naming the record already in the store (`existing_object`); the store keeps that first record unchanged |
 | `ExcludedRequiredPeerError` (new, base class) | `required_peer_excluded_by_filter`, with the field and the excluded peer ID |
 | `PeerNotLoadedError` (new, base class) | a dependent left-out record, naming the peer (R4) |
+| `PeerNotFoundError` (new, base class), raised for a required relationship | `peer_not_found_in_source`, with the field, the peer kind and the peer's source ID (R4) |
 
 Any other exception, including a `ValidationError` that holds a non-type error such as a
 missing required value, is raised again as `RecordLoadError` with the kind, the record ID and
@@ -195,15 +204,22 @@ replaces its scan of `self.store.get_all(...)` by `local_id` with one call to
 | in the load report without a known identity | `PeerNotLoadedError`: the referring record is left out as a dependent, whether the relationship is required or optional, because its reference cannot be stated |
 | removed by a configured filter, relationship required | `ExcludedRequiredPeerError` (the required field is `str` with no default, `runtime_schema/models.py:77-81`, so the record cannot be built) |
 | removed by a configured filter, relationship optional | no value, as today (`adapters/netbox.py:258-271`): a filter decides what the source holds, so this is not a left-out record |
-| none of these | `PeerNotFoundError`, which fails the plan with the kind, record ID, field and peer ID |
+| not in the source, relationship required | `PeerNotFoundError`. The admission step records `peer_not_found_in_source` with the kind, the record ID, the field and the peer ID. The record cannot be built, so it is left out with its dependents |
+| not in the source, relationship optional | No exception. `peer_unique_id` records `peer_not_found_in_source` in the load report for the referring record, with the same fields, and returns a placeholder marked "not in the source". The record loads with that reference, and the problem pass keeps it without that relationship (R7) |
 
 Kinds load in dependency order (`SyncConfig.compute_order_and_tiers`,
 `infrahub_sync/__init__.py:187`), so a peer's load result is known before its referrers load.
 
-Behaviour change: Nautobot today logs "Unable to locate the node" and drops the reference
-(`adapters/nautobot.py:286`, `:300`), so DiffSync compares a relationship the source does not
-have. Under the shared resolution it fails the plan, as NetBox, ACI and generic REST do today
-(`netbox.py:276-277`, `aci.py:332-333`, `genericrestapi.py:217-218`).
+A peer is "not in the source" when it is in neither the store, the load report nor the list of
+records a filter removed, after its kind has loaded. Decided by the product owner on
+2026-10-15: this is a plan problem, not a plan failure. The referring record follows the same
+left-out and kept rule as a reference to a left-out record.
+
+Behaviour change for four adapters. Today NetBox, ACI and generic REST fail the whole plan on
+such a reference (`netbox.py:276-277`, `aci.py:332-333`, `genericrestapi.py:217-218`). Nautobot
+logs "Unable to locate the node" and drops the reference (`adapters/nautobot.py:286`, `:300`),
+so DiffSync compares a relationship the source does not have. Under the shared resolution all
+four report `peer_not_found_in_source` in the plan, and the plan continues.
 
 ## R5. One mechanism instead of `continue_on_error`
 
@@ -256,19 +272,23 @@ Decision, in `infrahub_sync/plan/problems.py`:
 
 1. Problems: from the load reports (R3, R4), the Dropdown check (R6) and the identity checks
    (R8).
-2. Dependency walk: starting from every record with a problem and every record the load could
-   not build, the pass walks the source store's reference fields (the mapping's
+2. Dependency walk: starting from every left-out record with a problem and every record the
+   load could not build, the pass walks the source store's reference fields (the mapping's
    `field.reference` entries) to find the records that refer to them, and repeats until no new
    record is found. A reference through a relationship that the destination schema marks
    `optional: false`, or that is a component of the destination's human-friendly ID, leaves the
    referring record out, naming the record it depends on. A reference through an optional
    relationship keeps the record and lists it as kept, with the relationship and the left-out
    record. A record with a problem and a left-out peer is listed once, with its problem.
+   A record whose only problem is `peer_not_found_in_source` through an optional relationship
+   is not left out: it is listed as a problem and as kept, with the relationship and the
+   peer's source ID, and the walk does not start from it (FR-005).
 3. Selection (`select_operations`):
    - removes every create and update of a left-out record;
    - removes every delete whose identity is a record of the load report or a left-out record,
      so a left-out record that exists in Infrahub stays as it is (FR-008);
-   - for a kept record, removes the relationship to the left-out peer from its operation. On a
+   - for a kept record, removes the relationship to the left-out peer, or to the peer that is
+     not in the source, from its operation. On a
      create, the relationship is absent (ADR 0001: an absent `relationships` entry carries no
      value); for a relationship of cardinality many, the other peers stay. On an update, the
      relationship is removed from the operation, so the destination keeps its current value,
@@ -278,8 +298,8 @@ Decision, in `infrahub_sync/plan/problems.py`:
      left-out peer from Infrahub (spec 010, edge case on relationships with several peers). An
      update whose only change was that relationship is removed.
 
-In step 3 of R2, a reference to a record of the load report resolves to a placeholder pair
-marked as left out, instead of raising `SourcePeerUnresolvedError` (`plan/derive.py:272-338`
+In step 3 of R2, a reference to a record of the load report, or to a peer that is not in the
+source (R4), resolves to a placeholder pair marked as left out, instead of raising `SourcePeerUnresolvedError` (`plan/derive.py:272-338`
 already has `allow_missing` for a peer absent from the store). Step 5 removes every placeholder.
 
 Rationale: the product owner decided on 2026-10-15 that an optional reference keeps the record
@@ -372,9 +392,11 @@ below for the product owner.
 >
 > **Decision.**
 >
-> - At the plan stage, a record with one of six named problems, and every record that depends
+> - At the plan stage, a record with one of seven named problems, and every record that depends
 >   on it through a required relationship, is left out. A record that refers to it only through
->   an optional relationship is kept without that relationship.
+>   an optional relationship is kept without that relationship. A reference to a peer that is
+>   not in the source is one of the seven problems; through an optional relationship, the
+>   referring record is kept without that relationship.
 > - DiffSync compares the stores as loaded. A record that cannot be built is not loaded; every
 >   other record is loaded as the source holds it, references included. The adapter base class
 >   owns the per-record loop and is the one place that catches a record that cannot be built.
@@ -387,7 +409,7 @@ below for the product owner.
 > - Every other plan failure still fails the plan. During apply, an Infrahub rejection still
 >   stops the apply. `continue_on_error` is removed.
 >
-> **Consequences.** AD047's rule changes for these six problem types only. A left-out record
+> **Consequences.** AD047's rule changes for these seven problem types only. A left-out record
 > that exists in Infrahub is not updated and not deleted. An adapter that overrides
 > `model_loader` opts out of the admission step. The policy for runs that nobody watches stays
 > open for 3.0.
@@ -453,7 +475,7 @@ Classification, by exception type in the cause chain, never by text:
 | `system_timeout` | `requests.Timeout`, `httpx.TimeoutException`, `ServerNotResponsiveError` | `system` |
 | `token_rejected` | HTTP 401 or 403 from `requests`, `httpx` or `pynetbox.RequestError`; Infrahub `AuthenticationError` | `system` |
 | `tls_certificate_rejected` | `ssl.SSLCertVerificationError` (agreed with spec 013) | `system` |
-| `record_load_failed` | `RecordLoadError`, `PeerNotFoundError` (R3, R4) | `node_kind`, `record`, `field` |
+| `record_load_failed` | `RecordLoadError` (R3) | `node_kind`, `record`, `field` |
 | `transform_failed` | a new `TransformError(ValueError)` that `apply_transform` raises instead of a bare `ValueError` (`infrahub_sync/__init__.py:436-441`), with the field and the record's `local_id` as attributes; its message text, which repeats the transform expression and the error, is not used | `node_kind`, `record`, `field` |
 | `verification_failed`, `apply_refused`, `credential_missing`, `left_out_review_required` | the existing typed errors | fixed text |
 | `internal_error` | anything else | class name, fixed text |
@@ -501,8 +523,9 @@ and the punctuation after it (`docs/docs/development/guidelines/secret-redaction
 values below a length floor"). Under R13 a plan holds no credential by construction, so the pass
 protects nothing on a plan. It can be removed safely for the plan review artifact
 (`service/flow.py:178-187`) once a test asserts that the review document is built only from the
-saved plan's fields (`service/flow.py:164-175`). Following the product owner's rule, that removal
-is follow-up work, not MVP work. Until then, the existing risk stays.
+saved plan's fields (`service/flow.py:164-175`). The product owner moved SYNC-262 out of the MVP
+on 2026-10-15: that removal is follow-up work after the MVP, and the masking stays unchanged in
+the MVP. Until then, the existing risk stays.
 
 Follow-ups to file (not filed by this plan): remove value replacement from the plan review
 artifact (SYNC-262); log the structured cause instead of error text in the worker (rest of

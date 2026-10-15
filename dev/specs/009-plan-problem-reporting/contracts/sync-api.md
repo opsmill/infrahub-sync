@@ -52,10 +52,14 @@ Rules:
   `expected_checksum=<hex>` that differs from the stored plan is refused with 409
   `plan-changed`.
 - A plan saved in format 2 or 3 returns empty lists and zero counts.
+- `problem_type` is one of the seven stable names in data-model.md:
+  `dropdown_value_not_in_choices`, `duplicate_source_identity`,
+  `destination_identity_collision`, `wrong_value_type`, `required_peer_excluded_by_filter`,
+  `identities_merge_in_destination`, `peer_not_found_in_source`.
 - `reason` is rendered from a fixed template per problem type; `value` is the source value.
   No entry holds a connection setting or the text of an error.
 - Errors: 404 `run-not-found`; 410 `artifact-expired`; 503 `plan-unavailable`; 422 for an
-  unknown `problem_type` (the stable names are in data-model.md).
+  unknown `problem_type` (the stable names are listed above and in data-model.md).
 
 ## Run failure cause
 

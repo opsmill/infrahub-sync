@@ -16,20 +16,37 @@ The live scenarios need the development stack, a local NetBox with the pinned `d
 and the schema library, as described in
 [The `from-netbox` example check](../../../docs/docs/development/guidelines/testing-tiers.md#the-from-netbox-example-check).
 
-## Scenario 1: one plan lists six problems (User Story 1, SC-002)
+## Scenario 1: one plan lists seven problems (User Story 1, SC-002)
 
-1. Load the fixture source that holds one record of each problem type, valid records, a
-   device with a problem and five interfaces that belong to it, and an IP address that refers to
-   that device only through an optional relationship.
+1. Load the fixture source that holds one record of each of the seven problem types, valid
+   records, a device with a problem and five interfaces that belong to it, and an IP address
+   that refers to that device only through an optional relationship. The
+   `peer_not_found_in_source` record refers to its missing peer through a required
+   relationship.
 2. Register the fixture configuration and run `infrahub-sync diff`.
 3. Expected:
-   - the run finishes; the summary shows `left_out` equal to the six problem records plus their
+   - the run finishes; the summary shows `left_out` equal to the seven problem records plus their
      dependents, with the split between "with a problem" and "depending on one";
-   - `infrahub-sync runs problems <run_id>` prints six lines, one per problem type, each with
+   - `infrahub-sync runs problems <run_id>` prints seven lines, one per problem type, each with
      kind, identity, type and reason;
    - `infrahub-sync runs left-out <run_id>` names each interface with the device it depends on;
    - `infrahub-sync runs kept <run_id>` names the IP address, the relationship and the device;
    - the Infrahub branch has no new commit (no write).
+
+## Scenario 1b: a peer that is not in the source (User Story 1 scenario 8, SC-010)
+
+1. For each bundled source adapter that resolves references while loading (NetBox, Nautobot,
+   ACI, generic REST, Slurp'it; research R4), load a fixture where a device refers to a site
+   that the source does not return, through a required relationship, and an IP address refers
+   to a VRF that the source does not return, through an optional relationship.
+2. Run `infrahub-sync diff`.
+3. Expected:
+   - the run finishes; no adapter fails the plan or drops the reference without a problem;
+   - `infrahub-sync runs problems <run_id> --type peer_not_found_in_source` prints two lines,
+     each with the kind, the identity, the relationship and the missing peer's source ID;
+   - `infrahub-sync runs left-out <run_id>` names the device;
+   - `infrahub-sync runs kept <run_id>` names the IP address, the relationship `vrf` and the
+     missing peer, and the plan holds no change to that relationship.
 
 ## Scenario 2: apply needs the confirmed count (User Story 2, SC-006)
 

@@ -41,7 +41,7 @@ where 3.0 is complete when every card linked to
 
 | Specification | What the customer team can do | Requirements from the scope decision |
 | --- | --- | --- |
-| [009 Plan problem reporting](009-plan-problem-reporting/spec.md) | View every bad source record in one plan, apply the rest after confirming the count left out, view why a run failed, plan again after a stopped apply, check a configuration against the destination schema before a run | Plan collects every problem; records with problems are left out; failure causes shown; recovery by planning again; credential masking; NetBox example on real data; `configs validate` checks |
+| [009 Plan problem reporting](009-plan-problem-reporting/spec.md) | View every bad source record in one plan, apply the rest after confirming the count left out, view why a run failed, plan again after a stopped apply, check a configuration against the destination schema before a run | Plan collects every problem; records with problems are left out; failure causes shown; recovery by planning again; credentials kept out of causes and plans; NetBox example on real data; `configs validate` checks |
 | [010 Second sync and plan speed](010-second-sync-plan-speed/spec.md) | Plan again after a change and view only that change, at tier M in no more time than the first-sync plan | Second sync shows only real changes; plan time at tier M |
 | [011 Operator UI](011-operator-ui/spec.md) | Review, approve and apply a plan, and view runs, in a browser on the `sync-api` host; list and cancel runs in the CLI | UI served by `sync-api`; `GET /runs`; plan detail in pages; each peer identity shown once; `runs list` and `runs cancel` |
 | [012 v2 configuration conversion](012-v2-configuration-conversion/spec.md) | Convert a v2 `config.yml`, and view a first V3 plan with no false changes on data v2 wrote | Conversion command; no-false-updates check |
@@ -54,9 +54,9 @@ Suggested order: 009, 010, 011, 012, 013. Specification 011 uses the API that 00
 [path-to-3.0.md](https://github.com/opsmill/infrahub-sync-process/blob/main/product/path-to-3.0.md)
 names these problems for the MVP cards. Each one now has an owner:
 
-- Short credentials and masking that corrupts JSON (SYNC-82, SYNC-262): specification 009,
-  FR-027 and FR-028, by keeping credentials out of causes, problem reasons and plan files;
-  removing the existing masking pass on published plans is a follow-up after the MVP.
+- Short credentials in failure causes, problem reasons and plan files (SYNC-82):
+  specification 009, FR-027 and FR-028, by keeping credentials out of them. SYNC-262 is not an
+  MVP blocker: it is follow-up work for 3.0 (see "Credential follow-ups").
 - The NetBox example package fails on data that real NetBox instances hold
   ([#374](https://github.com/opsmill/infrahub-sync/issues/374)): specification 009, FR-031,
   because its success criteria run on that example.
@@ -128,6 +128,14 @@ status on 2026-10-06 according to
     with records left out without a person confirming the count (the MVP stops a `sync` run
     after such a plan, specification 009 FR-012)
   - [INFP-650](https://opsmill.atlassian.net/browse/INFP-650), IN PLANNING
+- **Credential follow-ups** from specification 009 (product owner decision of 2026-10-15). The
+  MVP keeps today's masking unchanged:
+  - SYNC-262: remove the masking pass from plan files, where it can make a published plan
+    invalid JSON. This is safe once the MVP ships, because plan files no longer receive
+    credential values (specification 009, FR-027 and FR-028).
+  - The rest of SYNC-82: a credential shorter than six characters can still appear in the
+    worker and orchestration logs. It stops appearing there once those logs record the
+    structured cause instead of the error text.
 - **Tier L** with the 64 MiB and 16 MiB limits removed:
   [INFP-659](https://opsmill.atlassian.net/browse/INFP-659), IN PLANNING.
   [metrics.md](https://github.com/opsmill/infrahub-sync-process/blob/main/product/metrics.md)
@@ -201,6 +209,7 @@ The cards are listed with their status on 2026-10-06:
 | Q5. Who can reach the UI? | 011, FR-031 | The `sync-api` host only, on loopback; a person on another computer uses a tunnel they set up. Access from other computers over TLS through a reverse proxy is 3.0 (INFP-663) |
 | Q6. What happens to a v2 setting that a registered package does not accept? | 012, FR-010 | Refuse the conversion and list every such setting |
 | Q7. If the new MinIO image cannot read the old volume, may operators reset the object store? | 013, FR-019 | No longer applies: on 2026-10-15 the product owner kept the current MinIO build, so the update keeps the data with no reset |
+| Q8. Does a source record that refers to a peer that is not in the source fail the plan? | 009, FR-002 and FR-005 | No. It is the problem `peer_not_found_in_source`. The record is left out when the relationship is required, and kept without that relationship when it is optional |
 
 Benoit Kohler answered these questions on 2026-10-15.
 

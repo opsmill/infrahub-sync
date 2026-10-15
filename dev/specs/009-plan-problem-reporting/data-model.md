@@ -14,6 +14,7 @@ source data, schema names, Infrahub's own error message, or fixed templates.
 | `wrong_value_type` | The model refuses a value because of its type (for example `2.5` for a Number) | none |
 | `required_peer_excluded_by_filter` | A required relationship's peer was removed by a configured filter | none; `peer` names the excluded peer |
 | `identities_merge_in_destination` | Two or more source objects with different mapping identities would be stored as one Infrahub node | every other record in the group |
+| `peer_not_found_in_source` | A source record refers to a peer that is not in the source at all: not loaded, not in the load report, not removed by a filter (research R4) | none; `peer` names the missing peer by kind and source ID |
 
 The names are part of the public contract. A later release may add a type; an existing name is
 never renamed or removed.
@@ -28,11 +29,12 @@ the problem pass reads it.
 | `kind` | string | The model name |
 | `source_id` | string or null | `local_id` from the record data, when present |
 | `identity` | object or null | The identifier fields and values, when every identifier field was converted |
-| `reason` | `wrong_value_type`, `duplicate_source_identity`, `required_peer_excluded_by_filter`, `peer_not_loaded` | |
+| `reason` | `wrong_value_type`, `duplicate_source_identity`, `required_peer_excluded_by_filter`, `peer_not_found_in_source`, `peer_not_loaded` | |
 | `field` | string or null | From the pydantic error location or the typed peer exception |
 | `error_type` | string or null | The pydantic error type, for example `int_from_float` |
 | `value` | JSON value or null | The value the model refused (pydantic `input`), strings limited to 256 characters |
-| `peer` | Source record reference or null | For the peer reasons |
+| `peer` | Source record reference or null | For the peer reasons; for `peer_not_found_in_source`, `identity` is null |
+| `loaded` | boolean | False when the record was not built. True for `peer_not_found_in_source` through an optional relationship: the record loads with a placeholder reference |
 | `existing` | Source record reference or null | For `duplicate_source_identity`, the record kept in the store |
 
 ## Source record reference
@@ -52,11 +54,15 @@ the problem pass reads it.
 | `field` | string or null | The attribute or relationship involved |
 | `value` | JSON value or null | The source value involved; strings limited to 256 characters |
 | `allowed` | list of strings or null | For `dropdown_value_not_in_choices`, the attribute's choices |
-| `peer` | Source record reference or null | For `required_peer_excluded_by_filter`, the excluded peer |
+| `peer` | Source record reference or null | For `required_peer_excluded_by_filter`, the excluded peer. For `peer_not_found_in_source`, the missing peer, with `identity` null |
 | `other_records` | list of Source record reference | For the identity types, at least one entry |
 | `reason` | string | Rendered from a fixed template per problem type over the fields above; at most 512 characters |
 
 A record with several problems has one entry per problem and counts once as left out.
+
+A record whose only problem is `peer_not_found_in_source` through an optional relationship is
+not left out. It has a problem entry and a kept entry, and is not counted in `left_out`
+(FR-005).
 
 ## Left-out record (FR-005, FR-006)
 
@@ -74,8 +80,9 @@ A record with several problems has one entry per problem and counts once as left
 | Field | Type | Rule |
 | --- | --- | --- |
 | `record` | Source record reference | |
-| `relationship` | string | The optional relationship written without the left-out peer |
-| `left_out_peer` | Source record reference | |
+| `cause` | `peer_left_out`, `peer_not_found_in_source` | Why the relationship is not written |
+| `relationship` | string | The optional relationship written without the peer |
+| `left_out_peer` | Source record reference | The left-out record, or for `peer_not_found_in_source` the missing peer, with `identity` null |
 
 ## Plan summary additions (FR-007)
 
@@ -111,7 +118,7 @@ file. A mismatch is a `PlanVerificationError`; the plan is not applied.
 | --- | --- | --- |
 | Load | source systems | the two stores, the load reports |
 | Compare (`diff_from`) | the two stores | the diff |
-| Derive | the diff, the stores, the load reports | operations, with placeholders for references to records not loaded |
+| Derive | the diff, the stores, the load reports | operations, with placeholders for references to records not loaded and to peers not in the source |
 | Find problems | load reports, source store, destination schema record, operations | plan report |
 | Select operations | operations, plan report | selected operations, no placeholder |
 | Check and write | selected operations, plan report | plan directory |

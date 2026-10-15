@@ -51,6 +51,15 @@
   library's error. The existing replacement of values stays unchanged in the testing release.
   What remains of SYNC-82 (short credentials in the worker and orchestration logs) and of
   SYNC-262 (the replacement pass on published plans) is stated in FR-028 and the assumptions.
+- Revision of 2026-10-15 after two more product owner decisions, so no marker remains:
+  - A source record that refers to a peer that is not in the source is the seventh problem
+    type, `peer_not_found_in_source`, and does not fail the plan. Changed: Summary, FR-002,
+    FR-003, FR-005, User Story 1 (independent test, scenario 1, new scenario 8), the plan
+    problem and kept record entities, SC-002, new SC-010 and two assumptions.
+  - SYNC-262 is follow-up work after the MVP, not an MVP blocker of this specification. The
+    existing replacement of values stays unchanged in the MVP. The rest of SYNC-82 (short
+    credentials in the worker and orchestration logs) is also follow-up work. Changed:
+    Summary, the introduction of the credential requirements, FR-028 and the assumptions.
 - The Sync API and the CLI are named because the request asks for the contract the UI of spec 011
   consumes. The requirements state what each surface returns or shows, not how it is built.
 - Iteration 1 removed a source file reference and the term "schema fingerprint" from the
