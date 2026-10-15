@@ -1,243 +1,400 @@
 # Research: Plan problem reporting
 
-Each section states a decision, why it was chosen from the code at commit `d9e83cb2`, and the
-alternatives that were rejected. Sizes and timings come from the existing benchmark records in
-`infrahub-sync-process/product/metrics.md` and `validation.md`. No new measurement was run.
+Each section states a decision, why it was chosen from the code at commit `4646b716`, and the
+alternatives that were rejected. File references are to that commit. Sizes and timings come
+from `infrahub-sync-process/product/metrics.md`; no new measurement was run (product owner
+constraint, 2026-10-15).
+
+This is the second plan. The product owner rejected two parts of the first one on 2026-10-15:
+
+- It changed what DiffSync compares: it replaced `self.add(...)` with an `admit_record` call at
+  each adapter call site, emptied relationship fields at load time for kept records, and removed
+  left-out records from the source store, so that DiffSync computed a diff that was then
+  corrected after derivation (first plan R2, R4).
+- It masked credential values of any length by search and replace in messages, plan files and
+  logs (first plan R11).
+
+R2 to R8 replace the first design. R13 and R14 replace the masking.
 
 ## R1. Where each of the six problem types is found today
 
-Decision: each problem type is detected where the data that proves it first exists, and each
-detection site records a problem instead of raising.
-
-| Problem type (stable name) | Where it stops a plan today | Where the plan detects it |
+| Problem type (stable name) | Where it stops a plan today | Where this plan finds it |
 | --- | --- | --- |
-| `dropdown_value_not_in_choices` | Not detected. Infrahub rejects the write during apply (#370, #371; `runtime_schema/models.py:46` types a Dropdown as `str`) | Engine, after the source load, against the destination schema record |
-| `duplicate_source_identity` | `self.add(item)` in each adapter's `model_loader` raises DiffSync's "already present" (`adapters/netbox.py:224`, `nautobot.py:254`, `aci.py:287`, `genericrestapi.py:145`, `prometheus.py:511`, `slurpitsync.py:281`) | Shared record admission in `DiffSyncMixin` |
-| `destination_identity_collision` | `refuse_destination_identity_collisions` raises `DestinationIdentityCollisionError` (`plan/keying.py:523-557`) | Same function, changed to return collisions |
-| `wrong_value_type` | Pydantic refuses the model when the adapter builds it, for example `int_from_float` on `DcimDevice.position` (#374) | Shared record admission in `DiffSyncMixin` |
-| `required_peer_excluded_by_filter` | `ValueError("Configured filter excluded all peers for required relationship …")` (`adapters/netbox.py:270-275`, `306-312`) | Adapter reference resolution, through a typed exception the admission step catches |
-| `identities_merge_in_destination` | A warning only (`_warn_identity_finer_than_destination_key`, `plan/derive.py:791-837`; #166) and `refuse_source_identity_collisions` (`plan/keying.py:67-122`) | Same functions, changed to return the merge groups |
+| `dropdown_value_not_in_choices` | Not found. Infrahub rejects the write during apply (#370, #371). A Dropdown is typed `str` (`runtime_schema/models.py:46`), so the model accepts any text | Problem pass, against the choices in the destination schema record (R6) |
+| `duplicate_source_identity` | `self.add(item)` raises DiffSync's `ObjectAlreadyExists` (`adapters/netbox.py:224`, `nautobot.py:254`, `aci.py:287`, `genericrestapi.py:145`, `prometheus.py:511`, `slurpitsync.py:281`; raised by `diffsync/__init__.py:806-815`) | Load: the record admission step of the base class (R3) |
+| `destination_identity_collision` | `refuse_destination_identity_collisions` raises (`plan/keying.py:523`), called from `warn_missing_convergence_key` (`plan/derive.py:908`) | Problem pass, through the same check changed to return the groups (R8) |
+| `wrong_value_type` | Pydantic refuses the model at `model(**data)`, for example a rack position of `2.5` for an integer (`adapters/netbox.py:223`, #374) | Load: the record admission step (R3) |
+| `required_peer_excluded_by_filter` | `ValueError("Configured filter excluded all peers for required relationship …")` (`adapters/netbox.py:270-275`, `306-312`) | Load: the record admission step, through a typed exception of the base class (R4) |
+| `identities_merge_in_destination` | A warning only (`_warn_identity_finer_than_destination_key`, `plan/derive.py:791`; #166) and `refuse_source_identity_collisions` (`plan/keying.py:67`, called at `plan/derive.py:931`) | Problem pass, through the same checks changed to return the groups (R8) |
 
-Rationale: every one of these sites already holds the record, the kind and the reason. Moving
-detection elsewhere would need the data again. `potenda/__init__.py:488-501` wraps every load
-failure into one `ValueError`, so today the first problem ends the whole load; collecting at the
-admission step is the only place that sees each record once.
+Today every load failure ends the whole load: `_load_side` wraps it into one `ValueError`
+(`potenda/__init__.py:488-501`).
+
+## R2. Plan steps, and how DiffSync's view stays the source data as loaded
+
+Decision: a plan runs these steps in this order. Only step 1 builds the stores; no later step
+changes them.
+
+1. **Load.** Each adapter loads its side. A record that cannot be built (R3) is not added to the
+   store, because there is no valid model to add. It is recorded in the adapter's load report.
+   Every other record is added as the source holds it, with every reference it holds (R4).
+2. **Compare.** `self.destination.diff_from(self.source, …)` (`potenda/__init__.py:553`),
+   unchanged. It compares the stores as loaded.
+3. **Derive.** `operations_from_diff` and `derive_deletes` (`potenda/__init__.py:655-680`) derive
+   one operation per difference, for every record, including records with problems. The only
+   change: a reference to a record that the load report names resolves to a placeholder instead
+   of raising `SourcePeerUnresolvedError` (R7).
+4. **Find problems.** A new problem pass (`infrahub_sync/plan/problems.py`) reads the load
+   reports, the source store, the destination schema record and the derived operations. It runs
+   the Dropdown check, the identity checks and the dependency walk, and returns a plan report:
+   problems, left-out records and kept records. It reads; it changes nothing.
+5. **Select operations.** A separate, pure function `select_operations(operations, report)`
+   applies the report to the derived operations: it removes the operations of left-out records,
+   removes the deletes that name a record the load could not build, and removes from a kept
+   record's operation the relationship to a left-out peer. Every placeholder of step 3 is gone
+   after this step; the plan writer refuses an operation that still holds one.
+6. **Check and write.** `warn_missing_convergence_key` (`plan/derive.py:888`) runs on the
+   selected operations, then the plan writer writes the operations and the report (R9).
+
+What keeps DiffSync's view intact:
+
+- The stores are not changed after step 1. A test takes a canonical dump of both stores before
+  step 2 and after step 5 and asserts that they are equal.
+- The diff that step 2 returns is not edited. Left-out and kept decisions are applied in step 5,
+  to the plan's operations, and step 5 is the only code that applies them.
+- No relationship field is emptied at load time to obtain a decision. A kept record is loaded
+  with its reference to the left-out record, so DiffSync compares the real value.
+- A record that the load could not build is absent from the source store, so DiffSync reports
+  its Infrahub node as a delete. That is correct for the data as loaded. Step 5 records it as
+  left out instead of as a delete not executed (ADR 0004: deletes are recorded, never executed).
+- Models declare no `_children`. The runtime model builder emits none
+  (`runtime_schema/models.py:11`), and derivation refuses a diff element with children
+  (`_refuse_child_elements`, `plan/derive.py:387-415`). V3 calls only `diff_from`
+  (`potenda/__init__.py:553`), never `sync_from` or `sync_to`. A test asserts both: no
+  runtime model has a `_children` mapping, and `Potenda` has no call to a DiffSync sync method.
+
+Rationale: the problem types need data from three moments: the load (a record that cannot be
+built), the stores (Dropdown values, references) and the derived operations (identity
+collisions are defined over creates, `plan/keying.py:523`). Running the checks after derivation
+lets each use the data where it exists, without changing what DiffSync compares.
 
 Alternatives considered:
 
-- A separate validation pass over raw source records before the load. Rejected: the adapters
-  turn raw records into model data (`netbox_obj_to_diffsync`, `adapters/netbox.py:229-315`), so a
-  separate pass would repeat each adapter's mapping logic.
-- Keep raising, and retry the plan without the failing record. Rejected: one plan per problem
-  is what #369 reports (five configuration versions on 2026-10-05).
+- Remove left-out records from the stores before the diff (first plan). Rejected by the product
+  owner: DiffSync then proposes deletes and clears relationships that are not true of the source.
+- Run the whole problem pass before the diff. Rejected: the identity checks work on derived
+  creates and would have to repeat derivation.
 
-## R2. Shared record admission for every bundled source adapter
+## R3. One admission step for records that cannot be loaded
 
-Decision: add `DiffSyncMixin.admit_record(model, data, *, source_record)` in
-`infrahub_sync/__init__.py` (the mixin is at line 300). It builds the model, adds it to the store
-and, on the source side only, turns these exceptions into problems instead of raising:
+Which hook point catches which error, verified against the code:
 
-- `pydantic.ValidationError` becomes `wrong_value_type`, naming the field and the value;
-- `diffsync.exceptions.ObjectAlreadyExists` becomes `duplicate_source_identity`, naming both
-  records;
-- the new `ExcludedRequiredPeerError` becomes `required_peer_excluded_by_filter`;
-- the new `LeftOutPeerError` makes the record a dependent left-out record (required
-  relationship) or a kept record (optional relationship), see R4.
+- `DiffSync.Adapter.add` (`diffsync/__init__.py:806-815`, diffsync 2.2.3) calls
+  `self.store.add(obj=obj)`, which raises `ObjectAlreadyExists` with `existing_object`
+  (`diffsync/exceptions.py:45-51`). Overriding `add` in `DiffSyncMixin`
+  (`infrahub_sync/__init__.py:300`) would catch duplicates for every adapter.
+- `add` never sees a pydantic `ValidationError`. The adapter raises it at `model(**data)`, one
+  line before `self.add(item)` (`adapters/netbox.py:223-224`), so the exception leaves the
+  adapter's loop before `add` is reached.
+- Model construction cannot absorb it either. A wrap model validator on the model base that
+  returns a substitute instance was tried with pydantic 2.12.5: pydantic warns "A custom
+  validator is returning a value other than `self`" and discards the returned object, leaving an
+  empty instance. There is no supported way for `model(**data)` to return a "not loaded" result.
+- `DiffSyncMixin.load()` (`infrahub_sync/__init__.py:305-313`) sees the error only after the
+  adapter's `model_loader` loop has ended, so the rest of that kind would be lost.
 
-Each bundled adapter's `self.add(model(**data))` call (the six sites in R1) is changed to call
-`admit_record`. The IP Fabric adapter calls `update_or_add_model_instance`
-(`adapters/ipfabricsync.py:104-105`), so a duplicate there overwrites the earlier record without
-an error; it is changed to call `admit_record` too, which makes duplicates visible. The Peering
-Manager adapter (`adapters/peeringmanager.py`) is checked in the tasks for which loader it uses. The destination side keeps raising as it does today, because a bad destination
-record is not a source problem.
+Decision: the base class owns the per-record loop. `DiffSyncMixin.model_loader` gets a default
+implementation that every adapter inherits:
 
-The NetBox bookkeeping of filter-excluded peer IDs (`_filtered_peer_ids`,
-`adapters/netbox.py:34-59`) moves into the mixin, so that the NetBox, Nautobot, ACI and generic
-REST adapters, which resolve references while loading (`nautobot.py:286-300`, `aci.py:332-362`,
-`genericrestapi.py:217-233`), raise the same typed exceptions. The Prometheus, Slurp'it and IP
-Fabric adapters resolve no references while loading; for them only the type and duplicate checks
-apply. The task list confirms this per adapter with a test.
+1. find the mapping entry for the kind;
+2. call the adapter's `list_records(model_name, element)` to fetch raw records;
+3. on the source side, apply `model.filter_records` and record the IDs a filter removed (the
+   NetBox bookkeeping of `adapters/netbox.py:29-59, 226-227` moves here), then
+   `model.transform_records`;
+4. for each record, call `load_record(model, element, record)`.
 
-Rationale: constitution principle III requires one contract for every adapter. One admission
-method gives every bundled adapter the same checks with a one-line change at each call site.
+`load_record` is the one admission step. It calls the adapter's
+`record_to_data(record, element, model)`, builds `model(**data)` and calls `self.add(item)`, and
+on the source side catches exactly these exceptions per record:
 
-Alternatives considered: a decorator around `model_loader`. Rejected because the loader loops over
-many records, and a decorator cannot continue the loop after a failure.
+| Exception | Recorded as |
+| --- | --- |
+| `pydantic.ValidationError` whose errors are all type errors | `wrong_value_type`, with the field, the error type and the value (from `errors(include_url=False)`) |
+| `diffsync.exceptions.ObjectAlreadyExists` | `duplicate_source_identity`, naming the record already in the store (`existing_object`); the store keeps that first record unchanged |
+| `ExcludedRequiredPeerError` (new, base class) | `required_peer_excluded_by_filter`, with the field and the excluded peer ID |
+| `PeerNotLoadedError` (new, base class) | a dependent left-out record, naming the peer (R4) |
 
-## R3. The Dropdown check needs the choices in the destination schema record
+Any other exception, including a `ValidationError` that holds a non-type error such as a
+missing required value, is raised again as `RecordLoadError` with the kind, the record ID and
+the field, and fails the plan (FR-018). On the destination side nothing is caught: a bad
+Infrahub record is not a source problem.
+
+The load report holds, for each record not loaded: the kind, the source record ID
+(`local_id`), the identity when it can be computed (`model.create_unique_id(**identifiers)`
+when every identifier field is in `data`), and the structured fields above. It holds no error
+text.
+
+Adapter changes, which remove each adapter's own loop rather than adding a call to it:
+
+| Adapter | `list_records` from | `record_to_data` from |
+| --- | --- | --- |
+| NetBox | `model_loader`, `adapters/netbox.py:182-227` | `netbox_obj_to_diffsync`, `:229` |
+| Nautobot | `model_loader`, `adapters/nautobot.py:208-254` | `nautobot_obj_to_diffsync`, `:256` |
+| ACI | `model_loader`, `adapters/aci.py:240-287` | `obj_to_diffsync`, `:289` |
+| Generic REST (and Peering Manager, its subclass) | `model_loader`, `adapters/genericrestapi.py:100-145` | `obj_to_diffsync`, `:179` |
+| Prometheus | `model_loader`, `adapters/prometheus.py:466-511`; the `lookup` injection stays in `list_records` | `obj_to_diffsync`, `:513` |
+| Slurp'it | `model_loader`, `adapters/slurpitsync.py:231-281`; its `load()` override that closes the client (`:104-109`) stays | `slurpit_obj_to_diffsync`, `:288` |
+| IP Fabric | `model_loader`, `adapters/ipfabricsync.py:76-105` | `ipfabric_dict_to_diffsync`, `:107` |
+
+IP Fabric today calls `update_or_add_model_instance` (`adapters/ipfabricsync.py:105`), so a
+duplicate overwrites the first record silently. Through `load_record` it calls `add`, as the
+documented contract says (`docs/docs/development/knowledge/adapter-anatomy.md:52`), and a
+duplicate becomes a problem.
+
+The Infrahub adapter keeps its own `model_loader` (`adapters/infrahub.py:825-854`), because it
+also fills the SDK store with each node and hydrates peers. It calls `load_record` for each
+record, with a hook `after_add(item, record)` for the SDK store. It is the one adapter that
+calls `load_record` itself. Its peer hydration (`:956-957`) stays on `update_or_add_model_instance`,
+because the same node can be added by a peer first; duplicates from an Infrahub source are
+therefore found only when the same record appears twice in one kind's records.
+
+The engine builds models in two other places, both for incremental loads: the snapshot rows
+(`potenda/__init__.py:442-444`) and the changed rows (`cache/incremental.py:219-220`). Both call
+`load_record` with an identity conversion. Spec 010 owns incremental loads; R17 passes it the
+rule that a plan after one that left out records reads the source in full.
+
+Custom adapters (INFP-654, 3.0) implement `list_records` and `record_to_data` and get the same
+admission with no code of their own. An adapter that overrides `model_loader` and calls
+`self.add(model(**data))` itself opts out of it; the adapter anatomy page and the
+writing-an-adapter guideline say so.
+
+Rationale: every bundled loader already has the same shape (mapping lookup, fetch, filter,
+transform, convert, build, add), so the base class can own it. One loop in one class is the
+only place where a per-record catch can continue with the next record.
+
+Alternatives considered:
+
+- `admit_record` at each adapter call site (first plan). Rejected by the product owner: the
+  behaviour depends on each adapter calling it.
+- Override `add` only. Rejected: it does not see `ValidationError` (above).
+- A model validator that turns a failure into a flagged instance. Rejected: pydantic discards
+  the substitute (above).
+
+## R4. References to records that were not loaded or were excluded by a filter
+
+Decision: the base class resolves source references for the adapters that resolve references
+while loading (NetBox `adapters/netbox.py:250-312`, Nautobot `nautobot.py:276-300`, ACI
+`aci.py:312-367`, generic REST `genericrestapi.py:209-234`, Slurp'it `slurpitsync.py:308`). Each
+replaces its scan of `self.store.get_all(...)` by `local_id` with one call to
+`self.peer_unique_id(peer_kind, peer_source_id, owner=…, field=…, required=…)`:
+
+| The peer is | Result |
+| --- | --- |
+| in the store | its unique ID, from an index by kind and `local_id` |
+| in the load report with a known identity | that identity. The referring record loads with the real reference, and the problem pass decides whether it is left out or kept (R7) |
+| in the load report without a known identity | `PeerNotLoadedError`: the referring record is left out as a dependent, whether the relationship is required or optional, because its reference cannot be stated |
+| removed by a configured filter, relationship required | `ExcludedRequiredPeerError` (the required field is `str` with no default, `runtime_schema/models.py:77-81`, so the record cannot be built) |
+| removed by a configured filter, relationship optional | no value, as today (`adapters/netbox.py:258-271`): a filter decides what the source holds, so this is not a left-out record |
+| none of these | `PeerNotFoundError`, which fails the plan with the kind, record ID, field and peer ID |
+
+Kinds load in dependency order (`SyncConfig.compute_order_and_tiers`,
+`infrahub_sync/__init__.py:187`), so a peer's load result is known before its referrers load.
+
+Behaviour change: Nautobot today logs "Unable to locate the node" and drops the reference
+(`adapters/nautobot.py:286`, `:300`), so DiffSync compares a relationship the source does not
+have. Under the shared resolution it fails the plan, as NetBox, ACI and generic REST do today
+(`netbox.py:276-277`, `aci.py:332-333`, `genericrestapi.py:217-218`).
+
+## R5. One mechanism instead of `continue_on_error`
+
+Decision: the `continue_on_error` parameter is removed from the engine and the adapters. The
+admission step of R3 replaces its record-skipping branches, and every record it leaves out is
+counted in the plan report.
+
+Today:
+
+- `execution.py:108`, `:1133` and `:1232` and `utils.py:208`, `:313` pass the flag to `Potenda`,
+  which sets it on both adapters (`potenda/__init__.py:256-262`, `309-312`).
+- Nautobot (`adapters/nautobot.py:236-253`) and Infrahub (`adapters/infrahub.py:839-850`) skip a
+  record whose model fails validation, with a warning and no count.
+- Infrahub skips a peer relationship whose peer is missing identifier values
+  (`adapters/infrahub.py:930-951`, `PeerIdentifierError`).
+- V3 never sets it: the CLI option is retired (`tests/cli/test_parity_and_closure.py:16-19`), and
+  remote runs pass `False` (`tests/test_execution_surface.py:1479`).
+
+After this change, the two record-skipping branches are deleted; their case becomes
+`wrong_value_type` through admission. The Infrahub peer-identifier branch keeps raising
+`PeerIdentifierError`, which fails the plan, as every V3 run does today. The tests that set the
+flag (`tests/adapters/test_infrahub_peer_identifier.py`, `test_infrahub_loader_fields.py`,
+`test_infrahub_incremental.py`) are changed to the admission behaviour.
+
+Rationale: two ways of skipping records, one silent and one counted, would let a plan leave out
+records that its report does not list.
+
+## R6. The Dropdown check needs the choices in the destination schema record
 
 Decision: the schema read keeps the names of a Dropdown attribute's choices.
 
-- `_attribute_shape` (`configuration/capabilities.py:345-356`) adds `"choices": [names]` for an
-  attribute of kind `Dropdown`, and nothing for other kinds.
-- `NormalizedAttribute` (`runtime_schema/domain.py:29-47`) adds `choices: tuple[str, ...] | None`.
-- `_member_semantics` (`runtime_schema/projection.py:38-58`) adds `choices` for a mapped Dropdown
-  attribute. This changes the consumed-schema fingerprint of every configuration that maps a
-  Dropdown attribute.
-- After the source load, the engine checks every mapped Dropdown value against those choices.
+- `_attribute_shape` (`configuration/capabilities.py:344`) adds `"choices": [names]` for an
+  attribute of kind `Dropdown`.
+- `NormalizedAttribute` (`runtime_schema/domain.py:29`) adds `choices: tuple[str, ...] | None`.
+- `_member_semantics` (`runtime_schema/projection.py:38`) adds `choices` for a mapped Dropdown
+  attribute, which changes the consumed-schema fingerprint of every configuration that maps one.
+- The problem pass checks every mapped Dropdown value in the source store against the choices.
   A `None` value on an optional attribute is not checked.
 
-Rationale: the spec's assumption accepts that plans saved by an earlier release must be planned
-again (#371). The fingerprint change makes that refusal automatic: `PlanSchemaChangedError`
-already refuses an apply whose recorded fingerprint differs from the live one.
+Rationale: the spec accepts that plans saved by an earlier release must be planned again (#371).
+`PlanSchemaChangedError` already refuses an apply whose recorded fingerprint differs from the
+live one, so a change to the choices in Infrahub also invalidates a reviewed plan.
 
-Alternatives considered: read the choices only during the check and leave the fingerprint alone.
-Rejected: a change to the choices in Infrahub would then not invalidate a reviewed plan, and the
-apply could still write a value the reviewer was told was valid.
+Alternative considered: read the choices only during the check. Rejected: a change to the
+choices would then not invalidate a reviewed plan.
 
-## R4. Leaving out records and their dependents (AD-12 plan stage)
+## R7. The problem pass, the dependency walk and the selection step
 
-Decision: the plan builds a left-out index in three steps, and filters the plan with it.
+Decision, in `infrahub_sync/plan/problems.py`:
 
-1. Load time. A record that fails admission is not added to the source store. Its raw source ID
-   is recorded per kind. Because the adapters load kinds in dependency order
-   (`SyncConfig.compute_order_and_tiers`, `infrahub_sync/__init__.py:187`), a later record whose
-   peer was left out finds the peer's raw ID in that index:
-   - through a required relationship, the adapter raises `LeftOutPeerError` and the record is
-     left out as a dependent, naming the peer;
-   - through an optional relationship, the adapter leaves the field empty, and the record is
-     kept and listed with the relationship and the peer.
-2. After the load and after derivation. Records with a Dropdown or identity problem are already
-   in the source store. The engine walks the store's reference fields once to find every record
-   that refers to them, and repeats until no new record is found. A reference through a required
-   relationship (destination schema `optional: false`) leaves the record out. A reference
-   through an optional relationship keeps it.
-3. Filtering. Every create and update whose kind and source identity are in the left-out index is
-   removed. Every delete that `derive_deletes` proposes for a destination object whose identity
-   matches a left-out record is removed too, so a left-out record that already exists in Infrahub
-   stays as it is (spec edge case and FR-008).
+1. Problems: from the load reports (R3, R4), the Dropdown check (R6) and the identity checks
+   (R8).
+2. Dependency walk: starting from every record with a problem and every record the load could
+   not build, the pass walks the source store's reference fields (the mapping's
+   `field.reference` entries) to find the records that refer to them, and repeats until no new
+   record is found. A reference through a relationship that the destination schema marks
+   `optional: false`, or that is a component of the destination's human-friendly ID, leaves the
+   referring record out, naming the record it depends on. A reference through an optional
+   relationship keeps the record and lists it as kept, with the relationship and the left-out
+   record. A record with a problem and a left-out peer is listed once, with its problem.
+3. Selection (`select_operations`):
+   - removes every create and update of a left-out record;
+   - removes every delete whose identity is a record of the load report or a left-out record,
+     so a left-out record that exists in Infrahub stays as it is (FR-008);
+   - for a kept record, removes the relationship to the left-out peer from its operation. On a
+     create, the relationship is absent (ADR 0001: an absent `relationships` entry carries no
+     value); for a relationship of cardinality many, the other peers stay. On an update, the
+     relationship is removed from the operation, so the destination keeps its current value,
+     as `_warn_dropped_cardinality_one_clear` already does for a null peer
+     (`plan/derive.py:558-587`). For cardinality many on an update, the whole relationship is
+     removed, because a replace-set write (ADR 0012) of the other peers would remove the
+     left-out peer from Infrahub (spec 010, edge case on relationships with several peers). An
+     update whose only change was that relationship is removed.
 
-A kept record is written without the relationship:
-
-- On a create, the relationship is absent from the operation (ADR 0001: an absent
-  `relationships` entry carries no value).
-- On an update, the relationship is removed from the operation, which leaves the destination
-  relationship unchanged, as `_warn_dropped_cardinality_one_clear` already does for a null peer
-  (`plan/derive.py:558-587`). An update whose only difference was that relationship is dropped.
-- For a relationship of cardinality many, the whole relationship is removed from the operation,
-  not only the left-out peer. Removing one peer from the set would make the replace-set write
-  (ADR 0012) remove that peer from the Infrahub node.
-- A relationship that is a component of the destination identity cannot be omitted; the record is
-  left out as a dependent instead, as for a required relationship.
+In step 3 of R2, a reference to a record of the load report resolves to a placeholder pair
+marked as left out, instead of raising `SourcePeerUnresolvedError` (`plan/derive.py:272-338`
+already has `allow_missing` for a peer absent from the store). Step 5 removes every placeholder.
 
 Rationale: the product owner decided on 2026-10-15 that an optional reference keeps the record
-(spec FR-005). Filtering operations after derivation keeps `operations_from_diff`
-(`plan/derive.py:590-682`) and `derive_deletes` unchanged except for one filter argument, so
-ADR 0001's operation identifiers and the checksum rules are untouched.
+(FR-005). Applying the decisions in one pure function after derivation keeps `operations_from_diff`
+and `derive_deletes` unchanged except for the placeholder, so ADR 0001's operation identifiers
+and checksum rules are unchanged.
 
-Alternatives considered:
+## R8. Duplicates and identity collisions leave out every record involved
 
-- Remove left-out records from both stores before the diff. Rejected: derivation resolves peers by
-  probing the source store (`_resolve_references`, `plan/derive.py:341`), so a kept record's
-  update would fail with `SourcePeerUnresolvedError`.
-- Leave out the whole plan when any record has a problem. Rejected by the spec (FR-001, FR-005).
-
-## R5. Duplicate records and identity collisions leave out every record involved
-
-Decision: for `duplicate_source_identity`, the record already in the store is removed from the
-plan as well as the one that was refused. For `destination_identity_collision` and
-`identities_merge_in_destination`, every record in the group is left out. Each problem names the
-other records (FR-003).
+Decision: for `duplicate_source_identity`, the record kept in the store and every refused
+record are left out. `refuse_destination_identity_collisions` (`plan/keying.py:523-557`) and
+`refuse_source_identity_collisions` (`plan/keying.py:67-122`) are split into a function that
+returns the groups and a function that raises when the groups are not empty. The problem pass
+calls the first on the derived operations; `warn_missing_convergence_key` keeps calling the
+second on the selected operations, where it finds nothing, because every record of a group is
+left out. `_warn_identity_finer_than_destination_key` (`plan/derive.py:791-837`) returns its
+merge groups to the problem pass instead of only logging a warning.
 
 Rationale: the spec assumption says the plan cannot tell which record is correct.
 
-## R6. The plan report and its size
+## R9. The plan report and its size
 
 Decision: the problems, left-out records and kept records are written to a third file in the
 plan directory, `plan/report.jsonl`, in the canonical encoding of ADR 0001, one entry per line,
-in a stable order: problems by problem type, kind, source identity; then left-out records by
-kind and identity; then kept records. The manifest records the file's SHA-256 digest, its size
-and the counts, so the plan checksum covers the report (R7).
+in a stable order. The manifest records its SHA-256 digest, its size and the counts, so the plan
+checksum covers it (R10).
 
-Size estimate from the benchmark records, not measured:
+Size, estimated from `metrics.md`, not measured: the tier L first-sync plan is 69,757,845 bytes
+for 87,815 objects ("A v3 sync of tier L cannot complete"), about 794 bytes per object, so a
+tier M plan (10,207 objects) is about 8.1 MB, below the 16 MiB client limit. A report entry is
+at most about 1 KB (reason limited to 512 characters), so a report where every tier M record has
+a problem is about 10 MB. The report is returned in pages (contracts/sync-api.md), so it does
+not reach the client limit.
 
-- Tier L's first-sync plan is 69,757,845 bytes for 87,815 objects (metrics.md, "A v3 sync of
-  tier L cannot complete"), about 794 bytes per object. Tier M has 10,207 objects (metrics.md,
-  "What was measured"), so a tier M plan is about 8.1 MB, below the 16 MiB client limit.
-- A report entry holds a kind, an identity, a type and a reason bounded to 512 characters, so
-  each is at most about 1 KB. In the worst case where every tier M record has one problem, the
-  report is about 10 MB. In the NetBox demo on 2026-10-05, five problems were found (#369).
-- The report is returned in pages (contract `sync-api-plan-report.md`), so its size does not
-  reach the client limit.
+Planning time: the added steps run in memory over data already loaded. The tier M first-sync
+plan step takes 4 min 32 s to 4 min 33 s (`metrics.md`, "Where the v3 time goes"). Whether the
+new steps add measurable time is not known; they run inside the part that spec 010 FR-009 names
+"checking the plan before it is saved", which spec 010 times.
 
-Planning time: detection adds one check per record and one pass over references. The tier M
-first-sync plan step takes 4 min 33 s and the no-change plan step about 19 to 21 min
-(metrics.md, "Where the v3 time goes"). VAL-1 measured 88,000 synthetic objects compared and
-planned in about 5 seconds (validation.md), so the added in-memory passes are expected to be small
-next to the load. Spec 010 measures the plan step by phase; this plan adds a `problems` phase
-to that measurement through spec 010's mechanism and runs no measurement of its own.
-
-## R7. Decision record 0022 (draft): saved plan format 4
+## R10. Decision record 0022 (draft): saved plan format 4
 
 Name: `dev/adr/0022-saved-plan-format-4-records-left-out-records.md`.
-
-Draft content:
 
 > **Status**: Proposed. **Date**: 2026-10-15. **Source**: `dev/specs/009-plan-problem-reporting`.
 >
 > **Context.** A plan can now leave out records (ADR 0020). Apply must then require the person
 > to confirm the left-out count. ADR 0001 lets a later outcome add a manifest key without a
-> format bump, because unknown keys are tolerated on read. For this key that tolerance is the
-> wrong posture: a reader that does not know the key would apply the plan without asking for
-> the confirmation.
+> format bump, because unknown keys are tolerated on read. For this key that is the wrong
+> posture: a reader that does not know the key would apply the plan without the confirmation.
 >
 > **Decision.** The plan format becomes 4.
 >
 > - The plan directory holds a third file, `report.jsonl`, written after `operations.jsonl` and
 >   before `manifest.json`, in the same canonical encoding. `manifest.json` stays the commit
 >   point.
-> - The manifest gains a `report` object: `digest` (SHA-256 of `report.jsonl`), `size`,
->   `problems`, `left_out`, `left_out_with_problem`, `left_out_dependent`, `kept`. The checksum
->   rule of ADR 0001 is unchanged, and it covers the report through this digest.
+> - The manifest gains a `report` object: `digest`, `size`, `problems`, `left_out`,
+>   `left_out_with_problem`, `left_out_dependent`, `kept`. The checksum rule of ADR 0001 is
+>   unchanged and covers the report through the digest.
 > - `PlannedOperation` is unchanged, so operation identifiers and their bytes are unchanged.
+> - The report holds source data, schema names and fixed reason templates. No entry is built
+>   from connection settings or from the text of an error (ADR 0021).
 > - Reading and review accept 2, 3 and 4. Apply accepts 4 alone, and refuses 3 with
->   `PlanFormatApplyUnsupportedError` and the instruction to plan again, as the format-3
->   amendment did for 2 (`potenda/__init__.py:148-163`).
+>   `PlanFormatApplyUnsupportedError` and the instruction to plan again
+>   (`potenda/__init__.py:148-163`).
 > - Apply compares the confirmed count with `report.left_out` before the first ownership proof,
 >   so a refusal writes nothing.
 >
 > **Consequences.** Every plan saved before this release must be planned again before it is
-> applied. The Dropdown choices change the consumed-schema fingerprint as well (ADR 0020), so
-> such plans would be refused anyway. An older Sync release refuses a format-4 plan instead of
-> applying it without the confirmation.
+> applied. An older Sync release refuses a format-4 plan instead of applying it without the
+> confirmation.
 >
-> **Alternatives considered.** An additive manifest key with no bump: rejected, because an
-> older reader would ignore the confirmation. The report inside `operations.jsonl`: rejected,
-> because it would change the bytes and the meaning of the file every consumer reads as
-> operations.
+> **Alternatives considered.** An additive manifest key with no bump: an older reader would
+> ignore the confirmation. The report inside `operations.jsonl`: it would change the bytes and
+> the meaning of the file every consumer reads as operations.
 
-## R8. Decision record 0020 (draft): records with problems are left out at the plan stage
+## R11. Decision record 0020 (draft): records with problems are left out at the plan stage
 
 Name: `dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md`. It records the
-engineering side of the AD-12 amendment (FR-029). The product amendment itself is a change to
+engineering side of the AD-12 amendment (FR-029). The product amendment is a change to
 `infrahub-sync-process/product/decisions.md`, outside this repository; its text is drafted
 below for the product owner.
 
-Draft content:
-
 > **Status**: Proposed, needs product sign-off (spec 009 FR-029). **Date**: 2026-10-15.
 >
-> **Context.** A plan stops at the first bad source record (#369). Product decision AD-12 says
-> failed dependencies are visible and block dependent work, and leaves the per-object policy
-> open. `plan/derive.py` states that a derivation failure fails the command and that degrading to
-> warn-and-drop would emit a silently incomplete plan (AD047, lines 33-37).
+> **Context.** A plan stops at the first bad source record (#369). AD-12 says failed
+> dependencies are visible and block dependent work, and leaves the per-object policy open.
+> `plan/derive.py:36-39` (AD047) states that a derivation failure fails the command and that
+> warn-and-drop would emit a silently incomplete plan. Two adapters already skip bad records
+> without a count when `continue_on_error` is set.
 >
-> **Decision.** At the plan stage, a record with one of six named problems, and every record
-> that depends on it through a required relationship, is left out of the plan. The plan is not
-> silently incomplete: it lists each problem, each left-out record and each record kept without
-> an optional relationship, counts them in the summary, and its checksum covers that list
-> (ADR 0022). Apply needs the person to confirm the left-out count. A `sync` run whose plan
-> leaves out records stops after the plan. Every other plan failure, for example an unreachable
-> system or a transform error, still fails the plan. During apply, an Infrahub rejection still
-> stops the apply.
+> **Decision.**
 >
-> **Consequences.** AD047's rule changes for these six problem types only. A record with a
-> problem that already exists in Infrahub is not updated and not deleted. The policy for runs
-> that nobody watches stays open for 3.0.
+> - At the plan stage, a record with one of six named problems, and every record that depends
+>   on it through a required relationship, is left out. A record that refers to it only through
+>   an optional relationship is kept without that relationship.
+> - DiffSync compares the stores as loaded. A record that cannot be built is not loaded; every
+>   other record is loaded as the source holds it, references included. The adapter base class
+>   owns the per-record loop and is the one place that catches a record that cannot be built.
+> - Problems are found after derivation, by a pass that reads the stores and the operations.
+>   The left-out and kept decisions are applied by one selection step to the plan's operations,
+>   never to the stores or to the diff.
+> - The plan lists each problem, left-out record and kept record, counts them, and its checksum
+>   covers the list (ADR 0022). Apply needs the confirmed left-out count. A `sync` run whose plan
+>   leaves out records stops after the plan.
+> - Every other plan failure still fails the plan. During apply, an Infrahub rejection still
+>   stops the apply. `continue_on_error` is removed.
 >
-> **Alternatives considered.** `fail-fast` (today): one plan per problem. `continue` without a
-> list: hides what was not written. `block` (leave out the whole kind): leaves out valid
-> records the team could import.
+> **Consequences.** AD047's rule changes for these six problem types only. A left-out record
+> that exists in Infrahub is not updated and not deleted. An adapter that overrides
+> `model_loader` opts out of the admission step. The policy for runs that nobody watches stays
+> open for 3.0.
+>
+> **Alternatives considered.** `fail-fast` (today): one plan per problem. Removing left-out
+> records from the stores before the diff: DiffSync would compute a diff that is not true of
+> the source. `block` (leave out a whole kind): leaves out valid records the team could import.
 
 Draft text for the AD-12 row in `decisions.md`:
 
@@ -247,160 +404,160 @@ Draft text for the AD-12 row in `decisions.md`:
 > plan leaves out records stops after the plan. The policy for runs that nobody watches is open
 > for 3.0.
 
-## R9. Decision record 0021 (draft): a run's failure record holds a redacted, bounded message
+## R12. Decision record 0021 (draft): a run's failure record holds a structured cause
 
-Name: `dev/adr/0021-a-run-failure-record-holds-a-redacted-message.md`. It replaces the rule in
-`infrahub_sync/service/flow.py:723-727` ("A class name, never a message") and the
-"category only" rule of `_operational_failure_summary` (`potenda/__init__.py:220-238`) and of
-`_uniqueness_refusal_summary` (lines 104-145). It does not change ADR 0005: translation and
-redaction still happen at the remote boundary only.
-
-Draft content:
+Name: `dev/adr/0021-a-run-failure-record-holds-a-structured-cause.md`. It replaces the rule at
+`infrahub_sync/service/flow.py:722-725` ("A class name, never a message"). It keeps ADR 0005:
+the cause is built at the remote boundary only.
 
 > **Status**: Proposed, needs product sign-off (spec 009 FR-030). **Date**: 2026-10-15.
 >
-> **Context.** A failed run records only an error class name, because a destination's text
-> "can carry anything" (`service/flow.py:723-727`). A team then cannot tell why a run failed
-> without the worker log (#369), and an Infrahub rejection is reported as "a destination GraphQL
-> rejection" without Infrahub's code (#370). Infrahub 1.11 returns `extensions.code`, for
-> example `ATTRIBUTE_CONSTRAINT_VIOLATION`, and `extensions.http_status` (#370).
+> **Context.** A failed run records only an error class name, because a destination's text "can
+> carry anything" (`service/flow.py:722-725`). A team cannot tell why a run failed without the
+> worker log (#369), and an Infrahub rejection is reported as "a destination GraphQL rejection"
+> without Infrahub's code (`potenda/__init__.py:231-232`, #370). Masking credentials in free
+> text was tried and rejected: short values break unrelated text (SYNC-82) and masking can make
+> a published plan invalid JSON (SYNC-262).
 >
-> **Decision.** A run's failure record holds a structured cause: the stage, a failure type from
-> a fixed list, the system involved, Infrahub's error code, the node kind and attribute when
-> Infrahub returns them, and a message. The message is the text of the failure that decided the
-> run, after three steps in this order: every collected secret and every value referenced
-> through `$credential` is replaced, in raw and JSON-escaped forms (ADR 0001 encoding, spec
-> FR-027, FR-028); control characters are removed; the result is cut to 1,024 characters. The
-> same cause is printed by the CLI and returned by the Sync API. Source values may appear in the
-> message, as they already appear in the plan operations the team reviews.
+> **Decision.** A run's failure record holds a structured cause built only from these fields:
+> stage, failure type (a fixed list), system role and adapter name, Infrahub's error code, node
+> kind and attribute from Infrahub's `extensions`, Infrahub's own error message for a rejected
+> write, the kind, record identity and field named by a typed Sync exception, and apply
+> progress. One module builds it (`infrahub_sync/failure_cause.py`), called only from the remote
+> boundary. It reads typed attributes and exception classes; it never formats an exception's
+> text, an address, a header or a traceback. Each field is limited in length.
 >
-> **Consequences.** A destination's message reaches the run record. Text that is not a collected
-> or referenced secret, for example a password that a source record holds as data, is not
-> masked; this is the same exposure as the plan operations. The secret-redaction guideline and
-> the comment at `service/flow.py:723-727` are rewritten to match. The CLI's `apply failed:
-> <ClassName>` line (`cli.py:726-745`) becomes the cause.
+> **Consequences.** Infrahub's message reaches the run record; it describes the write Infrahub
+> received, which is source data. A failure of an unknown type records its class name and a
+> fixed message. The secret-redaction guideline and the comment at `service/flow.py:722-725`
+> are rewritten to match. Existing value replacement is unchanged; it no longer protects the
+> run record, which holds no free text.
 >
-> **Alternatives considered.** Keep class names and add a fixed message per error code: an
-> unknown code would still say nothing. Return only the error code: #370 shows the attribute
-> and value are what the team acts on.
+> **Alternatives considered.** The message with secrets masked (first plan of spec 009):
+> rejected for SYNC-82 and SYNC-262. Class names only (today): gives no cause. A fixed message
+> per error code: an unknown code says nothing.
 
-## R10. How a failure is classified (FR-016 to FR-018, FR-025)
+## R13. The failure cause builder is the one layer that handles secrets
 
-Decision: a new module `infrahub_sync/failure_cause.py` turns an exception into a
-`RunFailureCause` (data-model.md). `_failure_evidence` (`service/flow.py:697-736`) calls it, so
-the remote boundary stays the only place that translates (ADR 0005). The CLI's own handlers do
-not change.
+Decision: a new module `infrahub_sync/failure_cause.py` with `build_failure_cause(stage, exc,
+record) -> RunFailureCause`. `_failure_evidence` (`service/flow.py:697-736`) calls it and stores
+the result; the CLI and the Sync API return that stored record. No other code turns an
+exception into text that leaves the worker.
 
-- The side and adapter come from a new `SideLoadError(ValueError)` that `_load_side`
-  (`potenda/__init__.py:488-501`) raises instead of a bare `ValueError`. It subclasses
-  `ValueError`, so ADR 0005's CLI handlers still match.
-- `system_unreachable`: `requests.ConnectionError`, `httpx.ConnectError`, Infrahub SDK
-  `ServerNotReachableError`, in the cause chain.
-- `system_timeout`: `requests.Timeout`, `httpx.TimeoutException`, `ServerNotResponsiveError`.
-- `token_rejected`: HTTP 401 or 403 from `requests`, `httpx` or `pynetbox.RequestError`, and
-  Infrahub `AuthenticationError`.
-- `tls_certificate_rejected`: `ssl.SSLCertVerificationError` in the cause chain (agreed with
-  spec 013, whose worker adds a custom CA).
-- `destination_rejected_write`: `GraphQLError` during apply. The error code, node kind and
-  attribute are read from the first error's `extensions` when they are strings, bounded to
-  128 characters each.
-- `plan_problem_failure`, `verification_failed`, `apply_refused`, `credential_missing`,
-  `internal_error` cover the rest; `internal_error` records only the class name and a fixed
-  message, because its text comes from no known boundary.
+Classification, by exception type in the cause chain, never by text:
 
-Rationale: the cause chain is already walked for redaction (`sanitize_exception_chain`,
-`execution.py:509`). Classifying by type in the chain needs no change to the adapters.
+| Failure type | Recognised by | Fields |
+| --- | --- | --- |
+| `destination_rejected_write` | `GraphQLError` during apply | `error_code`, `node_kind`, `attribute` from the first error's `extensions` when they are strings (at most 128 characters each); `message` from the first error's `message` (at most 1,024 characters, control characters removed) |
+| `system_unreachable` | `requests.ConnectionError`, `httpx.ConnectError`, Infrahub SDK `ServerNotReachableError` | `system` |
+| `system_timeout` | `requests.Timeout`, `httpx.TimeoutException`, `ServerNotResponsiveError` | `system` |
+| `token_rejected` | HTTP 401 or 403 from `requests`, `httpx` or `pynetbox.RequestError`; Infrahub `AuthenticationError` | `system` |
+| `tls_certificate_rejected` | `ssl.SSLCertVerificationError` (agreed with spec 013) | `system` |
+| `record_load_failed` | `RecordLoadError`, `PeerNotFoundError` (R3, R4) | `node_kind`, `record`, `field` |
+| `transform_failed` | a new `TransformError(ValueError)` that `apply_transform` raises instead of a bare `ValueError` (`infrahub_sync/__init__.py:436-441`), with the field and the record's `local_id` as attributes; its message text, which repeats the transform expression and the error, is not used | `node_kind`, `record`, `field` |
+| `verification_failed`, `apply_refused`, `credential_missing`, `left_out_review_required` | the existing typed errors | fixed text |
+| `internal_error` | anything else | class name, fixed text |
 
-## R11. Credential values of any length and in JSON form (FR-027, FR-028)
+The system role and adapter name come from a new `SideLoadError(ValueError)` that `_load_side`
+(`potenda/__init__.py:488-501`) raises instead of a bare `ValueError`, with `side` and `adapter`
+attributes. It subclasses `ValueError`, so ADR 0005's handlers still match.
 
-Decision:
+Where credential values are: they are resolved only into adapter and SDK connection settings
+(`configuration/runtime.py:52`, `configuration/capabilities.py:208`). The plan's destination
+binding records the destination without the token (`plan/models.py:342-361`). Problem reasons
+are rendered from fixed templates over typed fields (kind, identity, field, value, choices,
+peer). None of these paths reads a connection setting or an error's text, so no credential can
+enter a cause, a problem reason or a plan file, whatever its length or characters.
 
-- `collect_secret_values` (`execution.py:411-456`) keeps the six-character floor for values it
-  collects by name shape (`MIN_SECRET_LENGTH`, line 126), as FR-019 requires. A new
-  `collect_referenced_credential_values(package, environ)` in `configuration/credentials.py`
-  resolves every `$credential` reference and adds its value with no length floor. The worker
-  merges both sets before the run starts.
-- `publish_artifact` (`product_store/store.py:2925`) already redacts a JSON artifact's decoded
-  strings, keys and numbers. For a JSON artifact, the raw byte pass after that step is removed,
-  because the guideline records that it can corrupt JSON (for example `"234567,"`). The redacted
-  document is parsed again before it is stored; if it does not parse, the publish fails and the
-  run fails with `internal_error`, instead of storing an invalid plan.
-- The run log, problem reasons, left-out and kept entries pass through the same `redact` with the
-  merged set.
+Rationale: the product owner required prevention in one layer. The remote boundary of ADR 0005
+is already the one place where a failure becomes a run record.
 
-Risk: a one- or two-character credential replaces every occurrence of those characters in every
-message. The spec requires masking whatever the length. The documentation recommends
-credentials of at least six characters.
+## R14. Existing redaction, and what happens to SYNC-82 and SYNC-262
 
-## R12. `configs validate` reaches the destination schema and the worker credentials
+Decision: this plan adds no value replacement and changes no existing one.
 
-Decision for FR-032: `POST /configs/{config_id}/versions/{registry_version}/validate` accepts an
-optional `branch` query parameter. With it, the route calls `configs.validate(...,
-destination_schema=DestinationSchemaOptions(branch=…))` (`product_store/configs.py:863-910`),
-which runs `collect_destination_schema_findings` (`configuration/schema_validation.py:183`). Today
-the route never passes the option (`service/config_routes.py:146-175`). The check runs in
-`sync-api`, which already holds `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN`
-(`docker-compose.yml:234`). The Dropdown check uses the choices of R3 against every literal
-`static` value in the mapping. CLI: `infrahub-sync configs validate --branch <name>`.
+What stays as it is in the testing release:
+
+- `collect_secret_values` with its six-character floor (`execution.py:126`, `:411`), `redact`
+  (`:493`) and `sanitize_exception_chain` (`:509`), used at the worker boundary
+  (`service/flow.py:922`), the service (`service/service.py:133`, `:568`, `:657`), the apply
+  guard (`service/apply_guard.py:303`, `:380`) and the direct Prefect flow
+  (`orchestration/flow.py:175`, `:190`).
+- The JSON and byte passes of `publish_artifact` (`product_store/store.py:2925`, `:3561`,
+  `:3597`) and of configuration content (`product_store/configs.py:371`).
+
+SYNC-82 (short credentials appear in errors and plans): resolved for causes, problem reasons,
+left-out and kept entries, plan files and Sync API responses, because none of them is built from
+a credential or from error text (R13). What remains: the worker container log and the
+orchestration log keep exception text and tracebacks, protected only by the six-character
+replacement. A credential shorter than six characters can appear there. These logs are read by
+OpsMill engineers and are not returned by the Sync API or the CLI. Follow-up after the testing
+release: stop logging the text of adapter and HTTP library errors in the worker, and log the
+structured cause instead.
+
+SYNC-262 (masking corrupts a published plan): the byte pass of `publish_artifact` can still make
+a published plan invalid JSON when a collected value of six or more characters spans a number
+and the punctuation after it (`docs/docs/development/guidelines/secret-redaction.md`, "Drop
+values below a length floor"). Under R13 a plan holds no credential by construction, so the pass
+protects nothing on a plan. It can be removed safely for the plan review artifact
+(`service/flow.py:178-187`) once a test asserts that the review document is built only from the
+saved plan's fields (`service/flow.py:164-175`). Following the product owner's rule, that removal
+is follow-up work, not MVP work. Until then, the existing risk stays.
+
+Follow-ups to file (not filed by this plan): remove value replacement from the plan review
+artifact (SYNC-262); log the structured cause instead of error text in the worker (rest of
+SYNC-82).
+
+## R15. `configs validate` reaches the destination schema and the worker credentials
+
+Decision for FR-032: `POST /configs/{config_id}/versions/{registry_version}/validate`
+(`service/config_routes.py:368-369`) accepts an optional `branch` query parameter. With it, the
+route calls `configs.validate(..., destination_schema=DestinationSchemaOptions(branch=…))`
+(`product_store/configs.py:863-891`), which runs `collect_destination_schema_findings`
+(`configuration/schema_validation.py:183`). Today the route never passes the option. The check
+runs in `sync-api`, which holds `INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN` (agreed with spec
+013). The Dropdown check uses the choices of R6 against every literal `static` value in the
+mapping. CLI: `infrahub-sync configs validate --branch <name>`.
 
 Decision for FR-033: the worker writes the names of the `INFRAHUB_SYNC_CREDENTIAL_*` variables
 that are set and not empty into a new product-store record, `worker_environment`, when it starts
-and on each poll (`service/worker.py`). Names only, never values. Compose passes unset variables
-as empty strings (`"${VAR:-}"`), so an empty value counts as unset. The validate route compares
-the package's references with the most recent record of a live worker, and reports each missing
-name as a finding `credential-not-set-in-worker`. When no live worker has a record, it reports
+and on each poll (`service/worker.py`). Names only, never values. Compose passes unset
+variables as empty strings, so an empty value counts as unset. The validate route compares the
+package's references with the most recent record of a live worker and reports each missing name
+as `credential-not-set-in-worker`. When no live worker has a record, it reports
 `worker-environment-unknown` as a warning.
 
-Rationale: `sync-api` must not receive the source credentials (agreed with spec 013, least
-privilege). Variable names are not secrets.
-
-Alternatives considered: run validation as a worker run. Rejected: it would add an operation
-that FR-025's stage list does not have, and the existing route is synchronous.
+Alternative considered: run validation as a worker run. Rejected: it adds an operation that
+FR-025's stage list does not have, and the route is synchronous.
 
 Decision for FR-034 (SYNC-147): the plan's create check (`refuse_unkeyed_create`,
-`plan/keying.py:397`) and validation's check (`writable_convergence_reason` at
-`configuration/schema_validation.py:251`) call one shared function for the part that depends on
-the schema only. The value checks stay in the plan. A parametrized test runs both over the same
-kinds and asserts the same answer.
+`plan/keying.py:397`) and validation's check (`writable_convergence_reason`,
+`plan/keying.py:181`, used by `configuration/schema_validation.py`) call one shared function for
+the part that depends on the schema only. A parametrized test runs both over the same kinds.
 
 Decision for FR-035 (SYNC-107): the responses of `configs register` and `configs version`
-return the checksum without `declared_content`. `GET /configs/{id}/versions/{v}` keeps the
-redacted content; whether it also needs this change is an open question for the product owner.
+return the checksum without `declared_content`.
 
-## R13. The NetBox example on the pinned `demo` dataset (FR-031, #374)
+## R16. The NetBox example on the pinned `demo` dataset (FR-031, #374)
 
-Decision, per case:
-
-- Device status outside the five choices: changed mapping. A `device_status` transform in both
-  `DcimDevice` entries (`examples/netbox_to_infrahub/package.yml:246-247`, `290-291`) translates
-  `planned` and `staged` to `provisioning`, `offline` and `failed` to `maintenance`, `inventory`
-  to `reserved`, and `decommissioning` to `deprecated`. This translation got the local copy
-  through on 2026-10-05 (#374). The example README states the table.
-- Rack position `2.5`: reported as a `wrong_value_type` problem. Rounding would write a
-  position the device does not have.
+- Device status outside the five choices: a `device_status` transform in both `DcimDevice`
+  entries of `examples/netbox_to_infrahub/package.yml` translates `planned` and `staged` to
+  `provisioning`, `offline` and `failed` to `maintenance`, `inventory` to `reserved`, and
+  `decommissioning` to `deprecated`, as the local copy did on 2026-10-05 (#374).
+- Rack position `2.5`: reported as `wrong_value_type`. Rounding would write a position the
+  device does not have.
 - Two devices with the same name at two sites: reported as `destination_identity_collision`.
-  The 2026-10-05 workaround used a hard-coded ID list and does not generalise (#374).
 
-## R14. A stopped apply and the next plan (FR-020 to FR-022)
+## R17. A stopped apply and the next plan (FR-020 to FR-022)
 
-Decision:
-
-- FR-020 is mostly in place: `ApplyRecord` (`plan/models.py:497-583`) records the applied
-  operation IDs, the failing operation and whether it wrote. The cause adds the failing
-  operation's kind and source identity, read from the plan by its ID.
+- FR-020: `ApplyRecord` (`plan/models.py:497-583`) records the applied operation IDs, the
+  failing operation and whether it wrote. The cause adds the failing operation's kind and
+  identity, read from the plan by its ID.
 - FR-021: updates are keyed by recorded destination IDs and creates converge by upsert
-  (ADR 0012, ADR 0013), so a new plan against the destination as it now is contains only what
-  does not match. A plan that follows a stopped apply of the same configuration reads the
-  destination in full rather than incrementally, so that writes made after the previous
-  cursor cannot be missed. Spec 010 owns the incremental-read rules; this rule is passed to it.
-- FR-022: the product store already refuses any stage on a run that admitted a write
-  (`_reservation_refused`, `product_store/store.py:1827-1857`). The refusal gets the error code
-  `new-plan-required` and a message that names `infrahub-sync diff` as the next step.
-
-## R15. Performance and size: evidence used
-
-No tier M measurement was run (product owner constraint). Evidence: tier M is 10,207 objects,
-first-sync plan step 4 min 32 s to 4 min 33 s, apply step 43 to 44 min (metrics.md); 66.5 MiB plan
-at tier L (metrics.md); VAL-1 and VAL-18 (validation.md). The checks added here run in memory
-over data already loaded. Whether they add measurable time is not known; spec 010's phase timing
-will show it.
+  (ADR 0012, ADR 0013), so a new plan contains only what the destination does not match.
+- FR-022: the product store refuses any stage on a run that admitted a write
+  (`_reservation_refused`, `product_store/store.py:1827`). The refusal gets the error code
+  `new-plan-required`.
+- Rules passed to spec 010, which owns incremental reads: a plan that follows a stopped apply of
+  the same configuration reads the destination in full, and a plan that follows one that left
+  out records reads the source in full, so that left-out records are checked again (FR-009).

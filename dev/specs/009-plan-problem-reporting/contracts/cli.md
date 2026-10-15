@@ -44,12 +44,13 @@ infrahub-sync apply <run_id> --expected-checksum <hex> --confirm-left-out <count
 ## Cause of a failed or stopped run
 
 `diff`, `sync`, `apply` and `runs show` print the cause when the run failed or stopped,
-replacing today's `<stage> failed: <ClassName>` line (`cli.py:726-745`):
+replacing today's `<stage> failed: <ClassName>` line (`cli.py:730-745`). The CLI prints only
+the fields of the run record's `failure` object; it adds no text of its own from an error:
 
 ```text
 apply stopped: Infrahub rejected a write (ATTRIBUTE_CONSTRAINT_VIOLATION)
   node kind: DcimDevice   attribute: status
-  message: planned is not a valid value for status
+  Infrahub message: planned is not a valid value for status
   written: 692 of 2291 operations
   failed operation: op_518aada155d790ad update DcimDevice name=rtr1 (may have written part of its change)
   next: fix the cause, then create and review a new plan with `infrahub-sync diff`
@@ -58,6 +59,7 @@ apply stopped: Infrahub rejected a write (ATTRIBUTE_CONSTRAINT_VIOLATION)
 ```text
 plan failed: the source (netbox) did not answer in time
 plan failed: the destination (infrahub) rejected the token
+plan failed: the transform of field status failed for DcimDevice source_id=42
 ```
 
 The exit code stays 1 for a failed or stopped run.

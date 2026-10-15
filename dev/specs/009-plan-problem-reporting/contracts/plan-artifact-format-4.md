@@ -40,6 +40,16 @@ One canonical JSON object per line with `entry` set to `problem`, `left_out` or 
 fields of [data-model.md](../data-model.md). An empty report is a zero-byte file; `report` is
 still present in the manifest with zero counts.
 
+Content rule: entries hold source values, schema names and reasons rendered from fixed
+templates. No entry is built from a connection setting or from the text of an error, so the
+report needs no value replacement (research R13, R14).
+
+## Operations file
+
+`operations.jsonl` holds only selected operations (research R2, step 5): no operation of a
+left-out record, no delete of a record that the load could not build, and no relationship to a
+left-out peer. The writer refuses an operation that still holds a left-out placeholder.
+
 ## Read and apply rules
 
 | Format | Read and review | Apply |

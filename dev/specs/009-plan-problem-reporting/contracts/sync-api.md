@@ -1,7 +1,8 @@
 # Sync API contract for spec 009
 
 Spec 011 (operator UI) consumes this contract. Every route uses the bearer-token
-authentication of the existing run routes (`service/app.py:174-230`). Field definitions are in
+authentication of the existing run routes (`service/app.py`). This contract does not mention
+the object store; spec 013 owns it. Field definitions are in
 [data-model.md](../data-model.md). Spec 011 may add filters and fields; it does not rename or
 remove anything defined here.
 
@@ -51,6 +52,8 @@ Rules:
   `expected_checksum=<hex>` that differs from the stored plan is refused with 409
   `plan-changed`.
 - A plan saved in format 2 or 3 returns empty lists and zero counts.
+- `reason` is rendered from a fixed template per problem type; `value` is the source value.
+  No entry holds a connection setting or the text of an error.
 - Errors: 404 `run-not-found`; 410 `artifact-expired`; 503 `plan-unavailable`; 422 for an
   unknown `problem_type` (the stable names are in data-model.md).
 
@@ -67,7 +70,10 @@ otherwise:
   "error_code": "ATTRIBUTE_CONSTRAINT_VIOLATION",
   "node_kind": "DcimDevice",
   "attribute": "status",
-  "message": "planned is not a valid value for status",
+  "record": null,
+  "field": null,
+  "infrahub_message": "planned is not a valid value for status",
+  "summary": "Infrahub rejected a write to DcimDevice attribute status (ATTRIBUTE_CONSTRAINT_VIOLATION)",
   "error_class": "OperationApplyFailedError",
   "apply_progress": {
     "operations_total": 2291,
@@ -79,8 +85,31 @@ otherwise:
 }
 ```
 
-The example message is illustrative. `written_operation_ids` is returned by
+The example Infrahub message is illustrative. The written operation IDs are returned by
 `GET /runs/{run_id}/results` under `apply_failure`, as the applied IDs are today.
+
+Content rule: every field is built from the allowlisted fields of
+[data-model.md](../data-model.md#run-failure-cause-fr-014-to-fr-020-fr-025). `infrahub_message`
+is set only for `destination_rejected_write`. No field holds the text of an adapter's or an
+HTTP library's error, an address, a header or a traceback. A source failure looks like this:
+
+```json
+{
+  "stage": "plan",
+  "failure_type": "token_rejected",
+  "system": {"role": "source", "adapter": "netbox"},
+  "error_code": null,
+  "node_kind": null,
+  "attribute": null,
+  "record": null,
+  "field": null,
+  "infrahub_message": null,
+  "summary": "The source (netbox) rejected the token",
+  "error_class": "RunExecutionError",
+  "apply_progress": null,
+  "next_action": "Check the credential that the configuration references for netbox, then plan again."
+}
+```
 
 The existing `results.{stage}_failure` keys (`stage`, `outcome`, `error_type`, `cause_type`,
 `applied_operations`, `failed_operation`, `failed_operation_wrote`, `may_have_partially_written`)
@@ -102,13 +131,13 @@ stay, so existing scripts keep working.
 
 Checks, in order, all before any write:
 
-1. `confirm_writes` (today, `service/service.py:307-315`): 409 `confirmation-required`.
-2. Checksum (today, lines 317-330): 409 `checksum-conflict`.
+1. `confirm_writes` (today, `service/service.py:315`): 409 `confirmation-required`.
+2. Checksum (today, `service/service.py:317-330`): 409 `checksum-conflict`.
 3. New: the plan's `left_out` is greater than zero and `confirmed_left_out_count` is absent or
    different: 409 `left-out-confirmation-required`, with
    `{"expected_left_out_count": 12}` in the error body. Audited with outcome
    `refused-left-out-count`.
-4. New: the run already admitted a write (`product_store/store.py:1827-1857`): 409
+4. New: the run already admitted a write (`product_store/store.py:1827`): 409
    `new-plan-required`, message "This plan was already applied or its apply stopped; create
    and review a new plan".
 5. New: the plan is format 2 or 3: 409 `plan-format-not-applicable`, message "plan again

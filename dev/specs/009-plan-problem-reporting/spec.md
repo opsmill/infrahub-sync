@@ -43,6 +43,12 @@ through an optional relationship is kept and written without that relationship (
 `sync` run (plan and apply in one request) whose plan leaves out records stops after the plan,
 and the MVP has no option that skips that stop (FR-012).
 
+Decided by the product owner on 2026-10-15, second review: credential values are kept out of
+failure causes, problem reasons and plan files by how these are built, not by replacing values
+in text afterwards. A cause is built only from named fields, never from the text of an error
+raised by an adapter or an HTTP library (FR-019, FR-027, FR-028). The existing replacement of
+collected values stays as it is in the testing release.
+
 Not decided yet: product sign-off on the two decision record changes this specification needs
 (FR-029 and FR-030).
 
@@ -50,7 +56,8 @@ This specification covers requirements FR-001 to FR-004, journey P1 scenarios 1 
 success criteria SC-003 and SC-005 of the V3 idea brief (2026-10-15). It also owns these MVP
 blockers from `infrahub-sync-process/product/path-to-3.0.md`:
 
-- credential values that can still appear in errors and plans (SYNC-82, SYNC-262)
+- credential values that can still appear in errors and plans (SYNC-82), and the replacement of
+  values that can make a published plan invalid JSON (SYNC-262)
 - the NetBox example package that fails on data real NetBox instances hold
   ([#374](https://github.com/opsmill/infrahub-sync/issues/374))
 - `configs validate`, which cannot reach the destination schema check or the credential check
@@ -151,14 +158,13 @@ container logs, which blocks a customer test (idea brief, SC-005).
 **Independent Test**: one test per failure type (Infrahub rejection, source unreachable,
 destination unreachable, source token rejected, destination token rejected, plan failure that is
 not a record problem) checks that the CLI output and the Sync API run record contain the cause
-text.
+fields of FR-019 and no other error text.
 
 **Acceptance Scenarios**:
 
 1. **Given** an apply in which Infrahub rejects a write with an error code, **When** the run
    stops, **Then** the CLI prints, and the Sync API run record holds, Infrahub's error code, the
-   node kind, the attribute name when Infrahub reports one, and Infrahub's message with any
-   secret replaced.
+   node kind, the attribute name when Infrahub reports one, and Infrahub's message.
 2. **Given** a NetBox or Infrahub address that cannot be reached, **When** a plan or an apply
    runs, **Then** the run fails and its cause names the system (source or destination, and its
    adapter name) and states that it could not be reached or did not answer in time.
@@ -166,11 +172,15 @@ text.
    the run fails and its cause names the system and states that it rejected the token, without
    showing the token.
 4. **Given** a plan that fails for a reason that is not a record problem, for example a
-   transform error, **When** the team views the run, **Then** the CLI and the Sync API show the
-   cause text, with any secret replaced.
+   transform that raises an error, **When** the team views the run, **Then** the CLI and the
+   Sync API show the failure type, and the kind, the source record identity and the field
+   involved when the failure names them.
 5. **Given** an Infrahub version that does not return an error code, **When** Infrahub rejects a
-   write, **Then** the cause shows that Infrahub rejected the write and Infrahub's message with
-   any secret replaced.
+   write, **Then** the cause shows that Infrahub rejected the write and Infrahub's message.
+6. **Given** a NetBox address that holds a user name and password, or an error from an HTTP
+   library that repeats a request header, **When** a plan fails because NetBox cannot be
+   reached or rejects the token, **Then** the cause holds no part of the address, the header
+   or the error text, only the system, the adapter and the failure type.
 
 ---
 
@@ -219,13 +229,15 @@ equals the original count minus the operations written.
   with that cause. This is a run failure, not a record problem, and no partial plan is saved.
 - Infrahub rejects a write during apply for a value the plan did not check: the apply stops, as
   it does today. Records are not left out during apply.
-- The cause text from Infrahub or from a source holds a value that matches a collected secret:
-  the secret is replaced before the text is stored, returned or printed.
+- The text of an error raised by a source adapter or an HTTP library holds an address with a
+  password, a request header or a traceback: none of that text enters the cause, whatever the
+  length of the credential (FR-019, FR-027).
 - The problem list is very long, for example several thousand problems at tier M: the list is
   returned in pages, under the same rule as the plan operations (spec 011 FR-014).
 - A credential value is shorter than six characters, or holds characters that JSON escapes: it
-  is still replaced in every cause, problem reason and published plan, and the published plan
-  stays valid JSON (FR-027, FR-028).
+  does not appear in any cause, problem reason or plan file, because none of them is built from
+  a credential or from error text (FR-027). A source record value that happens to be equal to a
+  credential value is source data and appears like any other value.
 
 ## Requirements *(mandatory)*
 
@@ -297,13 +309,19 @@ equals the original count minus the operations written.
   a token, the cause MUST name the system (source or destination, and the adapter) and the type
   of failure.
 - **FR-018**: Every other failure of a `plan`, `verify`, `apply` or `sync` run MUST record the
-  failure type and its message.
-- **FR-019**: Every cause text MUST have secrets replaced under FR-027 and FR-028, and MUST be
-  limited in length, before it is stored, returned by the Sync API, or printed. A credential
-  value that the configuration references MUST never appear in a cause. A value collected only
-  because its variable name looks like a secret keeps the six-character floor of the
-  [secret redaction guideline](../../../docs/docs/development/guidelines/secret-redaction.md)
-  ("Drop values below a length floor").
+  failure type, and the kind, the source record identity and the field when the failure names
+  them.
+- **FR-019**: A cause MUST be built only from these fields:
+  - the stage and the failure type
+  - the system involved: source or destination, and the adapter name
+  - Infrahub's error code, the node kind and the attribute name that Infrahub returns
+  - Infrahub's own error message, for a write that Infrahub rejected
+  - the kind, the source record identity and the field involved
+  - the operations written and the operation that failed
+
+  A cause MUST NOT hold the text of an error raised by an adapter, an HTTP library or a
+  configuration parser, such as an address, a request header or a traceback. Each field MUST
+  be limited in length.
 
 #### A stopped apply and the next plan (brief FR-004)
 
@@ -349,14 +367,18 @@ equals the original count minus the operations written.
 
 `path-to-3.0.md` lists SYNC-82 and SYNC-262 as needed for INFP-648, INFP-649 and INFP-653:
 short credentials and credentials that contain JSON separators can still appear in errors and
-plans, or break a published plan.
+plans, or break a published plan. The product owner decided on 2026-10-15 to prevent credential
+values from entering this information, not to replace them afterwards.
 
-- **FR-027**: Every credential value that a configuration references through `$credential` MUST
-  be replaced, whatever its length, in every cause, problem reason, left-out or kept entry,
-  published plan and run log, before it is stored, returned by the Sync API or printed.
-- **FR-028**: A credential value that holds characters that JSON escapes MUST be replaced in the
-  form it takes in a published plan and in a Sync API response, and the replacement MUST leave
-  that plan or response valid JSON.
+- **FR-027**: A credential value, whatever its length or its characters, MUST NOT enter a cause,
+  a problem reason, a left-out or kept entry, a plan file or a Sync API response. Sync uses a
+  credential value only to connect to the system it belongs to. No cause, problem reason or plan
+  field is built from connection settings or from the text of an error (FR-019).
+- **FR-028**: The protection of FR-027 MUST NOT depend on replacing values in text. This
+  specification adds no replacement of values. The existing replacement of collected values
+  in published artifacts, run records and the worker log stays as it is in the testing release.
+  Removing it from published plans, where it can make a plan invalid JSON (SYNC-262), is
+  follow-up work after the testing release.
 
 #### Decision records this specification changes (product sign-off needed)
 
@@ -368,8 +390,9 @@ plans, or break a published plan.
   holds an error class name and never a message
   ([#369](https://github.com/opsmill/infrahub-sync/issues/369); the rule is stated in
   `infrahub_sync/service/flow.py:722-725`, and ADR 0005 places failure translation at the remote
-  boundary). The new rule: the failure record holds the message, with secrets replaced under
-  FR-027 and FR-028 and limited in length. The code comment and the
+  boundary). The new rule: the failure record holds the structured cause of FR-019, which
+  includes Infrahub's own error message and never the text of other errors. The code comment
+  and the
   [secret redaction guideline](../../../docs/docs/development/guidelines/secret-redaction.md)
   MUST be updated to match. FR-014 to FR-019 MUST NOT ship before the product owner signs off
   this change.
@@ -418,8 +441,8 @@ that a credential missing from the worker is found only when the run fails in th
 - **Plan summary**: the counts of creates, updates, deletes not executed and records left out,
   by action and by kind.
 - **Run failure cause**: the stage (`plan`, `verify`, `apply` or `sync`), the failure type, the
-  system involved, Infrahub's error code, the node kind and attribute, and the message with
-  secrets replaced.
+  system involved, Infrahub's error code, the node kind and attribute, Infrahub's message for a
+  rejected write, and the record and field involved. It never holds the text of other errors.
 - **Apply progress**: for a stopped apply, the operations written, the operation that failed,
   and whether that operation may have written part of its change.
 
@@ -437,13 +460,14 @@ that a credential missing from the worker is found only when the run fails in th
 - **SC-004**: after an apply stopped partway, the new plan's operation count equals the stopped
   plan's operation count minus the operations written, adjusted only for changes made in the
   source between the two plans.
-- **SC-005**: no cause text, problem reason or left-out entry in the test suite contains a
-  collected secret.
+- **SC-005**: no cause, problem reason or left-out entry in the test suite contains a
+  credential value or the text of an error raised by an adapter or an HTTP library.
 - **SC-006**: 100% of apply attempts on a plan with records left out are refused when the
   left-out count is missing or wrong.
 - **SC-007**: in tests with a referenced credential of five characters and a referenced
-  credential that holds `"`, `\` and `,`, neither value appears in a cause, a problem reason, a
-  published plan, a Sync API response or a run log, and every published plan parses as JSON.
+  credential that holds `"`, `\` and `,`, where each failure type is raised with error text
+  that holds both values (for example an address with a user name and password), neither
+  value appears in a cause, a problem reason, a plan file or a Sync API response.
 - **SC-008**: the NetBox example package plans the pinned NetBox `demo` dataset with no run
   failure, and each of the three #374 cases is either written or listed as a plan problem.
 - **SC-009**: on a configuration that maps an attribute missing from the destination schema and
@@ -456,9 +480,16 @@ that a credential missing from the worker is found only when the run fails in th
 - A problem in a record that already exists in Infrahub leaves the Infrahub node as it is. The
   plan proposes no update and no delete for it.
 - Source values may appear in problem reasons and in Infrahub's message, as they already do in
-  the plan operations the team reviews. Secrets do not appear, under FR-027 and FR-028. This
+  the plan operations the team reviews. Credential values do not appear, under FR-027. This
   replaces today's rule that a run's failure record holds an error class name and never a
   message (#369). FR-030 requires the decision record and the product owner's sign-off.
+- Infrahub's error message describes the write Infrahub received, which holds source data and
+  no Sync credential. Infrahub does not receive the source credentials.
+- The worker container log and the orchestration log keep the full error text for OpsMill
+  engineers, protected only by the existing replacement of collected values, which skips
+  values shorter than six characters. A short credential can therefore still appear in those
+  two logs (the part of SYNC-82 that remains). They are not returned by the Sync API or
+  printed by the CLI.
 - Infrahub 1.11 and later return an error code, the node kind and the attribute name with a
   rejection (#370). For older versions, the cause shows Infrahub's message without a code.
 - The Dropdown check needs the attribute choices in the record of the destination schema that a

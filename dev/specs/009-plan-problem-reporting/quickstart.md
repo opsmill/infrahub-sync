@@ -46,14 +46,14 @@ and the schema library, as described in
 ## Scenario 3: the cause of a failed run (User Story 3, SC-003)
 
 Run one plan or apply per failure type and check that `infrahub-sync runs show <run_id>` and
-`GET /runs/{run_id}` show `failure` with the expected `failure_type`, `system` and message:
+`GET /runs/{run_id}` show `failure` with the expected `failure_type` and `system`:
 
 | Setup | Expected `failure_type` |
 | --- | --- |
 | Stop the NetBox container | `system_unreachable`, source `netbox` |
 | Set a wrong NetBox token | `token_rejected`, source `netbox` |
 | Set a wrong Infrahub token | `token_rejected`, destination `infrahub` |
-| A transform that raises | `plan_failed`, message names the transform error |
+| A transform that raises | `transform_failed`, with the kind, the record and the field, and no transform text |
 | Plan with the Dropdown check turned off in a test build, then apply a value outside the choices | `destination_rejected_write`, `error_code` from Infrahub, `node_kind`, `attribute` |
 
 ## Scenario 4: a stopped apply and the next plan (User Story 4, SC-004)
@@ -65,11 +65,28 @@ Run one plan or apply per failure type and check that `infrahub-sync runs show <
 4. `infrahub-sync diff` again with no source change: the new plan's operation count is
    N - (K - 1), less any operation the destination now already matches.
 
-## Scenario 5: credential masking (SC-005, SC-007)
+## Scenario 5: credentials stay out of causes, problems and plans (SC-005, SC-007)
 
-Run Scenarios 1 to 4 with a referenced credential of five characters and a referenced credential
-holding `"`, `\` and `,`. Search every cause, problem reason, report entry, published plan, Sync
-API response and run log for both values: no match. Every published plan parses as JSON.
+1. Configure a referenced credential of five characters and one that holds `"`, `\` and `,`.
+2. For each failure type of Scenario 3, raise the failure in a unit test with error text that
+   holds both values: an address with a user name and password, a request header, and a
+   traceback.
+3. Expected: neither value, and no part of the error text, appears in the run record's
+   `failure`, the CLI output, any problem reason, `report.jsonl`, `operations.jsonl`,
+   `manifest.json` or a Sync API response. The test asserts absence; it does not rely on value
+   replacement.
+
+## Scenario 5b: DiffSync compares the data as loaded (research R2)
+
+1. Plan the fixture of Scenario 1.
+2. Expected:
+   - a canonical dump of the source and destination stores taken before the comparison equals
+     the dump taken after operations are selected;
+   - the IP address that refers to the left-out device holds that reference in the source
+     store, and its operation in the plan does not;
+   - no runtime model declares `_children`, and the engine calls only `diff_from`;
+   - with the same fixture loaded by a test adapter that implements only `list_records` and
+     `record_to_data`, the plan lists the same problems.
 
 ## Scenario 6: the NetBox example on the `demo` dataset (SC-001, SC-008)
 

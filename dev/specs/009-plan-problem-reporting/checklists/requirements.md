@@ -43,6 +43,14 @@
   FR-027 to FR-035 assign MVP blockers to this specification (SYNC-82, SYNC-262, #374,
   INFP-651, INFP-652, SYNC-107, SYNC-147) and the AD-12 and #369 decision record changes.
   FR-029 and FR-030 need product sign-off; this is stated in the Summary, not as a marker.
+- Revision of 2026-10-15 after the product owner rejected value masking: FR-018, FR-019,
+  FR-027, FR-028 and FR-030, User Story 3 scenarios 1, 4 and 5 (and new scenario 6), two edge
+  cases, the run failure cause entity, SC-005, SC-007 and three assumptions now state that
+  credential values are kept out of causes, problem reasons and plan files by how these are
+  built. A cause holds only named fields and never the text of an adapter's or an HTTP
+  library's error. The existing replacement of values stays unchanged in the testing release.
+  What remains of SYNC-82 (short credentials in the worker and orchestration logs) and of
+  SYNC-262 (the replacement pass on published plans) is stated in FR-028 and the assumptions.
 - The Sync API and the CLI are named because the request asks for the contract the UI of spec 011
   consumes. The requirements state what each surface returns or shows, not how it is built.
 - Iteration 1 removed a source file reference and the term "schema fingerprint" from the
