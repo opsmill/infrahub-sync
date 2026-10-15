@@ -113,8 +113,6 @@ def load_preview_env() -> dict[str, str]:
     image_settings = {
         "INFRAHUB_DOCKER_IMAGE",
         "INFRAHUB_DOCKER_IMAGE_DIGEST",
-        "PREVIEW_PREFECT_IMAGE_TAG",
-        "PREVIEW_PREFECT_IMAGE_DIGEST",
     }
     for key in image_settings & os.environ.keys():
         values[key] = os.environ[key]
@@ -136,8 +134,6 @@ def load_preview_env() -> dict[str, str]:
         "PREVIEW_PREFECT_WORKER_QUERY_SECONDS",
         "VERSION",
         "INFRAHUB_DOCKER_IMAGE_DIGEST",
-        "PREVIEW_PREFECT_IMAGE_TAG",
-        "PREVIEW_PREFECT_IMAGE_DIGEST",
     }
     missing = required - values.keys()
     if missing:
@@ -151,11 +147,6 @@ def load_preview_env() -> dict[str, str]:
         "INFRAHUB_DOCKER_IMAGE_DIGEST"
     ):
         msg = "Change INFRAHUB_DOCKER_IMAGE_DIGEST with VERSION; use an empty value for a local image"
-        raise PreviewError(msg)
-    if values["PREVIEW_PREFECT_IMAGE_TAG"] != shipped.get("PREVIEW_PREFECT_IMAGE_TAG") and values[
-        "PREVIEW_PREFECT_IMAGE_DIGEST"
-    ] == shipped.get("PREVIEW_PREFECT_IMAGE_DIGEST"):
-        msg = "Change PREVIEW_PREFECT_IMAGE_DIGEST with PREVIEW_PREFECT_IMAGE_TAG"
         raise PreviewError(msg)
     return values
 
@@ -520,8 +511,9 @@ def up(context: Context) -> None:
     env = _runtime_env(values)
     STATE_DIR.mkdir(exist_ok=True)
 
-    print(f" - [{NAMESPACE}] Starting containers (first run downloads images)")
-    _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} --quiet-pull", values)
+    # `--build` rebuilds the Prefect server's Sync image from the checkout on every start.
+    print(f" - [{NAMESPACE}] Starting containers (first run downloads images and builds the Sync image)")
+    _compose(context, f"up --detach --wait --wait-timeout {WAIT_TIMEOUT_SECONDS} --quiet-pull --build", values)
     _wait_for_http(f"{urls['infrahub']}/api/config", "Infrahub")
     _wait_for_http(f"{urls['prefect']}/api/health", "Prefect")
     assert_no_legacy_state(env["PREFECT_API_URL"], values["PREVIEW_WORK_POOL"])

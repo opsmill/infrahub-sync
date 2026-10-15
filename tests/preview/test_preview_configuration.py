@@ -47,28 +47,17 @@ def clean_image_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
         "VERSION",
         "INFRAHUB_DOCKER_IMAGE",
         "INFRAHUB_DOCKER_IMAGE_DIGEST",
-        "PREVIEW_PREFECT_IMAGE_TAG",
-        "PREVIEW_PREFECT_IMAGE_DIGEST",
     ):
         monkeypatch.delenv(key, raising=False)
 
 
-@pytest.mark.parametrize(
-    ("override", "digest_name"),
-    [
-        ("VERSION=9.9.9", "INFRAHUB_DOCKER_IMAGE_DIGEST"),
-        ("PREVIEW_PREFECT_IMAGE_TAG=3.9.0-python3.12", "PREVIEW_PREFECT_IMAGE_DIGEST"),
-    ],
-)
-def test_preview_rejects_tag_only_image_overrides(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, override: str, digest_name: str
-) -> None:
+def test_preview_rejects_tag_only_image_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A changed tag must never silently keep the previous image digest."""
     local_env = tmp_path / "preview.local.env"
-    local_env.write_text(f"{override}\n", encoding="utf-8")
+    local_env.write_text("VERSION=9.9.9\n", encoding="utf-8")
     monkeypatch.setattr(preview, "LOCAL_ENV_FILE", local_env)
 
-    with pytest.raises(preview.PreviewError, match=digest_name):
+    with pytest.raises(preview.PreviewError, match="INFRAHUB_DOCKER_IMAGE_DIGEST"):
         preview.load_preview_env()
 
 
@@ -118,23 +107,6 @@ def test_preview_accepts_a_registry_mirror_with_the_shipped_digest(
 
     assert values["INFRAHUB_DOCKER_IMAGE"] == "mirror.example/infrahub"
     assert values["INFRAHUB_DOCKER_IMAGE_DIGEST"] == shipped["INFRAHUB_DOCKER_IMAGE_DIGEST"]
-
-
-@pytest.mark.parametrize(
-    ("setting", "value", "digest_name"),
-    [
-        ("PREVIEW_PREFECT_IMAGE_TAG", "3.9.0-python3.12", "PREVIEW_PREFECT_IMAGE_DIGEST"),
-    ],
-)
-def test_preview_rejects_shell_tag_only_overrides(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, setting: str, value: str, digest_name: str
-) -> None:
-    """A shell tag override cannot pair with a digest from preview.env."""
-    monkeypatch.setattr(preview, "LOCAL_ENV_FILE", tmp_path / "preview.local.env")
-    monkeypatch.setenv(setting, value)
-
-    with pytest.raises(preview.PreviewError, match=digest_name):
-        preview.load_preview_env()
 
 
 def test_preview_ignores_unrelated_shell_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -240,6 +212,27 @@ def test_preview_prefect_waits_for_successful_minio_bootstrap() -> None:
     )
 
 
+def test_preview_prefect_server_is_built_from_the_checkout() -> None:
+    """The preview Prefect server runs the Sync image this checkout builds, published on loopback."""
+    command = ["docker", "compose", "--project-name", "preview-startup-test", "--env-file", str(ENV_FILE)]
+    for compose_file in COMPOSE_FILES:
+        command.extend(("-f", str(compose_file)))
+    command.extend(("config", "--format", "json"))
+
+    result = subprocess.run(command, check=True, capture_output=True, text=True)  # noqa: S603
+    prefect = json.loads(result.stdout)["services"]["sync-prefect"]
+
+    assert prefect["image"] == "infrahub-sync:preview"
+    assert Path(prefect["build"]["context"]) == REPO_ROOT
+    assert prefect["build"]["dockerfile"] == "Dockerfile"
+    assert prefect["command"] == ["python", "-m", "infrahub_sync.service.prefect_server"]
+    assert [(port["host_ip"], port["published"], port["target"]) for port in prefect["ports"]] == [
+        ("127.0.0.1", "4210", 4200)
+    ]
+    compose = (DEV_DIR / "docker-compose.preview.yml").read_text(encoding="utf-8")
+    assert '"127.0.0.1:${PREVIEW_PREFECT_PORT:-4210}:4200"' in compose
+
+
 def test_preview_up_uses_a_bounded_compose_wait(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Preview startup cannot wait forever for its container dependency chain."""
     compose_calls: list[str] = []
@@ -273,7 +266,7 @@ def test_preview_up_uses_a_bounded_compose_wait(monkeypatch: pytest.MonkeyPatch,
     with pytest.raises(StopAfterComposeError):
         cast("Task", preview.up).body(context)
 
-    assert compose_calls == ["up --detach --wait --wait-timeout 420 --quiet-pull"]
+    assert compose_calls == ["up --detach --wait --wait-timeout 420 --quiet-pull --build"]
 
 
 def test_bringing_the_preview_up_writes_nothing_to_infrahub(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

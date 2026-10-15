@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,7 @@ from tests.compose.conftest import (
     COMPOSE_FILE,
     CONTRACT_ENVIRONMENT,
     PREFECT_UI_OVERRIDE,
+    REPO_ROOT,
     SCRATCH_OPTIONS,
     SYNC_SCRATCH_ROOTS,
     SYNC_SERVICES,
@@ -36,6 +38,7 @@ from tests.compose.conftest import (
     resolve_privately,
     service,
 )
+from tests.compose.redaction import capture
 from tests.docker_image import DEFAULT_IMAGE_REPOSITORY, IMAGE_REPOSITORY_ENV, IMAGE_VERSION_ENV
 
 if TYPE_CHECKING:
@@ -74,6 +77,25 @@ DEVELOPMENT_COMPOSE = Path(__file__).resolve().parents[2] / "development"
 DESTINATION_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.infrahub.yml"
 PREVIEW_COMPOSE = DEVELOPMENT_COMPOSE / "docker-compose.preview.yml"
 PREVIEW_ENV = DEVELOPMENT_COMPOSE / "preview.env"
+DEVELOPMENT_FILE = DEVELOPMENT_COMPOSE / "docker-compose.dev.yml"
+
+# The three Compose files of the repository, each resolved the way it runs: the
+# operator file with its required inputs and the CLI profile, the development file
+# alone, and the preview file over the Infrahub file it overrides, with its env file.
+REPOSITORY_STACKS = ("operator", "development", "preview")
+# The images the development and preview stacks build from this checkout. They are
+# the Sync image of their stack, so no digest names them.
+CHECKOUT_IMAGES = {"development": "infrahub-sync:dev", "preview": "infrahub-sync:preview"}
+# The one image other than Sync that a repository file names by tag alone: the
+# development PostgreSQL, which predates the digest rule. Recorded here so that a
+# second exception fails the test instead of joining it unnoticed.
+UNPINNED_IMAGES = {("development", "postgres"): "postgres:16-alpine"}
+# The Prefect server of each stack that runs from the Sync image.
+PREFECT_SERVERS = {"operator": "prefect-server", "development": "prefect-server", "preview": "sync-prefect"}
+PREFECT_SERVER_COMMAND = ["python", "-m", "infrahub_sync.service.prefect_server"]
+# The preview settings that used to select the stock Prefect image. Written in two
+# parts, so that this file does not match its own search.
+RETIRED_PREFECT_IMAGE_SETTING = "PREVIEW_PREFECT_" + "IMAGE_"
 
 # The two durable volumes and the services allowed to mount them. The short-lived
 # owner repair shares the object store's volume before the server starts.
@@ -644,20 +666,83 @@ def test_the_prefect_server_receives_only_its_database_and_api_credentials(
 # ---------------------------------------------------------------------------
 
 
-def test_no_service_runs_the_stock_prefect_image(cli_model: dict[str, Any]) -> None:
-    """FR-001: the deployment pulls the Sync image, PostgreSQL and the object store, and nothing else."""
+@pytest.fixture(scope="module")
+def stack_models(cli_model: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The resolved services of each repository Compose file, keyed by `REPOSITORY_STACKS`."""
+    resolved = {"operator": services(cli_model)}
+    for stack, files, env_files in (
+        ("development", (DEVELOPMENT_FILE,), ()),
+        ("preview", (DESTINATION_COMPOSE, PREVIEW_COMPOSE), (PREVIEW_ENV,)),
+    ):
+        result = compose(["config", "--format", "json"], files=files, env_files=env_files, inherit_environment=False)
+        assert result.returncode == 0, result.stderr
+        resolved[stack] = services(json.loads(result.stdout))
+    return resolved
+
+
+def is_sync_image(stack: str, name: str, definition: Mapping[str, Any]) -> bool:
+    """Whether a service of a stack runs that stack's Sync image."""
+    if stack == "operator":
+        return name in ALL_SYNC_SERVICES
+    return definition["image"] == CHECKOUT_IMAGES[stack]
+
+
+@pytest.mark.parametrize("stack", REPOSITORY_STACKS)
+def test_no_service_runs_the_stock_prefect_image(stack_models: dict[str, dict[str, Any]], stack: str) -> None:
+    """FR-001, FR-010: no repository Compose file pulls the `prefecthq/prefect` image."""
     stock = sorted(
         name
-        for name, definition in services(cli_model).items()
+        for name, definition in stack_models[stack].items()
         if str(definition["image"]).split("@", 1)[0].rsplit(":", 1)[0] == "prefecthq/prefect"
     )
 
-    assert stock == [], f"these services run the prefecthq/prefect image: {stock}"
+    assert stock == [], f"these {stack} services run the prefecthq/prefect image: {stock}"
 
 
-def test_the_prefect_server_runs_the_sync_factory_module(model: dict[str, Any]) -> None:
-    """FR-003: Prefect's own application, started through the Sync module that builds it."""
-    assert service(model, "prefect-server")["command"] == ["python", "-m", "infrahub_sync.service.prefect_server"]
+@pytest.mark.parametrize("stack", REPOSITORY_STACKS)
+def test_the_prefect_server_runs_the_sync_factory_module(stack_models: dict[str, dict[str, Any]], stack: str) -> None:
+    """FR-003, FR-010: Prefect's own application, started through the Sync module that builds it."""
+    prefect = stack_models[stack][PREFECT_SERVERS[stack]]
+
+    assert prefect["command"] == PREFECT_SERVER_COMMAND
+    assert is_sync_image(stack, PREFECT_SERVERS[stack], prefect)
+
+
+@pytest.mark.parametrize("stack", ["development", "preview"])
+def test_the_checkout_stacks_build_their_prefect_server_from_the_repository_dockerfile(
+    stack_models: dict[str, dict[str, Any]], stack: str
+) -> None:
+    """FR-010: the development and preview Prefect servers run what this checkout builds."""
+    build = stack_models[stack][PREFECT_SERVERS[stack]].get("build") or {}
+
+    assert Path(build.get("context", "")) == REPO_ROOT, build
+    assert build.get("dockerfile") == "Dockerfile", build
+
+
+def test_no_repository_file_names_the_retired_prefect_image_settings() -> None:
+    """FR-011: the preview Prefect image settings are gone; only spec history and the changelog keep them."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed; the search reads the tracked files")
+    result = capture(
+        [
+            "git",
+            "-C",
+            str(REPO_ROOT),
+            "grep",
+            "--files-with-matches",
+            "--fixed-strings",
+            RETIRED_PREFECT_IMAGE_SETTING,
+            "--",
+            ".",
+            ":(exclude)dev/",
+            ":(exclude)changelog/",
+        ],
+        timeout=60,
+    )
+    if result.returncode not in {0, 1}:
+        pytest.skip(f"not a git checkout: {result.stderr.strip()}")
+
+    assert result.stdout.split() == [], f"these files name {RETIRED_PREFECT_IMAGE_SETTING}*: {result.stdout.split()}"
 
 
 # ---------------------------------------------------------------------------
@@ -687,20 +772,25 @@ def test_object_store_uses_the_pinned_minio_build_and_migrates_existing_data(mod
     assert object_store["depends_on"]["object-store-init"]["condition"] == "service_completed_successfully"
 
 
-def test_every_image_other_than_sync_is_named_by_digest(cli_model: dict[str, Any]) -> None:
-    """A tag can be re-pointed; a digest names one artifact for good.
+@pytest.mark.parametrize("stack", REPOSITORY_STACKS)
+def test_every_image_other_than_sync_is_named_by_digest(stack_models: dict[str, dict[str, Any]], stack: str) -> None:
+    """FR-014: a tag can be re-pointed; a digest names one artifact for good.
 
-    One assertion over every service, so a service added later is covered by
-    having been added rather than by somebody remembering to extend a list. The
-    Sync image is the one deliberate exception: it is selected by release tag.
+    One assertion over every service of each repository file, so a service added
+    later is covered by having been added rather than by somebody remembering to
+    extend a list. The Sync image is the one deliberate exception: the operator
+    file selects it by release tag, and the other two build it from the checkout.
+    The development PostgreSQL is the one recorded exception, in `UNPINNED_IMAGES`.
     """
     mutable = sorted(
         f"{name}: {definition['image']}"
-        for name, definition in services(cli_model).items()
-        if name not in ALL_SYNC_SERVICES and not IMMUTABLE_REFERENCE.fullmatch(str(definition["image"]))
+        for name, definition in stack_models[stack].items()
+        if not is_sync_image(stack, name, definition)
+        and UNPINNED_IMAGES.get((stack, name)) != definition["image"]
+        and not IMMUTABLE_REFERENCE.fullmatch(str(definition["image"]))
     )
 
-    assert mutable == [], f"these services are not pinned to a digest: {mutable}"
+    assert mutable == [], f"these {stack} services are not pinned to a digest: {mutable}"
 
 
 def sync_image_lines() -> dict[str, str]:
@@ -795,7 +885,8 @@ def test_destination_and_preview_default_images_are_tagged_indexes(
     mutable = sorted(
         f"{name}: {definition['image']}"
         for name, definition in services(configured).items()
-        if not TAGGED_INDEX_REFERENCE.fullmatch(str(definition["image"]))
+        if definition["image"] != CHECKOUT_IMAGES["preview"]
+        and not TAGGED_INDEX_REFERENCE.fullmatch(str(definition["image"]))
     )
     assert mutable == [], f"destination or preview images lack tag and digest: {mutable}"
 
@@ -814,7 +905,7 @@ def test_preview_env_tags_match_compose_pin_defaults(compose_version: str) -> No
         assert result.returncode == 0, result.stderr
         models.append(services(json.loads(result.stdout)))
     defaults, shipped = models
-    for name in ("task-manager", "infrahub-server", "task-worker", "sync-prefect"):
+    for name in ("task-manager", "infrahub-server", "task-worker"):
         assert shipped[name]["image"] == defaults[name]["image"], name
 
 
@@ -826,10 +917,9 @@ def test_tagged_index_reference_requires_a_tag_after_the_last_slash() -> None:
 
 
 def test_image_overrides_keep_their_matching_digests(compose_version: str) -> None:
-    """Custom Infrahub and Prefect tags can be paired with their own index digests."""
+    """A custom Infrahub tag can be paired with its own index digest."""
     del compose_version
     infrahub_digest = "@sha256:" + "a" * 64
-    prefect_digest = "@sha256:" + "b" * 64
     result = compose(
         ["config", "--format", "json"],
         files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
@@ -840,8 +930,6 @@ def test_image_overrides_keep_their_matching_digests(compose_version: str) -> No
             "INFRAHUB_DOCKER_IMAGE": "example.invalid/infrahub",
             "VERSION": "custom",
             "INFRAHUB_DOCKER_IMAGE_DIGEST": infrahub_digest,
-            "PREVIEW_PREFECT_IMAGE_TAG": "custom",
-            "PREVIEW_PREFECT_IMAGE_DIGEST": prefect_digest,
         },
     )
     assert result.returncode == 0, result.stderr
@@ -849,7 +937,6 @@ def test_image_overrides_keep_their_matching_digests(compose_version: str) -> No
     assert configured["message-queue"]["image"] == "example.invalid/rabbitmq:custom"
     for name in ("task-manager", "infrahub-server", "task-worker"):
         assert configured[name]["image"] == f"example.invalid/infrahub:custom{infrahub_digest}"
-    assert configured["sync-prefect"]["image"] == f"prefecthq/prefect:custom{prefect_digest}"
 
 
 def test_local_image_override_can_drop_the_digest(compose_version: str) -> None:
@@ -864,15 +951,12 @@ def test_local_image_override_can_drop_the_digest(compose_version: str) -> None:
             "INFRAHUB_DOCKER_IMAGE": "local-infrahub",
             "VERSION": "custom",
             "INFRAHUB_DOCKER_IMAGE_DIGEST": "",
-            "PREVIEW_PREFECT_IMAGE_TAG": "custom",
-            "PREVIEW_PREFECT_IMAGE_DIGEST": "",
         },
     )
     assert result.returncode == 0, result.stderr
     configured = services(json.loads(result.stdout))
     for name in ("task-manager", "infrahub-server", "task-worker"):
         assert configured[name]["image"] == "local-infrahub:custom"
-    assert configured["sync-prefect"]["image"] == "prefecthq/prefect:custom"
 
 
 @pytest.mark.parametrize("digest_override", [{}, {"INFRAHUB_DOCKER_IMAGE_DIGEST": ""}])
@@ -918,13 +1002,14 @@ def test_standalone_version_override_drops_the_shipped_digest(compose_version: s
         ["config", "--format", "json"],
         files=(DESTINATION_COMPOSE, PREVIEW_COMPOSE),
         inherit_environment=False,
-        environment={"VERSION": "custom", "PREVIEW_PREFECT_IMAGE_TAG": "custom"},
+        environment={"VERSION": "custom"},
     )
     assert result.returncode == 0, result.stderr
     configured = services(json.loads(result.stdout))
     for name in ("task-manager", "infrahub-server", "task-worker"):
         assert configured[name]["image"] == "registry.opsmill.io/opsmill/infrahub:custom"
-    assert configured["sync-prefect"]["image"] == "prefecthq/prefect:custom"
+    # `VERSION` is Infrahub's version here; the Prefect server keeps the checkout's build.
+    assert configured["sync-prefect"]["image"] == CHECKOUT_IMAGES["preview"]
 
 
 # ---------------------------------------------------------------------------

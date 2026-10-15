@@ -5,7 +5,9 @@ title: "Run the preview stack"
 ## Run the preview stack
 
 The preview stack runs Infrahub, PostgreSQL and MinIO for the service's own records and
-artifacts, and a dedicated Prefect server in containers. The Sync HTTP API and its Prefect
+artifacts, and a dedicated Prefect server in containers. The Prefect server, `sync-prefect`,
+runs from a Sync image that `preview.up` builds from your checkout on every start, so it runs
+the Prefect version that `uv.lock` pins, as the worker does. The Sync HTTP API and its Prefect
 worker run on your host, from your checkout. Use it to work on `infrahub_sync/service/`
 itself and to run the smoke suite. To try Sync or run a first sync, use the
 [local development stack](../../development-stack.mdx) instead.
@@ -149,7 +151,7 @@ Removes everything the stack created. The `.preview/` directory keeps its logs.
 | Service | Address | Runs as |
 | --- | --- | --- |
 | Infrahub | `http://localhost:8080` | Container |
-| Prefect | `http://localhost:4210` | Container |
+| Prefect | `http://localhost:4210` | Container, built from the checkout |
 | Sync HTTP API | `http://127.0.0.1:8010` | Host process |
 | PostgreSQL | `127.0.0.1:5439` | Container |
 | MinIO | `http://127.0.0.1:9010` | Container |
@@ -185,12 +187,12 @@ Do not reuse them in a deployment, and do not leave an Infrahub that still uses 
 reachable from other machines. Mint your own tokens in `development/preview.local.env` if
 you need different ones.
 
-When updating an Infrahub or Prefect image in the preview, change its tag and
+When updating the Infrahub image in the preview, change its tag and
 matching `@sha256:` digest together in `development/preview.env`. Inspect the
 tag with `docker buildx imagetools inspect name:tag`, copy the top-level index
 digest, and check that it includes both linux/amd64 and linux/arm64. Compose
 would still pull the old image after a tag-only change, so the preview tasks
-refuse one, including a Prefect tag exported in the shell. The shipped
+refuse one. The shipped
 `preview.env` value takes precedence over an unrelated shell `VERSION`. An
 Infrahub image-name-only override in `development/preview.local.env` or the
 shell drops the shipped digest so a local build can run. To use a registry mirror, set its digest
@@ -198,7 +200,8 @@ explicitly; the mirror may use the same digest as the shipped image. When using
 Docker Compose directly, an image-name override drops the shipped digest even
 without `VERSION` or an env file. With that override, an empty
 `INFRAHUB_DOCKER_IMAGE_DIGEST` leaves the image unpinned. A digest-only override
-keeps the shipped Infrahub tag and replaces its digest.
+keeps the shipped Infrahub tag and replaces its digest. The Prefect server has no
+image setting: it runs the Sync image that `preview.up` builds from the checkout.
 
 ## The preview stack refuses to start on retired state
 

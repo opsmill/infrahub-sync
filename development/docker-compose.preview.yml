@@ -7,12 +7,11 @@
 # Infrahub stack, publishes every one it keeps on loopback only, drops host port
 # publications the preview does not need, and
 # adds a dedicated Prefect server for Infrahub Sync's service execution path —
-# separate from Infrahub's internal task-manager, and pinned to the same Prefect
-# version as the `service` extra (prefect==3.8.6).
-# Refresh pins with `docker buildx imagetools inspect name:tag`: use the top-level
-# index Digest and check for linux/amd64 and linux/arm64 manifests. When changing
-# PREVIEW_PREFECT_IMAGE_TAG in the preview, set PREVIEW_PREFECT_IMAGE_DIGEST to its matching
-# @sha256 digest. An empty digest is for an intentionally unpinned local image.
+# separate from Infrahub's internal task-manager. That server runs from the Sync
+# image built from this checkout, so it runs the Prefect version of the `service`
+# extra in `uv.lock`; `uv run invoke preview.up` rebuilds it on every start.
+# Refresh the other pins with `docker buildx imagetools inspect name:tag`: use the
+# top-level index Digest and check for linux/amd64 and linux/arm64 manifests.
 services:
   sync-postgres:
     image: "postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea"  # yamllint disable-line rule:line-length
@@ -71,12 +70,21 @@ services:
     ports: !reset []
 
   sync-prefect:
-    image: "prefecthq/prefect:${PREVIEW_PREFECT_IMAGE_TAG:-3.8.6-python3.13@sha256:dec8d5b095e93bba1f3d7ebd7cfff13b61209b961382d92be88584c23de5d97a}${PREVIEW_PREFECT_IMAGE_DIGEST-}"  # yamllint disable-line rule:line-length
-    command: prefect server start --host 0.0.0.0 --port 4200
+    # The project directory is `development/`, so the build context is the
+    # repository root.
+    image: "infrahub-sync:preview"
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["python", "-m", "infrahub_sync.service.prefect_server"]
     depends_on:
       sync-minio-bootstrap:
         condition: service_completed_successfully
     environment:
+      # The address and port `prefect server start --host 0.0.0.0 --port 4200` set;
+      # the Sync module reads them from Prefect's settings.
+      PREFECT_SERVER_API_HOST: "0.0.0.0"
+      PREFECT_SERVER_API_PORT: "4200"
       PREFECT_SERVER_UI_API_URL: "http://localhost:${PREVIEW_PREFECT_PORT:-4210}/api"
     ports:
       - "127.0.0.1:${PREVIEW_PREFECT_PORT:-4210}:4200"
