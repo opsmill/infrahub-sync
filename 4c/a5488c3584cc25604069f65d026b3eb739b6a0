@@ -1,0 +1,24 @@
+dev/specs/013-compose-images/tasks.md
+  s_47078ea83e766d::t_0cbd55471333fb 269-272
+tests/compose/test_managed_run.py
+  s_47078ea83e766d::t_29342d7f8893bb 53,57-59,64-70
+dev/specs/013-compose-images/implementation-notes.md
+  s_47078ea83e766d::t_0cbd55471333fb 137
+  s_47078ea83e766d::t_5d6ddd185d66fa 120-136,138-168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4ca5488c3584cc25604069f65d026b3eb739b6a0",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
