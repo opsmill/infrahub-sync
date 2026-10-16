@@ -117,3 +117,52 @@ are written later in `plan.md`, section "Lifecycle failure causes".
   service exits non-zero, names the file, and prints no line of the key. Spec 009 is not merged,
   so the failed run's type is not checked.
 - T052 to T054: `docs.docusaurus` built with no broken link or anchor warning.
+
+## Gates and tiers (T081 to T083)
+
+Run on 2026-10-16 at commit `c808c052`, Docker Engine 29.4.0 (OrbStack, arm64), Docker Compose
+v5.1.2, image `infrahub-sync:compose-test` (ID `79927274354b`) built from that commit.
+
+- T081: `docs.docusaurus` built with no broken link or anchor warning. `docs.generate` rewrites
+  `docs/docs/reference/cli.mdx` without the paragraph about `INFRAHUB_SYNC_API_TOKEN` that commit
+  `b5b50af1` added by hand, because the paragraph is not in the CLI help text. This
+  specification did not change that page, so the generated change was not kept.
+- T082: rumdl, ruff, pylint (0 diagnostics) and ty pass on the files this specification
+  changed. `invoke lint` stops at yamllint only because of untracked files under `.worktrees/`:
+  all 391 paths it reports start with `./.worktrees/`, and yamllint on every tracked YAML file
+  passes. ty reports 17 diagnostics, none in a file this specification changed.
+- T083: the unit tier passes. The image tier fails only the two OCI label cases (`version`,
+  `revision`) and the provenance case, which need the labels the publish workflow sets. In the
+  compose tier, `test_managed_run.py::test_the_deployed_worker_container_mounts_nothing` failed:
+  since T012 the worker mounts the read-only CA directory, so its mount list is not empty. The
+  test is now `test_the_deployed_worker_container_mounts_only_the_read_only_ca_directory`. It
+  checks that the only mount is `/etc/infrahub-sync/ca`, read-only, and that the worker and the
+  API share no writable mount, as `test_compose_contract.py` already does for the resolved file.
+  The compose tier then passes: 48 tests in 12 files; 6 files hold only offline tests, which
+  `-m compose` deselects.
+
+## Quickstart walk-through (T084)
+
+The CLI sanity checks (`--help`, `configs --help`, `runs --help`) exit 0. The scenarios ran
+against the root `docker-compose.yml` copied to a scratch directory, project `qs013`, with the
+image above and a `.env` written by the generator in `docs/docs/compose-deployment.mdx`. Port
+8000 was in use on the host, so `INFRAHUB_SYNC_API_PORT=18000` and
+`INFRAHUB_SYNC_PREFECT_PORT=14200` were set. Every stack started here was removed afterwards.
+
+| Scenario | Run | Result |
+| --- | --- | --- |
+| 1. Offline contract checks | Yes | Differs: the command collects the one `compose` case in `test_compose_minimum.py`, which fails when `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION` are not exported in the shell. The prerequisites put them in `.env`, which pytest does not read. With them exported, 319 pass; with `-m "not compose"`, 309 pass. |
+| 2. Three images, one published port | Yes | Matches, with one note: `ps` shows `postgres` with `{ 5432 0 tcp}`, an exposed port with no host port. Only `sync-api` has a host port. |
+| 3. One Prefect version | Yes | Matches: both commands print `3.8.6`. |
+| 4. Each credential reaches only its receivers | Yes | Matches the receiver table in `contracts/environment-variables.md`. |
+| 5. Plan and apply | Through the compose tier only | The manual NetBox sequence needs a NetBox with the `demo` dataset, which this machine does not run. `test_lifecycle.py` and `test_managed_run.py` pass. |
+| 6. Prefect opt-in | Yes | Matches: health is 200 with `prefect-ui.yml` and the connection is refused without it. The browser step was replaced by API calls with the credential: work pool `infrahub-sync` and deployment `run` are listed, and the same call without the credential returns 401. |
+| 7. Update keeps the bundled store's data | Through the compose tier only | `test_object_store_upgrade.py` passes. No deployment from the previous release ran on this machine. |
+| 8. The team's own S3-compatible store | Negative check, and the compose tier | No external HTTPS store was available. `test_external_object_store.py` passes. Setting an endpoint without `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0` stops `sync-bootstrap` with `bundled-object-store-not-left-out`, as described. The `object-store-unsupported` check was not run. |
+| 9. Credentials and custom CA | Yes | Matches: `True`, and one `custom CA bundle installed` line with `certificates=1` and the bundle path, with no certificate content. Differs in one case: a private key added to the directory of a running deployment stops only `sync-bootstrap` on `up -d --wait`, because Compose does not recreate `sync-api` and `sync-worker` when only the directory's content changes. After `docker compose restart`, both stop and name the file. The plan against an HTTPS source is covered by `test_custom_ca.py`, which passes. |
+| 10. No credential in output | Yes | Matches: 1 passed. As in scenario 1, the command needs `INFRAHUB_SYNC_DOCKER_IMAGE` and `VERSION` exported. |
+| 11. Development and preview stacks | Yes | Matches: 4230 and 4210 return `true`, and `PREVIEW_PREFECT_IMAGE` occurs 0 times. Port 8080 was in use on the host, so `development/preview.local.env` set `PREVIEW_INFRAHUB_PORT=8085` for the run and was removed afterwards. |
+
+One more observation: after the CA directory replaced the placeholder volume in `.env`,
+`docker compose down -v` left the volume `qs013_sync-ca-certificates`, created by the first
+start, because the resolved file no longer referenced it. It was removed by hand.

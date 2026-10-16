@@ -50,17 +50,24 @@ def destination_url() -> str:
     return f"http://host.docker.internal:{FIXTURE_INFRAHUB_PORT}"
 
 
-def test_the_deployed_worker_container_mounts_nothing(deployment: Deployment) -> None:
+def test_the_deployed_worker_container_mounts_only_the_read_only_ca_directory(deployment: Deployment) -> None:
     """Read from the running container, not the file that asked for it.
 
     A resolved Compose model says what was requested; this says what Docker
-    actually gave the process that ran the plan below.
+    actually gave the process that ran the plan below. The one mount is the
+    operator's CA directory, read-only, which the API also mounts read-only:
+    neither side can write to it, so it carries no run state between them.
     """
     worker = inspect(deployment.container("sync-worker"))
     api = inspect(deployment.container("sync-api"))
 
-    assert worker["Mounts"] == [], f"the worker container mounts {worker['Mounts']}"
-    assert {mount["Source"] for mount in worker["Mounts"]} & {mount["Source"] for mount in api["Mounts"]} == set()
+    targets = [(mount["Destination"], mount["RW"]) for mount in worker["Mounts"]]
+    assert targets == [("/etc/infrahub-sync/ca", False)], f"the worker container mounts {worker['Mounts']}"
+
+    def writable(container: dict) -> set[str]:
+        return {mount["Source"] for mount in container["Mounts"] if mount["RW"]}
+
+    assert writable(worker) & writable(api) == set()
 
 
 def test_the_deployed_worker_has_no_configuration_directory_in_its_environment(
