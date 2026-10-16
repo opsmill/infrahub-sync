@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 from .models import _SETTING_NAME, ConfigurationPackage, ValidationFinding, is_renderable_setting_path
@@ -284,6 +284,8 @@ def _read_infrahub_destination_schema(package: ConfigurationPackage, branch: str
 # nothing into it: not an exception type name — a metaclass executes on that read — and
 # never third-party exception text.
 _UNUSABLE_SCHEMA_RESPONSE = "destination returned an unusable schema response"
+# The attribute kind whose choice names the schema read keeps (research R6).
+DROPDOWN_ATTRIBUTE_KIND = "Dropdown"
 
 
 def _normalized_schema_snapshot(schema: object) -> Mapping[str, Any]:
@@ -344,7 +346,7 @@ def _build_schema_snapshot(schema: object) -> dict[str, Any]:
 def _attribute_shape(attribute: Any) -> dict[str, Any]:
     """The attribute properties that can change a runtime model or a planned write."""
     computed = getattr(attribute, "computed_attribute", None)
-    return {
+    shape = {
         "kind": _member_text(attribute.kind),
         "optional": _exact_bool(attribute.optional),
         "default_value": _json_native_default(attribute.default_value),
@@ -352,6 +354,24 @@ def _attribute_shape(attribute: Any) -> dict[str, Any]:
         "read_only": _exact_bool(getattr(attribute, "read_only", False))
         or (computed is not None and getattr(computed, "kind", None) != "User"),
     }
+    if shape["kind"] == DROPDOWN_ATTRIBUTE_KIND:
+        shape["choices"] = _choice_names(getattr(attribute, "choices", None))
+    return shape
+
+
+def _choice_names(choices: object) -> list[str]:
+    """The names of a Dropdown's choices, which the plan checks source values against (research R6)."""
+    if choices is None:
+        return []
+    if not isinstance(choices, (list, tuple)):
+        raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+    names: list[str] = []
+    for choice in choices:
+        name = cast("Mapping[str, Any]", choice).get("name") if isinstance(choice, Mapping) else None
+        if not isinstance(name, str):
+            raise DestinationSchemaReadError(_UNUSABLE_SCHEMA_RESPONSE, reason="rejected")
+        names.append(name)
+    return names
 
 
 def _relationship_shape(relationship: Any) -> dict[str, Any]:

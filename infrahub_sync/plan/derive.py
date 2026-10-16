@@ -68,12 +68,16 @@ from infrahub_sync.plan.errors import (
 )
 from infrahub_sync.plan.identity import canonical_identity, operation_id
 from infrahub_sync.plan.keying import (
+    IdentityGroup,
     _component_field,
+    destination_keys,
+    merged_identity_groups,
     refuse_destination_identity_collisions,
     refuse_source_identity_collisions,
     refuse_unkeyed_create,
     require_infrahub_create_schema,
 )
+from infrahub_sync.plan.left_out_peer import LeftOutPeers
 from infrahub_sync.plan.models import PlannedOperation, RelationshipReference
 from infrahub_sync.plan.reference_candidates import literal_peer_kind_is_unambiguous, reference_candidates
 
@@ -190,6 +194,7 @@ def _peer_pair(
     chain: tuple[tuple[str, Any], ...],
     peers: DestinationOnlyPeers | None,
     allow_missing: bool = False,
+    left_out: LeftOutPeers | None = None,
 ) -> dict[str, Any]:
     """Return the nested `{"peer_kind", "identity"}` pair naming one peer (AD043).
 
@@ -198,9 +203,12 @@ def _peer_pair(
     `(kind, unique_id)` pairs already open, so a configuration whose identifiers reference
     each other in a cycle fails with a message rather than a `RecursionError`.
 
+    A peer absent from the store that `left_out` names, a record of the load report or a peer
+    marked "not in the source", resolves to its placeholder pair (spec 009 research R7).
+
     Raises:
         SourcePeerUnresolvedError: the peer is in none of the candidate kinds' buckets and
-            `destination_only_identity` does not admit it (the **absent** arm).
+            neither `left_out` nor `destination_only_identity` admits it (the **absent** arm).
     """
     probed = _probe_peer_kind(
         store=store,
@@ -210,6 +218,9 @@ def _peer_pair(
         field=field,
     )
     if probed is None:
+        placeholder = left_out.pair(candidates=candidates, unique_id=unique_id) if left_out is not None else None
+        if placeholder is not None:
+            return placeholder
         if len(candidates) == 1 and literal_peer_kind_is_unambiguous(config, owning_kind, field, candidates[0]):
             literal = destination_only_identity(
                 config=config,
@@ -260,6 +271,7 @@ def _peer_pair(
         chain=(*chain, (peer_kind, unique_id)),
         peers=peers,
         allow_missing=allow_missing,
+        left_out=left_out,
     )
     return {
         "peer_kind": peer_kind,
@@ -280,6 +292,7 @@ def _resolve_one_reference(
     chain: tuple[tuple[str, Any], ...],
     peers: DestinationOnlyPeers | None,
     allow_missing: bool = False,
+    left_out: LeftOutPeers | None = None,
 ) -> _ResolvedReference:
     """Resolve one reference-bearing field's value into a peer kind and peer identities.
 
@@ -305,6 +318,7 @@ def _resolve_one_reference(
             chain=chain,
             peers=peers,
             allow_missing=allow_missing,
+            left_out=left_out,
         )
         for unique_id in unique_ids
     ]
@@ -348,6 +362,7 @@ def _resolve_references(
     chain: tuple[tuple[str, Any], ...] = (),
     peers: DestinationOnlyPeers | None = None,
     allow_missing: bool = False,
+    left_out: LeftOutPeers | None = None,
 ) -> dict[str, _ResolvedReference]:
     """Resolve every reference-bearing field of `values` that carries a value.
 
@@ -362,6 +377,9 @@ def _resolve_references(
 
     `allow_missing` retains null components while examining the full source population.
     Operation derivation keeps the default strict identity proof.
+
+    `left_out` defaults to none, which refuses a reference to a record the load left out.
+    Operation derivation passes the source's, so such a reference becomes a placeholder.
     """
     resolved: dict[str, _ResolvedReference] = {}
     for field in sorted(candidates):
@@ -380,6 +398,7 @@ def _resolve_references(
             chain=chain,
             peers=peers,
             allow_missing=allow_missing,
+            left_out=left_out,
         )
     return resolved
 
@@ -610,7 +629,8 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
         UnformableDestinationIdentityError: an operation's destination identity cannot be
             formed.
         SourcePeerUnresolvedError: a relationship peer is absent from the loaded source
-            store, or its kind is ambiguous across the candidate kinds (AD082).
+            store and from its load report, or its kind is ambiguous across the candidate
+            kinds (AD082).
         UnserializablePayloadValueError: a payload value is outside the canonical-value
             table.
     """
@@ -620,6 +640,7 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
     # Read once per derivation: the destination key a destination-only peer is recorded
     # against does not change mid-plan, and the warning is de-duplicated across the whole run.
     peers = destination_only_peers(destination_adapter)
+    left_out = LeftOutPeers.from_adapter(source_adapter)
     # Read once per kind rather than per element: an update's id is looked up by unique id,
     # and the destination store is already fully in memory by the time derivation runs.
     destination_ids_by_kind: dict[str, dict[str, str | None]] = {}
@@ -646,6 +667,7 @@ def operations_from_diff(  # pylint: disable=redefined-outer-name
                 config=config,
                 owning_kind=kind,
                 peers=peers,
+                left_out=left_out,
             )
             identity = _identity_from_keys(keys=keys, kind=kind, resolved=resolved)
             _warn_dropped_cardinality_one_clear(
@@ -763,39 +785,14 @@ def _identity_attributes_by_kind(operations: Sequence[PlannedOperation]) -> dict
     return by_kind
 
 
-def _destination_keys(node: Any) -> list[tuple[str, ...]]:
-    """Sorted declared keys reduced to mapping field names for the advisory warning."""
-    constraints = getattr(node, "uniqueness_constraints", None) or []
-    human_friendly_id = getattr(node, "human_friendly_id", None)
-    declared = [*constraints, *([human_friendly_id] if human_friendly_id else [])]
-    keys = {tuple(sorted({_component_field(component) for component in key})) for key in declared if key}
-    return sorted(keys)
-
-
-def _merged_identity_counts(operations: Sequence[PlannedOperation], *, key: tuple[str, ...]) -> tuple[int, int]:
-    """Count collided source operations and destination identities after projection onto `key`.
-
-    Exclude deletes, which represent destination objects absent from the source.
-    """
-    groups: dict[bytes, int] = {}
-    for operation in operations:
-        if operation.action == DIFF_DELETE_ACTION:
-            continue
-        projection = {name: value for name, value in operation.identity.items() if name in key}
-        encoded = canonical_json_bytes(projection, kind=operation.kind)
-        groups[encoded] = groups.get(encoded, 0) + 1
-    collided = [count for count in groups.values() if count > 1]
-    return sum(collided), len(collided)
-
-
 def _warn_identity_finer_than_destination_key(
     *,
     kind: str,
     node: Any,
     supplied: set[str],
     operations: Sequence[PlannedOperation],
-) -> None:
-    """Warn where the destination cannot tell the plan's identities apart.
+) -> list[IdentityGroup]:
+    """Warn where the destination cannot tell the plan's identities apart, and return the groups.
 
     A finer source identity alone is allowed; proven create collisions are refused
     separately. FR-024's two arms test opposite subset relations: a missing destination
@@ -804,15 +801,20 @@ def _warn_identity_finer_than_destination_key(
     `Comms closet`, one per site, previously became one without a signal. Report surplus
     fields and projected operation counts. Kinds without a destination key receive the
     separate unkeyed-write warning; the destination has nothing to distinguish there.
+
+    Returns the merge groups: the operations that share one destination identity (spec 009
+    research R8). The problem pass leaves out every record of a group.
     """
-    keys = _destination_keys(node)
+    keys = destination_keys(node)
     if not keys or any(supplied <= set(key) for key in keys):
-        return
+        return []
 
     # Select the closest declared key, breaking ties deterministically.
     closest = min(keys, key=lambda key: (-len(supplied & set(key)), key))
     uncovered = sorted(supplied - set(closest))
-    collided, destination_identities = _merged_identity_counts(operations, key=closest)
+    groups = merged_identity_groups(operations, kind=kind, key=closest)
+    collided = sum(len(group.operations) for group in groups)
+    destination_identities = len(groups)
     if collided:
         identities = "identity" if destination_identities == 1 else "identities"
         observed = (
@@ -834,6 +836,7 @@ def _warn_identity_finer_than_destination_key(
         ", ".join(uncovered),
         observed,
     )
+    return groups
 
 
 def _source_identities(

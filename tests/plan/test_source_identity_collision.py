@@ -13,14 +13,18 @@ from diffsync import Adapter, DiffSyncModel
 from infrahub_sync import DiffSyncMixin, SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncInstance
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.parquet_io import write_resource_side
-from infrahub_sync.plan.derive import operations_from_diff, warn_missing_convergence_key
+from infrahub_sync.plan.derive import (
+    _source_identities,  # noqa: PLC2701 - the population the convergence check reads.
+    operations_from_diff,
+    warn_missing_convergence_key,
+)
 from infrahub_sync.plan.errors import (
     DestinationIdentityCollisionError,
     PlanVerificationError,
     SourcePeerUnresolvedError,
     UnkeyedCreateRefusedError,
 )
-from infrahub_sync.plan.keying import refuse_source_identity_collisions
+from infrahub_sync.plan.keying import refuse_source_identity_collisions, source_identity_collision_groups
 from infrahub_sync.potenda import Potenda
 
 if TYPE_CHECKING:
@@ -196,6 +200,38 @@ def test_full_source_population_refuses_lossy_creates(
         assert ("device__site__name__value" if nested else "site__name__value") in message
         assert error.value.wrote is False
     assert not (tmp_path / "plan" / "manifest.json").exists()
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["rack", "interface-device-site"])
+@pytest.mark.parametrize("existing", ["none", "update", "unchanged"])
+def test_the_group_half_returns_both_source_records_of_a_refused_plan(*, nested: bool, existing: str) -> None:
+    """Spec 009 R8: the records `write_plan` refuses above form one group with both records.
+
+    `write_plan` still refuses here; the problem pass (spec 009 T050) leaves out the group instead.
+    """
+    source, destination, kind = populations(nested=nested, existing=existing)
+    operations = operations_from_diff(
+        engine(source, destination).diff(),
+        config=config(),
+        tier_of=lambda _: 0,
+        source_adapter=source,
+        destination_adapter=destination,
+    )
+    creates = [operation for operation in operations if operation.kind == kind and operation.action == "create"]
+    identities = _source_identities(kind=kind, source_adapter=source, config=config(), peers=None)
+
+    groups = source_identity_collision_groups(
+        kind=kind,
+        node=destination.schema[kind],  # ty: ignore[unresolved-attribute]
+        creates=creates,
+        identities=identities,
+    )
+
+    assert len(groups) == 1
+    assert list(groups[0].operations) == creates
+    assert sorted(identifier for identifier, _ in groups[0].source_records) == sorted(
+        record.get_unique_id() for record in source.get_all(kind)
+    )
 
 
 @pytest.mark.parametrize("nested", [False, True])

@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 def _member_semantics(member: NormalizedAttribute | NormalizedRelationship) -> dict[str, Any]:
     """Project one member's model- and write-affecting properties."""
     if isinstance(member, NormalizedAttribute):
-        return {
+        semantics: dict[str, Any] = {
             "name": member.name,
             "role": "attribute",
             "kind": member.kind,
@@ -47,6 +47,12 @@ def _member_semantics(member: NormalizedAttribute | NormalizedRelationship) -> d
             "unique": member.unique,
             "read_only": member.read_only,
         }
+        # A plan checks Dropdown values against the choices (research R6), so a change to them
+        # invalidates a reviewed plan. Sorted: the order the destination lists them in is not
+        # a semantic change. Absent when no choices were read, so earlier fingerprints stand.
+        if member.choices is not None:
+            semantics["choices"] = sorted(member.choices)
+        return semantics
     return {
         "name": member.name,
         "role": "relationship",

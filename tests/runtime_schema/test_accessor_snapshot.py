@@ -19,7 +19,13 @@ _NODE: dict[str, Any] = {
     "uniqueness_constraints": [["name__value"]],
     "attributes": [
         {"name": "name", "kind": AttributeKind.TEXT, "optional": False, "unique": True},
-        {"name": "role", "kind": AttributeKind.DROPDOWN, "optional": True, "default_value": "leaf"},
+        {
+            "name": "role",
+            "kind": AttributeKind.DROPDOWN,
+            "optional": True,
+            "default_value": "leaf",
+            "choices": [{"name": "leaf", "label": "Leaf"}, {"name": "spine", "label": "Spine"}],
+        },
     ],
     "relationships": [
         {"name": "site", "peer": "LocationSite", "cardinality": "one", "optional": False, "kind": "Attribute"},
@@ -64,7 +70,9 @@ def test_node_and_generic_entries_carry_the_key_sets_the_live_test_expects() -> 
     assert set(snapshot[generic.kind]) == base_keys | {"used_by"}
     assert snapshot[generic.kind]["used_by"] == ["LocationFloor", "LocationRackUnit"]
     for attribute in snapshot[node.kind]["attributes"].values():
-        assert set(attribute) == {"kind", "optional", "default_value", "unique", "read_only"}
+        # A Dropdown also carries its choice names (spec 009 research R6).
+        dropdown = {"choices"} if attribute["kind"] == "Dropdown" else set()
+        assert set(attribute) == {"kind", "optional", "default_value", "unique", "read_only"} | dropdown
     for relationship in snapshot[node.kind]["relationships"].values():
         assert set(relationship) == {"peer", "cardinality", "optional", "kind", "read_only"}
 
@@ -76,6 +84,7 @@ def test_the_snapshot_carries_every_attribute_and_relationship_property(snapshot
         "default_value": "leaf",
         "unique": False,
         "read_only": False,
+        "choices": ["leaf", "spine"],
     }
     assert snapshot["InfraDevice"]["relationships"]["interfaces"] == {
         "peer": "InfraInterface",

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Collection, Mapping
+from dataclasses import dataclass
 from hashlib import sha256
 from itertools import starmap
 from operator import itemgetter
@@ -64,22 +65,59 @@ def _identity_paths(identity: Mapping[str, Any], prefix: str = "") -> set[str]:
     return paths
 
 
-def refuse_source_identity_collisions(
+@dataclass(frozen=True)
+class IdentityGroup:
+    """Records that one destination key cannot tell apart (spec 009 research R8).
+
+    The plan cannot tell which record of a group is correct, so the problem pass leaves out
+    every record of it. `operations` are the group's planned operations, in the order the check
+    found them. `source_records` are the loaded source records of the group as
+    `(unique ID, identity)`; only the source population check fills it, because its group can
+    hold a record that has no operation in this plan. `generic` names the generic whose
+    inherited unique attribute matched creates of several kinds.
+    """
+
+    kind: str
+    rule: str
+    components: tuple[str, ...]
+    operations: tuple[PlannedOperation, ...]
+    source_records: tuple[tuple[str, Mapping[str, Any]], ...] = ()
+    generic: str | None = None
+
+    def member_key(self) -> frozenset[tuple[str, bytes]]:
+        """The kind and canonical identity of every record of the group.
+
+        Two checks can find the same records, for example a destination collision and a
+        source collision of the same two creates. Their groups have the same member key, so
+        the problem pass can report the records once.
+        """
+        members = {
+            (operation.kind, canonical_json_bytes(operation.identity, kind=operation.kind))
+            for operation in self.operations
+        }
+        members.update(
+            (self.kind, canonical_json_bytes(identity, kind=self.kind)) for _, identity in self.source_records
+        )
+        return frozenset(members)
+
+
+def source_identity_collision_groups(
     *,
     kind: str,
     node: Any,
     creates: Sequence[PlannedOperation],
     identities: Sequence[tuple[str, Mapping[str, Any]]],
-    declared_identity: Collection[str],
-) -> None:
-    """Refuse a create matching a distinct loaded source identity, even without a diff.
+) -> list[IdentityGroup]:
+    """Return every group of loaded source records that a create shares its match key with.
 
-    Only the human-friendly ID matches a converging create. Uniqueness constraints
-    may reject a write but do not provide an alternative upsert match key.
+    Only the human-friendly ID matches a converging create. Uniqueness constraints may
+    reject a write but do not provide an alternative upsert match key. A group holds every
+    create of the match key that collides and every loaded source record of that match key,
+    unchanged records included; groups are in the order of their first create.
     """
     components = tuple(getattr(node, "human_friendly_id", None) or ())
     if not components or not creates:
-        return
+        return []
     population: dict[bytes, dict[bytes, tuple[str, Mapping[str, Any]]]] = {}
     missing: set[str] = set()
     for identifier, identity in identities:
@@ -97,29 +135,62 @@ def refuse_source_identity_collisions(
             kind,
             ", ".join(sorted(missing)),
         )
+    found: dict[bytes, list[PlannedOperation]] = {}
     for operation in creates:
         values = [_create_component_value(operation, component) for component in components]
         if not all(_usable(value) for value in values):
             continue
-        group = population.get(canonical_json_bytes(values, kind=kind), {})
+        projection = canonical_json_bytes(values, kind=kind)
         own = canonical_json_bytes(operation.identity, kind=kind)
-        others = [record for encoded, record in group.items() if encoded != own]
-        if not others:
-            continue
-        paths = _identity_paths(operation.identity)
-        for _, identity in others:
-            paths.update(_identity_paths(identity))
-        indistinguishable = ", ".join(sorted(paths - set(components))) or "distinct source identities"
-        ids = ", ".join(starmap(_source_record_identifier, sorted(others, key=itemgetter(0))[:2]))
-        msg = (
-            f"Create {operation.operation_id!r} of destination kind {kind!r} shares its actual destination "
-            f"match key (human-friendly ID: {', '.join(components)}) with a distinct loaded source record. "
-            f"Declared source identity (mapping identifiers): {', '.join(sorted(declared_identity))}. "
-            f"The destination cannot distinguish: {indistinguishable}. Other loaded source record identifiers: {ids}. "
-            f"{_collision_values(components, operation)}. Applying the create could replace that record's data. "
-            "The whole plan was refused before any destination write."
+        if any(encoded != own for encoded in population.get(projection, {})):
+            found.setdefault(projection, []).append(operation)
+    return [
+        IdentityGroup(
+            kind=kind,
+            rule="human-friendly ID",
+            components=components,
+            operations=tuple(operations),
+            source_records=tuple(population[projection].values()),
         )
-        raise DestinationIdentityCollisionError(msg)
+        for projection, operations in found.items()
+    ]
+
+
+def refuse_source_identity_collisions(
+    *,
+    kind: str,
+    node: Any,
+    creates: Sequence[PlannedOperation],
+    identities: Sequence[tuple[str, Mapping[str, Any]]],
+    declared_identity: Collection[str],
+) -> None:
+    """Refuse a create matching a distinct loaded source identity, even without a diff.
+
+    Raises `DestinationIdentityCollisionError` for the first group of
+    `source_identity_collision_groups`, naming its first create.
+    """
+    groups = source_identity_collision_groups(kind=kind, node=node, creates=creates, identities=identities)
+    if not groups:
+        return
+    group = groups[0]
+    operation = group.operations[0]
+    components = group.components
+    own = canonical_json_bytes(operation.identity, kind=kind)
+    others = [record for record in group.source_records if canonical_json_bytes(record[1], kind=kind) != own]
+    paths = _identity_paths(operation.identity)
+    for _, identity in others:
+        paths.update(_identity_paths(identity))
+    indistinguishable = ", ".join(sorted(paths - set(components))) or "distinct source identities"
+    ids = ", ".join(starmap(_source_record_identifier, sorted(others, key=itemgetter(0))[:2]))
+    msg = (
+        f"Create {operation.operation_id!r} of destination kind {kind!r} shares its actual destination "
+        f"match key (human-friendly ID: {', '.join(components)}) with a distinct loaded source record. "
+        f"Declared source identity (mapping identifiers): {', '.join(sorted(declared_identity))}. "
+        f"The destination cannot distinguish: {indistinguishable}. Other loaded source record identifiers: {ids}. "
+        f"{_collision_values(components, operation)}. Applying the create could replace that record's data. "
+        "The whole plan was refused before any destination write."
+    )
+    raise DestinationIdentityCollisionError(msg)
 
 
 def _source_record_identifier(identifier: str, identity: Mapping[str, Any]) -> str:
@@ -486,10 +557,10 @@ def _unique_generic_attributes(node: Any, schema: Mapping[str, Any]) -> set[tupl
     return found
 
 
-def _refuse_cross_kind_generic_collisions(
+def _cross_kind_generic_groups(
     *, by_kind: Mapping[str, list[PlannedOperation]], schema: Mapping[str, Any]
-) -> None:
-    """Refuse creates matched across kinds by a shared generic's unique attribute."""
+) -> list[IdentityGroup]:
+    """Return the creates of several kinds matched by a shared generic's unique attribute."""
     by_generic_rule: dict[tuple[str, str], list[PlannedOperation]] = {}
     for kind, creates in by_kind.items():
         node = schema.get(kind)
@@ -497,6 +568,7 @@ def _refuse_cross_kind_generic_collisions(
             continue
         for rule in _unique_generic_attributes(node, schema):
             by_generic_rule.setdefault(rule, []).extend(creates)
+    groups: list[IdentityGroup] = []
     for (generic, attribute), creates in sorted(by_generic_rule.items()):
         if len({operation.kind for operation in creates}) < 2:
             continue
@@ -506,28 +578,34 @@ def _refuse_cross_kind_generic_collisions(
             value = _create_component_value(operation, component)
             if _usable(value):
                 by_projection.setdefault(canonical_json_bytes([value], kind=generic), []).append(operation)
-        for group in by_projection.values():
-            if len({operation.kind for operation in group}) < 2:
-                continue
-            kinds = ", ".join(sorted({operation.kind for operation in group}))
-            ids = ", ".join(sorted(operation.operation_id for operation in group[:2]))
-            msg = (
-                f"Planned creates of destination kinds {kinds} collide on inherited unique attribute "
-                f"{generic}.{component}, {_collision_values((component,), group[0])}: {ids}. "
-                "Applying them could match one generic object across kinds. "
-                "The whole plan was refused before any destination write."
+        groups.extend(
+            IdentityGroup(
+                kind=generic,
+                rule="inherited unique attribute",
+                components=(component,),
+                operations=tuple(group),
+                generic=generic,
             )
-            raise DestinationIdentityCollisionError(msg)
+            for group in by_projection.values()
+            if len({operation.kind for operation in group}) >= 2
+        )
+    return groups
 
 
-def refuse_destination_identity_collisions(
+def destination_identity_collision_groups(
     *, schema: Mapping[str, Any], operations: Sequence[PlannedOperation]
-) -> None:
-    """Refuse creates sharing any declared destination uniqueness rule before a write."""
+) -> list[IdentityGroup]:
+    """Return every group of creates that share a declared destination uniqueness rule.
+
+    Groups of one kind come first, by kind and then in the order of the kind's rules; groups
+    of creates of several kinds matched by a generic's inherited unique attribute follow. The
+    same creates can form a group under several rules; each group has the same member key.
+    """
     by_kind: dict[str, list[PlannedOperation]] = {}
     for operation in operations:
         if operation.action == "create":
             by_kind.setdefault(operation.kind, []).append(operation)
+    groups: list[IdentityGroup] = []
     for kind, creates in sorted(by_kind.items()):
         node = schema.get(kind)
         if node is None or len(creates) < 2:
@@ -540,18 +618,75 @@ def refuse_destination_identity_collisions(
                     continue
                 projection = canonical_json_bytes(values, kind=kind)
                 by_projection.setdefault(projection, []).append(operation)
-            collided = [group for group in by_projection.values() if len(group) > 1]
-            if not collided:
-                continue
-            group = collided[0]
-            ids = ", ".join(sorted(operation.operation_id for operation in group[:2]))
-            if len(group) > 2:
-                ids += f", and {len(group) - 2} more"
-            msg = (
-                f"Planned creates of destination kind {kind!r} collide on {rule_name} "
-                f"({', '.join(components)}), {_collision_values(components, group[0])}: {ids}. "
-                "Applying them could merge distinct planned objects "
-                "into one destination object. The whole plan was refused before any destination write."
+            groups.extend(
+                IdentityGroup(kind=kind, rule=rule_name, components=components, operations=tuple(group))
+                for group in by_projection.values()
+                if len(group) > 1
             )
-            raise DestinationIdentityCollisionError(msg)
-    _refuse_cross_kind_generic_collisions(by_kind=by_kind, schema=schema)
+    groups.extend(_cross_kind_generic_groups(by_kind=by_kind, schema=schema))
+    return groups
+
+
+def refuse_destination_identity_collisions(
+    *, schema: Mapping[str, Any], operations: Sequence[PlannedOperation]
+) -> None:
+    """Refuse creates sharing any declared destination uniqueness rule before a write.
+
+    Raises `DestinationIdentityCollisionError` for the first group of
+    `destination_identity_collision_groups`.
+    """
+    groups = destination_identity_collision_groups(schema=schema, operations=operations)
+    if not groups:
+        return
+    group = groups[0]
+    if group.generic is not None:
+        component = group.components[0]
+        kinds = ", ".join(sorted({operation.kind for operation in group.operations}))
+        ids = ", ".join(sorted(operation.operation_id for operation in group.operations[:2]))
+        msg = (
+            f"Planned creates of destination kinds {kinds} collide on inherited unique attribute "
+            f"{group.generic}.{component}, {_collision_values((component,), group.operations[0])}: {ids}. "
+            "Applying them could match one generic object across kinds. "
+            "The whole plan was refused before any destination write."
+        )
+        raise DestinationIdentityCollisionError(msg)
+    ids = ", ".join(sorted(operation.operation_id for operation in group.operations[:2]))
+    if len(group.operations) > 2:
+        ids += f", and {len(group.operations) - 2} more"
+    msg = (
+        f"Planned creates of destination kind {group.kind!r} collide on {group.rule} "
+        f"({', '.join(group.components)}), {_collision_values(group.components, group.operations[0])}: {ids}. "
+        "Applying them could merge distinct planned objects "
+        "into one destination object. The whole plan was refused before any destination write."
+    )
+    raise DestinationIdentityCollisionError(msg)
+
+
+def destination_keys(node: Any) -> list[tuple[str, ...]]:
+    """Sorted declared destination keys, reduced to mapping field names."""
+    constraints = getattr(node, "uniqueness_constraints", None) or []
+    human_friendly_id = getattr(node, "human_friendly_id", None)
+    declared = [*constraints, *([human_friendly_id] if human_friendly_id else [])]
+    keys = {tuple(sorted({_component_field(component) for component in key})) for key in declared if key}
+    return sorted(keys)
+
+
+def merged_identity_groups(
+    operations: Sequence[PlannedOperation], *, kind: str, key: tuple[str, ...]
+) -> list[IdentityGroup]:
+    """Return the groups of operations whose identities are equal after projection onto `key`.
+
+    `key` holds mapping field names (`destination_keys`). Deletes are excluded: they stand
+    for destination objects absent from the source.
+    """
+    by_projection: dict[bytes, list[PlannedOperation]] = {}
+    for operation in operations:
+        if operation.action == "delete":
+            continue
+        projection = {name: value for name, value in operation.identity.items() if name in key}
+        by_projection.setdefault(canonical_json_bytes(projection, kind=operation.kind), []).append(operation)
+    return [
+        IdentityGroup(kind=kind, rule="closest destination key", components=key, operations=tuple(group))
+        for group in by_projection.values()
+        if len(group) > 1
+    ]
