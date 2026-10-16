@@ -2,11 +2,11 @@
 
 `build_failure_cause` is the one place where a run failure becomes text that leaves the worker.
 It classifies the failure by the exception types in the cause chain and reads only named,
-typed attributes: Infrahub's error code, kind, attribute and message from a `GraphQLError`,
-the kind, record ID and field of a typed Sync error, and the side and adapter name of a
-`SideLoadError`. It never formats an exception (`str(exc)`, `repr(exc)`, `exc.args`), an
-address, a header or a traceback, so no credential can reach a cause, whatever its length or
-characters. Each field is limited in length; `summary` and `next_action` come from fixed
+typed attributes: the error code, message, and the kind and attribute in `extensions.data` of
+a `GraphQLError` from Infrahub, the kind, record ID and field of a typed Sync error, and the
+side and adapter name of a `SideLoadError`. It never formats an exception (`str(exc)`,
+`repr(exc)`, `exc.args`), an address, a header or a traceback, so no credential can reach a
+cause, whatever its length or characters. Each field is limited in length; `summary` and `next_action` come from fixed
 templates.
 
 An exception class outside this module's imports declares its failure type with a class-level
@@ -245,18 +245,43 @@ def _infrahub_message(value: object) -> str | None:
     return _CONTROL_CHARACTERS.sub("", value)[:MESSAGE_LIMIT] or None
 
 
+def _attribute(data: Mapping[str, Any]) -> str | None:
+    """The attribute an Infrahub error names: `field_name`, or the members of a uniqueness constraint.
+
+    `UNIQUENESS_VIOLATION` carries `fields`, a list of names (attributes or relationships). They
+    are joined with ", " in Infrahub's order when every member is a non-empty string, then cut to
+    the name limit; any other value gives no attribute.
+    """
+    field_name = _name(data.get("field_name"))
+    if field_name is not None:
+        return field_name
+    fields = data.get("fields")
+    if isinstance(fields, list) and fields and all(isinstance(item, str) and item for item in fields):
+        return _name(", ".join(fields))
+    return None
+
+
 def _rejection_fields(link: BaseException) -> dict[str, Any]:
-    """Infrahub's code, kind, attribute and message, from the first error it returned."""
+    """Infrahub's code, kind, attribute and message, from the first error it returned.
+
+    Infrahub's error formatter writes `extensions = {"code", "http_status", "data"}`, and the
+    kind and attribute sit in `data` (`node_kind`, `field_name`, or `fields` for a uniqueness
+    violation). An older Infrahub sends no `data`; the kind and attribute are then null. The
+    free-text members of `data` (`detail`, `constraint`, `identifier`) are not read: the cause
+    has no field for them.
+    """
     errors = getattr(link, "errors", None)
     first = errors[0] if isinstance(errors, list) and errors else None
     if not isinstance(first, Mapping):
         return {}
     extensions = first.get("extensions")
     extensions = extensions if isinstance(extensions, Mapping) else {}
+    data = extensions.get("data")
+    data = data if isinstance(data, Mapping) else {}
     return {
         "error_code": _name(extensions.get("code")),
-        "node_kind": _name(extensions.get("node_kind")),
-        "attribute": _name(extensions.get("attribute")),
+        "node_kind": _name(data.get("node_kind")),
+        "attribute": _attribute(data),
         "infrahub_message": _infrahub_message(first.get("message")),
     }
 

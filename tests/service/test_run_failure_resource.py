@@ -100,8 +100,13 @@ def test_a_rejected_write_returns_infrahub_s_fields(harness: SyncStageHarness, m
                 "message": "planned is not a valid value for status",
                 "extensions": {
                     "code": "ATTRIBUTE_CONSTRAINT_VIOLATION",
-                    "node_kind": "DcimDevice",
-                    "attribute": "status",
+                    "http_status": 422,
+                    "data": {
+                        "node_kind": "DcimDevice",
+                        "field_name": "status",
+                        "constraint": "enum",
+                        "detail": "planned is not one of the allowed values",
+                    },
                 },
             }
         ],

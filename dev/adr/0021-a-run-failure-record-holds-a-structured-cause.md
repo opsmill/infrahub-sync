@@ -27,7 +27,8 @@ A run's failure record holds a structured cause built only from these fields:
 - the stage;
 - the failure type, from a fixed list;
 - the system role and the adapter name;
-- Infrahub's error code, and the node kind and attribute from Infrahub's `extensions`;
+- Infrahub's error code (`extensions.code`), and the node kind and attribute from
+  `extensions.data` (`node_kind`, and `field_name` or the `fields` of a uniqueness violation);
 - Infrahub's own error message, for a rejected write only;
 - the kind, record identity and field that a typed Sync exception names;
 - the apply progress.

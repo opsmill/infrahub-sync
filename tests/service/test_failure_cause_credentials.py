@@ -114,7 +114,21 @@ CASES: list[Any] = [
     pytest.param(
         "apply",
         lambda: GraphQLError(
-            errors=[{"message": "Value is not valid for name", "extensions": {"code": "VALIDATION_ERROR"}}],
+            errors=[
+                {
+                    "message": "Value is not valid for name",
+                    "extensions": {
+                        "code": "ATTRIBUTE_CONSTRAINT_VIOLATION",
+                        "http_status": 422,
+                        "data": {
+                            "node_kind": "DcimDevice",
+                            "field_name": "name",
+                            "constraint": SHORT_CREDENTIAL,
+                            "detail": f"{SPECIAL_CREDENTIAL} {TEXT}",
+                        },
+                    },
+                }
+            ],
             query=f"mutation {{ login(token: {json.dumps(SPECIAL_CREDENTIAL)}) }} # {TEXT}",
             variables={"password": SHORT_CREDENTIAL, "text": TEXT},
         ),

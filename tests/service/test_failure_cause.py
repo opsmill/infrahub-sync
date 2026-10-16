@@ -99,6 +99,11 @@ def _graphql(errors: list[dict[str, Any]]) -> GraphQLError:
     return GraphQLError(errors=errors, query=LEAK, variables={"text": LEAK})
 
 
+def _extensions(code: str, data: object) -> dict[str, Any]:
+    """The `extensions` that Infrahub's error formatter writes: code, HTTP status and `data`."""
+    return {"code": code, "http_status": 422, "data": data}
+
+
 def _expected(failure_type: str, summary: str, **fields: object) -> dict[str, Any]:
     return {"failure_type": failure_type, "summary": summary, **fields}
 
@@ -112,7 +117,9 @@ CASES: list[Any] = [
                 [
                     {
                         "message": f"Value is not valid\x07 for name\n{chr(0x9B)}",
-                        "extensions": {"code": "VALIDATION_ERROR", "node_kind": "DcimDevice", "attribute": "name"},
+                        "extensions": _extensions(
+                            "ATTRIBUTE_REQUIRED", {"node_kind": "DcimDevice", "field_name": "name"}
+                        ),
                     },
                     {"message": LEAK, "extensions": {"code": LEAK}},
                 ]
@@ -120,14 +127,172 @@ CASES: list[Any] = [
         ),
         _expected(
             "destination_rejected_write",
-            "The destination rejected a write to DcimDevice with error code VALIDATION_ERROR",
-            error_code="VALIDATION_ERROR",
+            "The destination rejected a write to DcimDevice with error code ATTRIBUTE_REQUIRED",
+            error_code="ATTRIBUTE_REQUIRED",
             node_kind="DcimDevice",
             attribute="name",
             infrahub_message="Value is not valid for name",
             error_class="RuntimeError",
         ),
-        id="destination_rejected_write-with-code",
+        id="destination_rejected_write-attribute-required",
+    ),
+    pytest.param(
+        "apply",
+        lambda: _graphql(
+            [
+                {
+                    "message": "Value is not valid for status",
+                    "extensions": _extensions(
+                        "ATTRIBUTE_INVALID_TYPE",
+                        {
+                            "node_kind": "DcimDevice",
+                            "field_name": "status",
+                            "expected_type": LEAK,
+                            "received_type": LEAK,
+                            "constraint": LEAK,
+                            "detail": LEAK,
+                        },
+                    ),
+                }
+            ]
+        ),
+        _expected(
+            "destination_rejected_write",
+            "The destination rejected a write to DcimDevice with error code ATTRIBUTE_INVALID_TYPE",
+            error_code="ATTRIBUTE_INVALID_TYPE",
+            node_kind="DcimDevice",
+            attribute="status",
+            infrahub_message="Value is not valid for status",
+            error_class="GraphQLError",
+        ),
+        id="destination_rejected_write-attribute-invalid-type",
+    ),
+    pytest.param(
+        "apply",
+        lambda: _graphql(
+            [
+                {
+                    "message": "Value is too long for name",
+                    "extensions": _extensions(
+                        "ATTRIBUTE_CONSTRAINT_VIOLATION",
+                        {"node_kind": "DcimDevice", "field_name": "name", "constraint": LEAK, "detail": LEAK},
+                    ),
+                }
+            ]
+        ),
+        _expected(
+            "destination_rejected_write",
+            "The destination rejected a write to DcimDevice with error code ATTRIBUTE_CONSTRAINT_VIOLATION",
+            error_code="ATTRIBUTE_CONSTRAINT_VIOLATION",
+            node_kind="DcimDevice",
+            attribute="name",
+            infrahub_message="Value is too long for name",
+            error_class="GraphQLError",
+        ),
+        id="destination_rejected_write-attribute-constraint-violation",
+    ),
+    pytest.param(
+        "apply",
+        lambda: _graphql(
+            [
+                {
+                    "message": "Violates uniqueness constraint",
+                    "extensions": _extensions(
+                        "UNIQUENESS_VIOLATION", {"node_kind": "DcimDevice", "fields": ["name", "site"]}
+                    ),
+                }
+            ]
+        ),
+        _expected(
+            "destination_rejected_write",
+            "The destination rejected a write to DcimDevice with error code UNIQUENESS_VIOLATION",
+            error_code="UNIQUENESS_VIOLATION",
+            node_kind="DcimDevice",
+            attribute="name, site",
+            infrahub_message="Violates uniqueness constraint",
+            error_class="GraphQLError",
+        ),
+        id="destination_rejected_write-uniqueness-violation",
+    ),
+    pytest.param(
+        "apply",
+        lambda: _graphql(
+            [
+                {
+                    "message": "Violates uniqueness constraint",
+                    "extensions": _extensions(
+                        "UNIQUENESS_VIOLATION", {"node_kind": "DcimDevice", "fields": ["name", 5]}
+                    ),
+                }
+            ]
+        ),
+        _expected(
+            "destination_rejected_write",
+            "The destination rejected a write to DcimDevice with error code UNIQUENESS_VIOLATION",
+            error_code="UNIQUENESS_VIOLATION",
+            node_kind="DcimDevice",
+            infrahub_message="Violates uniqueness constraint",
+            error_class="GraphQLError",
+        ),
+        id="destination_rejected_write-uniqueness-violation-non-string-member",
+    ),
+    pytest.param(
+        "apply",
+        lambda: _graphql(
+            [
+                {
+                    "message": "Unable to find the node",
+                    "extensions": _extensions("NODE_NOT_FOUND", {"node_kind": "DcimDevice", "identifier": LEAK}),
+                }
+            ]
+        ),
+        _expected(
+            "destination_rejected_write",
+            "The destination rejected a write to DcimDevice with error code NODE_NOT_FOUND",
+            error_code="NODE_NOT_FOUND",
+            node_kind="DcimDevice",
+            infrahub_message="Unable to find the node",
+            error_class="GraphQLError",
+        ),
+        id="destination_rejected_write-node-not-found",
+    ),
+    pytest.param(
+        "apply",
+        lambda: _graphql(
+            [
+                {
+                    "message": "Value is not valid for name",
+                    "extensions": {"code": "VALIDATION_ERROR", "node_kind": "DcimDevice", "attribute": "name"},
+                }
+            ]
+        ),
+        _expected(
+            "destination_rejected_write",
+            "The destination rejected a write with error code VALIDATION_ERROR",
+            error_code="VALIDATION_ERROR",
+            infrahub_message="Value is not valid for name",
+            error_class="GraphQLError",
+        ),
+        id="destination_rejected_write-no-data-ignores-top-level-names",
+    ),
+    pytest.param(
+        "apply",
+        lambda: _graphql(
+            [
+                {
+                    "message": "Value is not valid for name",
+                    "extensions": {"code": "ATTRIBUTE_REQUIRED", "http_status": 422, "data": ["DcimDevice", "name"]},
+                }
+            ]
+        ),
+        _expected(
+            "destination_rejected_write",
+            "The destination rejected a write with error code ATTRIBUTE_REQUIRED",
+            error_code="ATTRIBUTE_REQUIRED",
+            infrahub_message="Value is not valid for name",
+            error_class="GraphQLError",
+        ),
+        id="destination_rejected_write-data-not-a-dict",
     ),
     pytest.param(
         "sync",
@@ -143,7 +308,12 @@ CASES: list[Any] = [
     pytest.param(
         "apply",
         lambda: _graphql(
-            [{"message": "m" * 2000, "extensions": {"code": "C" * 200, "node_kind": 5, "attribute": ["name"]}}]
+            [
+                {
+                    "message": "m" * 2000,
+                    "extensions": _extensions("C" * 200, {"node_kind": 5, "field_name": ["name"]}),
+                }
+            ]
         ),
         _expected(
             "destination_rejected_write",
@@ -153,6 +323,50 @@ CASES: list[Any] = [
             error_class="GraphQLError",
         ),
         id="destination_rejected_write-limits",
+    ),
+    pytest.param(
+        "apply",
+        lambda: _graphql(
+            [
+                {
+                    "message": "Value is not valid",
+                    "extensions": _extensions("ATTRIBUTE_REQUIRED", {"node_kind": "K" * 200, "field_name": "f" * 200}),
+                }
+            ]
+        ),
+        _expected(
+            "destination_rejected_write",
+            f"The destination rejected a write to {'K' * 128} with error code ATTRIBUTE_REQUIRED",
+            error_code="ATTRIBUTE_REQUIRED",
+            node_kind="K" * 128,
+            attribute="f" * 128,
+            infrahub_message="Value is not valid",
+            error_class="GraphQLError",
+        ),
+        id="destination_rejected_write-data-limits",
+    ),
+    pytest.param(
+        "apply",
+        lambda: _graphql(
+            [
+                {
+                    "message": "Violates uniqueness constraint",
+                    "extensions": _extensions(
+                        "UNIQUENESS_VIOLATION", {"node_kind": "DcimDevice", "fields": ["n" * 100] * 3}
+                    ),
+                }
+            ]
+        ),
+        _expected(
+            "destination_rejected_write",
+            "The destination rejected a write to DcimDevice with error code UNIQUENESS_VIOLATION",
+            error_code="UNIQUENESS_VIOLATION",
+            node_kind="DcimDevice",
+            attribute=", ".join(["n" * 100] * 3)[:128],
+            infrahub_message="Violates uniqueness constraint",
+            error_class="GraphQLError",
+        ),
+        id="destination_rejected_write-uniqueness-violation-limits",
     ),
     pytest.param(
         "plan",

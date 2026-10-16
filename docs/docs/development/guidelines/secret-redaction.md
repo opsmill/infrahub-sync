@@ -29,8 +29,12 @@ into text that leaves the worker:
 - It is called only from `failure_evidence` in `infrahub_sync/service/failure_record.py`, which
   the worker's failure path (`record_failure`) calls for every failed stage.
 - It reads exception classes and typed attributes: the stage, the failure type from a fixed
-  list, the system role and adapter name, Infrahub's error code, node kind and attribute, the
-  kind, identity and field a typed Sync exception names, and the apply progress.
+  list, the system role and adapter name, Infrahub's error code (`extensions.code`), the node
+  kind and attribute in `extensions.data` (`node_kind`, and `field_name` or the `fields` of a
+  uniqueness violation), the kind, identity and field a typed Sync exception names, and the
+  apply progress. It does not read the free-text members of `extensions.data`, such as
+  `detail` and `constraint`. An Infrahub that sends no `data` leaves the kind and attribute
+  null.
 - It keeps Infrahub's own error message only for a rejected write, with control characters
   removed and at most 1,024 characters. Every other field has a length limit of 128 characters.
 - The summary and the next action come from fixed templates over those fields.
