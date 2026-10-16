@@ -1,0 +1,60 @@
+infrahub_sync/runtime_schema/projection.py
+  s_47078ea83e766d::t_d920757a254025 41,50-55
+infrahub_sync/plan/left_out_peer.py
+  s_47078ea83e766d::t_72f77b7a307301 1-76,78-80,83-105
+  s_47078ea83e766d::t_8045737f2908d8 81-82
+  s_47078ea83e766d::t_fe6a1b602967da 77
+tests/runtime_schema/test_accessor_snapshot.py
+  s_47078ea83e766d::t_c45a8350914301 22-28,73-75,87
+infrahub_sync/configuration/capabilities.py
+  s_47078ea83e766d::t_6d8f0bf94e73ab 370
+  s_47078ea83e766d::t_0f58b5b5c3df41 349,357-369,371-374
+  s_47078ea83e766d::t_f9db4935f17a4a 12
+  s_47078ea83e766d::t_daac04febf4593 287-288
+tests/plan/test_source_identity_collision.py
+  s_47078ea83e766d::t_1e78036db9fa02 18-20
+  s_47078ea83e766d::t_cf651b1d865a21 221,224-227,231-234
+  s_47078ea83e766d::t_6d8f0bf94e73ab 16-17
+  s_47078ea83e766d::t_a149b76adc1e1a 27,205-220,222-223,228-230
+  s_47078ea83e766d::t_9326b2faa7547f 235-236
+dev/specs/009-plan-problem-reporting/tasks.md
+  s_47078ea83e766d::t_ea4316816b59cc 117-118,127-129
+infrahub_sync/runtime_schema/domain.py
+  s_47078ea83e766d::t_0f58b5b5c3df41 43-45,176,180-186
+  s_47078ea83e766d::t_daa153fea04032 187-188
+infrahub_sync/plan/derive.py
+  s_47078ea83e766d::t_f7b19826f2593e 71,73-74,80,197,206-208,211,221-223,274,295,321,365,380-382,401,632-633,643,670,794-795,804-806,808,810,815-817,839
+tests/runtime_schema/test_dropdown_choices.py
+  s_47078ea83e766d::t_1e78036db9fa02 19,21
+  s_47078ea83e766d::t_374adb871e1800 1-17,22,24-91,93-167
+  s_47078ea83e766d::t_2279e9cdf1bcdb 23,92
+  s_47078ea83e766d::t_6d8f0bf94e73ab 18,20
+tests/plan/test_left_out_peer_placeholder.py
+  s_47078ea83e766d::t_f9db4935f17a4a 59-63
+  s_47078ea83e766d::t_9f3d6882f5ecc3 1-58,64-124
+tests/runtime_schema/test_projection.py
+  s_47078ea83e766d::t_4f741e3e8b90a5 142,165
+infrahub_sync/plan/keying.py
+  s_47078ea83e766d::t_db949646ca1774 20,68-104,110-111,113-116,120,138,143,145-153,155-193,560,562-563,571,581-587,589-592,595,597-603,608,621-624,626-692
+tests/plan/test_identity_groups.py
+  s_47078ea83e766d::t_6d8f0bf94e73ab 23-24
+  s_47078ea83e766d::t_8045737f2908d8 52-53,55,58-62
+  s_47078ea83e766d::t_429c23eba917d3 1-22,27-51,54,56-57,63-319
+  s_47078ea83e766d::t_1e78036db9fa02 25-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0311ec175aaecebfd44582521a61e3a0cb9cb5b9",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
