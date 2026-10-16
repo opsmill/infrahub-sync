@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Annotated, Any, Generic, Literal, TypeAlias, TypeVar
@@ -9,9 +10,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from infrahub_sync.configuration.credentials import ENV_CREDENTIAL_PREFIX
 from infrahub_sync.execution import Operation  # noqa: TC001 - Pydantic resolves this annotation at runtime.
 
 _IDENTIFIER_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+_CREDENTIAL_NAME = re.compile(rf"{ENV_CREDENTIAL_PREFIX}[A-Za-z0-9_]+")
 _INVALID_SERVICE_WORKER_ID = "service worker identity is invalid"
 _LEGAL_EXECUTION_VERDICTS = {
     ("completed", "succeeded"),
@@ -411,6 +414,36 @@ class AuditEvent(BaseModel):
     def _require_audit_timezone(cls, value: datetime) -> datetime:
         if value.utcoffset() is None:
             msg = "audit-event timestamps must include a timezone"
+            raise ValueError(msg)
+        return value
+
+
+class WorkerEnvironment(BaseModel):
+    """The names of the credential variables one worker holds, and when it last published them.
+
+    The record holds names only. Each name must be a credential variable name, so a value can
+    never be stored in its place.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    worker_id: str = Field(pattern=_IDENTIFIER_PATTERN)
+    credential_names: tuple[str, ...]
+    observed_at: datetime
+
+    @field_validator("credential_names")
+    @classmethod
+    def _require_credential_names(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if any(_CREDENTIAL_NAME.fullmatch(name) is None for name in value):
+            msg = f"worker environment names must be {ENV_CREDENTIAL_PREFIX}* variable names"
+            raise ValueError(msg)
+        return tuple(sorted(set(value)))
+
+    @field_validator("observed_at")
+    @classmethod
+    def _require_observed_timezone(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            msg = "worker environment timestamps must include a timezone"
             raise ValueError(msg)
         return value
 

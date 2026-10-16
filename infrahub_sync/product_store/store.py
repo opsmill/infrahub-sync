@@ -43,6 +43,15 @@ from infrahub_sync.product_store.models import (
     MutationReceipt,
     PrefectExecutionLink,
     ProductRun,
+    WorkerEnvironment,
+)
+from infrahub_sync.product_store.worker_environment import (
+    SELECT_LATEST_WORKER_ENVIRONMENT,
+    UPSERT_WORKER_ENVIRONMENT,
+    WORKER_ENVIRONMENT_SCHEMA,
+    observed_at_text,
+    worker_environment_from_row,
+    worker_environment_values,
 )
 
 _SCHEMA = """
@@ -530,6 +539,10 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
 
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]: ...
 
+    def record_worker_environment(self, record: WorkerEnvironment) -> None: ...
+
+    def latest_worker_environment(self, *, observed_after: datetime) -> WorkerEnvironment | None: ...
+
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
 
     def merge_results(self, run_id: str, results: Mapping[str, Any]) -> None: ...
@@ -573,7 +586,7 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             try:
                 cursor = connection.cursor()
                 try:
-                    for statement in _SCHEMA.split(";"):
+                    for statement in (_SCHEMA + WORKER_ENVIRONMENT_SCHEMA).split(";"):
                         if statement.strip():
                             cursor.execute(statement)
                     self._migrate_product_runs_columns(cursor)
@@ -2254,6 +2267,34 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
             connection.close()
         return tuple(_configuration_version_from_row(row) for row in rows)
 
+    def record_worker_environment(self, record: WorkerEnvironment) -> None:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(UPSERT_WORKER_ENVIRONMENT), worker_environment_values(record))
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def latest_worker_environment(self, *, observed_after: datetime) -> WorkerEnvironment | None:
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(self._sql(SELECT_LATEST_WORKER_ENVIRONMENT), (observed_at_text(observed_after),))
+                row = cursor.fetchone()
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+        return None if row is None else worker_environment_from_row(row)
+
     def record_results(self, run_id: str, results: Mapping[str, Any]) -> None:
         connection = self._connect()
         try:
@@ -2932,6 +2973,14 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
     def list_configuration_versions(self, config_id: str) -> tuple[ConfigurationVersion, ...]:
         """Return every registered version of one configuration, oldest first."""
         return self._records.list_configuration_versions(config_id)
+
+    def record_worker_environment(self, record: WorkerEnvironment) -> None:
+        """Replace one worker's published credential variable names with a newer publication."""
+        self._records.record_worker_environment(record)
+
+    def latest_worker_environment(self, *, observed_after: datetime) -> WorkerEnvironment | None:
+        """Return the most recent publication made at or after `observed_after`, if any."""
+        return self._records.latest_worker_environment(observed_after=observed_after)
 
     def record_results(
         self,

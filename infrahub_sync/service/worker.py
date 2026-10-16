@@ -26,10 +26,11 @@ from pydantic import PrivateAttr
 
 from .orchestration import SERVICE_DEFINITION
 from .trust_store import CustomCertificateError, install_custom_ca_bundle
+from .worker_environment import WorkerEnvironmentPublisher
 
 if TYPE_CHECKING:
     import logging
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
     from anyio.abc import TaskStatus
     from prefect.client.schemas.objects import Flow as APIFlow
@@ -227,6 +228,7 @@ class ServiceProcessWorker(ProcessWorker):
         heartbeat_interval_seconds: int | None = None,
         *,
         base_job_template: dict[str, Any] | None = None,
+        environment_publisher: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__(
             work_pool_name=work_pool_name,
@@ -242,6 +244,7 @@ class ServiceProcessWorker(ProcessWorker):
         self._identity_generation = 0
         self._identity_refresh_requests = 0
         self._identity_refresh_active = False
+        self._environment_publisher = environment_publisher
 
     @classmethod
     def __dispatch_key__(cls) -> str | None:
@@ -338,6 +341,10 @@ class ServiceProcessWorker(ProcessWorker):
         return self._identity_generation
 
     async def get_and_submit_flow_runs(self) -> list[FlowRun]:
+        if self._environment_publisher is not None:
+            # Before the identity check: validation needs the names whether or not this
+            # poll may submit runs. The store client is synchronous.
+            await asyncio.to_thread(self._environment_publisher)
         generation = self._submission_generation()
         if generation is None:
             self._logger.debug("Service worker identity is unavailable; skipping flow run submission.")
@@ -470,13 +477,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stderr.write(f"{error}\n")
         return 1
     pool = _pool_argument(argv)
+    name = service_worker_name()
     # Entered before the worker exists, so nothing this parent imports later -- the
-    # runner, its crash hooks, or an adapter -- can resolve out of a source tree.
+    # runner, its crash hooks, the product store client, or an adapter -- can resolve
+    # out of a source tree.
     with neutral_working_directory():
+        publisher = WorkerEnvironmentPublisher(name)
+        publisher.publish()
         worker = ServiceProcessWorker(
             work_pool_name=pool,
-            name=service_worker_name(),
+            name=name,
             create_pool_if_not_found=False,
+            environment_publisher=publisher.publish,
         )
         asyncio.run(worker.start())
     return 0
