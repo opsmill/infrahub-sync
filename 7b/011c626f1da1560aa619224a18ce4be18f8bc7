@@ -1,0 +1,49 @@
+dev/specs/013-compose-images/plan.md
+  s_47078ea83e766d::t_c4dcffa998f9e5 249-253
+RELEASING.md
+  s_47078ea83e766d::t_9a013861d18b7f 147-148
+tests/compose/conftest.py
+  s_47078ea83e766d::t_aac4e0476a00b6 23-25
+  s_47078ea83e766d::t_95cb50f1fe601c 564-568
+  s_47078ea83e766d::t_e08feb19648be9 462-463
+  s_47078ea83e766d::t_74c40eed37ba87 234-293,295-359
+  s_47078ea83e766d::t_6b3ddbfdd7adb8 294
+tests/test_workflow_contracts.py
+  s_47078ea83e766d::t_65408ef835196a 1791-1879
+.github/workflows/workflow-publish.yml
+  s_47078ea83e766d::t_43b4c23f8ee4be 234-235
+  s_47078ea83e766d::t_5548126e311447 192-233,236-251
+dev/specs/013-compose-images/tasks.md
+  s_47078ea83e766d::t_c4dcffa998f9e5 247-256
+tests/compose/test_fixture_prerequisites.py
+  s_47078ea83e766d::t_cd1ac6f9a62e22 154
+  s_47078ea83e766d::t_d8046f0e6954d2 20
+  s_47078ea83e766d::t_54877f585a0f31 155
+tests/compose/test_readiness_bounds.py
+  s_47078ea83e766d::t_eaba6332441cf5 21,27-32,36,40-45
+  s_47078ea83e766d::t_6b3ddbfdd7adb8 155
+  s_47078ea83e766d::t_0ca7ccca55efe9 103-108,110,119-136,147-151,153-154,156-162
+  s_47078ea83e766d::t_02f9eaf3b241ad 137-146,152
+.github/workflows/trigger-release.yml
+  s_47078ea83e766d::t_cffc6343a3a1da 16-19,21
+tests/compose/lifecycle.py
+  s_47078ea83e766d::t_adbd0584537444 42-47
+  s_47078ea83e766d::t_48d96451a1204b 21
+  s_47078ea83e766d::t_a0bc126c9c5dd9 136-140
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7b011c626f1da1560aa619224a18ce4be18f8bc7",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
