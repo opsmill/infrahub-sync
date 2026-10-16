@@ -71,3 +71,35 @@ deployment starts empty.
 When a write might have reached the destination, do not repeat it. Follow the
 [uncertain-write reconciliation procedure](../compose-deployment#when-the-outcome-of-a-write-is-uncertain):
 read the run record, inspect the destination, and create a fresh plan.
+
+## A run failed: read its cause
+
+When a run fails or stops, the worker records its cause. `diff`, `sync`, and `apply` print it
+when they finish waiting. To read it later, run:
+
+```bash
+docker compose run --rm --no-deps -T cli runs show RUN_ID
+```
+
+The first line names the stage, whether it failed or stopped, and a summary, for example
+`plan failed: the source system (netbox) rejected the token`. The lines below it give the
+destination kind and attribute, the source record and field, the message Infrahub returned,
+or how far a stopped apply got, when these apply. The last line, `next:`, gives the next step.
+The cause holds no credential, address, or error text from a library. `GET /runs/RUN_ID` returns the same cause in the run's `failure` field.
+
+| Summary starts with | Action |
+| --- | --- |
+| `the connection to the ... system (...) failed` | Check that the system runs and that `sync-worker` reaches it on the network, then run the stage again. |
+| `the ... system (...) did not respond in time` | Check the load on the named system and its response time, then run the stage again. |
+| `the ... system (...) rejected the token` | Check the credential variable that the package references for the named system in `.env`, run `docker compose up -d --wait`, then run the stage again. |
+| `the TLS certificate of ... is not trusted` | Add the CA certificate that signed the system's certificate to the directory named by `INFRAHUB_SYNC_CA_CERTIFICATES`, run `docker compose up -d --wait`, then run the stage again. See [Use custom CA certificates](../custom-certificates). |
+| `a credential that the configuration references is missing or not valid` | Set the credential variable in `.env`, run `docker compose up -d --wait`, then run the stage again. `configs validate CONFIG_ID VERSION --branch BRANCH` names each credential variable the worker does not hold. |
+| `the ... record ... could not be loaded` or `the transform of field ... failed` | Fix the record in the source, or the mapping or transform of the named field in the package, then create a new plan. |
+| `the destination rejected a write` | Read the Infrahub message and the node kind and attribute. Fix the cause, then create and review a new plan. Operations written before the failure stay written. |
+| `the saved plan did not pass verification` | Create and review a new plan, then apply that plan. |
+| `the apply was refused before any write` | The destination was not changed. Fix the reason the apply was refused, then create and review a new plan: a run accepts one apply, so a second `apply` of the same run is refused with `new-plan-required`. |
+| `the plan leaves out ... records, so the sync stopped before writing` | Review the left-out records with `runs left-out RUN_ID`, then apply the run with `apply RUN_ID --expected-checksum CHECKSUM --confirm-left-out <count>`. |
+| `the ... stage failed with an internal error` | Run the stage again. If it fails again, read the worker log with `docker compose logs sync-worker` and report the error class to OpsMill. |
+
+See [Find why a run failed](../running-a-sync.mdx#find-why-a-run-failed) for the format of
+each line.

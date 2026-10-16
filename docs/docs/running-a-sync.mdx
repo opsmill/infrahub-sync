@@ -14,7 +14,7 @@ A reviewed sync has five steps:
 1. Register the configuration package.
 2. Validate the registered version.
 3. Create a plan.
-4. Review the plan.
+4. Review the plan, including the source records it leaves out.
 5. Apply the reviewed plan.
 
 ## Connect the CLI to the Sync API
@@ -54,8 +54,8 @@ differs:
 Before its first authenticated request, the CLI checks that the service is compatible. It
 refuses an incompatible service before it sends the token.
 
-In the commands below, replace `CONFIG_ID`, `RUN_ID`, and `CHECKSUM` with the values that
-the previous command printed, and `BRANCH` with the destination branch.
+In the commands below, replace `CONFIG_ID`, `RUN_ID`, `CHECKSUM`, and `LEFT_OUT` with the
+values that the previous command printed, and `BRANCH` with the destination branch.
 
 ## Register the package
 
@@ -147,6 +147,25 @@ and saves the plan. It writes nothing to the destination. By default, `diff` wai
 plan, then prints the `run_id`, the `plan_checksum`, and the operation counts by action and
 by kind.
 
+After the counts by action, `diff` prints three counts about the source data:
+
+```text
+left_out: 6 (with a problem: 1, depending on one: 5)
+problems: 1
+kept_without_relationship: 0
+```
+
+- `left_out` is the number of source records that the plan does not write. A record is left
+  out when it has a problem, or when it depends on a left-out record through a required
+  relationship.
+- `problems` is the number of problems found in the source data, such as a value that is not
+  one of the choices of a Dropdown attribute.
+- `kept_without_relationship` is the number of records that the plan writes without one
+  optional relationship, because the related record is left out or is not in the source.
+
+When the plan has problems, `diff` also prints the first 20 of them and the `runs problems`
+command that lists the rest.
+
 ## Review the plan
 
 <Tabs groupId="sync-client">
@@ -183,16 +202,81 @@ contain. Apply never executes a delete. The detailed output marks each delete as
 destination side was not read in full, the plan contains no deletes and the review says so.
 See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 
+### Review problems, left-out records and kept records
+
+Three commands list the records behind the counts of the summary. Each one reads every page
+from the Sync API and prints one line per entry. `--kind` limits a list to one destination
+kind, and `runs problems --type` limits it to one problem type.
+
+<Tabs groupId="sync-client">
+  <TabItem value="compose" label="Run the container image" default>
+
+  ```bash
+  docker compose run --rm --no-deps -T cli runs problems RUN_ID
+  docker compose run --rm --no-deps -T cli runs left-out RUN_ID
+  docker compose run --rm --no-deps -T cli runs kept RUN_ID
+  ```
+
+  </TabItem>
+  <TabItem value="source" label="Run from source">
+
+  ```bash
+  uv run infrahub-sync runs problems RUN_ID
+  uv run infrahub-sync runs left-out RUN_ID
+  uv run infrahub-sync runs kept RUN_ID
+  ```
+
+  </TabItem>
+</Tabs>
+
+`runs problems` prints the problem type, the destination kind, the identity of the source
+record, and what is wrong:
+
+```text
+dropdown_value_not_in_choices  DcimDevice  location=dc1 name=rtr1  status='planned' is not one of: active, deprecated, maintenance, provisioning, reserved
+peer_not_found_in_source  IpamIPAddress  address=10.0.0.1/32  vrf refers to IpamVRF source ID 17, which is not in the source
+```
+
+The problem types are:
+
+- `dropdown_value_not_in_choices`: a value is not one of the choices of a Dropdown attribute.
+- `duplicate_source_identity`: two or more source records of one kind have the same
+  identity.
+- `destination_identity_collision`: two or more creates would form the same Infrahub
+  human-friendly ID.
+- `wrong_value_type`: a value has the wrong type for its attribute, such as `2.5` for a
+  Number.
+- `required_peer_excluded_by_filter`: a required relationship points to a record that a
+  filter of the package removes.
+- `identities_merge_in_destination`: two or more source records with different identities
+  would be stored as one Infrahub node.
+- `peer_not_found_in_source`: a relationship points to a record that is not in the source.
+
+`runs left-out` prints each left-out record and its cause: `has_problem` with the problem
+types, or `depends_on_left_out` with the left-out record it depends on and the relationship:
+
+```text
+depends_on_left_out  InterfacePhysical  device=rtr1 name=eth0  depends on DcimDevice location=dc1 name=rtr1 through device
+```
+
+`runs kept` prints each record that the plan writes without one optional relationship, and
+names the related record that is left out or not in the source.
+
+Fix a problem in the source data or in the package, then create a new plan. To write the
+other records now, apply the plan and confirm the left-out count.
+
 ## Apply the reviewed plan
 
-Pass the checksum that the review printed, and the same `--branch` that you gave `diff`:
+Pass the checksum that the review printed, and the same `--branch` that you gave `diff`. When
+the plan leaves out records, also pass `--confirm-left-out` with the `left_out` count of the
+summary:
 
 <Tabs groupId="sync-client">
   <TabItem value="compose" label="Run the container image" default>
 
   ```bash
   docker compose run --rm --no-deps -T cli apply RUN_ID --expected-checksum CHECKSUM \
-    --branch BRANCH --reason "apply reviewed inventory import"
+    --confirm-left-out LEFT_OUT --branch BRANCH --reason "apply reviewed inventory import"
   docker compose run --rm --no-deps -T cli runs show RUN_ID
   ```
 
@@ -201,7 +285,7 @@ Pass the checksum that the review printed, and the same `--branch` that you gave
 
   ```bash
   uv run infrahub-sync apply RUN_ID --expected-checksum CHECKSUM \
-    --branch BRANCH --reason "apply reviewed inventory import"
+    --confirm-left-out LEFT_OUT --branch BRANCH --reason "apply reviewed inventory import"
   uv run infrahub-sync runs show RUN_ID
   ```
 
@@ -210,7 +294,20 @@ Pass the checksum that the review printed, and the same `--branch` that you gave
 
 The service compares the checksum with the saved plan and refuses a mismatch before it
 writes. The CLI never reads or builds a local plan. When `runs show` reports
-`phase: applied` and `execution_state: completed`, the apply is finished.
+`phase: applied` and `execution_state: completed`, the apply is finished. `runs show` then
+also prints `operations_written` and `left_out`.
+
+When the plan leaves out records and `--confirm-left-out` is missing or differs from the
+plan's count, the service refuses the apply before any write. The command exits with code 1
+and prints the count to confirm:
+
+```text
+apply refused: this plan leaves out 12 records; confirm with --confirm-left-out 12
+```
+
+When the plan leaves out no records, omit `--confirm-left-out` or pass `0`. A plan saved by an
+earlier release records no left-out count; the service refuses to apply it, and you create a
+new plan.
 
 Before the first write, apply checks every planned field against the current destination
 schema. It repeats the check for each operation before that operation's write. If a field is
@@ -218,19 +315,52 @@ no longer writable, or a planned value would be dropped, apply refuses the write
 the kind and the field. Create and review a new plan in that case. Operations applied before
 a refusal stay applied.
 
-The check does not compare a value with the choices of a Dropdown attribute. A plan can
-therefore hold a value the destination schema does not offer, such as a NetBox device status
-`planned` for a `status` attribute whose choices are `active`, `provisioning`, `maintenance`,
-`deprecated`, and `reserved`. Infrahub rejects that write during the apply, and the apply stops
-there. Translate such values with a transform in the package; see the
+The plan compares each value of a Dropdown attribute with the choices in the destination
+schema it read. A record with a value the schema does not offer, such as a NetBox device
+status `planned` for a `status` attribute whose choices are `active`, `provisioning`,
+`maintenance`, `deprecated`, and `reserved`, has the problem `dropdown_value_not_in_choices`
+and is left out of the plan. Translate such values with a transform in the package; see the
 [Schema mapping reference](./reference/schema-mapping.mdx).
 
 ## Find why a run failed
 
-`diff`, `sync`, and `apply` print the final phase and outcome of a failed run, such as
-`phase: plan-failed`. When an `apply` command fails and the run recorded the class of the
-apply error, it also prints `apply failed: <ErrorClass>`. The error message itself is
-recorded on the run's Prefect flow run:
+`diff`, `sync`, `apply`, and `runs show` print the final phase and outcome of a failed run,
+such as `phase: plan-failed`, and then the cause that the worker recorded for the run. The
+first line names the stage, whether it failed or stopped, and a one-sentence summary. The
+next lines give the fields that apply to the cause, and the last line gives the next step:
+
+```text
+apply stopped: the destination rejected a write to DcimDevice with error code ATTRIBUTE_CONSTRAINT_VIOLATION
+  node kind: DcimDevice   attribute: status
+  Infrahub message: planned is not a valid value for status
+  written: 692 of 2291 operations
+  failed operation: op_518aada155d790ad update DcimDevice name=rtr1 (may have written part of its change)
+  next: Fix the cause, then create and review a new plan.
+```
+
+```text
+plan failed: the destination system (infrahub) rejected the token
+  next: Check the token that the worker uses for this system, then run the stage again.
+```
+
+The detail lines are:
+
+- `node kind` and `attribute`: the destination kind and attribute that Infrahub named in its
+  error.
+- `record` and `field`: the source record and the field that could not be loaded or
+  transformed.
+- `Infrahub message`: the message of the error that Infrahub returned for a rejected write.
+- `written` and `failed operation`: how far a stopped apply got, and the operation it stopped
+  at.
+
+The worker builds the cause only from named fields, such as Infrahub's error code and the
+kind and attribute that Infrahub reports. It never copies the text of an error, an address,
+or a header into the cause. The command exits with code 1 for a run that failed or stopped.
+The API returns the same cause in the run's `failure` field; see
+[Run failure cause](./reference/sync-http-api.mdx#run-failure-cause).
+
+When the summary reports an internal error, or you need more detail, read the run's Prefect
+flow run:
 
 1. Run `runs show RUN_ID`. The output includes `flow_run_id`.
 2. Open `<prefect-ui>/runs/flow-run/FLOW_RUN_ID` in a browser. The state message of the failed
@@ -258,6 +388,13 @@ that failed:
 Remove the cause first, in the source data or in the package. Then create a new plan for the
 same branch with `diff`, review it, and apply it. The new plan compares the source with what
 the destination now holds, so it contains only what is still missing or different.
+
+A run accepts one apply. A second `apply` of a run whose apply finished or stopped is refused
+before any write, with code 1:
+
+```text
+apply refused: This plan was already applied or its apply stopped; create and review a new plan
+```
 
 ## Change a registered package
 
@@ -308,6 +445,19 @@ The worker saves the plan before the first write, so you can read it afterwards 
 `runs plan`. `sync` does not apply a plan that you reviewed earlier; it creates a new one. To
 approve the exact operations before they are written, use `diff`, `runs plan`, and `apply`.
 
+When the plan of a `sync` leaves out records, the run stops after the plan and writes nothing.
+The run ends with `phase: planned` and `outcome: left-out-review-required`, and the command
+exits with code 1:
+
+```text
+sync stopped: the plan leaves out 12 records, so the sync stopped before writing
+  next: Review the left-out records with `infrahub-sync runs left-out`, then apply the plan with `infrahub-sync apply --confirm-left-out` and the plan's left-out count.
+```
+
+Review the plan with `runs plan`, `runs problems`, and `runs left-out`. Then apply the same
+run with `apply RUN_ID --expected-checksum CHECKSUM --confirm-left-out 12`. No option of
+`sync` skips this stop.
+
 ## Reference
 
 ### Waiting for a run
@@ -327,10 +477,11 @@ and the retry key. Check the run later with `runs show RUN_ID` or `runs plan RUN
 - A run that succeeds prints its latest record.
 - A run that fails, is cancelled, or ends in an unknown state exits with a nonzero status
   and prints the run ID and its final fields.
-- A failed apply also prints `apply failed: <ErrorClass>` when the service recorded the
-  error. For `PlanSchemaChangedError`, the destination schema changed after the plan was
-  saved: create and review a new plan. A plan saved by a different release can need a new
-  plan too, and the message says so.
+- A run that failed or stopped also prints its cause: a `<stage> failed: <summary>` or
+  `<stage> stopped: <summary>` line, the detail lines, and the next step. See
+  [Find why a run failed](#find-why-a-run-failed). When the destination schema changed after
+  the plan was saved, the summary reads `the saved plan did not pass verification`: create and
+  review a new plan.
 - When the wait times out, the CLI exits with a nonzero status and prints the run ID and its
   last phase, outcome, and execution state. The run continues on the service.
 - Ctrl-C stops the wait, prints the last record, and exits with status 130. It does not
@@ -349,7 +500,8 @@ returns the original response instead of starting a second operation. See
 - `configs validate` prints `offset`, `limit`, `total_findings`, and `next_offset`. Use
   `--offset` and `--limit` to read another page of findings.
 - `runs show RUN_ID` prints the run's phase, outcome, execution state, and Prefect
-  correlation.
+  correlation. After an apply or a `sync`, it also prints `operations_written` and
+  `left_out`, and for a run that failed or stopped, its cause.
 - `runs results RUN_ID` prints the results that the service recorded for the run, as JSON.
 
 For every command and option, see the [Sync CLI reference](./reference/cli.mdx).

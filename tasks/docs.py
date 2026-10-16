@@ -16,6 +16,19 @@ def generate(context: Context) -> None:
     _generate_infrahubsync_documentation(context=context)
 
 
+CLI_REFERENCE = DOCUMENTATION_DIRECTORY / "docs" / "reference" / "cli.mdx"
+# The first paragraph typer writes for the root command: the app's help text.
+CLI_REFERENCE_ANCHOR = "Synchronize registered configurations through the Sync API.\n"
+# Written after the root command's help in the reference only: in `--help` the link would
+# print as raw Markdown.
+CLI_REFERENCE_AUTH_PARAGRAPH = """
+Set `INFRAHUB_SYNC_API_TOKEN` to the bearer token for your actor before running any
+command; the CLI reads it from the environment and never accepts it as a flag. See
+[Sync HTTP API — Configure principals](./sync-http-api.mdx#configure-principals) for how
+tokens are issued.
+"""
+
+
 def _generate_infrahubsync_documentation(context: Context) -> None:
     """Generate the documentation for infrahub-sync using typer-cli."""
 
@@ -24,6 +37,17 @@ def _generate_infrahubsync_documentation(context: Context) -> None:
     exec_cmd += " --output docs/docs/reference/cli.mdx"
     with context.cd(ESCAPED_REPO_PATH):
         context.run(exec_cmd)
+    _add_auth_paragraph(CLI_REFERENCE)
+
+
+def _add_auth_paragraph(reference: Path) -> None:
+    """Insert the token paragraph after the root command's help in the generated reference."""
+    content = reference.read_text(encoding="utf-8")
+    if CLI_REFERENCE_ANCHOR not in content:
+        msg = f"{reference}: the root command's help text changed; update CLI_REFERENCE_ANCHOR"
+        raise RuntimeError(msg)
+    content = content.replace(CLI_REFERENCE_ANCHOR, CLI_REFERENCE_ANCHOR + CLI_REFERENCE_AUTH_PARAGRAPH, 1)
+    reference.write_text(content, encoding="utf-8")
 
 
 @task

@@ -35,6 +35,14 @@ behavior.
 - [`infrahub_sync/client/`][src-infrahub-sync-client] — the only place that builds Sync API requests.
   `client.py` holds the synchronous client, `models.py` its typed request and response shapes,
   and `errors.py` its error taxonomy.
+- `infrahub_sync/cli_cause.py` — the lines the CLI prints for the cause of a failed or
+  stopped run, built only from the fields of the run record's `failure` object.
+
+A run's cause is built once, on the worker, by `infrahub_sync/failure_cause.py`:
+`build_failure_cause` classifies a failure by the exception types in its cause chain and reads
+only named attributes, never the text of an exception (ADR 0021).
+`infrahub_sync/load_errors.py` holds the typed load errors it reads: `SideLoadError` names the
+side and adapter that failed, and `TransformError` the record and field whose transform failed.
 
 The command surface is `configs`, `runs`, `diff`, `sync` and `apply`. See the
 [CLI reference](../../reference/cli.mdx) for every option.
@@ -67,6 +75,7 @@ destination-schema checks.
 | `schema_validation.py` | The opt-in destination-schema checks |
 | `warnings.py` | Intentional omissions and unqualified optional features |
 | `runtime.py` | Runtime resolution, including the effective destination branch |
+| `worker_credentials.py` | The comparison of a package's credential references with the variable names a live worker published |
 
 [Configuration foundation](configuration-foundation.md) explains the declared identity,
 credential references and the connection-free capability declaration in full.
@@ -78,6 +87,18 @@ credential references and the connection-free capability declaration in full.
 deployment (`worker.py`, `deploy.py`, `orchestration.py`, `flow.py`), liveness and checkpoint
 policy (`liveness.py`, `checkpoints.py`), per-stage scratch directories (`scratch.py`), the
 write guard (`apply_guard.py`) and artifact storage (`storage.py`).
+
+Spec 009 added these modules:
+
+- `plan_report.py` and `plan_report_routes.py`: the routes `GET /runs/{run_id}/plan/problems`,
+  `/plan/left-out` and `/plan/kept`, which page the plan report that the plan stage publishes
+  as the `plan-report` artifact.
+- `left_out_stop.py`: the stop of a `sync` whose plan leaves out records, and the counts an
+  apply records.
+- `failure_record.py`: `record_failure`, which stores a failed stage's evidence under
+  `results["{stage}_failure"]` and the run's cause under `results["failure"]`.
+- `worker_environment.py`: the worker's publication of the names of the credential variables
+  it holds, when it starts and on each poll, read by `configs validate --branch`.
 
 Two facts about it are often missed:
 
@@ -120,6 +141,9 @@ return types.
 | `verify.py`, `errors.py` | Pre-write verification and the error taxonomy |
 | `write_surface.py` | `PlannedWriteDestination`, the destination write surface an apply goes through |
 | `config_version.py`, `destination_only_peer.py` | Version binding and destination-only peers |
+| `problems.py` | The plan report: the problem pass over the source data, the walk of records that depend on a left-out record, and `select_operations`, which removes the operations of left-out records |
+| `left_out_peer.py` | Placeholder peers for references to records that the plan leaves out or that are not in the source |
+| `apply_gate.py` | The checks an apply makes before its first write: only a format 4 plan is applied, and a plan that leaves out records only with the confirmed count |
 
 [The saved plan artifact](plan-artifact.md) and [Planned writes and apply](planned-write-and-apply.md)
 are the deep documents.
@@ -129,7 +153,8 @@ are the deep documents.
 `infrahub_sync/product_store/` is the durable record of configurations, runs and artifacts.
 `configs.py` is the configuration service boundary — register, version, list, show, validate —
 `store.py` the durable projection, `models.py` the record types and `bundle.py` the artifact
-bundle. [Durable product records](../../reference/durable-product-records.mdx) documents what
+bundle. `worker_environment.py` holds the SQL of the `worker_environment` record, one row per
+worker with the names of the credential variables it holds and never a value. [Durable product records](../../reference/durable-product-records.mdx) documents what
 is kept.
 
 ### Adapters

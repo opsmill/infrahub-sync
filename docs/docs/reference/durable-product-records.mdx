@@ -247,7 +247,8 @@ admission, no other unresolved plan, verify, apply, or sync receipt, and no unfi
 execution, while a plan or verify reservation requires only that no write has been admitted.
 A cancellation is deliberately outside this arbitration, so a claimed write stays
 cancellable. A losing request never reaches Prefect; its receipt is stored already answered,
-carrying `409 run-execution-conflict`, so replaying that client key replays the refusal. An
+carrying `409 new-plan-required` when the run already admitted its write and
+`409 run-execution-conflict` otherwise, so replaying that client key replays the refusal. An
 accepted run receipt therefore carries a Prefect flow-run ID only when its stored response is
 a successful submission. `AuditEvent` records secret-safe actor, reason, operation, and outcome evidence
 for accepted mutations and refusals.

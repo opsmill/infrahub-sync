@@ -137,8 +137,8 @@ returned as `PublicRunResource.failure`.
 | `failure_type` | string | One of the failure types below |
 | `system` | object or null | `{"role": "source" or "destination", "adapter": <adapter name>}` |
 | `error_code` | string or null | Infrahub's `extensions.code`, at most 128 characters |
-| `node_kind` | string or null | At most 128 characters |
-| `attribute` | string or null | At most 128 characters |
+| `node_kind` | string or null | Infrahub's `extensions.data.node_kind`, or the kind of a typed Sync exception; at most 128 characters |
+| `attribute` | string or null | Infrahub's `extensions.data.field_name`; for `UNIQUENESS_VIOLATION`, the names in `extensions.data.fields`, joined with `, `; at most 128 characters |
 | `record` | Source record reference or null | From a typed Sync exception |
 | `field` | string or null | From a typed Sync exception |
 | `infrahub_message` | string or null | Only for `destination_rejected_write`: Infrahub's error `message`, control characters removed, at most 1,024 characters |

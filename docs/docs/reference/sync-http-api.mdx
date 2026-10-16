@@ -139,7 +139,7 @@ Configure the worker environment before it starts:
 | `PREFECT_WORKER_QUERY_SECONDS` | Prefect worker polling interval. It must be a finite positive decimal no greater than 3600; the API derives its liveness thresholds from the same value. |
 | Adapter credential variables | The environment variables that the `credentials` entries of a registered package name, for example `INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN`. A registered run reads only these credential values from the worker environment; adapter URL variables such as `NETBOX_URL` do not replace the declared URLs. |
 
-The service flow accepts exactly eight bounded parameters:
+The service flow accepts exactly ten bounded parameters:
 
 | Parameter | Type | Purpose |
 | --- | --- | --- |
@@ -151,6 +151,8 @@ The service flow accepts exactly eight bounded parameters:
 | `branch` | `str` or `null` | Optional Infrahub branch. |
 | `expected_checksum` | SHA-256 string or `null` | Reviewed checksum required by `apply`. |
 | `confirm_writes` | `bool` | Required for `apply` and composed `sync`. |
+| `configuration_name` | `str` or `null` | Readable name of the registered configuration, used only for the run's title. |
+| `confirmed_left_out_count` | `int` or `null` | Left-out count that the `apply` request confirmed. |
 
 `config_id`, `registry_version`, and `package_checksum` must be all present for a
 registered execution or all `null` for a legacy execution.
@@ -273,10 +275,13 @@ exception, since it only re-checks an already-registered version and takes no bo
 | `GET /configs/{config_id}` | Return one registered configuration's summary. |
 | `GET /configs/{config_id}/versions` | List a configuration's registered versions. |
 | `GET /configs/{config_id}/versions/{registry_version}` | Return one registered version. |
-| `POST /configs/{config_id}/versions/{registry_version}/validate` | Re-check a registered version against the adapter declarations installed now. |
+| `POST /configs/{config_id}/versions/{registry_version}/validate` | Re-check a registered version against the adapter declarations installed now. With `?branch=<name>`, also check it against that branch's destination schema and the worker's credential variables. |
 | `POST /runs` | Create one Sync run and accept `plan` or confirmed composed `sync`. |
 | `GET /runs/{run_id}` | Return the durable product record, with current linked Prefect detail for non-terminal executions. |
 | `GET /runs/{run_id}/plan` | Return retained saved-plan review data. |
+| `GET /runs/{run_id}/plan/problems` | List the problems that the plan found in the source data, one page at a time. |
+| `GET /runs/{run_id}/plan/left-out` | List the source records that the plan leaves out, and why, one page at a time. |
+| `GET /runs/{run_id}/plan/kept` | List the records that the plan writes without one optional relationship, one page at a time. |
 | `GET /runs/{run_id}/results` | Return retained results independently of Prefect result retention. |
 | `GET /runs/{run_id}/artifacts` | List immutable run-owned artifact references. |
 | `GET /runs/{run_id}/artifacts/{artifact_id}` | Return verified artifact bytes with their media type and `Digest` header. |
@@ -325,6 +330,77 @@ notes, per-object operations, and `schema_fingerprint`. For a registered plan,
 semantics consumed by that configuration. It is `null` only for a legacy unregistered
 plan.
 
+The plan's `summary` also holds the counts of its report on the source data:
+
+| Field | Meaning |
+| --- | --- |
+| `left_out` | Source records that the plan does not write. Equals `left_out_with_problem` plus `left_out_dependent`. |
+| `left_out_with_problem` | Left-out records that have a problem of their own. |
+| `left_out_dependent` | Left-out records that depend on a left-out record through a required relationship. |
+| `left_out_by_kind` | `left_out` by destination kind. |
+| `problems` | Problems found in the source data. |
+| `problems_by_type` | `problems` by problem type. |
+| `kept` | Records that the plan writes without one optional relationship, because the related record is left out or is not in the source. |
+
+A plan saved before format 4 reports zero for each count.
+
+### List problems, left-out records and kept records
+
+```text
+GET /runs/{run_id}/plan/problems?offset=0&limit=500&problem_type=<name>&kind=<kind>
+GET /runs/{run_id}/plan/left-out?offset=0&limit=500&kind=<kind>
+GET /runs/{run_id}/plan/kept?offset=0&limit=500&kind=<kind>
+```
+
+The three routes return pages of the same shape:
+
+```json
+{
+  "run_id": "20261015T1200-1a2b3c4d",
+  "plan_checksum": "<64 hex>",
+  "entries": [
+    {
+      "problem_type": "dropdown_value_not_in_choices",
+      "record": {"kind": "DcimDevice", "identity": {"location": "dc1", "name": "rtr1"}, "source_id": "42"},
+      "field": "status",
+      "value": "planned",
+      "allowed": ["active", "deprecated", "maintenance", "provisioning", "reserved"],
+      "peer": null,
+      "other_records": [],
+      "reason": "DcimDevice rtr1: status 'planned' is not one of the choices of the Dropdown attribute status"
+    }
+  ],
+  "offset": 0,
+  "limit": 500,
+  "total": 1,
+  "next_offset": null
+}
+```
+
+- `limit` is 1 to 500, and 500 by default. Entries are in the stable order of the plan
+  report. `next_offset` is `null` on the last page.
+- `kind` limits the entries to one destination kind. `problem_type` limits the problems to one
+  of the seven problem types: `dropdown_value_not_in_choices`, `duplicate_source_identity`,
+  `destination_identity_collision`, `wrong_value_type`, `required_peer_excluded_by_filter`,
+  `identities_merge_in_destination`, and `peer_not_found_in_source`. Another value is refused
+  with `422`.
+- `plan_checksum` names the plan that the page comes from. Pass
+  `expected_checksum=<hex>` to require that plan: a request that names another plan is refused
+  with `409 plan-changed`.
+- A problem entry holds the source `record`, the `field`, the source `value`, the `allowed`
+  choices of a Dropdown attribute, the `peer` that a relationship names, the `other_records`
+  of a group of records with the same identity, and a `reason` built from a fixed template.
+  No entry holds a connection setting or the text of an error.
+- A left-out entry holds the `record`, its `cause` (`has_problem` or
+  `depends_on_left_out`), its `problem_types`, the `depends_on` record and the
+  `relationship` that links them, and `loaded`, which is `false` when the record could not be
+  built.
+- A kept entry holds the `record`, its `cause` (`peer_left_out` or
+  `peer_not_found_in_source`), the optional `relationship` written without its peer, and the
+  `left_out_peer`.
+- A plan saved before format 4 returns empty lists.
+- Errors: `404 run-not-found`, `410 artifact-expired`, and `503 plan-unavailable`.
+
 ### Verify and apply the reviewed plan
 
 Verification is read-only and retains verification evidence without finishing or otherwise
@@ -350,18 +426,130 @@ curl --request POST \
   --data '{
     "expected_checksum": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "confirm_writes": true,
-    "reason": "change approved"
+    "confirmed_left_out_count": 12,
+    "reason": "change approved, 12 left-out records reviewed"
   }'
 ```
 
+`confirmed_left_out_count` is the plan's `left_out` count, as the reviewer confirmed it. When
+the plan leaves out no records, omit it or send `0`.
+
+The API checks the request in this order, before any write, and refuses the first check that
+fails with status `409`:
+
+1. `confirm_writes` is not `true`: `confirmation-required`.
+2. `expected_checksum` does not match the saved plan: `checksum-conflict`.
+3. `confirmed_left_out_count` is absent or differs from the plan's `left_out` count:
+   `left-out-confirmation-required`. The error body holds the count to confirm in
+   `expected_left_out_count`:
+
+   ```json
+   {
+     "error": {
+       "code": "left-out-confirmation-required",
+       "message": "this plan leaves out 12 records; confirm the count with confirmed_left_out_count",
+       "status": 409,
+       "run_id": "20261015T1200-1a2b3c4d",
+       "mutation_id": null,
+       "expected_left_out_count": 12
+     }
+   }
+   ```
+
+4. The run already admitted its one write, because its plan was applied or its apply stopped:
+   `new-plan-required`, with the message "This plan was already applied or its apply stopped;
+   create and review a new plan".
+5. The plan was saved before format 4 and records no left-out count:
+   `plan-format-not-applicable`, with the message "plan again before applying".
+
 The worker verifies the saved plan again before its first destination write. Destination
 deletes remain disabled.
+
+### A `sync` run whose plan leaves out records
+
+`POST /runs` with `"operation": "sync"` stops after the plan when the plan's `left_out` count
+is greater than zero, and writes nothing. The run ends with phase `planned` and outcome
+`left-out-review-required`, and its `failure` has `failure_type: "left_out_review_required"`
+and `stage: "sync"`. The stop gives back the run's write admission: review the plan, then send
+`POST /runs/{run_id}/apply` with the confirmed count. No request field skips this stop.
+
+### Run failure cause
+
+`GET /runs/{run_id}` returns `run.failure` when the run failed or stopped, and `null`
+otherwise:
+
+```json
+{
+  "stage": "apply",
+  "failure_type": "destination_rejected_write",
+  "system": {"role": "destination", "adapter": "infrahub"},
+  "error_code": "ATTRIBUTE_CONSTRAINT_VIOLATION",
+  "node_kind": "DcimDevice",
+  "attribute": "status",
+  "record": null,
+  "field": null,
+  "infrahub_message": "planned is not a valid value for status",
+  "summary": "The destination rejected a write to DcimDevice with error code ATTRIBUTE_CONSTRAINT_VIOLATION",
+  "error_class": "OperationApplyFailedError",
+  "apply_progress": {
+    "operations_total": 2291,
+    "operations_written": 692,
+    "failed_operation": {"operation_id": "op_518aada155d790ad", "action": "update", "kind": "DcimDevice", "identity": {"name": "rtr1"}},
+    "failed_operation_may_have_written": true
+  },
+  "next_action": "Fix the cause, then create and review a new plan."
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `stage` | `plan`, `verify`, `apply`, or `sync`. |
+| `failure_type` | One of `destination_rejected_write`, `system_unreachable`, `system_timeout`, `token_rejected`, `tls_certificate_rejected`, `record_load_failed`, `transform_failed`, `credential_missing`, `verification_failed`, `apply_refused`, `left_out_review_required`, and `internal_error`. |
+| `system` | The `role` (`source` or `destination`) and `adapter` of the system the failure came from, or `null`. |
+| `error_code`, `node_kind`, `attribute` | For an error that Infrahub returned: `extensions.code`, `extensions.data.node_kind`, and `extensions.data.field_name`. For `UNIQUENESS_VIOLATION`, `attribute` is the names in `extensions.data.fields`, joined with `, `. |
+| `record`, `field` | The source record and field that could not be loaded or transformed. |
+| `infrahub_message` | The message of the error that Infrahub returned. Set only for `destination_rejected_write`. |
+| `summary` | One sentence from a fixed template of the failure type. |
+| `error_class` | The class name of the error, kept for scripts. |
+| `apply_progress` | For a stopped apply: the operation counts, the operation it stopped at, and whether that operation may have written part of its change. |
+| `next_action` | A fixed sentence per failure type that gives the next step. |
+
+The worker builds every field from named fields of the error only. No field holds the text of
+an adapter's or an HTTP library's error, an address, a header, or a traceback.
+`GET /runs/{run_id}/results` keeps the `{stage}_failure` keys of earlier releases (`stage`,
+`outcome`, `error_type`, `cause_type`, `applied_operations`, `failed_operation`,
+`failed_operation_wrote`, and `may_have_partially_written`) and lists the written operation IDs
+under `apply_failure`.
 
 `PlanSchemaChangedError` means the live destination-schema semantics no longer match the
 reviewed plan's `schema_fingerprint`. The worker refuses the retained plan before any
 destination write. Create a new plan against the current schema, review its
 `schema_fingerprint`, operations, and checksum, then apply that new plan. There is no
 schema-drift override.
+
+### Register and validate a configuration package
+
+`POST /configs` and `POST /configs/{config_id}/versions` return, under `version`, the
+`config_id`, the `registry_version`, the `package_checksum`, and `created_at` of the
+registered version. They do not return the package content (`declared_content`); read it with
+`GET /configs/{config_id}/versions/{registry_version}`.
+
+`POST /configs/{config_id}/versions/{registry_version}/validate` checks only the declared
+content. With the query parameter `branch=<name>`, it also reads the destination schema of
+that Infrahub branch, unless the package declares `destination.settings.branch`, and compares
+the package's credential variables with the names that live workers published. It then adds
+these finding codes:
+
+- `destination-schema-mismatch`: the schema does not declare a mapped kind, attribute or
+  relationship, or the identifiers cannot key a create.
+- `destination-dropdown-value-not-in-choices`: a literal `static` value of a mapped Dropdown
+  attribute is not one of its choices.
+- `credential-not-set-in-worker`: no live worker holds a credential variable that the package
+  references. The finding names the variable and never holds a value.
+- `worker-environment-unknown`, a warning: no worker has published its credential variable
+  names in the last 90 seconds, so the credentials are not compared.
+
+See [Validate a version](../configuration-package.mdx#validate-a-version).
 
 ## Idempotency and retries
 
@@ -388,10 +576,16 @@ A run admits its one write only while nothing else is in flight on it: no other 
 admission, no other unresolved plan, verify, apply, or sync submission, and no unfinished
 execution. Whichever request wins is decided before either competitor is submitted to
 Prefect, so the loser never starts work. It is answered with `409 run-execution-conflict`
-stored on its own receipt, and replaying that idempotency key replays the refusal. Once a
-run has admitted its write, every later plan, verify, apply, and sync submission on that run
-gets the same refusal — including after the write becomes terminal, because terminal write
-evidence is not reopened.
+stored on its own receipt, and replaying that idempotency key replays the refusal. For
+example, an `apply` sent while the run's verification still runs gets
+`409 run-execution-conflict`, because verification writes nothing: send it again once the
+verification has finished.
+
+Once a run has admitted its write, every later plan, verify, apply, and sync submission on
+that run gets `409 new-plan-required` instead — including after the write becomes terminal,
+because terminal write evidence is not reopened. The one exception is a `sync` that stops
+after a plan that leaves out records: it gives back the write admission, so the run accepts
+one `apply`.
 
 A submission stays unresolved until it has a stored response, a stored refusal included. If
 a client abandons one — the process dies before it reads the reply, and the key is never
@@ -454,7 +648,7 @@ Every error uses the same envelope:
 | `401` | Missing or invalid authentication. |
 | `403` | The actor does not own the mutation and is not an administrator. |
 | `404` | The Sync run or run-owned artifact does not exist. |
-| `409` | Idempotency conflict, missing confirmation, stale checksum, non-cancellable execution, a run that cannot admit another stage (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
+| `409` | Idempotency conflict, missing confirmation, stale checksum, a left-out count that is not confirmed (`left-out-confirmation-required`), a run that already admitted its write (`new-plan-required`), a plan saved before format 4 (`plan-format-not-applicable`), a report page of another plan (`plan-changed`), non-cancellable execution, a run that cannot admit another stage while another one is in flight (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
 | `410` | The retained plan or artifact has expired. |
 | `422` | Invalid request schema, missing idempotency key, or a secret-bearing flow parameter. |
 | `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved. |

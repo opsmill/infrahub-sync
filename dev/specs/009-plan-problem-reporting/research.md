@@ -442,8 +442,10 @@ the cause is built at the remote boundary only.
 > a published plan invalid JSON (SYNC-262).
 >
 > **Decision.** A run's failure record holds a structured cause built only from these fields:
-> stage, failure type (a fixed list), system role and adapter name, Infrahub's error code, node
-> kind and attribute from Infrahub's `extensions`, Infrahub's own error message for a rejected
+> stage, failure type (a fixed list), system role and adapter name, Infrahub's error code
+> (`extensions.code`), node kind (`extensions.data.node_kind`) and attribute
+> (`extensions.data.field_name`, or for `UNIQUENESS_VIOLATION` the names in
+> `extensions.data.fields`, joined), Infrahub's own error message for a rejected
 > write, the kind, record identity and field named by a typed Sync exception, and apply
 > progress. One module builds it (`infrahub_sync/failure_cause.py`), called only from the remote
 > boundary. It reads typed attributes and exception classes; it never formats an exception's
@@ -470,7 +472,7 @@ Classification, by exception type in the cause chain, never by text:
 
 | Failure type | Recognised by | Fields |
 | --- | --- | --- |
-| `destination_rejected_write` | `GraphQLError` during apply | `error_code`, `node_kind`, `attribute` from the first error's `extensions` when they are strings (at most 128 characters each); `message` from the first error's `message` (at most 1,024 characters, control characters removed) |
+| `destination_rejected_write` | `GraphQLError` during apply | from the first error, when they are strings (at most 128 characters each): `error_code` from `extensions.code`, `node_kind` from `extensions.data.node_kind`, `attribute` from `extensions.data.field_name` (for `UNIQUENESS_VIOLATION`: the names in `extensions.data.fields`, joined with `, `); `message` from the first error's `message` (at most 1,024 characters, control characters removed) |
 | `system_unreachable` | `requests.ConnectionError`, `httpx.ConnectError`, Infrahub SDK `ServerNotReachableError` | `system` |
 | `system_timeout` | `requests.Timeout`, `httpx.TimeoutException`, `ServerNotResponsiveError` | `system` |
 | `token_rejected` | HTTP 401 or 403 from `requests`, `httpx` or `pynetbox.RequestError`; Infrahub `AuthenticationError` | `system` |
