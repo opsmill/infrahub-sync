@@ -56,3 +56,25 @@ Prefect is an internal component of Sync, not an external dependency that Sync s
   neither project then fully manages.
 - **Run Sync's own Prefect server, with its databases on `task-manager-db`.** Rejected. It still
   depends on Infrahub's deployment for Sync's PostgreSQL server.
+
+## Amendment (2026-10): the Prefect server runs from the Sync image
+
+**Decision.** Every Compose file runs Sync's Prefect server from the Sync image, as its own
+service, started with `python -m infrahub_sync.service.prefect_server`. That module returns
+Prefect's server application unchanged; it adds no route and no bootstrap step.
+
+**Why.**
+
+- The Prefect client in the worker and API and the Prefect server come from one installed
+  package, so their versions cannot differ. Before, the server image was pinned separately.
+- The server stays a separate service. Running it inside the `sync-api` container would give
+  the API container the Prefect database credential and need a process supervisor.
+
+**Consequences.**
+
+- The deployment pulls three images instead of four.
+- A Prefect upgrade is a change to the `service` extra and a new Sync release; no image pin
+  moves elsewhere.
+- A custom Sync image must include the `service` extra, or the Prefect server cannot start.
+- The Prefect port is not published by default. An engineer publishes it on loopback with a
+  second Compose file named on the command line.

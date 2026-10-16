@@ -232,8 +232,10 @@ recorded on the run's Prefect flow run:
 
 1. Run `runs show RUN_ID`. The output includes `flow_run_id`.
 2. Open `<prefect-ui>/runs/flow-run/FLOW_RUN_ID` in a browser. The state message of the failed
-   flow run contains the error. The Prefect UI is at `http://127.0.0.1:4200` on a Compose
-   deployment with the default port, and at `http://127.0.0.1:4230` on the
+   flow run contains the error. On a Compose deployment, the Prefect UI is not published by
+   default; open it on `127.0.0.1` as described in
+   [Open the Prefect UI](./compose-deployment.mdx#open-the-prefect-ui). It is at
+   `http://127.0.0.1:4230` on the
    [local development stack](./development-stack.mdx).
 
 The same error is in the worker's log: `docker compose logs sync-worker` from the deployment

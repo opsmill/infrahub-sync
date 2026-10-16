@@ -841,6 +841,15 @@ curl -sS -X POST --config "$CURL_CONFIG" \
 rm -f "$CURL_CONFIG"
 ```
 
+The verification runs on the worker as a separate step of the same run, and the API
+runs one step of a run at a time. Wait until it finishes before you apply:
+`docker compose run --rm --no-deps -T cli runs results RUN_ID` shows a `verification`
+entry once it is done. An `apply` sent while the verification still runs is refused
+with status 409 and the code `run-execution-conflict`, and nothing is written. Run the
+same `apply` command again once the verification has finished. The command creates a
+new idempotency key on each call, unless you pass `--idempotency-key`; a repeat with
+the same key returns the same refusal.
+
 ## Status
 
 ```bash

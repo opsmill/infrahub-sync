@@ -50,8 +50,13 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   — why the wrapper and digest binding became a root `docker-compose.yml` pinned by the
   release commit, and what was given up.
 - [0019 — Prefect is an internal component of Sync](0019-prefect-is-an-internal-component-of-sync.md)
-  — why Sync runs its own Prefect server and PostgreSQL server instead of Infrahub's task
-  manager and `task-manager-db`, and what that costs.
+  — amended 2026-10 — why Sync runs its own Prefect server and PostgreSQL server instead of
+  Infrahub's task manager and `task-manager-db`, and what that costs. The amendment runs the
+  Prefect server from the Sync image.
+- [0023 — The Compose deployment takes an external object store and custom CA certificates from `.env`](0023-the-compose-deployment-takes-an-external-object-store-and-custom-ca-certificates-from-env.md)
+  — how an operator replaces the bundled MinIO with an S3-compatible store, adds certificate
+  authorities from a host directory, and opens the Prefect port on loopback, all from `.env`
+  and a second Compose file.
 
 ## Related
 
