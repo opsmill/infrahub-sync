@@ -19,7 +19,8 @@ import pytest
 from diffsync.store.local import LocalStore
 
 import infrahub_sync.adapters as adapters_package
-from infrahub_sync import SchemaMappingField, SchemaMappingModel
+from infrahub_sync import SchemaMappingField, SchemaMappingModel, not_in_source_placeholder
+from tests.adapters.offline_holder import offline_adapter
 
 
 def _reload_submodule(name: str, monkeypatch: pytest.MonkeyPatch) -> Iterator[types.ModuleType]:
@@ -70,14 +71,14 @@ def slurpitsync_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[types.Module
     yield from _reload_submodule("slurpitsync", monkeypatch)
 
 
-def _holder(*, peer_model: type[Any], peers: dict[str, str], identifier_mapping: str):
-    """Build a small holder carrying `store` and `config`, following the ACI reference-conversion test style.
+def _holder(*, adapter_cls: type[Any], peer_model: type[Any], peers: dict[str, str], identifier_mapping: str):
+    """Build an offline adapter carrying `store` and `config`, following the ACI reference-conversion test style.
 
     `identifier_mapping` is the source-object key that the peer model's `name` identifier
     resolves to, matching how `build_mapping` reads identifiers directly off the caller's
     top-level source object.
     """
-    holder = types.SimpleNamespace()
+    holder = offline_adapter(adapter_cls, None)
     setattr(holder, peer_model._modelname, peer_model)
     holder.store = LocalStore(adapter=holder)
     for local_id, name in peers.items():
@@ -127,16 +128,48 @@ IPF_SCALAR_FIELD = SchemaMappingField(name="peer", mapping="peer_id", reference=
 IPF_LIST_FIELD = SchemaMappingField(name="peers", mapping="peer_ids", reference="IpfPeer")
 
 
+def test_ipfabric_duplicate_row_is_in_the_load_report(ipfabricsync_module) -> None:
+    """A second row with the same identity is `duplicate_source_identity`; the first row stays (spec 009).
+
+    Before spec 009 the second row overwrote the first through `update_or_add_model_instance`.
+    """
+    peer_model = _ipf_peer_model(ipfabricsync_module)
+    rows = [{"id": "peer-1", "name": "zulu", "site": "a"}, {"id": "peer-2", "name": "zulu", "site": "b"}]
+    holder = _holder(
+        adapter_cls=ipfabricsync_module.IpfabricsyncAdapter, peer_model=peer_model, peers={}, identifier_mapping="name"
+    )
+    holder.client = types.SimpleNamespace(fetch_all=lambda mapping, filters: [dict(row) for row in rows])  # noqa: ARG005
+    holder.config = types.SimpleNamespace(
+        schema_mapping=[
+            SchemaMappingModel(
+                name="IpfPeer",
+                mapping="tables/peers",
+                fields=[SchemaMappingField(name="name", mapping="name")],
+            )
+        ]
+    )
+
+    holder.model_loader("IpfPeer", peer_model)
+
+    assert [item.local_id for item in holder.store.get_all(model="IpfPeer")] == ["peer-1"]
+    assert [(entry.source_id, entry.reason) for entry in holder.load_report] == [
+        ("peer-2", "duplicate_source_identity")
+    ]
+
+
 def test_ipfabric_peer_found_resolves_to_unique_id(ipfabricsync_module) -> None:
     """A scalar reference resolves to the matching peer's unique id."""
     peer_model = _ipf_peer_model(ipfabricsync_module)
     record_model = _ipf_record_model(ipfabricsync_module)
-    holder = _holder(peer_model=peer_model, peers={"peer-1": "zulu"}, identifier_mapping="peer_id")
+    holder = _holder(
+        adapter_cls=ipfabricsync_module.IpfabricsyncAdapter,
+        peer_model=peer_model,
+        peers={"peer-1": "zulu"},
+        identifier_mapping="peer_id",
+    )
     mapping = SchemaMappingModel(name=record_model._modelname, fields=[IPF_SCALAR_FIELD])
 
-    data = ipfabricsync_module.IpfabricsyncAdapter.ipfabric_dict_to_diffsync(
-        holder, obj={"id": "record-1", "peer_id": "zulu"}, mapping=mapping, model=record_model
-    )
+    data = holder.record_to_data({"id": "record-1", "peer_id": "zulu"}, mapping, record_model)
 
     assert data["peer"] == "zulu"
 
@@ -145,12 +178,15 @@ def test_ipfabric_peer_missing_resolves_to_none(ipfabricsync_module) -> None:
     """IP Fabric's policy for an unresolved scalar reference is `None`, not an error."""
     peer_model = _ipf_peer_model(ipfabricsync_module)
     record_model = _ipf_record_model(ipfabricsync_module)
-    holder = _holder(peer_model=peer_model, peers={}, identifier_mapping="peer_id")
+    holder = _holder(
+        adapter_cls=ipfabricsync_module.IpfabricsyncAdapter,
+        peer_model=peer_model,
+        peers={},
+        identifier_mapping="peer_id",
+    )
     mapping = SchemaMappingModel(name=record_model._modelname, fields=[IPF_SCALAR_FIELD])
 
-    data = ipfabricsync_module.IpfabricsyncAdapter.ipfabric_dict_to_diffsync(
-        holder, obj={"id": "record-1", "peer_id": "missing"}, mapping=mapping, model=record_model
-    )
+    data = holder.record_to_data({"id": "record-1", "peer_id": "missing"}, mapping, record_model)
 
     assert data["peer"] is None
 
@@ -159,12 +195,15 @@ def test_ipfabric_list_valued_reference_field_is_left_unset(ipfabricsync_module)
     """A list-valued reference field is not populated; only the scalar branch is implemented."""
     peer_model = _ipf_peer_model(ipfabricsync_module)
     record_model = _ipf_record_model(ipfabricsync_module)
-    holder = _holder(peer_model=peer_model, peers={"peer-1": "zulu", "peer-2": "alpha"}, identifier_mapping="peer_ids")
+    holder = _holder(
+        adapter_cls=ipfabricsync_module.IpfabricsyncAdapter,
+        peer_model=peer_model,
+        peers={"peer-1": "zulu", "peer-2": "alpha"},
+        identifier_mapping="peer_ids",
+    )
     mapping = SchemaMappingModel(name=record_model._modelname, fields=[IPF_LIST_FIELD])
 
-    data = ipfabricsync_module.IpfabricsyncAdapter.ipfabric_dict_to_diffsync(
-        holder, obj={"id": "record-1", "peer_ids": ["zulu", "alpha"]}, mapping=mapping, model=record_model
-    )
+    data = holder.record_to_data({"id": "record-1", "peer_ids": ["zulu", "alpha"]}, mapping, record_model)
 
     assert "peers" not in data
 
@@ -172,11 +211,11 @@ def test_ipfabric_list_valued_reference_field_is_left_unset(ipfabricsync_module)
 # --- Slurpit -------------------------------------------------------------------------
 
 
-def _slurpit_holder(*, peer_model: type[Any], peers: dict[str, str], identifier_mapping: str):
-    """Build a `_holder` with the `skipped` list Slurpit's reference conversion appends to."""
-    holder = _holder(peer_model=peer_model, peers=peers, identifier_mapping=identifier_mapping)
-    holder.skipped = []
-    return holder
+def _slurpit_holder(module, *, peer_model: type[Any], peers: dict[str, str], identifier_mapping: str):
+    """Build a `_holder` for the Slurp'it adapter."""
+    return _holder(
+        adapter_cls=module.SlurpitsyncAdapter, peer_model=peer_model, peers=peers, identifier_mapping=identifier_mapping
+    )
 
 
 def _slurpit_peer_model(module):
@@ -212,30 +251,30 @@ def test_slurpit_peer_found_resolves_to_unique_id(slurpitsync_module) -> None:
     """A scalar reference resolves to the matching peer's unique id."""
     peer_model = _slurpit_peer_model(slurpitsync_module)
     record_model = _slurpit_record_model(slurpitsync_module)
-    holder = _slurpit_holder(peer_model=peer_model, peers={"peer-1": "zulu"}, identifier_mapping="peer_id")
+    holder = _slurpit_holder(
+        slurpitsync_module, peer_model=peer_model, peers={"peer-1": "zulu"}, identifier_mapping="peer_id"
+    )
     mapping = SchemaMappingModel(name=record_model._modelname, fields=[SLURPIT_SCALAR_FIELD])
 
-    data = slurpitsync_module.SlurpitsyncAdapter.slurpit_obj_to_diffsync(
-        holder, obj={"id": "record-1", "peer_id": "zulu"}, mapping=mapping, model=record_model
-    )
+    data = holder.record_to_data({"id": "record-1", "peer_id": "zulu"}, mapping, record_model)
 
     assert data["peer"] == "zulu"
-    assert holder.skipped == []
+    assert holder.load_report == []
 
 
-def test_slurpit_peer_missing_is_skipped_and_returns_none(slurpitsync_module) -> None:
-    """Slurpit's policy for an unresolved scalar reference is to append to `skipped` and return `None`."""
+def test_slurpit_peer_missing_resolves_to_a_not_in_source_placeholder(slurpitsync_module) -> None:
+    """An unresolved optional scalar reference is a peer not in the source, listed in the load report."""
     peer_model = _slurpit_peer_model(slurpitsync_module)
     record_model = _slurpit_record_model(slurpitsync_module)
-    holder = _slurpit_holder(peer_model=peer_model, peers={}, identifier_mapping="peer_id")
+    holder = _slurpit_holder(slurpitsync_module, peer_model=peer_model, peers={}, identifier_mapping="peer_id")
     mapping = SchemaMappingModel(name=record_model._modelname, fields=[SLURPIT_SCALAR_FIELD])
 
-    data = slurpitsync_module.SlurpitsyncAdapter.slurpit_obj_to_diffsync(
-        holder, obj={"id": "record-1", "peer_id": "missing"}, mapping=mapping, model=record_model
-    )
+    data = holder.record_to_data({"id": "record-1", "peer_id": "missing"}, mapping, record_model)
 
-    assert data is None
-    assert holder.skipped == ["missing"]
+    assert data["peer"] == not_in_source_placeholder("SlurpitPeer", "missing")
+    assert [(entry.kind, entry.source_id, entry.reason, entry.field) for entry in holder.load_report] == [
+        ("SlurpitRecord", "record-1", "peer_not_found_in_source", "peer")
+    ]
 
 
 def test_slurpit_list_valued_reference_resolves_matching_peer(slurpitsync_module) -> None:
@@ -243,31 +282,30 @@ def test_slurpit_list_valued_reference_resolves_matching_peer(slurpitsync_module
     peer_model = _slurpit_peer_model(slurpitsync_module)
     record_model = _slurpit_record_model(slurpitsync_module)
     holder = _slurpit_holder(
-        peer_model=peer_model, peers={"peer-1": "zulu", "peer-2": "alpha"}, identifier_mapping="peer_ids"
+        slurpitsync_module,
+        peer_model=peer_model,
+        peers={"peer-1": "zulu", "peer-2": "alpha"},
+        identifier_mapping="peer_ids",
     )
     mapping = SchemaMappingModel(name=record_model._modelname, fields=[SLURPIT_LIST_FIELD])
 
-    data = slurpitsync_module.SlurpitsyncAdapter.slurpit_obj_to_diffsync(
-        holder, obj={"id": "record-1", "peer_ids": "alpha"}, mapping=mapping, model=record_model
-    )
+    data = holder.record_to_data({"id": "record-1", "peer_ids": "alpha"}, mapping, record_model)
 
     assert data["peers"] == ["alpha"]
-    assert holder.skipped == []
+    assert holder.load_report == []
 
 
-def test_slurpit_list_valued_reference_missing_is_skipped(slurpitsync_module) -> None:
-    """Slurpit's policy for an unresolved list-valued reference is to append to `skipped` and continue."""
+def test_slurpit_list_valued_reference_missing_resolves_to_a_placeholder(slurpitsync_module) -> None:
+    """An unresolved list-valued reference is a peer not in the source, listed in the load report."""
     peer_model = _slurpit_peer_model(slurpitsync_module)
     record_model = _slurpit_record_model(slurpitsync_module)
-    holder = _slurpit_holder(peer_model=peer_model, peers={}, identifier_mapping="peer_ids")
+    holder = _slurpit_holder(slurpitsync_module, peer_model=peer_model, peers={}, identifier_mapping="peer_ids")
     mapping = SchemaMappingModel(name=record_model._modelname, fields=[SLURPIT_LIST_FIELD])
 
-    data = slurpitsync_module.SlurpitsyncAdapter.slurpit_obj_to_diffsync(
-        holder, obj={"id": "record-1", "peer_ids": "missing"}, mapping=mapping, model=record_model
-    )
+    data = holder.record_to_data({"id": "record-1", "peer_ids": "missing"}, mapping, record_model)
 
-    assert data["peers"] == []
-    assert holder.skipped == ["missing"]
+    assert data["peers"] == [not_in_source_placeholder("SlurpitPeer", "missing")]
+    assert [entry.reason for entry in holder.load_report] == ["peer_not_found_in_source"]
 
 
 # --- Fixture teardown hygiene -------------------------------------------------------

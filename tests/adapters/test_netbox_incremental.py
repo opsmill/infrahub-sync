@@ -164,7 +164,7 @@ def test_list_existing_ids_returns_unique_ids() -> None:
 
     # When the adapter instantiates `model(**payload)`, it calls the
     # MagicMock — make the returned instance expose `get_unique_id`
-    # tied to the `local_id` we know netbox_obj_to_diffsync sets.
+    # tied to the `local_id` we know record_to_data sets.
     def _make_instance(**payload: object) -> MagicMock:
         instance = MagicMock()
         instance.get_unique_id.return_value = payload["local_id"]

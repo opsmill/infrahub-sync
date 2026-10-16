@@ -13,11 +13,11 @@ from infrahub_sdk import (
 )
 from infrahub_sdk.exceptions import GraphQLError, NodeNotFoundError
 from infrahub_sdk.schema.main import GenericSchemaAPI, NodeSchemaAPI, RelationshipSchemaAPI
-from pydantic import ValidationError
 
 from infrahub_sync import (
     DiffSyncMixin,
     DiffSyncModelMixin,
+    SchemaMappingModel,
     SyncAdapter,
     SyncConfig,
 )
@@ -663,7 +663,6 @@ def _unresolved_peer_identifiers(
 class InfrahubAdapter(DiffSyncMixin, Adapter):
     type = "Infrahub"
 
-    continue_on_error: bool = False
     # Cache state: absent means hydration has not been attempted; None means
     # one attempt was exhausted; a string is the resolved DiffSync identity.
     _peer_unique_ids: dict[tuple[str, str], str | None]
@@ -807,7 +806,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         Load and process models using schema mapping filters and transformations.
 
         This method retrieves data from Infrahub, applies filters and transformations
-        as specified in the schema mapping, and loads the processed data into the adapter.
+        as specified in the schema mapping, and passes each record to `load_record`, the
+        base class's admission step. It keeps its own loop because each loaded record also
+        fills the SDK store.
         """
         element = next((el for el in self.config.schema_mapping if el.name == model_name), None)
         if element:
@@ -833,25 +834,52 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 logger.info("%s: Loading all %d %s", self.type, total, model_name)
                 transformed_objs = list_obj
 
-            # Create model instances after filtering and transforming
+            def fill_sdk_store(item: DiffSyncModel, record: dict[str, Any]) -> None:
+                original_node: InfrahubNodeSync = next(node for node, obj in node_dict_pairs if obj == record)
+                self.client.store.set(key=item.get_unique_id(), node=original_node)
+
             for transformed_obj in transformed_objs:
-                original_node: InfrahubNodeSync = next(node for node, obj in node_dict_pairs if obj == transformed_obj)
-                try:
-                    item = model(**transformed_obj)
-                except ValidationError as exc:
-                    if not self.continue_on_error:
-                        raise
-                    logger.warning(
-                        "Skipping %s[%s]: cannot build DiffSync model "
-                        "(likely a required peer was skipped earlier). Pydantic errors: %s",
-                        model_name,
-                        transformed_obj.get("local_id"),
-                        exc.errors(include_url=False),
-                    )
-                    continue
-                unique_id = item.get_unique_id()
-                self.client.store.set(key=unique_id, node=original_node)
-                self.update_or_add_model_instance(item)
+                self._release_hydrated_peer(model, transformed_obj)
+                self.load_record(model, element, transformed_obj, after_add=fill_sdk_store)
+
+    def record_to_data(
+        self,
+        record: dict[str, Any],
+        element: SchemaMappingModel,  # noqa: ARG002
+        model: type[DiffSyncModel],  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Return the record: `infrahub_node_to_diffsync` already built the model data."""
+        return record
+
+    def record_source_id(self, record: Any) -> str | None:
+        """Return the Infrahub node ID that `infrahub_node_to_diffsync` stored as `local_id`."""
+        value = record.get("local_id") if isinstance(record, Mapping) else None
+        return None if value is None else str(value)
+
+    @property
+    def _hydrated_peers(self) -> set[tuple[str, str]]:
+        """Unique IDs of peers added to the store by peer hydration, before their own kind loaded."""
+        return self.__dict__.setdefault("_hydrated_peer_ids", set())
+
+    def _release_hydrated_peer(self, model: type[InfrahubModel], record: Mapping[str, Any]) -> None:
+        """Remove the hydrated copy of `record` from the store, so `load_record` can add the full record.
+
+        Peer hydration adds a peer before its own kind loads. Without this, the full record
+        would be refused as a duplicate of its own hydrated copy.
+        """
+        identifiers = tuple(model._identifiers)
+        if any(identifier not in record for identifier in identifiers):
+            return
+        unique_id = model.create_unique_id(**{identifier: record[identifier] for identifier in identifiers})
+        key = (model.get_type(), unique_id)
+        if key not in self._hydrated_peers:
+            return
+        self._hydrated_peers.discard(key)
+        try:
+            hydrated = self.store.get(model=model.get_type(), identifier=unique_id)
+        except ObjectNotFound:
+            return
+        self.store.remove(obj=hydrated)
 
     def _resolve_peer_unique_id(
         self,
@@ -862,10 +890,9 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
     ) -> str | None:
         """Resolve a peer node to its DiffSync unique_id.
 
-        Returns None if the peer cannot be mapped (no DiffSync model, or
-        `continue_on_error` is set and the peer is missing identifier values).
-        Raises ``PeerIdentifierError`` otherwise so the operator sees actionable
-        context instead of a bare ``KeyError``.
+        Returns None if the peer cannot be mapped (no DiffSync model). Raises
+        ``PeerIdentifierError`` when the peer is missing identifier values, so the
+        operator sees actionable context instead of a bare ``KeyError``.
         """
         peer_kind = peer_node.get_kind()
         peer_model = getattr(self, peer_kind, None)
@@ -943,10 +970,6 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 present_keys=tuple(peer_data.keys()),
             )
             self._peer_unique_ids[cache_key] = None
-            if self.continue_on_error:
-                if not hydration_attempted:
-                    logger.warning("Skipping peer relationship: %s", err)
-                return None
             raise err
 
         unique_id = peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
@@ -955,6 +978,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         except ObjectNotFound:
             peer_item = peer_model(**peer_data)
             self.update_or_add_model_instance(peer_item)
+            self._hydrated_peers.add((peer_kind, unique_id))
 
         # Identifier-only hydration is deliberately adapter-local: inserting its
         # narrow result into the shared SDK store can replace a fuller node that

@@ -716,3 +716,45 @@ def test_destination_record_the_model_refuses_fails_the_load() -> None:
         adapter.model_loader(model_name="LocationSite", model=LocationSite)
 
     assert adapter.load_report == []
+
+
+@pytest.mark.parametrize("target", ["source", "destination"])
+def test_full_record_replaces_its_hydrated_copy(target: str) -> None:
+    """A peer added by peer hydration before its own kind loads is not a duplicate of itself.
+
+    The full record replaces the hydrated copy in the store, as `update_or_add_model_instance`
+    did before spec 009, and the load report stays empty.
+    """
+
+    adapter = _Harness(config=_config({"LocationSite": ["name", "description"]}), client=_two_site_client())
+    adapter.target = target
+    hydrated = LocationSite(name="dc-east")
+    adapter.update_or_add_model_instance(hydrated)
+    adapter._hydrated_peers.add(("LocationSite", hydrated.get_unique_id()))
+
+    adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    assert adapter.load_report == []
+    assert _loaded(adapter, LocationSite, "dc-east").description == "east"
+    assert _loaded_names(adapter, LocationSite) == ["dc-east", "dc-west"]
+    assert ("LocationSite", "dc-east") in adapter.client.store.set_calls  # ty: ignore[unresolved-attribute]
+
+
+def test_same_record_twice_in_one_kind_is_a_duplicate() -> None:
+    """A source record whose identity another record of the same kind already holds is in the load report."""
+
+    client = StrictClient(
+        rows={
+            "LocationSite": [
+                _Row("id-1", {"name": "dc-east", "description": "first"}),
+                _Row("id-2", {"name": "dc-east", "description": "second"}),
+            ]
+        }
+    )
+    adapter = _Harness(config=_config({"LocationSite": ["name", "description"]}), client=client)
+    adapter.target = "source"
+
+    adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    assert _loaded(adapter, LocationSite, "dc-east").description == "first"
+    assert [(entry.source_id, entry.reason) for entry in adapter.load_report] == [("id-2", "duplicate_source_identity")]

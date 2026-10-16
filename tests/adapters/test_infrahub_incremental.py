@@ -145,7 +145,7 @@ def test_model_loader_requests_identifiers_and_mapped_attributes() -> None:
     adapter.infrahub_node_to_diffsync = MagicMock(  # ty: ignore[invalid-assignment]
         return_value={"local_id": "device-id", "device": "leaf1", "name": "eth0", "description": "test"}
     )
-    adapter.update_or_add_model_instance = MagicMock()  # ty: ignore[invalid-assignment]
+    adapter.add = MagicMock()  # ty: ignore[invalid-assignment]
 
     fake_model = MagicMock()
     fake_model._identifiers = ("device", "name")

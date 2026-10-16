@@ -9,8 +9,7 @@ generates, so the fields under test have real declared types and defaults.
 from __future__ import annotations
 
 import importlib
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -24,6 +23,7 @@ NautobotRecord = pytest.importorskip("pynautobot.core.response").Record
 
 from infrahub_sync.adapters.nautobot import NautobotAdapter, NautobotModel  # noqa: E402
 from infrahub_sync.adapters.netbox import NetboxAdapter, NetboxModel  # noqa: E402
+from tests.adapters.offline_holder import offline_adapter  # noqa: E402
 
 ADAPTERS = ("netbox", "nautobot")
 
@@ -156,12 +156,10 @@ def _convert(
     model: type[Any],
     store: _Store | None = None,
 ) -> dict[str, Any]:
-    """Run one adapter's `*_obj_to_diffsync` offline, with no provider client."""
+    """Run one adapter's `record_to_data` offline, with no provider client."""
     mapping = SchemaMappingModel(name=model._modelname, fields=fields)
-    holder = SimpleNamespace(store=store)
-    if adapter == "netbox":
-        return NetboxAdapter.netbox_obj_to_diffsync(cast("NetboxAdapter", holder), obj, mapping, model)
-    return NautobotAdapter.nautobot_obj_to_diffsync(cast("NautobotAdapter", holder), obj, mapping, model)
+    adapter_cls = NetboxAdapter if adapter == "netbox" else NautobotAdapter
+    return offline_adapter(adapter_cls, store).record_to_data(obj, mapping, model)
 
 
 def _assert_exact(data: dict[str, Any], name: str, expected: object) -> None:

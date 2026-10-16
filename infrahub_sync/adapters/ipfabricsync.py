@@ -73,48 +73,29 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             sdk_defaults = {"snapshot_id": "$last"}
         return IPFClient(verify=verify_ssl, **sdk_defaults, **settings)
 
-    def model_loader(self, model_name: str, model: type[IpfabricsyncModel]) -> None:
+    def list_records(self, model_name: str, element: SchemaMappingModel) -> list[dict[str, Any]]:  # noqa: ARG002
+        """Return every row of the mapped IP Fabric table, before any filter.
+
+        Each row goes through the base class's `load_record`, which calls `add`: a second row
+        with the same identity is a `duplicate_source_identity` problem instead of overwriting
+        the first row.
         """
-        Load and process models using schema mapping filters and transformations.
+        mapping = element.mapping or ""
+        table = self.client.fetch_all(mapping, filters=ipf_filters.get(mapping))
+        logger.info("%s: Read %d %s", self.type, len(table), mapping)
+        return table
 
-        This method retrieves data from IP Fabric, and loads the processed data into the adapter.
-        """
-        for element in self.config.schema_mapping:
-            if element.name != model_name:
-                continue
-
-            if not element.mapping:
-                logger.info("No mapping defined for '%s', skipping", element.name)
-                continue
-            table = self.client.fetch_all(element.mapping, filters=ipf_filters.get(element.mapping))
-
-            total = len(table)
-            if self.target == "source":
-                # Filter records
-                filtered_objs = model.filter_records(records=table, schema_mapping=element)
-                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)
-                # Transform records
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
-            else:
-                logger.info("%s: Loading all %d %s", self.type, total, element.mapping)
-                transformed_objs = table
-
-            for obj in transformed_objs:
-                data = self.ipfabric_dict_to_diffsync(obj=obj, mapping=element, model=model)
-                item = model(**data)
-                self.update_or_add_model_instance(item)
-
-    def ipfabric_dict_to_diffsync(self, obj: dict, mapping: SchemaMappingModel, model: type[IpfabricsyncModel]) -> dict:  # pylint: disable=too-many-branches
+    def record_to_data(self, record: dict, element: SchemaMappingModel, model: type[DiffSyncModel]) -> dict:  # pylint: disable=too-many-branches
         """Convert an IP Fabric dict to a DiffSync-ready payload."""
-        data: dict[str, Any] = {"local_id": str(obj["id"])}
+        data: dict[str, Any] = {"local_id": str(record["id"])}
 
-        for field in mapping.fields:  # pylint: disable=too-many-nested-blocks
+        for field in element.fields:  # pylint: disable=too-many-nested-blocks
             field_is_list = model.is_list(name=field.name)
 
             if field.static:
                 data[field.name] = field.static
             elif not field_is_list and field.mapping and not field.reference:
-                value = obj.get(field.mapping)
+                value = record.get(field.mapping)
                 if value is not None:
                     # TODO: Be able to do this in the infrahub-sync mapping file
                     if field.name == "speed":
@@ -123,7 +104,7 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
                         data[field.name] = value
             elif field_is_list and field.mapping and not field.reference:
                 # Handle list data for attributes like ntp_servers
-                list_value = obj.get(field.mapping)
+                list_value = record.get(field.mapping)
                 if list_value is not None:
                     # Ensure we end up with a real Python list.
                     if isinstance(list_value, str):
@@ -145,8 +126,8 @@ class IpfabricsyncAdapter(DiffSyncMixin, Adapter):
             elif field.mapping and field.reference:
                 all_nodes_for_reference = self.store.get_all(model=field.reference)
                 nodes = [item for item in all_nodes_for_reference]
-                if not field_is_list and (node := obj[field.mapping]):
-                    node_id = build_mapping(adapter=self, reference=field.reference, obj=obj, field=field)
+                if not field_is_list and (node := record[field.mapping]):
+                    node_id = build_mapping(adapter=self, reference=field.reference, obj=record, field=field)
                     matching_nodes = [item for item in nodes if str(item) == node_id]
                     if len(matching_nodes) == 0:
                         data[field.name] = None

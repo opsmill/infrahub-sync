@@ -136,7 +136,8 @@ is kept.
 
 [`infrahub_sync/adapters/`][src-infrahub-sync-adapters] holds the nine bundled connectors: `aci`, `genericrestapi`,
 `infrahub`, `ipfabricsync`, `nautobot`, `netbox`, `peeringmanager`, `prometheus` and
-`slurpitsync`, plus the shared `rest_api_client.py` and `utils.py`.
+`slurpitsync`, plus the shared `rest_api_client.py`, `utils.py` and `references.py`, which
+resolves source references through the base class's `peer_unique_id`.
 
 Every bundled adapter has a matching entry in `BUILTIN_ADAPTER_CAPABILITIES`; the pair is what
 makes a package using that adapter admissible. [Adapter anatomy](adapter-anatomy.md) explains

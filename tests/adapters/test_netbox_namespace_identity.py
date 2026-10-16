@@ -229,33 +229,32 @@ def _loaded(adapter: NetboxAdapter, kind: str) -> list[dict[str, Any]]:
 
 
 def test_same_name_vrfs_are_refused_while_the_namespace_records_load() -> None:
-    """Two VRFs sharing a name collide at `IpamNamespace`, before any plan exists."""
-    from diffsync import DiffSyncModel
-    from diffsync.exceptions import ObjectAlreadyExists
+    """Two VRFs sharing a name collide at `IpamNamespace`, before any plan exists.
 
+    Since spec 009 the second VRF is recorded in the load report as
+    `duplicate_source_identity`, naming the record the store keeps; loading continues.
+    """
     adapter = _adapter(_example_entries("IpamNamespace"), {"ipam.vrfs": SAME_NAME_VRFS})
 
-    with pytest.raises(ObjectAlreadyExists) as refusal:
-        _load(adapter, "IpamNamespace")
+    _load(adapter, "IpamNamespace")
 
-    assert "Object MGMT already present" in str(refusal.value)
-    # It is the second VRF that is rejected, and loading stops there. Nothing folded the
-    # two records together: the store holds the first one, unchanged.
-    rejected = refusal.value.existing_object
-    assert isinstance(rejected, DiffSyncModel)
-    assert rejected.model_dump()["local_id"] == "4"
+    (entry,) = adapter.load_report
+    assert (entry.kind, entry.source_id, entry.reason) == ("IpamNamespace", "4", "duplicate_source_identity")
+    assert entry.identity == {"name": "MGMT"}
+    assert entry.existing is not None
+    assert (entry.existing.source_id, entry.existing.identity) == ("3", {"name": "MGMT"})
+    # Nothing folded the two records together: the store holds the first one, unchanged.
     assert [namespace["name"] for namespace in _loaded(adapter, "IpamNamespace")] == ["MGMT"]
     assert [namespace["local_id"] for namespace in _loaded(adapter, "IpamNamespace")] == ["3"]
 
 
 def test_the_refused_source_records_are_left_unchanged() -> None:
     """The adapter transforms copies, so a refusal does not rewrite the source rows."""
-    from diffsync.exceptions import ObjectAlreadyExists
-
     adapter = _adapter(_example_entries("IpamNamespace"), {"ipam.vrfs": SAME_NAME_VRFS})
 
-    with pytest.raises(ObjectAlreadyExists):
-        _load(adapter, "IpamNamespace")
+    _load(adapter, "IpamNamespace")
+
+    assert [entry.reason for entry in adapter.load_report] == ["duplicate_source_identity"]
 
     assert VRF_MGMT_A == {
         "id": 3,
@@ -276,14 +275,13 @@ def test_the_full_example_also_refuses_same_name_vrfs_at_its_vrf_entry() -> None
     `IpamVRF` is keyed on the VRF name too, so a source the namespace transform fixes
     still refuses one entry later.
     """
-    from diffsync.exceptions import ObjectAlreadyExists
-
     adapter = _adapter(_example_entries("IpamVRF"), {"ipam.vrfs": SAME_NAME_VRFS})
 
-    with pytest.raises(ObjectAlreadyExists) as refusal:
-        _load(adapter, "IpamVRF")
+    _load(adapter, "IpamVRF")
 
-    assert "Object MGMT already present" in str(refusal.value)
+    assert [(entry.kind, entry.source_id, entry.reason) for entry in adapter.load_report] == [
+        ("IpamVRF", "4", "duplicate_source_identity")
+    ]
 
 
 def test_the_shipped_example_still_maps_the_namespace_from_the_vrf_name() -> None:

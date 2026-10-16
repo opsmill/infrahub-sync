@@ -198,15 +198,14 @@ def _adapter(module: types.ModuleType, mapping: str, target: str = "source") -> 
     instance.name = "Slurpit"
     instance.target = target
     instance.client = Client("https://slurpit.example", "test-api-key")
-    instance.skipped = []
     instance.filtered_networks = [{"normalized_prefix": "10.0.0.0/24", "Vrf": "default"}]
     loaded: list[dict[str, object]] = []
     instance.add = loaded.append
     instance.config = types.SimpleNamespace(
-        schema_mapping=[types.SimpleNamespace(name="Thing", mapping=mapping)],
+        schema_mapping=[types.SimpleNamespace(name="Thing", mapping=mapping, filters=None)],
         source=types.SimpleNamespace(name="other"),
     )
-    instance.slurpit_obj_to_diffsync = lambda obj, mapping, model: obj  # noqa: ARG005
+    instance.record_to_data = lambda record, element, model: record  # noqa: ARG005
     return instance, loaded
 
 

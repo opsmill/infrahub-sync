@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 import httpx
 import slurpit  # ty: ignore[unresolved-import]  # declared as `slurpit-sdk` in the optional `slurpit` extra
 from diffsync import Adapter, DiffSyncModel
+from diffsync.exceptions import ObjectNotFound
 
 from infrahub_sync import (
     DiffSyncMixin,
@@ -19,6 +20,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
+from infrahub_sync.adapters.references import owner_kind, reference_is_required, resolve_peer_list
 from infrahub_sync.adapters.utils import build_mapping, get_value
 from infrahub_sync.configuration.credentials import declared_settings
 
@@ -81,7 +83,6 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         self._finalizer = weakref.finalize(self, _close_resources, self._loop, self.client)
         self.config = config
         self.filtered_networks = []
-        self.skipped = []
 
     def _create_slurpit_client(self, adapter: SyncAdapter) -> slurpit.api:
         """Create and check the configured Slurp'it client."""
@@ -228,112 +229,95 @@ class SlurpitsyncAdapter(DiffSyncMixin, Adapter):
         results = self.run_async(self.client.planning.search_plannings(search_data, limit=30000))
         return results or []
 
-    def model_loader(self, model_name: str, model: type[SlurpitsyncModel]) -> None:
-        """Fetch `model_name` from Slurpit, apply schema-mapping filters/transforms, and add each row to the store."""
-        for element in self.config.schema_mapping:
-            if element.name != model_name:
-                continue
+    def list_records(self, model_name: str, element: SchemaMappingModel) -> list[Any]:  # noqa: ARG002
+        """Fetch the rows of `element.mapping` from Slurp'it, as dicts, before any filter."""
+        mapping = element.mapping or ""
+        if mapping.startswith("planning_results"):
+            planning_name = mapping.split(".")[1]
+            nodes = self.planning_results(planning_name)
+        elif "." in mapping:
+            if mapping not in READ_ONLY_SDK_MAPPINGS:
+                msg = f"Unsupported Slurp'it SDK mapping: {mapping}"
+                raise ValueError(msg)
+            app_name, resource_name = mapping.split(".")
+            slurpit_app = getattr(self.client, app_name)
+            slurpit_model = getattr(slurpit_app, resource_name)
+            nodes = self.run_async(slurpit_model())
+        elif mapping == "filter_interfaces":
+            interfaces = self.planning_results("interfaces")
+            nodes = self.run_async(self.filter_interfaces(interfaces))
+        else:
+            slurpit_model = getattr(self, mapping)
+            nodes = slurpit_model()
 
-            if not element.mapping:
-                logger.info("No mapping defined for '%s', skipping", element.name)
-                continue
+        list_obj = [node.to_dict() if hasattr(node, "to_dict") else node for node in nodes]
+        logger.info("%s: Read %d %s", self.type, len(list_obj), mapping)
+        return list_obj
 
-            if element.mapping.startswith("planning_results"):
-                planning_name = element.mapping.split(".")[1]
-                nodes = self.planning_results(planning_name)
-            elif "." in element.mapping:
-                if element.mapping not in READ_ONLY_SDK_MAPPINGS:
-                    msg = f"Unsupported Slurp'it SDK mapping: {element.mapping}"
-                    raise ValueError(msg)
-                app_name, resource_name = element.mapping.split(".")
-                slurpit_app = getattr(self.client, app_name)
-                slurpit_model = getattr(slurpit_app, resource_name)
-                nodes = self.run_async(slurpit_model())
-            elif element.mapping == "filter_interfaces":
-                interfaces = self.planning_results("interfaces")
-                nodes = self.run_async(self.filter_interfaces(interfaces))
-            else:
-                slurpit_model = getattr(self, element.mapping)
-                nodes = slurpit_model()
+    def _peer_by_unique_id(
+        self, peer_kind: str, unique_id: str, *, owner: tuple[str, str | None], field: str, required: bool
+    ) -> str | None:
+        """Resolve a reference Slurp'it states as the peer's unique ID.
 
-            list_obj = []
-            for node in nodes:
-                if hasattr(node, "to_dict"):
-                    list_obj.append(node.to_dict())
-                else:
-                    list_obj.append(node)
-            total = len(list_obj)
+        A peer the store does not hold resolves through `peer_unique_id`, with the unique ID
+        as the peer's source value.
+        """
+        try:
+            return self.store.get(model=peer_kind, identifier=unique_id).get_unique_id()
+        except ObjectNotFound:
+            return self.peer_unique_id(peer_kind, unique_id, owner=owner, field=field, required=required)
 
-            if self.target == "source":
-                # Filter records
-                filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
-                logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, element.mapping)
-                # Transform records
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
-            else:
-                logger.info("%s: Loading all %d %s", self.type, total, element.mapping)
-                transformed_objs = list_obj
-
-            for obj in transformed_objs:
-                if data := self.slurpit_obj_to_diffsync(obj=obj, mapping=element, model=model):
-                    item = model(**data)
-                    try:  # noqa: SIM105
-                        self.add(item)
-                    except Exception:  # noqa: BLE001, S110
-                        pass
-
-        if self.skipped:
-            logger.info("%s: skipped syncing %d models", self.type, len(self.skipped))
-
-    def slurpit_obj_to_diffsync(
-        self, obj: dict[str, Any], mapping: SchemaMappingModel, model: type[SlurpitsyncModel]
-    ) -> dict | None:
-        """Convert a Slurpit dict to a DiffSync-ready payload, or None when a required reference is missing."""
-        obj_id = obj.get("id")
+    def record_to_data(
+        self, record: dict[str, Any], element: SchemaMappingModel, model: type[DiffSyncModel]
+    ) -> dict[str, Any]:
+        """Convert a Slurp'it dict to a DiffSync-ready payload; references resolve through the base class."""
+        obj_id = record.get("id")
         data: dict[str, Any] = {"local_id": str(obj_id)}
+        owner = (owner_kind(model, element.name), str(obj_id))
 
-        for field in mapping.fields:
+        for field in element.fields:
             field_is_list = model.is_list(name=field.name)
 
             if field.static:
                 data[field.name] = field.static
             elif not field_is_list and field.mapping and not field.reference:
-                value = get_value(obj, field.mapping)
+                value = get_value(record, field.mapping)
                 if value is not None:
                     data[field.name] = value
             elif field_is_list and field.mapping and not field.reference:
                 msg = "It's not supported yet to have an attribute of type list with a simple mapping"
                 raise NotImplementedError(msg)
             elif field.mapping and field.reference:
-                all_nodes_for_reference = self.store.get_all(model=field.reference)
-                nodes = [item for item in all_nodes_for_reference]
+                required = reference_is_required(model, field.name)
                 if not field_is_list:
-                    if node := obj.get(field.mapping):
+                    if node := record.get(field.mapping):
                         # If node is a simple string/value, use it directly; otherwise build from nested object
                         if isinstance(node, (str, int)):
                             node_id = str(node)
                         else:
-                            node_id = build_mapping(adapter=self, reference=field.reference, obj=obj, field=field)
-                        matching_nodes = [item for item in nodes if item.get_unique_id() == node_id]
-                        if len(matching_nodes) == 0:
-                            self.skipped.append(node)
-                            return None
-                            # Ideally we should raise an IndexError but there are some instances where Slurpit
-                            # data has no dependencies so skipping is required.
-                        node = matching_nodes[0]
-                        data[field.name] = node.get_unique_id()
+                            node_id = build_mapping(adapter=self, reference=field.reference, obj=record, field=field)
+                        unique_id = self._peer_by_unique_id(
+                            field.reference, node_id, owner=owner, field=field.name, required=required
+                        )
+                        if unique_id is not None:
+                            data[field.name] = unique_id
                 else:
                     data[field.name] = []
-                    if node := obj.get(field.mapping):
-                        node_id = build_mapping(adapter=self, reference=field.reference, obj=obj, field=field)
-                        matching_nodes = [item for item in nodes if item.get_unique_id() == node_id]
-                        if len(matching_nodes) == 0:
-                            self.skipped.append(node)
-                            continue
-                            # Ideally we should raise an IndexError but there are some instances where Slurpit
-                            # data has no dependencies so skipping is required.
-                        data[field.name].append(matching_nodes[0].get_unique_id())
-                    data[field.name] = sorted(data[field.name])
+                    if record.get(field.mapping):
+                        node_id = build_mapping(adapter=self, reference=field.reference, obj=record, field=field)
+                        try:
+                            data[field.name] = [
+                                self.store.get(model=field.reference, identifier=node_id).get_unique_id()
+                            ]
+                        except ObjectNotFound:
+                            data[field.name], _ = resolve_peer_list(
+                                self,
+                                peer_kind=field.reference,
+                                peer_source_ids=[node_id],
+                                owner=owner,
+                                field=field.name,
+                                required=required,
+                            )
         return data
 
 

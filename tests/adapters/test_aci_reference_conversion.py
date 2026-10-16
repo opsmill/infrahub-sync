@@ -7,8 +7,9 @@ from typing import Any
 import pytest
 from diffsync.store.local import LocalStore
 
-from infrahub_sync import SchemaMappingField, SchemaMappingModel
+from infrahub_sync import SchemaMappingField, SchemaMappingModel, not_in_source_placeholder
 from infrahub_sync.adapters.aci import AciAdapter, AciModel
+from tests.adapters.offline_holder import offline_adapter
 
 
 class AciPeer(AciModel):
@@ -44,8 +45,7 @@ LIST_FIELD = SchemaMappingField(
 
 def _adapter(peers: dict[str, str]) -> AciAdapter:
     """Build an offline adapter backed by a real DiffSync `LocalStore`."""
-    adapter = object.__new__(AciAdapter)
-    adapter.store = LocalStore()
+    adapter = offline_adapter(AciAdapter, LocalStore())
     for local_id, name in peers.items():
         peer = AciPeer(name=name)
         peer.local_id = local_id
@@ -62,7 +62,7 @@ def _convert(
     """Run the real ACI converter against its ordinary nested source shape."""
     mapping = SchemaMappingModel(name=AciRecord._modelname, fields=fields)
     source = {"id": "record-1", "attributes": attributes}
-    return adapter.obj_to_diffsync(obj=source, mapping=mapping, model=AciRecord)
+    return adapter.record_to_data(source, mapping, AciRecord)
 
 
 def test_empty_store_preserves_an_absent_scalar_reference() -> None:
@@ -82,18 +82,30 @@ def test_empty_store_preserves_an_absent_scalar_reference() -> None:
         pytest.param({"other": "unrelated"}, id="peer-absent"),
     ],
 )
-def test_missing_list_peer_raises_the_existing_error(peers: dict[str, str]) -> None:
-    """An unresolved list item raises the exact existing `ValueError`."""
+def test_missing_list_peer_resolves_to_a_not_in_source_placeholder(peers: dict[str, str]) -> None:
+    """An unresolved list item is a peer not in the source, listed in the load report (spec 009)."""
     adapter = _adapter(peers)
 
-    with pytest.raises(ValueError) as error:
-        _convert(
-            adapter=adapter,
-            fields=[LIST_FIELD],
-            attributes={"peers": ["missing"]},
-        )
+    data = _convert(
+        adapter=adapter,
+        fields=[LIST_FIELD],
+        attributes={"peers": ["missing"]},
+    )
 
-    assert str(error.value) == "Unable to locate the node AciPeer missing"
+    assert data["peers"] == [not_in_source_placeholder("AciPeer", "missing")]
+    assert [(entry.kind, entry.source_id, entry.reason, entry.field) for entry in adapter.load_report] == [
+        ("AciRecord", "record-1", "peer_not_found_in_source", "peers")
+    ]
+
+
+def test_scalar_reference_falls_back_to_the_peer_name() -> None:
+    """A scalar reference that matches no local id resolves by the peer's name."""
+    adapter = _adapter({"peer-1": "zulu"})
+
+    data = _convert(adapter=adapter, fields=[SCALAR_FIELD], attributes={"primary": "zulu"})
+
+    assert data["primary_peer"] == "zulu"
+    assert adapter.load_report == []
 
 
 def test_scalar_reference_resolves_to_the_matching_peer_unique_id() -> None:

@@ -16,6 +16,7 @@ from infrahub_sync import (
     SourceRecordReference,
     SyncAdapter,
     SyncConfig,
+    not_in_source_placeholder,
 )
 
 if TYPE_CHECKING:
@@ -213,30 +214,67 @@ def test_required_many_keeps_a_valid_peer_when_another_is_excluded(
     assert "Example record 1 field peer (peer kind BuiltinTag, IDs: 20)" in caplog.text
 
 
-@pytest.mark.parametrize("model", [OptionalOne, RequiredOne, OptionalMany, RequiredMany])
-def test_unexplained_missing_peer_stays_fatal(monkeypatch: pytest.MonkeyPatch, model: type[NetboxModel]) -> None:
-    """A peer absent from the source retains the original lookup error."""
-    value: Any = [{"id": 99}] if model in {OptionalMany, RequiredMany} else {"id": 99}
+def test_required_peer_not_in_the_source_is_in_the_load_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A required peer the source does not return leaves the record out (spec 009 research R4)."""
+    adapter = _adapter(monkeypatch, RequiredOne, [{"id": 1, "name": "owner", "peer": {"id": 99}}])
+
+    adapter.model_loader("Example", RequiredOne)
+
+    assert adapter.get_all("Example") == []
+    assert adapter.load_report == [
+        LoadReportEntry(
+            kind="Example",
+            source_id="1",
+            reason="peer_not_found_in_source",
+            field="peer",
+            peer=SourceRecordReference(kind="BuiltinTag", identity=None, source_id="99"),
+            loaded=False,
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("model", "value"),
+    [(OptionalOne, {"id": 99}), (OptionalMany, [{"id": 99}]), (RequiredMany, [{"id": 99}])],
+)
+def test_optional_peer_not_in_the_source_loads_with_a_placeholder(
+    monkeypatch: pytest.MonkeyPatch, model: type[NetboxModel], value: dict[str, int] | list[dict[str, int]]
+) -> None:
+    """The record loads with a "not in the source" reference, and the load report lists it.
+
+    A cardinality-many reference resolves each peer as optional; only peers a filter removed
+    can leave a required list empty.
+    """
     adapter = _adapter(monkeypatch, model, [{"id": 1, "name": "owner", "peer": value}])
 
-    with pytest.raises(IndexError) as err:
-        adapter.model_loader("Example", model)
+    adapter.model_loader("Example", model)
 
-    expected = "BuiltinTag" if model in {OptionalMany, RequiredMany} else "peer"
-    assert str(err.value) == f"Unable to locate the node {expected} 99"
+    placeholder = not_in_source_placeholder("BuiltinTag", "99")
+    peer = adapter.get_all("Example")[0].model_dump()["peer"]
+    assert peer == (placeholder if model is OptionalOne else [placeholder])
+    assert adapter.load_report == [
+        LoadReportEntry(
+            kind="Example",
+            source_id="1",
+            identity={"name": "owner"},
+            reason="peer_not_found_in_source",
+            field="peer",
+            peer=SourceRecordReference(kind="BuiltinTag", identity=None, source_id="99"),
+            loaded=True,
+        )
+    ]
 
 
 def test_incremental_reference_checks_the_full_filtered_peer_set(monkeypatch: pytest.MonkeyPatch) -> None:
     """A warm run can classify a peer excluded before its changed-since window."""
     adapter = _adapter(monkeypatch, OptionalOne, [])
-    adapter._complete_filtered_peers.clear()
-    adapter._filtered_peer_ids.clear()
+    adapter._admission.filtered_ids.clear()
     payload = {"id": 1, "name": "owner", "peer": {"id": 20}}
 
-    data = adapter.netbox_obj_to_diffsync(payload, adapter.config.schema_mapping[1], OptionalOne)
+    data = adapter.record_to_data(payload, adapter.config.schema_mapping[1], OptionalOne)
 
     assert data == {"local_id": "1", "name": "owner"}
-    assert adapter._filtered_peer_ids["BuiltinTag"] == {"20"}
+    assert adapter.excluded_peer_ids("BuiltinTag") == {"20"}
 
 
 def test_filtered_optional_relationship_can_be_planned(monkeypatch: pytest.MonkeyPatch) -> None:

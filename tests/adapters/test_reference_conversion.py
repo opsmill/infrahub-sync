@@ -2,9 +2,10 @@
 
 A schema-mapping field that declares `reference` resolves its value against the adapter's
 DiffSync store. These tests run all three converters against a real `LocalStore` and pin what
-each one emits, raises, or logs for an empty store, a store holding no matching peer, a
-matching peer, a scalar reference, and several references at once. NetBox and the generic REST
-adapter fail on a peer they cannot find; Nautobot warns and skips it.
+each one emits or raises for an empty store, a store holding no matching peer, a matching
+peer, a scalar reference, and several references at once. Since spec 009 all three resolve
+references through the base class's `peer_unique_id`: a peer the source does not return
+resolves to a "not in the source" placeholder and is listed in the load report (research R4).
 
 They also pin the store contract those converters read: `get_all` hands back a list, so an
 immediate copy of it is empty exactly when the list is.
@@ -15,13 +16,13 @@ so the fields under test have real declared types and defaults.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from diffsync.store.local import LocalStore
 
-from infrahub_sync import SchemaMappingField, SchemaMappingModel
+from infrahub_sync import SchemaMappingField, SchemaMappingModel, not_in_source_placeholder
+from tests.adapters.offline_holder import offline_adapter
 
 if TYPE_CHECKING:
     from diffsync.store import BaseStore
@@ -40,8 +41,8 @@ from infrahub_sync.adapters.nautobot import NautobotAdapter, NautobotModel  # no
 from infrahub_sync.adapters.netbox import NetboxAdapter, NetboxModel  # noqa: E402
 
 ADAPTERS = ("netbox", "nautobot", "genericrestapi")
-FAILING_ADAPTERS = ("netbox", "genericrestapi")
-"""The adapters that raise on a peer the store does not hold. Nautobot warns and skips."""
+PASS_THROUGH_ADAPTERS = ("netbox", "genericrestapi")
+"""The adapters that copy a scalar reference that is not a mapping. Nautobot has no such branch."""
 
 
 class NetboxBuiltinTag(NetboxModel):
@@ -157,18 +158,13 @@ def _convert(
     """Run one adapter's converter offline, with no provider client."""
     model = RIR_MODELS[adapter]
     mapping = SchemaMappingModel(name=model._modelname, fields=fields)
-    holder = SimpleNamespace(store=store)
-    if adapter == "netbox":
-        return NetboxAdapter.netbox_obj_to_diffsync(
-            cast("NetboxAdapter", holder), obj, mapping, cast("type[NetboxModel]", model)
-        )
-    if adapter == "nautobot":
-        return NautobotAdapter.nautobot_obj_to_diffsync(
-            cast("NautobotAdapter", holder), obj, mapping, cast("type[NautobotModel]", model)
-        )
-    return GenericrestapiAdapter.obj_to_diffsync(
-        cast("GenericrestapiAdapter", holder), obj, mapping, cast("type[GenericrestapiModel]", model)
-    )
+    adapter_cls = {"netbox": NetboxAdapter, "nautobot": NautobotAdapter, "genericrestapi": GenericrestapiAdapter}
+    return offline_adapter(adapter_cls[adapter], store).record_to_data(obj, mapping, model)
+
+
+def _not_in_source(peer_id: object) -> str:
+    """The placeholder a reference to a `BuiltinTag` the source does not return resolves to."""
+    return not_in_source_placeholder("BuiltinTag", str(peer_id))
 
 
 def _list_payload(adapter: str) -> dict[str, Any]:
@@ -254,88 +250,51 @@ def test_list_reference_resolves_every_peer_in_sorted_order(adapter: str) -> Non
 # --- Peers the store does not hold --------------------------------------------------------
 
 
-@pytest.mark.parametrize("adapter", FAILING_ADAPTERS)
+@pytest.mark.parametrize("adapter", ADAPTERS)
 @pytest.mark.parametrize("peers", NO_MATCHING_PEER)
-def test_missing_scalar_peer_raises(adapter: str, peers: dict[Any, str]) -> None:
-    """NetBox and generic REST fail on a scalar peer the store does not hold.
-
-    Their messages differ: NetBox names the field, generic REST names the model class.
-    """
+def test_missing_scalar_peer_resolves_to_a_not_in_source_placeholder(adapter: str, peers: dict[Any, str]) -> None:
+    """An optional scalar peer the store does not hold becomes a placeholder, listed in the load report."""
     first, _ = PEER_IDS[adapter]
     obj = _source_object(adapter, _scalar_payload(adapter))
-    expected = "primary_tag" if adapter == "netbox" else str(RIR_MODELS[adapter])
+    model = RIR_MODELS[adapter]
+    mapping = SchemaMappingModel(name=model._modelname, fields=SCALAR_FIELD)
+    adapter_cls = {"netbox": NetboxAdapter, "nautobot": NautobotAdapter, "genericrestapi": GenericrestapiAdapter}
+    holder = offline_adapter(adapter_cls[adapter], _store(adapter, peers))
 
-    with pytest.raises(IndexError) as err:
-        _convert(adapter, obj, SCALAR_FIELD, _store(adapter, peers))
+    data = holder.record_to_data(obj, mapping, model)
 
-    assert str(err.value) == f"Unable to locate the node {expected} {first}"
-
-
-@pytest.mark.parametrize("adapter", FAILING_ADAPTERS)
-@pytest.mark.parametrize("peers", NO_MATCHING_PEER)
-def test_missing_list_peer_raises(adapter: str, peers: dict[Any, str]) -> None:
-    """NetBox and generic REST fail on the first list peer the store does not hold."""
-    first, _ = PEER_IDS[adapter]
-    obj = _source_object(adapter, _list_payload(adapter))
-
-    with pytest.raises(IndexError) as err:
-        _convert(adapter, obj, LIST_FIELD, _store(adapter, peers))
-
-    assert str(err.value) == f"Unable to locate the node BuiltinTag {first}"
-
-
-@pytest.mark.parametrize("peers", NO_MATCHING_PEER)
-def test_nautobot_warns_and_drops_a_missing_scalar_peer(
-    peers: dict[Any, str], caplog: pytest.LogCaptureFixture
-) -> None:
-    """Nautobot logs the unresolved scalar peer and leaves the field out of the payload."""
-    first, _ = PEER_IDS["nautobot"]
-    obj = _source_object("nautobot", _scalar_payload("nautobot"))
-
-    with caplog.at_level("WARNING", logger="infrahub_sync.adapters.nautobot"):
-        data = _convert("nautobot", obj, SCALAR_FIELD, _store("nautobot", peers))
-
-    assert "primary_tag" not in data
-    assert caplog.messages == [f"Unable to locate the node primary_tag {first}"]
-
-
-@pytest.mark.parametrize("peers", NO_MATCHING_PEER)
-def test_nautobot_warns_once_per_missing_list_peer_and_emits_an_empty_list(
-    peers: dict[Any, str], caplog: pytest.LogCaptureFixture
-) -> None:
-    """Nautobot logs each unresolved list peer and still emits the field, empty."""
-    first, second = PEER_IDS["nautobot"]
-    obj = _source_object("nautobot", _list_payload("nautobot"))
-
-    with caplog.at_level("WARNING", logger="infrahub_sync.adapters.nautobot"):
-        data = _convert("nautobot", obj, LIST_FIELD, _store("nautobot", peers))
-
-    assert data["tags"] == []
-    assert caplog.messages == [
-        f"Unable to locate the node tags {first}",
-        f"Unable to locate the node tags {second}",
+    assert data["primary_tag"] == _not_in_source(first)
+    assert [(entry.reason, entry.field, entry.loaded) for entry in holder.load_report] == [
+        ("peer_not_found_in_source", "primary_tag", True)
     ]
 
 
 @pytest.mark.parametrize("adapter", ADAPTERS)
+@pytest.mark.parametrize("peers", NO_MATCHING_PEER)
+def test_missing_list_peers_resolve_to_not_in_source_placeholders(adapter: str, peers: dict[Any, str]) -> None:
+    """Each list peer the store does not hold becomes a placeholder, sorted with the others."""
+    first, second = PEER_IDS[adapter]
+    obj = _source_object(adapter, _list_payload(adapter))
+
+    data = _convert(adapter, obj, LIST_FIELD, _store(adapter, peers))
+
+    assert data["tags"] == sorted([_not_in_source(first), _not_in_source(second)])
+
+
+@pytest.mark.parametrize("adapter", ADAPTERS)
 def test_one_missing_peer_does_not_lose_the_peers_that_resolved(adapter: str) -> None:
-    """With only the second peer stored, NetBox and generic REST fail; Nautobot keeps the rest."""
-    _, second = PEER_IDS[adapter]
+    """With only the second peer stored, the first resolves to a placeholder beside it."""
+    first, second = PEER_IDS[adapter]
     obj = _source_object(adapter, _list_payload(adapter))
     store = _store(adapter, {second: SECOND_PEER_NAME})
 
-    if adapter == "nautobot":
-        assert _convert(adapter, obj, LIST_FIELD, store)["tags"] == [SECOND_PEER_NAME]
-        return
-
-    with pytest.raises(IndexError):
-        _convert(adapter, obj, LIST_FIELD, store)
+    assert _convert(adapter, obj, LIST_FIELD, store)["tags"] == sorted([SECOND_PEER_NAME, _not_in_source(first)])
 
 
 # --- A reference that is not a peer lookup ------------------------------------------------
 
 
-@pytest.mark.parametrize("adapter", FAILING_ADAPTERS)
+@pytest.mark.parametrize("adapter", PASS_THROUGH_ADAPTERS)
 def test_scalar_reference_to_a_plain_value_passes_straight_through(adapter: str) -> None:
     """NetBox and generic REST copy a non-dict scalar reference without consulting the store.
 
@@ -394,30 +353,15 @@ def _peer_list_payload(adapter: str, peers: list[Any]) -> dict[str, Any]:
     return {"id": OBJECT_IDS[adapter], "name": "RIPE", "tags": peers}
 
 
-@pytest.mark.parametrize("adapter", FAILING_ADAPTERS)
+@pytest.mark.parametrize("adapter", ADAPTERS)
 @pytest.mark.parametrize("peer", NO_USABLE_PEER_ID)
-def test_list_peer_without_a_usable_id_is_looked_up_as_none_and_fails(adapter: str, peer: dict[str, Any]) -> None:
+def test_list_peer_without_a_usable_id_is_looked_up_as_none(adapter: str, peer: dict[str, Any]) -> None:
     """A list peer with no id is not skipped: it is searched for under the string "None"."""
     obj = _source_object(adapter, _peer_list_payload(adapter, [peer]))
 
-    with pytest.raises(IndexError) as err:
-        _convert(adapter, obj, LIST_FIELD, _store(adapter, {}))
+    data = _convert(adapter, obj, LIST_FIELD, _store(adapter, {}))
 
-    assert str(err.value) == "Unable to locate the node BuiltinTag None"
-
-
-@pytest.mark.parametrize("peer", NO_USABLE_PEER_ID)
-def test_nautobot_warns_for_a_list_peer_without_a_usable_id(
-    peer: dict[str, Any], caplog: pytest.LogCaptureFixture
-) -> None:
-    """Nautobot reaches the same "None" lookup and warns instead of raising."""
-    obj = _source_object("nautobot", _peer_list_payload("nautobot", [peer]))
-
-    with caplog.at_level("WARNING", logger="infrahub_sync.adapters.nautobot"):
-        data = _convert("nautobot", obj, LIST_FIELD, _store("nautobot", {}))
-
-    assert data["tags"] == []
-    assert caplog.messages == ["Unable to locate the node tags None"]
+    assert data["tags"] == [_not_in_source(None)]
 
 
 @pytest.mark.parametrize("adapter", ADAPTERS)
@@ -430,26 +374,14 @@ def test_list_peer_with_a_zero_id_is_looked_up_not_skipped(adapter: str) -> None
     assert data["tags"] == [FIRST_PEER_NAME]
 
 
-@pytest.mark.parametrize("adapter", FAILING_ADAPTERS)
-def test_unstored_zero_id_list_peer_fails_naming_the_zero(adapter: str) -> None:
-    """A zero id the store does not hold fails like any other unresolved peer."""
+@pytest.mark.parametrize("adapter", ADAPTERS)
+def test_unstored_zero_id_list_peer_is_named_by_its_zero(adapter: str) -> None:
+    """A zero id the store does not hold resolves like any other peer not in the source."""
     obj = _source_object(adapter, _peer_list_payload(adapter, [{"id": 0, "name": FIRST_PEER_NAME}]))
 
-    with pytest.raises(IndexError) as err:
-        _convert(adapter, obj, LIST_FIELD, _store(adapter, {}))
+    data = _convert(adapter, obj, LIST_FIELD, _store(adapter, {}))
 
-    assert str(err.value) == "Unable to locate the node BuiltinTag 0"
-
-
-def test_nautobot_warns_for_an_unstored_zero_id_list_peer(caplog: pytest.LogCaptureFixture) -> None:
-    """Nautobot names the zero in its warning rather than reporting a missing id."""
-    obj = _source_object("nautobot", _peer_list_payload("nautobot", [{"id": 0, "name": FIRST_PEER_NAME}]))
-
-    with caplog.at_level("WARNING", logger="infrahub_sync.adapters.nautobot"):
-        data = _convert("nautobot", obj, LIST_FIELD, _store("nautobot", {}))
-
-    assert data["tags"] == []
-    assert caplog.messages == ["Unable to locate the node tags 0"]
+    assert data["tags"] == [_not_in_source(0)]
 
 
 # --- Empty peer entries -------------------------------------------------------------------
@@ -459,7 +391,7 @@ def test_nautobot_warns_for_an_unstored_zero_id_list_peer(caplog: pytest.LogCapt
 def test_an_empty_peer_entry_is_skipped_without_touching_the_store(adapter: str) -> None:
     """An empty mapping among the peers is dropped by the falsy check, not looked up.
 
-    Were it looked up, NetBox and generic REST would raise on it before reaching the real peer.
+    Were it looked up, it would resolve to a placeholder beside the real peer.
     """
     first, _ = PEER_IDS[adapter]
     obj = _source_object(adapter, _peer_list_payload(adapter, [{}, {"id": first, "name": FIRST_PEER_NAME}]))
