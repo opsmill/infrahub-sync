@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from infrahub_sync.cache.cursors import CursorState
     from infrahub_sync.runtime_schema import RuntimeModelPlan
 
+    RecordToData = Callable[[Any, "SchemaMappingModel | None", type[DiffSyncModel]], Mapping[str, Any]]
+
 logger = logging.getLogger(__name__)
 
 
@@ -451,6 +453,15 @@ class _AdmissionState:
     filtered_ids: dict[str, set[str]] = dataclasses.field(default_factory=dict)
 
 
+def identity_record_data(
+    record: Mapping[str, Any],
+    element: SchemaMappingModel | None,  # noqa: ARG001  # pylint: disable=unused-argument  # the `to_data` signature
+    model: type[DiffSyncModel],  # noqa: ARG001  # pylint: disable=unused-argument  # the `to_data` signature
+) -> dict[str, Any]:
+    """Return a row that already holds model data unchanged (the engine's incremental rows)."""
+    return dict(record)
+
+
 class DiffSyncMixin:
     """Adapter base class: owns the per-record load loop and the one admission step.
 
@@ -546,45 +557,72 @@ class DiffSyncMixin:
         """Return the source IDs of `peer_kind` that a configured filter removed."""
         return self._admission.filtered_ids.get(peer_kind, set())
 
-    def load_record(
+    def load_record(  # pylint: disable=too-many-arguments  # the hooks are keyword-only
         self,
         model: type[DiffSyncModel],
-        element: SchemaMappingModel,
+        element: SchemaMappingModel | None,
         record: Any,  # a raw record of any adapter
         *,
         after_add: Callable[[DiffSyncModel, Any], None] | None = None,
+        to_data: RecordToData | None = None,
+        store_item: Callable[[DiffSyncModel], DiffSyncModel] | None = None,
     ) -> DiffSyncModel | None:
         """Build one record, add it to the store and return it (the admission step, research R3).
 
         On the source side, a record that cannot be built is recorded in `load_report` and
         None is returned; any other failure is raised again as `RecordLoadError`. On the
         destination side nothing is caught.
+
+        `to_data` replaces `record_to_data` (the engine passes `identity_record_data` for its
+        incremental rows); `store_item` replaces `self.add` and returns the stored model.
         """
         if not self._is_source():
-            data = self.record_to_data(record, element, model)  # pylint: disable=assignment-from-no-return  # adapters implement it
-            item = model(**data)
-            self.add(item)  # ty: ignore[unresolved-attribute]  # DiffSync adapter method
+            data = self._record_data(record, element, model, to_data)
+            item = self._store(model(**data), store_item)
             self._index(item, data)
             if after_add is not None:
                 after_add(item, record)
             return item
-        return self._admit_source_record(model, element, record, after_add=after_add)
+        return self._admit_source_record(
+            model, element, record, after_add=after_add, to_data=to_data, store_item=store_item
+        )
 
-    def _admit_source_record(
+    def _record_data(
+        self,
+        record: Any,  # a raw record of any adapter
+        element: SchemaMappingModel | None,
+        model: type[DiffSyncModel],
+        to_data: RecordToData | None,
+    ) -> dict[str, Any]:
+        if to_data is not None:
+            return dict(to_data(record, element, model))
+        if element is None:
+            msg = "load_record needs a mapping entry unless a `to_data` conversion is given."
+            raise TypeError(msg)
+        return self.record_to_data(record, element, model)  # pylint: disable=assignment-from-no-return  # adapters implement it
+
+    def _store(self, item: DiffSyncModel, store_item: Callable[[DiffSyncModel], DiffSyncModel] | None) -> DiffSyncModel:
+        if store_item is not None:
+            return store_item(item)
+        self.add(item)  # ty: ignore[unresolved-attribute]  # DiffSync adapter method
+        return item
+
+    def _admit_source_record(  # pylint: disable=too-many-arguments  # the hooks are keyword-only
         self,
         model: type[DiffSyncModel],
-        element: SchemaMappingModel,
+        element: SchemaMappingModel | None,
         record: Any,  # a raw record of any adapter
         *,
         after_add: Callable[[DiffSyncModel, Any], None] | None,
+        to_data: RecordToData | None,
+        store_item: Callable[[DiffSyncModel], DiffSyncModel] | None,
     ) -> DiffSyncModel | None:
-        kind = getattr(model, "_modelname", element.name)
+        kind = getattr(model, "_modelname", element.name if element is not None else model.__name__)
         report_start = len(self.load_report)
         data: dict[str, Any] | None = None
         try:
-            data = self.record_to_data(record, element, model)  # pylint: disable=assignment-from-no-return  # adapters implement it
-            item = model(**data)
-            self.add(item)  # ty: ignore[unresolved-attribute]  # DiffSync adapter method
+            data = self._record_data(record, element, model, to_data)
+            item = self._store(model(**data), store_item)
         except PeerReferenceError as exc:
             self._settle_pending(report_start, kind, exc.source_id, identity=None)
             self._record_peer_error(kind, exc)

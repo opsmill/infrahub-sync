@@ -1,0 +1,1 @@
+The `continue_on_error` parameter is removed from the engine (`Potenda`, `get_potenda_from_instance`, `execute_run`) and the adapters. A source record that cannot be built is now recorded in the adapter's load report instead of being skipped.

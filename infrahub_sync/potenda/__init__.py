@@ -17,7 +17,7 @@ from infrahub_sdk.exceptions import (
 )
 from tqdm import tqdm
 
-from infrahub_sync import resolve_effective_diffsync_flags
+from infrahub_sync import identity_record_data, resolve_effective_diffsync_flags
 
 # These plan imports are cheap; imports that reach pyarrow stay deferred below.
 from infrahub_sync.plan.config_version import resolve_config_version, validate_config_version
@@ -76,7 +76,7 @@ if TYPE_CHECKING:
     from diffsync.diff import Diff
     from diffsync.enum import DiffSyncFlags
 
-    from infrahub_sync import SyncInstance
+    from infrahub_sync import LoadReportEntry, SyncInstance
     from infrahub_sync.cache.cursors import CursorState
     from infrahub_sync.plan.models import PlanManifest, PlannedOperation, VerificationFailure
     from infrahub_sync.plan.ownership import WriteOwnership
@@ -253,13 +253,11 @@ class Potenda:
         run_id: str | None = None,
         cache_root: Path | None = None,
         schema_subhash: str = "",
-        continue_on_error: bool = False,
         concurrent_load: bool = True,
     ):
         """Initialize adapters, execution options, and per-run cache state."""
         self.top_level = top_level
         self.tiers: list[set[str]] | None = tiers
-        self.continue_on_error = continue_on_error
         self.concurrent_load = concurrent_load
         if self.tiers:
             for idx, tier in enumerate(self.tiers):
@@ -301,15 +299,14 @@ class Potenda:
 
         self.source = source
         self.destination = destination
+        # The records each side's admission step could not build (spec 009 research R3), kept
+        # for the problem pass. A recorded record does not fail the load.
+        self.source_load_report: list[LoadReportEntry] = []
+        self.destination_load_report: list[LoadReportEntry] = []
 
         # diffsync's `Adapter.top_level` is a ClassVar but the library supports per-instance overrides.
         self.source.top_level = top_level  # ty: ignore[invalid-attribute-access]
         self.destination.top_level = top_level  # ty: ignore[invalid-attribute-access]
-
-        # Propagate continue_on_error so adapters can skip bad peers in-loop.
-        # Adapters that don't read the attribute just ignore it.
-        self.source.continue_on_error = continue_on_error  # ty: ignore[unresolved-attribute]
-        self.destination.continue_on_error = continue_on_error  # ty: ignore[unresolved-attribute]
 
         self.partition = partition
         self.progress_bar = None
@@ -440,8 +437,10 @@ class Potenda:
         models = required_resource_models(adapter=adapter, side=side)
 
         def _add(model_name: str, payload: dict, _adapter: Adapter = adapter) -> None:
-            """Add a cached resource row to the selected adapter."""
-            _adapter.add(models[model_name](**payload))
+            """Add a cached resource row to the selected adapter through the admission step."""
+            _adapter.load_record(  # ty: ignore[unresolved-attribute]  # DiffSyncMixin method
+                models[model_name], None, payload, to_data=identity_record_data
+            )
 
         cursors = load_cursors(prev_run / "cursors.json", side=side)
         full_resources: set[str] = set()
@@ -486,12 +485,18 @@ class Potenda:
         self._side_cursors[side] = next_cursors
 
     def _load_side(self, *, side: str, adapter: Adapter) -> None:
-        """Keep cursors publishable only when loading and snapshotting both succeed."""
+        """Keep cursors publishable only when loading and snapshotting both succeed.
+
+        A record in the adapter's load report does not fail the load; a `RecordLoadError` does.
+        """
         completed = False
         try:
             logger.info("Load: Importing data from %s", adapter)
             self.load_one_side(side=side, adapter=adapter)
             self._write_side_snapshot(side, adapter)
+            # The problem pass reads both load reports from this instance.
+            report = list(getattr(adapter, "load_report", ()))
+            setattr(self, "source_load_report" if side == "A" else "destination_load_report", report)
             completed = True
         except Exception as exc:
             msg = f"An error occurred while loading {adapter}: {exc!s}"

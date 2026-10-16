@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import pytest
 from diffsync import Adapter, DiffSyncModel
 
-from infrahub_sync import SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncInstance
+from infrahub_sync import DiffSyncMixin, SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncInstance
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.parquet_io import write_resource_side
 from infrahub_sync.plan.derive import operations_from_diff, warn_missing_convergence_key
@@ -68,7 +68,7 @@ class Interface(DiffSyncModel):
     local_id: str | None = None
 
 
-class Population(Adapter):
+class Population(DiffSyncMixin, Adapter):
     """In-memory product comparison and incremental load, with no server writes."""
 
     TestSite = Site
@@ -77,8 +77,7 @@ class Population(Adapter):
     InterfacePhysical = Interface
     top_level: ClassVar[list[str]] = ["TestSite", "TestRack", "TestDevice", "InterfacePhysical"]
 
-    @staticmethod
-    def cursor_tier_for(_kind: str) -> CursorTier:
+    def cursor_tier_for(self, model_name: str) -> CursorTier:  # noqa: ARG002, PLR6301
         """Support the timestamp cursor used by the warm-run fixture."""
         return CursorTier.TIMESTAMP
 
@@ -90,10 +89,9 @@ class Population(Adapter):
     def model_loader(self, model_name: str, model: Any) -> None:  # noqa: ANN401
         """Leave already seeded peers in place."""
 
-    @staticmethod
-    def list_changed_since(kind: str, _cursor: CursorState) -> list[dict[str, str]]:
+    def list_changed_since(self, model_name: str, cursor: CursorState) -> list[dict[str, str]]:  # noqa: ARG002, PLR6301
         """Only the new rack changed after the previous snapshot."""
-        return [{"name": "same", "site": "site-b", "description": "desired"}] if kind == "TestRack" else []
+        return [{"name": "same", "site": "site-b", "description": "desired"}] if model_name == "TestRack" else []
 
 
 def config() -> SyncInstance:

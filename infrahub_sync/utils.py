@@ -205,7 +205,6 @@ def get_potenda_from_instance(  # pylint: disable=too-many-positional-arguments 
     show_progress: bool | None = None,
     verbosity: int | None = None,
     run_id: str | None = None,
-    continue_on_error: bool = False,
     concurrent_load: bool = True,
     base_directory: Path | None = None,
 ) -> Potenda:
@@ -310,7 +309,6 @@ def get_potenda_from_instance(  # pylint: disable=too-many-positional-arguments 
         run_id=rid,
         cache_root=rdir.parent,  # .infrahub-sync-cache/<sync_name>/
         schema_subhash=subhash,
-        continue_on_error=continue_on_error,
         concurrent_load=concurrent_load,
     )
 
@@ -319,8 +317,8 @@ class _PlanApplySource:
     """Stands in for the source adapter an apply never constructs.
 
     Apply reads no source (FR-012), so `PlanApplier.open_existing` neither imports nor
-    instantiates one. `Potenda.__init__` assigns `top_level` and `continue_on_error` onto
-    its source, which a plain instance accepts; anything that would actually *use* the
+    instantiates one. `Potenda.__init__` assigns `top_level` onto its
+    source, which a plain instance accepts; anything that would actually *use* the
     source raises immediately, so a change that reintroduces source access on the apply
     path fails loudly instead of quietly requiring the source's dependencies again.
     """

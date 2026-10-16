@@ -111,7 +111,8 @@ class _LoopAdapter(DiffSyncMixin):
         self.listed.append((model_name, element.mapping))
         return [dict(record) for record in RECORDS]
 
-    def load_record(self, model: Any, element: SchemaMappingModel, record: Any, *, after_add: Any = None) -> None:  # noqa: ANN401, ARG002
+    def load_record(self, model: Any, element: SchemaMappingModel | None, record: Any, **_hooks: Any) -> None:  # noqa: ANN401
+        assert element is not None  # the base class loop always passes its mapping entry
         self.loaded.append((model, element, record))
 
 

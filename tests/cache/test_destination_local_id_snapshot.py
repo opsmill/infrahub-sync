@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from diffsync import Adapter, DiffSyncModel
 
+from infrahub_sync import DiffSyncMixin
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.incremental import hydrate_from_parquet
 from infrahub_sync.cache.parquet_io import write_resource_side
@@ -49,7 +50,7 @@ class _Device(DiffSyncModel):
     local_id: str | None = None
 
 
-class _StubAdapter(Adapter):
+class _StubAdapter(DiffSyncMixin, Adapter):
     """An adapter that records which load path the engine chose for it."""
 
     InfraDevice = _Device
@@ -67,14 +68,14 @@ class _StubAdapter(Adapter):
     def load(self) -> None:
         self.calls.append(("full_load", None))
 
-    def cursor_tier_for(self, _model_name: str) -> CursorTier:  # noqa: PLR6301
+    def cursor_tier_for(self, model_name: str) -> CursorTier:  # noqa: ARG002, PLR6301
         return CursorTier.TIMESTAMP
 
     def safe_cursor_before_load(self, _model_name: str) -> CursorState:  # noqa: PLR6301
         """Provide the synthetic source's guaranteed pre-query bound."""
         return CursorState(tier=CursorTier.TIMESTAMP, value="2026-05-17T10:00:00+00:00", safe=True)
 
-    def list_changed_since(self, _model_name: str, cursor: CursorState) -> list[dict]:
+    def list_changed_since(self, model_name: str, cursor: CursorState) -> list[dict]:  # noqa: ARG002
         self.calls.append(("delta", cursor))
         return list(self.deltas)
 

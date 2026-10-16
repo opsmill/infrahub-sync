@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 from diffsync import Adapter, DiffSyncModel
 from diffsync.store.local import LocalStore
 
+from infrahub_sync import DiffSyncMixin
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.incremental import apply_changed_rows
 
@@ -23,14 +24,13 @@ class Rack(DiffSyncModel):
     local_id: str | None = None
 
 
-class Population(Adapter):
+class Population(DiffSyncMixin, Adapter):
     """In-memory adapter with a rack model."""
 
     TestRack = Rack
     top_level: ClassVar[list[str]] = ["TestRack"]
 
-    @staticmethod
-    def list_changed_since(_kind: str, _cursor: CursorState) -> list[dict[str, str]]:
+    def list_changed_since(self, model_name: str, cursor: CursorState) -> list[dict[str, str]]:  # noqa: ARG002, PLR6301
         """Return one changed rack that overlaps the stored copy."""
         return [{"name": "same", "site": "site-a", "description": "new", "local_id": "new-id"}]
 

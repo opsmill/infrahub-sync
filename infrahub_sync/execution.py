@@ -105,7 +105,6 @@ class PotendaFactory(Protocol):
         show_progress: bool | None = ...,
         verbosity: int = ...,
         run_id: str | None = ...,
-        continue_on_error: bool = ...,
         concurrent_load: bool = ...,
         base_directory: Path | None = ...,
     ) -> Potenda: ...
@@ -1130,7 +1129,6 @@ def execute_run(
     run_id: str | None = None,
     concurrent_load: bool = True,
     full_extract: bool = True,
-    continue_on_error: bool = False,
     print_diff: bool = True,
     potenda_factory: PotendaFactory | None = None,
     allow_destination_change: bool = False,
@@ -1221,7 +1219,7 @@ def execute_run(
         # A plan may have been committed while this command waited for the lock.
         _require_a_free_run_id(sync_name=sync_instance.name, run_id=run_id, base_directory=base_directory)
         factory: PotendaFactory = potenda_factory if potenda_factory is not None else get_potenda_from_instance
-        # Pinned call shape: all eight keyword arguments of
+        # Pinned call shape: all seven keyword arguments of
         # utils.get_potenda_from_instance, always explicitly.
         ptd = factory(
             sync_instance=sync_instance,
@@ -1229,7 +1227,6 @@ def execute_run(
             show_progress=show_progress,
             verbosity=verbosity,
             run_id=run_id,
-            continue_on_error=continue_on_error,
             concurrent_load=concurrent_load,
             base_directory=base_directory,
         )

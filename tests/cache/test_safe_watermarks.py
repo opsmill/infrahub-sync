@@ -11,6 +11,7 @@ from typing import Any, ClassVar
 import pytest
 from diffsync import Adapter, DiffSyncModel
 
+from infrahub_sync import DiffSyncMixin
 from infrahub_sync.cache import parquet_io
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.incremental import load_cursors
@@ -39,7 +40,7 @@ CHANGE_TIME = SOURCE_START.replace(microsecond=0)
 SAFE_BOUND = CHANGE_TIME - timedelta(seconds=1)
 
 
-class _TimestampSource(Adapter):
+class _TimestampSource(DiffSyncMixin, Adapter):
     Device = _Device
     Empty = _Empty
     top_level: ClassVar[list[str]] = ["Device", "Empty"]
@@ -53,7 +54,7 @@ class _TimestampSource(Adapter):
         self.mutate = mutate
         self.calls: list[tuple[str, object]] = []
 
-    def cursor_tier_for(self, _model_name: str) -> CursorTier:  # noqa: PLR6301
+    def cursor_tier_for(self, model_name: str) -> CursorTier:  # noqa: ARG002, PLR6301
         """Advertise timestamp queries for each synthetic resource."""
         return CursorTier.TIMESTAMP
 

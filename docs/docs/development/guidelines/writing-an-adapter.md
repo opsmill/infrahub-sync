@@ -27,22 +27,46 @@ class MyAdapter(Adapter, DiffSyncMixin): ...
 Set a `type` class attribute (for example `type = "NetBox"`); it is used in log lines and to
 decide whether the adapter is acting as the source.
 
-### Reuse the loading helpers
+### Implement `list_records` and `record_to_data`, not the load loop
 
-**Always filter and transform through the model mixin:**
+**Always load through the base class loop:**
 
 ```python
-# ✅ Good — honors the schema mapping consistently
-filtered = model.filter_records(records=records, schema_mapping=element)
-records = model.transform_records(records=filtered, schema_mapping=element)
+# ✅ Good — the base class filters, transforms and admits each record
+def list_records(self, model_name, element):
+    return self.client.fetch(element.mapping)
 
-# ❌ Bad — re-implements filtering, diverges from every other adapter
-records = [r for r in records if r["status"] == "active"]
+def record_to_data(self, record, element, model):
+    data = {"local_id": str(record["id"]), "name": record["name"]}
+    data["site"] = self.peer_unique_id(
+        "Site", record["site_id"], owner=("Device", str(record["id"])), field="site", required=True
+    )
+    return data
+
+# ❌ Bad — overrides the loop and adds models itself
+def model_loader(self, model_name, model):
+    for record in self.client.fetch(model_name):
+        self.add(model(**self.to_data(record)))
 ```
 
-Filtering and transforming are defined once on `DiffSyncModelMixin`. Re-implementing them in
-an adapter means filters and transforms in `config.yml` behave differently per system. For a
-REST source, subclass `GenericrestapiAdapter` instead of writing HTTP handling from scratch —
+`DiffSyncMixin.model_loader` calls `list_records`, applies the mapping's filters and
+transforms on the source side, and passes each record to `load_record`. `load_record` builds
+the model, adds it to the store, and records a source record that cannot be built in the
+load report instead of failing the load. Do not call `self.add(model(**data))` in an adapter:
+an adapter that overrides `model_loader` and adds models itself opts out of the admission
+step, so its records that cannot be built fail the load and are not listed in the plan. An
+adapter that must keep its own loop calls `self.load_record(model, element, record)` for each
+record, as the Infrahub adapter does.
+
+**Resolve every reference with `peer_unique_id`.** Do not look peers up in the store, and do
+not raise or drop a reference yourself. `peer_unique_id` tells apart a peer that a configured
+filter removed, a peer that was not loaded and a peer that the source does not return, and
+the admission step records each case.
+
+**Do not re-implement filtering or transforming.** Filters and transforms are defined once on
+`DiffSyncModelMixin` and applied by the base class loop. Re-implementing them in an adapter
+means filters and transforms in `config.yml` behave differently per system. For a REST
+source, subclass `GenericrestapiAdapter` instead of writing HTTP handling from scratch —
 override only the settings defaults you need (see `infrahub_sync/adapters/peeringmanager.py`).
 
 ### Type and document the public surface
@@ -155,7 +179,9 @@ If a destination does not implement both methods, the pre-write gate refuses `sy
 | Splitting a `unique_id` on `__` to get identifiers | Read the nested `{peer_kind, identity}` pair |
 | Silently dropping an unresolvable peer on the apply path | Raise, naming the peer and the next action |
 | Implementing model `create` / `update` / `delete` for V3 writes | Implement the planned-write surface on the adapter |
-| Inline filtering / transforming in the adapter | `model.filter_records` / `model.transform_records` |
+| Inline filtering / transforming in the adapter | Let the base class `model_loader` apply them |
+| Overriding `model_loader` and calling `self.add(model(**data))` | Implement `list_records` and `record_to_data` |
+| Looking a peer up in the store, or dropping an unresolved reference at load | `peer_unique_id` |
 | Hand-rolled HTTP for a REST source | Subclass `GenericrestapiAdapter` |
 | `except Exception: pass` | Catch the specific error; surface the rest |
 | `print()` for diagnostics | `structlog` with context |
