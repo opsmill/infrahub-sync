@@ -1,0 +1,38 @@
+tests/data/loader_parity/netbox_source_into_empty_infrahub.jsonl
+  s_47078ea83e766d::t_87159351f73b80 1-11
+tests/plan/test_loader_plan_parity.py
+  s_47078ea83e766d::t_325f2c16422486 441-442
+  s_47078ea83e766d::t_36fa19c386b881 32,439,458-462
+  s_47078ea83e766d::t_b3d94dc19ae1bd 448-449
+  s_47078ea83e766d::t_44ea6df0c80a74 509-510
+  s_47078ea83e766d::t_46dc51c5918dd2 63
+  s_47078ea83e766d::t_0a187795c8883f 371
+  s_47078ea83e766d::t_c1f8a60a1798fe 390
+  s_47078ea83e766d::t_756f72649f1a4a 10-15
+  s_47078ea83e766d::t_7891d0148c4940 48
+  s_47078ea83e766d::t_241a5787bc9b58 109-111,117,119-370,372-389,391-416,435-437,440,446,454,464-508,511-662
+  s_47078ea83e766d::t_bf90dc3ac2ce2d 417,419,421-434,438,443-445,447,450-453,457,463
+  s_47078ea83e766d::t_5a135f7f0f5d35 418,420
+  s_47078ea83e766d::t_a04ea32e182a3b 455-456
+  s_47078ea83e766d::t_abdde2113f98eb 22,25,27-28,31,34-45,47
+tests/data/loader_parity/netbox_source_against_stale_infrahub.jsonl
+  s_47078ea83e766d::t_87159351f73b80 1-7
+tests/data/loader_parity/infrahub_source_against_stale_infrahub.jsonl
+  s_47078ea83e766d::t_87159351f73b80 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d328c25be88b5928528331f66ce7abfe1b938fe4",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
