@@ -1,0 +1,84 @@
+infrahub_sync/service/trust_store.py
+  s_47078ea83e766d::t_ec1bc8b3c2e4e2 138-140
+  s_47078ea83e766d::t_77cb1a6e9f6c93 156
+  s_47078ea83e766d::t_419b4fd6b8aeca 17
+  s_47078ea83e766d::t_a61bdc119ee5df 47-71,76,80-86,89
+  s_47078ea83e766d::t_784d8ea95743a1 101-113,115-116,118
+  s_47078ea83e766d::t_c9ec0a352e3cc0 114
+  s_47078ea83e766d::t_d6c07b39818e30 117
+tests/compose/conftest.py
+  s_47078ea83e766d::t_adb890cb046080 329,332-334,337-351
+dev/specs/013-compose-images/contracts/object-store.md
+  s_47078ea83e766d::t_46f3957be9a303 52-54,57,59-62
+dev/specs/013-compose-images/data-model.md
+  s_47078ea83e766d::t_7eda46946ae1b7 65-66,68-69,71-72
+tests/service/test_compose_bootstrap.py
+  s_47078ea83e766d::t_73389c77e59700 234-293
+  s_47078ea83e766d::t_d280c6acb631ac 77
+  s_47078ea83e766d::t_96907ae7ce81aa 82,84-85,90,93,106,112-113,121-123
+  s_47078ea83e766d::t_b7b6b5c173ff7d 471,474,476
+  s_47078ea83e766d::t_7872730c82ced7 534-558,562-564,579-600,602
+  s_47078ea83e766d::t_cb6448eea69be7 332,343-385
+  s_47078ea83e766d::t_f68f0be4690b6b 386-387
+docs/docs/custom-certificates.mdx
+  s_47078ea83e766d::t_bf11f19090eb79 32-38
+  s_47078ea83e766d::t_c6ac61d0dab587 61
+tests/service/test_trust_store.py
+  s_47078ea83e766d::t_56566721116eb5 376
+  s_47078ea83e766d::t_d07f585b6de59b 226-358,361-375,377-399
+  s_47078ea83e766d::t_d280c6acb631ac 359-360
+tests/compose/test_readiness_bounds.py
+  s_47078ea83e766d::t_adb890cb046080 21,27,167-175,177-190,193-210,226,231-239,241,244-250,252
+  s_47078ea83e766d::t_587a2a635861d0 224-225,227-230
+  s_47078ea83e766d::t_e28f0f5d12d37b 254-256
+  s_47078ea83e766d::t_95ff2ac5c1e2ac 176,191-192,211-223,240,242-243,251,253
+  s_47078ea83e766d::t_d280c6acb631ac 41-42
+docs/docs/operations/compose-troubleshooting.mdx
+  s_47078ea83e766d::t_69ae19c799b37d 37
+  s_47078ea83e766d::t_21b8619646d7cd 34
+  s_47078ea83e766d::t_71943c7ff1568d 35
+  s_47078ea83e766d::t_04f8bb56123237 32-33
+docs/docs/compose-deployment.mdx
+  s_47078ea83e766d::t_e88462a96a0e5b 526-528,531
+  s_47078ea83e766d::t_1ae4b83421cc0a 392-401
+tests/dev_stack/test_compose_valid.py
+  s_47078ea83e766d::t_10385781e59658 17
+  s_47078ea83e766d::t_b67f36b16a3046 91-125,127
+  s_47078ea83e766d::t_7b24c99ceacc90 126,128
+tests/compose/test_external_object_store.py
+  s_47078ea83e766d::t_b818ede04ab41a 436-446
+  s_47078ea83e766d::t_113ac1301509d6 536-542,544-547
+  s_47078ea83e766d::t_5f0abb5673593b 348,351-352
+  s_47078ea83e766d::t_9d9667004f38cc 329-330,332-336
+  s_47078ea83e766d::t_541a00689a9b4f 504-511,522-523
+tests/service/conftest.py
+  s_47078ea83e766d::t_3e0405ebc81838 1-34
+infrahub_sync/service/bootstrap.py
+  s_47078ea83e766d::t_b72c019f878125 100-102,105,108-113,122-135
+  s_47078ea83e766d::t_617d7928a8232a 80-82,86
+  s_47078ea83e766d::t_72b8e1043fb537 167-170,183-185,191,194-195,202-203,207,215-217,220-224
+  s_47078ea83e766d::t_27515c84ac79c8 283-285
+  s_47078ea83e766d::t_49a6036fc580df 333
+  s_47078ea83e766d::t_32a5a1d7b1c18d 17
+  s_47078ea83e766d::t_84e7cc1fde8fce 136-137
+development/docker-compose.dev.yml
+  s_47078ea83e766d::t_a9fc9a6f7a7266 45-48
+tests/compose/test_credential_leaks.py
+  s_47078ea83e766d::t_5e826410c2bfbf 95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3247228131f7a154972a621c185d03f8d437e5f5",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
