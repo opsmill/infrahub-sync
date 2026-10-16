@@ -1,0 +1,38 @@
+dev/adr/README.md
+  s_47078ea83e766d::t_7442ad8cc2af33 53-59
+dev/specs/013-compose-images/tasks.md
+  s_47078ea83e766d::t_cdc30b724dac23 262
+  s_47078ea83e766d::t_5a0495e6ddf5ec 263-268
+docs/docs/compose-deployment.mdx
+  s_47078ea83e766d::t_76c7c452dd8ad8 844-852
+dev/adr/0023-the-compose-deployment-takes-an-external-object-store-and-custom-ca-certificates-from-env.md
+  s_47078ea83e766d::t_51be929dd1b90d 1-35
+tests/compose/test_credential_leaks.py
+  s_47078ea83e766d::t_4cc09a7409a35c 146,235-237,253,255,260-279,284-288,292-293,302-305,307-308,312,314-315,318,320-322,325,338,350,354-357,363-367,369-371,376,378-381,385
+  s_47078ea83e766d::t_b07f75f560ed31 67
+  s_47078ea83e766d::t_977694418829a6 1-41,44-66,68-145,148-173,175-234,238-252,254,256-259,289-291,294-301,306,309-311,313,316-317,319,323-324,326-337,339-348,351-353,358-362,377,382-384
+  s_47078ea83e766d::t_5de99d77ac43c4 42-43,147,174,280-283,368,372-375
+  s_47078ea83e766d::t_1ddf1df411bfb4 349
+dev/adr/0019-prefect-is-an-internal-component-of-sync.md
+  s_47078ea83e766d::t_51be929dd1b90d 59-80
+changelog/+013-compose-images.changed.md
+  s_47078ea83e766d::t_cf7815a28483dc 1
+docs/docs/running-a-sync.mdx
+  s_47078ea83e766d::t_7e1bac38615e64 235-238
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c808c052cb25a66028ed2ee6612167457a2e184b",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
