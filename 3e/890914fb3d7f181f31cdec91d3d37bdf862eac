@@ -1,0 +1,75 @@
+tests/service/test_failure_cause_credentials.py
+  s_47078ea83e766d::t_2967a2f4326770 26,191,205-206,230
+  s_47078ea83e766d::t_3651a0e8f49d7e 6-7,36,183-190,192-204,207-222,232
+  s_47078ea83e766d::t_0b2a356ec3c19b 224-229,231
+  s_47078ea83e766d::t_060dcdf08a81e9 223
+infrahub_sync/client/__init__.py
+  s_47078ea83e766d::t_1f527e9248f19f 27-28,45,57,71-72,90
+  s_47078ea83e766d::t_2967a2f4326770 17
+tests/service/test_sync_left_out_stop.py
+  s_47078ea83e766d::t_6e4db01ea55955 25,30,34-35,50,116
+  s_47078ea83e766d::t_38786e12f8b45a 88
+infrahub_sync/service/failure_record.py
+  s_47078ea83e766d::t_4ff52e019fd3a8 1-175
+tests/service/test_run_failure_resource.py
+  s_47078ea83e766d::t_0b4004f85eb158 95,101-105
+  s_47078ea83e766d::t_8095dd72956f5c 1-94,96-100,106-116,120-153
+  s_47078ea83e766d::t_301f95f79bdb3a 117-119
+infrahub_sync/service/flow.py
+  s_47078ea83e766d::t_0470b2f5b5d3a3 781
+  s_47078ea83e766d::t_0263f557fd43e0 14,44,60
+docs/docs/development/guidelines/secret-redaction.md
+  s_47078ea83e766d::t_ddb5ee1d6717e5 54-55
+  s_47078ea83e766d::t_500979d4de9fa4 7-53,64,66,232,235-244,267
+tests/compose/test_custom_ca.py
+  s_47078ea83e766d::t_87ccefc9df4c8c 11-12,383-385
+changelog/+009-failure-cause.added.md
+  s_47078ea83e766d::t_ddb5ee1d6717e5 1
+tests/cli/test_client_commands.py
+  s_47078ea83e766d::t_0e164dab604e1a 427-473,475-479,481-518,522,526-528,531-533,535-540,542-560,563,568-590
+  s_47078ea83e766d::t_cfe193efd19d45 43,114
+  s_47078ea83e766d::t_05a2f11ae4fecd 80
+  s_47078ea83e766d::t_0b4004f85eb158 73
+tests/service/sync_stage_harness.py
+  s_47078ea83e766d::t_2967a2f4326770 99
+  s_47078ea83e766d::t_74cb61165dbd41 1-11,13-85,88-98,100-182
+  s_47078ea83e766d::t_0b4004f85eb158 12,86-87
+infrahub_sync/client/models.py
+  s_47078ea83e766d::t_823fd14c121a19 202-209
+  s_47078ea83e766d::t_f01dcbc797b01a 210-256
+  s_47078ea83e766d::t_b74e262a107df0 277-278
+infrahub_sync/cli.py
+  s_47078ea83e766d::t_78430939a20b52 9,500
+  s_47078ea83e766d::t_0f9d70b3df66c1 459-472,498-499,501-502,772,822-828,831
+  s_47078ea83e766d::t_2967a2f4326770 20
+dev/specs/009-plan-problem-reporting/tasks.md
+  s_47078ea83e766d::t_4d62fa8dc8d48f 186-188,190,197-201
+infrahub_sync/service/left_out_stop.py
+  s_47078ea83e766d::t_16fc8822ad8f90 11-12,21,58-59,61-63
+  s_47078ea83e766d::t_7a1fda4beb7587 60
+infrahub_sync/service/models.py
+  s_47078ea83e766d::t_0f2eea3a762a67 195-197
+infrahub_sync/cli_cause.py
+  s_47078ea83e766d::t_223eee8f062d69 37,44-47
+  s_47078ea83e766d::t_ea1fed06a42ff7 1-36,38-43,48-67
+tests/service/test_http_api.py
+  s_47078ea83e766d::t_bd33c5b82562e5 1289-1290,1294-1298,1305
+tests/service/test_flow_and_prefect.py
+  s_47078ea83e766d::t_bd33c5b82562e5 1190,1196-1199,1204,1214,1233-1237
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3e890914fb3d7f181f31cdec91d3d37bdf862eac",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
