@@ -1788,6 +1788,95 @@ def test_each_release_call_grants_what_the_called_workflow_requests(caller: Path
             )
 
 
+# After the image is published, `record_image` writes the image's digest and its
+# SBOM files onto the GitHub Release the version was published from (FR-027).
+RECORD_IMAGE_JOB = "record_image"
+SBOM_FILES = ("infrahub-sync-sbom.spdx.json", "infrahub-sync-sbom.cdx.json")
+DOWNLOAD_ACTION = "actions/download-artifact"
+# The only token the job may hold: the run's own GITHUB_TOKEN, under either name.
+RUN_TOKENS = frozenset({"${{ github.token }}", "${{ secrets.GITHUB_TOKEN }}"})
+
+
+def _record_image_runs() -> str:
+    return "\n".join(str(step.get("run", "")) for step in job_of(PUBLISH_WORKFLOW, RECORD_IMAGE_JOB)["steps"])
+
+
+def _sbom_artifact_name() -> str:
+    """Return the name `ci-docker-image.yml` uploads the SBOM files under."""
+    _index, step = _step_running(
+        job_of(DOCKER_IMAGE_WORKFLOW, "sbom")["steps"],
+        "upload the SBOM files",
+        lambda step: str(step.get("uses", "")).startswith(f"{UPLOAD_ACTION}@"),
+    )
+    return str(step["with"]["name"])
+
+
+def test_the_image_is_recorded_on_the_release_only_after_a_publishing_image_job() -> None:
+    job = job_of(PUBLISH_WORKFLOW, RECORD_IMAGE_JOB)
+
+    assert _needs(job) == ("publish_docker_image",)
+    assert _requires_publish(job.get("if")), job.get("if")
+    assert job_permissions(PUBLISH_WORKFLOW, RECORD_IMAGE_JOB) == {"contents": "write"}
+
+
+def test_recording_the_image_downloads_the_sbom_artifact_the_image_workflow_uploads() -> None:
+    """The artifact name is read from the uploader, so renaming one side fails here."""
+    _index, step = _step_running(
+        job_of(PUBLISH_WORKFLOW, RECORD_IMAGE_JOB)["steps"],
+        "download the SBOM files",
+        lambda step: str(step.get("uses", "")).startswith(f"{DOWNLOAD_ACTION}@"),
+    )
+
+    assert step["with"]["name"] == _sbom_artifact_name()
+
+
+def test_recording_the_image_names_the_published_digest_and_its_verification() -> None:
+    runs = _record_image_runs()
+    steps = job_of(PUBLISH_WORKFLOW, RECORD_IMAGE_JOB)["steps"]
+    environment = {key: value for step in steps for key, value in (step.get("env") or {}).items()}
+
+    assert environment.get("DIGEST") == "${{ needs.publish_docker_image.outputs.digest }}"
+    assert "Container image" in runs
+    assert "cosign verify-attestation" in runs
+    assert "gh release edit" in runs
+    assert "--notes-file" in runs
+
+
+def test_recording_the_image_uploads_both_sbom_files_to_the_release() -> None:
+    runs = _record_image_runs()
+    upload = next((line for line in runs.splitlines() if "gh release upload" in line), "")
+
+    assert upload, "no step uploads to the release"
+    for name in SBOM_FILES:
+        assert name in runs, name
+    assert "--clobber" in upload, "a re-run of the job must replace the files it already uploaded"
+
+
+def test_recording_the_image_holds_only_the_run_token_and_never_prints_it() -> None:
+    steps = job_of(PUBLISH_WORKFLOW, RECORD_IMAGE_JOB)["steps"]
+    text = _job_text(PUBLISH_WORKFLOW, RECORD_IMAGE_JOB)
+    runs = _record_image_runs()
+    tokens = [value for step in steps for key, value in (step.get("env") or {}).items() if key == "GH_TOKEN"]
+
+    assert tokens, "the gh steps need GH_TOKEN"
+    assert set(tokens) <= RUN_TOKENS, tokens
+    assert set(re.findall(r"secrets\.(\w+)", text)) <= {"GITHUB_TOKEN"}
+    assert "GH_TOKEN" not in runs
+    assert "set -x" not in runs
+
+
+def test_recording_the_image_pins_every_action_it_uses() -> None:
+    lines = [line for line in _job_text(PUBLISH_WORKFLOW, RECORD_IMAGE_JOB).splitlines() if "uses:" in line]
+
+    assert lines
+    assert all(PINNED_USES.match(line) for line in lines), lines
+
+
+def test_the_release_trigger_lets_the_publish_workflow_edit_the_release() -> None:
+    """`record_image` edits the release, and a called workflow can only narrow what its caller grants."""
+    assert job_permissions(TRIGGER_RELEASE_WORKFLOW, "publish") == {"contents": "write", "id-token": "write"}
+
+
 # The root `docker-compose.yml` names the release's image by version. The release
 # pull request pins it (trigger-push-stable.yml), and the tag is refused for a file
 # pinned to any other version (release-publish.yml).

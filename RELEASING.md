@@ -144,6 +144,8 @@ The seven fragment types come from `[tool.towncrier]` in `pyproject.toml`: `secu
 
 Labels no longer shape the release notes — they only decide the version bump (see Step 1 above).
 
+After the container image is published, the `record_image` job of `workflow-publish.yml` appends a "Container image" section to the GitHub Release body. The section names the image by version and digest (`registry.opsmill.io/opsmill/infrahub-sync:<version>@<digest>`) and gives the `cosign verify-attestation` commands. The job also uploads the two SBOM files, `infrahub-sync-sbom.spdx.json` and `infrahub-sync-sbom.cdx.json`, as release assets. If `record_image` fails, re-run that job from the Actions page of the publish run: it adds the section only once and replaces the SBOM files it already uploaded.
+
 ## Verifying a release
 
 After publishing:

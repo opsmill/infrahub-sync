@@ -18,7 +18,7 @@ import httpx
 import pytest
 
 from tasks.preview import SHARED_DEVICE_NAME, SMOKE_BRANCH, SMOKE_KIND
-from tests.compose.conftest import COMPOSE_FILE, compose, start_command
+from tests.compose.conftest import COMPOSE_FILE, compose, readiness_recorded, start_command
 from tests.compose.redaction import SECRETS, Captured, capture
 
 if TYPE_CHECKING:
@@ -39,6 +39,12 @@ GATEWAY_PROBE_IMAGE = "postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c926
 # The declared readiness bound. Compose is given it as `--wait-timeout`, so it is
 # Compose that decides a deployment did not come up; the subprocess cushion below
 # only lets that decision be reported and the process reaped.
+#
+# Set from measurement: the bound is at least 1.5 times the slowest start measured.
+# The slowest compose test of 20 nightly iterations took 220.5 s, cold `up` and
+# fixture setup included (plan.md, "Lifecycle failure causes"), and 1.5 times that
+# is 331 s, so 420 s stays. Each `up` now records how long every service took to
+# become healthy (`readiness_recorded`); lower the bound only from those times.
 READY_TIMEOUT_SECONDS = 420
 PROCESS_CUSHION_SECONDS = 60
 RUN_TIMEOUT_SECONDS = 300
@@ -127,10 +133,11 @@ class Deployment:
         first would kill Compose mid-start and leave the deployment in whatever
         state it had reached, which is a different answer than "not ready".
         """
-        return self.compose(
-            start_command(services, bound=READY_TIMEOUT_SECONDS),
-            timeout=READY_TIMEOUT_SECONDS + PROCESS_CUSHION_SECONDS,
-        )
+        with readiness_recorded(self.project):
+            return self.compose(
+                start_command(services, bound=READY_TIMEOUT_SECONDS),
+                timeout=READY_TIMEOUT_SECONDS + PROCESS_CUSHION_SECONDS,
+            )
 
     def container(self, service: str) -> str:
         """Return the one container identifier of a service, failing when it has none."""

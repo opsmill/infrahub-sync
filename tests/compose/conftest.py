@@ -20,6 +20,9 @@ import os
 import re
 import subprocess  # noqa: S404 -- for the failure types `capture` can raise
 import sys
+import tempfile
+import time
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -228,6 +231,132 @@ def start_command(services: Sequence[str], *, bound: int) -> list[str]:
     return ["up", "--detach", "--wait", "--wait-timeout", str(bound), "--quiet-pull", *services]
 
 
+# Every waited `up` of the session leaves one entry here: how long each service
+# took to become healthy. The run writes it to `.diagnostics/readiness.log`, which
+# the nightly keeps for every iteration, and prints it in the terminal summary, so
+# `pytest.log` carries it too. A readiness bound is set from these times.
+READINESS_LOG = DIAGNOSTIC_DIR / "readiness.log"
+READINESS_RECORDS: list[str] = []
+# The fields `docker events` prints for one event: only times, actions, Compose
+# service names and exit codes, so nothing a credential could reach is kept.
+READINESS_EVENT_FORMAT = (
+    '{{.TimeNano}}\t{{.Action}}\t{{index .Actor.Attributes "com.docker.compose.service"}}'
+    '\t{{index .Actor.Attributes "exitCode"}}'
+)
+# How long the watcher keeps listening after `up` returns. Compose returns when it
+# has seen the last service healthy, which can be before the daemon has delivered
+# that event to a second listener.
+READINESS_EVENT_GRACE_SECONDS = 1.0
+EVENT_FIELDS = 4
+
+
+def readiness_times(events: str, *, began: float) -> list[str]:
+    """Return one line per service: when it became healthy, or how far it got instead.
+
+    `events` is the `docker events` output of one `up`, in `READINESS_EVENT_FORMAT`.
+    Times are measured from the container's own start and from the moment `up`
+    began; a service whose container was already running has only the second.
+    """
+    first: dict[str, dict[str, float]] = {}
+    exit_codes: dict[str, str] = {}
+    for line in events.splitlines():
+        fields = line.split("\t")
+        if len(fields) != EVENT_FIELDS or not fields[2]:
+            continue
+        stamp, action, service, exit_code = fields
+        try:
+            at = int(stamp) / 1_000_000_000
+        except ValueError:
+            continue
+        seen = first.setdefault(service, {})
+        if action == "start":
+            seen.setdefault("start", at)
+        elif action == "health_status: healthy":
+            seen.setdefault("healthy", at)
+        elif action == "die" and "exited" not in seen:
+            seen["exited"] = at
+            exit_codes[service] = exit_code
+    return [_readiness_line(service, first[service], exit_codes.get(service, ""), began) for service in sorted(first)]
+
+
+def _readiness_line(service: str, seen: Mapping[str, float], exit_code: str, began: float) -> str:
+    """Say how far one service's start got during one `up`."""
+    start = seen.get("start")
+    for state, outcome in (("healthy", "healthy"), ("exited", f"exited with code {exit_code or 'unknown'}")):
+        if state not in seen:
+            continue
+        at = seen[state]
+        if start is None:
+            return f"{service}: {outcome} {at - began:.1f} s after up began; its container was already running"
+        return f"{service}: {outcome} {at - start:.1f} s after its container started, {at - began:.1f} s after up began"
+    if start is None:
+        return f"{service}: no start, health or exit event during up"
+    return f"{service}: started {start - began:.1f} s after up began; no healthy status during up, or no health check"
+
+
+@contextmanager
+def readiness_recorded(project: str) -> Iterator[None]:
+    """Record, for the `up` this wraps, how long each service of `project` took to become healthy.
+
+    `docker events` is followed while `up` runs rather than queried afterwards:
+    the daemon keeps only its most recent events, and every health probe adds
+    some. `--since` covers the moment between starting the watcher and its
+    subscription.
+    """
+    began = time.time()
+    argv = [
+        "docker",
+        "events",
+        "--since",
+        f"{began:.9f}",
+        "--filter",
+        f"label={PROJECT_LABEL}={project}",
+        "--filter",
+        "type=container",
+        "--filter",
+        "event=start",
+        "--filter",
+        "event=health_status",
+        "--filter",
+        "event=die",
+        "--format",
+        READINESS_EVENT_FORMAT,
+    ]
+    with (
+        tempfile.TemporaryFile("w+", encoding="utf-8") as sink,
+        subprocess.Popen(argv, stdout=sink, stderr=subprocess.DEVNULL, text=True) as watcher,  # noqa: S603 -- fixed argv
+    ):
+        try:
+            yield
+        finally:
+            ended = time.time()
+            time.sleep(READINESS_EVENT_GRACE_SECONDS)
+            watcher.terminate()
+            watcher.wait(timeout=30)
+            sink.seek(0)
+            lines = readiness_times(sink.read(), began=began)
+            _keep_readiness(project, ended - began, lines)
+
+
+def _keep_readiness(project: str, duration: float, lines: Sequence[str]) -> None:
+    """Append one `up`'s readiness times to the session record and to the kept log."""
+    test = os.environ.get("PYTEST_CURRENT_TEST", "outside a test").rsplit(" (", 1)[0]
+    entry = "\n".join([f"{project} up took {duration:.1f} s ({test})", *(f"  {line}" for line in lines)])
+    READINESS_RECORDS.append(entry)
+    DIAGNOSTIC_DIR.mkdir(parents=True, exist_ok=True)
+    with READINESS_LOG.open("a", encoding="utf-8") as log:
+        log.write(entry + "\n")
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    """Print every recorded `up`, so the run's own output carries the readiness times."""
+    if not READINESS_RECORDS:
+        return
+    terminalreporter.section("compose readiness times")
+    for entry in READINESS_RECORDS:
+        terminalreporter.write_line(entry)
+
+
 def resolve(environment: Mapping[str, str], *, files: Sequence[Path] = (COMPOSE_FILE,)) -> dict[str, Any]:
     """Return the model Compose resolves the file to, or fail naming its refusal."""
     result = compose(["config", "--format", "json"], environment=environment, files=files)
@@ -330,6 +459,8 @@ FIXTURE_INFRAHUB_PORT = "8081"
 # The declared readiness bound, and it is Compose that is given it: `--wait-timeout`
 # is what decides the fixture is not coming up. The subprocess timeout below is a
 # cushion for Compose's own exit and cleanup, never a second readiness rule.
+# The value is the same rule as `lifecycle.READY_TIMEOUT_SECONDS`: at least 1.5
+# times the slowest measured start (test_readiness_bounds.py).
 FIXTURE_READY_SECONDS = 420
 FIXTURE_PROCESS_CUSHION_SECONDS = 60
 FIXTURE_SCHEMA_CONVERGE_SECONDS = 120
@@ -430,10 +561,11 @@ def infrahub_fixture(sync_image: str) -> Iterator[dict[str, str]]:
     def run(argv: Sequence[str], *, timeout: int) -> Captured:
         return capture([*base, *argv], timeout=timeout, env=environment)
 
-    started = run(
-        start_command(("infrahub-server", "task-worker"), bound=FIXTURE_READY_SECONDS),
-        timeout=FIXTURE_READY_SECONDS + FIXTURE_PROCESS_CUSHION_SECONDS,
-    )
+    with readiness_recorded(FIXTURE_PROJECT):
+        started = run(
+            start_command(("infrahub-server", "task-worker"), bound=FIXTURE_READY_SECONDS),
+            timeout=FIXTURE_READY_SECONDS + FIXTURE_PROCESS_CUSHION_SECONDS,
+        )
     if started.returncode != 0:
         run(["down", "--volumes", "--remove-orphans"], timeout=FIXTURE_READY_SECONDS)
         pytest.fail(f"the pinned Infrahub fixture did not start: {started.stderr[-2000:]}")

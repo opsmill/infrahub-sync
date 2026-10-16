@@ -17,6 +17,7 @@ The positive case needs no session: it drives the two fixture bodies directly.
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import os
 import subprocess  # noqa: S404 -- the inner pytest sessions this proof is built on, and a stubbed result
@@ -150,6 +151,8 @@ def test_a_named_image_runs_the_fixture_through_start_seed_and_teardown(monkeypa
 
     monkeypatch.setattr(conftest, "capture", record)
     monkeypatch.setattr(preview, "ensure_smoke_branch", lambda env: calls.append(f"seed {sorted(env)}"))
+    # The stubbed start has no containers to time, and no daemon need answer `docker events`.
+    monkeypatch.setattr(conftest, "readiness_recorded", lambda _project: contextlib.nullcontext())
 
     reference = inspect.unwrap(conftest.sync_image)(None)
     assert reference == "infrahub-sync:compose-test"

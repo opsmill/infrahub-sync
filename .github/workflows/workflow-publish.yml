@@ -189,3 +189,63 @@ jobs:
       ref: ${{ needs.docker_meta.outputs.ref }}
       tags: ${{ needs.docker_meta.outputs.tags }}
       labels: ${{ needs.docker_meta.outputs.labels }}
+
+  # Writes what was published onto the GitHub Release of this version: the image
+  # reference pinned by digest, the command that verifies its SBOM attestations,
+  # and the two SBOM files. Safe to re-run from the Actions page: the section is
+  # appended once, and the files are replaced.
+  record_image:
+    name: Record the image on the GitHub Release
+    needs: publish_docker_image
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      # Uploaded by the sbom job of ci-docker-image.yml, in this same run.
+      - name: Download the SBOM files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: sbom-${{ inputs.version }}
+          path: sbom
+
+      - name: Append the image to the release notes and attach the SBOM files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          DIGEST: ${{ needs.publish_docker_image.outputs.digest }}
+          REPOSITORY: ${{ vars.HARBOR_HOST }}/${{ github.repository }}
+          IDENTITY: ${{ github.server_url }}/${{ github.repository }}/
+        run: |
+          set -euo pipefail
+          if ! [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::the image job returned '${DIGEST}', which is not a manifest digest"
+            exit 1
+          fi
+          IMAGE="${REPOSITORY}:${VERSION}@${DIGEST}"
+          if ! gh release view "${VERSION}" --json body --jq .body > notes.md; then
+            echo "::error::no GitHub Release is tagged ${VERSION}; create it, then re-run this job"
+            exit 1
+          fi
+          if grep -qF "## Container image" notes.md; then
+            echo "The release notes already hold a Container image section; leaving them unchanged"
+          else
+            # The backticks are Markdown code fences, printed as they stand.
+            # shellcheck disable=SC2016
+            {
+              printf '\n## Container image\n\n'
+              printf '```text\n%s\n```\n\n' "${IMAGE}"
+              printf 'Verify the signed SBOM attestations:\n\n```shell\n'
+              for type in spdxjson cyclonedx; do
+                printf 'cosign verify-attestation --type %s \\\n' "${type}"
+                printf "  --certificate-identity-regexp '%s' \\\\\n" "${IDENTITY}"
+                printf '  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\\n'
+                printf '  %s\n' "${IMAGE}"
+              done
+              printf '```\n'
+            } >> notes.md
+            gh release edit "${VERSION}" --notes-file notes.md
+          fi
+          gh release upload "${VERSION}" sbom/infrahub-sync-sbom.spdx.json sbom/infrahub-sync-sbom.cdx.json --clobber
+          echo "Recorded ${IMAGE} and its SBOM files on release ${VERSION}"

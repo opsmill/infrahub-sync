@@ -18,19 +18,31 @@ observed with the runner replaced.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from tests.compose import lifecycle as lifecycle_module
-from tests.compose.conftest import FIXTURE_PROCESS_CUSHION_SECONDS, FIXTURE_READY_SECONDS, start_command
+from tests.compose.conftest import (
+    FIXTURE_PROCESS_CUSHION_SECONDS,
+    FIXTURE_READY_SECONDS,
+    readiness_times,
+    start_command,
+)
 from tests.compose.lifecycle import PROCESS_CUSHION_SECONDS, READY_TIMEOUT_SECONDS, Deployment
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
     from pathlib import Path
 
 DECLARED_BOUND_SECONDS = 420
+# The slowest compose test of the 20 measured iterations (plan.md, "Lifecycle
+# failure causes", run 38806056523): 220.5 s on amd64. It includes the session's
+# first cold `up` and its fixture setup, so every single `up` took less.
+MEASURED_SLOWEST_SECONDS = 220.5
+# The bound must stay at least half as long again as the slowest measurement.
+READINESS_MARGIN = 1.5
 
 
 def flag(argv: Sequence[str], name: str) -> str:
@@ -88,7 +100,14 @@ def test_the_deployment_start_uses_the_declared_bound_and_a_cushioned_process(
         recorded["timeout"] = keywords.get("timeout")
         return None
 
+    @contextmanager
+    def watched(project: str) -> Iterator[None]:
+        recorded["watched"] = project
+        yield
+        recorded["watched_after"] = "argv" in recorded
+
     monkeypatch.setattr(lifecycle_module, "compose", record)
+    monkeypatch.setattr(lifecycle_module, "readiness_recorded", watched)
     environment = tmp_path / ".env"
     environment.write_text("VERSION=bounds\n", encoding="utf-8")
 
@@ -97,3 +116,47 @@ def test_the_deployment_start_uses_the_declared_bound_and_a_cushioned_process(
     assert flag(recorded["argv"], "--wait-timeout") == str(DECLARED_BOUND_SECONDS), recorded["argv"]
     assert recorded["timeout"] > DECLARED_BOUND_SECONDS, recorded["timeout"]
     assert recorded["timeout"] == DECLARED_BOUND_SECONDS + PROCESS_CUSHION_SECONDS, recorded["timeout"]
+    # The per-service readiness times are recorded around the very `up` that waits.
+    assert recorded["watched"] == "infrahub-sync-bounds"
+    assert recorded["watched_after"] is True
+
+
+@pytest.mark.parametrize("bound", [READY_TIMEOUT_SECONDS, FIXTURE_READY_SECONDS])
+def test_the_bound_keeps_its_margin_over_the_slowest_measured_start(bound: int) -> None:
+    """The bound comes from the measurement: the slowest time, half as long again, fits under it.
+
+    A bound lowered below that margin turns an ordinary slow cold start into a
+    failure. Lowering it is a change to the measured figure first, made from the
+    per-service times the tier now records.
+    """
+    assert bound >= MEASURED_SLOWEST_SECONDS * READINESS_MARGIN
+
+
+# Each line is what `docker events` prints in the suite's format: the time in
+# nanoseconds, the action, the Compose service, and the exit code of a `die`.
+EVENT_LINES = (
+    "101000000000\tstart\tpostgres\t",
+    "113500000000\thealth_status: healthy\tpostgres\t",
+    "114000000000\tstart\tsync-bootstrap\t",
+    "150000000000\tdie\tsync-bootstrap\t0",
+    "151000000000\tstart\tsync-api\t",
+    "152000000000\thealth_status: unhealthy\tsync-api\t",
+    "160000000000\thealth_status: healthy\tobject-store\t",
+    "not an event line",
+    "",
+)
+
+
+def test_each_service_time_to_healthy_is_read_from_the_events_of_one_up() -> None:
+    """One line per service, sorted, each saying how far its start got and when."""
+    assert readiness_times("\n".join(EVENT_LINES), began=100.0) == [
+        "object-store: healthy 60.0 s after up began; its container was already running",
+        "postgres: healthy 12.5 s after its container started, 13.5 s after up began",
+        "sync-api: started 51.0 s after up began; no healthy status during up, or no health check",
+        "sync-bootstrap: exited with code 0 36.0 s after its container started, 50.0 s after up began",
+    ]
+
+
+def test_no_events_means_no_service_lines() -> None:
+    """An `up` that started nothing new records nothing per service."""
+    assert readiness_times("", began=100.0) == []
