@@ -14,7 +14,7 @@ operations into write units (FR-026).
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import PurePath
@@ -23,23 +23,27 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_serializer, model_validator
 
-from infrahub_sync.plan.canonical import canonical_value
+from infrahub_sync.plan.canonical import canonical_json_bytes, canonical_value
 from infrahub_sync.plan.config_version import CONFIG_VERSION_PATTERN
 from infrahub_sync.plan.errors import UnsupportedOperationActionError
 from infrahub_sync.plan.identity import OPERATION_ID_PATTERN, canonical_identity, operation_id
 
 # `1` is reserved for the pre-existing row format the reader refuses (FR-019); no manifest
 # ever carries it.
-PLAN_FORMAT_VERSION = 3
-# Read and review accept both; `apply` accepts only the current one. A format-2 plan's
-# updates carry no recorded destination id, so they cannot be keyed — reviewing such a plan
-# is still useful, applying it is not safe (see `PlanFormatApplyUnsupportedError`).
-SUPPORTED_FORMAT_VERSIONS = frozenset({2, 3})
+PLAN_FORMAT_VERSION = 4
+# Read and review accept every one of them. A format-2 plan's updates carry no recorded
+# destination id, so they cannot be keyed — reviewing such a plan is still useful, applying
+# it is not safe (see `PlanFormatApplyUnsupportedError`). Formats 2 and 3 have no plan
+# report and read with an empty one.
+SUPPORTED_FORMAT_VERSIONS = frozenset({2, 3, 4})
 
 # The format that introduced `PlannedOperation.destination_id`. `PlannedOperation` is
 # `extra="forbid"`, so the field's presence is itself a format discriminator: it must be
-# absent under 2 and governed by the action under 3.
+# absent under 2 and governed by the action under 3 and later.
 DESTINATION_ID_FORMAT_VERSION = 3
+
+# The format that introduced `report.jsonl` and the manifest `report` object (ADR 0022).
+REPORT_FORMAT_VERSION = 4
 
 PlanAction = Literal["create", "update", "delete"]
 
@@ -374,6 +378,209 @@ class DestinationBindingRecord(BaseModel):
         return _normalized_destination_url(value)
 
 
+# --- The plan report (spec 009, plan format 4) ---------------------------------------------
+
+ProblemType = Literal[
+    "dropdown_value_not_in_choices",
+    "duplicate_source_identity",
+    "destination_identity_collision",
+    "wrong_value_type",
+    "required_peer_excluded_by_filter",
+    "identities_merge_in_destination",
+    "peer_not_found_in_source",
+]
+"""The stable problem type names (spec 009 FR-024). A name is never renamed or removed."""
+
+PROBLEM_TYPES: tuple[ProblemType, ...] = get_args(ProblemType)
+
+# The longest reason a problem holds, and the longest string kept of a source value.
+REPORT_REASON_LIMIT = 512
+REPORT_VALUE_LIMIT = 256
+
+ReportEntryName = Literal["problem", "left_out", "kept"]
+REPORT_ENTRY_NAMES: tuple[ReportEntryName, ...] = get_args(ReportEntryName)
+
+
+def limited_report_value(value: Any) -> Any:  # a source value can be any JSON value
+    """Return `value` with every string limited to `REPORT_VALUE_LIMIT` characters.
+
+    A value outside JSON's types is rendered as its limited text, so the report stays
+    encodable whatever the source returned.
+    """
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:REPORT_VALUE_LIMIT]
+    if isinstance(value, Mapping):
+        return {str(key)[:REPORT_VALUE_LIMIT]: limited_report_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [limited_report_value(item) for item in value]
+    return str(value)[:REPORT_VALUE_LIMIT]
+
+
+class PlanRecordReference(BaseModel):
+    """Names a source record by kind, identity and source record ID (data-model.md).
+
+    `identity` is the record's identity as the plan operations show it, or `None` when the
+    record could not be converted far enough to compute it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: str
+    identity: dict[str, Any] | None = None
+    source_id: str | None = None
+
+
+class PlanProblem(BaseModel):
+    """One problem found in the source data (spec 009 FR-003)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    problem_type: ProblemType
+    record: PlanRecordReference
+    field: str | None = None
+    value: Any = None
+    allowed: list[str] | None = None
+    peer: PlanRecordReference | None = None
+    other_records: list[PlanRecordReference] = Field(default_factory=list)
+    reason: str = Field(min_length=1, max_length=REPORT_REASON_LIMIT)
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _limit_value(cls, value: Any) -> Any:
+        return limited_report_value(value)
+
+
+class LeftOutRecord(BaseModel):
+    """One source record the plan leaves out (spec 009 FR-005, FR-006)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    record: PlanRecordReference
+    cause: Literal["has_problem", "depends_on_left_out"]
+    problem_types: list[ProblemType] = Field(default_factory=list)
+    depends_on: PlanRecordReference | None = None
+    relationship: str | None = None
+    loaded: bool
+
+    @model_validator(mode="after")
+    def _require_cause_fields(self) -> LeftOutRecord:
+        if self.cause == "has_problem" and not self.problem_types:
+            msg = "a record left out because of a problem names its problem types"
+            raise ValueError(msg)
+        if self.cause == "depends_on_left_out" and self.depends_on is None:
+            msg = "a record left out as a dependent names the record it depends on"
+            raise ValueError(msg)
+        return self
+
+
+class KeptRecord(BaseModel):
+    """A source record the plan keeps without one optional relationship (spec 009 FR-005, FR-023)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    record: PlanRecordReference
+    cause: Literal["peer_left_out", "peer_not_found_in_source"]
+    relationship: str
+    left_out_peer: PlanRecordReference
+    # Internal to the plan step and never saved: the record's update changes nothing but this
+    # relationship, so the selection step removes the whole update (research R7).
+    relationship_only_update: bool = Field(default=False, exclude=True)
+
+
+class PlanReportCounts(BaseModel):
+    """The manifest's `report` object: the report file's digest, size and counts (ADR 0022)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    size: int = Field(ge=0)
+    problems: int = Field(ge=0)
+    left_out: int = Field(ge=0)
+    left_out_with_problem: int = Field(ge=0)
+    left_out_dependent: int = Field(ge=0)
+    kept: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _require_consistent_left_out(self) -> PlanReportCounts:
+        if self.left_out_with_problem + self.left_out_dependent != self.left_out:
+            msg = "left_out_with_problem + left_out_dependent must equal left_out"
+            raise ValueError(msg)
+        return self
+
+
+def _identity_sort_key(reference: PlanRecordReference) -> tuple[str, bytes, str]:
+    identity = b"" if reference.identity is None else canonical_json_bytes(reference.identity)
+    return reference.kind, identity, reference.source_id or ""
+
+
+class PlanReport(BaseModel):
+    """The problems, left-out records and kept records of one plan (`report.jsonl`).
+
+    `entries()` returns the lines in the stable order of data-model.md: problems by problem
+    type, kind, canonical identity and source ID; then left-out records by kind, identity and
+    source ID; then kept records by kind, identity and relationship.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    problems: list[PlanProblem] = Field(default_factory=list)
+    left_out: list[LeftOutRecord] = Field(default_factory=list)
+    kept: list[KeptRecord] = Field(default_factory=list)
+
+    def ordered(self) -> PlanReport:
+        """Return the report with each list in the stable order."""
+        return PlanReport(
+            problems=sorted(self.problems, key=lambda item: (item.problem_type, *_identity_sort_key(item.record))),
+            left_out=sorted(self.left_out, key=lambda item: _identity_sort_key(item.record)),
+            kept=sorted(
+                self.kept,
+                key=lambda item: (item.record.kind, _identity_sort_key(item.record)[1], item.relationship),
+            ),
+        )
+
+    def entries(self) -> list[dict[str, Any]]:
+        """Return the report lines, each with its `entry` name, in the stable order."""
+        ordered = self.ordered()
+        return [
+            *({"entry": "problem", **item.model_dump()} for item in ordered.problems),
+            *({"entry": "left_out", **item.model_dump()} for item in ordered.left_out),
+            *({"entry": "kept", **item.model_dump()} for item in ordered.kept),
+        ]
+
+    def counts(self, *, digest: str, size: int) -> PlanReportCounts:
+        """Return the manifest `report` object for this report's file `digest` and `size`."""
+        with_problem = sum(1 for item in self.left_out if item.cause == "has_problem")
+        return PlanReportCounts(
+            digest=digest,
+            size=size,
+            problems=len(self.problems),
+            left_out=len(self.left_out),
+            left_out_with_problem=with_problem,
+            left_out_dependent=len(self.left_out) - with_problem,
+            kept=len(self.kept),
+        )
+
+    @classmethod
+    def from_entries(cls, entries: Sequence[Mapping[str, Any]]) -> PlanReport:
+        """Build a report from its lines, as `entries()` returns them and the reader parses them."""
+        builders: dict[str, tuple[list[Any], type[BaseModel]]] = {
+            "problem": ([], PlanProblem),
+            "left_out": ([], LeftOutRecord),
+            "kept": ([], KeptRecord),
+        }
+        for line in entries:
+            body = dict(line)
+            name = body.pop("entry", None)
+            if name not in builders:
+                msg = f"unknown report entry {name!r}; expected one of {', '.join(REPORT_ENTRY_NAMES)}"
+                raise ValueError(msg)
+            items, model = builders[name]
+            items.append(model.model_validate(body))
+        return cls(problems=builders["problem"][0], left_out=builders["left_out"][0], kept=builders["kept"][0])
+
+
 class PlanManifest(BaseModel):
     """The artifact's header, and the format contract (FR-027).
 
@@ -405,6 +612,17 @@ class PlanManifest(BaseModel):
     # on a registered plan and absent from an unregistered one, so a registered apply always
     # has something to compare the live schema against and legacy manifests keep reading.
     schema_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    # The plan report's digest, size and counts (plan format 4, ADR 0022). Required from
+    # format 4 on and absent before it, so the checksum covers the report through its digest.
+    report: PlanReportCounts | None = None
+
+    @model_validator(mode="after")
+    def _require_report_from_format_4(self) -> PlanManifest:
+        """A format-4 manifest records its report; an older one has none to record."""
+        if self.format_version >= REPORT_FORMAT_VERSION and self.report is None:
+            msg = f"a format-{self.format_version} plan manifest must record its report"
+            raise ValueError(msg)
+        return self
 
     @field_validator("registry_version", mode="before")
     @classmethod
@@ -468,6 +686,8 @@ class PlanManifest(BaseModel):
             data.pop("destination_binding", None)
         if self.schema_fingerprint is None:
             data.pop("schema_fingerprint", None)
+        if self.report is None:
+            data.pop("report", None)
         if self.configuration_binding is None:
             data.pop("config_id", None)
             data.pop("registry_version", None)
@@ -580,6 +800,7 @@ VerificationCheck: TypeAlias = Literal[
     "torn_operations",
     "write_surface",
     "destination_binding",
+    "report",
 ]
 
 

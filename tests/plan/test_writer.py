@@ -39,6 +39,7 @@ from infrahub_sync.plan.writer import (
     MANIFEST_FILE_NAME,
     OPERATIONS_FILE_NAME,
     PLAN_DIR_NAME,
+    REPORT_FILE_NAME,
     write_plan_artifact,
 )
 
@@ -62,6 +63,8 @@ FR027_MANIFEST_FIELDS = frozenset(
         "operations_count",
         "delete_operations_computed",
         "plan_checksum",
+        # Plan format 4 (spec 009 ADR 0022): the plan report's digest, size and counts.
+        "report",
     }
 )
 
@@ -253,7 +256,7 @@ def test_operations_are_written_first_and_the_manifest_last(tmp_path: Path, monk
     monkeypatch.setattr(writer, "_atomic_write_bytes", _recording)
     _write(tmp_path, [_tag("prod"), _rack_update()])
 
-    assert calls == [OPERATIONS_FILE_NAME, MANIFEST_FILE_NAME]
+    assert calls == [OPERATIONS_FILE_NAME, REPORT_FILE_NAME, MANIFEST_FILE_NAME]
 
 
 def test_a_failure_during_the_operations_write_leaves_no_manifest(

@@ -1,4 +1,8 @@
-"""Creates must not collapse the full loaded source population, including warm runs."""
+"""Creates must not collapse the full loaded source population, including warm runs.
+
+Since spec 009 (T050) the records of such a group are left out and listed as a problem,
+instead of refusing the whole plan.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ from diffsync import Adapter, DiffSyncModel
 from infrahub_sync import DiffSyncMixin, SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncInstance
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.parquet_io import write_resource_side
+from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.derive import (
     _source_identities,  # noqa: PLC2701 - the population the convergence check reads.
     operations_from_diff,
@@ -25,6 +30,7 @@ from infrahub_sync.plan.errors import (
     UnkeyedCreateRefusedError,
 )
 from infrahub_sync.plan.keying import refuse_source_identity_collisions, source_identity_collision_groups
+from infrahub_sync.plan.reader import load_plan_artifact
 from infrahub_sync.potenda import Potenda
 
 if TYPE_CHECKING:
@@ -164,13 +170,31 @@ def engine(source: Population, destination: Population) -> Potenda:
     )
 
 
+def _assert_group_left_out(potenda: Potenda, source: Population, kind: str) -> None:
+    """Spec 009 R8: every source record of the group is left out and listed once as a problem."""
+    report = potenda.last_plan_report
+    assert report is not None
+    (problem,) = [problem for problem in report.problems if problem.record.kind == kind]
+    assert problem.problem_type in {"destination_identity_collision", "identities_merge_in_destination"}
+    assert len(problem.other_records) == 1
+    left_out = sorted(
+        canonical_json_bytes(item.record.identity) for item in report.left_out if item.record.kind == kind
+    )
+    assert len(left_out) == len(source.get_all(kind)) == 2
+    assert all(item.cause == "has_problem" for item in report.left_out)
+
+
 @pytest.mark.parametrize("nested", [False, True], ids=["rack", "interface-device-site"])
 @pytest.mark.parametrize("existing", ["none", "update", "unchanged"])
 @pytest.mark.parametrize("artifact", [False, True], ids=["no-artifact", "saved-artifact"])
-def test_full_source_population_refuses_lossy_creates(
+def test_full_source_population_leaves_out_lossy_creates(
     *, nested: bool, existing: str, artifact: bool, tmp_path: Path
 ) -> None:
-    """A real diff may omit a colliding source record entirely; planning still refuses."""
+    """A real diff may omit a colliding source record entirely; the plan still finds the group.
+
+    Spec 009 T050: the records of the group are left out and listed as one problem instead
+    of refusing the whole plan, and no operation of the kind is written.
+    """
     source, destination, kind = populations(nested=nested, existing=existing)
     potenda = engine(source, destination)
     if artifact:
@@ -184,31 +208,21 @@ def test_full_source_population_refuses_lossy_creates(
             diff, config=config(), tier_of=lambda _: 0, source_adapter=source, destination_adapter=destination
         )
         assert next(op for op in operations if op.action == "update").destination_id == "recorded-id"
-    with pytest.raises(DestinationIdentityCollisionError) as error:
-        potenda.write_plan(diff)
-    message = str(error.value)
-    assert kind in message
-    if existing != "none":
-        assert "actual destination match key" in message
-        assert "Declared source identity" in message
-        assert f"mapping identifiers): {'device, name' if nested else 'name, site'}." in message
-        assert (
-            f"Other loaded source record identifiers: '{'eth0__edge1__site-a' if nested else 'same__site-a'}'"
-            in message
-        )
-        assert "Source identity identifiers" not in message
-        assert ("device__site__name__value" if nested else "site__name__value") in message
-        assert error.value.wrote is False
-    assert not (tmp_path / "plan" / "manifest.json").exists()
+    potenda.write_plan(diff)
+    _assert_group_left_out(potenda, source, kind)
+    if artifact:
+        loaded = load_plan_artifact(tmp_path)
+        assert [operation for operation in loaded.operations if operation.kind == kind] == []
+        assert loaded.manifest.report is not None
+        assert loaded.manifest.report.left_out == 2
+    else:
+        assert not (tmp_path / "plan" / "manifest.json").exists()
 
 
 @pytest.mark.parametrize("nested", [False, True], ids=["rack", "interface-device-site"])
 @pytest.mark.parametrize("existing", ["none", "update", "unchanged"])
 def test_the_group_half_returns_both_source_records_of_a_refused_plan(*, nested: bool, existing: str) -> None:
-    """Spec 009 R8: the records `write_plan` refuses above form one group with both records.
-
-    `write_plan` still refuses here; the problem pass (spec 009 T050) leaves out the group instead.
-    """
+    """Spec 009 R8: the records `write_plan` leaves out above form one group with both records."""
     source, destination, kind = populations(nested=nested, existing=existing)
     operations = operations_from_diff(
         engine(source, destination).diff(),
@@ -266,8 +280,8 @@ def test_warm_incremental_population_includes_unchanged_collision(tmp_path: Path
     potenda.load_one_side(side="A", adapter=source)
     assert potenda._side_full_extract["A"] is False
     assert len(source.get_all("TestRack")) == 2
-    with pytest.raises(DestinationIdentityCollisionError, match="distinct loaded source record"):
-        potenda.write_plan(potenda.diff())
+    potenda.write_plan(potenda.diff())
+    _assert_group_left_out(potenda, source, "TestRack")
 
 
 def test_missing_peer_value_in_population_warns_and_proceeds(caplog: pytest.LogCaptureFixture) -> None:
@@ -391,8 +405,8 @@ def test_alternative_uniqueness_constraint_does_not_mask_actual_match_key() -> N
     source, destination, _ = populations(nested=False, existing="unchanged")
     destination.schema["TestRack"].uniqueness_constraints = [["site__name__value", "name__value"]]  # ty: ignore[unresolved-attribute]
     potenda = engine(source, destination)
-    with pytest.raises(DestinationIdentityCollisionError, match="actual destination match key"):
-        potenda.write_plan(potenda.diff())
+    potenda.write_plan(potenda.diff())
+    _assert_group_left_out(potenda, source, "TestRack")
 
 
 @pytest.mark.parametrize("missing", ["schema", "kind"])

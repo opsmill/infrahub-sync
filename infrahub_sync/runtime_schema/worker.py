@@ -28,7 +28,7 @@ from infrahub_sync.configuration.runtime import effective_destination_branch
 from infrahub_sync.plan.keying import writable_convergence_reason
 from infrahub_sync.plugin_loader import resolve_installed_adapter_class, resolve_installed_model_base
 
-from .domain import normalize_destination_schema
+from .domain import DestinationSchemaSnapshot, normalize_destination_schema
 from .errors import (
     DestinationSchemaUnavailableError,
     MissingMappedKindError,
@@ -77,6 +77,9 @@ class RuntimeModelPlan:
     destination: RuntimeSideModels
     source: RuntimeSideModels | None
     generic_peers: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    # The normalized destination schema record the models were built from. The plan's problem
+    # pass checks Dropdown values and relationship requirements against it (spec 009 R6, R7).
+    snapshot: DestinationSchemaSnapshot | None = None
 
 
 def read_destination_schema_snapshot(package: ConfigurationPackage, branch: str) -> Mapping[str, Any]:
@@ -194,6 +197,7 @@ def build_runtime_model_plan(
         destination=side(instance.destination),
         source=side(instance.source) if scope == "both" else None,
         generic_peers=snapshot.generic_peers,
+        snapshot=snapshot,
     )
 
 

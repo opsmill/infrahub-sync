@@ -387,6 +387,56 @@ class PlanVerificationError(PlanArtifactError):
     next_action = "Address each failed check named above; every failure carries its own next action."
 
 
+# The plan report's verification failures (spec 009, plan format 4). Each is a
+# `PlanVerificationError`, so a plan whose report does not match its manifest is not applied.
+_REPORT_REPLAN = "Create a new plan for this sync with `infrahub-sync diff`, review it, then apply that plan."
+
+
+class PlanReportVerificationError(PlanVerificationError):
+    """`report.jsonl` is missing or does not match the manifest's `report` object.
+
+    `expected` and `found` hold the compared values, for the verifier's failure entry.
+    """
+
+    next_action = _REPORT_REPLAN
+    expected: str = ""
+    found: str = ""
+
+
+class PlanReportMissingError(PlanReportVerificationError):
+    """A format-4 plan holds no `report.jsonl`."""
+
+    next_action = _REPORT_REPLAN
+
+
+class PlanReportDigestMismatchError(PlanReportVerificationError):
+    """The SHA-256 digest of `report.jsonl` differs from the one the manifest records."""
+
+    next_action = _REPORT_REPLAN
+
+
+class PlanReportSizeMismatchError(PlanReportVerificationError):
+    """The size of `report.jsonl` differs from the one the manifest records."""
+
+    next_action = _REPORT_REPLAN
+
+
+class PlanReportCountMismatchError(PlanReportVerificationError):
+    """The lines of `report.jsonl` differ from the counts the manifest records, or do not parse."""
+
+    next_action = _REPORT_REPLAN
+
+
+class LeftOutPeerInOperationError(PlanArtifactError):
+    """The plan writer was given an operation that still names a left-out peer placeholder.
+
+    The selection step removes every placeholder (spec 009 research R7), so this is a defect
+    in plan derivation; the writer refuses it before it writes any file.
+    """
+
+    next_action = "Report this defect with the run identifier; no plan file was written."
+
+
 class PlanSchemaChangedError(PlanArtifactError):
     """The destination no longer declares the schema semantics the plan was computed against.
 

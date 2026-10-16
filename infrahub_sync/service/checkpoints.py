@@ -9,7 +9,8 @@ atomic extraction.
 Two checkpoints exist, and their membership is fixed rather than incidental:
 
 The plan checkpoint carries what verify and apply consume -- the plan manifest, the
-operations file, and the source snapshots the manifest declares. The final checkpoint
+operations file, the plan report of a format-4 plan, and the source snapshots the manifest
+declares. The final checkpoint
 carries the applied run sidecar and nothing else. It records what the engine completed;
 it is not a recovery input, a success receipt, or future incremental state, so nothing
 reads it back and no stage may infer anything from its presence.
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
+from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, REPORT_FILE_NAME
 from infrahub_sync.product_store.bundle import (
     BUNDLE_MEDIA_TYPE,
     FINAL_CHECKPOINT_ARTIFACT_ID,
@@ -46,6 +47,7 @@ __all__ = [
 _BUNDLE_KIND = "run-bundle"
 _PLAN_MANIFEST_MEMBER = f"{PLAN_DIR_NAME}/{MANIFEST_FILE_NAME}"
 _PLAN_OPERATIONS_MEMBER = f"{PLAN_DIR_NAME}/{OPERATIONS_FILE_NAME}"
+_PLAN_REPORT_MEMBER = f"{PLAN_DIR_NAME}/{REPORT_FILE_NAME}"
 # The applied sidecar lives at the run directory's root, and a bundle member path is two
 # segments, so the checkpoint states which container it belongs to.
 FINAL_RUN_FILE_MEMBER = "final/run.json"
@@ -83,6 +85,9 @@ def publish_plan_checkpoint(
         _PLAN_MANIFEST_MEMBER: (run_directory / PLAN_DIR_NAME / MANIFEST_FILE_NAME).read_bytes(),
         _PLAN_OPERATIONS_MEMBER: (run_directory / PLAN_DIR_NAME / OPERATIONS_FILE_NAME).read_bytes(),
     }
+    if manifest.report is not None:
+        # A format-4 manifest records its report, whose digest the plan checksum covers.
+        members[_PLAN_REPORT_MEMBER] = (run_directory / PLAN_DIR_NAME / REPORT_FILE_NAME).read_bytes()
     for record in manifest.source_snapshot:
         members[record.path] = (run_directory / record.path).read_bytes()
     return projection.publish_artifact(

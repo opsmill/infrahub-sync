@@ -82,6 +82,8 @@ MANIFEST_KEYS = frozenset(
         "operations_count",
         "delete_operations_computed",
         "plan_checksum",
+        # Plan format 4 (spec 009 ADR 0022): the plan report's digest, size and counts.
+        "report",
     }
 )
 

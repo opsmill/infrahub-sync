@@ -32,6 +32,7 @@ from infrahub_sync.plan.models import (
     SourceSnapshotRecord,
     VerificationFailure,
 )
+from tests.plan.artifact_fixtures import EMPTY_REPORT_COUNTS
 
 SITE_PEER: dict[str, Any] = {"name": "dc1"}
 
@@ -97,9 +98,9 @@ def _reference(
 
 def test_declared_constants() -> None:
     """The constants nine later outcomes read are exactly as the data model fixes them."""
-    assert PLAN_FORMAT_VERSION == 3
-    # Format 2 stays readable and reviewable; only `apply` narrows to the current version.
-    assert frozenset({2, 3}) == SUPPORTED_FORMAT_VERSIONS
+    assert PLAN_FORMAT_VERSION == 4
+    # Formats 2 and 3 stay readable and reviewable; only `apply` narrows (spec 009 ADR 0022).
+    assert frozenset({2, 3, 4}) == SUPPORTED_FORMAT_VERSIONS
     assert ACTIONS == ("create", "update", "delete")
     assert CHECKSUM_EXCLUDED_FIELDS == ("plan_checksum", "run_id", "created_at")
     assert SC006_MASKED_FIELDS == ("run_id", "created_at")
@@ -699,6 +700,8 @@ PLAN_MANIFEST_FIELDS = {
     # Additive: the consumed destination-schema semantics a registered plan was computed
     # against. An identity to compare at apply time, not a grouping of operations.
     "schema_fingerprint",
+    # Plan format 4: the plan report's digest, size and counts (spec 009 ADR 0022).
+    "report",
 }
 
 # Vocabulary a grouping field would plausibly be named with. Belt and braces beside the
@@ -769,6 +772,7 @@ def _manifest(**overrides: Any) -> dict[str, Any]:  # noqa: ANN401 — a raw man
         "operations_count": 2,
         "delete_operations_computed": True,
         "plan_checksum": "a91c",
+        "report": dict(EMPTY_REPORT_COUNTS),
     }
     record.update(overrides)
     return record

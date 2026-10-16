@@ -89,10 +89,10 @@ def parse(directory: Path) -> LoadedPlan:
     return parse_plan_artifact(read_plan_artifact_bytes(directory), run_id=RUN_ID)
 
 
-def test_the_current_plan_format_is_3_and_2_stays_readable() -> None:
-    """Format 3 is what `diff` writes; format 2 stays readable for review (ADR 0001)."""
-    assert PLAN_FORMAT_VERSION == 3, "A new operation field is a hard format change (extra='forbid')."
-    assert frozenset({2, 3}) == SUPPORTED_FORMAT_VERSIONS, "Format-2 plans stay readable and reviewable."
+def test_formats_2_and_3_stay_readable_after_format_4() -> None:
+    """Format 4 is what `diff` writes (spec 009 ADR 0022); formats 2 and 3 stay readable for review."""
+    assert PLAN_FORMAT_VERSION == 4, "The plan report is a hard format change (ADR 0022)."
+    assert frozenset({2, 3, 4}) == SUPPORTED_FORMAT_VERSIONS, "Format-2 and format-3 plans stay readable."
 
 
 def test_a_format_3_update_round_trips_its_destination_id(tmp_path: Path) -> None:

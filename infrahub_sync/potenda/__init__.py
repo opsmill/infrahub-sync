@@ -78,9 +78,10 @@ if TYPE_CHECKING:
 
     from infrahub_sync import LoadReportEntry, SyncInstance
     from infrahub_sync.cache.cursors import CursorState
-    from infrahub_sync.plan.models import PlanManifest, PlannedOperation, VerificationFailure
+    from infrahub_sync.plan.models import PlanManifest, PlannedOperation, PlanReport, VerificationFailure
     from infrahub_sync.plan.ownership import WriteOwnership
     from infrahub_sync.plan.reader import RawPlanArtifact
+    from infrahub_sync.runtime_schema.domain import DestinationSchemaSnapshot
 
 
 def _plan_refusal(failures: Sequence[VerificationFailure], *, run_id: str) -> PlanVerificationError:
@@ -276,6 +277,9 @@ class Potenda:
         # records the semantics it was actually computed against rather than a second read.
         runtime_models = getattr(config, "_runtime_models", None)
         self.schema_fingerprint: str | None = None if runtime_models is None else runtime_models.schema_fingerprint
+        # The destination schema record the problem pass reads, and the last plan's report (spec 009).
+        self.schema_record: DestinationSchemaSnapshot | None = getattr(runtime_models, "snapshot", None)
+        self.last_plan_report: PlanReport | None = None
         if config is not None and runtime_models is None:
             # A direct run has no validated snapshot; plan derivation reads the same live
             # schema ordering does, so a generic reference expands consistently.
@@ -653,44 +657,39 @@ class Potenda:
             warn_missing_convergence_key,
         )
         from infrahub_sync.plan.models import SourceSnapshotRecord
+        from infrahub_sync.plan.problems import find_problems, select_operations
         from infrahub_sync.plan.writer import write_plan_artifact as write_artifact
 
         resolve_tier = partial(tier_of, tiers=self.tiers, top_level=self.top_level)
-        operations = []
-        for diff in diffs:
-            operations.extend(
-                operations_from_diff(
-                    diff,
-                    config=self.config,
-                    tier_of=resolve_tier,
-                    source_adapter=self.source,
-                    destination_adapter=self.destination,
-                )
-            )
-
-        # FR-015: deletes are derived only where the destination side holds a complete
-        # picture, and the manifest records which of the two happened. A source hydrated
-        # from a prior snapshot plus changed-since rows still holds objects deleted at the
-        # source, so the source must also be fully extracted before deletes count as computed.
+        sides = {"source_adapter": self.source, "destination_adapter": self.destination}
+        operations = [
+            operation
+            for diff in diffs
+            for operation in operations_from_diff(diff, config=self.config, tier_of=resolve_tier, **sides)
+        ]
+        # FR-015: deletes only when both sides were fully extracted (a hydrated source still holds
+        # objects deleted at the source); the manifest records which of the two happened.
         deletes_computed = self._side_full_extract.get("A", False) and self._side_full_extract.get("B", False)
         operations.extend(
             derive_deletes(
                 kinds=list(self.top_level),
-                source_adapter=self.source,
-                destination_adapter=self.destination,
                 config=self.config,
                 tier_of=resolve_tier,
                 destination_full_extract=deletes_computed,
+                **sides,
             )
         )
+        # Spec 009 research R2 steps 4 to 6: find problems, select, then check the selection.
+        problem_inputs = (self.source_load_report, self.destination_load_report, self.source, self.schema_record)
+        report = find_problems(*problem_inputs, operations, config=self.config, destination=self.destination)
+        operations = select_operations(operations, report)
+        self.last_plan_report = report
         action_counts: dict[str, int] = dict.fromkeys(ACTIONS, 0)
         for operation in operations:
             action_counts[operation.action] += 1
-
         warn_missing_convergence_key(
             destination=self.destination, operations=operations, source_adapter=self.source, config=self.config
         )
-
         if not self.run_dir or not self.run_id:
             logger.debug("Plan artifact: skipped after identity checks, this run has no run_dir/run_id")
             return None
@@ -707,6 +706,7 @@ class Potenda:
             destination_binding=getattr(self.destination, "destination_binding", None),
             configuration_binding=self.configuration_binding,
             schema_fingerprint=self.schema_fingerprint,
+            report=report,
         )
         logger.info(
             "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",

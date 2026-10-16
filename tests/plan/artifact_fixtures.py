@@ -20,14 +20,15 @@ Not a test module: no assertions live here.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.identity import operation_id
-from infrahub_sync.plan.models import PLAN_FORMAT_VERSION
-from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
+from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, REPORT_FORMAT_VERSION
+from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, REPORT_FILE_NAME
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -41,6 +42,17 @@ SYNC_NAME = "demo"
 # A payload value the tamper helper below rewrites. Payload, never identity — see
 # `tamperable_operation`.
 TAMPERABLE_VALUE = "production"
+
+# The manifest `report` object of an empty plan report (plan format 4).
+EMPTY_REPORT_COUNTS: dict[str, Any] = {
+    "digest": hashlib.sha256(b"").hexdigest(),
+    "size": 0,
+    "problems": 0,
+    "left_out": 0,
+    "left_out_with_problem": 0,
+    "left_out_dependent": 0,
+    "kept": 0,
+}
 
 # The destination id a fixture update carries unless its case is about the id itself.
 DEFAULT_DESTINATION_ID = "18d52a8a-7e7d-9bf5-3967-c51149d169da"
@@ -127,6 +139,9 @@ def write_artifact(  # noqa: PLR0913 — one parameter per manifest field the fi
     `manifest_overrides` are applied **before** `plan_checksum` is computed, so a fixture
     that overrides `format_version` or `operations_count` — or adds an unknown field — is
     still checksum-consistent and therefore broken only in the way its case is about.
+
+    A format-4 manifest gets an empty `report.jsonl` and the matching `report` object, unless
+    `manifest_overrides` supplies `report` itself.
     """
     operations_bytes = encode_operations(records)
     body: dict[str, Any] = {
@@ -139,10 +154,15 @@ def write_artifact(  # noqa: PLR0913 — one parameter per manifest field the fi
         "delete_operations_computed": deletes_computed,
     }
     body.update(manifest_overrides)
+    with_report = isinstance(body["format_version"], int) and body["format_version"] >= REPORT_FORMAT_VERSION
+    if with_report and "report" not in manifest_overrides:
+        body["report"] = EMPTY_REPORT_COUNTS
     body["plan_checksum"] = compute_plan_checksum(body, operations_bytes)
 
     directory = plan_dir(run_directory)
     directory.mkdir(parents=True, exist_ok=True)
+    if with_report:
+        (directory / REPORT_FILE_NAME).write_bytes(b"")
     (directory / OPERATIONS_FILE_NAME).write_bytes(operations_bytes)
     (directory / MANIFEST_FILE_NAME).write_bytes(canonical_json_bytes(body))
     return body

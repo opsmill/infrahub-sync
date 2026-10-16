@@ -34,7 +34,7 @@ from pyarrow import ArrowInvalid
 from pydantic import ValidationError
 
 from infrahub_sync.plan.checksum import compute_plan_checksum, snapshot_digest_and_row_count
-from infrahub_sync.plan.errors import PlanArtifactUnreadableError
+from infrahub_sync.plan.errors import PlanArtifactUnreadableError, PlanReportVerificationError
 from infrahub_sync.plan.models import (
     SUPPORTED_FORMAT_VERSIONS,
     DestinationBindingRecord,
@@ -45,6 +45,7 @@ from infrahub_sync.plan.reader import (
     DuplicateManifestKeyError,
     load_manifest_mapping,
     operation_record_lines,
+    parse_report,
     stat_or_unreadable,
     supported_versions_text,
 )
@@ -209,6 +210,19 @@ def _operations_failures(run_id: str, artifact: RawPlanArtifact, mapping: dict[s
 
     failure = plan_checksum_failure(run_id=run_id, manifest_mapping=mapping, operations_bytes=operations_bytes)
     return [] if failure is None else [failure]
+
+
+def report_failures(run_id: str, artifact: RawPlanArtifact, mapping: dict[str, Any]) -> list[VerificationFailure]:
+    """Evaluate the plan report check (plan format 4): presence, digest, size and line counts.
+
+    The checksum covers the report through the digest the manifest records, so this check is
+    what ties the file to the checksum. A format-2 or format-3 plan has no report to check.
+    """
+    try:
+        parse_report(artifact.report_bytes, mapping, run_id=run_id)
+    except PlanReportVerificationError as exc:
+        return [_failure("report", run_id=run_id, expected=exc.expected, found=exc.found, next_action=exc.next_action)]
+    return []
 
 
 def plan_checksum_failure(
@@ -499,6 +513,7 @@ def verify_plan(
     failures: list[VerificationFailure] = []
     failures.extend(_run_binding_failures(run_id, mapping))
     failures.extend(_operations_failures(run_id, artifact, mapping))
+    failures.extend(report_failures(run_id, artifact, mapping))
     failures.extend(source_snapshot_failures(run_id=run_id, run_dir=artifact.run_dir, mapping=mapping))
     failures.extend(_config_version_failures(run_id, mapping, config_version))
     failures.extend(_write_surface_failures(run_id, write_surface_missing_on))

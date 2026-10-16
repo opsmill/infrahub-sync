@@ -23,6 +23,7 @@ from infrahub_sync.plan.verify import verify_plan
 from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, write_plan_artifact
 from tests.plan.artifact_fixtures import (
     CONFIG_VERSION,
+    EMPTY_REPORT_COUNTS,
     RUN_ID,
     SYNC_NAME,
     duplicated_key_manifest_bytes,
@@ -85,6 +86,7 @@ def _raw_manifest(**overrides: Any) -> dict[str, Any]:  # noqa: ANN401 — a raw
         "operations_count": 0,
         "delete_operations_computed": True,
         "plan_checksum": "a91c",
+        "report": dict(EMPTY_REPORT_COUNTS),
     }
     record.update(overrides)
     return record

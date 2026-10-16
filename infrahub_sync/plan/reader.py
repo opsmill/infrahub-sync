@@ -34,9 +34,11 @@ model and therefore stay inside the recomputed checksum (FR-027, AD028).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import stat as stat_module
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
@@ -46,13 +48,22 @@ from infrahub_sync.plan.errors import (
     PlanArtifactUnreadableError,
     PlanFormatV1Error,
     PlanFormatVersionError,
+    PlanReportCountMismatchError,
+    PlanReportDigestMismatchError,
+    PlanReportMissingError,
+    PlanReportSizeMismatchError,
+    PlanReportVerificationError,
 )
 from infrahub_sync.plan.models import (
+    REPORT_FORMAT_VERSION,
     SUPPORTED_FORMAT_VERSIONS,
     PlanManifest,
     PlannedOperation,
+    PlanReport,
+    ProblemType,
+    ReportEntryName,
 )
-from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME
+from infrahub_sync.plan.writer import MANIFEST_FILE_NAME, OPERATIONS_FILE_NAME, PLAN_DIR_NAME, REPORT_FILE_NAME
 
 if TYPE_CHECKING:
     import os
@@ -84,6 +95,8 @@ class LoadedPlan:
     operations: list[PlannedOperation]
     manifest_mapping: dict[str, Any]
     operations_bytes: bytes
+    # The plan report (plan format 4); empty for a format-2 or format-3 plan.
+    report: PlanReport = field(default_factory=PlanReport)
 
 
 @dataclass(frozen=True)
@@ -101,6 +114,8 @@ class RawPlanArtifact:
     run_dir: Path
     manifest_bytes: bytes | None
     operations_bytes: bytes | None
+    # `report.jsonl`'s bytes; `None` when absent, which only a format-2 or format-3 plan may be.
+    report_bytes: bytes | None = None
 
 
 def read_plan_artifact_bytes(run_dir: Path) -> RawPlanArtifact:
@@ -114,6 +129,7 @@ def read_plan_artifact_bytes(run_dir: Path) -> RawPlanArtifact:
         run_dir=run_dir,
         manifest_bytes=_read_optional_bytes(directory / MANIFEST_FILE_NAME, description="plan manifest"),
         operations_bytes=_read_optional_bytes(directory / OPERATIONS_FILE_NAME, description="plan operations file"),
+        report_bytes=_read_optional_bytes(directory / REPORT_FILE_NAME, description="plan report file"),
     )
 
 
@@ -495,6 +511,8 @@ def parse_plan_artifact(raw: RawPlanArtifact, *, run_id: str) -> LoadedPlan:
             reason other than its action (FR-010).
         PlanFormatVersionError: `format_version` is outside `SUPPORTED_FORMAT_VERSIONS`
             (FR-027).
+        PlanVerificationError: a format-4 plan's report is missing or does not match the
+            manifest's `report` object (`parse_report`).
         UnsupportedOperationActionError: an operation's `action` is outside `ACTIONS`,
             refused here — while parsing — and therefore before any destination write
             (FR-017, AD055).
@@ -506,6 +524,7 @@ def parse_plan_artifact(raw: RawPlanArtifact, *, run_id: str) -> LoadedPlan:
         operations=operations,
         manifest_mapping=mapping,
         operations_bytes=operations_bytes,
+        report=parse_report(raw.report_bytes, mapping, run_id=run_id),
     )
 
 
@@ -531,3 +550,128 @@ def load_plan_artifact(run_dir: Path) -> LoadedPlan:
     run_id = run_dir.name
     require_plan_directory(run_dir)
     return parse_plan_artifact(read_plan_artifact_bytes(run_dir), run_id=run_id)
+
+
+# --- The plan report (plan format 4) ----------------------------------------------------
+
+
+def _report_refusal(
+    error: type[PlanReportVerificationError], run_id: str, what: str, *, expected: str, found: str
+) -> PlanReportVerificationError:
+    """Build a report verification failure that carries its expected and found values."""
+    refusal = error(f"The plan report of run {run_id!r} {what}. Expected {expected}; found {found}.")
+    refusal.expected = expected
+    refusal.found = found
+    return refusal
+
+
+def parse_report(report_bytes: bytes | None, manifest_mapping: Mapping[str, Any], *, run_id: str) -> PlanReport:
+    """Verify `report.jsonl` against the manifest's `report` object and return the report.
+
+    A format-2 or format-3 manifest has no report: the result is empty and the file is not
+    read. A format-4 report must be present, and its digest, size and line counts must equal
+    the manifest's; the lines must parse as report entries.
+
+    Raises:
+        PlanReportMissingError: the file is absent, or the manifest records no `report` object.
+        PlanReportDigestMismatchError: the file's SHA-256 digest differs from the manifest's.
+        PlanReportSizeMismatchError: the file's size differs from the manifest's.
+        PlanReportCountMismatchError: a line does not parse, or the line counts differ.
+    """
+    version = manifest_mapping.get("format_version")
+    if not isinstance(version, int) or isinstance(version, bool) or version < REPORT_FORMAT_VERSION:
+        return PlanReport()
+    recorded = manifest_mapping.get("report")
+    if report_bytes is None or not isinstance(recorded, Mapping):
+        raise _report_refusal(
+            PlanReportMissingError,
+            run_id,
+            f"is missing from a format-{version} plan",
+            expected=f"{REPORT_FILE_NAME} and the manifest report object",
+            found="no report file" if report_bytes is None else "no manifest report object",
+        )
+    digest = hashlib.sha256(report_bytes).hexdigest()
+    if digest != recorded.get("digest"):
+        raise _report_refusal(
+            PlanReportDigestMismatchError,
+            run_id,
+            "changed after the plan was written",
+            expected=f"digest {recorded.get('digest')}",
+            found=f"digest {digest}",
+        )
+    if len(report_bytes) != recorded.get("size"):
+        raise _report_refusal(
+            PlanReportSizeMismatchError,
+            run_id,
+            "has a different size than the manifest records",
+            expected=f"{recorded.get('size')} byte(s)",
+            found=f"{len(report_bytes)} byte(s)",
+        )
+    try:
+        report = PlanReport.from_entries([json.loads(line) for line in operation_record_lines(report_bytes)])
+    except (ValueError, ValidationError) as exc:
+        # `json.JSONDecodeError` and `UnicodeDecodeError` are `ValueError`s. The message names
+        # the failure class only, never the line's text.
+        raise _report_refusal(
+            PlanReportCountMismatchError,
+            run_id,
+            "holds a line that is not a report entry",
+            expected="one report entry per line",
+            found=f"a line that does not parse ({type(exc).__name__})",
+        ) from None
+    counts = report.counts(digest=digest, size=len(report_bytes)).model_dump()
+    differing = sorted(name for name, value in counts.items() if recorded.get(name) != value)
+    if differing:
+        raise _report_refusal(
+            PlanReportCountMismatchError,
+            run_id,
+            "holds different counts than the manifest records",
+            expected=", ".join(f"{name} {recorded.get(name)}" for name in differing),
+            found=", ".join(f"{name} {counts[name]}" for name in differing),
+        )
+    return report
+
+
+@dataclass(frozen=True)
+class ReportPage:
+    """One page of report entries of one entry name, in the stable report order."""
+
+    entries: list[dict[str, Any]]
+    offset: int
+    limit: int
+    total: int
+
+    @property
+    def next_offset(self) -> int | None:
+        """The offset of the next page, or `None` on the last page."""
+        following = self.offset + len(self.entries)
+        return following if following < self.total else None
+
+
+def report_page(
+    report: PlanReport,
+    *,
+    entry: ReportEntryName,
+    offset: int = 0,
+    limit: int = 500,
+    problem_type: ProblemType | None = None,
+    kind: str | None = None,
+) -> ReportPage:
+    """Return the `entry` entries of `report` from `offset`, at most `limit` of them.
+
+    `kind` keeps the entries whose record has that kind. `problem_type` keeps the problems of
+    that type and the left-out records with that problem type; it keeps no kept record.
+    """
+    if offset < 0 or limit < 1:
+        msg = "offset must be at least 0 and limit at least 1"
+        raise ValueError(msg)
+    selected = [line for line in report.entries() if line["entry"] == entry]
+    if kind is not None:
+        selected = [line for line in selected if line["record"]["kind"] == kind]
+    if problem_type is not None:
+        selected = [
+            line
+            for line in selected
+            if line.get("problem_type") == problem_type or problem_type in line.get("problem_types", ())
+        ]
+    return ReportPage(entries=selected[offset : offset + limit], offset=offset, limit=limit, total=len(selected))

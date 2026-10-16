@@ -1,9 +1,9 @@
 """The plan artifact writer (FR-004, FR-010, FR-019, FR-021, FR-022, FR-026, FR-027).
 
-`operations.jsonl` is written **first** and `manifest.json` **last**, and that order is the
-commit point (AD014): the manifest's presence is what makes the artifact complete, so a
-failure part-way through the operations write leaves a run directory with a `plan/`
-directory and no manifest — which the reader classifies as **torn** — while a run that
+`operations.jsonl` is written **first**, `report.jsonl` (plan format 4, ADR 0022) second and
+`manifest.json` **last**, and that order is the commit point (AD014): the manifest's
+presence is what makes the artifact complete, so a failure part-way through the operations
+or report write leaves a run directory with a `plan/` directory and no manifest — which the reader classifies as **torn** — while a run that
 never reached this writer has no `plan/` directory at all and is classified as the
 pre-existing v1 format. The two verdicts are therefore disjoint by construction rather
 than by heuristic.
@@ -21,6 +21,7 @@ observable to a test.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import tempfile
 from datetime import datetime, timezone
@@ -29,17 +30,19 @@ from typing import TYPE_CHECKING, Any
 
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.checksum import compute_plan_checksum
-from infrahub_sync.plan.errors import DuplicateOperationIdError, PlanGenerationExistsError
-from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, PlanManifest
+from infrahub_sync.plan.errors import DuplicateOperationIdError, LeftOutPeerInOperationError, PlanGenerationExistsError
+from infrahub_sync.plan.left_out_peer import holds_left_out_peer
+from infrahub_sync.plan.models import PLAN_FORMAT_VERSION, PlanManifest, PlanReport
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from infrahub_sync.plan.models import DestinationBindingRecord, PlannedOperation, SourceSnapshotRecord
 
-# The artifact's directory and its two files, in the order they are written.
+# The artifact's directory and its three files, in the order they are written.
 PLAN_DIR_NAME = "plan"
 OPERATIONS_FILE_NAME = "operations.jsonl"
+REPORT_FILE_NAME = "report.jsonl"
 MANIFEST_FILE_NAME = "manifest.json"
 
 
@@ -129,6 +132,30 @@ def _refuse_duplicate_identifiers(operations: Sequence[PlannedOperation]) -> Non
         seen[operation.operation_id] = operation
 
 
+def _refuse_left_out_placeholders(operations: Sequence[PlannedOperation]) -> None:
+    """Refuse an operation that still names a left-out peer placeholder (spec 009 research R7).
+
+    The selection step removes every placeholder; one that reaches the writer would be applied
+    as a peer that does not exist. The message names the operation, never a value.
+    """
+    for operation in operations:
+        if holds_left_out_peer(operation):
+            msg = (
+                f"Operation {operation.operation_id!r} ({operation.action} of kind {operation.kind!r}) still "
+                "names a peer the plan leaves out, so the plan cannot be written."
+            )
+            raise LeftOutPeerInOperationError(msg)
+
+
+def encode_report(report: PlanReport) -> bytes:
+    """Encode the plan report as `report.jsonl`'s exact bytes (canonical encoding, ADR 0001).
+
+    One canonical JSON object per line in the stable order of `PlanReport.entries`, every
+    line LF-terminated. An empty report encodes to zero bytes.
+    """
+    return b"".join(canonical_json_bytes(line) + b"\n" for line in report.entries())
+
+
 def _ordered_operations(operations: Sequence[PlannedOperation]) -> list[PlannedOperation]:
     """Order operations by `(tier, operation_id)` — tier ascending, then identifier (AD001)."""
     return sorted(operations, key=lambda operation: (operation.tier, operation.operation_id))
@@ -186,12 +213,16 @@ def write_plan_artifact(
     destination_binding: DestinationBindingRecord | None = None,
     configuration_binding: tuple[str, int, str] | None = None,
     schema_fingerprint: str | None = None,
+    report: PlanReport | None = None,
 ) -> PlanManifest:
     """Write `<run_dir>/plan/` and return the manifest that was written.
 
     Operations are ordered by `(tier, operation_id)` and their identifiers asserted unique;
-    `operations.jsonl` is written first and `manifest.json` last, each atomically. The
-    returned `PlanManifest` is the one on disk, `plan_checksum` included.
+    `operations.jsonl` is written first, `report.jsonl` second and `manifest.json` last, each
+    atomically. The returned `PlanManifest` is the one on disk, `plan_checksum` included.
+
+    `report` is the plan report (plan format 4); `None` writes an empty report. The manifest
+    records its digest, size and counts, so the checksum covers it.
 
     `destination_binding` is the resolved destination identity the plan is bound to —
     endpoint URL and branch, never the token. It is additive: `None`
@@ -207,18 +238,24 @@ def write_plan_artifact(
         PlanGenerationExistsError: the run already holds a committed plan generation, which
             is never overwritten.
         DuplicateOperationIdError: two operations share an operation identifier (FR-021).
+        LeftOutPeerInOperationError: an operation still names a left-out peer placeholder.
         UnserializablePayloadValueError: a payload value is outside the canonical-value table.
         ValidationError: the manifest the caller's values assemble is not a valid manifest —
             a registered plan with no `schema_fingerprint`, above all.
     """
     require_uncommitted_plan(run_dir, run_id=run_id)
     _refuse_duplicate_identifiers(operations)
+    _refuse_left_out_placeholders(operations)
     ordered = _ordered_operations(operations)
     operations_bytes = _encode_operations(ordered)
+    plan_report = report if report is not None else PlanReport()
+    report_bytes = encode_report(plan_report)
 
     plan_dir = run_dir / PLAN_DIR_NAME
     # FIRST. A failure here leaves no manifest, so the artifact reads as torn (AD014).
     _atomic_write_bytes(plan_dir / OPERATIONS_FILE_NAME, operations_bytes)
+    # SECOND. Still before the manifest, so a failure here leaves an uncommitted plan too.
+    _atomic_write_bytes(plan_dir / REPORT_FILE_NAME, report_bytes)
 
     body: dict[str, Any] = {
         "format_version": PLAN_FORMAT_VERSION,
@@ -228,6 +265,9 @@ def write_plan_artifact(
         "source_snapshot": [record.model_dump() for record in source_snapshot],
         "operations_count": len(ordered),
         "delete_operations_computed": deletes_computed,
+        "report": plan_report.counts(
+            digest=hashlib.sha256(report_bytes).hexdigest(), size=len(report_bytes)
+        ).model_dump(),
     }
     if destination_binding is not None:
         # Before the checksum below, so the recorded binding is covered by it.
