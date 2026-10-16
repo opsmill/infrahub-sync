@@ -8,7 +8,9 @@ from named fields only, never from the text of an exception (ADR 0021).
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -20,6 +22,8 @@ from infrahub_sync.configuration.storage import (
 from infrahub_sync.failure_cause import build_failure_cause
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.product_store import ExecutionFinishWriteback, ExecutionMergeWriteback, ExecutionWriteback
+
+from .service import PLAN_ARTIFACT_ID
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -47,6 +51,7 @@ def failure_evidence(
     *,
     outcome: str,
     record: ApplyRecord | None,
+    operations: Sequence[Mapping[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Describe one failure: its evidence, with whatever is known about what it wrote, and its cause.
 
@@ -56,6 +61,8 @@ def failure_evidence(
 
     The cause is built here and only here. It is built before `sanitize_exception_chain`
     replaces the exception, because the replacement keeps none of the types the cause reads.
+    `operations` are the saved plan's operations; with the apply record they give the
+    cause's `apply_progress`.
     """
     evidence: dict[str, Any] = {
         "stage": stage,
@@ -76,7 +83,27 @@ def failure_evidence(
     written = effective_apply_record(exc, record)
     if written is not None:
         evidence.update(written.as_summary_keys())
-    return evidence, build_failure_cause(stage, exc).model_dump(mode="json")
+    cause = build_failure_cause(stage, exc, apply_record=written, operations=operations)
+    return evidence, cause.model_dump(mode="json")
+
+
+def planned_operations(projection: ProductProjection, run_id: str) -> list[Mapping[str, Any]] | None:
+    """The operations of the run's saved plan, as its review document holds them, or None.
+
+    The cause reads only each operation's ID, action, kind and identity. A plan that cannot be
+    read leaves the cause without `apply_progress` rather than without a cause.
+    """
+    stored = projection.lookup_artifact(run_id, PLAN_ARTIFACT_ID).value
+    if stored is None:
+        return None
+    try:
+        document = json.loads(stored)
+    except ValueError:
+        return None
+    operations = document.get("operations") if isinstance(document, Mapping) else None
+    if not isinstance(operations, list):
+        return None
+    return [operation for operation in operations if isinstance(operation, Mapping)]
 
 
 def effective_apply_record(exc: Exception, record: ApplyRecord | None) -> ApplyRecord | None:
@@ -132,7 +159,8 @@ def record_failure(  # pylint: disable=too-many-arguments,too-many-positional-ar
         else:
             ambiguous = dispatch_started
         terminal_state, terminal_outcome = ("interrupted", "ambiguous") if ambiguous else ("failed", "failed")
-        evidence, cause = failure_evidence(stage, exc, outcome=terminal_outcome, record=record)
+        operations = planned_operations(projection, run_id) if described is not None and stage != "verify" else None
+        evidence, cause = failure_evidence(stage, exc, outcome=terminal_outcome, record=record, operations=operations)
         # The cause replaces any earlier one, such as the stop of a `sync` this apply follows.
         results: dict[str, Any] = {f"{stage}_failure": evidence, "failure": cause}
         if stage == "verify":

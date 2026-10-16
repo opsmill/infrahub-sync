@@ -214,7 +214,10 @@ def test_a_plan_saved_before_format_4_is_refused(api: _Api, plan_format: int | N
 
 
 def test_the_checks_run_in_the_contract_order(api: _Api) -> None:
-    """Confirmation, then checksum, then the count, then the plan format."""
+    """Confirmation, then checksum, then the count, then the plan format.
+
+    Check 4, a run that already admitted a write, is tested on its own below.
+    """
     left_out_format_3 = _publish_document(
         api,
         format_version=3,
@@ -263,5 +266,41 @@ def test_the_count_is_checked_before_a_run_that_already_admitted_a_write(
 
     assert wrong.json()["error"]["code"] == "left-out-confirmation-required"
     assert right.status_code == 409
-    assert right.json()["error"]["code"] not in {"left-out-confirmation-required", "plan-format-not-applicable"}
+    assert right.json()["error"]["code"] == "new-plan-required"
     assert len(api.apply_submissions()) == 1, "Only the first apply reached a worker."
+
+
+def test_a_run_that_admitted_a_write_is_refused_before_the_plan_format(api: _Api) -> None:
+    """Check 4 (`new-plan-required`) comes after the count and before the plan format."""
+    version = api.client.app.state.run_binding
+    admitted = api.client.post(
+        "/runs",
+        headers={"Authorization": f"Bearer {OWNER_TOKEN}", "Idempotency-Key": "sync-admits-the-write"},
+        json={
+            "operation": "sync",
+            "config_id": version.config_id,
+            "registry_version": version.registry_version,
+            "confirm_writes": True,
+            "reason": "synchronize the inventory",
+        },
+    )
+    assert admitted.status_code == 202, admitted.text
+    run_id = admitted.json()["run"]["run_id"]
+    _publish_document(
+        api,
+        format_version=3,
+        summary=_plan_document("x").summary.model_copy(
+            update={"left_out": 2, "left_out_dependent": 2, "left_out_by_kind": {"Device": 2}}
+        ),
+    )(run_id)
+    _settle_open_executions(api.projection, run_id)
+
+    no_count = api.apply(run_id, "after-sync-1", expected_checksum="a" * 64)
+    counted = api.apply(run_id, "after-sync-2", expected_checksum="a" * 64, confirmed_left_out_count=2)
+
+    assert no_count.json()["error"]["code"] == "left-out-confirmation-required"
+    error = counted.json()["error"]
+    assert (counted.status_code, error["code"]) == (409, "new-plan-required")
+    assert error["message"] == "This plan was already applied or its apply stopped; create and review a new plan"
+    assert api.outcomes(run_id)[-2:] == ["refused-left-out-count", "refused-new-plan-required"]
+    assert api.apply_submissions() == []

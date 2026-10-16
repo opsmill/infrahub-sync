@@ -28,6 +28,7 @@ from infrahub_sync.product_store import (
     ProductProjection,
     ProductRun,
 )
+from infrahub_sync.product_store.store import NEW_PLAN_REQUIRED, NEW_PLAN_REQUIRED_MESSAGE
 
 from .liveness import CancellationSelectionUnavailableError, select_cancellable_execution
 from .models import (
@@ -62,7 +63,12 @@ PLAN_ARTIFACT_ID = "plan-review"
 def _reservation_outcome(receipt: MutationReceipt) -> str:
     """Name what an already-answered receipt is: a replay, or this run's stored refusal."""
     assert receipt.response_status is not None  # an accepted receipt always stores its status.
-    return "replayed" if receipt.response_status < 400 else "refused-run-execution-conflict"
+    if receipt.response_status < 400:
+        return "replayed"
+    error = (receipt.response_body or {}).get("error")
+    if isinstance(error, dict) and error.get("code") == NEW_PLAN_REQUIRED:
+        return "refused-new-plan-required"
+    return "refused-run-execution-conflict"
 
 
 def _service_status(snapshot: PoolStatus) -> ServiceStatusResource:
@@ -353,9 +359,12 @@ class RunService:
     ) -> None:
         """Refuse, before any write, an apply that does not confirm the plan's left-out count.
 
-        Then a plan saved before format 4, which records no report and so no left-out count
-        (contracts/sync-api.md checks 3 and 5). A review document of an earlier release has
-        no `format_version` and is refused with it.
+        Then a run that already admitted its one write: its plan was applied or its apply
+        stopped, so only a new plan can write. The store refuses the same case again when it
+        reserves the write, for a request that races this check. Then a plan saved before
+        format 4, which records no report and so no left-out count (contracts/sync-api.md
+        checks 3, 4 and 5). A review document of an earlier release has no `format_version`
+        and is refused with it.
         """
         left_out = plan.summary.left_out
         if (request.confirmed_left_out_count or 0) != left_out:
@@ -373,6 +382,15 @@ class RunService:
                 run_id=run_id,
                 expected_left_out_count=left_out,
             )
+        if self._projection.write_admitted(run_id):
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation="apply",
+                reason=request.reason,
+                outcome="refused-new-plan-required",
+            )
+            raise self._error(409, NEW_PLAN_REQUIRED, NEW_PLAN_REQUIRED_MESSAGE, run_id=run_id)
         if plan.format_version is None or plan.format_version < REPORT_FORMAT_VERSION:
             self._audit(
                 run_id,

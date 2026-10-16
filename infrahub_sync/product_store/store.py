@@ -250,6 +250,10 @@ _RUN_EXECUTION_CONFLICT_MESSAGE = (
     "this Sync run already has a write admission, an unresolved submission, or a running "
     "execution; review the run and create a new plan or sync run"
 )
+# The refusal of a stage on a run that already admitted its one write (contracts/sync-api.md
+# apply check 4). The run's plan was applied, or its apply stopped, so only a new plan can write.
+NEW_PLAN_REQUIRED = "new-plan-required"
+NEW_PLAN_REQUIRED_MESSAGE = "This plan was already applied or its apply stopped; create and review a new plan"
 _ADMITTED_APPEND_REFUSED = (
     "appending a write execution requires the mutation receipt that holds this run's write admission"
 )
@@ -415,6 +419,8 @@ class _RunStore(Protocol):  # pylint: disable=too-many-public-methods
     ) -> LookupResult[tuple[ArtifactReference, bool]]: ...
 
     def has_pending_artifacts(self, run_id: str) -> bool: ...
+
+    def write_admitted(self, run_id: str) -> bool: ...
 
     def lookup_configuration_baseline(self, config_id: str) -> LookupResult[ConfigurationBaseline]: ...
 
@@ -931,6 +937,22 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         if row is None:
             return LookupResult(value=None, reason="artifact-reference-not-found")
         return LookupResult(value=(_reference_from_row(row), bool(row[10])))
+
+    def write_admitted(self, run_id: str) -> bool:
+        """Whether the run already admitted its one write, terminal or not."""
+        connection = self._connect()
+        try:
+            cursor = connection.cursor()
+            try:
+                return self._write_admitted(cursor, run_id)
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def _write_admitted(self, cursor: _Cursor, run_id: str) -> bool:
+        cursor.execute(self._sql("SELECT 1 FROM write_admissions WHERE run_id = ?"), (run_id,))
+        return cursor.fetchone() is not None
 
     def has_pending_artifacts(self, run_id: str) -> bool:
         connection = self._connect()
@@ -1824,28 +1846,24 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
         run_id = receipt.run_id
         assert run_id is not None  # a run receipt carries its run ID (MutationReceipt invariant).
         cursor.execute(self._sql("UPDATE product_runs SET run_id = run_id WHERE run_id = ?"), (run_id,))
-        if not self._reservation_refused(cursor, run_id, receipt.receipt_id, admit_write=admit_write):
+        if self._write_admitted(cursor, run_id):
+            refusal = _new_plan_required_response(run_id, receipt.receipt_id)
+        elif self._reservation_refused(cursor, run_id, receipt.receipt_id, admit_write=admit_write):
+            refusal = _run_execution_conflict_response(run_id, receipt.receipt_id)
+        else:
             return receipt
-        return receipt.model_copy(
-            update={
-                "state": "accepted",
-                "response_status": 409,
-                "response_body": _run_execution_conflict_response(run_id, receipt.receipt_id),
-            }
-        )
+        return receipt.model_copy(update={"state": "accepted", "response_status": 409, "response_body": refusal})
 
     def _reservation_refused(self, cursor: _Cursor, run_id: str, receipt_id: str, *, admit_write: bool) -> bool:
-        """Answer whether this run may still admit the requested stage.
+        """Answer whether this run, which has not admitted a write, may admit the requested stage.
 
         A run that has admitted its one write never admits another stage of any kind, even
         after that write becomes terminal: terminal write evidence is immutable and the
-        operator's next step is a new run. A write additionally needs the run quiet — no
-        other unresolved submission and no unfinished execution — so an apply cannot race
-        a verify that has reserved but not yet submitted.
+        operator's next step is a new plan. The caller refuses that case first, with
+        `new-plan-required`. A write additionally needs the run quiet — no other unresolved
+        submission and no unfinished execution — so an apply cannot race a verify that has
+        reserved but not yet submitted.
         """
-        cursor.execute(self._sql("SELECT 1 FROM write_admissions WHERE run_id = ?"), (run_id,))
-        if cursor.fetchone() is not None:
-            return True
         if not admit_write:
             return False
         # Every stage a run arbitrates is every run mutation except cancellation, which
@@ -2595,6 +2613,10 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
         """Look up a product record by stable Sync run ID."""
         return self._records.lookup(run_id)
 
+    def write_admitted(self, run_id: str) -> bool:
+        """Whether the run already admitted its one write, so only a new plan can write."""
+        return self._records.write_admitted(run_id)
+
     def add_prefect_execution(
         self,
         run_id: str,
@@ -3255,6 +3277,19 @@ def _receipt_from_row(row: Sequence[Any]) -> MutationReceipt:
             "updated_at": row[16],
         }
     )
+
+
+def _new_plan_required_response(run_id: str, receipt_id: str) -> dict[str, Any]:
+    """The refusal a stage stores on its receipt when the run already admitted its one write."""
+    return {
+        "error": {
+            "code": NEW_PLAN_REQUIRED,
+            "message": NEW_PLAN_REQUIRED_MESSAGE,
+            "status": 409,
+            "run_id": run_id,
+            "mutation_id": receipt_id,
+        }
+    }
 
 
 def _run_execution_conflict_response(run_id: str, receipt_id: str) -> dict[str, Any]:

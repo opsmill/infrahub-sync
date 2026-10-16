@@ -46,6 +46,8 @@ if TYPE_CHECKING:
 # only the rows it wrote even when several sessions share one server.
 _SESSION = uuid4().hex[:10]
 _CONFLICT_CODE = "run-execution-conflict"
+# A run that already admitted its one write refuses every later stage with this code (spec 009).
+_NEW_PLAN_CODE = "new-plan-required"
 _WORKER_ID = "5f2d3a0e-2f2c-4a55-9d3f-9a2a1c6f4b71"
 _STARTED_AT = datetime(2026, 9, 3, 9, tzinfo=timezone.utc)
 
@@ -171,7 +173,7 @@ def test_exactly_one_of_two_concurrent_applies_wins_the_run_write_reservation(
     assert len(winners) == 1
     assert len(losers) == 1
     assert losers[0].response_status == 409
-    assert _refusal_code(losers[0]) == _CONFLICT_CODE
+    assert _refusal_code(losers[0]) == _NEW_PLAN_CODE
     assert losers[0].flow_run_id is None
 
 
@@ -262,7 +264,7 @@ def test_every_later_reservation_refuses_once_a_write_is_admitted(
 
     assert refused.state == "accepted"
     assert refused.response_status == 409
-    assert _refusal_code(refused) == _CONFLICT_CODE
+    assert _refusal_code(refused) == _NEW_PLAN_CODE
 
 
 def test_a_terminal_write_still_refuses_a_later_reservation(projection: ProductProjection) -> None:
@@ -303,7 +305,7 @@ def test_a_terminal_write_still_refuses_a_later_reservation(projection: ProductP
     )
 
     assert refused.state == "accepted"
-    assert _refusal_code(refused) == _CONFLICT_CODE
+    assert _refusal_code(refused) == _NEW_PLAN_CODE
 
 
 def test_only_the_admitted_receipt_may_append_the_write_execution(projection: ProductProjection) -> None:
@@ -438,7 +440,7 @@ def test_a_different_client_key_cannot_resume_another_actors_reservation(project
 
     assert created is True
     assert refused.state == "accepted"
-    assert _refusal_code(refused) == _CONFLICT_CODE
+    assert _refusal_code(refused) == _NEW_PLAN_CODE
 
 
 def test_a_new_run_reservation_is_never_arbitrated_against_another_run(projection: ProductProjection) -> None:

@@ -773,6 +773,21 @@ def sync_cmd(
             _echo_completed_destination_branch(client, completed.run.run_id)
 
 
+# The Sync API's message for `new-plan-required` (contracts/sync-api.md apply check 4). The
+# client error carries no text from the server, so the CLI holds its own copy.
+_NEW_PLAN_REQUIRED = "This plan was already applied or its apply stopped; create and review a new plan"
+
+
+def _apply_refusal(error: APIError) -> str | None:
+    """The sentence `apply` prints for a refusal the team acts on, or None for any other error."""
+    expected = error.expected_left_out_count
+    if error.code == "left-out-confirmation-required" and expected is not None:
+        return f"this plan leaves out {expected} records; confirm with --confirm-left-out {expected}"
+    if error.code == "new-plan-required":
+        return _NEW_PLAN_REQUIRED
+    return None
+
+
 @app.command("apply")
 def apply_cmd(
     ctx: typer.Context,
@@ -810,13 +825,10 @@ def apply_cmd(
         try:
             accepted = client.apply(run_id, request, key)
         except APIError as error:
-            expected = error.expected_left_out_count
-            if error.code != "left-out-confirmation-required" or expected is None:
+            refusal = _apply_refusal(error)
+            if refusal is None:
                 raise
-            typer.echo(
-                f"apply refused: this plan leaves out {expected} records; confirm with --confirm-left-out {expected}",
-                err=True,
-            )
+            typer.echo(f"apply refused: {refusal}", err=True)
             raise typer.Exit(1) from None
         _echo_run(accepted)
         completed = _wait(

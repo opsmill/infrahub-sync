@@ -1552,7 +1552,8 @@ def test_concurrent_and_post_completion_distinct_apply_keys_are_refused(
     accepted = next(response for response in responses if response.status_code == 202)
     refused = next(response for response in responses if response.status_code == 409)
     accepted_position = next(position for position, response in enumerate(responses) if response.status_code == 202)
-    assert refused.json()["error"]["code"] == "run-execution-conflict"
+    # The winner's write admission is committed with its receipt, so the loser needs a new plan.
+    assert refused.json()["error"]["code"] == "new-plan-required"
     assert len(orchestration.submissions) == 2
 
     projection.finish_run(
@@ -1580,9 +1581,9 @@ def test_concurrent_and_post_completion_distinct_apply_keys_are_refused(
     assert replay.status_code == 202
     assert replay.json() == accepted.json()
     assert post_completion.status_code == 409
-    assert post_completion.json()["error"]["code"] == "run-execution-conflict"
+    assert post_completion.json()["error"]["code"] == "new-plan-required"
     assert len(orchestration.submissions) == 2
-    refusals = [event for event in projection.audit_events(run_id) if event.outcome == "refused-run-execution-conflict"]
+    refusals = [event for event in projection.audit_events(run_id) if event.outcome == "refused-new-plan-required"]
     assert len(refusals) == 2
 
 
@@ -1614,7 +1615,7 @@ def test_confirmed_sync_reserves_its_write_admission_and_replays(
     assert accepted.status_code == 202
     assert replay.json() == accepted.json()
     assert later_apply.status_code == 409
-    assert later_apply.json()["error"]["code"] == "run-execution-conflict"
+    assert later_apply.json()["error"]["code"] == "new-plan-required"
     assert [parameters["stage"] for parameters, _ in orchestration.submissions] == ["sync"]
 
 

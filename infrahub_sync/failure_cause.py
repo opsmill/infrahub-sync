@@ -44,7 +44,9 @@ from infrahub_sync.plan.errors import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Iterator, Sequence
+
+    from infrahub_sync.plan.models import ApplyRecord
 
 try:
     from pynetbox.core.query import RequestError as _NetboxRequestError
@@ -344,16 +346,60 @@ def _summary(failure_type: FailureType, stage: str, fields: Mapping[str, Any]) -
     return f"The {stage} stage failed with an internal error ({fields.get('error_class')})"
 
 
+def _failed_operation(operation_id: str | None, operations: Sequence[Mapping[str, Any]]) -> FailedOperation | None:
+    """The plan operation named `operation_id`, read from the saved plan by its ID.
+
+    Only the operation's ID, action, kind and identity are read; its payload is not.
+    """
+    if operation_id is None:
+        return None
+    for operation in operations:
+        if operation.get("operation_id") != operation_id:
+            continue
+        identity = operation.get("identity")
+        return FailedOperation(
+            operation_id=operation_id,
+            action=str(operation.get("action")),
+            kind=str(operation.get("kind")),
+            identity=dict(identity) if isinstance(identity, Mapping) else None,
+        )
+    return None
+
+
+def _apply_progress(
+    apply_record: ApplyRecord | None, operations: Sequence[Mapping[str, Any]] | None
+) -> ApplyProgress | None:
+    """How far a stopped apply got, from its apply record and the saved plan (FR-020).
+
+    `failed_operation_may_have_written` is false only when the write surface proved that the
+    failed operation wrote nothing (`failed_operation_wrote` false). When its reach is not
+    known, it may have written part of its change, so the field is true.
+    """
+    if apply_record is None or operations is None:
+        return None
+    failed = apply_record.failed_operation
+    return ApplyProgress(
+        operations_total=len(operations),
+        operations_written=len(apply_record.applied_operations),
+        failed_operation=_failed_operation(failed, operations),
+        failed_operation_may_have_written=None if failed is None else apply_record.may_have_partially_written,
+    )
+
+
 def build_failure_cause(
     stage: FailureStage,
     exc: BaseException,
     record: SourceRecordReference | None = None,
+    *,
+    apply_record: ApplyRecord | None = None,
+    operations: Sequence[Mapping[str, Any]] | None = None,
 ) -> RunFailureCause:
     """Build the cause of a run that failed in `stage` with `exc`, from named fields only.
 
     `record` names the source record the caller knows the failure belongs to, when the chain
-    does not name one. `apply_progress` stays null here; T082 adds the apply record and the
-    saved plan as inputs and fills it for a stopped apply.
+    does not name one. For an apply or a sync that stopped while writing, `apply_record` is
+    what the apply wrote and `operations` are the saved plan's operations, as the plan's review
+    document holds them; together they fill `apply_progress`. Without both, it stays null.
     """
     chain = list(_chain(exc))
     failure_type, link = _classify(stage, chain)
@@ -363,10 +409,12 @@ def build_failure_cause(
     elif isinstance(link, (RecordLoadError, TransformError)):
         fields.update(_record_fields(link))
         fields["record"] = fields["record"] or record
+    progress = _apply_progress(apply_record, operations) if stage in _WRITE_STAGES else None
     return RunFailureCause(
         stage=stage,
         failure_type=failure_type,
         summary=_summary(failure_type, stage, fields),
+        apply_progress=progress,
         next_action=NEXT_ACTIONS[failure_type],
         **fields,
     )

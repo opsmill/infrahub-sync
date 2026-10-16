@@ -215,14 +215,14 @@ source change: the new plan has N - (K - 1) operations, less any the destination
 
 ### Tests for User Story 4 (write first, confirm they fail)
 
-- [ ] T080 [P] [US4] Create `tests/service/test_stopped_apply.py`: a destination fake that rejects operation K gives `failure.apply_progress` with `operations_total` N, `operations_written` K - 1, `failed_operation` with `operation_id`, `action`, `kind` and `identity` read from the plan by its ID, and `failed_operation_may_have_written` from `ApplyRecord.failed_operation_wrote`; `GET /runs/{run_id}/results` lists the written IDs under `apply_failure`; a second apply of the same run returns 409 `new-plan-required` with the message of `contracts/sync-api.md`; the CLI prints the same message.
-- [ ] T081 [P] [US4] Create `tests/plan/test_replan_after_stopped_apply.py`: with the same fake and an in-memory destination that keeps the K - 1 writes, a new plan with no source change has N - (K - 1) operations, holds the failed operation and the operations not attempted, and holds none for the nodes already written (SC-004).
+- [X] T080 [P] [US4] Create `tests/service/test_stopped_apply.py`: a destination fake that rejects operation K gives `failure.apply_progress` with `operations_total` N, `operations_written` K - 1, `failed_operation` with `operation_id`, `action`, `kind` and `identity` read from the plan by its ID, and `failed_operation_may_have_written` from `ApplyRecord.failed_operation_wrote`; `GET /runs/{run_id}/results` lists the written IDs under `apply_failure`; a second apply of the same run returns 409 `new-plan-required` with the message of `contracts/sync-api.md`; the CLI prints the same message.
+- [X] T081 [P] [US4] Create `tests/plan/test_replan_after_stopped_apply.py`: with the same fake and an in-memory destination that keeps the K - 1 writes, a new plan with no source change has N - (K - 1) operations, holds the failed operation and the operations not attempted, and holds none for the nodes already written (SC-004).
 
 ### Implementation for User Story 4
 
-- [ ] T082 [US4] Fill `apply_progress` in `build_failure_cause` (`infrahub_sync/failure_cause.py`) from `ApplyRecord` (`infrahub_sync/plan/models.py:497-583`) and the failing operation's kind and identity read from the saved plan by operation ID. Depends on T074.
-- [ ] T083 [US4] Give the refusal of `_reservation_refused` (`infrahub_sync/product_store/store.py:1827`) the error code `new-plan-required`, map it to 409 with the contract message in `infrahub_sync/service/service.py`, and print it in `apply` in `infrahub_sync/cli.py`.
-- [ ] T084 [US4] Add the changelog fragment `changelog/+009-new-plan-required.changed.md`: a stopped apply shows the operations written and the operation that failed; applying its plan again is refused with `new-plan-required`.
+- [X] T082 [US4] Fill `apply_progress` in `build_failure_cause` (`infrahub_sync/failure_cause.py`) from `ApplyRecord` (`infrahub_sync/plan/models.py:497-583`) and the failing operation's kind and identity read from the saved plan by operation ID. Depends on T074.
+- [X] T083 [US4] Give the refusal of `_reservation_refused` (`infrahub_sync/product_store/store.py:1827`) the error code `new-plan-required`, map it to 409 with the contract message in `infrahub_sync/service/service.py`, and print it in `apply` in `infrahub_sync/cli.py`.
+- [X] T084 [US4] Add the changelog fragment `changelog/+009-new-plan-required.changed.md`: a stopped apply shows the operations written and the operation that failed; applying its plan again is refused with `new-plan-required`.
 
 **Checkpoint**: all four user stories work on their own.
 
