@@ -2,11 +2,6 @@
 
 Synchronize registered configurations through the Sync API.
 
-Set `INFRAHUB_SYNC_API_TOKEN` to the bearer token for your actor before running any
-command; the CLI reads it from the environment and never accepts it as a flag. See
-[Sync HTTP API — Configure principals](./sync-http-api.mdx#configure-principals) for how
-tokens are issued.
-
 **Usage**:
 
 ```console
@@ -255,6 +250,9 @@ $ infrahub-sync runs [OPTIONS] COMMAND [ARGS]...
 * `show`: Show one run&#x27;s service record and its...
 * `results`: Print the results the service recorded for...
 * `plan`: Review a saved plan summary, checksum, and...
+* `problems`: List every problem the saved plan found in...
+* `left-out`: List every source record the saved plan...
+* `kept`: List every record the saved plan keeps...
 
 ### `infrahub-sync runs show`
 
@@ -310,4 +308,62 @@ $ infrahub-sync runs plan [OPTIONS] {run_id}
 
 * `--detail`: Render every saved operation.
 * `--kind <str>`: Filter the detailed operation list by destination kind; requires --detail.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync runs problems`
+
+List every problem the saved plan found in the source data.
+
+**Usage**:
+
+```console
+$ infrahub-sync runs problems [OPTIONS] {run_id}
+```
+
+**Arguments**:
+
+* `run_id`: Service-issued run ID.  [required]
+
+**Options**:
+
+* `--type <str>`: List only the problems of this type.
+* `--kind <str>`: List only the problems of records of this kind.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync runs left-out`
+
+List every source record the saved plan leaves out, and why.
+
+**Usage**:
+
+```console
+$ infrahub-sync runs left-out [OPTIONS] {run_id}
+```
+
+**Arguments**:
+
+* `run_id`: Service-issued run ID.  [required]
+
+**Options**:
+
+* `--kind <str>`: List only the left-out records of this kind.
+* `--help`: Show this message and exit.
+
+### `infrahub-sync runs kept`
+
+List every record the saved plan keeps without one optional relationship.
+
+**Usage**:
+
+```console
+$ infrahub-sync runs kept [OPTIONS] {run_id}
+```
+
+**Arguments**:
+
+* `run_id`: Service-issued run ID.  [required]
+
+**Options**:
+
+* `--kind <str>`: List only the kept records of this kind.
 * `--help`: Show this message and exit.

@@ -45,7 +45,11 @@ if TYPE_CHECKING:
     from infrahub_sync.client.models import (
         ConfigurationSummaryResource,
         ConfigurationVersionResource,
+        KeptRecordResource,
+        LeftOutRecordResource,
         PlanOperationResource,
+        PlanProblemResource,
+        PlanRecordReferenceResource,
     )
 
 DEFAULT_WAIT_TIMEOUT = 30 * 60.0
@@ -54,6 +58,8 @@ VERBOSITY_MAP = {"quiet": logging.WARNING, "default": logging.INFO, "verbose": l
 _REQUEST_ARG = "request"
 _PACKAGE_ARG = "package"
 _KIND_ARG = "kind"
+# `diff` prints this many problems of a new plan, then the command that lists them all.
+_FIRST_PROBLEMS = 20
 # Characters a terminal acts on or a reader cannot see: every code point in the Unicode
 # categories Cc (C0 and C1 controls, DEL), Cf (bidirectional overrides and isolates,
 # zero-width characters, direction marks, soft hyphen, tag characters), Zl and Zp (line
@@ -564,11 +570,73 @@ def _echo_plan(plan: PlanResource, *, detail: bool = False, kind: str | None = N
     for note in plan.verification_notes:
         typer.echo(f"verification_note: {_display(note)}")
     _echo_counts("by_action", plan.summary.by_action)
+    _echo_report_summary(plan)
     _echo_counts("by_kind", plan.summary.by_kind)
     _delete_disclosure(plan)
     if detail:
         for operation in operations:
             _operation_detail(operation)
+
+
+def _echo_report_summary(plan: PlanResource) -> None:
+    summary = plan.summary
+    typer.echo(
+        f"left_out: {summary.left_out} "
+        f"(with a problem: {summary.left_out_with_problem}, depending on one: {summary.left_out_dependent})"
+    )
+    typer.echo(f"problems: {summary.problems}")
+    typer.echo(f"kept_without_relationship: {summary.kept}")
+
+
+def _reference_text(reference: PlanRecordReferenceResource) -> str:
+    if reference.identity:
+        return _identity_text(reference.identity)
+    return f"source_id={reference.source_id}"
+
+
+def _report_line(name: str, record: PlanRecordReferenceResource, detail: str) -> None:
+    # Identities and values come from the source, so the whole line is escaped.
+    typer.echo(_display(f"{name}  {record.kind}  {_reference_text(record)}  {detail}"))
+
+
+def _echo_problem(problem: PlanProblemResource) -> None:
+    detail = problem.reason
+    if problem.problem_type == "dropdown_value_not_in_choices" and problem.allowed is not None:
+        detail = f"{problem.field}={problem.value!r} is not one of: {', '.join(problem.allowed)}"
+    elif problem.problem_type == "peer_not_found_in_source" and problem.peer is not None:
+        detail = (
+            f"{problem.field} refers to {problem.peer.kind} source ID {problem.peer.source_id}, "
+            "which is not in the source"
+        )
+    _report_line(problem.problem_type, problem.record, detail)
+
+
+def _echo_left_out(item: LeftOutRecordResource) -> None:
+    if item.depends_on is not None:
+        detail = f"depends on {item.depends_on.kind} {_reference_text(item.depends_on)} through {item.relationship}"
+    else:
+        detail = f"has a problem: {', '.join(item.problem_types)}"
+    _report_line(item.cause, item.record, detail)
+
+
+def _echo_kept(item: KeptRecordResource) -> None:
+    peer = f"{item.left_out_peer.kind} {_reference_text(item.left_out_peer)}"
+    state = "is not in the source" if item.cause == "peer_not_found_in_source" else "is left out"
+    _report_line(item.cause, item.record, f"kept without {item.relationship}: {peer} {state}")
+
+
+def _echo_first_problems(client: SyncClient, plan: PlanResource) -> None:
+    """Print the first problems of a new plan and the command that lists them all."""
+    if not plan.summary.problems:
+        return
+    problems = client.plan_problems(plan.run_id)
+    for problem in problems[:_FIRST_PROBLEMS]:
+        _echo_problem(problem)
+    remaining = len(problems) - _FIRST_PROBLEMS
+    if remaining > 0:
+        typer.echo(
+            f"{remaining} more problems; list them all with: infrahub-sync runs problems {_display(plan.run_id)}"
+        )
 
 
 def _echo_completed_destination_branch(client: SyncClient, run_id: str) -> None:
@@ -645,7 +713,9 @@ def diff_cmd(
             poll_interval=poll_interval,
         )
         if wait:
-            _echo_plan(client.get_plan(completed.run.run_id))
+            plan = client.get_plan(completed.run.run_id)
+            _echo_plan(plan)
+            _echo_first_problems(client, plan)
 
 
 @app.command("sync")
@@ -795,3 +865,40 @@ def runs_plan(
     """Review a saved plan summary, checksum, and operations."""
     with _client_errors():
         _echo_plan(_client(ctx).get_plan(run_id), detail=detail, kind=kind)
+
+
+@runs_app.command("problems")
+def runs_problems(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Service-issued run ID."),
+    problem_type: str | None = typer.Option(None, "--type", help="List only the problems of this type."),
+    kind: str | None = typer.Option(None, "--kind", help="List only the problems of records of this kind."),
+) -> None:
+    """List every problem the saved plan found in the source data."""
+    with _client_errors():
+        for problem in _client(ctx).plan_problems(run_id, problem_type=problem_type, kind=kind):
+            _echo_problem(problem)
+
+
+@runs_app.command("left-out")
+def runs_left_out(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Service-issued run ID."),
+    kind: str | None = typer.Option(None, "--kind", help="List only the left-out records of this kind."),
+) -> None:
+    """List every source record the saved plan leaves out, and why."""
+    with _client_errors():
+        for item in _client(ctx).plan_left_out(run_id, kind=kind):
+            _echo_left_out(item)
+
+
+@runs_app.command("kept")
+def runs_kept(
+    ctx: typer.Context,
+    run_id: str = typer.Argument(..., help="Service-issued run ID."),
+    kind: str | None = typer.Option(None, "--kind", help="List only the kept records of this kind."),
+) -> None:
+    """List every record the saved plan keeps without one optional relationship."""
+    with _client_errors():
+        for item in _client(ctx).plan_kept(run_id, kind=kind):
+            _echo_kept(item)

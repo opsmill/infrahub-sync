@@ -34,6 +34,11 @@ _WORKER_STATUS_MESSAGE = "worker status is invalid"
 _ARTIFACT_IDS_MESSAGE = "artifact IDs must be unique within a product record"
 _ARTIFACT_OWNER_MESSAGE = "every artifact reference must belong to the product record's run ID"
 _EXECUTION_IDS_MESSAGE = "execution IDs must be unique within a product record"
+_LEFT_OUT_COUNTS_MESSAGE = "left_out_with_problem + left_out_dependent must equal left_out"
+_LEFT_OUT_BY_KIND_MESSAGE = "left_out_by_kind must sum to left_out"
+_PROBLEMS_BY_TYPE_MESSAGE = "problems_by_type must sum to problems"
+# The largest page the plan report routes return (contracts/sync-api.md).
+REPORT_PAGE_LIMIT = 500
 
 
 def _timezone(value: datetime | None, message: str) -> datetime | None:
@@ -320,6 +325,96 @@ class PlanSummaryResource(_ResourceModel):
     total: int = Field(ge=0)
     delete_operations_computed: bool
     deletes_not_executed: int = Field(ge=0)
+    # The plan report's counts (spec 009). A summary from a server or a plan without a report
+    # reads as zero counts.
+    left_out: int = Field(default=0, ge=0)
+    left_out_with_problem: int = Field(default=0, ge=0)
+    left_out_dependent: int = Field(default=0, ge=0)
+    left_out_by_kind: dict[str, int] = Field(default_factory=dict)
+    problems: int = Field(default=0, ge=0)
+    problems_by_type: dict[str, int] = Field(default_factory=dict)
+    kept: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _require_consistent_report_counts(self) -> PlanSummaryResource:
+        if self.left_out_with_problem + self.left_out_dependent != self.left_out:
+            raise ValueError(_LEFT_OUT_COUNTS_MESSAGE)
+        if sum(self.left_out_by_kind.values()) != self.left_out:
+            raise ValueError(_LEFT_OUT_BY_KIND_MESSAGE)
+        if sum(self.problems_by_type.values()) != self.problems:
+            raise ValueError(_PROBLEMS_BY_TYPE_MESSAGE)
+        return self
+
+
+class PlanRecordReferenceResource(_ResourceModel):
+    """Name one source record by kind, identity and source record ID."""
+
+    kind: str = Field(min_length=1)
+    identity: dict[str, Any] | None = None
+    source_id: str | None = None
+
+
+class PlanProblemResource(_ResourceModel):
+    """One problem the plan found in the source data."""
+
+    # A string rather than the closed list of names: a later server may add a problem type.
+    problem_type: str = Field(min_length=1)
+    record: PlanRecordReferenceResource
+    field: str | None = None
+    value: Any = None
+    allowed: tuple[str, ...] | None = None
+    peer: PlanRecordReferenceResource | None = None
+    other_records: tuple[PlanRecordReferenceResource, ...] = ()
+    reason: str = Field(min_length=1)
+
+
+class LeftOutRecordResource(_ResourceModel):
+    """One source record the plan leaves out, and why."""
+
+    record: PlanRecordReferenceResource
+    cause: str = Field(min_length=1)
+    problem_types: tuple[str, ...] = ()
+    depends_on: PlanRecordReferenceResource | None = None
+    relationship: str | None = None
+    loaded: bool
+
+
+class KeptRecordResource(_ResourceModel):
+    """One source record the plan keeps without one optional relationship."""
+
+    record: PlanRecordReferenceResource
+    cause: str = Field(min_length=1)
+    relationship: str = Field(min_length=1)
+    left_out_peer: PlanRecordReferenceResource
+
+
+class _PlanReportPageResource(_ResourceModel):
+    """The fields every page of a plan report route returns."""
+
+    run_id: str
+    plan_checksum: str
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=1, le=REPORT_PAGE_LIMIT)
+    total: int = Field(ge=0)
+    next_offset: int | None = Field(default=None, ge=0)
+
+
+class PlanProblemsPageResource(_PlanReportPageResource):
+    """One page of `GET /runs/{run_id}/plan/problems`."""
+
+    entries: tuple[PlanProblemResource, ...]
+
+
+class PlanLeftOutPageResource(_PlanReportPageResource):
+    """One page of `GET /runs/{run_id}/plan/left-out`."""
+
+    entries: tuple[LeftOutRecordResource, ...]
+
+
+class PlanKeptPageResource(_PlanReportPageResource):
+    """One page of `GET /runs/{run_id}/plan/kept`."""
+
+    entries: tuple[KeptRecordResource, ...]
 
 
 class PlanOperationResource(_ResourceModel):

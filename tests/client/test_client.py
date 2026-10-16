@@ -580,3 +580,131 @@ def test_artifact_requires_a_matching_digest(digest_header: str | None) -> None:
         ),
     )
     assert client.get_artifact("run-1", "artifact-1").data == data
+
+
+# --- Spec 009: paged plan report reads (contracts/sync-api.md) ---
+
+
+def _report_page(entries: list[dict[str, object]], *, offset: int, limit: int, total: int) -> dict[str, object]:
+    following = offset + len(entries)
+    return {
+        "run_id": "run-1",
+        "plan_checksum": "a" * 64,
+        "entries": entries,
+        "offset": offset,
+        "limit": limit,
+        "total": total,
+        "next_offset": following if following < total else None,
+    }
+
+
+def _problem(name: str) -> dict[str, object]:
+    return {
+        "problem_type": "wrong_value_type",
+        "record": {"kind": "DcimDevice", "identity": {"name": name}, "source_id": name},
+        "field": "position",
+        "value": 2.5,
+        "allowed": None,
+        "peer": None,
+        "other_records": [],
+        "reason": f"DcimDevice {name}: position 2.5 is not a Number",
+    }
+
+
+def _paged_handler(
+    route: str, entries: list[dict[str, object]], requests: list[httpx.Request], *, page_size: int = 2
+) -> httpx.MockTransport:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        requests.append(request)
+        assert request.url.path == f"/runs/run-1/plan/{route}"
+        offset = int(request.url.params["offset"])
+        page = entries[offset : offset + page_size]
+        return httpx.Response(200, json=_report_page(page, offset=offset, limit=page_size, total=len(entries)))
+
+    return httpx.MockTransport(handler)
+
+
+def test_plan_problems_reads_every_page_and_binds_later_pages_to_the_first_checksum() -> None:
+    requests: list[httpx.Request] = []
+    entries = [_problem(f"rtr{index}") for index in range(5)]
+    client = SyncClient("https://example.test", TOKEN, transport=_paged_handler("problems", entries, requests))
+
+    problems = client.plan_problems("run-1", problem_type="wrong_value_type", kind="DcimDevice")
+
+    assert [problem.record.source_id for problem in problems] == ["rtr0", "rtr1", "rtr2", "rtr3", "rtr4"]
+    assert [request.url.params["offset"] for request in requests] == ["0", "2", "4"]
+    assert all(request.url.params["limit"] == "500" for request in requests)
+    assert all(request.url.params["problem_type"] == "wrong_value_type" for request in requests)
+    assert all(request.url.params["kind"] == "DcimDevice" for request in requests)
+    assert "expected_checksum" not in requests[0].url.params
+    assert all(request.url.params["expected_checksum"] == "a" * 64 for request in requests[1:])
+    assert all(request.headers["Authorization"] == f"Bearer {TOKEN}" for request in requests)
+
+
+def test_plan_left_out_and_kept_read_every_page() -> None:
+    record = {"kind": "InterfacePhysical", "identity": {"name": "eth0"}, "source_id": "40"}
+    device = {"kind": "DcimDevice", "identity": {"name": "rtr1"}, "source_id": "42"}
+    left_out: list[dict[str, object]] = [
+        {
+            "record": {**record, "source_id": str(index)},
+            "cause": "depends_on_left_out",
+            "depends_on": device,
+            "relationship": "device",
+            "loaded": True,
+        }
+        for index in range(3)
+    ]
+    kept: list[dict[str, object]] = [
+        {"record": record, "cause": "peer_left_out", "relationship": "device", "left_out_peer": device}
+    ]
+    left_out_requests: list[httpx.Request] = []
+    kept_requests: list[httpx.Request] = []
+
+    left_out_client = SyncClient(
+        "https://example.test", TOKEN, transport=_paged_handler("left-out", left_out, left_out_requests)
+    )
+    kept_client = SyncClient("https://example.test", TOKEN, transport=_paged_handler("kept", kept, kept_requests))
+
+    assert [item.record.source_id for item in left_out_client.plan_left_out("run-1", kind="InterfacePhysical")] == [
+        "0",
+        "1",
+        "2",
+    ]
+    assert [item.relationship for item in kept_client.plan_kept("run-1")] == ["device"]
+    assert len(left_out_requests) == 2
+    assert left_out_requests[0].url.params["kind"] == "InterfacePhysical"
+    assert len(kept_requests) == 1
+    assert "kind" not in kept_requests[0].url.params
+
+
+def test_a_report_page_that_does_not_advance_is_a_protocol_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        body = _report_page([_problem("rtr0")], offset=0, limit=1, total=3)
+        body["next_offset"] = 0
+        return httpx.Response(200, json=body)
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(ProtocolError) as raised:
+        client.plan_problems("run-1")
+    assert raised.value.operation == "plan_problems"
+
+
+def test_a_plan_changed_refusal_is_a_typed_api_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(
+            409,
+            json={"error": {"code": "plan-changed", "message": "the plan changed", "status": 409, "run_id": "run-1"}},
+        )
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(APIError) as raised:
+        client.plan_kept("run-1", expected_checksum="b" * 64)
+    assert raised.value.code == "plan-changed"

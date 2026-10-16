@@ -25,6 +25,7 @@ from .errors import (
     TransportError,
 )
 from .models import (
+    REPORT_PAGE_LIMIT,
     ApplyRunRequest,
     ArtifactContent,
     ArtifactListResource,
@@ -35,7 +36,13 @@ from .models import (
     ConfigurationVersionResource,
     CreateRunRequest,
     ErrorEnvelope,
+    KeptRecordResource,
+    LeftOutRecordResource,
     OrchestrationSummary,
+    PlanKeptPageResource,
+    PlanLeftOutPageResource,
+    PlanProblemResource,
+    PlanProblemsPageResource,
     PlanResource,
     RegisteredConfigurationResource,
     RegisteredVersionResource,
@@ -52,6 +59,7 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 _Model = TypeVar("_Model", bound=BaseModel)
+_ReportPage = TypeVar("_ReportPage", PlanProblemsPageResource, PlanLeftOutPageResource, PlanKeptPageResource)
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _DIGEST = re.compile(r"sha-256=(?P<digest>[0-9a-f]{64})")
 _ERROR_STATUSES = frozenset({401, 403, 404, 409, 410, 422, 503})
@@ -304,6 +312,88 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         run_id = self._identifier(run_id, "run_id")
         return self._request_model("get_plan", "GET", f"/runs/{run_id}/plan", model=PlanResource, success={200})
 
+    def plan_problems(
+        self,
+        run_id: str,
+        *,
+        problem_type: str | None = None,
+        kind: str | None = None,
+        expected_checksum: str | None = None,
+    ) -> tuple[PlanProblemResource, ...]:
+        """Return every problem of one saved plan, reading every page."""
+
+        filters = {"problem_type": problem_type, "kind": kind}
+        return self._report_entries(
+            "plan_problems",
+            run_id,
+            "problems",
+            model=PlanProblemsPageResource,
+            filters=filters,
+            expected_checksum=expected_checksum,
+        )
+
+    def plan_left_out(
+        self, run_id: str, *, kind: str | None = None, expected_checksum: str | None = None
+    ) -> tuple[LeftOutRecordResource, ...]:
+        """Return every record one saved plan leaves out, reading every page."""
+
+        return self._report_entries(
+            "plan_left_out",
+            run_id,
+            "left-out",
+            model=PlanLeftOutPageResource,
+            filters={"kind": kind},
+            expected_checksum=expected_checksum,
+        )
+
+    def plan_kept(
+        self, run_id: str, *, kind: str | None = None, expected_checksum: str | None = None
+    ) -> tuple[KeptRecordResource, ...]:
+        """Return every record one saved plan keeps without a relationship, reading every page."""
+
+        return self._report_entries(
+            "plan_kept",
+            run_id,
+            "kept",
+            model=PlanKeptPageResource,
+            filters={"kind": kind},
+            expected_checksum=expected_checksum,
+        )
+
+    def _report_entries(
+        self,
+        operation: str,
+        run_id: str,
+        route: str,
+        *,
+        model: type[_ReportPage],
+        filters: dict[str, str | None],
+        expected_checksum: str | None,
+    ) -> tuple[Any, ...]:
+        """Read every page of one plan report route, all bound to one plan.
+
+        The pages after the first carry the first page's `plan_checksum`, so a plan that
+        changes between two pages is refused (409 `plan-changed`) rather than mixed.
+        """
+        run_id = self._identifier(run_id, "run_id")
+        params: dict[str, int | str] = {name: value for name, value in filters.items() if value is not None}
+        entries: list[Any] = []
+        offset = 0
+        while True:
+            page_params: dict[str, int | str] = {**params, "offset": offset, "limit": REPORT_PAGE_LIMIT}
+            if expected_checksum is not None:
+                page_params["expected_checksum"] = expected_checksum
+            page = self._request_model(
+                operation, "GET", f"/runs/{run_id}/plan/{route}", model=model, success={200}, params=page_params
+            )
+            entries.extend(page.entries)
+            if page.next_offset is None:
+                return tuple(entries)
+            if page.next_offset <= offset:
+                raise ProtocolError(operation, 200)
+            offset = page.next_offset
+            expected_checksum = page.plan_checksum
+
     def get_results(self, run_id: str) -> ResultsResource:
         """Return the recorded results for one run."""
 
@@ -487,7 +577,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         success: set[int],
         body: BaseModel | None = None,
         idempotency_key: str | None = None,
-        params: dict[str, int] | None = None,
+        params: dict[str, int | str] | None = None,
         config_route: bool = False,
         request_timeout: float | None = None,
     ) -> _Model:
@@ -558,7 +648,7 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         authenticated: bool = True,
         headers: dict[str, str] | None = None,
         json: object = None,
-        params: dict[str, int] | None = None,
+        params: dict[str, int | str] | None = None,
         request_timeout: float | None = None,
     ) -> httpx.Response:
         request_headers = dict(headers or {})

@@ -26,8 +26,12 @@ from infrahub_sync.client import (
     ConfigurationSummaryResource,
     ConfigurationVersionResource,
     CreateRunRequest,
+    KeptRecordResource,
+    LeftOutRecordResource,
     OrchestrationSummary,
     PlanOperationResource,
+    PlanProblemResource,
+    PlanRecordReferenceResource,
     PlanResource,
     PlanSummaryResource,
     ProtocolError,
@@ -1051,3 +1055,225 @@ def test_store_refusal_explains_how_to_keep_data_in_memory(tmp_path: Path, clien
     assert result.exit_code == 1
     assert "Configured sync stores, including Redis, are not supported in V3." in result.output
     assert "Remove the store block to keep sync data in memory." in result.output
+
+
+# --- Spec 009: plan summary lines and the problem, left-out and kept lists (contracts/cli.md) ---
+
+_DEVICE = PlanRecordReferenceResource(kind="DcimDevice", identity={"location": "dc1", "name": "rtr1"}, source_id="42")
+
+
+def _dropdown_problem(name: str = "rtr1") -> PlanProblemResource:
+    return PlanProblemResource(
+        problem_type="dropdown_value_not_in_choices",
+        record=PlanRecordReferenceResource(kind="DcimDevice", identity={"location": "dc1", "name": name}),
+        field="status",
+        value="planned",
+        allowed=("active", "deprecated", "maintenance", "provisioning", "reserved"),
+        reason=f"DcimDevice {name}: status 'planned' is not one of the choices of the Dropdown attribute status",
+    )
+
+
+def _peer_problem() -> PlanProblemResource:
+    return PlanProblemResource(
+        problem_type="peer_not_found_in_source",
+        record=PlanRecordReferenceResource(kind="IpamIPAddress", identity={"address": "10.0.0.1/32"}, source_id="9"),
+        field="vrf",
+        peer=PlanRecordReferenceResource(kind="IpamVRF", source_id="17"),
+        reason="IpamIPAddress 10.0.0.1/32: vrf refers to IpamVRF source ID 17, which is not in the source",
+    )
+
+
+def _reported_plan(*, problems: int = 1) -> PlanResource:
+    summary = _plan().summary.model_copy(
+        update={
+            "left_out": 6,
+            "left_out_with_problem": 1,
+            "left_out_dependent": 5,
+            "left_out_by_kind": {"DcimDevice": 1, "InterfacePhysical": 5},
+            "problems": problems,
+            "problems_by_type": {"dropdown_value_not_in_choices": problems},
+            "kept": 0,
+        }
+    )
+    return _plan().model_copy(update={"summary": summary})
+
+
+_SUMMARY_LINES = "left_out: 6 (with a problem: 1, depending on one: 5)\nproblems: 1\nkept_without_relationship: 0\n"
+
+
+def test_runs_plan_prints_the_three_plan_summary_lines_after_the_counts_by_action(client: MagicMock) -> None:
+    client.get_plan.return_value = _reported_plan()
+
+    result = _invoke(client, "runs", "plan", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "by_action: create=1, delete=1\n" + _SUMMARY_LINES in result.output
+    client.plan_problems.assert_not_called()
+
+
+def test_runs_plan_prints_zero_counts_for_a_plan_without_a_report(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "plan", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "left_out: 0 (with a problem: 0, depending on one: 0)\nproblems: 0\nkept_without_relationship: 0\n" in (
+        result.output
+    )
+
+
+def _diff(client: MagicMock):  # type: ignore[no-untyped-def]
+    return _invoke(client, "diff", "--config-id", "edge-sync", "--version", "1", "--reason", "inspect changes")
+
+
+def test_diff_prints_the_summary_lines_and_every_problem_when_there_are_at_most_twenty(client: MagicMock) -> None:
+    client.get_plan.return_value = _reported_plan()
+    client.plan_problems.return_value = (_dropdown_problem(),)
+
+    result = _diff(client)
+
+    assert result.exit_code == 0, result.output
+    assert _SUMMARY_LINES in result.output
+    client.plan_problems.assert_called_once_with("service-run-1")
+    assert (
+        "dropdown_value_not_in_choices  DcimDevice  location=dc1 name=rtr1  "
+        "status='planned' is not one of: active, deprecated, maintenance, provisioning, reserved\n"
+    ) in result.output
+    assert "infrahub-sync runs problems" not in result.output
+
+
+def test_diff_prints_the_first_twenty_problems_and_the_command_that_lists_the_rest(client: MagicMock) -> None:
+    client.get_plan.return_value = _reported_plan(problems=23)
+    client.plan_problems.return_value = tuple(_dropdown_problem(f"rtr{index:02d}") for index in range(23))
+
+    result = _diff(client)
+
+    assert result.exit_code == 0, result.output
+    listed = [line for line in result.output.splitlines() if line.startswith("dropdown_value_not_in_choices  ")]
+    assert len(listed) == 20
+    assert "name=rtr19 " in listed[-1]
+    assert "name=rtr20 " not in result.output
+    assert "3 more problems; list them all with: infrahub-sync runs problems service-run-1" in result.output
+
+
+def test_diff_does_not_read_problems_when_the_plan_has_none(client: MagicMock) -> None:
+    result = _diff(client)
+
+    assert result.exit_code == 0, result.output
+    client.plan_problems.assert_not_called()
+
+
+def test_runs_problems_reads_every_page_and_prints_one_line_per_problem(client: MagicMock) -> None:
+    client.plan_problems.return_value = (_dropdown_problem(), _peer_problem())
+
+    result = _invoke(
+        client, "runs", "problems", "service-run-1", "--type", "peer_not_found_in_source", "--kind", "IpamIPAddress"
+    )
+
+    assert result.exit_code == 0, result.output
+    client.plan_problems.assert_called_once_with(
+        "service-run-1", problem_type="peer_not_found_in_source", kind="IpamIPAddress"
+    )
+    assert result.output.splitlines() == [
+        "dropdown_value_not_in_choices  DcimDevice  location=dc1 name=rtr1  "
+        "status='planned' is not one of: active, deprecated, maintenance, provisioning, reserved",
+        "peer_not_found_in_source  IpamIPAddress  address=10.0.0.1/32  "
+        "vrf refers to IpamVRF source ID 17, which is not in the source",
+    ]
+
+
+def test_runs_problems_prints_the_reason_for_the_other_problem_types(client: MagicMock) -> None:
+    client.plan_problems.return_value = (
+        PlanProblemResource(
+            problem_type="wrong_value_type",
+            record=PlanRecordReferenceResource(kind="DcimDevice", identity=None, source_id="7"),
+            field="position",
+            value=2.5,
+            reason="DcimDevice source ID 7: position 2.5 is not a Number",
+        ),
+    )
+
+    result = _invoke(client, "runs", "problems", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    client.plan_problems.assert_called_once_with("service-run-1", problem_type=None, kind=None)
+    assert result.output.splitlines() == [
+        "wrong_value_type  DcimDevice  source_id=7  DcimDevice source ID 7: position 2.5 is not a Number"
+    ]
+
+
+def test_runs_left_out_prints_one_line_per_left_out_record(client: MagicMock) -> None:
+    client.plan_left_out.return_value = (
+        LeftOutRecordResource(
+            record=_DEVICE, cause="has_problem", problem_types=("dropdown_value_not_in_choices",), loaded=True
+        ),
+        LeftOutRecordResource(
+            record=PlanRecordReferenceResource(kind="InterfacePhysical", identity={"device": "rtr1", "name": "eth0"}),
+            cause="depends_on_left_out",
+            depends_on=_DEVICE,
+            relationship="device",
+            loaded=True,
+        ),
+    )
+
+    result = _invoke(client, "runs", "left-out", "service-run-1", "--kind", "InterfacePhysical")
+
+    assert result.exit_code == 0, result.output
+    client.plan_left_out.assert_called_once_with("service-run-1", kind="InterfacePhysical")
+    assert result.output.splitlines() == [
+        "has_problem  DcimDevice  location=dc1 name=rtr1  has a problem: dropdown_value_not_in_choices",
+        "depends_on_left_out  InterfacePhysical  device=rtr1 name=eth0  "
+        "depends on DcimDevice location=dc1 name=rtr1 through device",
+    ]
+
+
+def test_runs_kept_prints_one_line_per_kept_record(client: MagicMock) -> None:
+    client.plan_kept.return_value = (
+        KeptRecordResource(
+            record=PlanRecordReferenceResource(kind="IpamIPAddress", identity={"address": "10.0.0.9/32"}),
+            cause="peer_not_found_in_source",
+            relationship="vrf",
+            left_out_peer=PlanRecordReferenceResource(kind="IpamVRF", source_id="17"),
+        ),
+        KeptRecordResource(
+            record=PlanRecordReferenceResource(kind="IpamIPAddress", identity={"address": "10.0.0.1/32"}),
+            cause="peer_left_out",
+            relationship="interface",
+            left_out_peer=_DEVICE,
+        ),
+    )
+
+    result = _invoke(client, "runs", "kept", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    client.plan_kept.assert_called_once_with("service-run-1", kind=None)
+    assert result.output.splitlines() == [
+        "peer_not_found_in_source  IpamIPAddress  address=10.0.0.9/32  "
+        "kept without vrf: IpamVRF source_id=17 is not in the source",
+        "peer_left_out  IpamIPAddress  address=10.0.0.1/32  "
+        "kept without interface: DcimDevice location=dc1 name=rtr1 is left out",
+    ]
+
+
+def test_report_lines_escape_terminal_controls_in_source_values(client: MagicMock) -> None:
+    hostile = PlanProblemResource(
+        problem_type="dropdown_value_not_in_choices",
+        record=PlanRecordReferenceResource(kind="DcimDevice", identity={"name": "rtr\x1b[2J"}),
+        field="status",
+        value="plan\x07ned",
+        allowed=("active",),
+        reason="DcimDevice rtr: status is not one of the choices",
+    )
+    client.plan_problems.return_value = (hostile,)
+
+    result = _invoke(client, "runs", "problems", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    _assert_no_terminal_controls(result.output)
+
+
+def test_a_report_read_refusal_exits_with_the_typed_error(client: MagicMock) -> None:
+    client.plan_kept.side_effect = APIError(410, "artifact-expired", run_id="service-run-1")
+
+    result = _invoke(client, "runs", "kept", "service-run-1")
+
+    assert result.exit_code == 1
+    assert "artifact-expired" in result.output

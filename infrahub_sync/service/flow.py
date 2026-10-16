@@ -65,6 +65,7 @@ from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehy
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
+from .plan_report import PLAN_REPORT_ARTIFACT_ID, PLAN_REPORT_ARTIFACT_KIND, plan_report_document
 from .scratch import StageScratch, stage_scratch
 from .service import PLAN_ARTIFACT_ID
 from .storage import service_guard_secrets, service_guard_session, service_product_projection
@@ -176,6 +177,16 @@ def _review_document(run_id: str, saved: SavedPlan) -> PlanResource:
 
 
 def _publish_plan(projection: ProductProjection, run_id: str, saved: SavedPlan, secrets: Sequence[str]) -> None:
+    # The report first: a run whose review document is readable then always has its report
+    # beside it, and the report routes read a missing report as a plan of an earlier release.
+    projection.publish_artifact(
+        run_id,
+        artifact_id=PLAN_REPORT_ARTIFACT_ID,
+        kind=PLAN_REPORT_ARTIFACT_KIND,
+        media_type="application/json",
+        data=plan_report_document(run_id, saved.manifest.plan_checksum, saved.report),
+        secrets=secrets,
+    )
     document = _review_document(run_id, saved)
     projection.publish_artifact(
         run_id,

@@ -711,6 +711,28 @@ class PlanSummary(BaseModel):
     total: int = Field(ge=0)
     delete_operations_computed: bool
     deletes_not_executed: int = Field(ge=0)
+    # The plan report's counts (spec 009 FR-007, data-model.md "Plan summary additions").
+    # Zero for a format-2 or format-3 plan, whose report is empty.
+    left_out: int = Field(default=0, ge=0)
+    left_out_with_problem: int = Field(default=0, ge=0)
+    left_out_dependent: int = Field(default=0, ge=0)
+    left_out_by_kind: dict[str, int] = Field(default_factory=dict)
+    problems: int = Field(default=0, ge=0)
+    problems_by_type: dict[str, int] = Field(default_factory=dict)
+    kept: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _require_consistent_report_counts(self) -> PlanSummary:
+        if self.left_out_with_problem + self.left_out_dependent != self.left_out:
+            msg = "left_out_with_problem + left_out_dependent must equal left_out"
+            raise ValueError(msg)
+        if sum(self.left_out_by_kind.values()) != self.left_out:
+            msg = "left_out_by_kind must sum to left_out"
+            raise ValueError(msg)
+        if sum(self.problems_by_type.values()) != self.problems:
+            msg = "problems_by_type must sum to problems"
+            raise ValueError(msg)
+        return self
 
 
 @dataclass(frozen=True)

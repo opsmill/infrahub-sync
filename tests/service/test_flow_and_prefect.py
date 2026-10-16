@@ -773,7 +773,7 @@ def test_service_plan_worker_updates_the_api_created_run_and_publishes_review(
     stored = projection.lookup_run(run_id).value
     assert stored is not None
     assert stored.phase == "planned"
-    assert [artifact.artifact_id for artifact in stored.artifact_refs] == ["plan-review"]
+    assert [artifact.artifact_id for artifact in stored.artifact_refs] == ["plan-report", "plan-review"]
     assert stored.prefect_executions[0].terminal_state == "completed"
     assert stored.prefect_executions[0].terminal_outcome == "succeeded"
 

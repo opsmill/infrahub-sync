@@ -43,6 +43,7 @@ pytestmark = pytest.mark.preview
 WAIT_TIMEOUT_SECONDS = 240.0
 POLL_INTERVAL_SECONDS = 3.0
 PLAN_ARTIFACT_ID = "plan-review"
+PLAN_REPORT_ARTIFACT_ID = "plan-report"
 REASON = "preview qualification: review a saved plan"
 # A kind the destination schema does not define, so `--kind` filters the plan to nothing.
 ABSENT_KIND = "InfraNotAKind"
@@ -266,8 +267,12 @@ def test_the_python_client_verifies_a_plan_and_reads_its_artifact_and_results(
         assert verification["checksum_ok"] is True
 
         artifacts = client.list_artifacts(run_id)
-        assert [reference.artifact_id for reference in artifacts.artifacts] == [PLAN_ARTIFACT_ID]
-        reference = artifacts.artifacts[0]
+        # The plan report (spec 009) is published before the review document.
+        assert [reference.artifact_id for reference in artifacts.artifacts] == [
+            PLAN_REPORT_ARTIFACT_ID,
+            PLAN_ARTIFACT_ID,
+        ]
+        reference = artifacts.artifacts[1]
         content = client.get_artifact(run_id, PLAN_ARTIFACT_ID)
         # The client verifies the declared digest itself; recomputing here is what proves
         # the bytes it returned are the bytes that digest describes.

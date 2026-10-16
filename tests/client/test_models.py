@@ -10,7 +10,18 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from infrahub_sync.client.models import OrchestrationSummary, PublicRunResource
+from infrahub_sync.client.models import (
+    KeptRecordResource,
+    LeftOutRecordResource,
+    OrchestrationSummary,
+    PlanKeptPageResource,
+    PlanLeftOutPageResource,
+    PlanProblemResource,
+    PlanProblemsPageResource,
+    PlanRecordReferenceResource,
+    PlanSummaryResource,
+    PublicRunResource,
+)
 from infrahub_sync.product_store.models import PrefectExecutionLink, ProductRun
 from infrahub_sync.service.models import public_run_resource
 
@@ -131,3 +142,150 @@ def test_server_projects_store_run_into_a_self_contained_resource() -> None:
         "last_observed_state": None,
         "last_observed_at": None,
     }
+
+
+# --- Spec 009: plan report entries and plan summary counts (contracts/sync-api.md) ---
+
+_CONTRACT_PROBLEMS_PAGE: dict[str, object] = {
+    "run_id": "20261015T1200-1a2b3c4d",
+    "plan_checksum": "d" * 64,
+    "entries": [
+        {
+            "problem_type": "dropdown_value_not_in_choices",
+            "record": {"kind": "DcimDevice", "identity": {"location": "dc1", "name": "rtr1"}, "source_id": "42"},
+            "field": "status",
+            "value": "planned",
+            "allowed": ["active", "deprecated", "maintenance", "provisioning", "reserved"],
+            "peer": None,
+            "other_records": [],
+            "reason": "DcimDevice rtr1: status 'planned' is not one of the choices of the Dropdown attribute status",
+        }
+    ],
+    "offset": 0,
+    "limit": 500,
+    "total": 1,
+    "next_offset": None,
+}
+
+
+def test_the_problems_page_parses_the_contract_example() -> None:
+    page = PlanProblemsPageResource.model_validate(_CONTRACT_PROBLEMS_PAGE)
+
+    problem = page.entries[0]
+    assert isinstance(problem, PlanProblemResource)
+    assert problem.problem_type == "dropdown_value_not_in_choices"
+    assert problem.record == PlanRecordReferenceResource(
+        kind="DcimDevice", identity={"location": "dc1", "name": "rtr1"}, source_id="42"
+    )
+    assert problem.value == "planned"
+    assert problem.allowed == ("active", "deprecated", "maintenance", "provisioning", "reserved")
+    assert (page.offset, page.limit, page.total, page.next_offset) == (0, 500, 1, None)
+
+
+def test_the_left_out_and_kept_pages_parse_their_entries() -> None:
+    device = {"kind": "DcimDevice", "identity": {"location": "dc1", "name": "rtr1"}, "source_id": "42"}
+    common = {"run_id": "run-1", "plan_checksum": "d" * 64, "offset": 0, "limit": 500, "total": 2, "next_offset": None}
+    left_out = PlanLeftOutPageResource.model_validate(
+        {
+            **common,
+            "entries": [
+                {
+                    "record": device,
+                    "cause": "has_problem",
+                    "problem_types": ["dropdown_value_not_in_choices"],
+                    "depends_on": None,
+                    "relationship": None,
+                    "loaded": True,
+                },
+                {
+                    "record": {
+                        "kind": "InterfacePhysical",
+                        "identity": {"device": "rtr1", "name": "eth0"},
+                        "source_id": "40",
+                    },
+                    "cause": "depends_on_left_out",
+                    "problem_types": [],
+                    "depends_on": device,
+                    "relationship": "device",
+                    "loaded": True,
+                },
+            ],
+        }
+    )
+    kept = PlanKeptPageResource.model_validate(
+        {
+            **common,
+            "total": 1,
+            "entries": [
+                {
+                    "record": {"kind": "IpamIPAddress", "identity": {"address": "10.0.0.9/32"}, "source_id": "9"},
+                    "cause": "peer_not_found_in_source",
+                    "relationship": "vrf",
+                    "left_out_peer": {"kind": "IpamVRF", "identity": None, "source_id": "17"},
+                }
+            ],
+        }
+    )
+
+    assert isinstance(left_out.entries[1], LeftOutRecordResource)
+    assert left_out.entries[1].depends_on is not None
+    assert left_out.entries[1].depends_on.kind == "DcimDevice"
+    assert isinstance(kept.entries[0], KeptRecordResource)
+    assert kept.entries[0].left_out_peer.identity is None
+    assert kept.entries[0].left_out_peer.source_id == "17"
+
+
+@pytest.mark.parametrize("limit", [0, 501])
+def test_a_report_page_limit_outside_one_to_five_hundred_is_refused(limit: int) -> None:
+    with pytest.raises(ValidationError):
+        PlanProblemsPageResource.model_validate({**_CONTRACT_PROBLEMS_PAGE, "limit": limit})
+
+
+def _summary(**counts: object) -> dict[str, object]:
+    return {
+        "by_action": {"create": 1},
+        "by_kind": {"DcimDevice": 1},
+        "total": 1,
+        "delete_operations_computed": True,
+        "deletes_not_executed": 0,
+        **counts,
+    }
+
+
+def test_the_plan_summary_parses_the_report_counts() -> None:
+    summary = PlanSummaryResource.model_validate(
+        _summary(
+            left_out=6,
+            left_out_with_problem=1,
+            left_out_dependent=5,
+            left_out_by_kind={"DcimDevice": 1, "InterfacePhysical": 5},
+            problems=1,
+            problems_by_type={"dropdown_value_not_in_choices": 1},
+            kept=0,
+        )
+    )
+
+    assert (summary.left_out, summary.left_out_with_problem, summary.left_out_dependent) == (6, 1, 5)
+    assert summary.left_out_by_kind == {"DcimDevice": 1, "InterfacePhysical": 5}
+    assert (summary.problems, summary.kept) == (1, 0)
+    assert summary.problems_by_type == {"dropdown_value_not_in_choices": 1}
+
+
+def test_a_plan_summary_from_an_earlier_release_has_zero_report_counts() -> None:
+    summary = PlanSummaryResource.model_validate(_summary())
+
+    assert (summary.left_out, summary.left_out_with_problem, summary.left_out_dependent) == (0, 0, 0)
+    assert (summary.left_out_by_kind, summary.problems, summary.problems_by_type, summary.kept) == ({}, 0, {}, 0)
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [
+        {"left_out": 6, "left_out_with_problem": 1, "left_out_dependent": 4, "left_out_by_kind": {"DcimDevice": 6}},
+        {"left_out": 6, "left_out_with_problem": 1, "left_out_dependent": 5, "left_out_by_kind": {"DcimDevice": 5}},
+        {"problems": 2, "problems_by_type": {"wrong_value_type": 1}},
+    ],
+)
+def test_plan_summary_counts_that_do_not_add_up_are_refused(counts: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        PlanSummaryResource.model_validate(_summary(**counts))

@@ -20,12 +20,13 @@ rules, and a programmatic caller must not have to catch an exception to learn a 
 
 from __future__ import annotations
 
+from collections import Counter
 from typing import TYPE_CHECKING, NamedTuple
 
 from infrahub_sync.cache.paths import cache_root_for, run_dir
 from infrahub_sync.plan.checksum import compute_plan_checksum
 from infrahub_sync.plan.errors import UnknownPlanKindError, UnknownRunIdentifierError, UnsafeRunIdentifierError
-from infrahub_sync.plan.models import PlanSummary
+from infrahub_sync.plan.models import PlanReport, PlanSummary
 from infrahub_sync.plan.reader import (
     RUN_ID_LISTING_LIMIT,
     load_plan_artifact,
@@ -73,6 +74,8 @@ class SavedPlan:
         verification_notes: Human-readable notes about any check that did not pass — the
             plan checksum, and the source-snapshot binding FR-010 puts on this path too.
             An empty list is the only "nothing to report" answer.
+        report: The plan report (plan format 4): problems, left-out records and kept
+            records. Empty for a format-2 or format-3 plan.
     """
 
     def __init__(
@@ -83,8 +86,10 @@ class SavedPlan:
         checksum_ok: bool,
         verification_notes: Iterable[str],
         declared_kinds: Iterable[str] | None = None,
+        report: PlanReport | None = None,
     ) -> None:
         self.manifest = manifest
+        self.report = report if report is not None else PlanReport()
         self.checksum_ok = checksum_ok
         self.verification_notes = list(verification_notes)
         self._operations = list(operations)
@@ -111,12 +116,24 @@ class SavedPlan:
         for operation in self._operations:
             by_action[operation.action] = by_action.get(operation.action, 0) + 1
             by_kind[operation.kind] = by_kind.get(operation.kind, 0) + 1
+        # The report counts. The reader has already checked them against the manifest's
+        # `report` object (`parse_report`), so counting the entries gives the same numbers.
+        left_out_by_kind = Counter(item.record.kind for item in self.report.left_out)
+        problems_by_type = Counter(item.problem_type for item in self.report.problems)
+        with_problem = sum(1 for item in self.report.left_out if item.cause == "has_problem")
         return PlanSummary(
             by_action=dict(sorted(by_action.items())),
             by_kind=dict(sorted(by_kind.items())),
             total=len(self._operations),
             delete_operations_computed=self.manifest.delete_operations_computed,
             deletes_not_executed=by_action.get("delete", 0),
+            left_out=len(self.report.left_out),
+            left_out_with_problem=with_problem,
+            left_out_dependent=len(self.report.left_out) - with_problem,
+            left_out_by_kind=dict(sorted(left_out_by_kind.items())),
+            problems=len(self.report.problems),
+            problems_by_type=dict(sorted(problems_by_type.items())),
+            kept=len(self.report.kept),
         )
 
     def operations(self, *, kind: str | None = None) -> list[PlannedOperation]:
@@ -423,4 +440,5 @@ def read_saved_plan(
         checksum_ok=checksum_failure is None,
         verification_notes=notes,
         declared_kinds=declared_kinds,
+        report=loaded.report,
     )

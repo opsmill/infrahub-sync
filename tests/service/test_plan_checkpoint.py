@@ -33,6 +33,7 @@ from infrahub_sync.product_store.bundle import (
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.checkpoints import CheckpointUnavailableError, rehydrate_plan_checkpoint
 from infrahub_sync.service.flow import service_sync_run
+from infrahub_sync.service.plan_report import PLAN_REPORT_ARTIFACT_ID
 from infrahub_sync.service.scratch import stage_scratch
 from infrahub_sync.service.service import PLAN_ARTIFACT_ID
 from tests.configuration.validation_packages import package
@@ -177,6 +178,8 @@ def test_the_plan_checkpoint_publishes_before_the_public_review(
 
     assert projection.publications == [
         (PLAN_CHECKPOINT_ARTIFACT_ID, "internal"),
+        # The plan report before the review document that names it (spec 009).
+        (PLAN_REPORT_ARTIFACT_ID, "public"),
         (PLAN_ARTIFACT_ID, "public"),
     ]
     assert planning_stage

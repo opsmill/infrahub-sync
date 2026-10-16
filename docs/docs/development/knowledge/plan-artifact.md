@@ -11,12 +11,16 @@ title: "The saved plan artifact"
 A run records what it intends to change as a **plan artifact** under its cache run directory. The
 artifact is what `infrahub-sync runs plan` renders for review and what an apply executes, and it
 exists so that the set of changes an operator reads is the set that gets written. The format is owned
-by `infrahub_sync/plan/` and is versioned: `format_version` is `3`. A format `2` plan can still be
-read and reviewed, but `apply` refuses it, because its updates record no destination id. `1` is
+by `infrahub_sync/plan/` and is versioned: `format_version` is `4`. Format 4 adds the plan report,
+`report.jsonl`: the problems the plan found in the source data, the records it leaves out and the
+records it keeps without one optional relationship. A format `2` or `3` plan can still be read and
+reviewed, with an empty report, but `apply` refuses it: a format 2 plan's updates record no
+destination id, and a format 3 plan records no left-out records, so it must be planned again. `1` is
 reserved for the pre-existing `plan.parquet` row format, which is still written for querying and
 never read by this path.
 
 For *why* the format is shaped this way, see [ADR 0001](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0001-saved-plan-artifact-format.md).
+For why format 4 records left-out records, see [ADR 0022](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0022-saved-plan-format-4-records-left-out-records.md) (status: Proposed).
 
 ### What is on disk
 
@@ -28,10 +32,11 @@ For *why* the format is shaped this way, see [ADR 0001](https://github.com/opsmi
 ├── run.json, cursors.json, schema-sub-hash.txt
 └── plan/                     # the artifact
     ├── operations.jsonl      # written FIRST
+    ├── report.jsonl          # written SECOND (format 4)
     └── manifest.json         # written LAST — its presence is the commit point
 ```
 
-Both files are written tmp-then-`replace`, the same way the other sidecars are. The write order is
+Each file is written tmp-then-`replace`, the same way the other sidecars are. The write order is
 load-bearing, and it is what makes the failure verdicts disjoint without any heuristic:
 
 | Observation | Verdict |
@@ -41,6 +46,7 @@ load-bearing, and it is what makes the failure verdicts disjoint without any heu
 | `manifest.json` present, `operations.jsonl` absent | **Torn** |
 | `manifest.json` present, line count ≠ `operations_count` | **Torn** |
 | `manifest.json` present, `format_version` unrecognized | Unrecognized version — worded distinctly from the v1 message |
+| Format 4 `manifest.json` present, `report.jsonl` absent, or its digest, size or line counts differ from the manifest's `report` object | Report verification failure (`PlanReportVerificationError`); the plan is not applied |
 | Any path exists but cannot be read | Unreadable, naming the path |
 
 Unreadable is deliberately not flattened into a verification failure: it is a different condition with
@@ -161,7 +167,7 @@ The data model rejects a stored identifier that does not match its own triple.
 
 | Key | Meaning |
 |---|---|
-| `format_version` | `3` for every plan written now; `2` is accepted for review only |
+| `format_version` | `4` for every plan written now; `2` and `3` are accepted for review only |
 | `run_id` | The run the plan was produced under; excluded from the checksum, checked by equality |
 | `created_at` | ISO-8601 UTC; excluded from the checksum |
 | `config_version` | Opaque, non-empty printable ASCII; compared for equality, never parsed |
@@ -169,6 +175,7 @@ The data model rejects a stored identifier that does not match its own triple.
 | `operations_count` | Keeps an empty plan distinguishable from a torn one |
 | `delete_operations_computed` | `false` when the destination side was loaded incrementally |
 | `destination_binding` | `{url, branch}` — the destination the plan was computed against, URL-normalized, **never the token**. A registered package takes the URL from its declared settings only; a local configuration directory lets `INFRAHUB_ADDRESS` or `INFRAHUB_URL` override it. Compared for equality at apply time. Additive: absent on plans written before it existed, and the check is skipped for them |
+| `report` | Format 4: `digest` (sha256 hex of `report.jsonl`), `size` (bytes), and the counts `problems`, `left_out`, `left_out_with_problem`, `left_out_dependent` and `kept`. `left_out_with_problem + left_out_dependent = left_out`. Present with zero counts when the report is empty |
 | `plan_checksum` | Lowercase sha256 hex over the manifest body plus the operations bytes |
 | *(any other key)* | Tolerated on read, preserved, and included in the bytes the checksum covers |
 
@@ -180,6 +187,9 @@ digest   = sha256(canonical_json_bytes(body) + operations_jsonl_raw_bytes).hexdi
 
 No separator between the two byte sequences. Removing `run_id` and `created_at` is what makes the
 manifest byte-identical across re-plans.
+
+The checksum covers the report through the manifest's `report.digest`: the report bytes are not
+added to the hashed bytes, so the formula is the same for every format.
 
 The `config_version` default digests the parsed configuration with `directory` excluded — location is
 not configuration, and including it would stop a plan produced in CI being applied from a checkout.
@@ -193,6 +203,52 @@ re-plan of an unchanged source. The digest is taken over the table with `_extrac
 file order; `_source_id` and `_tombstone` stay in, both being deterministic for identical input. What
 this stops detecting is a change confined to the extraction timestamp. An absent recorded file, a
 disagreeing digest and a disagreeing row count are all still refusals.
+
+### The plan report
+
+`report.jsonl` holds one canonical JSON object per line (the encoding of `operations.jsonl`), each
+with an `entry` field set to `problem`, `left_out` or `kept`. The fields of each entry are in the
+spec 009 data model; the models are `PlanProblem`, `LeftOutRecord` and `KeptRecord` in
+`infrahub_sync/plan/models.py`. An empty report is a zero-byte file.
+
+- A `problem` entry names one problem of one of seven types: `dropdown_value_not_in_choices`,
+  `duplicate_source_identity`, `destination_identity_collision`, `wrong_value_type`,
+  `required_peer_excluded_by_filter`, `identities_merge_in_destination` and
+  `peer_not_found_in_source`. The names are stable: a later release may add a type, never rename
+  or remove one.
+- A `left_out` entry names a record the plan leaves out, either because it has a problem
+  (`has_problem`) or because it depends on a left-out record through a required relationship
+  (`depends_on_left_out`).
+- A `kept` entry names a record the plan keeps without one optional relationship, because the peer
+  is left out (`peer_left_out`) or is not in the source (`peer_not_found_in_source`).
+
+The lines are in a stable order: problems by problem type, kind, canonical identity and source ID;
+then left-out records by kind, identity and source ID; then kept records by kind, identity and
+relationship. The order lets the Sync API return the report in pages
+(`GET /runs/{run_id}/plan/problems`, `/plan/left-out` and `/plan/kept`) that hold each entry once.
+
+Entries hold source values, schema names and reasons rendered from fixed templates. No entry is
+built from a connection setting or from the text of an error. The plan stage's worker publishes
+the report beside the review document as the public `plan-report` artifact, which the service
+reads to answer the report routes.
+
+### Plan steps
+
+A plan runs these steps in order. Only the load builds the stores; no later step changes them,
+and no step edits the diff that the comparison returns ([ADR 0022](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0022-saved-plan-format-4-records-left-out-records.md)).
+
+| Step | Reads | Writes |
+|---|---|---|
+| Load | The source systems | The two stores and each adapter's load report |
+| Compare (`diff_from`) | The two stores | The diff |
+| Derive | The diff, the stores, the load reports | Operations, with placeholders for references to records that were not loaded and to peers that are not in the source |
+| Find problems (`plan/problems.py`) | Load reports, source store, destination schema record, operations | The plan report |
+| Select operations (`select_operations`) | Operations, plan report | The selected operations, without any placeholder |
+| Check and write | Selected operations, plan report | The plan directory |
+
+The selection step removes the operations of left-out records, removes a delete that names a record
+the load could not build, and removes from a kept record's operation its relationship to a
+left-out peer. The writer refuses an operation that still holds a placeholder.
 
 ### Determinism
 
@@ -209,7 +265,9 @@ runs at different extraction modes are *expected* to differ.
 `VerificationFailure`.
 
 - `reader.load_plan_artifact(run_dir)` classifies v1 / torn / unrecognized-version and returns the
-  parsed manifest and operations.
+  parsed manifest, operations and report. A format 4 report is checked against the manifest's
+  `report` object (`reader.parse_report`); a format 2 or 3 plan returns an empty report.
+  `reader.report_page` returns one page of report entries by offset, limit, problem type and kind.
 - `verify_plan(*, artifact, run_id, config_version, write_surface_missing_on=None)` runs the pre-apply
   checks and returns **every** failure, each naming itself, the refused run, expected and found where
   neither is secret, and the operator's next action. An empty list means safe to apply. It takes the
@@ -219,6 +277,15 @@ runs at different extraction modes are *expected* to differ.
   verification subjects and are never applied.
 - `review.read_saved_plan(...)` is the review path. It reads and renders without constructing an
   adapter and without creating a run directory, so a review writes nothing.
+  `SavedPlan.summary()` adds the report counts to the counts by action and by kind: `left_out`,
+  `left_out_with_problem`, `left_out_dependent`, `left_out_by_kind`, `problems`,
+  `problems_by_type` and `kept`.
+
+| Format | Read and review | Apply |
+|---|---|---|
+| 2 | Yes, with an empty report | Refused |
+| 3 | Yes, with an empty report | Refused: plan again |
+| 4 | Yes | Yes, after the left-out count check |
 
 The format-version check is a **gate**. When it fails, the remaining checks are not evaluated and the
 refusal says so, because a reader that does not know what the fields mean would otherwise report
@@ -236,6 +303,7 @@ cardinality-one peer, which the operation shape cannot express (see **An operati
 ### See also
 
 - [ADR 0001](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0001-saved-plan-artifact-format.md) — why the format is shaped this way.
+- [ADR 0022](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0022-saved-plan-format-4-records-left-out-records.md) — why format 4 records the problems and the left-out records.
 - [Planned writes and apply](planned-write-and-apply.md) — what executes an artifact.
 - [Incremental sync and cache](incremental-and-cache.md) — the run directory and snapshots it sits in.
 - [Schema mapping](schema-mapping.md) — where identities and references come from.

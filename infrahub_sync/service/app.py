@@ -34,6 +34,7 @@ from .models import (
     VerifyRunRequest,
     VersionResource,
 )
+from .plan_report_routes import plan_report_router
 from .service import RunService, ServiceAPIError
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,8 @@ def create_app(
     @application.get("/runs/{run_id}/plan", responses=ERROR_RESPONSES)
     def get_plan(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> PlanResource:
         return service.get_plan(run_id)
+
+    application.include_router(plan_report_router(service, authenticate, ERROR_RESPONSES))
 
     @application.get("/runs/{run_id}/results", responses=ERROR_RESPONSES)
     def get_results(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> ResultsResource:

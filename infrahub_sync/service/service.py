@@ -46,9 +46,12 @@ from .models import (
     public_run_resource,
 )
 from .orchestration import Observation, PoolStatus, ServiceOrchestration, normalized_pool_status
+from .plan_report import ReportPageResource, ReportRoute, plan_report_page
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from infrahub_sync.plan.models import ProblemType
 
     from .auth import Principal
 
@@ -597,6 +600,33 @@ class RunService:
         """Return the retained review document."""
         self._required_run(run_id)
         return self._plan(run_id)
+
+    def get_plan_report(
+        self,
+        run_id: str,
+        route: ReportRoute,
+        *,
+        offset: int = 0,
+        limit: int = 500,
+        problem_type: ProblemType | None = None,
+        kind: str | None = None,
+        expected_checksum: str | None = None,
+    ) -> ReportPageResource:
+        """Return one page of the saved plan's problems, left-out records or kept records."""
+        self._required_run(run_id)
+        plan = self._plan(run_id)
+        return plan_report_page(
+            self._projection,
+            self._error,
+            run_id,
+            plan.checksum,
+            route,
+            offset=offset,
+            limit=limit,
+            problem_type=problem_type,
+            kind=kind,
+            expected_checksum=expected_checksum,
+        )
 
     def get_results(self, run_id: str) -> ResultsResource:
         """Return retained product results without consulting Prefect."""

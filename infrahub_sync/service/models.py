@@ -26,8 +26,15 @@ from infrahub_sync.client.models import (
     CreateRunRequest,
     ErrorDetail,
     ErrorEnvelope,
+    KeptRecordResource,
+    LeftOutRecordResource,
     OrchestrationSummary,
+    PlanKeptPageResource,
+    PlanLeftOutPageResource,
     PlanOperationResource,
+    PlanProblemResource,
+    PlanProblemsPageResource,
+    PlanRecordReferenceResource,
     PlanResource,
     PlanSummaryResource,
     PublicExecutionLink,
@@ -53,8 +60,15 @@ __all__ = [
     "CreateRunRequest",
     "ErrorDetail",
     "ErrorEnvelope",
+    "KeptRecordResource",
+    "LeftOutRecordResource",
     "OrchestrationSummary",
+    "PlanKeptPageResource",
+    "PlanLeftOutPageResource",
     "PlanOperationResource",
+    "PlanProblemResource",
+    "PlanProblemsPageResource",
+    "PlanRecordReferenceResource",
     "PlanResource",
     "PlanSummaryResource",
     "PublicExecutionLink",
@@ -128,6 +142,11 @@ def bounded_emitted_model(model: type[BaseModel]) -> type[BaseModel]:
 EmittedRunResource = cast("type[PublicRunResource]", bounded_emitted_model(PublicRunResource))
 EmittedPlanResource = cast("type[PlanResource]", bounded_emitted_model(PlanResource))
 EmittedArtifactListResource = cast("type[ArtifactListResource]", bounded_emitted_model(ArtifactListResource))
+EmittedPlanProblemsPageResource = cast(
+    "type[PlanProblemsPageResource]", bounded_emitted_model(PlanProblemsPageResource)
+)
+EmittedPlanLeftOutPageResource = cast("type[PlanLeftOutPageResource]", bounded_emitted_model(PlanLeftOutPageResource))
+EmittedPlanKeptPageResource = cast("type[PlanKeptPageResource]", bounded_emitted_model(PlanKeptPageResource))
 
 # What the server builds out of data it did not write literally, and therefore what the
 # boundedness check in the test suite walks.
@@ -135,6 +154,9 @@ EMITTED_RESOURCES: tuple[type[BaseModel], ...] = (
     EmittedRunResource,
     EmittedPlanResource,
     EmittedArtifactListResource,
+    EmittedPlanProblemsPageResource,
+    EmittedPlanLeftOutPageResource,
+    EmittedPlanKeptPageResource,
 )
 # The run resource declares its executions as bounded, so the projection has to build them
 # that way; a parent-class instance is not one of these.
