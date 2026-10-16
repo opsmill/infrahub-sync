@@ -1,0 +1,1 @@
+The NetBox example translates device statuses outside the five Infrahub choices (`planned` and `staged` to `provisioning`, `offline` and `failed` to `maintenance`, `inventory` to `reserved`, `decommissioning` to `deprecated`), and the pinned `demo` dataset plans without a run failure.

@@ -34,6 +34,39 @@ uv run infrahub-sync apply <run-id> \
   --branch netbox-import --reason "apply reviewed NetBox plan"
 ```
 
+## Device status translation
+
+Infrahub's `DcimDevice.status` has five choices: `active`, `reserved`, `provisioning`,
+`maintenance` and `deprecated`. NetBox has more device statuses. A `device_status`
+transform in both `DcimDevice` entries translates them:
+
+| NetBox status | Infrahub status |
+|---------------|-----------------|
+| `active` | `active` |
+| `planned` | `provisioning` |
+| `staged` | `provisioning` |
+| `offline` | `maintenance` |
+| `failed` | `maintenance` |
+| `inventory` | `reserved` |
+| `decommissioning` | `deprecated` |
+
+Any other status is kept as it is, and the plan lists the device as a problem.
+
+## Source records that a plan lists as problems
+
+A plan leaves out a source record it cannot write and lists it as a problem. Review the
+list with `uv run infrahub-sync runs problems <run-id>`. The NetBox demo data holds records
+of two problem types:
+
+- A device at a rack position that is not a whole number, such as `2.5`, is listed as
+  `wrong_value_type`. Infrahub stores a rack position as a whole number, and rounding
+  would write a position the device does not have.
+- Two devices with the same name at two sites are listed as
+  `destination_identity_collision`. Infrahub identifies a device by its name alone.
+
+To apply a plan that leaves out records, pass the number of left-out records to
+`apply --confirm-left-out`. `sync` stops after such a plan and does not apply it.
+
 ## Current limitations
 
 - The public NetBox demo changes over time, and any visitor can edit it. A current token

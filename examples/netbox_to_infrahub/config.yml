@@ -244,7 +244,7 @@ schema_mapping:
       - name: rack_face
         mapping: face.value
       - name: status
-        mapping: status.value
+        mapping: device_status
       # NOTE: schema changes are required to support role sync (see related note)
       # - name: role
       #   mapping: role.slug
@@ -263,6 +263,14 @@ schema_mapping:
       - name: primary_address
         mapping: primary_ip
         reference: IpamIPAddress
+    transforms:
+      # Infrahub's device status has five choices. NetBox statuses outside them are
+      # translated; any other status is kept and a plan lists it as a problem.
+      - field: device_status
+        expression: >-
+          {{ {'planned': 'provisioning', 'staged': 'provisioning',
+          'offline': 'maintenance', 'failed': 'maintenance',
+          'inventory': 'reserved', 'decommissioning': 'deprecated'}.get(status.value, status.value) }}
     filters:
       - field: parent_device # For sub-devices (e.g. stacks), you'd most likely have a dedicated node in Infrahub
         operation: "is_empty"
@@ -288,7 +296,7 @@ schema_mapping:
       - name: rack_face
         mapping: face.value
       - name: status
-        mapping: status.value
+        mapping: device_status
       # NOTE: schema changes are required to support role sync (see related note)
       # - name: role
       #   mapping: role.slug
@@ -307,6 +315,14 @@ schema_mapping:
       - name: primary_address
         mapping: primary_ip
         reference: IpamIPAddress
+    transforms:
+      # Infrahub's device status has five choices. NetBox statuses outside them are
+      # translated; any other status is kept and a plan lists it as a problem.
+      - field: device_status
+        expression: >-
+          {{ {'planned': 'provisioning', 'staged': 'provisioning',
+          'offline': 'maintenance', 'failed': 'maintenance',
+          'inventory': 'reserved', 'decommissioning': 'deprecated'}.get(status.value, status.value) }}
     filters:
       - field: parent_device
         operation: "is_empty"
