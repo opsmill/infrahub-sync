@@ -20,6 +20,7 @@ from netutils.ip import is_ip_within as netutils_is_ip_within
 from infrahub_sync.adapters.utils import get_value
 from infrahub_sync.cache.cursors import CursorTier
 from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
+from infrahub_sync.load_errors import SideLoadError, TransformError, record_source_id  # noqa: F401 -- re-exported
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -944,10 +945,10 @@ class DiffSyncModelMixin:
 
         except SecurityError as exc:
             msg = f"Failed to transform '{field}' with '{transform_expr}': not allowed in the transform sandbox: {exc}"
-            raise ValueError(msg) from exc
+            raise TransformError(msg, field=field, source_id=record_source_id(item)) from exc
         except Exception as exc:
             msg = f"Failed to transform '{field}' with '{transform_expr}': {exc}"
-            raise ValueError(msg) from exc
+            raise TransformError(msg, field=field, source_id=record_source_id(item)) from exc
 
     @classmethod
     def apply_transforms(cls, item: dict[str, Any], transforms: list[SchemaMappingTransform]) -> dict[str, Any]:
@@ -960,31 +961,23 @@ class DiffSyncModelMixin:
 
     @classmethod
     def filter_records(cls, records: list[dict], schema_mapping: SchemaMappingModel) -> list[dict]:
-        """
-        Apply filters to the records based on the schema mapping configuration.
-        """
+        """Apply filters to the records based on the schema mapping configuration."""
         filters = schema_mapping.filters or []
         if not filters:
             return records
-        filtered_records = []
-        for record in records:
-            if cls.apply_filters(item=record, filters=filters):
-                filtered_records.append(record)
-        return filtered_records
+        return [record for record in records if cls.apply_filters(item=record, filters=filters)]
 
     @classmethod
     def transform_records(cls, records: list[dict], schema_mapping: SchemaMappingModel) -> list[dict]:
-        """
-        Apply transformations to the records based on the schema mapping configuration.
-        """
+        """Apply transformations to the records; a `TransformError` names the mapping entry's kind."""
         transforms = schema_mapping.transforms or []
         if not transforms:
             return records
-        transformed_records = []
-        for record in records:
-            transformed_record = cls.apply_transforms(item=record, transforms=transforms)
-            transformed_records.append(transformed_record)
-        return transformed_records
+        try:
+            return [cls.apply_transforms(item=record, transforms=transforms) for record in records]
+        except TransformError as exc:
+            exc.kind = schema_mapping.name
+            raise
 
     @classmethod
     def is_list(cls, name):

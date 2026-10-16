@@ -18,6 +18,7 @@ from infrahub_sdk.exceptions import (
 from tqdm import tqdm
 
 from infrahub_sync import identity_record_data, resolve_effective_diffsync_flags
+from infrahub_sync.load_errors import side_load_error
 
 # These plan imports are cheap; imports that reach pyarrow stay deferred below.
 from infrahub_sync.plan.apply_gate import require_applyable_plan
@@ -486,7 +487,7 @@ class Potenda:
             completed = True
         except Exception as exc:
             msg = f"An error occurred while loading {adapter}: {exc!s}"
-            raise ValueError(msg) from exc
+            raise side_load_error(msg, side=side, adapter=adapter, config=self.config) from exc
         finally:
             if not completed:
                 self._side_cursors.pop(side, None)

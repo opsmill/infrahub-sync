@@ -11,7 +11,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 from uuid import UUID
 
 import httpx
@@ -105,6 +105,9 @@ _WRITE_STAGES = ("apply", "sync")
 
 class RegisteredPlanVerificationError(ValueError):
     """A managed plan refusal with a fixed, safe recovery signal for the CLI."""
+
+    # Read by `infrahub_sync.failure_cause`, which cannot import this module.
+    cause_failure_type: ClassVar[str] = "verification_failed"
 
     def __init__(self, message: str, recovery_action: Literal["rebuild", "compatible_version"] | None) -> None:
         super().__init__(message)
