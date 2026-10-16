@@ -1,0 +1,43 @@
+dev/adr/0022-saved-plan-format-4-records-left-out-records.md
+  s_47078ea83e766d::t_a0d1d6cf219239 1-43
+tests/data/loader_parity/creates_into_empty_destination.jsonl
+  s_47078ea83e766d::t_6e389d2bb389ad 1-6
+tests/data/loader_parity/creates_and_one_delete.jsonl
+  s_47078ea83e766d::t_6e389d2bb389ad 1-7
+tests/plan/problem_fixtures.py
+  s_47078ea83e766d::t_3c6256e9d40382 19,131-143,174
+  s_47078ea83e766d::t_0056951529e81c 1-18,20-21,23-36,38-130,144-173,175-255,261-262,264-405,407-409,414-519
+  s_47078ea83e766d::t_26cd47da2dcd02 22,406,410-413
+  s_47078ea83e766d::t_22e0a9eaf1e90c 256-260,263
+  s_47078ea83e766d::t_ec6d561095a636 37
+dev/adr/0021-a-run-failure-record-holds-a-structured-cause.md
+  s_47078ea83e766d::t_7eafff7a813eb4 1-55
+dev/specs/009-plan-problem-reporting/tasks.md
+  s_47078ea83e766d::t_134289adc81b2e 45-51
+tests/data/loader_parity/updates_against_stale_destination.jsonl
+  s_47078ea83e766d::t_6e389d2bb389ad 1-4
+dev/specs/009-plan-problem-reporting/ad-12-amendment.md
+  s_47078ea83e766d::t_0d2c669a3574f3 1-20
+tests/plan/test_loader_plan_parity.py
+  s_47078ea83e766d::t_e440d67d39198a 1-95
+dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md
+  s_47078ea83e766d::t_c4f8eae44cfe62 1-56
+dev/adr/README.md
+  s_47078ea83e766d::t_542c03130e0586 56-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f5b95244384f86619fdddce3cbd33d60bcc9b25",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
