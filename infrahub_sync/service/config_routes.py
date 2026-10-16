@@ -31,10 +31,13 @@ from infrahub_sync.product_store import (
 from .auth import Principal
 from .models import ConfigMutationRequest
 from .service import ServiceAPIError
+from .worker_environment import LIVE_WORKER_MAX_AGE
 
 _CONFIG_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
 _MAX_REGISTRY_VERSION = 2**63 - 1
 _MAX_PAGE_LIMIT = 256
+# Infrahub refuses branch names longer than this, and any whitespace in one.
+_BRANCH_PATTERN = r"^\S{1,250}$"
 
 
 class ConfigurationAPIError(Exception):
@@ -144,17 +147,37 @@ class ConfigurationRoutes:
         return ConfigurationVersionResource.model_validate(result, from_attributes=True)
 
     def validate(
-        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = _MAX_PAGE_LIMIT
+        self,
+        config_id: str,
+        registry_version: int,
+        *,
+        offset: int = 0,
+        limit: int = _MAX_PAGE_LIMIT,
+        branch: str | None = None,
     ) -> ValidationReportResource:
         """Validate a version and return the requested ordered findings page.
 
         This server's collected secrets reach the producer, which can replace a declared key
         whole before the diagnostic bounds cut it, and the same set is applied again to every
         finding on the returned page.
+
+        ``branch`` adds the destination schema check against that Infrahub branch and the
+        comparison of the package's credentials with the most recent names a live worker
+        published (FR-032, FR-033). Without it, validation reads no schema and no worker record.
         """
 
+        options: dict[str, Any] = {}
+        if branch is not None:
+            options = {
+                "destination_schema": configs.DestinationSchemaOptions(branch=branch),
+                "live_worker_since": datetime.now(timezone.utc) - LIVE_WORKER_MAX_AGE,
+            }
         report = self._call(
-            self._service.validate, config_id=config_id, registry_version=registry_version, secrets=self._secrets
+            self._service.validate,
+            config_id=config_id,
+            registry_version=registry_version,
+            secrets=self._secrets,
+            **options,
         )
         findings = tuple(
             configs.redact_finding(finding, self._secrets) for finding in report.findings[offset : offset + limit]
@@ -286,6 +309,7 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
     registry_version_parameter = APIPath()
     page_offset = Query()
     page_limit = Query()
+    branch_parameter = Query(pattern=_BRANCH_PATTERN)
 
     @router.post("/configs", status_code=201)
     def register(
@@ -372,12 +396,14 @@ def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempot
         _principal: Annotated[Principal, Depends(authenticate)],
         offset: Annotated[str, page_offset] = "0",
         limit: Annotated[str, page_limit] = str(_MAX_PAGE_LIMIT),
+        branch: Annotated[str | None, branch_parameter] = None,
     ) -> Any:
         return routes.validate(
             config_id,
             _strict_integer(registry_version, minimum=1, maximum=_MAX_REGISTRY_VERSION),
             offset=_strict_integer(offset, minimum=0, maximum=_MAX_REGISTRY_VERSION),
             limit=_strict_integer(limit, minimum=1, maximum=_MAX_PAGE_LIMIT),
+            branch=branch,
         )
 
     return router

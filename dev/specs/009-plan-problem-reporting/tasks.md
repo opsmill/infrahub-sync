@@ -238,22 +238,22 @@ keyability; registration responses do not show redacted content.
 
 ### Tests (write first, confirm they fail)
 
-- [ ] T085 [P] Extend `tests/service/test_config_routes.py`: `POST /configs/{config_id}/versions/{registry_version}/validate` without `branch` is unchanged; with `branch` it adds `destination-schema-mismatch`, `destination-dropdown-value-not-in-choices`, `credential-not-set-in-worker` naming the variable and never a value, and the warning `worker-environment-unknown` when no live worker has a record.
+- [X] T085 [P] Extend `tests/service/test_config_routes.py`: `POST /configs/{config_id}/versions/{registry_version}/validate` without `branch` is unchanged; with `branch` it adds `destination-schema-mismatch`, `destination-dropdown-value-not-in-choices`, `credential-not-set-in-worker` naming the variable and never a value, and the warning `worker-environment-unknown` when no live worker has a record.
 - [X] T086 [P] Create `tests/service/test_worker_environment.py`: the worker publishes the names of set and non-empty `INFRAHUB_SYNC_CREDENTIAL_*` variables (an empty value counts as unset) at start and on each poll; the record holds no value (assert the value bytes are absent from the stored row); the most recent record of a live worker is the one compared.
-- [ ] T087 [P] Extend `tests/configuration/test_schema_validation.py`: a literal `static` value of a mapped Dropdown attribute outside the choices gives `destination-dropdown-value-not-in-choices`.
-- [ ] T088 [P] Extend `tests/test_writable_convergence_identity.py` with a parametrized test that runs the plan's create check (`refuse_unkeyed_create`) and validation's check (`writable_convergence_reason`) over the same kinds and asserts they agree (FR-034).
-- [ ] T089 [P] Extend `tests/product_store/test_configs_service.py`: the responses of `configs register` and `configs version` return `package_checksum` and no `declared_content` (FR-035).
+- [X] T087 [P] Extend `tests/configuration/test_schema_validation.py`: a literal `static` value of a mapped Dropdown attribute outside the choices gives `destination-dropdown-value-not-in-choices`.
+- [X] T088 [P] Extend `tests/test_writable_convergence_identity.py` with a parametrized test that runs the plan's create check (`refuse_unkeyed_create`) and validation's check (`writable_convergence_reason`) over the same kinds and asserts they agree (FR-034).
+- [X] T089 [P] Extend `tests/product_store/test_configs_service.py`: the responses of `configs register` and `configs version` return `package_checksum` and no `declared_content` (FR-035).
 
 ### Implementation
 
 - [X] T090 Add the `worker_environment` record (`worker_id`, `credential_names`, `observed_at`) to `infrahub_sync/product_store/store.py` with a write method and a read method for the most recent record of a live worker.
 - [X] T091 Create `infrahub_sync/service/worker_environment.py`: collect the names of set, non-empty `INFRAHUB_SYNC_CREDENTIAL_*` variables using the prefix of `infrahub_sync/configuration/credentials.py:29`, and publish them through T090. Depends on T090.
 - [X] T092 DEP-013 Call the publication of T091 in `main()` and on each poll in `infrahub_sync/service/worker.py`. 009 owns this file; spec 013 task T010 adds one `trust_store` import and one call at the top of `main()`. Whichever branch merges second rebases; keep 013's call first in `main()`. Depends on T091.
-- [ ] T093 [P] Add the Dropdown literal check over `static` values to `infrahub_sync/configuration/schema_validation.py` using the choices of T043, and move the schema-only part of `refuse_unkeyed_create` (`infrahub_sync/plan/keying.py:397`) and `writable_convergence_reason` (`:181`) into one shared function in `infrahub_sync/plan/keying.py` that both call.
-- [ ] T094 Accept an optional `branch` query parameter on the validate route in `infrahub_sync/service/config_routes.py` (`:368-369`), pass `DestinationSchemaOptions(branch=...)` to `configs.validate` in `infrahub_sync/product_store/configs.py` (`:863-891`), and compare the package's `$credential` references with the worker environment record. Depends on T090 and T093.
-- [ ] T095 [P] Remove `declared_content` from the `configs register` and `configs version` responses in `infrahub_sync/product_store/configs.py` and the matching resource in `infrahub_sync/client/models.py`.
-- [ ] T096 Add `--branch <name>` to `configs validate` in `infrahub_sync/cli.py` and pass it through `infrahub_sync/client/client.py`. Depends on T094.
-- [ ] T097 Add the changelog fragment `changelog/+009-configs-validate-branch.added.md`: `configs validate --branch` checks the destination schema, Dropdown literals and the credentials the worker holds; registration responses no longer show `declared_content`.
+- [X] T093 [P] Add the Dropdown literal check over `static` values to `infrahub_sync/configuration/schema_validation.py` using the choices of T043, and move the schema-only part of `refuse_unkeyed_create` (`infrahub_sync/plan/keying.py:397`) and `writable_convergence_reason` (`:181`) into one shared function in `infrahub_sync/plan/keying.py` that both call.
+- [X] T094 Accept an optional `branch` query parameter on the validate route in `infrahub_sync/service/config_routes.py` (`:368-369`), pass `DestinationSchemaOptions(branch=...)` to `configs.validate` in `infrahub_sync/product_store/configs.py` (`:863-891`), and compare the package's `$credential` references with the worker environment record. Depends on T090 and T093.
+- [X] T095 [P] Remove `declared_content` from the `configs register` and `configs version` responses in `infrahub_sync/product_store/configs.py` and the matching resource in `infrahub_sync/client/models.py`.
+- [X] T096 Add `--branch <name>` to `configs validate` in `infrahub_sync/cli.py` and pass it through `infrahub_sync/client/client.py`. Depends on T094.
+- [X] T097 Add the changelog fragment `changelog/+009-configs-validate-branch.added.md`: `configs validate --branch` checks the destination schema, Dropdown literals and the credentials the worker holds; registration responses no longer show `declared_content`.
 
 ---
 

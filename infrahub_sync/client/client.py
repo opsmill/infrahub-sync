@@ -70,6 +70,7 @@ _TOKEN_ARG = "token"
 _TIMEOUT_ARG = "timeout"
 _OFFSET_ARG = "offset"
 _LIMIT_ARG = "limit"
+_BRANCH_ARG = "branch"
 _REQUEST_ARG = "request"
 _IDEMPOTENCY_KEY_ARG = "idempotency_key"
 _GET_ARTIFACT = "get_artifact"
@@ -243,9 +244,13 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         )
 
     def validate_config(
-        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = 256
+        self, config_id: str, registry_version: int, *, offset: int = 0, limit: int = 256, branch: str | None = None
     ) -> ValidationReportResource:
-        """Validate a configuration version and return one findings page."""
+        """Validate a configuration version and return one findings page.
+
+        With ``branch``, the Sync API also checks the mapping against that branch's
+        destination schema and the package's credentials against the worker's.
+        """
 
         config_id = self._identifier(config_id, "config_id")
         version = self._positive_integer(registry_version, "registry_version")
@@ -253,13 +258,18 @@ class SyncClient:  # pylint: disable=too-many-public-methods
             raise ClientInputError(_OFFSET_ARG)
         if type(limit) is not int or not 1 <= limit <= 256:  # pylint: disable=unidiomatic-typecheck
             raise ClientInputError(_LIMIT_ARG)
+        params: dict[str, int | str] = {"offset": offset, "limit": limit}
+        if branch is not None:
+            if type(branch) is not str or not branch:  # pylint: disable=unidiomatic-typecheck
+                raise ClientInputError(_BRANCH_ARG)
+            params["branch"] = branch
         return self._request_model(
             "validate_config",
             "POST",
             f"/configs/{config_id}/versions/{version}/validate",
             model=ValidationReportResource,
             success={200},
-            params={"offset": offset, "limit": limit},
+            params=params,
             config_route=True,
         )
 

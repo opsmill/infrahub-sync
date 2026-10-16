@@ -48,11 +48,15 @@ if TYPE_CHECKING:
 _CODE_INTENTIONAL_OMISSION = "intentional-omission"
 _CODE_OMISSION_CONTRADICTS_MAPPING = "omission-contradicts-mapping"
 _CODE_OPTIONAL_FEATURE_UNQUALIFIED = "optional-feature-unqualified"
+_CODE_WORKER_ENVIRONMENT_UNKNOWN = "worker-environment-unknown"
 
 _OMISSION_MESSAGE = "declared content is intentionally omitted from synchronization"
 _CONTRADICTION_MESSAGE = "omission names content a schema mapping also maps"
 _UNQUALIFIED_INCREMENTAL_MESSAGE = (
     "incremental extraction is declared, but the source adapter does not declare support for it"
+)
+_WORKER_ENVIRONMENT_UNKNOWN_MESSAGE = (
+    "no live worker has published its credential variable names, so the credentials were not checked"
 )
 
 
@@ -148,4 +152,18 @@ def accumulate_unqualified_optional_features(package: ConfigurationPackage) -> t
             location="/configuration/incremental",
             message=_UNQUALIFIED_INCREMENTAL_MESSAGE,
         ),
+    )
+
+
+def worker_environment_unknown() -> ValidationFinding:
+    """Warn that the credentials were not compared with a worker's, because no live worker published.
+
+    Reported by the worker credential check of ``configs validate --branch`` (spec 009
+    FR-033). It does not prevent a run: the credentials may be set in a worker that starts later.
+    """
+    return ValidationFinding(
+        code=_CODE_WORKER_ENVIRONMENT_UNKNOWN,
+        severity="warning",
+        location="/credentials",
+        message=_WORKER_ENVIRONMENT_UNKNOWN_MESSAGE,
     )

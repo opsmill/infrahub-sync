@@ -315,7 +315,7 @@ def test_get_config_and_list_versions_return_one_configurations_own_records(tmp_
     )
 
     assert summary == registered.configuration
-    assert versions == (registered.version, added.version)
+    assert tuple(map(configs_service.RegisteredVersionReference.of, versions)) == (registered.version, added.version)
     assert [version.registry_version for version in versions] == [1, 2]
     assert unrelated.version.config_id not in {version.config_id for version in versions}
 
@@ -406,9 +406,30 @@ def test_get_version_round_trips_the_registered_content_and_checksum(tmp_path: P
         projection=projection,
     )
 
-    assert stored.declared_content == registered.version.declared_content
+    assert stored.declared_content == package(package_data()).declared_content()
     assert stored.package_checksum == registered.version.package_checksum
-    assert stored == registered.version
+    assert (stored.config_id, stored.registry_version, stored.created_at) == (
+        registered.version.config_id,
+        registered.version.registry_version,
+        registered.version.created_at,
+    )
+
+
+def test_register_and_version_responses_carry_the_checksum_and_no_declared_content(tmp_path: Path) -> None:
+    """FR-035: a registration response never shows package content next to the checksum."""
+    projection = _store(tmp_path)
+    registered = configs_service.register(package=package_data(), projection=projection)
+    changed = package_data()
+    changed["configuration"]["source"]["settings"]["url"] = "https://second.netbox.test"
+    versioned = configs_service.create_version(
+        config_id=registered.version.config_id, package=changed, projection=projection
+    )
+
+    for version in (registered.version, versioned.version):
+        assert not hasattr(version, "declared_content")
+        assert len(version.package_checksum) == 64
+    assert registered.version.package_checksum == package(package_data()).checksum()
+    assert versioned.version.package_checksum == package(changed).checksum()
 
 
 # A value of the wrong type entirely, annotated ``Any`` so the calls below type-check. That is

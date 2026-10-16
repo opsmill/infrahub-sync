@@ -29,6 +29,7 @@ from infrahub_sync.client import (
     PlanResource,
     ProtocolError,
     RegisteredConfigurationResource,
+    RegisteredVersionReferenceResource,
     RegisteredVersionResource,
     RunResource,
     RunTerminalError,
@@ -305,13 +306,24 @@ def _echo_config_version(resource: ConfigurationVersionResource) -> None:
     )
 
 
+def _echo_version_reference(resource: RegisteredVersionReferenceResource) -> None:
+    _echo_fields(
+        (
+            ("config_id", resource.config_id),
+            ("registry_version", resource.registry_version),
+            ("package_checksum", resource.package_checksum),
+            ("created_at", resource.created_at.isoformat()),
+        )
+    )
+
+
 def _echo_registered_config(resource: RegisteredConfigurationResource) -> None:
     _echo_config_summary(resource.configuration)
-    _echo_config_version(resource.version)
+    _echo_version_reference(resource.version)
 
 
 def _echo_registered_version(resource: RegisteredVersionResource) -> None:
-    _echo_config_version(resource.version)
+    _echo_version_reference(resource.version)
     _echo_fields((("created", resource.created),))
 
 
@@ -422,12 +434,21 @@ def configs_validate(
     ctx: typer.Context,
     config_id: str = typer.Argument(...),
     version: int = typer.Argument(...),
+    *,
     offset: int = typer.Option(0, "--offset", help="Finding offset."),
     limit: int = typer.Option(256, "--limit", help="Maximum findings to return."),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        help=(
+            "Also check the mapping against the destination schema of this Infrahub branch, "
+            "and the credentials the worker holds."
+        ),
+    ),
 ) -> None:
     """Validate a registered configuration version."""
     with _client_errors():
-        _echo_validation(_client(ctx).validate_config(config_id, version, offset=offset, limit=limit))
+        _echo_validation(_client(ctx).validate_config(config_id, version, offset=offset, limit=limit, branch=branch))
 
 
 def _echo_run(resource: RunResource) -> None:

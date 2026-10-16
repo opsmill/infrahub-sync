@@ -47,9 +47,10 @@ not.
 ### Finding codes
 
 The `code` is the stable part of a finding. The message wording and the printed layout may
-change; the code will not. Three enumerations are emitted: the declared-content core's
-fifteen error codes below, the five destination-schema codes (emitted only when `validate`
-is given an explicit destination-schema opt-in), and the three warning-channel codes. One
+change; the code will not. Four enumerations are emitted: the declared-content core's
+fifteen error codes below, the six destination-schema codes and the two worker credential
+codes (emitted only when `validate` is given an explicit destination-schema opt-in, which
+`configs validate --branch` sends), and the three warning-channel codes. One
 location can report more than one of them — a credential declaration naming an uninstalled
 provider *and* an invalid identifier reports both at `/credentials/<name>` — but only ever
 from one check: when two checks reach the same pointer, the first to judge it is the one
@@ -78,14 +79,18 @@ An adapter's own configuration check keeps its own codes, which are outside this
 
 #### Destination schema validation codes
 
-These five codes are emitted **only on the explicit opt-in**: `validate` given a
-destination-schema options object. The default `validate` path judges declared content
-only, performs no schema read and no network I/O, and never emits them. All five carry an
-`error` severity.
+These six codes are emitted **only on the explicit opt-in**: `validate` given a
+destination-schema options object, which `configs validate --branch <name>` and
+`POST /configs/{config_id}/versions/{registry_version}/validate?branch=<name>` send. The
+schema is read from the named branch, unless the configuration declares
+`destination.settings.branch`, which a run uses too. The default `validate` path judges
+declared content only, performs no schema read and no network I/O, and never emits them.
+All six carry an `error` severity.
 
 | Code | What it means | Where it points |
 | ---- | ------------- | --------------- |
-| `destination-schema-mismatch` | A declared schema mapping disagrees with the destination's schema snapshot: an undeclared kind, a field that is neither an attribute nor a relationship, a relationship reference on an attribute, or a static value whose shape disagrees with the relationship's cardinality. | the mapping entry, field, reference, or static value |
+| `destination-dropdown-value-not-in-choices` | A field sets a literal `static` value on a Dropdown attribute, and the value is not one of the attribute's choices. The message lists the choices. A value mapped from the source is checked by the plan, record by record. | the static value |
+| `destination-schema-mismatch` | A declared schema mapping disagrees with the destination's schema snapshot: an undeclared kind, a field that is neither an attribute nor a relationship, a relationship reference on an attribute, a static value whose shape disagrees with the relationship's cardinality, or identifiers that cannot key a create. The last rule is the one the plan applies to each create: a kind whose human-friendly ID can be written must have every component of it selected as an identifier. | the mapping entry, field, reference, static value, or identifiers |
 | `destination-schema-read-failed` | The destination schema could not be read: a timeout, refused credentials, an unreachable server, a rejected or unusable response, an unresolvable declared token, or unusable declared client settings. The message names the failure class. | `/configuration/destination` |
 | `destination-schema-unsupported-semantics` | The destination schema was read, but it declares semantics outside the supported schema domain — an unknown relationship cardinality, a member shape the domain does not define, or a default no JSON encoding can carry. A run of this configuration refuses the same schema. | `/configuration/destination` |
 | `destination-schema-validation-unsupported` | Schema validation was explicitly requested against a destination adapter that does not declare it. A missing capability needed to determine safety is an error, not a warning. | `/configuration/destination` |
@@ -99,10 +104,23 @@ mandatory-without-default field on those kinds. Unmapped destination growth and
 differences in schema delivery order leave it unchanged. It is `null` whenever no
 snapshot was read — the default path, a non-declaring destination, or a failed read.
 
+#### Worker credential codes
+
+On the same opt-in, validation compares each credential declaration with the names of the
+credential variables a live worker holds. Each worker publishes those names, never their
+values, when it starts and on each poll; a worker that has not published for 90 seconds
+is not live. The comparison reads names only, so a finding never carries a value.
+
+| Code | Severity | What it means | Where it points |
+| ---- | -------- | ------------- | --------------- |
+| `credential-not-set-in-worker` | `error` | The variable a credential declaration names is not set, or is empty, in the worker environment. The message names the variable. A run that reads this credential fails. | `/credentials/<name>` |
+| `worker-environment-unknown` | `warning` | No live worker has published its credential variable names, so the credentials were not checked. Start a worker, or wait for its next poll, and validate again. | `/credentials` |
+
 #### Warning-channel codes
 
-The warning channel is closed: warnings are limited to intentional omissions and
-explicitly unqualified optional features, and nothing else.
+The warning channel is closed: apart from `worker-environment-unknown` above, warnings are
+limited to intentional omissions and explicitly unqualified optional features, and nothing
+else.
 
 | Code | Severity | What it means | Where it points |
 | ---- | -------- | ------------- | --------------- |

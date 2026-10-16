@@ -272,10 +272,15 @@ FROZEN_WARNING_MODULE_CODES = frozenset(
         "intentional-omission",
         "omission-contradicts-mapping",
         "optional-feature-unqualified",
+        # Spec 009 FR-033: `configs validate --branch` found no live worker to compare credentials with.
+        "worker-environment-unknown",
     }
 )
-# The closed emission rule: only the two contract section 4 families carry a warning.
-FROZEN_WARNING_SEVERITY_CODES = frozenset({"intentional-omission", "optional-feature-unqualified"})
+# The closed emission rule: only the two contract section 4 families and the worker
+# credential check's unknown environment carry a warning.
+FROZEN_WARNING_SEVERITY_CODES = frozenset(
+    {"intentional-omission", "optional-feature-unqualified", "worker-environment-unknown"}
+)
 
 
 def _declared_codes(tree: ast.AST) -> set[str]:
@@ -321,7 +326,9 @@ def test_every_frozen_warning_module_code_is_reachable_and_nothing_else_is_emitt
         {"kind": "InfraDevice"},
     ]
 
-    findings = collect_findings(package(data))
+    # The worker credential check is not part of the declared-content core: it runs only on
+    # `configs validate --branch`, when no live worker has published its credential names.
+    findings = (*collect_findings(package(data)), configuration_warnings.worker_environment_unknown())
 
     assert {finding.code for finding in findings} == FROZEN_WARNING_MODULE_CODES
     assert {finding.code for finding in findings if finding.severity == "warning"} == FROZEN_WARNING_SEVERITY_CODES

@@ -104,7 +104,9 @@ not read again. For what registration checks and returns, see
 </Tabs>
 
 `configs validate` reports findings in the declared content. It does not connect to the
-source or the destination.
+source or the destination. Add `--branch <branch>` to also check the mapping against that
+branch's destination schema and the credentials the worker holds; see
+[Validate a version](./configuration-package.mdx#validate-a-version).
 
 `configs show --version` prints the registered content. Check
 `configuration.destination.settings.branch`:

@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from infrahub_sync.product_store import ProductProjection
-    from infrahub_sync.product_store.models import ConfigurationVersion
+    from infrahub_sync.product_store.configs import RegisteredVersionReference
 
 BEARER = "administrator-bearer-token-0001"
 SOURCE_SETTINGS = "/configuration/source/settings"
@@ -262,7 +262,7 @@ def _register_then_narrow(
     *,
     undeclared: str,
     credential_path: str,
-) -> ConfigurationVersion:
+) -> RegisteredVersionReference:
     """Register while the declaration accepts both settings, then withdraw both from it.
 
     Revalidating a persisted version against the *current* declaration is the product's own
@@ -277,7 +277,7 @@ def _register_then_narrow(
 
 
 def _validate(
-    monkeypatch: pytest.MonkeyPatch, projection: ProductProjection, version: ConfigurationVersion
+    monkeypatch: pytest.MonkeyPatch, projection: ProductProjection, version: RegisteredVersionReference
 ) -> dict[str, Any]:
     """Drive the real serialized validation response for the one registered version."""
     monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": BEARER, "administrator": True}}))

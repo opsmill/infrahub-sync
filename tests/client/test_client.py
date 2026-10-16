@@ -708,3 +708,37 @@ def test_a_plan_changed_refusal_is_a_typed_api_error() -> None:
     with pytest.raises(APIError) as raised:
         client.plan_kept("run-1", expected_checksum="b" * 64)
     assert raised.value.code == "plan-changed"
+
+
+def test_validate_config_sends_the_branch_only_when_given() -> None:
+    requests: list[httpx.Request] = []
+    report = {
+        "config_id": "cfg",
+        "registry_version": 1,
+        "package_checksum": "a" * 64,
+        "destination_schema_fingerprint": None,
+        "findings": [],
+        "offset": 0,
+        "limit": 256,
+        "total_findings": 0,
+        "next_offset": None,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/version":
+            return httpx.Response(200, json=_version())
+        return httpx.Response(200, json=report)
+
+    client = SyncClient("https://example.test", TOKEN, transport=httpx.MockTransport(handler))
+    client.validate_config("cfg", 1)
+    client.validate_config("cfg", 1, branch="netbox-import")
+
+    validated = [request.url.raw_path.decode() for request in requests if request.url.path.endswith("/validate")]
+    assert validated == [
+        "/configs/cfg/versions/1/validate?offset=0&limit=256",
+        "/configs/cfg/versions/1/validate?offset=0&limit=256&branch=netbox-import",
+    ]
+    with pytest.raises(ClientInputError) as raised:
+        client.validate_config("cfg", 1, branch="")
+    assert raised.value.argument == "branch"

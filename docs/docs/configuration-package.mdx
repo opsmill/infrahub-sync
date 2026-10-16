@@ -104,10 +104,11 @@ infrahub-sync configs version <config-id> package.yml --reason "update the devic
 - Each run names one registered version by `config_id` and version number. No run command
   takes a file path.
 
-Both commands print the version's `config_id`, `registry_version`, `package_checksum`,
-`created_at`, and `declared_content`. `configs version` also prints `created`. It is `false`
-when the submitted content matches an existing version of that configuration. In that case
-the command prints the existing version and stores nothing.
+Both commands print the version's `config_id`, `registry_version`, `package_checksum`, and
+`created_at`. `configs version` also prints `created`. It is `false` when the submitted
+content matches an existing version of that configuration. In that case the command prints
+the existing version and stores nothing. To read the registered content, run
+`configs show <config-id> --version <version>`.
 
 ### When registration fails
 
@@ -134,6 +135,32 @@ infrahub-sync configs validate <config-id> <version>
 
 The check reads only the declared content. It does not connect to the source or the
 destination, so it does not test URLs, tokens, or the destination schema.
+
+### Check against the destination schema and the worker credentials
+
+Pass `--branch` to check the version against the schema of an Infrahub branch before you
+start a run:
+
+```bash
+infrahub-sync configs validate <config-id> <version> --branch <branch>
+```
+
+The Sync API reads the destination schema of that branch, unless the package declares
+`destination.settings.branch`, which a run uses too. It then reports:
+
+- each mapped kind, attribute or relationship that the schema does not declare
+  (`destination-schema-mismatch`)
+- identifiers that cannot key a create, by the rule the plan applies: when every
+  human-friendly-ID component of a kind can be written, the identifiers must name all of
+  them (`destination-schema-mismatch`)
+- each literal `static` value of a Dropdown attribute that is not one of its choices
+  (`destination-dropdown-value-not-in-choices`)
+- each credential variable that the worker does not hold (`credential-not-set-in-worker`).
+  The finding names the variable and never shows a value.
+
+Each worker publishes the names of its set credential variables when it starts and on each
+poll. When no worker has published them in the last 90 seconds, the check reports the
+warning `worker-environment-unknown` and does not compare the credentials.
 
 Each finding has a `code`, a `severity` of `error` or `warning`, a `location` in the package
 as a JSON Pointer, and a message. The codes are listed in

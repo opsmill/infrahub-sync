@@ -509,6 +509,52 @@ def test_the_wrapper_and_the_core_never_call_a_schema_accessor(monkeypatch: pyte
     assert accessor.calls == []
 
 
+# --- Spec 009 FR-032: a literal Dropdown value is one of the attribute's choices ------------
+
+
+def _dropdown_snapshot() -> dict[str, Any]:
+    snapshot = copy.deepcopy(_SNAPSHOT)
+    snapshot["InfraDevice"]["attributes"]["status"] = {
+        **_attribute("Dropdown"),
+        "choices": ["active", "maintenance", "provisioning"],
+    }
+    return snapshot
+
+
+@pytest.mark.parametrize(
+    ("static", "expected"),
+    [
+        pytest.param(
+            "planned",
+            [("destination-dropdown-value-not-in-choices", "/configuration/schema_mapping/0/fields/1/static")],
+            id="outside-the-choices",
+        ),
+        pytest.param("active", [], id="one-of-the-choices"),
+    ],
+)
+def test_a_literal_dropdown_value_outside_the_choices_is_an_error_finding(
+    monkeypatch: pytest.MonkeyPatch, static: str, expected: list[tuple[str, str]]
+) -> None:
+    _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(_dropdown_snapshot())))
+    data = _mapping_package_data([{"name": "name", "mapping": "name"}, {"name": "status", "static": static}])
+
+    findings = collect_destination_schema_findings(package(data)).findings
+
+    assert _codes_and_locations(findings) == expected
+    for finding in findings:
+        assert finding.severity == "error"
+        assert "'planned'" in finding.message
+        assert "active, maintenance, provisioning" in finding.message
+
+
+def test_a_mapped_dropdown_value_is_left_to_the_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Only a literal `static` value can be judged before a run; a mapped value comes from the source.
+    _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(_dropdown_snapshot())))
+    data = _mapping_package_data([{"name": "name", "mapping": "name"}, {"name": "status", "mapping": "status"}])
+
+    assert collect_destination_schema_findings(package(data)).findings == ()
+
+
 # --- AR8: the schema module's own exact-set and reachability tests ---------------------
 
 
@@ -524,6 +570,8 @@ FROZEN_SCHEMA_CODES = frozenset(
         "destination-schema-read-failed",
         # The closed-domain family: a snapshot the shared runtime domain refuses.
         "destination-schema-unsupported-semantics",
+        # Spec 009 FR-032: a literal Dropdown value outside the attribute's choices.
+        "destination-dropdown-value-not-in-choices",
     }
 )
 
@@ -569,6 +617,11 @@ def test_every_frozen_schema_code_is_reachable_and_nothing_else_is_emitted(
 
     _inject(monkeypatch, _table_with_accessor(_SpiedAccessor()))
     for finding in collect_destination_schema_findings(package(_mapping_package_data(kind="NopeKind"))).findings:
+        reached.add(finding.code)
+        severities.add(finding.severity)
+    _inject(monkeypatch, _table_with_accessor(_SpiedAccessor(_dropdown_snapshot())))
+    dropdown = _mapping_package_data([{"name": "name", "mapping": "name"}, {"name": "status", "static": "planned"}])
+    for finding in collect_destination_schema_findings(package(dropdown)).findings:
         reached.add(finding.code)
         severities.add(finding.severity)
     _inject(monkeypatch, _table_with_accessor(_raising_accessor("timeout")))

@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from infrahub_sync.configuration import schema_validation
+from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
+from infrahub_sync.configuration.schema_validation import collect_destination_schema_findings
 from infrahub_sync.plan.derive import warn_missing_convergence_key
 from infrahub_sync.plan.errors import UnkeyedCreateRefusedError
 from infrahub_sync.plan.identity import canonical_identity, operation_id
-from infrahub_sync.plan.keying import unkeyed_create_reason, writable_convergence_reason
+from infrahub_sync.plan.keying import refuse_unkeyed_create, unkeyed_create_reason, writable_convergence_reason
 from infrahub_sync.plan.models import PlannedOperation
+from infrahub_sync.runtime_schema import normalize_destination_schema
+from tests.configuration.validation_packages import package, package_data
 
 
 def _node(*, constraint: list[str] | None = None) -> SimpleNamespace:
@@ -160,6 +166,99 @@ def test_relationship_crossing_key_checks_the_peer_attribute() -> None:
     )
     assert early_reason is not None
     assert "owner__rule_id__value" in early_reason
+
+
+def _keyed_kind(
+    *, hfid: list[str], constraints: list[list[str]], read_only: frozenset[str] = frozenset()
+) -> dict[str, Any]:
+    def attribute(name: str) -> dict[str, Any]:
+        return {
+            "kind": "Text",
+            "optional": True,
+            "default_value": None,
+            "unique": False,
+            "read_only": name in read_only,
+        }
+
+    return {
+        "InfraDevice": {
+            "human_friendly_id": hfid,
+            "uniqueness_constraints": constraints,
+            "attributes": {name: attribute(name) for name in ("name", "serial")},
+            "relationships": {},
+        }
+    }
+
+
+# FR-034 (SYNC-147): each case is one destination kind and the fields a mapping selects as
+# its identity. The plan and validation must give the same answer for every case.
+_KEYABILITY_CASES = [
+    pytest.param(_keyed_kind(hfid=["name__value"], constraints=[["name__value"]]), ["name"], id="hfid-selected"),
+    pytest.param(
+        _keyed_kind(hfid=["name__value"], constraints=[["serial__value"]]),
+        ["serial"],
+        id="writable-hfid-not-selected-but-a-constraint-is",
+    ),
+    pytest.param(
+        _keyed_kind(hfid=["name__value"], constraints=[["serial__value"]], read_only=frozenset({"name"})),
+        ["serial"],
+        id="read-only-hfid-and-a-selected-constraint",
+    ),
+    pytest.param(
+        _keyed_kind(hfid=["name__value"], constraints=[], read_only=frozenset({"name"})),
+        ["name"],
+        id="read-only-hfid-only",
+    ),
+    pytest.param(_keyed_kind(hfid=[], constraints=[]), ["name"], id="no-declared-key"),
+    pytest.param(_keyed_kind(hfid=[], constraints=[["serial__value"]]), ["serial"], id="selected-constraint-no-hfid"),
+    pytest.param(
+        _keyed_kind(hfid=[], constraints=[["name__value", "serial__value"]]),
+        ["name"],
+        id="partly-selected-constraint",
+    ),
+]
+
+
+@pytest.mark.parametrize(("snapshot", "identifiers"), _KEYABILITY_CASES)
+def test_the_plan_and_validation_agree_on_whether_a_kind_can_be_created(
+    monkeypatch: pytest.MonkeyPatch, snapshot: dict[str, Any], identifiers: list[str]
+) -> None:
+    node = normalize_destination_schema(snapshot).kinds["InfraDevice"]
+    identity = {field: f"{field}-1" for field in identifiers}
+    key = canonical_identity(identity, kind="InfraDevice")
+    operation = PlannedOperation(
+        operation_id=operation_id("create", "InfraDevice", key),
+        action="create",
+        kind="InfraDevice",
+        identity=key,
+        tier=0,
+        payload=dict(identity),
+        relationships=None,
+        destination_id=None,
+    )
+    try:
+        refuse_unkeyed_create(operation, node=node, schemas={"InfraDevice": node})
+    except UnkeyedCreateRefusedError:
+        plan_refuses = True
+    else:
+        plan_refuses = False
+
+    table = dict(BUILTIN_ADAPTER_CAPABILITIES)
+    table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=lambda _package, _branch: snapshot)
+    monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
+    content = package_data()
+    content["configuration"]["schema_mapping"] = [
+        {
+            "name": "InfraDevice",
+            "mapping": "dcim.devices",
+            "identifiers": identifiers,
+            "fields": [{"name": field, "mapping": field} for field in identifiers],
+        }
+    ]
+    findings = collect_destination_schema_findings(package(content)).findings
+    validation_refuses = any(finding.location == "/configuration/schema_mapping/0/identifiers" for finding in findings)
+
+    assert validation_refuses == plan_refuses
 
 
 @pytest.mark.parametrize("component", ["owner", "owner__hostname__value"])

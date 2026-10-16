@@ -356,6 +356,54 @@ def _usable(value: Any) -> bool:
     return is_usable_component_value(value)
 
 
+def _keys_on_human_friendly_id(
+    node: Any,
+    schemas: Mapping[str, Any] | None,
+    identity: Mapping[str, Any] | None = None,
+    references: Mapping[str, Mapping[str, str]] | None = None,
+) -> bool:
+    """Whether the destination matches a create of this kind on its human-friendly ID.
+
+    That is the case when the kind declares one and a write can set every component of it.
+    """
+    human_friendly_id = list(getattr(node, "human_friendly_id", None) or ())
+    return bool(human_friendly_id) and all(
+        _writable_component(component, node, schemas, identity, references) for component in human_friendly_id
+    )
+
+
+def create_key_reason(
+    *,
+    node: Any,
+    fields: Collection[str],
+    schemas: Mapping[str, Any] | None = None,
+    identity: Mapping[str, Any] | None = None,
+    references: Mapping[str, Mapping[str, str]] | None = None,
+) -> str | None:
+    """Why a create keyed on `fields` cannot be matched by the destination, from the schema alone.
+
+    The one rule the plan's create check and configuration validation share (FR-034,
+    SYNC-147), so that a kind validation accepts is never refused by the plan for its key,
+    and the reverse. Values are not asked here: the plan checks them per record.
+
+    A kind whose human-friendly ID can be written is matched on it, so `fields` must name
+    every one of its components. Any other kind needs one human-friendly ID or uniqueness
+    constraint whose components `fields` names and a write can set.
+    """
+    if _keys_on_human_friendly_id(node, schemas, identity, references):
+        human_friendly_id = list(getattr(node, "human_friendly_id", None) or ())
+        uncovered = sorted(component for component in human_friendly_id if _component_field(component) not in fields)
+        if not uncovered:
+            return None
+        return (
+            f"its identity ({', '.join(sorted(fields)) or 'none'}) does not name every "
+            f"human-friendly-ID component of the kind; missing: {', '.join(uncovered)}"
+        )
+    return writable_convergence_reason(
+        node=node, identity_fields=fields, schemas=schemas, identity=identity, references=references
+    )
+
+
 def unkeyed_create_coverage_reason(
     operation: PlannedOperation, *, node: Any, schemas: Mapping[str, Any] | None = None
 ) -> str | None:
@@ -367,7 +415,8 @@ def unkeyed_create_coverage_reason(
     cover a uniqueness constraint the destination will refuse duplicates on?
 
     A component resolvable from the payload but absent from identity still fails, because
-    identity is what the plan proves the write on and what a reviewer reads.
+    identity is what the plan proves the write on and what a reviewer reads. The part that
+    depends on the schema only is `create_key_reason`, which configuration validation calls too.
 
     Value presence is deliberately **not** asked here. At the write surface that is AD051's
     question, asked of the assembled write and answered per component
@@ -376,6 +425,9 @@ def unkeyed_create_coverage_reason(
     `unkeyed_create_value_reason` below.
     """
     identity = operation.identity
+    reason = create_key_reason(node=node, fields=identity, schemas=schemas, identity=identity)
+    if reason is not None or _keys_on_human_friendly_id(node, schemas, identity):
+        return reason
     if any(
         not _writable_component(component, node, schemas, identity)
         for key in [
@@ -384,17 +436,10 @@ def unkeyed_create_coverage_reason(
         ]
         for component in key
     ):
-        return writable_convergence_reason(node=node, identity_fields=identity, schemas=schemas, identity=identity)
-    human_friendly_id = list(getattr(node, "human_friendly_id", None) or ())
-    if human_friendly_id:
-        uncovered = sorted(component for component in human_friendly_id if _component_field(component) not in identity)
-        if uncovered:
-            return (
-                f"its identity ({', '.join(sorted(identity)) or 'none'}) does not name every "
-                f"human-friendly-ID component of the kind; missing: {', '.join(uncovered)}"
-            )
         return None
 
+    # Every component can be written and the kind declares no human-friendly ID, so the
+    # destination matches on a uniqueness constraint: one must carry a usable value throughout.
     constraints = [list(constraint) for constraint in (getattr(node, "uniqueness_constraints", None) or [])]
     for constraint in constraints:
         if all(
@@ -402,15 +447,10 @@ def unkeyed_create_coverage_reason(
             for component in constraint
         ):
             return None
-    if constraints:
-        declared = "; ".join(", ".join(constraint) for constraint in constraints)
-        return (
-            f"the kind declares no human-friendly ID, and its identity "
-            f"({', '.join(sorted(identity)) or 'none'}) covers none of its uniqueness constraints ({declared})"
-        )
+    declared = "; ".join(", ".join(constraint) for constraint in constraints)
     return (
-        "the kind declares neither a human-friendly ID nor a uniqueness constraint, so the destination "
-        "cannot match the object and every write would add another"
+        f"the kind declares no human-friendly ID, and its identity "
+        f"({', '.join(sorted(identity)) or 'none'}) covers none of its uniqueness constraints ({declared})"
     )
 
 

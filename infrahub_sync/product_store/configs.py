@@ -24,6 +24,7 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, ParamSpec, TypeVar
@@ -52,6 +53,7 @@ from infrahub_sync.configuration.schema_validation import (
 )
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
 from infrahub_sync.configuration.validation import _CODE_UNSUPPORTED_SYNC_STORE, _location_digest
+from infrahub_sync.configuration.worker_credentials import collect_worker_credential_findings
 from infrahub_sync.execution import REDACTED, json_string_forms, redact, redaction_order
 from infrahub_sync.product_store.store import (
     ConfigurationNotFoundError,
@@ -503,18 +505,43 @@ def describe(error: ConfigsError, secrets: Sequence[str]) -> str:
 
 
 @dataclass(frozen=True, slots=True)
+class RegisteredVersionReference:
+    """One registered version, identified by its checksum and without its package content.
+
+    A registration response is stored and replayed with collected values replaced, so
+    package content in it could differ from the content the checksum covers (FR-035,
+    SYNC-107). `get_version` returns the content.
+    """
+
+    config_id: str
+    registry_version: int
+    package_checksum: str
+    created_at: datetime
+
+    @classmethod
+    def of(cls, version: ConfigurationVersion) -> RegisteredVersionReference:
+        """Return the reference to one stored version."""
+        return cls(
+            config_id=version.config_id,
+            registry_version=version.registry_version,
+            package_checksum=version.package_checksum,
+            created_at=version.created_at,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class RegisteredConfiguration:
     """A newly registered configuration together with its first version."""
 
     configuration: ConfigurationSummary
-    version: ConfigurationVersion
+    version: RegisteredVersionReference
 
 
 @dataclass(frozen=True, slots=True)
 class RegisteredVersion:
     """One configuration version, and whether this call is what created it."""
 
-    version: ConfigurationVersion
+    version: RegisteredVersionReference
     created: bool
 
 
@@ -759,7 +786,7 @@ def register(
     if summary is None:
         msg = f"configuration {version.config_id!r} was registered but cannot be read back"
         raise ConfigsStorageError(msg)
-    return RegisteredConfiguration(configuration=summary, version=version)
+    return RegisteredConfiguration(configuration=summary, version=RegisteredVersionReference.of(version))
 
 
 @_service_boundary
@@ -785,7 +812,7 @@ def create_version(
         raise ConfigsNotFoundError(str(exc)) from None
     except ConfigurationVersionAllocationError as exc:
         raise ConfigsStorageError(str(exc)) from None
-    return RegisteredVersion(version=version, created=created)
+    return RegisteredVersion(version=RegisteredVersionReference.of(version), created=created)
 
 
 @_service_boundary
@@ -867,6 +894,7 @@ def validate(
     projection: ProductProjection,
     destination_schema: DestinationSchemaOptions | None = None,
     secrets: Sequence[str] = (),
+    live_worker_since: datetime | None = None,
 ) -> ValidationReport:
     """Report every declared defect in one registered version, in contract order.
 
@@ -884,11 +912,17 @@ def validate(
     schema checks, merges their findings under the same ``sort_findings`` contract, and
     records the judged snapshot's fingerprint. The caller supplies the durable-store
     :class:`ProductProjection` through ``projection``.
+
+    ``live_worker_since`` adds the worker credential check: the most recent credential
+    variable names a worker published at or after that time are compared with the
+    package's credential declarations. ``None`` — the default — reads no worker record.
     """
     _require_argument_type(config_id, name="config_id", expected=str)
     _require_registry_version(registry_version)
     if destination_schema is not None:
         _require_argument_type(destination_schema, name="destination_schema", expected=DestinationSchemaOptions)
+    if live_worker_since is not None:
+        _require_argument_type(live_worker_since, name="live_worker_since", expected=datetime)
     lookup = projection.lookup_configuration_version(config_id, registry_version)
     stored = lookup.value
     if stored is None:
@@ -898,9 +932,13 @@ def validate(
     findings = collect_findings(parsed, secrets)
     fingerprint: str | None = None
     if destination_schema is not None:
-        schema_validation = collect_destination_schema_findings(parsed)
+        schema_validation = collect_destination_schema_findings(parsed, destination_schema)
         findings = sort_findings((*findings, *schema_validation.findings))
         fingerprint = schema_validation.schema_fingerprint
+    if live_worker_since is not None:
+        environment = projection.latest_worker_environment(observed_after=live_worker_since)
+        worker_names = None if environment is None else environment.credential_names
+        findings = sort_findings((*findings, *collect_worker_credential_findings(parsed, worker_names)))
     return ValidationReport(
         config_id=stored.config_id,
         registry_version=stored.registry_version,

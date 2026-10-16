@@ -1236,3 +1236,190 @@ def test_build_app_validates_complete_liveness_policy_before_constructing_depend
         )
 
     assert constructed == []
+
+
+# --- Spec 009 FR-032/FR-033: `validate?branch=` reaches the destination schema and the worker -----
+
+_NETBOX_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_NETBOX_TOKEN"
+_INFRAHUB_VARIABLE = "INFRAHUB_SYNC_CREDENTIAL_INFRAHUB_API_TOKEN"
+_CREDENTIAL_CANARY = "netbox-credential-value-canary-0009"
+
+
+def _branch_snapshot() -> dict[str, object]:
+    def attribute(kind: str = "Text", **extra: object) -> dict[str, object]:
+        return {"kind": kind, "optional": True, "default_value": None, "unique": False, **extra}
+
+    return {
+        "InfraDevice": {
+            "human_friendly_id": ["name__value"],
+            "uniqueness_constraints": [["name__value"]],
+            "attributes": {
+                "name": attribute(unique=True),
+                "status": attribute("Dropdown", choices=["active", "maintenance"]),
+            },
+            "relationships": {},
+        }
+    }
+
+
+def _branch_package() -> dict[str, object]:
+    data = package_data()
+    data["configuration"]["schema_mapping"] = [
+        {
+            "name": "InfraDevice",
+            "mapping": "dcim.devices",
+            "fields": [
+                {"name": "name", "mapping": "name"},
+                {"name": "status", "static": "planned"},
+                {"name": "serial", "mapping": "serial"},
+            ],
+        }
+    ]
+    return data
+
+
+def _branch_client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, branches: list[str]
+) -> tuple[TestClient, ProductProjection, str]:
+    from dataclasses import replace
+
+    from infrahub_sync.configuration import schema_validation
+    from infrahub_sync.configuration.capabilities import BUILTIN_ADAPTER_CAPABILITIES
+
+    def accessor(_package: object, branch: str) -> dict[str, object]:
+        branches.append(branch)
+        return _branch_snapshot()
+
+    table = dict(BUILTIN_ADAPTER_CAPABILITIES)
+    table["infrahub"] = replace(table["infrahub"], destination_schema_accessor=accessor)
+    monkeypatch.setattr(schema_validation, "BUILTIN_ADAPTER_CAPABILITIES", table)
+    monkeypatch.setenv(_NETBOX_VARIABLE, _CREDENTIAL_CANARY)
+    monkeypatch.setenv(PRINCIPALS_ENV, json.dumps({"admin": {"token": ADMIN_TOKEN, "administrator": True}}))
+    resolver = EnvironmentPrincipalResolver.from_environment()
+    projection = local_product_projection(tmp_path)
+    client = TestClient(
+        create_app(
+            RunService(projection, _Orchestration(), secrets=resolver.secret_values),
+            resolver,
+            ConfigurationRoutes(product_projection=projection, secrets=resolver.secret_values),
+        )
+    )
+    registered = client.post(
+        "/configs",
+        headers={"Authorization": f"Bearer {ADMIN_TOKEN}", "Idempotency-Key": "register-branch"},
+        json={"package": _branch_package(), "reason": "register"},
+    )
+    assert registered.status_code == 201, registered.text
+    return client, projection, registered.json()["configuration"]["config_id"]
+
+
+def _publish_worker(projection: ProductProjection, names: tuple[str, ...]) -> None:
+    from datetime import timezone
+
+    from infrahub_sync.product_store import WorkerEnvironment
+
+    projection.record_worker_environment(
+        WorkerEnvironment(worker_id="worker-1", credential_names=names, observed_at=datetime.now(timezone.utc))
+    )
+
+
+def _codes(response_json: dict[str, object]) -> list[tuple[str, str]]:
+    findings = cast("list[dict[str, str]]", response_json["findings"])
+    return [(finding["code"], finding["severity"]) for finding in findings]
+
+
+def test_validate_without_a_branch_reads_no_schema_and_no_worker_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    branches: list[str] = []
+    client, _projection, config_id = _branch_client(tmp_path, monkeypatch, branches)
+
+    response = client.post(
+        f"/configs/{config_id}/versions/1/validate", headers={"Authorization": f"Bearer {ADMIN_TOKEN}"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert branches == []
+    assert response.json()["findings"] == []
+    assert response.json()["destination_schema_fingerprint"] is None
+
+
+def test_validate_with_a_branch_reports_schema_dropdown_and_unset_worker_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    branches: list[str] = []
+    client, projection, config_id = _branch_client(tmp_path, monkeypatch, branches)
+    _publish_worker(projection, (_INFRAHUB_VARIABLE,))
+
+    response = client.post(
+        f"/configs/{config_id}/versions/1/validate?branch=netbox-import",
+        headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert branches == ["netbox-import"]
+    body = response.json()
+    codes = _codes(body)
+    assert ("destination-schema-mismatch", "error") in codes
+    assert ("destination-dropdown-value-not-in-choices", "error") in codes
+    assert ("credential-not-set-in-worker", "error") in codes
+    assert ("worker-environment-unknown", "warning") not in codes
+    unset = [finding for finding in body["findings"] if finding["code"] == "credential-not-set-in-worker"]
+    assert len(unset) == 1
+    assert _NETBOX_VARIABLE in unset[0]["message"]
+    assert unset[0]["location"] == "/credentials/netbox-token"
+    assert _CREDENTIAL_CANARY not in response.text
+    assert body["destination_schema_fingerprint"] is not None
+
+
+def test_validate_with_a_branch_warns_when_no_live_worker_has_a_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    branches: list[str] = []
+    client, _projection, config_id = _branch_client(tmp_path, monkeypatch, branches)
+
+    response = client.post(
+        f"/configs/{config_id}/versions/1/validate?branch=main", headers={"Authorization": f"Bearer {ADMIN_TOKEN}"}
+    )
+
+    assert response.status_code == 200, response.text
+    codes = _codes(response.json())
+    assert ("worker-environment-unknown", "warning") in codes
+    assert all(code != "credential-not-set-in-worker" for code, _severity in codes)
+
+
+def test_validate_with_a_branch_ignores_a_stale_worker_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta, timezone
+
+    from infrahub_sync.product_store import WorkerEnvironment
+
+    branches: list[str] = []
+    client, projection, config_id = _branch_client(tmp_path, monkeypatch, branches)
+    projection.record_worker_environment(
+        WorkerEnvironment(
+            worker_id="worker-1",
+            credential_names=(_INFRAHUB_VARIABLE, _NETBOX_VARIABLE),
+            observed_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        )
+    )
+
+    response = client.post(
+        f"/configs/{config_id}/versions/1/validate?branch=main", headers={"Authorization": f"Bearer {ADMIN_TOKEN}"}
+    )
+
+    assert ("worker-environment-unknown", "warning") in _codes(response.json())
+
+
+@pytest.mark.parametrize("branch", ["", "x" * 251])
+def test_validate_refuses_an_unusable_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, branch: str) -> None:
+    branches: list[str] = []
+    client, _projection, config_id = _branch_client(tmp_path, monkeypatch, branches)
+
+    response = client.post(
+        f"/configs/{config_id}/versions/1/validate",
+        params={"branch": branch},
+        headers={"Authorization": f"Bearer {ADMIN_TOKEN}"},
+    )
+
+    assert response.status_code == 422
+    assert branches == []

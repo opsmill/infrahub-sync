@@ -38,6 +38,7 @@ from infrahub_sync.client import (
     PublicExecutionLink,
     PublicRunResource,
     RegisteredConfigurationResource,
+    RegisteredVersionReferenceResource,
     RegisteredVersionResource,
     ResultsResource,
     RunFailureCauseResource,
@@ -67,6 +68,12 @@ def _version(version: int = 1) -> ConfigurationVersionResource:
         package_checksum=CHECKSUM,
         declared_content={"name": "edge-sync"},
         created_at=NOW,
+    )
+
+
+def _version_reference(version: int = 1) -> RegisteredVersionReferenceResource:
+    return RegisteredVersionReferenceResource(
+        config_id="edge-sync", registry_version=version, package_checksum=CHECKSUM, created_at=NOW
     )
 
 
@@ -163,9 +170,9 @@ def client() -> MagicMock:
     injected.get_config_version.return_value = _version()
     injected.register_config.return_value = RegisteredConfigurationResource(
         configuration=ConfigurationSummaryResource(config_id="edge-sync", created_at=NOW),
-        version=_version(),
+        version=_version_reference(),
     )
-    injected.create_config_version.return_value = RegisteredVersionResource(version=_version(2), created=True)
+    injected.create_config_version.return_value = RegisteredVersionResource(version=_version_reference(2), created=True)
     injected.validate_config.return_value = ValidationReportResource(
         config_id="edge-sync",
         registry_version=1,
@@ -232,6 +239,7 @@ def test_configs_register_reads_one_package_and_preserves_identity(client: Magic
     assert "config_id: edge-sync" in result.output
     assert "registry_version: 1" in result.output
     assert f"package_checksum: {CHECKSUM}" in result.output
+    assert "declared_content" not in result.output
     assert "idempotency_key: retry-register" in result.output
 
 
@@ -262,13 +270,21 @@ def test_configuration_reads_and_validation_keep_machine_fields_and_finding_orde
     client.get_config.assert_called_once_with("edge-sync")
     client.get_config_version.assert_called_once_with("edge-sync", 1)
     client.list_config_versions.assert_called_once_with("edge-sync")
-    client.validate_config.assert_called_once_with("edge-sync", 1, offset=2, limit=3)
+    client.validate_config.assert_called_once_with("edge-sync", 1, offset=2, limit=3, branch=None)
     assert f"package_checksum: {CHECKSUM}" in shown.output
     assert "offset: 2" in validated.output
     assert "limit: 3" in validated.output
     assert "total_findings: 7" in validated.output
     assert "next_offset: 5" in validated.output
     assert validated.output.index("first finding") < validated.output.index("second finding")
+
+
+def test_configs_validate_passes_the_branch_to_the_sync_api(client: MagicMock) -> None:
+    result = _invoke(client, "configs", "validate", "edge-sync", "1", "--branch", "netbox-import")
+
+    assert result.exit_code == 0, result.output
+    client.validate_config.assert_called_once_with("edge-sync", 1, offset=0, limit=256, branch="netbox-import")
+    assert result.output.index("first finding") < result.output.index("second finding")
 
 
 def test_diff_uses_registered_tuple_waits_and_renders_service_plan(client: MagicMock) -> None:

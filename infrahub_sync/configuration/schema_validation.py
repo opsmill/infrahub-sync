@@ -1,7 +1,7 @@
 """Destination schema validation — the explicit opt-in checks outside the declared-content core.
 
 The declared-content core (``validation.py``) judges declared content only and stays
-untouched; this module owns the schema-path checks and their finding codes. Four error
+untouched; this module owns the schema-path checks and their finding codes. Five error
 families live here, each behind its own ``_CODE_`` constant and frozen by this module's
 own exact-set and reachability tests:
 
@@ -20,6 +20,8 @@ own exact-set and reachability tests:
 * the closed-domain family — a snapshot the accessor delivered but the shared runtime
   schema domain refuses. Registered execution refuses the same snapshot, so validation
   reports the same defect rather than silently withholding the fingerprint;
+* the Dropdown literal family (spec 009 FR-032) — a literal ``static`` value of a mapped
+  Dropdown attribute that is not one of the attribute's choices;
 * the schema-read-failure family — a schema read the accessor reports as failed becomes a
   typed error finding rather than a generic service-boundary refusal. The bundled accessor
   classifies SDK-raised errors, HTTP transport and status failures, an unresolvable declared
@@ -37,10 +39,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from infrahub_sync import requested_destination_write_operations
-from infrahub_sync.plan.keying import writable_convergence_reason
+from infrahub_sync.generator import get_identifiers
+from infrahub_sync.plan.keying import create_key_reason
 from infrahub_sync.runtime_schema import (
     UnsupportedSchemaSemanticsError,
     compute_consumed_schema_fingerprint,
@@ -53,12 +56,17 @@ from .runtime import effective_destination_branch
 from .validation import _finding_message
 
 if TYPE_CHECKING:
+    from infrahub_sdk.schema import NodeSchema
+
+    from infrahub_sync.runtime_schema import DestinationSchemaSnapshot
+
     from .models import ConfigurationPackage
 
 _CODE_DESTINATION_SCHEMA_MISMATCH = "destination-schema-mismatch"
 _CODE_DESTINATION_SCHEMA_READ_FAILED = "destination-schema-read-failed"
 _CODE_DESTINATION_SCHEMA_UNSUPPORTED_SEMANTICS = "destination-schema-unsupported-semantics"
 _CODE_DESTINATION_SCHEMA_VALIDATION_UNSUPPORTED = "destination-schema-validation-unsupported"
+_CODE_DESTINATION_DROPDOWN_VALUE_NOT_IN_CHOICES = "destination-dropdown-value-not-in-choices"
 _CODE_UNSUPPORTED_DESTINATION_WRITE = "unsupported-destination-write"
 
 _DESTINATION_LOCATION = "/configuration/destination"
@@ -70,9 +78,11 @@ class DestinationSchemaOptions:
     """Explicit request for destination schema validation on ``validate``.
 
     Presence is the opt-in: ``None`` on the operation keeps today's declared-content-only
-    behavior byte-identical, with zero schema reads. No options exist yet; the type is the
-    extension point later units add to.
+    behavior byte-identical, with zero schema reads. ``branch`` names the Infrahub branch
+    whose schema is read; ``None`` reads the declared branch, or ``main``.
     """
+
+    branch: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,14 +100,14 @@ class DestinationSchemaValidation:
     schema_fingerprint: str | None
 
 
-def resolve_declared_destination_branch(package: ConfigurationPackage) -> str:
+def resolve_declared_destination_branch(package: ConfigurationPackage, branch: str | None = None) -> str:
     """Resolve the destination branch validation reads, through the shared rule.
 
-    Validation judges declared content and has no run request, so it passes no run
-    branch: the result is the declared branch or ``"main"``. Execution calls the same
-    resolver with the run's branch.
+    ``branch`` is the branch the team names on the request, resolved the way execution
+    resolves a run's branch: a declared ``destination.settings.branch`` comes first, then
+    ``branch``, then ``"main"``.
     """
-    return effective_destination_branch(package.configuration.destination.settings, None)
+    return effective_destination_branch(package.configuration.destination.settings, branch)
 
 
 def _finding(*, code: str, location: str, message: str) -> ValidationFinding:
@@ -180,7 +190,38 @@ def _schema_content_findings(
     return findings
 
 
-def collect_destination_schema_findings(package: ConfigurationPackage) -> DestinationSchemaValidation:
+def _dropdown_findings(package: ConfigurationPackage, normalized: DestinationSchemaSnapshot) -> list[ValidationFinding]:
+    """Report each literal ``static`` value of a mapped Dropdown attribute that is not a choice.
+
+    A value mapped from the source is checked by the plan, record by record. A kind or
+    field the snapshot does not declare is reported by the mismatch checks instead.
+    """
+    findings: list[ValidationFinding] = []
+    for index, mapping in enumerate(package.configuration.schema_mapping):
+        node = normalized.kinds.get(mapping.name)
+        if node is None:
+            continue
+        choices_by_name = {attribute.name: attribute.choices for attribute in node.attributes}
+        for field_index, field in enumerate(mapping.fields or ()):
+            choices = choices_by_name.get(field.name)
+            if choices is None or not isinstance(field.static, str) or field.static in choices:
+                continue
+            findings.append(
+                _finding(
+                    code=_CODE_DESTINATION_DROPDOWN_VALUE_NOT_IN_CHOICES,
+                    location=f"/configuration/schema_mapping/{index}/fields/{field_index}/static",
+                    message=(
+                        f"{mapping.name} {field.name}: {field.static!r} is not one of the choices of the "
+                        f"Dropdown attribute: {', '.join(choices)}"
+                    ),
+                )
+            )
+    return findings
+
+
+def collect_destination_schema_findings(
+    package: ConfigurationPackage, options: DestinationSchemaOptions | None = None
+) -> DestinationSchemaValidation:
     """Run every destination schema check for one explicit opt-in request.
 
     Accumulating and total over declared defects: a non-declaring destination, a failed
@@ -220,7 +261,7 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
             )
         )
     else:
-        branch = resolve_declared_destination_branch(package)
+        branch = resolve_declared_destination_branch(package, None if options is None else options.branch)
         try:
             snapshot = accessor(package, branch)
         except DestinationSchemaReadError as exc:
@@ -247,11 +288,13 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
                     node = normalized.kinds.get(mapping.name)
                     if node is None:
                         continue
+                    # The plan keys each create on the fields the generator selects as identifiers,
+                    # so validation judges the same fields through the same rule (FR-034).
                     mapped_fields = {field.name for field in mapping.fields or ()}
-                    reason = writable_convergence_reason(
+                    identifiers = get_identifiers(node=cast("NodeSchema", node), config=package.configuration) or ()
+                    reason = create_key_reason(
                         node=node,
-                        identity_fields=mapped_fields,
-                        mapped_fields=mapped_fields,
+                        fields={field for field in identifiers if field in mapped_fields},
                         schemas=normalized.kinds,
                         references=references,
                     )
@@ -263,6 +306,7 @@ def collect_destination_schema_findings(package: ConfigurationPackage) -> Destin
                                 message=f"destination kind {mapping.name!r}: {reason}",
                             )
                         )
+                findings.extend(_dropdown_findings(package, normalized))
             except UnsupportedSchemaSemanticsError:
                 # The worker refuses this snapshot too, so validation names the same
                 # defect rather than reporting only a missing fingerprint.
