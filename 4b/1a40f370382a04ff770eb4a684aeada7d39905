@@ -1,0 +1,30 @@
+examples/netbox_to_infrahub/package.yml
+  s_47078ea83e766d::t_b13897cdb48a6e 247,266-273,299,318-325
+changelog/+009-netbox-example-device-status.fixed.md
+  s_47078ea83e766d::t_0bd4ffca82995e 1
+dev/specs/009-plan-problem-reporting/tasks.md
+  s_47078ea83e766d::t_a371702aa84ac2 265-272
+examples/netbox_to_infrahub/README.md
+  s_47078ea83e766d::t_dba1437c3b1ed4 64-65
+  s_47078ea83e766d::t_1f614df686eda0 37-63,66-69
+examples/netbox_to_infrahub/config.yml
+  s_47078ea83e766d::t_a3524ac6261185 247,266-273,299,318-325
+tests/test_netbox_example_device_status.py
+  s_47078ea83e766d::t_66bae9f2245041 1-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4b1a40f370382a04ff770eb4a684aeada7d39905",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
