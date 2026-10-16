@@ -29,7 +29,13 @@ The worker opens the connections that matter for a sync: to the source (NetBox, 
 
 On the Compose deployment you do not set these variables yourself. You name a directory of CA certificates in `.env`, and `sync-bootstrap`, `sync-api` and `sync-worker` trust those certificates in addition to the public roots. The trust applies to every connection these services open: to sources, to Infrahub, and to the object store.
 
-1. Put each CA certificate in PEM format in one directory on the host, as a file that ends in `.pem` or `.crt`. Put only CA certificates there: never a private key.
+1. Put each CA certificate in PEM format in one directory on the host, as a file that ends in `.pem` or `.crt`, in any letter case. Put only CA certificates there: never a private key. The services run as user ID 10001, so that user must be able to list the directory and read each file, for example with mode `0755` on the directory and `0644` on the files:
+
+   ```bash
+   chmod 0755 ca-certificates
+   chmod 0644 ca-certificates/*
+   ```
+
 2. In `.env`, set `INFRAHUB_SYNC_CA_CERTIFICATES` to that directory, as an absolute path or a path that starts with `./`:
 
    ```dotenv
@@ -52,6 +58,6 @@ On the Compose deployment you do not set these variables yourself. You name a di
 
 Certificate checks stay on: the CA is added to the trusted roots, and no setting turns verification off. Without `INFRAHUB_SYNC_CA_CERTIFICATES`, the services start as before and trust only the public roots.
 
-If a file in the directory holds a private key, `sync-bootstrap`, `sync-api` and `sync-worker` stop. Their logs name the file, and hold none of its content. A `.pem` or `.crt` file that is not a certificate stops them in the same way. See [Compose troubleshooting](operations/compose-troubleshooting).
+If a file in the directory holds a private key, `sync-bootstrap`, `sync-api` and `sync-worker` stop. Their logs name the file, and hold none of its content. A `.pem` or `.crt` file that is not a certificate stops them in the same way. So does a directory that user ID 10001 cannot list, or a file it cannot read: the log then shows `CA certificate directory cannot be read` or `CA certificate file <file> cannot be read`. See [Compose troubleshooting](operations/compose-troubleshooting).
 
 `verify_ssl: false` turns off verification for the Infrahub destination and for adapters that support that setting. It does not establish trust, so use it only for development.

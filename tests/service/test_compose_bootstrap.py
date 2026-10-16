@@ -74,19 +74,23 @@ class _Store:
     which order, and that a refused setting made none.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- one keyword per provider answer a case sets
         self,
         *,
         head_status: int = 200,
         create_code: str | None = None,
+        create_status: int = 409,
         honours_condition: bool = True,
-        put_failures: dict[int, int] | None = None,
+        put_failures: dict[int, tuple[str, int]] | None = None,
+        delete_failure: tuple[str, int] | None = None,
     ) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
         self._head_status = head_status
         self._create_code = create_code
+        self._create_status = create_status
         self._honours_condition = honours_condition
         self._put_failures = put_failures or {}
+        self._delete_failure = delete_failure
         self._objects: set[str] = set()
         self._puts = 0
 
@@ -99,14 +103,14 @@ class _Store:
     def create_bucket(self, **request: object) -> None:
         self.calls.append(("CreateBucket", request))
         if self._create_code is not None:
-            raise ClientError(_error(self._create_code, 409), "CreateBucket")
+            raise ClientError(_error(self._create_code, self._create_status), "CreateBucket")
 
     def put_object(self, **request: object) -> None:
         self.calls.append(("PutObject", request))
         self._puts += 1
         if self._puts in self._put_failures:
-            status = self._put_failures[self._puts]
-            raise ClientError(_error("InternalError", status), "PutObject")
+            code, status = self._put_failures[self._puts]
+            raise ClientError(_error(code, status), "PutObject")
         key = str(request["Key"])
         if self._honours_condition and request.get("IfNoneMatch") == "*" and key in self._objects:
             raise ClientError(_error("PreconditionFailed", 412), "PutObject")
@@ -114,6 +118,9 @@ class _Store:
 
     def delete_object(self, **request: object) -> None:
         self.calls.append(("DeleteObject", request))
+        if self._delete_failure is not None:
+            code, status = self._delete_failure
+            raise ClientError(_error(code, status), "DeleteObject")
         self._objects.discard(str(request["Key"]))
 
     @property
@@ -224,6 +231,66 @@ def test_an_unreachable_store_stops_with_the_unavailable_family() -> None:
     assert ENDPOINT_CANARY not in str(refusal.value)
 
 
+def test_a_bucket_check_redirected_to_another_region_is_unavailable() -> None:
+    """A store answers 301 when the bucket lives in another region than the client's."""
+    client = _Store(head_status=301)
+
+    with pytest.raises(BootstrapError) as refusal:
+        converge_bucket(client, BUCKET)
+
+    assert refusal.value.family == "object-store-unavailable"
+    assert client.requests == ["HeadBucket"]
+
+
+def test_a_bucket_check_error_without_a_status_is_unavailable() -> None:
+    class NoStatus(_Store):
+        def head_bucket(self, **request: object) -> dict[str, Any]:
+            self.calls.append(("HeadBucket", request))
+            raise ClientError({"Error": {"Code": "Unknown", "Message": CREDENTIAL_CANARY}}, "HeadBucket")
+
+    with pytest.raises(BootstrapError) as refusal:
+        converge_bucket(NoStatus(), BUCKET)
+
+    assert refusal.value.family == "object-store-unavailable"
+    assert CREDENTIAL_CANARY not in repr(refusal.value) + str(refusal.value)
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "family"),
+    [
+        ("AccessDenied", 403, "object-store-access-refused"),
+        ("NotImplemented", 501, "object-store-unsupported"),
+        ("InternalError", 500, "object-store-unavailable"),
+    ],
+    ids=["refused", "not implemented", "failed"],
+)
+def test_a_refused_or_failed_bucket_create_stops_with_its_family_only(code: str, status: int, family: str) -> None:
+    """The bucket is absent, and the store refuses or cannot carry out the create."""
+    client = _Store(head_status=404, create_code=code, create_status=status)
+
+    with pytest.raises(BootstrapError) as refusal:
+        converge_bucket(client, BUCKET)
+
+    assert refusal.value.family == family
+    assert client.requests == ["HeadBucket", "CreateBucket"]
+    rendered = repr(refusal.value) + str(refusal.value)
+    assert ENDPOINT_CANARY not in rendered
+    assert CREDENTIAL_CANARY not in rendered
+
+
+def test_an_unreachable_store_during_the_bucket_create_is_unavailable() -> None:
+    class DropsTheCreate(_Store):
+        def create_bucket(self, **request: object) -> None:
+            self.calls.append(("CreateBucket", request))
+            raise EndpointConnectionError(endpoint_url=ENDPOINT_CANARY)
+
+    with pytest.raises(BootstrapError) as refusal:
+        converge_bucket(DropsTheCreate(head_status=404), BUCKET)
+
+    assert refusal.value.family == "object-store-unavailable"
+    assert ENDPOINT_CANARY not in repr(refusal.value) + str(refusal.value)
+
+
 # ---------------------------------------------------------------------------
 # The create-only check
 # ---------------------------------------------------------------------------
@@ -262,7 +329,7 @@ def test_a_store_that_accepts_the_second_create_only_write_is_unsupported() -> N
 
 @pytest.mark.parametrize("failing_write", [1, 2], ids=["first write", "second write"])
 def test_a_failed_check_write_is_unavailable_and_still_deletes_the_key(failing_write: int) -> None:
-    client = _Store(put_failures={failing_write: 500})
+    client = _Store(put_failures={failing_write: ("InternalError", 500)})
 
     with pytest.raises(BootstrapError) as refusal:
         check_create_only(Boto3S3Client(client), BUCKET, "stable")
@@ -271,6 +338,51 @@ def test_a_failed_check_write_is_unavailable_and_still_deletes_the_key(failing_w
     assert client.requests[-1] == "DeleteObject"
     assert len(set(_check_keys(client))) == 1
     assert ENDPOINT_CANARY not in str(refusal.value)
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "family"),
+    [
+        ("AccessDenied", 403, "object-store-access-refused"),
+        ("NotImplemented", 501, "object-store-unsupported"),
+    ],
+    ids=["refused", "not implemented"],
+)
+def test_a_refused_or_unsupported_check_write_stops_with_its_family_and_deletes_the_key(
+    code: str, status: int, family: str
+) -> None:
+    """A credential without `PutObject`, or a store without conditional writes, is named as such."""
+    client = _Store(put_failures={1: (code, status)})
+
+    with pytest.raises(BootstrapError) as refusal:
+        check_create_only(Boto3S3Client(client), BUCKET, "stable")
+
+    assert refusal.value.family == family
+    assert client.requests == ["PutObject", "DeleteObject"]
+    rendered = repr(refusal.value) + str(refusal.value)
+    assert ENDPOINT_CANARY not in rendered
+    assert CREDENTIAL_CANARY not in rendered
+
+
+def test_a_refused_check_key_delete_stops_with_the_access_refused_family() -> None:
+    client = _Store(delete_failure=("AccessDenied", 403))
+
+    with pytest.raises(BootstrapError) as refusal:
+        check_create_only(Boto3S3Client(client), BUCKET, "stable")
+
+    assert refusal.value.family == "object-store-access-refused"
+    assert client.requests == ["PutObject", "PutObject", "DeleteObject"]
+
+
+def test_a_failed_check_write_keeps_its_own_family_when_the_delete_fails_too() -> None:
+    """The delete runs on every path; its failure must not replace the one that stopped the check."""
+    client = _Store(put_failures={1: ("NotImplemented", 501)}, delete_failure=("AccessDenied", 403))
+
+    with pytest.raises(BootstrapError) as refusal:
+        check_create_only(Boto3S3Client(client), BUCKET, "stable")
+
+    assert refusal.value.family == "object-store-unsupported"
+    assert client.requests == ["PutObject", "DeleteObject"]
 
 
 # ---------------------------------------------------------------------------
@@ -356,10 +468,12 @@ def test_a_bootstrap_checks_the_bucket_then_the_create_only_write(
     ("store", "family"),
     [
         (_Store(head_status=403), "object-store-access-refused"),
+        (_RefusesCreate(head_status=404), "object-store-access-refused"),
         (_Store(head_status=503), "object-store-unavailable"),
         (_Store(honours_condition=False), "object-store-unsupported"),
+        (_Store(put_failures={1: ("NotImplemented", 501)}), "object-store-unsupported"),
     ],
-    ids=["refused", "unavailable", "unsupported"],
+    ids=["refused", "create refused", "unavailable", "unsupported", "conditional write not implemented"],
 )
 def test_each_object_store_failure_prints_its_family_only(
     store: _Store,
@@ -417,12 +531,37 @@ def test_the_guard_lets_a_consistent_deployment_through(
     bootstrap.refuse_unused_bundled_object_store(endpoint)
 
 
-def test_the_bootstrap_client_comes_from_the_shared_builder(
+_ENDPOINT_REFUSAL = "INFRAHUB_SYNC_S3_ENDPOINT_URL must be an absolute http or https URL without userinfo"
+
+
+@pytest.mark.parametrize(
+    ("setting", "value", "message"),
+    [
+        ("INFRAHUB_SYNC_S3_ENDPOINT_URL", f"https://access-key:{CREDENTIAL_CANARY}@s3.example.test", _ENDPOINT_REFUSAL),
+        ("INFRAHUB_SYNC_S3_ENDPOINT_URL", f"{CREDENTIAL_CANARY}.example.test", _ENDPOINT_REFUSAL),
+        (
+            "INFRAHUB_SYNC_S3_ADDRESSING_STYLE",
+            CREDENTIAL_CANARY,
+            "INFRAHUB_SYNC_S3_ADDRESSING_STYLE must be path or virtual",
+        ),
+        (
+            "INFRAHUB_SYNC_S3_REGION",
+            "  ",
+            "INFRAHUB_SYNC_S3_REGION must be a non-empty string when set",
+        ),
+    ],
+    ids=["endpoint with userinfo", "endpoint without a scheme", "addressing style", "blank region"],
+)
+def test_a_setting_the_shared_builder_refuses_is_named_without_its_value(
+    setting: str,
+    value: str,
+    message: str,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """So an endpoint with a user name or password is refused here too (FR-034)."""
-    _settings(monkeypatch, f"https://access-key:{CREDENTIAL_CANARY}@s3.example.test")
+    """The bootstrap client comes from the shared builder, so its setting checks apply here too (FR-034)."""
+    _settings(monkeypatch, "https://s3.example.test")
+    monkeypatch.setenv(setting, value)
     _resolves(monkeypatch, bundled_store_running=False)
     built: list[Mapping[str, str]] = []
 
@@ -437,7 +576,30 @@ def test_the_bootstrap_client_comes_from_the_shared_builder(
         assert bootstrap.main() == 1
 
     assert len(built) == 1
+    assert _printed(caplog) == [f"refused: object-store-setting-invalid: {message}"]
+    assert CREDENTIAL_CANARY not in caplog.text
+    assert later == []
+
+
+def test_a_client_the_sdk_cannot_build_stops_with_the_unavailable_family(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The SDK renders the endpoint into its own text, so only the family is printed."""
+    _settings(monkeypatch, ENDPOINT_CANARY)
+    _resolves(monkeypatch, bundled_store_running=False)
+
+    def sdk_failure(*_arguments: object, **_settings: object) -> object:
+        raise RuntimeError(ENDPOINT_CANARY)
+
+    monkeypatch.setattr(bootstrap, "build_s3_client", lambda values: build_s3_client(values, builder=sdk_failure))
+    later = _after_the_object_store(monkeypatch)
+
+    with caplog.at_level("INFO"):
+        assert bootstrap.main() == 1
+
     assert _printed(caplog) == ["refused: object-store-unavailable"]
+    assert ENDPOINT_CANARY not in caplog.text
     assert later == []
 
 

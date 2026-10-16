@@ -42,8 +42,10 @@ x-sync-env: &sync-env
   INFRAHUB_SYNC_DATABASE_URL: "postgresql://postgres:devpassword@postgres:5432/infrahub_sync"
   INFRAHUB_SYNC_S3_BUCKET: "infrahub-sync"
   INFRAHUB_SYNC_S3_PREFIX: "infrahub-sync"
-  INFRAHUB_SYNC_S3_ENDPOINT_URL: "${INFRAHUB_SYNC_S3_ENDPOINT_URL:-http://object-store:9000}"
-  INFRAHUB_SYNC_S3_ADDRESSING_STYLE: "${INFRAHUB_SYNC_S3_ADDRESSING_STYLE:-path}"
+  # Fixed, not read from the shell: `uv run invoke preview.*` exports a loopback
+  # endpoint for host processes, and this stack always uses its own MinIO.
+  INFRAHUB_SYNC_S3_ENDPOINT_URL: "http://object-store:9000"
+  INFRAHUB_SYNC_S3_ADDRESSING_STYLE: "path"
   INFRAHUB_SYNC_S3_REGION: "us-east-1"
   AWS_ACCESS_KEY_ID: "devaccesskey"
   AWS_SECRET_ACCESS_KEY: "devsecretkey"

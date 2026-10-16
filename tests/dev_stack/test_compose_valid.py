@@ -14,6 +14,7 @@ the Compose CLI but no daemon.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess  # noqa: S404 -- fixed argv, reading the repository's own Compose file
@@ -87,3 +88,41 @@ def test_optional_settings_resolve_to_empty(setting: str) -> None:
     if resolved.returncode != 0:
         pytest.skip("the development stack could not be resolved; the validity case reports that")
     assert f'{setting}: ""' in resolved.stdout
+
+
+def test_an_exported_object_store_setting_does_not_reach_the_stack() -> None:
+    """The stack always uses its own MinIO, whatever the developer's shell exports.
+
+    `uv run invoke preview.*` exports a loopback endpoint for host processes. Passed
+    into this stack, it would name a store no container can reach, and `sync-bootstrap`
+    would refuse it because the bundled store still runs.
+    """
+    if shutil.which("docker") is None:
+        pytest.skip("docker is not installed; the development stack's Compose file cannot be resolved")
+    environment = dict(os.environ)
+    environment["COMPOSE_DISABLE_ENV_FILE"] = "1"
+    environment["INFRAHUB_SYNC_S3_ENDPOINT_URL"] = "http://127.0.0.1:9010"
+    environment["INFRAHUB_SYNC_S3_ADDRESSING_STYLE"] = "virtual"
+    resolved = subprocess.run(  # noqa: S603
+        ["docker", "compose", "--file", str(COMPOSE_FILE), "config", "--format", "json"],  # noqa: S607 -- resolved on PATH above
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=REPO_ROOT,
+        env=environment,
+    )
+    if _NO_COMPOSE_PLUGIN in resolved.stderr:
+        pytest.skip("the docker CLI has no compose plugin; the development stack cannot be resolved")
+    assert resolved.returncode == 0, f"`docker compose config` failed:\n{resolved.stderr}"
+
+    received = {
+        name: {
+            setting: (definition.get("environment") or {}).get(setting)
+            for setting in ("INFRAHUB_SYNC_S3_ENDPOINT_URL", "INFRAHUB_SYNC_S3_ADDRESSING_STYLE")
+        }
+        for name, definition in json.loads(resolved.stdout)["services"].items()
+        if "INFRAHUB_SYNC_S3_ENDPOINT_URL" in (definition.get("environment") or {})
+    }
+    bundled = {"INFRAHUB_SYNC_S3_ENDPOINT_URL": "http://object-store:9000", "INFRAHUB_SYNC_S3_ADDRESSING_STYLE": "path"}
+    assert received
+    assert received == dict.fromkeys(received, bundled)

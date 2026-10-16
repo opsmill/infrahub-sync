@@ -62,11 +62,14 @@ A validation failure raises a fixed message that names the setting and not its v
 Steps, in order, each ending in success or one fixed failure family:
 
 1. guard: external endpoint while `object-store` resolves → `bundled-object-store-not-left-out`
-2. build the client → `object-store-unavailable` on failure
+2. build the client → `object-store-setting-invalid` and the setting's name for a refused setting;
+   `object-store-unavailable` on any other failure
 3. `HeadBucket`: 2xx present; 404 absent → `CreateBucket`; 403 → `object-store-access-refused`;
-   other → `object-store-unavailable`
+   501 or `NotImplemented` → `object-store-unsupported`; other → `object-store-unavailable`.
+   `CreateBucket` maps its failures the same way
 4. create-only check on `<prefix>/.infrahub-sync/bootstrap-check/<uuid4>`: second write refused →
-   continue; accepted → `object-store-unsupported`; the key is deleted on every path
+   continue; accepted → `object-store-unsupported`; a `PutObject` or `DeleteObject` failure maps
+   as in step 3; the key is deleted on every path
 
 ## Worker credential variable
 

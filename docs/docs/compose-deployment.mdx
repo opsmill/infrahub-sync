@@ -389,9 +389,16 @@ versioning or object lock.
 At each start, `sync-bootstrap` writes one check key twice under
 `<prefix>/.infrahub-sync/bootstrap-check/` with `If-None-Match: *`, then deletes
 it. A store that accepts the second write would let a later write replace a
-stored artifact, so `sync-bootstrap` stops with `object-store-unsupported`. A
-`HeadBucket` refused with 403 stops it with `object-store-access-refused`. See
-[Compose troubleshooting](operations/compose-troubleshooting) for each failure
+stored artifact, so `sync-bootstrap` stops with `object-store-unsupported`. It
+stops with the same name when the store answers 501 or `NotImplemented` to one of
+its requests. A `HeadBucket`, `CreateBucket`, `PutObject` or `DeleteObject`
+refused with 403 stops it with `object-store-access-refused`.
+
+`sync-bootstrap` checks the store settings before it sends any request. A
+setting it refuses stops it with `object-store-setting-invalid`, followed by a
+message that names the setting and not its value, for example
+`refused: object-store-setting-invalid: INFRAHUB_SYNC_S3_ADDRESSING_STYLE must be path or virtual`.
+See [Compose troubleshooting](operations/compose-troubleshooting) for each failure
 name.
 
 ### Stores OpsMill tests with
@@ -516,10 +523,12 @@ never `source` the file.
 
 The port binds to `127.0.0.1`, which the file writes itself.
 `INFRAHUB_SYNC_BIND_ADDRESS` does not change it. From another computer, forward
-the port through SSH and browse to `http://127.0.0.1:4200` on that computer:
+the port through SSH and browse to `http://127.0.0.1:<port>` on that computer.
+`<port>` is the value of `INFRAHUB_SYNC_PREFECT_PORT`, or `4200` when it is
+unset:
 
 ```bash
-ssh -N -L 4200:127.0.0.1:4200 <user>@<docker-host>
+ssh -N -L <port>:127.0.0.1:<port> <user>@<docker-host>
 ```
 
 To close the UI again, run the root file alone. Compose recreates

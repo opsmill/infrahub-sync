@@ -18,11 +18,13 @@ observed with the runner replaced.
 
 from __future__ import annotations
 
+import subprocess  # noqa: S404 -- for the timeout type a stand-in watcher raises
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests.compose import conftest as compose_conftest
 from tests.compose import lifecycle as lifecycle_module
 from tests.compose.conftest import (
     FIXTURE_PROCESS_CUSHION_SECONDS,
@@ -35,6 +37,8 @@ from tests.compose.lifecycle import PROCESS_CUSHION_SECONDS, READY_TIMEOUT_SECON
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
     from pathlib import Path
+
+    from typing_extensions import Self
 
 DECLARED_BOUND_SECONDS = 420
 # The slowest compose test of the 20 measured iterations (plan.md, "Lifecycle
@@ -160,3 +164,93 @@ def test_each_service_time_to_healthy_is_read_from_the_events_of_one_up() -> Non
 def test_no_events_means_no_service_lines() -> None:
     """An `up` that started nothing new records nothing per service."""
     assert readiness_times("", began=100.0) == []
+
+
+class _StubbornWatcher:
+    """A `docker events` process that ignores `terminate`, recording what is done to it."""
+
+    def __init__(self, *_arguments: object, **_settings: object) -> None:
+        self.calls: list[str] = []
+        _WATCHERS.append(self)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_details: object) -> None:
+        self.calls.append("exit")
+
+    def terminate(self) -> None:
+        self.calls.append("terminate")
+
+    def kill(self) -> None:
+        self.calls.append("kill")
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.calls.append(f"wait {timeout}")
+        if timeout is not None:
+            command = "docker events"
+            raise subprocess.TimeoutExpired(command, timeout)
+        return -9
+
+
+_WATCHERS: list[_StubbornWatcher] = []
+
+
+@pytest.fixture
+def stubborn_watcher(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """Follow events with a watcher that outlives `terminate`, recording no readiness line."""
+    _WATCHERS.clear()
+    monkeypatch.setattr(compose_conftest.subprocess, "Popen", _StubbornWatcher)
+    monkeypatch.setattr(compose_conftest, "READINESS_EVENT_GRACE_SECONDS", 0)
+    kept: list[str] = []
+    monkeypatch.setattr(compose_conftest, "_keep_readiness", lambda project, *_record: kept.append(project))
+    yield kept
+    _WATCHERS.clear()
+
+
+def _unreadable(_text: str, *, began: float) -> list[str]:
+    """A readiness parser that fails, standing in for any failure of the record."""
+    del began
+    msg = "the readiness record failed"
+    raise RuntimeError(msg)
+
+
+def _fail_inside_the_record(project: str) -> None:
+    with compose_conftest.readiness_recorded(project):
+        msg = "the test's own failure"
+        raise AssertionError(msg)
+
+
+def _pass_inside_the_record(project: str) -> None:
+    with compose_conftest.readiness_recorded(project):
+        pass
+
+
+def test_a_watcher_that_outlives_terminate_is_killed_and_reaped(stubborn_watcher: list[str]) -> None:
+    _pass_inside_the_record("stubborn")
+
+    [watcher] = _WATCHERS
+    assert watcher.calls == ["terminate", "wait 30", "kill", "wait None", "exit"]
+    assert stubborn_watcher == ["stubborn"]
+
+
+def test_a_readiness_record_failure_never_replaces_the_failure_it_wraps(
+    stubborn_watcher: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(compose_conftest, "readiness_times", _unreadable)
+
+    with pytest.raises(AssertionError, match="the test's own failure"):
+        _fail_inside_the_record("failing")
+
+    assert stubborn_watcher == []
+
+
+def test_a_readiness_record_failure_is_reported_when_nothing_else_failed(
+    stubborn_watcher: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(compose_conftest, "readiness_times", _unreadable)
+
+    with pytest.raises(RuntimeError, match="the readiness record failed"):
+        _pass_inside_the_record("passing")
+
+    assert stubborn_watcher == []

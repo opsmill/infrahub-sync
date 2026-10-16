@@ -14,6 +14,7 @@ errors name the file, and the log record holds only a count and the bundle path.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import ssl
 import tempfile
@@ -43,26 +44,49 @@ class CustomCertificateError(ValueError):
 
 
 def _certificate_files(directory: Path) -> list[Path]:
-    """Return the directory's ``.pem`` and ``.crt`` files in name order."""
-    if not directory.is_dir():
-        return []
-    return sorted(
-        (entry for entry in directory.iterdir() if entry.suffix in CERTIFICATE_SUFFIXES and entry.is_file()),
-        key=lambda entry: entry.name,
-    )
+    """Return the directory's ``.pem`` and ``.crt`` files, in any letter case, in name order."""
+    try:
+        if not directory.is_dir():
+            return []
+        return sorted(
+            (
+                entry
+                for entry in directory.iterdir()
+                if entry.suffix.lower() in CERTIFICATE_SUFFIXES and entry.is_file()
+            ),
+            key=lambda entry: entry.name,
+        )
+    except OSError:
+        # Only a fixed text: the error carries the path, and the reason is the operator's to check.
+        msg = "CA certificate directory cannot be read"
+        raise CustomCertificateError(msg) from None
+
+
+def _read(path: Path) -> bytes:
+    """Return one file's bytes, refusing an unreadable file by its name only."""
+    try:
+        return path.read_bytes()
+    except OSError:
+        msg = f"CA certificate file {path.name} cannot be read"
+        raise CustomCertificateError(msg) from None
 
 
 def _pem_headers(content: bytes) -> list[bytes]:
     """Return only the PEM ``BEGIN`` lines of a file, never its body."""
-    return [line.strip() for line in content.splitlines() if line.startswith(_PEM_BEGIN)]
+    return [line.strip() for line in content.splitlines() if line.strip().startswith(_PEM_BEGIN)]
 
 
 def _check_file(path: Path, content: bytes) -> int:
-    """Refuse a private key or a file ``ssl`` cannot load; return its certificate count."""
-    headers = _pem_headers(content)
-    if any(header.endswith(_PRIVATE_KEY_MARKER) for header in headers):
+    """Refuse a private key or a file ``ssl`` cannot load; return its certificate count.
+
+    The key marker is searched in the whole file, not only at the start of a line:
+    ``ssl`` skips a line that does not open a PEM block, so a key it ignores would
+    still be copied into the bundle.
+    """
+    if _PRIVATE_KEY_MARKER in content:
         msg = f"CA certificate file {path.name} holds a private key"
         raise CustomCertificateError(msg)
+    headers = _pem_headers(content)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     try:
         context.load_verify_locations(cafile=str(path))
@@ -74,14 +98,24 @@ def _check_file(path: Path, content: bytes) -> int:
 
 
 def _write_bundle(path: Path, parts: list[bytes]) -> None:
-    """Write the bundle with mode ``0600``, replacing any bundle from an earlier start."""
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "wb") as bundle:
-        os.fchmod(bundle.fileno(), 0o600)
-        for part in parts:
-            bundle.write(part)
-            if not part.endswith(b"\n"):
-                bundle.write(b"\n")
+    """Write the bundle with mode ``0600``, replacing any bundle from an earlier start.
+
+    The content goes to a new file that ``mkstemp`` creates exclusively, and a rename
+    then puts it at ``path``. A rename replaces the name itself, so a link someone
+    planted at ``path`` in a shared temporary directory is replaced, never followed.
+    """
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{BUNDLE_NAME}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as bundle:
+            for part in parts:
+                bundle.write(part)
+                if not part.endswith(b"\n"):
+                    bundle.write(b"\n")
+        Path(temporary).replace(path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            Path(temporary).unlink()
+        raise
 
 
 def install_custom_ca_bundle(
@@ -101,8 +135,9 @@ def install_custom_ca_bundle(
         ``.pem`` or ``.crt`` file, in which case no variable and no file changes.
 
     Raises:
-        CustomCertificateError: A file holds a private key, or ``ssl`` cannot load
-            it. Nothing is written and no variable changes.
+        CustomCertificateError: The directory or a file in it cannot be read, a
+            file holds a private key, or ``ssl`` cannot load a file. Nothing is
+            written and no variable changes.
     """
     environment = os.environ if environ is None else environ
     if directory is None:
@@ -118,7 +153,7 @@ def install_custom_ca_bundle(
     contents: list[bytes] = []
     certificates = 0
     for path in files:
-        content = path.read_bytes()
+        content = _read(path)
         certificates += _check_file(path, content)
         contents.append(content)
 

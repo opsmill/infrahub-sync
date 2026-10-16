@@ -49,13 +49,17 @@ lock.
 | --- | --- |
 | Bucket exists | completes; no `CreateBucket` call |
 | Bucket absent, credential may create it | creates it, completes |
-| `HeadBucket` refused (403) | stops with family `object-store-access-refused` |
-| Store unreachable, or another error | stops with family `object-store-unavailable` (existing) |
+| `HeadBucket`, `CreateBucket`, `PutObject` or `DeleteObject` refused (403) | stops with family `object-store-access-refused`; the check key is deleted |
+| A request the store does not implement (501 or `NotImplemented`) | stops with family `object-store-unsupported`; the check key is deleted |
+| Store unreachable, or another error (a 301 region redirect included) | stops with family `object-store-unavailable` (existing) |
 | Second create-only write accepted | stops with family `object-store-unsupported`; the check key is deleted |
 | External endpoint while the bundled store runs | stops with family `bundled-object-store-not-left-out`, before any object store request |
+| The shared S3 client builder refuses a setting (endpoint, addressing style, blank region) | stops with family `object-store-setting-invalid`, followed by the builder's text, which names the setting only |
 
-Each family is printed alone, as today (`bootstrap.py:182-189`): no endpoint, bucket, key or
-credential value.
+Each family is printed alone: no endpoint, bucket, key or credential value. The one addition is
+`object-store-setting-invalid`, printed as `refused: object-store-setting-invalid: <setting> must
+be ...`; the text names the setting and never its value. When a write of the check fails and the
+delete fails too, the write's family is the one printed.
 
 ## Tested stores
 

@@ -223,3 +223,177 @@ def test_the_log_record_holds_only_the_count_and_the_bundle_path(tmp_path: Path)
             "bundle": str(bundle),
         }
     ]
+
+
+def test_a_file_with_an_indented_private_key_header_stops(tmp_path: Path) -> None:
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    indented = b"".join(b"  " + line + b"\n" for line in _pkcs8_key().splitlines())
+    (directory / "indented.pem").write_bytes(_ca_certificate("ca") + indented)
+    environ = _environment(tmp_path)
+    before = dict(environ)
+
+    with pytest.raises(CustomCertificateError) as raised:
+        install_custom_ca_bundle(directory, environ)
+
+    assert str(raised.value) == "CA certificate file indented.pem holds a private key"
+    assert environ == before
+    assert not (tmp_path / "scratch" / BUNDLE_NAME).exists()
+
+
+def test_a_private_key_marker_anywhere_in_a_file_stops(tmp_path: Path) -> None:
+    """`ssl` skips a line that does not start a PEM block, so the key body would reach the bundle."""
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    canary = "mid-line-private-key-canary"
+    (directory / "hidden.pem").write_bytes(
+        _ca_certificate("ca") + f"note -----BEGIN PRIVATE KEY-----\n{canary}\n".encode()
+    )
+    environ = _environment(tmp_path)
+
+    with pytest.raises(CustomCertificateError) as raised:
+        install_custom_ca_bundle(directory, environ)
+
+    assert str(raised.value) == "CA certificate file hidden.pem holds a private key"
+    assert canary not in str(raised.value)
+    assert not (tmp_path / "scratch" / BUNDLE_NAME).exists()
+
+
+def test_an_unreadable_directory_stops_without_the_os_error_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "ca.pem").write_bytes(_ca_certificate("ca"))
+    canary = "directory-os-error-canary"
+
+    def refuse(_self: Path) -> object:
+        raise PermissionError(13, canary, str(directory))
+
+    monkeypatch.setattr(Path, "iterdir", refuse)
+    environ = _environment(tmp_path)
+    before = dict(environ)
+
+    with pytest.raises(CustomCertificateError) as raised:
+        install_custom_ca_bundle(directory, environ)
+
+    assert str(raised.value) == "CA certificate directory cannot be read"
+    assert raised.value.__cause__ is None
+    assert raised.value.__suppress_context__
+    assert canary not in str(raised.value)
+    assert environ == before
+    assert not (tmp_path / "scratch" / BUNDLE_NAME).exists()
+
+
+def test_an_unreadable_file_stops_naming_the_file_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "a-good.pem").write_bytes(_ca_certificate("good"))
+    (directory / "b-locked.crt").write_bytes(_ca_certificate("locked"))
+    canary = "file-os-error-canary"
+    read_bytes = Path.read_bytes
+
+    def refuse_one(self: Path) -> bytes:
+        if self.name == "b-locked.crt":
+            raise PermissionError(13, canary, str(self))
+        return read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", refuse_one)
+    environ = _environment(tmp_path)
+    before = dict(environ)
+
+    with pytest.raises(CustomCertificateError) as raised:
+        install_custom_ca_bundle(directory, environ)
+
+    assert str(raised.value) == "CA certificate file b-locked.crt cannot be read"
+    assert raised.value.__cause__ is None
+    assert raised.value.__suppress_context__
+    assert environ == before
+    assert not (tmp_path / "scratch" / BUNDLE_NAME).exists()
+
+
+def test_upper_case_suffixes_are_certificate_files_too(tmp_path: Path) -> None:
+    """The suffix match ignores case, so a `.PEM` or `.CRT` file from another system is trusted."""
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    upper = _ca_certificate("upper")
+    mixed = _ca_certificate("mixed")
+    (directory / "a-upper.PEM").write_bytes(upper)
+    (directory / "b-mixed.Crt").write_bytes(mixed)
+
+    bundle = install_custom_ca_bundle(directory, _environment(tmp_path))
+
+    assert bundle is not None
+    content = bundle.read_bytes()
+    assert upper in content
+    assert mixed in content
+
+
+def test_an_explicit_directory_wins_over_the_setting(tmp_path: Path) -> None:
+    chosen = tmp_path / "chosen"
+    chosen.mkdir()
+    certificate = _ca_certificate("chosen")
+    (chosen / "ca.pem").write_bytes(certificate)
+    ignored = tmp_path / "ignored"
+    ignored.mkdir()
+    (ignored / "ca.pem").write_bytes(_pkcs8_key())
+    environ = _environment(tmp_path)
+    environ[DIRECTORY_SETTING] = str(ignored)
+
+    bundle = install_custom_ca_bundle(chosen, environ)
+
+    assert bundle is not None
+    assert certificate in bundle.read_bytes()
+
+
+def test_an_empty_trust_variable_counts_as_set_and_keeps_its_value(tmp_path: Path) -> None:
+    """Only an absent variable is pointed at the bundle; an operator's empty value is left alone."""
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "ca.pem").write_bytes(_ca_certificate("ca"))
+    environ = _environment(tmp_path)
+    environ["SSL_CERT_FILE"] = ""
+
+    bundle = install_custom_ca_bundle(directory, environ)
+
+    assert "SSL_CERT_FILE" in environ
+    assert not environ["SSL_CERT_FILE"]
+    assert environ["REQUESTS_CA_BUNDLE"] == str(bundle)
+
+
+def test_a_readable_bundle_from_an_earlier_start_is_replaced_with_mode_0600(tmp_path: Path) -> None:
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    certificate = _ca_certificate("ca")
+    (directory / "ca.pem").write_bytes(certificate)
+    environ = _environment(tmp_path)
+    earlier = tmp_path / "scratch" / BUNDLE_NAME
+    earlier.write_bytes(b"stale bundle")
+    earlier.chmod(0o644)
+
+    bundle = install_custom_ca_bundle(directory, environ)
+
+    assert bundle is not None
+    assert bundle == earlier
+    assert stat.S_IMODE(bundle.stat().st_mode) == 0o600
+    assert b"stale bundle" not in bundle.read_bytes()
+    assert certificate in bundle.read_bytes()
+
+
+def test_a_planted_link_at_the_bundle_path_is_replaced_not_followed(tmp_path: Path) -> None:
+    """In a shared temporary directory another user could plant the bundle name as a link."""
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "ca.pem").write_bytes(_ca_certificate("ca"))
+    environ = _environment(tmp_path)
+    target = tmp_path / "target.txt"
+    target.write_bytes(b"left alone")
+    (tmp_path / "scratch" / BUNDLE_NAME).symlink_to(target)
+
+    bundle = install_custom_ca_bundle(directory, environ)
+
+    assert bundle is not None
+    assert not bundle.is_symlink()
+    assert stat.S_IMODE(bundle.stat().st_mode) == 0o600
+    assert target.read_bytes() == b"left alone"
+    assert sorted(entry.name for entry in (tmp_path / "scratch").iterdir()) == [BUNDLE_NAME]

@@ -326,16 +326,29 @@ def readiness_recorded(project: str) -> Iterator[None]:
         tempfile.TemporaryFile("w+", encoding="utf-8") as sink,
         subprocess.Popen(argv, stdout=sink, stderr=subprocess.DEVNULL, text=True) as watcher,  # noqa: S603 -- fixed argv
     ):
+        failed = False
         try:
             yield
+        except BaseException:
+            failed = True
+            raise
         finally:
             ended = time.time()
-            time.sleep(READINESS_EVENT_GRACE_SECONDS)
-            watcher.terminate()
-            watcher.wait(timeout=30)
-            sink.seek(0)
-            lines = readiness_times(sink.read(), began=began)
-            _keep_readiness(project, ended - began, lines)
+            try:
+                time.sleep(READINESS_EVENT_GRACE_SECONDS)
+                watcher.terminate()
+                try:
+                    watcher.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    watcher.kill()
+                    watcher.wait()
+                sink.seek(0)
+                lines = readiness_times(sink.read(), began=began)
+                _keep_readiness(project, ended - began, lines)
+            except Exception:
+                # The readiness record is a diagnostic: it never replaces the failure it wraps.
+                if not failed:
+                    raise
 
 
 def _keep_readiness(project: str, duration: float, lines: Sequence[str]) -> None:

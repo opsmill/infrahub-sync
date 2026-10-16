@@ -14,7 +14,7 @@ any of this: an API or a worker that converged bootstrap state on startup would
 make every restart a write, and would give two processes racing claims on the
 same objects. And every failure leaves through one fixed family name, because
 this job's inputs are credentials and endpoints and its provider errors carry
-them.
+them. A refused object store setting adds the setting's name, never its value.
 """
 
 from __future__ import annotations
@@ -77,10 +77,13 @@ _CHECK_PATH = ".infrahub-sync/bootstrap-check"
 
 # Every way this job can fail, named. The family is the whole public message:
 # each input it reads is an endpoint or a credential, and the providers
-# underneath render both into their own exception text.
+# underneath render both into their own exception text. The one exception is a
+# setting the shared S3 client builder refuses: its text names the setting and
+# never its value, so it is printed after the family.
 OBJECT_STORE_UNAVAILABLE = "object-store-unavailable"
 OBJECT_STORE_ACCESS_REFUSED = "object-store-access-refused"
 OBJECT_STORE_UNSUPPORTED = "object-store-unsupported"
+OBJECT_STORE_SETTING_INVALID = "object-store-setting-invalid"
 BUNDLED_OBJECT_STORE_NOT_LEFT_OUT = "bundled-object-store-not-left-out"
 WORK_POOL_UNAVAILABLE = "work-pool-unavailable"
 WORK_POOL_CONFLICT = "work-pool-conflict"
@@ -94,18 +97,42 @@ class BootstrapError(RuntimeError):
 
     The message is the family name and nothing else. Every input this job reads
     is an endpoint or a credential, and the providers underneath render both into
-    their exception text, so no provider detail crosses this boundary.
+    their exception text, so no provider detail crosses this boundary. `setting`
+    is the shared builder's own text for a refused setting, which names the
+    setting only.
     """
 
-    def __init__(self, family: str) -> None:
+    def __init__(self, family: str, setting: str | None = None) -> None:
         super().__init__(family)
         self.family = family
+        self.setting = setting
+
+    @property
+    def report(self) -> str:
+        """The printed refusal: the family, then the refused setting when there is one."""
+        return self.family if self.setting is None else f"{self.family}: {self.setting}"
 
 
 def _status(error: ClientError) -> int | None:
     """Return the response status of one SDK error, reading no message text."""
     value = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
     return value if isinstance(value, int) else None
+
+
+def _object_store_family(error: ClientError | BotoCoreError) -> str:
+    """Name one SDK failure from its status and code, reading no message text.
+
+    403 is a credential the store refuses; 501 or `NotImplemented` is a request the
+    store does not carry out, such as a conditional write. Anything else, a missing
+    status included, is the store being unavailable to this job.
+    """
+    if isinstance(error, ClientError):
+        status = _status(error)
+        if status == 403:
+            return OBJECT_STORE_ACCESS_REFUSED
+        if status == 501 or error.response.get("Error", {}).get("Code") == "NotImplemented":
+            return OBJECT_STORE_UNSUPPORTED
+    return OBJECT_STORE_UNAVAILABLE
 
 
 def refuse_unused_bundled_object_store(endpoint: str | None) -> None:
@@ -137,13 +164,10 @@ def converge_bucket(client: Any, bucket: str, region: str | None = None) -> bool
     try:
         client.head_bucket(Bucket=bucket)
     except ClientError as error:
-        status = _status(error)
-        if status == 403:
-            raise BootstrapError(OBJECT_STORE_ACCESS_REFUSED) from None
-        if status != 404:
-            raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
-    except BotoCoreError:
-        raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+        if _status(error) != 404:
+            raise BootstrapError(_object_store_family(error)) from None
+    except BotoCoreError as error:
+        raise BootstrapError(_object_store_family(error)) from None
     else:
         return False
 
@@ -156,29 +180,31 @@ def converge_bucket(client: Any, bucket: str, region: str | None = None) -> bool
         code = error.response.get("Error", {}).get("Code")
         if code in _BUCKET_PRESENT:
             return False
-        raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
-    except BotoCoreError:
-        raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+        raise BootstrapError(_object_store_family(error)) from None
+    except BotoCoreError as error:
+        raise BootstrapError(_object_store_family(error)) from None
     return True
 
 
 @contextlib.contextmanager
 def _object_store_failures() -> Iterator[None]:
-    """Map every SDK failure inside the block to the unavailable family."""
+    """Map every SDK failure inside the block to its object store family."""
     try:
         yield
-    except (ClientError, BotoCoreError):
-        raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
+    except (ClientError, BotoCoreError) as error:
+        raise BootstrapError(_object_store_family(error)) from None
 
 
 def check_create_only(store_client: Boto3S3Client, bucket: str, prefix: str) -> None:
     """Check that the store refuses a second create-only write of one key.
 
     A store that ignores the condition would let a second artifact write replace
-    a stored one. The check key is deleted on every path.
+    a stored one. The check key is deleted on every path; when a write already
+    failed, that failure is the one reported, whatever the delete does.
     """
     key = "/".join(part for part in (prefix, _CHECK_PATH, str(uuid.uuid4())) if part)
     refusing = False
+    failure: BootstrapError | None = None
     try:
         with _object_store_failures():
             store_client.put(bucket=bucket, key=key, data=b"", if_absent=True)
@@ -186,9 +212,16 @@ def check_create_only(store_client: Boto3S3Client, bucket: str, prefix: str) -> 
                 store_client.put(bucket=bucket, key=key, data=b"", if_absent=True)
             except DuplicateArtifactError:
                 refusing = True
-    finally:
+    except BootstrapError as error:
+        failure = error
+    try:
         with _object_store_failures():
             store_client.delete(bucket=bucket, key=key)
+    except BootstrapError:
+        if failure is None:
+            raise
+    if failure is not None:
+        raise failure
     if not refusing:
         raise BootstrapError(OBJECT_STORE_UNSUPPORTED)
 
@@ -247,6 +280,9 @@ def _converge() -> None:
     """
     try:
         client = build_s3_client(os.environ)
+    except ValueError as error:
+        # The shared builder's text for a refused setting names the setting, never its value.
+        raise BootstrapError(OBJECT_STORE_SETTING_INVALID, str(error)) from None
     except Exception:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         raise BootstrapError(OBJECT_STORE_UNAVAILABLE) from None
     refuse_unused_bundled_object_store(os.environ.get(S3_ENDPOINT_ENV))
@@ -294,7 +330,7 @@ def main() -> int:
     try:
         _converge()
     except BootstrapError as error:
-        logger.error("refused: %s", error.family)  # noqa: TRY400 - the family is the whole report.
+        logger.error("refused: %s", error.report)  # noqa: TRY400 - a family and at most a setting name.
         return 1
     return 0
 

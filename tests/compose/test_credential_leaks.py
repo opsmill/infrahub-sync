@@ -92,7 +92,7 @@ NOT_RUN = {
     "the `.env` generator": "the case writes its own `.env` with every credential setting, not only the required ones",
     "docker compose config (without --quiet)": "documented as printing every value; the page warns not to share it",
     "docker inspect": "documented as printing every value; the case inspects each container privately instead",
-    "ssh -N -L 4200:127.0.0.1:4200 <user>@<docker-host>": "needs a second computer",
+    "ssh -N -L <port>:127.0.0.1:<port> <user>@<docker-host>": "needs a second computer",
     "python3 -m venv .schema-tools; pip install 'infrahub-sdk[ctl]'": "needs a package index; the suite's "
     "own `infrahubctl` runs instead",
     "infrahubctl schema load schema.yml --branch BRANCH_NAME": "changes the shared fixture's schema; the "

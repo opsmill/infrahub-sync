@@ -326,8 +326,14 @@ def store_environment(  # noqa: PLR0913 -- one `.env` per case, each input indep
     prefix: str,
     addressing_style: str,
     leave_out_bundled: bool,
+    bucket: str | None = None,
+    credential: tuple[str, str] | None = None,
 ) -> Path:
-    """Write the `.env` of a deployment that uses the external store."""
+    """Write the `.env` of a deployment that uses the external store.
+
+    `bucket` and `credential` replace the store's own bucket and limited credential.
+    """
+    access_key, secret_key = credential or (store.access_key, store.secret_key)
     path = operator_environment(
         directory,
         image=image,
@@ -339,11 +345,11 @@ def store_environment(  # noqa: PLR0913 -- one `.env` per case, each input indep
     values.update(
         {
             "INFRAHUB_SYNC_S3_ENDPOINT_URL": store.endpoint,
-            "INFRAHUB_SYNC_S3_BUCKET": store.bucket,
+            "INFRAHUB_SYNC_S3_BUCKET": bucket or store.bucket,
             "INFRAHUB_SYNC_S3_PREFIX": prefix,
             "INFRAHUB_SYNC_S3_REGION": REGION,
-            "INFRAHUB_SYNC_S3_ACCESS_KEY": store.access_key,
-            "INFRAHUB_SYNC_S3_SECRET_KEY": store.secret_key,
+            "INFRAHUB_SYNC_S3_ACCESS_KEY": access_key,
+            "INFRAHUB_SYNC_S3_SECRET_KEY": secret_key,
             "INFRAHUB_SYNC_S3_ADDRESSING_STYLE": addressing_style,
             "INFRAHUB_SYNC_CA_CERTIFICATES": str(store.ca_directory),
         }
@@ -427,6 +433,17 @@ def bucket_keys(store: ExternalStore) -> list[str]:
     return keys
 
 
+def bucket_names(store: ExternalStore) -> set[str]:
+    """Every bucket the store holds, read with the store's root credential."""
+    listed = store.mc("ls", "--json", "store")
+    assert listed.returncode == 0, listed.output
+    names = set()
+    for line in listed.unredacted().splitlines():
+        if line.strip().startswith("{"):
+            names.add(str(json.loads(line)["key"]).rstrip("/"))
+    return names
+
+
 @pytest.mark.parametrize("addressing_style", ["path", "virtual"])
 def test_a_run_keeps_its_files_in_the_external_store(  # noqa: PLR0913, PLR0917 -- pytest passes one fixture per input
     addressing_style: str,
@@ -484,6 +501,14 @@ def test_bootstrap_refuses_an_external_endpoint_while_the_bundled_store_runs(
     canaries: dict[str, str],
     tmp_path: Path,
 ) -> None:
+    """Refused before any request reaches the store.
+
+    The case names a bucket that does not exist, with the store's root credential,
+    which may create it. A `HeadBucket` would answer 404 and the bootstrap would then
+    create the bucket, so its absence afterwards shows that no request was sent.
+    """
+    fresh_bucket = f"refused-{secrets.token_hex(6)}"
+    SECRETS.register(fresh_bucket)
     environment_file = store_environment(
         tmp_path,
         external_store,
@@ -494,6 +519,8 @@ def test_bootstrap_refuses_an_external_endpoint_while_the_bundled_store_runs(
         prefix="team-runs/refused",
         addressing_style="path",
         leave_out_bundled=False,
+        bucket=fresh_bucket,
+        credential=(external_store.root_user, external_store.root_password),
     )
     deployment = deployment_for(external_store, tmp_path, environment_file, API_PORTS["refused"])
     try:
@@ -506,10 +533,18 @@ def test_bootstrap_refuses_an_external_endpoint_while_the_bundled_store_runs(
 
         bootstrap_log = deployment.logs("sync-bootstrap", tail=1000)
         assert NOT_LEFT_OUT in bootstrap_log.stdout, bootstrap_log.output
-        leaked = SECRETS.leaked(bootstrap_log.unredacted(), external_store.values)
+        given = {
+            **external_store.values,
+            "INFRAHUB_SYNC_S3_BUCKET": fresh_bucket,
+            "INFRAHUB_SYNC_S3_ACCESS_KEY": external_store.root_user,
+            "INFRAHUB_SYNC_S3_SECRET_KEY": external_store.root_password,
+        }
+        leaked = SECRETS.leaked(bootstrap_log.unredacted(), given)
         assert leaked == [], f"sync-bootstrap's log holds the value of {', '.join(leaked)}"
-        # Refused before any object store request: not even the create-only check key was written.
-        assert [key for key in bucket_keys(external_store) if key.startswith("team-runs/refused/")] == []
+        # Refused before any object store request: the fresh bucket was never created.
+        buckets = bucket_names(external_store)
+        assert external_store.bucket in buckets, "the listing does not show the store's own bucket"
+        assert fresh_bucket not in buckets, "sync-bootstrap reached the store before it refused"
         # Nothing that waits for bootstrap runs.
         running = deployment.compose(["ps", "--quiet", "sync-api", "sync-worker"])
         assert running.returncode == 0, running.output
