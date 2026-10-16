@@ -8,7 +8,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from infrahub_sync import SchemaMappingField, SchemaMappingFilter, SchemaMappingModel, SyncAdapter, SyncConfig
+from infrahub_sync import (
+    LoadReportEntry,
+    SchemaMappingField,
+    SchemaMappingFilter,
+    SchemaMappingModel,
+    SourceRecordReference,
+    SyncAdapter,
+    SyncConfig,
+)
 
 if TYPE_CHECKING:
     from infrahub_sync.adapters.netbox import NetboxAdapter
@@ -166,20 +174,31 @@ def test_optional_relationship_drops_excluded_peer(
 
 
 @pytest.mark.parametrize("model", [RequiredOne, RequiredMany])
-def test_required_relationship_with_only_excluded_peers_fails(
+def test_required_relationship_with_only_excluded_peers_is_in_the_load_report(
     monkeypatch: pytest.MonkeyPatch, model: type[NetboxModel]
 ) -> None:
-    """A configured filter is named when it leaves a required field empty."""
-    value: Any = [{"id": 20}] if model is RequiredMany else {"id": 20}
-    adapter = _adapter(monkeypatch, model, [{"id": 1, "name": "owner", "peer": value}])
-
-    with pytest.raises(ValueError) as err:
-        adapter.model_loader("Example", model)
-
-    assert str(err.value) == (
-        "Configured filter excluded all peers for required relationship "
-        "Example record 1 field peer (peer kind BuiltinTag): 20"
+    """A record whose required peers a filter removed is recorded; the rest of the kind loads (spec 009 T013)."""
+    excluded: Any = [{"id": 20}] if model is RequiredMany else {"id": 20}
+    retained: Any = [{"id": 10}] if model is RequiredMany else {"id": 10}
+    adapter = _adapter(
+        monkeypatch,
+        model,
+        [{"id": 1, "name": "owner", "peer": excluded}, {"id": 2, "name": "other", "peer": retained}],
     )
+
+    adapter.model_loader("Example", model)
+
+    assert [item.model_dump()["local_id"] for item in adapter.get_all("Example")] == ["2"]
+    assert adapter.load_report == [
+        LoadReportEntry(
+            kind="Example",
+            source_id="1",
+            reason="required_peer_excluded_by_filter",
+            field="peer",
+            peer=SourceRecordReference(kind="BuiltinTag", identity=None, source_id="20"),
+            loaded=False,
+        )
+    ]
 
 
 def test_required_many_keeps_a_valid_peer_when_another_is_excluded(

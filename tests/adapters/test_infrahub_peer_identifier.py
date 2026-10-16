@@ -4,7 +4,7 @@ The full adapter touches an Infrahub server, so these tests build a minimal
 stand-in adapter that reuses the real helper. The focused cases cover:
 
 - Rich errors for missing peer identifier keys.
-- Skipping missing identifiers when continue_on_error=True.
+- Missing identifiers always raise; no option skips the relationship (spec 009 R5).
 - Bounded hydration of missing relationship identifiers.
 - Cache preservation and reuse for repeated peer references.
 - Propagation of unexpected hydration errors.
@@ -192,7 +192,6 @@ class _Harness(InfrahubAdapter):
         self,
         *,
         schemas: Sequence[SimpleNamespace] = (),
-        continue_on_error: bool = False,
         rehydrated_peer: object | None = None,
         raise_not_found: bool = False,
         get_error: Exception | None = None,
@@ -205,7 +204,6 @@ class _Harness(InfrahubAdapter):
         )
         self._diffsync_store = _FakeStore()
         self.store = self._diffsync_store  # ty: ignore[invalid-assignment]
-        self.continue_on_error = continue_on_error
         self._peer_unique_ids = {}
         self._instances: list[object] = []
         self.schema = {schema.kind: schema for schema in schemas}
@@ -235,7 +233,6 @@ class _RelationshipHarness(InfrahubAdapter):
         self.client = _FakeClient(rehydrated_peer=rehydrated_peer)
         self._diffsync_store = _FakeStore()
         self.store = self._diffsync_store  # ty: ignore[invalid-assignment]
-        self.continue_on_error = False
         self._peer_unique_ids = {}
         self._instances: list[object] = []
         self.InterfaceLag = _FakeLagModel
@@ -319,7 +316,7 @@ def _resolve_cached_sdk_peer(harness: InfrahubAdapter, *, kind: str, unique_id: 
 def test_missing_identifier_raises_with_rich_context() -> None:
     device_schema = _device_schema()
     location_schema = _location_schema()
-    harness = _Harness(schemas=(device_schema, location_schema), continue_on_error=False, raise_not_found=True)
+    harness = _Harness(schemas=(device_schema, location_schema), raise_not_found=True)
     parent = _make_node(device_schema, "parent-id", {})
     peer = _make_node(location_schema, "peer-id", {"name": "dc-east"})  # 'organization' missing
 
@@ -389,18 +386,22 @@ def test_missing_identifier_guidance_matches_command_surface(command: str) -> No
     assert "--continue-on-error" not in result.output
 
 
-def test_missing_identifier_skipped_when_continue_on_error(caplog: pytest.LogCaptureFixture) -> None:
+def test_missing_identifier_is_never_skipped(caplog: pytest.LogCaptureFixture) -> None:
+    """The peer-identifier case keeps raising `PeerIdentifierError`; no option skips it (spec 009 R5)."""
     device_schema = _device_schema()
     location_schema = _location_schema()
-    harness = _Harness(schemas=(device_schema, location_schema), continue_on_error=True)
+    harness = _Harness(schemas=(device_schema, location_schema))
     parent = _make_node(device_schema, "parent-id", {})
     peer = _make_node(location_schema, "peer-id", {"name": "dc-east"})
 
-    with caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"):
-        result = harness._resolve_peer_unique_id(parent_node=parent, rel_name="location", peer_node=peer)  # ty: ignore[invalid-argument-type]
+    with (
+        caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"),
+        pytest.raises(PeerIdentifierError) as excinfo,
+    ):
+        harness._resolve_peer_unique_id(parent_node=parent, rel_name="location", peer_node=peer)  # ty: ignore[invalid-argument-type]
 
-    assert result is None
-    assert any("Skipping peer relationship" in rec.message for rec in caplog.records)
+    assert excinfo.value.missing_keys == ("organization",)
+    assert not any("Skipping peer relationship" in rec.message for rec in caplog.records)
 
 
 def test_missing_relationship_identifier_is_rehydrated_by_uuid() -> None:
@@ -721,11 +722,11 @@ def test_relationship_hydration_is_reused_for_shared_store_references() -> None:
     ]
 
 
-def test_unexpected_hydration_error_propagates_with_continue_on_error() -> None:
+def test_unexpected_hydration_error_propagates() -> None:
     device_schema = _device_schema()
     location_schema = _location_schema()
     get_error = RuntimeError("unexpected hydration failure")
-    harness = _Harness(schemas=(device_schema, location_schema), continue_on_error=True, get_error=get_error)
+    harness = _Harness(schemas=(device_schema, location_schema), get_error=get_error)
     parent = _make_node(device_schema, "parent-id", {})
     shallow_peer = _make_node(location_schema, "peer-id", {"name": "dc-east"})
 
@@ -926,7 +927,7 @@ def test_later_complete_peer_recovers_without_second_hydration() -> None:
 
 
 @pytest.mark.parametrize("hydration_result", ["not-found", "incomplete"])
-def test_unresolvable_peer_logs_once_when_continue_on_error(
+def test_unresolvable_peer_raises_each_time_and_hydrates_once(
     hydration_result: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -935,7 +936,6 @@ def test_unresolvable_peer_logs_once_when_continue_on_error(
     incomplete_peer = _make_node(location_schema, "peer-id", {"name": "dc-east"})
     harness = _Harness(
         schemas=(device_schema, location_schema),
-        continue_on_error=True,
         rehydrated_peer=incomplete_peer,
         raise_not_found=hydration_result == "not-found",
     )
@@ -943,18 +943,16 @@ def test_unresolvable_peer_logs_once_when_continue_on_error(
     shallow_peer = _make_node(location_schema, "peer-id", {"name": "dc-east"})
 
     with caplog.at_level(logging.WARNING, logger="infrahub_sync.adapters.infrahub"):
-        results = [
-            harness._resolve_peer_unique_id(
-                parent_node=parent,  # ty: ignore[invalid-argument-type]
-                rel_name="location",
-                peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
-            )
-            for _ in range(2)
-        ]
+        for _ in range(2):
+            with pytest.raises(PeerIdentifierError):
+                harness._resolve_peer_unique_id(
+                    parent_node=parent,  # ty: ignore[invalid-argument-type]
+                    rel_name="location",
+                    peer_node=shallow_peer,  # ty: ignore[invalid-argument-type]
+                )
 
-    assert results == [None, None]
     assert len(harness.client.get_calls) == 1
-    assert sum("Skipping peer relationship" in record.message for record in caplog.records) == 1
+    assert not any("Skipping peer relationship" in record.message for record in caplog.records)
 
 
 def test_complete_peer_returns_unique_id() -> None:

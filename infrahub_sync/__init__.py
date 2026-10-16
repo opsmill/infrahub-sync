@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 import operator
 import re
-from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any, ClassVar, Union
+from collections.abc import Iterator, Mapping
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Union
 
 import pydantic
+from diffsync import DiffSyncModel
 from diffsync.enum import DiffSyncFlags
+from diffsync.exceptions import ObjectAlreadyExists
 from jinja2 import StrictUndefined, Undefined
 from jinja2.exceptions import SecurityError
 from jinja2.nativetypes import NativeCodeGenerator, NativeTemplate, native_concat
@@ -19,7 +22,7 @@ from infrahub_sync.cache.cursors import CursorTier
 from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Iterable
 
     from diffsync.store import BaseStore
 
@@ -297,7 +300,167 @@ FILTERS_OPERATIONS: dict[str, Callable[..., Any]] = {
 }
 
 
+LoadReportReason = Literal[
+    "wrong_value_type",
+    "duplicate_source_identity",
+    "required_peer_excluded_by_filter",
+    "peer_not_found_in_source",
+    "peer_not_loaded",
+]
+"""Why the admission step recorded a source record in the load report (data-model.md)."""
+
+LOAD_REPORT_VALUE_LIMIT = 256
+"""The longest string a load report entry keeps of a refused value."""
+
+NOT_IN_SOURCE_PLACEHOLDER_PREFIX = "infrahub-sync:not-in-source:"
+"""Prefix of the reference value that stands for an optional peer the source does not return."""
+
+
+def not_in_source_placeholder(peer_kind: str, peer_source_id: str) -> str:
+    """Return the reference value that marks an optional peer as not in the source (research R4)."""
+    return f"{NOT_IN_SOURCE_PLACEHOLDER_PREFIX}{peer_kind}:{peer_source_id}"
+
+
+def is_not_in_source_placeholder(value: object) -> bool:
+    """Tell whether a reference value is a placeholder of `not_in_source_placeholder`."""
+    return isinstance(value, str) and value.startswith(NOT_IN_SOURCE_PLACEHOLDER_PREFIX)
+
+
+class PeerReferenceError(Exception):
+    """A source record refers to a peer that the load cannot resolve.
+
+    The message is built from the typed attributes only, never from record data or from the
+    text of another error (research R13).
+    """
+
+    problem: ClassVar[str] = "cannot resolve its peer"
+
+    def __init__(self, *, kind: str, source_id: str | None, field: str, peer_kind: str, peer_source_id: str) -> None:
+        self.kind = kind
+        self.source_id = source_id
+        self.field = field
+        self.peer_kind = peer_kind
+        self.peer_source_id = peer_source_id
+        super().__init__(
+            f"{kind} record {source_id} field {field} {self.problem} (peer kind {peer_kind}, source ID {peer_source_id})"
+        )
+
+
+class ExcludedRequiredPeerError(PeerReferenceError):
+    """A required relationship's peer was removed by a configured filter."""
+
+    problem = "refers to a required peer that a configured filter removed"
+
+
+class PeerNotLoadedError(PeerReferenceError):
+    """The peer is in the load report, and its identity is not known."""
+
+    problem = "refers to a peer that was not loaded"
+
+
+class PeerNotFoundError(PeerReferenceError):
+    """A required relationship's peer is not in the source."""
+
+    problem = "refers to a required peer that is not in the source"
+
+
+class RecordLoadError(Exception):
+    """A source record failed to load for a reason the admission step does not record.
+
+    It fails the plan (FR-018). The message names the kind, the record ID and the field only.
+    """
+
+    def __init__(self, *, kind: str, source_id: str | None, field: str | None) -> None:
+        self.kind = kind
+        self.source_id = source_id
+        self.field = field
+        location = f" field {field}" if field else ""
+        super().__init__(f"{kind} record {source_id}{location} cannot be loaded")
+
+
+class SourceRecordReference(pydantic.BaseModel):
+    """Names a source record by kind, identity and source record ID (data-model.md)."""
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    kind: str
+    identity: dict[str, Any] | None = None
+    source_id: str | None = None
+
+
+class LoadReportEntry(pydantic.BaseModel):
+    """One source record that the admission step recorded (data-model.md "Load report")."""
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    kind: str
+    source_id: str | None = None
+    identity: dict[str, Any] | None = None
+    reason: LoadReportReason
+    field: str | None = None
+    error_type: str | None = None
+    value: Any = None
+    peer: SourceRecordReference | None = None
+    loaded: bool = False
+    existing: SourceRecordReference | None = None
+
+
+_TYPE_ERROR_SUFFIXES = ("_type", "_parsing", "_parsing_size", "_from_float")
+
+
+def _is_type_error(error_type: str) -> bool:
+    """Tell whether a pydantic error type refuses a value because of its type."""
+    return error_type.endswith(_TYPE_ERROR_SUFFIXES)
+
+
+def _limited_value(value: Any) -> Any:  # a refused value can be any JSON value
+    """Return `value` with every string limited to `LOAD_REPORT_VALUE_LIMIT` characters."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return value[:LOAD_REPORT_VALUE_LIMIT]
+    if isinstance(value, Mapping):
+        return {str(key)[:LOAD_REPORT_VALUE_LIMIT]: _limited_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_limited_value(item) for item in value]
+    return str(value)[:LOAD_REPORT_VALUE_LIMIT]
+
+
+def _identity_of(model: type[DiffSyncModel], data: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Return the identifier values of `data`, or None when one identifier is missing."""
+    if data is None:
+        return None
+    identifiers = tuple(getattr(model, "_identifiers", ()))
+    if not identifiers or any(name not in data for name in identifiers):
+        return None
+    return {name: data[name] for name in identifiers}
+
+
+def _error_field(error: Mapping[str, Any]) -> str | None:
+    location = error.get("loc") or ()
+    return str(location[0]) if location else None
+
+
+@dataclasses.dataclass
+class _AdmissionState:
+    """Per-adapter bookkeeping of the shared loader step."""
+
+    load_report: list[LoadReportEntry] = dataclasses.field(default_factory=list)
+    peer_index: dict[tuple[str, str], str] = dataclasses.field(default_factory=dict)
+    not_loaded: dict[tuple[str, str], LoadReportEntry] = dataclasses.field(default_factory=dict)
+    filtered_ids: dict[str, set[str]] = dataclasses.field(default_factory=dict)
+
+
 class DiffSyncMixin:
+    """Adapter base class: owns the per-record load loop and the one admission step.
+
+    An adapter implements `list_records` and `record_to_data`. The default `model_loader`
+    fetches, filters and transforms the records of each mapping entry and passes each record
+    to `load_record`, which builds the model, adds it to the store and, on the source side,
+    records a record that cannot be built in `load_report` (research R3). References to peers
+    resolve through `peer_unique_id` (research R4).
+    """
+
     top_level: ClassVar[list[str]] = []
     config: SyncConfig
     store: BaseStore
@@ -312,8 +475,316 @@ class DiffSyncMixin:
             else:
                 self.model_loader(model_name=item, model=getattr(self, item))
 
-    def model_loader(self, model_name: str, model):  # pylint: disable=unused-argument  # abstract hook
-        raise NotImplementedError
+    # -- Methods an adapter implements ---------------------------------------------------
+
+    def list_records(self, model_name: str, element: SchemaMappingModel) -> Iterable[Any]:  # pylint: disable=unused-argument  # abstract hook
+        """Return the raw records of one mapping entry, before any filter."""
+        msg = f"{type(self).__name__}.list_records is not implemented."
+        raise NotImplementedError(msg)
+
+    def record_to_data(self, record: Any, element: SchemaMappingModel, model: type[DiffSyncModel]) -> dict[str, Any]:  # pylint: disable=unused-argument  # abstract hook
+        """Convert one raw record to model data, with `local_id` set to its source record ID."""
+        msg = f"{type(self).__name__}.record_to_data is not implemented."
+        raise NotImplementedError(msg)
+
+    def record_source_id(self, record: Any) -> str | None:  # an adapter may override it
+        """Return the source record ID of a raw record, used to know which IDs a filter removed."""
+        value = record.get("id") if isinstance(record, Mapping) else getattr(record, "id", None)
+        return None if value is None else str(value)
+
+    # -- Shared loader step ---------------------------------------------------------------
+
+    @property
+    def _admission(self) -> _AdmissionState:
+        state = self.__dict__.get("_admission_state")
+        if state is None:
+            state = _AdmissionState()
+            self.__dict__["_admission_state"] = state
+        return state
+
+    @property
+    def load_report(self) -> list[LoadReportEntry]:
+        """The source records the admission step recorded, in the order they were found."""
+        return self._admission.load_report
+
+    def _is_source(self) -> bool:
+        return getattr(self, "target", None) == "source"
+
+    def model_loader(self, model_name: str, model: type[Any]) -> None:
+        """Load every record of `model_name` through `load_record`.
+
+        On the source side, the IDs a configured filter removed are kept so that a reference
+        to one of them is told apart from a reference to a peer the source does not return.
+        """
+        is_source = self._is_source()
+        raw_ids: set[str] = set()
+        retained_ids: set[str] = set()
+        filtered_entry = False
+        for element in self.config.schema_mapping:
+            if element.name != model_name:
+                continue
+            if not element.mapping:
+                logger.info("No mapping defined for '%s', skipping", element.name)
+                continue
+            records = list(self.list_records(model_name, element))
+            if is_source:
+                filtered = model.filter_records(records=records, schema_mapping=element)
+                if element.filters:
+                    filtered_entry = True
+                    raw_ids.update(self._source_ids(records))
+                    retained_ids.update(self._source_ids(filtered))
+                records = model.transform_records(records=filtered, schema_mapping=element)
+            for record in records:
+                self.load_record(model, element, record)
+        if is_source and filtered_entry:
+            self._admission.filtered_ids.setdefault(model_name, set()).update(raw_ids - retained_ids)
+
+    def _source_ids(self, records: Iterable[Any]) -> set[str]:
+        return {source_id for record in records if (source_id := self.record_source_id(record)) is not None}
+
+    def excluded_peer_ids(self, peer_kind: str) -> set[str]:
+        """Return the source IDs of `peer_kind` that a configured filter removed."""
+        return self._admission.filtered_ids.get(peer_kind, set())
+
+    def load_record(
+        self,
+        model: type[DiffSyncModel],
+        element: SchemaMappingModel,
+        record: Any,  # a raw record of any adapter
+        *,
+        after_add: Callable[[DiffSyncModel, Any], None] | None = None,
+    ) -> DiffSyncModel | None:
+        """Build one record, add it to the store and return it (the admission step, research R3).
+
+        On the source side, a record that cannot be built is recorded in `load_report` and
+        None is returned; any other failure is raised again as `RecordLoadError`. On the
+        destination side nothing is caught.
+        """
+        if not self._is_source():
+            data = self.record_to_data(record, element, model)  # pylint: disable=assignment-from-no-return  # adapters implement it
+            item = model(**data)
+            self.add(item)  # ty: ignore[unresolved-attribute]  # DiffSync adapter method
+            self._index(item, data)
+            if after_add is not None:
+                after_add(item, record)
+            return item
+        return self._admit_source_record(model, element, record, after_add=after_add)
+
+    def _admit_source_record(
+        self,
+        model: type[DiffSyncModel],
+        element: SchemaMappingModel,
+        record: Any,  # a raw record of any adapter
+        *,
+        after_add: Callable[[DiffSyncModel, Any], None] | None,
+    ) -> DiffSyncModel | None:
+        kind = getattr(model, "_modelname", element.name)
+        report_start = len(self.load_report)
+        data: dict[str, Any] | None = None
+        try:
+            data = self.record_to_data(record, element, model)  # pylint: disable=assignment-from-no-return  # adapters implement it
+            item = model(**data)
+            self.add(item)  # ty: ignore[unresolved-attribute]  # DiffSync adapter method
+        except PeerReferenceError as exc:
+            self._settle_pending(report_start, kind, exc.source_id, identity=None)
+            self._record_peer_error(kind, exc)
+            return None
+        except pydantic.ValidationError as exc:
+            self._settle_pending(report_start, kind, self._data_source_id(record, data), identity=None)
+            self._record_validation_error(kind, model=model, record=record, data=data, exc=exc)
+            return None
+        except ObjectAlreadyExists as exc:
+            self._settle_pending(report_start, kind, self._data_source_id(record, data), identity=None)
+            self._record_duplicate(kind, model=model, record=record, data=data or {}, exc=exc)
+            return None
+        except RecordLoadError:
+            raise
+        except Exception as exc:  # research R3: every other failure fails the plan as RecordLoadError
+            raise RecordLoadError(kind=kind, source_id=self._data_source_id(record, data), field=None) from exc
+        self._settle_pending(report_start, kind, self._data_source_id(record, data), identity=_identity_of(model, data))
+        self._index(item, data)
+        if after_add is not None:
+            after_add(item, record)
+        return item
+
+    def _data_source_id(self, record: Any, data: Mapping[str, Any] | None) -> str | None:
+        if data is not None and data.get("local_id") is not None:
+            return str(data["local_id"])
+        return self.record_source_id(record)
+
+    def _index(self, item: DiffSyncModel, data: Mapping[str, Any]) -> None:
+        local_id = data.get("local_id")
+        if local_id is not None:
+            self._admission.peer_index[item.get_type(), str(local_id)] = item.get_unique_id()
+
+    def _report(self, entry: LoadReportEntry) -> None:
+        self._admission.load_report.append(entry)
+        if not entry.loaded and entry.source_id is not None:
+            self._admission.not_loaded.setdefault((entry.kind, entry.source_id), entry)
+
+    def _settle_pending(self, start: int, kind: str, source_id: str | None, *, identity: dict[str, Any] | None) -> None:
+        """Settle the entries `peer_unique_id` made for the record being admitted.
+
+        When the record loaded, they receive its identity. When it did not, they no longer
+        describe a loaded record, so they are marked `loaded: false`.
+        """
+        state = self._admission
+        report = state.load_report
+        for index in range(start, len(report)):
+            entry = report[index]
+            if entry.kind != kind or entry.source_id != source_id or not entry.loaded:
+                continue
+            if identity is not None:
+                report[index] = entry.model_copy(update={"identity": identity})
+            else:
+                report[index] = entry.model_copy(update={"loaded": False})
+                if source_id is not None:
+                    state.not_loaded.setdefault((kind, source_id), report[index])
+
+    def _record_peer_error(self, kind: str, exc: PeerReferenceError) -> None:
+        reasons: dict[type[PeerReferenceError], LoadReportReason] = {
+            ExcludedRequiredPeerError: "required_peer_excluded_by_filter",
+            PeerNotLoadedError: "peer_not_loaded",
+            PeerNotFoundError: "peer_not_found_in_source",
+        }
+        reason = reasons.get(type(exc))
+        if reason is None:
+            raise RecordLoadError(kind=kind, source_id=exc.source_id, field=exc.field) from exc
+        self._report(
+            LoadReportEntry(
+                kind=kind,
+                source_id=exc.source_id,
+                reason=reason,
+                field=exc.field,
+                peer=SourceRecordReference(kind=exc.peer_kind, identity=None, source_id=exc.peer_source_id),
+            )
+        )
+
+    def _record_validation_error(
+        self,
+        kind: str,
+        *,
+        model: type[DiffSyncModel],
+        record: Any,
+        data: Mapping[str, Any] | None,
+        exc: pydantic.ValidationError,
+    ) -> None:
+        errors = exc.errors(include_url=False)
+        source_id = self._data_source_id(record, data)
+        refused = [error for error in errors if not _is_type_error(error["type"])]
+        if data is None or not errors or refused:
+            field_name = _error_field(refused[0]) if refused else None
+            raise RecordLoadError(kind=kind, source_id=source_id, field=field_name) from exc
+        identity = _identity_of(model, data)
+        for error in errors:
+            self._report(
+                LoadReportEntry(
+                    kind=kind,
+                    source_id=source_id,
+                    identity=identity,
+                    reason="wrong_value_type",
+                    field=_error_field(error),
+                    error_type=error["type"],
+                    value=_limited_value(error.get("input")),
+                )
+            )
+
+    def _record_duplicate(
+        self,
+        kind: str,
+        *,
+        model: type[DiffSyncModel],
+        record: Any,
+        data: Mapping[str, Any],
+        exc: ObjectAlreadyExists,
+    ) -> None:
+        # diffsync 2.2 passes the refused object as `existing_object`; the record kept in the
+        # store is the one stored under the same unique ID.
+        refused = exc.existing_object
+        if not isinstance(refused, DiffSyncModel):
+            raise RecordLoadError(kind=kind, source_id=self._data_source_id(record, data), field=None) from exc
+        existing = self.store.get(model=kind, identifier=refused.get_unique_id())
+        existing_identity = existing.get_identifiers()
+        existing_source_id = getattr(existing, "local_id", None)
+        self._report(
+            LoadReportEntry(
+                kind=kind,
+                source_id=self._data_source_id(record, data),
+                identity=_identity_of(model, data),
+                reason="duplicate_source_identity",
+                existing=SourceRecordReference(
+                    kind=kind,
+                    identity=dict(existing_identity) if existing_identity is not None else None,
+                    source_id=None if existing_source_id is None else str(existing_source_id),
+                ),
+            )
+        )
+
+    def peer_unique_id(
+        self,
+        peer_kind: str,
+        peer_source_id: str,
+        *,
+        owner: tuple[str, str | None],
+        field: str,
+        required: bool,
+    ) -> str | None:
+        """Resolve a source reference to the peer's unique ID (research R4).
+
+        `owner` is the referring record's kind and source record ID. The peer is looked up in
+        the store, then in the load report, then in the IDs a configured filter removed. A
+        peer found nowhere is not in the source.
+        """
+        peer_source_id = str(peer_source_id)
+        state = self._admission
+        unique_id = state.peer_index.get((peer_kind, peer_source_id))
+        if unique_id is None:
+            unique_id = self._scan_store(peer_kind, peer_source_id)
+        if unique_id is not None:
+            return unique_id
+
+        owner_kind, owner_source_id = owner
+        details = {
+            "kind": owner_kind,
+            "source_id": owner_source_id,
+            "field": field,
+            "peer_kind": peer_kind,
+            "peer_source_id": peer_source_id,
+        }
+        peer_entry = state.not_loaded.get((peer_kind, peer_source_id))
+        if peer_entry is not None:
+            if peer_entry.identity is None:
+                raise PeerNotLoadedError(**details)
+            peer_model = getattr(self, peer_kind)
+            return peer_model.create_unique_id(**peer_entry.identity)
+
+        if peer_source_id in self.excluded_peer_ids(peer_kind):
+            if required:
+                raise ExcludedRequiredPeerError(**details)
+            return None
+
+        if required:
+            raise PeerNotFoundError(**details)
+        self._report(
+            LoadReportEntry(
+                kind=owner_kind,
+                source_id=owner_source_id,
+                reason="peer_not_found_in_source",
+                field=field,
+                peer=SourceRecordReference(kind=peer_kind, identity=None, source_id=peer_source_id),
+                loaded=True,
+            )
+        )
+        return not_in_source_placeholder(peer_kind, peer_source_id)
+
+    def _scan_store(self, peer_kind: str, peer_source_id: str) -> str | None:
+        """Find a peer added outside `load_record`, by its `local_id`."""
+        for item in self.store.get_all(model=peer_kind):
+            if getattr(item, "local_id", None) == peer_source_id:
+                unique_id = item.get_unique_id()
+                self._admission.peer_index[peer_kind, peer_source_id] = unique_id
+                return unique_id
+        return None
 
     def cursor_tier_for(self, model_name: str) -> CursorTier:  # noqa: ARG002  # pylint: disable=unused-argument
         """Strongest cursor tier the adapter supports for this model.

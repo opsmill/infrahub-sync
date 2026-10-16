@@ -33,6 +33,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
+import pydantic
+import pytest
 from diffsync import Adapter
 from infrahub_sdk.schema.main import GenericSchemaAPI
 
@@ -321,7 +323,6 @@ class _Harness(InfrahubAdapter):
         self.schema = client.schemas  # ty: ignore[invalid-assignment]
         self.source_node = None
         self.owner_node = None
-        self.continue_on_error = False
         # Normally set by `InfrahubAdapter.__init__`, which this harness bypasses.
         self._peer_unique_ids = {}
 
@@ -664,3 +665,54 @@ def test_field_union_is_ordered_and_deduplicated() -> None:
         _attributes = ("site", "description", "name")
 
     assert identifier_and_attribute_fields(_Stub) == ["name", "site", "description"]  # ty: ignore[invalid-argument-type]
+
+
+# ---------------------------------------------------------------------------
+# Record admission (spec 009 T012): no `continue_on_error` skip
+# ---------------------------------------------------------------------------
+
+
+def _site_client_with_a_refused_value() -> StrictClient:
+    """Two ``LocationSite`` rows; the model refuses the first one's description (an integer)."""
+
+    return StrictClient(
+        rows={
+            "LocationSite": [
+                _Row("id-1", {"name": "dc-east", "description": 5}),
+                _Row("id-2", {"name": "dc-west", "description": "west"}),
+            ]
+        }
+    )
+
+
+def test_source_record_the_model_refuses_is_in_the_load_report() -> None:
+    """On the source side the record is recorded as `wrong_value_type` and the kind keeps loading.
+
+    Before spec 009 such a record was skipped with a warning only under `continue_on_error`.
+    """
+
+    adapter = _Harness(
+        config=_config({"LocationSite": ["name", "description"]}), client=_site_client_with_a_refused_value()
+    )
+    adapter.target = "source"
+
+    adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    assert _loaded_names(adapter, LocationSite) == ["dc-west"]
+    assert [(entry.kind, entry.reason, entry.field, entry.error_type) for entry in adapter.load_report] == [
+        ("LocationSite", "wrong_value_type", "description", "string_type")
+    ]
+
+
+def test_destination_record_the_model_refuses_fails_the_load() -> None:
+    """On the destination side nothing is caught: a bad Infrahub record is not a source problem."""
+
+    adapter = _Harness(
+        config=_config({"LocationSite": ["name", "description"]}), client=_site_client_with_a_refused_value()
+    )
+    adapter.target = "destination"
+
+    with pytest.raises(pydantic.ValidationError):
+        adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    assert adapter.load_report == []

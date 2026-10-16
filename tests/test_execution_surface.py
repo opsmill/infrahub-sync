@@ -1476,7 +1476,8 @@ def test_branch_reaches_the_factory_from_run_remote_request(
     # Remote runs pin the CLI engine defaults, with progress display disabled.
     assert call["show_progress"] is False
     assert call["concurrent_load"] is True
-    assert call["continue_on_error"] is False
+    # `continue_on_error` is removed (spec 009 R5): no run can skip records outside the load report.
+    assert "continue_on_error" not in call
     assert call["run_id"] is None
     assert call["verbosity"] == logging.INFO
 
@@ -1892,3 +1893,14 @@ def test_composed_operation_skips_nested_core_lock(
 
     assert result.status == "planned"
     assert RunFile.load_or_default(cache_root / RUN_ID / "run.json").mode == "sync"
+
+
+def test_no_module_of_the_package_names_continue_on_error() -> None:
+    """`continue_on_error` is removed from the engine and the adapters (spec 009 research R5)."""
+    package = Path(execution.__file__).resolve().parent
+    offenders = sorted(
+        str(path.relative_to(package.parent))
+        for path in package.rglob("*.py")
+        if "continue_on_error" in path.read_text(encoding="utf-8")
+    )
+    assert offenders == []

@@ -38,7 +38,6 @@ def _make_adapter(schema_kinds: list[str]) -> "InfrahubAdapter":
     adapter.schema = {k: MagicMock() for k in schema_kinds}
     adapter.source_node = None
     adapter.owner_node = None
-    adapter.continue_on_error = False
     return adapter
 
 
