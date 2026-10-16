@@ -1243,6 +1243,16 @@ class _RelationalRunStore:  # pylint: disable=too-many-public-methods
                         "succeeded",
                     ):
                         self._record_configuration_baseline(cursor, run_id, writeback.baseline, terminal_at)
+                    if writeback.release_write_admission and (terminal_state, terminal_outcome) == (
+                        "completed",
+                        "succeeded",
+                    ):
+                        # A `sync` that stopped after its plan wrote nothing, so the admission
+                        # it reserved goes back and the run can admit the apply of that plan.
+                        cursor.execute(
+                            self._sql("DELETE FROM write_admissions WHERE run_id = ? AND operation = 'sync'"),
+                            (run_id,),
+                        )
                 else:
                     cursor.execute(
                         self._sql(_SELECT_LATEST_EXECUTION_RESULTS),
@@ -2715,6 +2725,7 @@ class ProductProjection:  # pylint: disable=too-many-public-methods
                 summary=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.summary), secrets)),
                 results=cast("dict[str, Any]", _redact_value(_normalize_mapping(writeback.results), secrets)),
                 baseline=_redacted_baseline(writeback.baseline, secrets),
+                release_write_admission=writeback.release_write_admission,
             )
         else:
             sanitized = ExecutionMergeWriteback(

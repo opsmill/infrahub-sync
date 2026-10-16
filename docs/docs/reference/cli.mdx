@@ -90,6 +90,7 @@ $ infrahub-sync apply [OPTIONS] {run_id}
 * `--reason <str>`: Audit reason for the apply.  [required]
 * `--branch <str>`: Destination branch admitted by the Sync API.
 * `--idempotency-key <str>`: Retry key.
+* `--confirm-left-out <int>`: The number of records the reviewed plan leaves out.
 * `--wait / --no-wait`: Wait for this run&#x27;s apply execution.  [default: wait]
 * `--wait-timeout <float>`: Bounded wait in seconds.  [default: 1800.0]
 * `--poll-interval <float>`: Poll interval in seconds.  [default: 2.0]

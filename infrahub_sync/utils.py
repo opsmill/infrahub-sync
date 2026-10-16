@@ -433,6 +433,7 @@ class PlanApplier:
         config_version: str | None = None,
         allow_destination_change: bool = False,
         expected_checksum: str | None = None,
+        confirmed_left_out_count: int | None = None,
     ) -> ApplyRecord:
         """Apply the stored plan — the engine's contract, unchanged; writes no run file (AD069).
 
@@ -464,6 +465,7 @@ class PlanApplier:
             config_version=config_version,
             artifact=artifact,
             expected_checksum=expected_checksum,
+            confirmed_left_out_count=confirmed_left_out_count,
         )
 
     def _require_recorded_destination(self, *, artifact: RawPlanArtifact, allow_destination_change: bool) -> None:

@@ -6,7 +6,15 @@ from datetime import datetime  # noqa: TC003 - Pydantic resolves resource annota
 from math import isfinite
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 Operation = Literal["plan", "verify", "apply", "sync"]
 TerminalState = Literal["completed", "failed", "cancelled", "abandoned", "interrupted"]
@@ -51,6 +59,14 @@ class _RequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
 
+def _without_absent_left_out_count(data: dict[str, Any]) -> dict[str, Any]:
+    """Drop an absent left-out count, so a body without one keeps its earlier shape (spec 009)."""
+    for name in ("confirmed_left_out_count", "expected_left_out_count"):
+        if name in data and data[name] is None:
+            del data[name]
+    return data
+
+
 class _ResourceModel(BaseModel):
     model_config = ConfigDict(extra="allow", frozen=True, str_strip_whitespace=True)
 
@@ -84,8 +100,16 @@ class ApplyRunRequest(_RequestModel):
 
     expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     confirm_writes: bool = False
+    # The plan's left-out count, as the reviewer confirmed it (spec 009). Required, and equal
+    # to the plan's count, when the plan leaves out records; absent or 0 otherwise.
+    confirmed_left_out_count: int | None = Field(default=None, ge=0)
     branch: str | None = None
     reason: str = Field(min_length=1)
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_left_out_count(self, handler: SerializerFunctionWrapHandler):
+        # Without a count the body is the one an earlier server accepts.
+        return _without_absent_left_out_count(handler(self))
 
 
 class CancelRunRequest(_RequestModel):
@@ -446,6 +470,9 @@ class PlanResource(_ResourceModel):
     # reviewer reads the binding the apply will compare. `None` for an unregistered plan.
     schema_fingerprint: str | None = None
     destination_branch: str | None = None
+    # The saved plan's format. `None` for a review document of an earlier release, whose plan
+    # predates format 4 and is therefore refused at apply (spec 009, ADR 0022).
+    format_version: int | None = None
 
 
 class ResultsResource(_ResourceModel):
@@ -546,6 +573,13 @@ class ErrorDetail(_ResourceModel):
     status: int
     run_id: str | None = None
     mutation_id: str | None = None
+    # Set only on `left-out-confirmation-required`: the count the apply must confirm.
+    expected_left_out_count: int | None = Field(default=None, ge=0)
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_left_out_count(self, handler: SerializerFunctionWrapHandler):
+        # Every other refusal keeps the body it had before this field existed.
+        return _without_absent_left_out_count(handler(self))
 
 
 class ErrorEnvelope(_ResourceModel):

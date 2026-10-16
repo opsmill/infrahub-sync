@@ -118,6 +118,26 @@ class PlanFormatApplyUnsupportedError(PlanArtifactError):
     )
 
 
+class LeftOutConfirmationError(PlanArtifactError):
+    """The apply did not confirm the plan's left-out count, or confirmed a different one.
+
+    A plan that leaves out records is applied only when the reviewer confirms how many it
+    leaves out (spec 009 FR-010). `expected_left_out_count` is the plan's
+    `manifest.report.left_out`. Raised before the first operation is dispatched, so the
+    destination was not touched.
+    """
+
+    next_action = (
+        "Review the records the plan leaves out with `infrahub-sync runs left-out`, then apply again "
+        "with `--confirm-left-out` set to the plan's left-out count. The destination was not touched."
+    )
+    wrote = False
+
+    def __init__(self, message: str, *, expected_left_out_count: int) -> None:
+        super().__init__(message)
+        self.expected_left_out_count = expected_left_out_count
+
+
 class MissingDestinationIdError(PlanArtifactError):
     """An update was derived for an object whose destination id the plan cannot record.
 

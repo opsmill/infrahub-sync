@@ -20,16 +20,16 @@ from tqdm import tqdm
 from infrahub_sync import identity_record_data, resolve_effective_diffsync_flags
 
 # These plan imports are cheap; imports that reach pyarrow stay deferred below.
+from infrahub_sync.plan.apply_gate import require_applyable_plan
 from infrahub_sync.plan.config_version import resolve_config_version, validate_config_version
 from infrahub_sync.plan.errors import (
     ApplyRecordInvariantError,
     OperationApplyFailedError,
     PlanArtifactError,
-    PlanFormatApplyUnsupportedError,
     PlanVerificationError,
     SkippedDeleteOperation,
 )
-from infrahub_sync.plan.models import ACTIONS, DESTINATION_ID_FORMAT_VERSION, ApplyRecord
+from infrahub_sync.plan.models import ACTIONS, ApplyRecord
 from infrahub_sync.plan.write_surface import PlannedWriteDestination
 
 # Justified once here rather than per site. Nearly every `infrahub_sync`
@@ -144,24 +144,6 @@ def _uniqueness_refusal_summary(exc: GraphQLError) -> str | None:
         constraint = matched.group(1)
         return f"a destination uniqueness constraint {constraint!r} violated (HTTP status {_UNIQUENESS_HTTP_STATUS})"
     return None
-
-
-def _require_applyable_format(manifest: PlanManifest, *, run_id: str) -> None:
-    """Refuse a plan whose format this version can read and review but not apply.
-
-    A format-2 plan records no destination id on its updates, and an update is keyed by that
-    id alone. Applying one would fall back to the create-shaped convergent upsert, whose
-    failure mode on an incomplete payload is a silent duplicate — so the plan is read,
-    rendered for review, and refused at the write.
-    """
-    if manifest.format_version >= DESTINATION_ID_FORMAT_VERSION:
-        return
-    msg = (
-        f"The plan artifact of run {run_id!r} declares format version {manifest.format_version}, which "
-        f"this version of infrahub-sync can read and review but cannot apply: its updates carry no "
-        f"recorded destination id, so they cannot be keyed. Nothing was written to the destination."
-    )
-    raise PlanFormatApplyUnsupportedError(msg)
 
 
 def _validate_infrahub_plan_payload(
@@ -742,6 +724,7 @@ class Potenda:
         config_version: str | None = None,
         artifact: RawPlanArtifact | None = None,
         expected_checksum: str | None = None,
+        confirmed_left_out_count: int | None = None,
     ) -> ApplyRecord:
         """Apply this run's saved plan artifact to the destination, and return what it did.
 
@@ -784,6 +767,8 @@ class Potenda:
                 **authoritative** answer to `--expected-checksum`, because it is given about
                 the bytes this call applies; a caller's earlier check is a fast path, not a
                 substitute. `None` asks for no approval comparison at all.
+            confirmed_left_out_count: The plan's left-out count as the reviewer confirmed it;
+                required when the plan leaves out records (`infrahub_sync.plan.apply_gate`).
 
         Returns:
             The `ApplyRecord`: the ordered applied identifiers (whose final element is
@@ -866,10 +851,10 @@ class Potenda:
         # before the first destination write.
         loaded = parse_plan_artifact(raw, run_id=run_id)
 
-        # Readable and reviewable, but not applyable. Refused after the artifact has been
+        # Format 4 only, then the confirmed left-out count. Refused after the artifact has been
         # read, before `ownership.before_operation` and therefore before the first dispatch,
         # so the destination is provably untouched.
-        _require_applyable_format(loaded.manifest, run_id=run_id)
+        require_applyable_plan(loaded.manifest, run_id=run_id, confirmed_left_out_count=confirmed_left_out_count)
 
         # The registered service has a schema fingerprint guard, but direct Python apply
         # callers need the same no-write guarantee for reviewed Infrahub payload fields.

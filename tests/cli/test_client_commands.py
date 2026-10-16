@@ -1277,3 +1277,82 @@ def test_a_report_read_refusal_exits_with_the_typed_error(client: MagicMock) -> 
 
     assert result.exit_code == 1
     assert "artifact-expired" in result.output
+
+
+# --- Spec 009 User Story 2: apply confirms the left-out count (contracts/cli.md) ---
+
+_LEFT_OUT_REFUSAL = "apply refused: this plan leaves out 12 records; confirm with --confirm-left-out 12"
+
+
+def _apply_args(*extra: str) -> tuple[str, ...]:
+    return ("apply", "service-run-1", "--expected-checksum", CHECKSUM, "--reason", "apply reviewed plan", *extra)
+
+
+@pytest.mark.parametrize("extra", [(), ("--confirm-left-out", "11")], ids=["missing", "wrong"])
+def test_apply_without_the_right_left_out_count_is_refused_before_any_write(
+    client: MagicMock, extra: tuple[str, ...]
+) -> None:
+    client.apply.side_effect = APIError(
+        409, "left-out-confirmation-required", run_id="service-run-1", expected_left_out_count=12
+    )
+
+    result = _invoke(client, *_apply_args(*extra))
+
+    assert result.exit_code == 1
+    assert _LEFT_OUT_REFUSAL in result.output
+    client.wait_for_run.assert_not_called()
+    _run_id, request, _key = client.apply.call_args.args
+    assert request.confirmed_left_out_count == (int(extra[1]) if extra else None)
+
+
+def test_apply_with_the_right_left_out_count_sends_it_and_succeeds(client: MagicMock) -> None:
+    result = _invoke(client, *_apply_args("--confirm-left-out", "12", "--no-wait"))
+
+    assert result.exit_code == 0, result.output
+    _run_id, request, _key = client.apply.call_args.args
+    assert request == ApplyRunRequest(
+        expected_checksum=CHECKSUM,
+        confirm_writes=True,
+        confirmed_left_out_count=12,
+        reason="apply reviewed plan",
+    )
+
+
+def test_apply_of_a_plan_that_leaves_out_nothing_needs_no_option(client: MagicMock) -> None:
+    result = _invoke(client, *_apply_args("--no-wait"))
+
+    assert result.exit_code == 0, result.output
+    _run_id, request, _key = client.apply.call_args.args
+    assert request.confirmed_left_out_count is None
+
+
+def test_a_negative_left_out_count_is_an_input_error(client: MagicMock) -> None:
+    result = _invoke(client, *_apply_args("--confirm-left-out", "-1"))
+
+    assert result.exit_code == 2
+    client.apply.assert_not_called()
+
+
+def test_runs_show_prints_the_operations_written_and_the_left_out_count(client: MagicMock) -> None:
+    applied = _run(operation="apply", phase="applied", outcome="applied", terminal=("completed", "succeeded"))
+    client.get_run.return_value = applied.model_copy(
+        update={
+            "run": applied.run.model_copy(
+                update={"summary": {"create": 4, "update": 1, "delete": 0, "operations_written": 5, "left_out": 12}}
+            )
+        }
+    )
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "operations_written: 5" in result.output
+    assert "left_out: 12" in result.output
+
+
+def test_runs_show_prints_no_counts_for_a_run_that_recorded_none(client: MagicMock) -> None:
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "operations_written" not in result.output
+    assert "left_out" not in result.output

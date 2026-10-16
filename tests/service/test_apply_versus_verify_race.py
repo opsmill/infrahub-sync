@@ -147,6 +147,7 @@ def _publish_reviewed_plan(projection: ProductProjection, run_id: str) -> str:
             deletes_not_executed=0,
         ),
         operations=(),
+        format_version=4,
     )
     projection.publish_artifact(
         run_id,

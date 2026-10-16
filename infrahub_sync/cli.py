@@ -453,6 +453,8 @@ def _echo_run(resource: RunResource) -> None:
             ("flow_run_id", selected.flow_run_id if selected is not None else None),
         )
     )
+    # Recorded by a completed apply or sync (spec 009): what it wrote, and what its plan left out.
+    _echo_fields(tuple((name, run.summary[name]) for name in ("operations_written", "left_out") if name in run.summary))
 
 
 def _wait(
@@ -759,6 +761,9 @@ def apply_cmd(
     reason: str = typer.Option(..., "--reason", help="Audit reason for the apply."),
     branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
+    confirm_left_out: int | None = typer.Option(
+        None, "--confirm-left-out", help="The number of records the reviewed plan leaves out."
+    ),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for this run's apply execution."),  # noqa: FBT003
     wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
     poll_interval: float = typer.Option(DEFAULT_POLL_INTERVAL, "--poll-interval", help="Poll interval in seconds."),
@@ -776,11 +781,22 @@ def apply_cmd(
                 ApplyRunRequest,
                 expected_checksum=expected_checksum,
                 confirm_writes=True,
+                confirmed_left_out_count=confirm_left_out,
                 branch=branch,
                 reason=reason,
             ),
         )
-        accepted = client.apply(run_id, request, key)
+        try:
+            accepted = client.apply(run_id, request, key)
+        except APIError as error:
+            expected = error.expected_left_out_count
+            if error.code != "left-out-confirmation-required" or expected is None:
+                raise
+            typer.echo(
+                f"apply refused: this plan leaves out {expected} records; confirm with --confirm-left-out {expected}",
+                err=True,
+            )
+            raise typer.Exit(1) from None
         _echo_run(accepted)
         try:
             completed = _wait(

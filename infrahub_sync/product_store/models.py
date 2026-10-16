@@ -266,6 +266,9 @@ class ExecutionFinishWriteback(BaseModel):
     # Present only when this execution completed a write whose source counts are safe to
     # become the next run's reference. Absent on every read stage.
     baseline: BaselineWriteback | None = None
+    # Set only by a `sync` that stopped after its plan without writing (spec 009): the run
+    # gives back its write admission, so its plan can then be applied.
+    release_write_admission: bool = False
 
     @field_validator("finished_at", mode="before")
     @classmethod

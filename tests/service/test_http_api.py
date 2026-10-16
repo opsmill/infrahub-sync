@@ -550,6 +550,7 @@ def _plan_document(run_id: str, *, checksum: str = "a" * 64) -> PlanResource:
                 relationships=(),
             ),
         ),
+        format_version=4,
     )
 
 

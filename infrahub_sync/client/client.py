@@ -710,7 +710,13 @@ class SyncClient:  # pylint: disable=too-many-public-methods
         detail = ErrorEnvelope.model_validate(payload).error
         if detail.status != status:
             raise ValueError
-        return APIError(detail.status, detail.code, run_id=detail.run_id, mutation_id=detail.mutation_id)
+        return APIError(
+            detail.status,
+            detail.code,
+            run_id=detail.run_id,
+            mutation_id=detail.mutation_id,
+            expected_left_out_count=detail.expected_left_out_count,
+        )
 
     @staticmethod
     def _identifier(value: object, argument: str) -> str:

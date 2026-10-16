@@ -62,6 +62,7 @@ from infrahub_sync.runtime_schema import STAGE_RUNTIME_MODEL_SCOPE, RuntimeModel
 
 from .apply_guard import ApplyGuard, hold_apply_guard
 from .checkpoints import publish_final_checkpoint, publish_plan_checkpoint, rehydrate_plan_checkpoint
+from .left_out_stop import applied_summary, left_out_stop
 from .liveness import LivenessPolicy
 from .models import PlanResource
 from .orchestration import SERVICE_FLOW_NAME, run_name
@@ -173,6 +174,7 @@ def _review_document(run_id: str, saved: SavedPlan) -> PlanResource:
         operations=tuple(operation.model_dump(mode="json") for operation in saved.operations()),
         schema_fingerprint=saved.manifest.registered_schema_fingerprint,
         destination_branch=saved.manifest.destination_binding.branch if saved.manifest.destination_binding else None,
+        format_version=saved.manifest.format_version,
     )
 
 
@@ -510,6 +512,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     projection: ProductProjection,
     tracker: WriteDispatchTracker,
     scratch: StageScratch,
+    confirmed_left_out_count: int | None = None,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary."""
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
@@ -619,6 +622,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 ownership=ownership,
                 record_applied=tracker.record_applied,
                 base_directory=scratch.root,
+                confirmed_left_out_count=confirmed_left_out_count,
                 _lock_already_held=True,
             )
         # Outside the guard, so the release this stage reports is already confirmed, and
@@ -630,7 +634,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             phase="applied",
             outcome=applied.status,
             finished_at=datetime.now(timezone.utc),
-            summary={"sync_name": sync_name, **{key: applied.summary[key] for key in ACTION_KEYS}},
+            summary=applied_summary(sync_name, applied, manifest, tracker.applied_record),
             results=result,
             baseline=_baseline_writeback(manifest),
         )
@@ -659,6 +663,9 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 secrets=secrets,
             )
             _publish_plan(projection, run_id, saved, secrets)
+            # A plan that leaves out records is applied only with the confirmed count.
+            if (stopped := left_out_stop(run_id, saved, sync_name)) is not None:
+                return stopped
             verified = execute_run(
                 instance,
                 operation="verify",
@@ -697,7 +704,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
             phase="applied",
             outcome=applied.status,
             finished_at=datetime.now(timezone.utc),
-            summary={"sync_name": sync_name, **{key: applied.summary[key] for key in ACTION_KEYS}},
+            summary=applied_summary(sync_name, applied, verified.manifest, tracker.applied_record),
             results=result,
             baseline=_baseline_writeback(verified.manifest),
         )
@@ -858,6 +865,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     expected_checksum: str | None = None,
     confirm_writes: bool = False,
     configuration_name: str | None = None,
+    confirmed_left_out_count: int | None = None,
 ) -> dict[str, Any]:
     """Execute one API-reserved stage and publish its durable product data.
 
@@ -897,6 +905,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 projection=projection,
                 tracker=tracker,
                 scratch=scratch,
+                confirmed_left_out_count=confirmed_left_out_count,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         failure = exc

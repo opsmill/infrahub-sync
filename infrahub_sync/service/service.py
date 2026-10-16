@@ -19,6 +19,7 @@ from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUP
 from infrahub_sync.configuration.validation import credential_namespace_finding
 from infrahub_sync.execution import collect_secret_values, redact, sanitize_exception_chain
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.plan.models import REPORT_FORMAT_VERSION
 from infrahub_sync.product_store import (
     AuditEvent,
     DuplicatePrefectExecutionError,
@@ -110,11 +111,13 @@ class ServiceAPIError(Exception):
         run_id: str | None = None,
         mutation_id: str | None = None,
         secrets: tuple[str, ...] = (),
+        expected_left_out_count: int | None = None,
     ) -> None:
         self.status = status
         self.code = code
         self.run_id = run_id
         self.mutation_id = mutation_id
+        self.expected_left_out_count = expected_left_out_count
         self.message = redact(message, secrets)
         super().__init__(self.message)
 
@@ -290,6 +293,7 @@ class RunService:
             expected_checksum=request.expected_checksum,
             confirm_writes=True,
         )
+        parameters["confirmed_left_out_count"] = request.confirmed_left_out_count
         existing = self._lookup_existing_receipt(
             run,
             principal,
@@ -332,6 +336,7 @@ class RunService:
                 "expected_checksum does not match the retained reviewed plan",
                 run_id=run_id,
             )
+        self._require_applyable_plan(plan, request, principal, run_id=run_id)
         receipt = self._reserve_existing(
             run,
             principal,
@@ -342,6 +347,41 @@ class RunService:
             admit_write=True,
         )
         return await self._resume_or_replay(receipt, parameters, principal, request.reason)
+
+    def _require_applyable_plan(
+        self, plan: PlanResource, request: ApplyRunRequest, principal: Principal, *, run_id: str
+    ) -> None:
+        """Refuse, before any write, an apply that does not confirm the plan's left-out count.
+
+        Then a plan saved before format 4, which records no report and so no left-out count
+        (contracts/sync-api.md checks 3 and 5). A review document of an earlier release has
+        no `format_version` and is refused with it.
+        """
+        left_out = plan.summary.left_out
+        if (request.confirmed_left_out_count or 0) != left_out:
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation="apply",
+                reason=request.reason,
+                outcome="refused-left-out-count",
+            )
+            raise self._error(
+                409,
+                "left-out-confirmation-required",
+                f"this plan leaves out {left_out} records; confirm the count with confirmed_left_out_count",
+                run_id=run_id,
+                expected_left_out_count=left_out,
+            )
+        if plan.format_version is None or plan.format_version < REPORT_FORMAT_VERSION:
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation="apply",
+                reason=request.reason,
+                outcome="refused-plan-format",
+            )
+            raise self._error(409, "plan-format-not-applicable", "plan again before applying", run_id=run_id)
 
     async def cancel_run(  # noqa: PLR0911  # pylint: disable=too-many-branches,too-many-return-statements,too-many-statements
         self, run_id: str, request: CancelRunRequest, principal: Principal, idempotency_key: str
@@ -1073,6 +1113,7 @@ class RunService:
         *,
         run_id: str | None = None,
         mutation_id: str | None = None,
+        expected_left_out_count: int | None = None,
     ) -> ServiceAPIError:
         return ServiceAPIError(
             status,
@@ -1081,4 +1122,5 @@ class RunService:
             run_id=run_id,
             mutation_id=mutation_id,
             secrets=self._secrets,
+            expected_left_out_count=expected_left_out_count,
         )
