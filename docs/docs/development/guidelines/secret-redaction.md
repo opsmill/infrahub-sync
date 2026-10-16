@@ -4,14 +4,55 @@ title: "Secret redaction"
 
 ## Secret redaction
 
-Failure messages can include credentials from an adapter, an HTTP library or a
-configuration parser. When adding an error path, sanitize the text before returning it
-through an API, forwarding it to Prefect or storing it for remote inspection. Never
-include credentials in messages you write yourself.
+Credentials must not leave the worker in a run record, a plan file, an API response or the
+CLI output. Two layers keep them out:
 
-The rules below describe the [released redaction implementation][execution-source].
-They apply to both registered service runs and direct execution, with different callers
-responsible for the final output.
+- **Prevention.** Text that leaves the worker is built from typed fields, so it never holds a
+  credential value in the first place. This is the rule for new code
+  ([ADR 0021][adr-0021]).
+- **Replacement.** The existing helpers replace collected credential values in failure
+  messages, logs and public artifacts. They stay unchanged and still cover the routes that
+  carry free text, but the run record no longer depends on them.
+
+### Prevent: build what leaves the worker from typed fields
+
+Credential values are resolved only into adapter and SDK settings. Never format one into a
+message, a log line, an exception or a field you return.
+
+A run failure cause, a plan problem reason and a plan file are built from typed fields only:
+a class, a kind, an identifier, a field name, a count or a value read from the source record.
+None of them holds the text of an exception, an address, a request header or a traceback.
+
+`build_failure_cause` in `infrahub_sync/failure_cause.py` is the one layer that turns a failure
+into text that leaves the worker:
+
+- It is called only from `failure_evidence` in `infrahub_sync/service/failure_record.py`, which
+  the worker's failure path (`record_failure`) calls for every failed stage.
+- It reads exception classes and typed attributes: the stage, the failure type from a fixed
+  list, the system role and adapter name, Infrahub's error code, node kind and attribute, the
+  kind, identity and field a typed Sync exception names, and the apply progress.
+- It keeps Infrahub's own error message only for a rejected write, with control characters
+  removed and at most 1,024 characters. Every other field has a length limit of 128 characters.
+- The summary and the next action come from fixed templates over those fields.
+- It runs before `sanitize_exception_chain`. That function replaces each exception with a
+  `RuntimeError` copy, so a cause built after it would lose every type it reads.
+
+The worker stores the cause under `results["failure"]`, next to the stage's
+`results["{stage}_failure"]` evidence. A `sync` that stops after a plan that leaves out records
+stores its cause in the same place. `GET /runs/{run_id}` returns it as `run.failure`, and the
+CLI commands `diff`, `sync`, `apply` and `runs show` print only the fields of that object.
+
+When you add a failure path, add a typed attribute or a failure type to `failure_cause.py`. Do
+not read `str(exc)`, `exc.args` or a response body to fill a field.
+
+### The replacement layer stays, and no longer protects the run record
+
+`collect_secret_values`, `redact`, `sanitize_exception_chain` and the passes of
+`publish_artifact` are unchanged. They still protect the tracebacks the worker raises to
+Prefect, the log lines `RunLoggerBridge` forwards, the observation text the API returns and
+public artifacts. The run record no longer depends on them, because it holds no free text.
+The sections below describe how the [released replacement implementation][execution-source]
+works and where it applies, for registered service runs and direct execution alike.
 
 ### Redact at the boundary, not at the source
 
@@ -20,9 +61,9 @@ from the route you are changing:
 
 | Route | Failure handling and obligation |
 | --- | --- |
-| Registered CLI `diff`, `sync`, `apply` | The CLI calls `SyncClient` over HTTP. The client replaces transport failures with fixed errors and suppresses their causes. It constructs API errors from classification fields rather than returning the response's message text. Preserve those choices when adding client errors. |
+| Registered CLI `diff`, `sync`, `apply` | The CLI calls `SyncClient` over HTTP. The client replaces transport failures with fixed errors and suppresses their causes. It constructs API errors from classification fields rather than returning the response's message text. For a failed or stopped run it prints only the fields of `run.failure`. Preserve those choices when adding client errors. |
 | Sync HTTP API | `service/app.py` formats error responses and handles unhandled request failures. `RunService` redacts provider observation text before returning run resources. Keep response and observation handling safe independently of worker exception handling. |
-| Registered service worker | `service_sync_run` calls `execute_run` for its stages. Its failure path records available evidence, then raises a sanitized exception to Prefect. Extend this worker boundary when adding stage failures. |
+| Registered service worker | `service_sync_run` calls `execute_run` for its stages. Its failure path records the evidence and the cause that `build_failure_cause` builds, then raises a sanitized exception to Prefect. Extend `failure_cause.py` when adding stage failures. |
 | Direct Python and direct Prefect | `execute_run` preserves lifecycle exceptions; callers must sanitize them before exposing them remotely. The direct Prefect flow calls `run_remote_request`, which resolves a local configuration and wraps execution failures. This integration executes plans only. |
 
 See the [CLI][cli-source], [HTTP client][client-source], [API handlers][api-source],
@@ -188,7 +229,18 @@ than the rejected body. See the [resolver][resolver-source] and [API handlers][a
 | Treating a CLI failure as local engine output | Trace the HTTP client, API and worker boundaries separately. |
 | Assuming collected values cover every credential | Test short, uncollected and transformed values at the changed output. |
 | Relying on exception redaction for logs | Check the logger and forwarding path used by the failing code. |
+| Filling a cause field from `str(exc)` or a response body | Read a typed attribute or the exception class in `failure_cause.py`. |
 | Returning validation detail from an invalid configuration | Return a bounded summary and suppress the original cause. |
+
+### Remaining gaps after the MVP
+
+These gaps are follow-up work after the MVP:
+
+- Worker and orchestration logs can still hold a credential shorter than six characters,
+  because the collector drops values below the [length floor](#drop-values-below-a-length-floor)
+  and the logs record the error text rather than the structured cause.
+- The byte pass of `publish_artifact` can still make a published plan invalid JSON (SYNC-262).
+  Plan files no longer receive credential values, so the pass can be removed then.
 
 ### Verifying it
 
@@ -212,6 +264,7 @@ Follow the [testing guidelines](testing.md) when changing those contracts.
 - [Prefect orchestration](../knowledge/orchestration-prefect.md) — registered and direct flows, including log forwarding.
 - [Writing an adapter](writing-an-adapter.md) — credential handling inside an adapter.
 
+[adr-0021]: https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0021-a-run-failure-record-holds-a-structured-cause.md
 [execution-source]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/execution.py#L243-L486
 [cli-source]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/cli.py#L519-L679
 [client-source]: https://github.com/opsmill/infrahub-sync/blob/f98a845986d1f03503d321ce5561b65a3946bf74/infrahub_sync/client/client.py#L552-L628

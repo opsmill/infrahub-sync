@@ -14,6 +14,7 @@ from .errors import (
     TransportError,
 )
 from .models import (
+    ApplyProgressResource,
     ApplyRunRequest,
     ArtifactContent,
     ArtifactListResource,
@@ -23,6 +24,8 @@ from .models import (
     ConfigurationSummaryResource,
     ConfigurationVersionResource,
     CreateRunRequest,
+    FailedOperationResource,
+    FailureSystemResource,
     KeptRecordResource,
     LeftOutRecordResource,
     OrchestrationSummary,
@@ -39,6 +42,7 @@ from .models import (
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ResultsResource,
+    RunFailureCauseResource,
     RunResource,
     ServiceStatusResource,
     ValidationFindingResource,
@@ -50,6 +54,7 @@ from .models import (
 
 __all__ = [
     "APIError",
+    "ApplyProgressResource",
     "ApplyRunRequest",
     "ArtifactContent",
     "ArtifactListResource",
@@ -63,6 +68,8 @@ __all__ = [
     "ConfigurationSummaryResource",
     "ConfigurationVersionResource",
     "CreateRunRequest",
+    "FailedOperationResource",
+    "FailureSystemResource",
     "KeptRecordResource",
     "LeftOutRecordResource",
     "OrchestrationSummary",
@@ -80,6 +87,7 @@ __all__ = [
     "RegisteredConfigurationResource",
     "RegisteredVersionResource",
     "ResultsResource",
+    "RunFailureCauseResource",
     "RunResource",
     "RunTerminalError",
     "RunWaitTimeoutError",

@@ -1286,18 +1286,23 @@ def test_public_run_resource_is_a_self_contained_projection_of_the_product_run_c
     )
     public_run = public_run_resource(product_run)
     projected_field = "prefect_executions"
+    # Derived from `results["failure"]`, the one place the worker stores a run's cause (spec 009).
+    derived_field = "failure"
     product_fields = set(ProductRun.model_fields)
 
     assert not issubclass(PublicRunResource, ProductRun)
-    assert set(PublicRunResource.model_fields) == product_fields
-    assert public_run.model_dump(exclude={projected_field}) == product_run.model_dump(exclude={projected_field})
+    assert set(PublicRunResource.model_fields) == product_fields | {derived_field}
+    assert public_run.model_dump(exclude={projected_field, derived_field}) == product_run.model_dump(
+        exclude={projected_field}
+    )
+    assert public_run.failure is None
 
     openapi = client.get("/openapi.json").json()
     public_schema = openapi["components"]["schemas"]["PublicRunResource"]
     product_app = FastAPI()
     product_app.add_api_route("/product-run", lambda: product_run, response_model=ProductRun)
     product_schema = product_app.openapi()["components"]["schemas"]["ProductRun"]
-    assert set(public_schema["properties"]) == product_fields
+    assert set(public_schema["properties"]) == product_fields | {derived_field}
     assert set(public_schema.get("required", ())) - {projected_field} == set(product_schema.get("required", ())) - {
         projected_field
     }

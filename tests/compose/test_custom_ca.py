@@ -8,8 +8,8 @@ The destination is the suite's Infrahub fixture, over HTTP.
 
 One deployment walks the cases in order. Started without the setting, every
 service starts as before and a plan run fails, because the worker cannot verify
-the source's certificate. Once spec 009 is merged, its failure type is
-`tls_certificate_rejected`; until then the case asserts only that the run fails.
+the source's certificate; the run's cause has the failure type
+`tls_certificate_rejected` (spec 009).
 Started again with the setting, the same package plans. Then a CA directory that
 also holds a private key stops `sync-bootstrap`, `sync-api` and `sync-worker`,
 and their output names the file and holds none of its content.
@@ -385,8 +385,10 @@ def test_a_custom_ca_is_trusted_only_when_named_and_a_private_key_stops_the_serv
                 client, source_package(source, deployment.destination), "custom CA suite: configuration"
             )
             phase, run = plan_outcome(client, config_id, registry_version)
-        # Spec 009 not merged: assert the run fails; its failure type is not checked yet.
         assert "failed" in phase, f"the run reached {phase!r} without the CA: {run}"
+        failure = run["failure"]
+        assert failure is not None, f"the failed run has no cause: {run}"
+        assert failure["failure_type"] == "tls_certificate_rejected", failure
 
         # With the setting: the three services trust the CA, and the same package plans.
         write_environment(base, environment_file, source.ca_directory)

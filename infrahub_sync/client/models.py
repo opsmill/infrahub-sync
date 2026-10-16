@@ -199,6 +199,61 @@ class PublicExecutionLink(_ResourceModel):
         return _timezone(value, "execution timestamps must include a timezone")
 
 
+class PlanRecordReferenceResource(_ResourceModel):
+    """Name one source record by kind, identity and source record ID."""
+
+    kind: str = Field(min_length=1)
+    identity: dict[str, Any] | None = None
+    source_id: str | None = None
+
+
+class FailureSystemResource(_ResourceModel):
+    """The system a run failure came from: its role in the sync and its adapter name."""
+
+    role: str = Field(min_length=1)
+    adapter: str = Field(min_length=1)
+
+
+class FailedOperationResource(_ResourceModel):
+    """The plan operation a stopped apply was writing."""
+
+    operation_id: str = Field(min_length=1)
+    action: str = Field(min_length=1)
+    kind: str = Field(min_length=1)
+    identity: dict[str, Any] | None = None
+
+
+class ApplyProgressResource(_ResourceModel):
+    """How far a stopped apply got."""
+
+    operations_total: int = Field(ge=0)
+    operations_written: int = Field(ge=0)
+    failed_operation: FailedOperationResource | None = None
+    failed_operation_may_have_written: bool | None = None
+
+
+class RunFailureCauseResource(_ResourceModel):
+    """The cause of a failed or stopped run, built by the worker from named fields only.
+
+    No field holds the text of an exception, an address, a header or a traceback.
+    """
+
+    stage: Operation
+    # Strings rather than the closed lists of names: a later server may add a failure type.
+    failure_type: str = Field(min_length=1)
+    system: FailureSystemResource | None = None
+    error_code: str | None = None
+    node_kind: str | None = None
+    attribute: str | None = None
+    record: PlanRecordReferenceResource | None = None
+    field: str | None = None
+    infrahub_message: str | None = None
+    summary: str = Field(min_length=1)
+    error_class: str | None = None
+    apply_progress: ApplyProgressResource | None = None
+    next_action: str = Field(min_length=1)
+
+
 class PublicRunResource(_ResourceModel):
     """Represent the public product record for one Sync run."""
 
@@ -219,6 +274,8 @@ class PublicRunResource(_ResourceModel):
     # Exposed directly rather than through ``results``: an operator deciding whether a run
     # needs reconciling must not have to parse failure evidence to find out.
     reconciliation_required: bool = False
+    # The cause of a failed or stopped run, null for any other run (ADR 0021).
+    failure: RunFailureCauseResource | None = None
     artifact_refs: tuple[ArtifactReferenceResource, ...] = ()
     prefect_executions: tuple[PublicExecutionLink, ...] = ()
 
@@ -368,14 +425,6 @@ class PlanSummaryResource(_ResourceModel):
         if sum(self.problems_by_type.values()) != self.problems:
             raise ValueError(_PROBLEMS_BY_TYPE_MESSAGE)
         return self
-
-
-class PlanRecordReferenceResource(_ResourceModel):
-    """Name one source record by kind, identity and source record ID."""
-
-    kind: str = Field(min_length=1)
-    identity: dict[str, Any] | None = None
-    source_id: str | None = None
 
 
 class PlanProblemResource(_ResourceModel):

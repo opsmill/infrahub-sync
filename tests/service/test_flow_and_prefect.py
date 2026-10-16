@@ -1187,19 +1187,21 @@ def test_a_wrapped_apply_failure_records_the_class_it_was_raised_from(
 
 
 @pytest.mark.usefixtures("_claimed_worker_execution")
-def test_the_recorded_cause_carries_a_class_name_and_never_a_message(
+def test_the_recorded_cause_carries_named_fields_and_never_free_text(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """Safe by construction is what the sweep exists to verify rather than accept.
 
-    A destination's text can carry anything it likes, including a credential it
-    was sent. The recorded cause is one identifier from this process's own
-    taxonomy, so the message the wrapper was raised from must reach nothing.
+    The text of an exception can carry anything, including a credential it was sent, so the
+    message the wrapper was raised from reaches nothing. The cause is built from named fields
+    (ADR 0021): Infrahub's own message about the write it rejected is one of them, recorded in
+    `infrahub_message` and nowhere else.
     """
     run_id = "run-cause-carries-no-message"
     projection = _create_product_run(tmp_path.resolve(), run_id)
     canary = "kaphaeric-secret-in-a-destination-message"
+    wrapper_canary = "kaphaeric-secret-in-the-wrapper-message"
     monkeypatch.setattr(service_flow, "_runtime", lambda: (str(tmp_path), projection))
     bind_granting_guard(monkeypatch, service_flow)
     monkeypatch.setattr(service_flow, "_run_logger", lambda: (logging.getLogger("test-service"), False))
@@ -1209,7 +1211,7 @@ def test_the_recorded_cause_carries_a_class_name_and_never_a_message(
     monkeypatch.setattr(service_flow, "_require_planned_schema", lambda **_kwargs: None)
 
     def fail_apply(*_args: object, **_kwargs: object) -> NoReturn:
-        msg = "applying an operation failed"
+        msg = f"applying an operation failed: {wrapper_canary}"
         cause = SDKGraphQLError(errors=[{"message": canary}])
         raise OperationApplyFailedError(msg, apply_record=ApplyRecord(failed_operation="op-failed")) from cause
 
@@ -1228,7 +1230,11 @@ def test_the_recorded_cause_carries_a_class_name_and_never_a_message(
     assert stored is not None
 
     assert stored.results["apply_failure"]["cause_type"] == "GraphQLError"
-    assert canary not in stored.model_dump_json()
+    recorded = stored.model_dump_json()
+    assert wrapper_canary not in recorded
+    assert stored.results["failure"]["failure_type"] == "destination_rejected_write"
+    assert stored.results["failure"]["infrahub_message"] == canary
+    assert recorded.count(canary) == 1, "Infrahub's message is recorded in `infrahub_message` only."
 
 
 # ---------------------------------------------------------------------------------------

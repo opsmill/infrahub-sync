@@ -192,5 +192,8 @@ def public_run_resource(run: ProductRun) -> PublicRunResource:
         {
             **run.model_dump(exclude={"prefect_executions"}),
             "prefect_executions": tuple(public_execution_link(link) for link in run.prefect_executions),
+            # The cause the worker built from named fields (ADR 0021): one stored place, for a
+            # failed run and for a `sync` that stopped after its plan alike.
+            "failure": run.results.get("failure"),
         }
     )

@@ -8,7 +8,8 @@ gives back its write admission, so the team applies the plan with
 contracts/sync-api.md). No request field skips the stop.
 
 The failure is built from fixed text and the plan's count only. It holds no text of an
-exception (ADR 0021).
+exception (ADR 0021). It is stored under `results["failure"]`, the one place
+`GET /runs/{run_id}` reads a run's cause from, as a failed stage's cause is.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from infrahub_sync.execution import ACTION_KEYS
+from infrahub_sync.failure_cause import NEXT_ACTIONS, RunFailureCause
 from infrahub_sync.product_store import ExecutionFinishWriteback
 
 if TYPE_CHECKING:
@@ -53,24 +55,12 @@ def left_out_stop(
     if left_out == 0:
         return None
     summary = saved.summary().model_dump(mode="json")
-    failure = {
-        "stage": "sync",
-        "failure_type": LEFT_OUT_REVIEW_FAILURE_TYPE,
-        "system": None,
-        "error_code": None,
-        "node_kind": None,
-        "attribute": None,
-        "record": None,
-        "field": None,
-        "infrahub_message": None,
-        "summary": f"The plan leaves out {left_out} records, so the sync stopped before writing",
-        "error_class": None,
-        "apply_progress": None,
-        "next_action": (
-            "Review the left-out records with `infrahub-sync runs left-out`, then apply the plan "
-            "with `infrahub-sync apply --confirm-left-out` and the plan's left-out count."
-        ),
-    }
+    failure = RunFailureCause(
+        stage="sync",
+        failure_type="left_out_review_required",
+        summary=f"The plan leaves out {left_out} records, so the sync stopped before writing",
+        next_action=NEXT_ACTIONS[LEFT_OUT_REVIEW_FAILURE_TYPE],
+    ).model_dump(mode="json")
     result = {
         "run_id": run_id,
         "stage": "sync",

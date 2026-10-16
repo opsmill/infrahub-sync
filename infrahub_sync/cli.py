@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import unicodedata
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from enum import Enum
 from math import isfinite
 from pathlib import Path  # noqa: TC003 - Typer resolves command annotations at runtime.
@@ -17,6 +17,7 @@ import typer
 import yaml
 from pydantic import ValidationError
 
+from infrahub_sync.cli_cause import failure_lines
 from infrahub_sync.client import (
     APIError,
     ApplyRunRequest,
@@ -455,6 +456,20 @@ def _echo_run(resource: RunResource) -> None:
     )
     # Recorded by a completed apply or sync (spec 009): what it wrote, and what its plan left out.
     _echo_fields(tuple((name, run.summary[name]) for name in ("operations_written", "left_out") if name in run.summary))
+    _echo_cause(resource)
+
+
+def _echo_cause(resource: RunResource, *, err: bool = False) -> None:
+    """Print the cause of a failed or stopped run, from the fields of its `failure` only."""
+    if resource.run.failure is not None:
+        for line in failure_lines(resource.run.failure):
+            typer.echo(_display(line), err=err)
+
+
+def _exit_if_stopped(resource: RunResource) -> None:
+    """End with exit code 1 for a run that stopped with a cause, such as a `sync` after its plan."""
+    if resource.run.failure is not None:
+        raise typer.Exit(1)
 
 
 def _wait(
@@ -480,6 +495,11 @@ def _wait(
             poll_interval=poll_interval,
             on_observation=observe,
         )
+    except RunTerminalError as error:
+        # The cause comes from the run record; without it, the terminal verdict alone is printed.
+        with suppress(SyncClientError):
+            _echo_cause(client.get_run(error.run_id), err=True)
+        raise
     except TransportError:
         _echo_run(latest)
         raise
@@ -749,6 +769,7 @@ def sync_cmd(
         )
         if wait:
             _echo_run(completed)
+            _exit_if_stopped(completed)
             _echo_completed_destination_branch(client, completed.run.run_id)
 
 
@@ -798,47 +819,16 @@ def apply_cmd(
             )
             raise typer.Exit(1) from None
         _echo_run(accepted)
-        try:
-            completed = _wait(
-                client,
-                accepted,
-                wait=wait,
-                wait_timeout=wait_timeout,
-                poll_interval=poll_interval,
-            )
-        except RunTerminalError as error:
-            try:
-                failure = client.get_results(error.run_id).results.get("apply_failure")
-            except SyncClientError:
-                failure = None
-            if isinstance(failure, dict):
-                stage = failure.get("stage")
-                error_type = failure.get("error_type")
-                if (
-                    stage == "apply"
-                    and isinstance(error_type, str)
-                    and len(error_type) <= 128
-                    and error_type.isascii()
-                    and error_type.isidentifier()
-                ):
-                    typer.echo(f"{stage} failed: {error_type}", err=True)
-                    if error_type == "PlanSchemaChangedError":
-                        typer.echo("hint: create and review a new plan before applying again", err=True)
-                    elif error_type == "RegisteredPlanVerificationError":
-                        recovery_action = failure.get("recovery_action")
-                        if recovery_action == "rebuild":
-                            typer.echo(
-                                "hint: re-run diff for this sync, review the new plan, then apply that run", err=True
-                            )
-                        elif recovery_action == "compatible_version":
-                            typer.echo(
-                                "hint: re-run diff with this version and review the new plan, "
-                                "or apply the reviewed plan with the version that wrote it",
-                                err=True,
-                            )
-            raise
+        completed = _wait(
+            client,
+            accepted,
+            wait=wait,
+            wait_timeout=wait_timeout,
+            poll_interval=poll_interval,
+        )
         if wait:
             _echo_run(completed)
+            _exit_if_stopped(completed)
             _echo_completed_destination_branch(client, completed.run.run_id)
 
 

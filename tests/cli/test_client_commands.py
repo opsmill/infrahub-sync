@@ -40,6 +40,7 @@ from infrahub_sync.client import (
     RegisteredConfigurationResource,
     RegisteredVersionResource,
     ResultsResource,
+    RunFailureCauseResource,
     RunResource,
     RunTerminalError,
     RunWaitTimeoutError,
@@ -69,13 +70,14 @@ def _version(version: int = 1) -> ConfigurationVersionResource:
     )
 
 
-def _run(
+def _run(  # noqa: PLR0913 - one keyword per field a test sets.
     *,
     operation: Literal["plan", "sync", "apply"] = "plan",
     phase: str = "accepted",
     reconciliation_required: bool = False,
     outcome: str | None = None,
     terminal: tuple[TerminalState, TerminalOutcome] | None = None,
+    failure: dict[str, object] | None = None,
 ) -> RunResource:
     # The three verdict fields are all-or-nothing, so they are set from one optional pair.
     terminal_state, terminal_outcome = terminal if terminal is not None else (None, None)
@@ -109,6 +111,7 @@ def _run(
             outcome=outcome,
             prefect_executions=(PublicExecutionLink(flow_run_id="flow-service-1", purpose=operation, attempt=1),),
             reconciliation_required=reconciliation_required,
+            failure=None if failure is None else RunFailureCauseResource.model_validate(failure),
         ),
         orchestration=(execution,),
     )
@@ -421,94 +424,170 @@ def test_apply_sends_only_reviewed_checksum_and_shipped_fields(client: MagicMock
     assert key == "retry-apply"
 
 
-@pytest.mark.parametrize(
-    ("error_type", "recovery_action", "expected_hint"),
-    [
-        ("PlanSchemaChangedError", None, "hint: create and review a new plan before applying again"),
-        ("RegisteredPlanVerificationError", "rebuild", "hint: re-run diff for this sync"),
-        (
-            "RegisteredPlanVerificationError",
-            "compatible_version",
-            "or apply the reviewed plan with the version that wrote it",
-        ),
-        ("RegisteredPlanVerificationError", "private-token-canary", None),
-        ("OperationApplyFailedError", "rebuild", None),
-    ],
-)
-def test_failed_apply_renders_only_recognized_recovery_hints(
-    client: MagicMock,
-    error_type: str,
-    recovery_action: str | None,
-    expected_hint: str | None,
-) -> None:
-    """Show a recovery hint only for recognized failed-apply evidence."""
-    client.wait_for_run.side_effect = RunTerminalError(
-        "service-run-1",
-        terminal_state="failed",
-        terminal_outcome="failed",
-        phase="apply-failed",
-        outcome="failed",
-    )
-    client.get_results.return_value = ResultsResource(
-        run_id="service-run-1",
-        results={
-            "apply_failure": {
-                "stage": "apply",
-                "outcome": "failed",
-                "error_type": error_type,
-                "recovery_action": recovery_action,
-            }
+CANARY = "private-token-canary"
+
+
+def _cause(**fields: object) -> dict[str, object]:
+    """A run failure cause with the fields of data-model.md, every optional one null."""
+    return {
+        "stage": "plan",
+        "failure_type": "token_rejected",
+        "system": {"role": "destination", "adapter": "infrahub"},
+        "error_code": None,
+        "node_kind": None,
+        "attribute": None,
+        "record": None,
+        "field": None,
+        "infrahub_message": None,
+        "summary": "The destination system (infrahub) rejected the token",
+        "error_class": "RunExecutionError",
+        "apply_progress": None,
+        "next_action": "Check the token that the worker uses for this system, then run the stage again.",
+        **fields,
+    }
+
+
+REJECTED_WRITE = _cause(
+    stage="apply",
+    failure_type="destination_rejected_write",
+    system={"role": "destination", "adapter": "infrahub"},
+    error_code="ATTRIBUTE_CONSTRAINT_VIOLATION",
+    node_kind="DcimDevice",
+    attribute="status",
+    infrahub_message="planned is not a valid value for status\x1b[2J",
+    summary="The destination rejected a write to DcimDevice with error code ATTRIBUTE_CONSTRAINT_VIOLATION",
+    error_class="OperationApplyFailedError",
+    apply_progress={
+        "operations_total": 2291,
+        "operations_written": 692,
+        "failed_operation": {
+            "operation_id": "op_518aada155d790ad",
+            "action": "update",
+            "kind": "DcimDevice",
+            "identity": {"name": "rtr1"},
         },
+        "failed_operation_may_have_written": True,
+    },
+    next_action="Fix the cause, then create and review a new plan.",
+    # A field the CLI does not know: a newer server's, or a leak. It is never printed.
+    detail=CANARY,
+)
+
+
+def _terminal(phase: str) -> RunTerminalError:
+    return RunTerminalError(
+        "service-run-1", terminal_state="failed", terminal_outcome="failed", phase=phase, outcome="failed"
     )
 
+
+def _assert_only_cause_fields(output: str) -> None:
+    assert CANARY not in output
+    assert "failed: RunExecutionError" not in output
+    assert "failed: OperationApplyFailedError" not in output
+
+
+def test_a_failed_diff_prints_the_cause(client: MagicMock) -> None:
+    client.wait_for_run.side_effect = _terminal("plan-failed")
+    client.get_run.return_value = _run(phase="plan-failed", outcome="failed", failure=_cause(detail=CANARY))
+
     result = _invoke(
-        client,
-        "apply",
-        "service-run-1",
-        "--expected-checksum",
-        CHECKSUM,
-        "--reason",
-        "apply reviewed plan",
+        client, "diff", "--config-id", "edge-sync", "--version", "1", "--reason", "review", "--idempotency-key", "k"
     )
 
     assert result.exit_code == 1
-    client.get_results.assert_called_once_with("service-run-1")
-    assert f"apply failed: {error_type}" in result.output
-    assert "private-token-canary" not in result.output
-    if expected_hint is None:
-        assert "hint:" not in result.output
-    else:
-        assert expected_hint in result.output
+    client.get_run.assert_called_once_with("service-run-1")
+    assert "plan failed: the destination system (infrahub) rejected the token" in result.output
+    assert "  next: Check the token that the worker uses for this system, then run the stage again." in result.output
+    _assert_only_cause_fields(result.output)
 
 
-def test_failed_apply_keeps_terminal_verdict_when_failure_evidence_is_unavailable(client: MagicMock) -> None:
-    client.wait_for_run.side_effect = RunTerminalError(
-        "service-run-1",
-        terminal_state="failed",
-        terminal_outcome="failed",
-        phase="apply-failed",
-        outcome="failed",
+def test_a_stopped_sync_prints_the_cause_and_exits_1(client: MagicMock) -> None:
+    stopped = _cause(
+        stage="sync",
+        failure_type="left_out_review_required",
+        system=None,
+        summary="The plan leaves out 12 records, so the sync stopped before writing",
+        error_class=None,
+        next_action="Review the left-out records with `infrahub-sync runs left-out`, then apply the plan.",
     )
-    client.get_results.side_effect = TransportError("get_results")
+    client.sync.return_value = _run(
+        operation="sync",
+        phase="planned",
+        outcome="left-out-review-required",
+        terminal=("completed", "succeeded"),
+        failure=stopped,
+    )
 
     result = _invoke(
-        client,
-        "apply",
-        "service-run-1",
-        "--expected-checksum",
-        CHECKSUM,
-        "--reason",
-        "apply reviewed plan",
+        client, "sync", "--config-id", "edge-sync", "--version", "1", "--reason", "sync", "--idempotency-key", "k"
     )
 
     assert result.exit_code == 1
-    client.get_results.assert_called_once_with("service-run-1")
+    assert "sync stopped: the plan leaves out 12 records, so the sync stopped before writing" in result.output
+    assert "  next: Review the left-out records with `infrahub-sync runs left-out`" in result.output
+    _assert_only_cause_fields(result.output)
+
+
+def test_a_stopped_apply_prints_the_rejected_write(client: MagicMock) -> None:
+    client.wait_for_run.side_effect = _terminal("apply-interrupted")
+    client.get_run.return_value = _run(operation="apply", phase="apply-interrupted", failure=REJECTED_WRITE)
+
+    result = _invoke(client, "apply", "service-run-1", "--expected-checksum", CHECKSUM, "--reason", "apply")
+
+    assert result.exit_code == 1
+    lines = result.output.splitlines()
+    headline = (
+        "apply stopped: the destination rejected a write to DcimDevice with error code ATTRIBUTE_CONSTRAINT_VIOLATION"
+    )
+    expected = [
+        headline,
+        "  node kind: DcimDevice   attribute: status",
+        "  Infrahub message: planned is not a valid value for status\\x1b[2J",
+        "  written: 692 of 2291 operations",
+        "  failed operation: op_518aada155d790ad update DcimDevice name=rtr1 (may have written part of its change)",
+        "  next: Fix the cause, then create and review a new plan.",
+    ]
+    start = lines.index(headline)
+    assert lines[start : start + len(expected)] == expected
+    assert "\x1b" not in result.output, "A control character reaches the terminal only escaped."
+    _assert_only_cause_fields(result.output)
+
+
+def test_a_failed_apply_keeps_its_terminal_verdict_when_the_run_is_unavailable(client: MagicMock) -> None:
+    client.wait_for_run.side_effect = _terminal("apply-failed")
+    client.get_run.side_effect = TransportError("get_run")
+
+    result = _invoke(client, "apply", "service-run-1", "--expected-checksum", CHECKSUM, "--reason", "apply")
+
+    assert result.exit_code == 1
+    client.get_run.assert_called_once_with("service-run-1")
     assert "error: run-terminal" in result.output
     assert "run_id: service-run-1" in result.output
     assert "terminal_state: failed" in result.output
-    assert "terminal_outcome: failed" in result.output
     assert "phase: apply-failed" in result.output
-    assert "outcome: failed" in result.output
+    assert "apply failed:" not in result.output
+
+
+def test_runs_show_prints_the_cause(client: MagicMock) -> None:
+    client.get_run.return_value = _run(operation="apply", phase="apply-interrupted", failure=REJECTED_WRITE)
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "phase: apply-interrupted" in result.output
+    assert "apply stopped: the destination rejected a write to DcimDevice" in result.output
+    assert "  written: 692 of 2291 operations" in result.output
+    _assert_only_cause_fields(result.output)
+
+
+def test_runs_show_prints_no_cause_for_a_run_without_one(client: MagicMock) -> None:
+    client.get_run.return_value = _run(operation="apply", phase="applied", outcome="applied")
+
+    result = _invoke(client, "runs", "show", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert "failed:" not in result.output
+    assert "stopped:" not in result.output
 
 
 def test_runs_show_renders_the_service_record_and_its_selected_execution(client: MagicMock) -> None:

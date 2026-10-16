@@ -3,7 +3,8 @@
 For every failure type, the exception carries the two fixture credentials of T001 in its text,
 in an address with a user name and password, in a request header and in a traceback. The
 stored cause is checked on its raw bytes: neither value, in any encoding JSON gives it, and no
-part of that text appears. The check does not depend on value replacement.
+part of that text appears. The check does not depend on value replacement. The same holds for
+`GET /runs/{run_id}` and the output of `runs show` after a run fails with that exception.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from infrahub_sdk.exceptions import (
     ServerNotReachableError,
     ServerNotResponsiveError,
 )
+from typer.testing import CliRunner
 
 from infrahub_sync import RecordLoadError, SideLoadError, TransformError
 from infrahub_sync.configuration.credentials import CredentialConfigurationError
@@ -31,6 +33,7 @@ from tests.plan.problem_fixtures import SHORT_CREDENTIAL, SPECIAL_CREDENTIAL
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 ADDRESS = f"https://admin:{SHORT_CREDENTIAL}@netbox.example.com:8443/api/dcim/devices/?token={SPECIAL_CREDENTIAL}"
 HEADER = f"Authorization: Token {SPECIAL_CREDENTIAL}"
@@ -177,3 +180,53 @@ def test_no_credential_and_no_error_text_reaches_the_cause(
     for raw in stored:
         for forbidden in _forbidden():
             assert forbidden not in raw, f"{forbidden!r} reached the {failure_type} cause"
+
+
+@pytest.fixture
+def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:  # noqa: ANN401
+    """The Sync API and the `sync` stage boundary; skipped where the service extras are missing."""
+    pytest.importorskip("prefect")
+    pytest.importorskip("opsmill_prefect_extras")
+    pytest.importorskip("fastapi")
+    from tests.service.sync_stage_harness import build_sync_stage_harness
+
+    return build_sync_stage_harness(monkeypatch, tmp_path)
+
+
+@pytest.mark.parametrize(("stage", "factory", "failure_type"), CASES)
+def test_no_credential_and_no_error_text_reaches_the_api_or_runs_show(
+    harness: Any,  # noqa: ANN401
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+    factory: Callable[[], BaseException],
+    failure_type: str,
+) -> None:
+    del stage  # The run fails in its own stage, `sync`.
+    from infrahub_sync.cli import app
+    from infrahub_sync.service import flow as service_flow
+
+    def plan(*_args: object, **_kwargs: object) -> None:
+        raise factory()
+
+    monkeypatch.setattr(service_flow, "_plan", plan)
+    run_id = harness.run_sync()
+
+    response = harness.get(f"/runs/{run_id}")
+    assert response.status_code == 200, response.text
+    assert response.json()["run"]["failure"]["failure_type"] == failure_type
+    client = harness.sync_client()
+    try:
+        shown = CliRunner().invoke(app, ["runs", "show", run_id], obj={"client": client})
+    finally:
+        client.close()
+    assert shown.exit_code == 0, shown.output
+    assert "sync failed: " in shown.output, "runs show prints the cause."
+    cause = json.dumps(response.json()["run"]["failure"], ensure_ascii=False).encode()
+    for forbidden in _forbidden():
+        assert forbidden not in cause, f"{forbidden!r} reached the returned cause for {failure_type}"
+    # The whole response and output also hold random run IDs, checksums and UUIDs, which can
+    # contain the port's digits by chance; the cause above is checked for those too.
+    words = [forbidden for forbidden in _forbidden() if not forbidden.isdigit()]
+    for raw, surface in ((response.content, "the run resource"), (shown.output.encode(), "runs show")):
+        for forbidden in words:
+            assert forbidden not in raw, f"{forbidden!r} reached {surface} for {failure_type}"
