@@ -177,3 +177,41 @@ Other fixes found by the chunks:
 2. Decide how to classify an apply whose planned peer was deleted from Infrahub: keep `internal_error`, or add a new failure type.
 3. Address the deferred medium findings, first the `identities_merge_in_destination` grouping and the comparison with every live worker.
 4. Open a pull request when the sign-off is done. Use the label `changes/minor` and confirm the `+009-` changelog fragments.
+
+## Product decisions applied on 2026-10-17
+
+Benoit Kohler decided three points on 2026-10-17. They replace the decision "Infrahub destination merges nodes with the same mapped identity" above, and answer suggested next step 2.
+
+### A yes or no flag confirms the records left out (commit `cae7f220`)
+
+- The CLI option `apply --confirm-left-out` takes no value. The apply request field `confirm_left_out: bool` (default false, strict JSON boolean) replaces `confirmed_left_out_count`. The client leaves the field out of the body when it is false.
+- When the plan leaves out records, an apply without `confirm_left_out: true` is refused before any write with 409 `left-out-confirmation-required`. The message states the count ("this plan leaves out N records; confirm with confirm_left_out=true"), the body keeps `expected_left_out_count`, and the audit outcome is `refused-left-out-not-confirmed`. The CLI prints "apply refused: this plan leaves out N records; confirm with --confirm-left-out".
+- The refusal of a count that differs from the plan's is removed, because the plan checksum already binds the apply to the reviewed plan. When the plan leaves out no records, the flag is accepted and ignored. The order of the checks is unchanged. `sync` still stops after a plan that leaves out records.
+- Updated: spec 009 (FR-010, FR-011, FR-012, FR-026, FR-029, user story 2, SC-002, SC-006), spec 011 FR-026 and user story 2 (checkbox "I have reviewed the N records left out"), data-model.md, contracts, quickstart.md, research.md, the drafts of ADR 0020 and 0022, the docs, the example README and the changelog fragment. `tests/plan/test_apply_left_out_count.py` is renamed `tests/plan/test_apply_gate.py`. tasks.md keeps the history of the count as it was implemented.
+
+### Infrahub objects that share one identity are the problem `destination_identity_ambiguous` (commit `bdfb41e7`)
+
+- New module `infrahub_sync/plan/destination_ambiguity.py`. The Infrahub adapter stores each destination record through `DestinationIdentityAmbiguities.store`, which keeps the store as `update_or_add_model_instance` did and records the node IDs when a second node has an identity already stored.
+- The problem pass lists each such identity with the kind, the identity and the node IDs (`destination_ids`, a new optional field of `PlanProblem` and `PlanProblemResource`, left out of every other problem line, so the bytes of other report lines and the loader parity baselines are unchanged). The source record with that identity is left out with its dependents. The selection step removes every operation of that identity, a delete included. Without a source record the problem is still listed, nothing is left out, and no delete is planned; when the identity cannot be formed from the destination store, no delete of that kind is planned.
+- `infrahub-sync runs problems` prints the node IDs. The shared fixture gains a source site `twin` and two Infrahub `twin` nodes, so the fixture plan lists nine problems of eight types.
+- Judgement call: the check covers the full destination load of the Infrahub adapter (`model_loader`). An incremental destination read through the cache does not check it.
+
+### A peer missing in Infrahub at apply time is `destination_peer_missing` (commit `e4f13fce`)
+
+- `PeerNotFoundError` and `PeerAmbiguousError` (`infrahub_sync/plan/errors.py`) carry the typed attributes `peer_kind` and `referring_operation_id`, set by `PeerResolver._query`. `failure_cause.py` classifies `PeerNotFoundError` with a peer kind as `destination_peer_missing`: system destination (`infrahub`), `node_kind` the peer kind, a summary that names the operation, and the next action "Create and review a new plan, then apply that plan: a run accepts one apply." No error text enters the cause. Verify resolves no peer, so only apply and sync reach this type.
+- Judgement call: `PeerAmbiguousError` was also classified `internal_error`. It is now the new type `destination_peer_ambiguous`, with the same fields. A `PeerNotFoundError` raised because no query could be formed from the peer identity has no peer kind and stays `internal_error`, because nothing showed that the peer is missing.
+
+### Evidence
+
+| Gate | Command | Time (UTC) | Result |
+| --- | --- | --- | --- |
+| Unit tests | `uv run invoke tests.tests-unit` | 2026-10-17T02:30:42Z | `6389 passed, 4 skipped, 222 deselected, 4 warnings in 156.77s` |
+| Loader parity | `uv run pytest -q -p no:randomly tests/plan/test_loader_plan_parity.py` | 2026-10-17T02:33:25Z | `7 passed in 0.20s`, baselines unchanged |
+| Compose lifecycle | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose/test_lifecycle.py -n 0 --compose-zero-skip` | 2026-10-17T02:33:47Z | `12 passed in 321.89s` |
+| Compose managed run | same, `tests/compose/test_managed_run.py` | 2026-10-17T02:39:13Z | `4 passed in 111.72s` |
+| Compose credential leaks | same, `tests/compose/test_credential_leaks.py` | 2026-10-17T02:41:08Z | `1 passed in 229.28s` |
+| Docs build | `uv run invoke docs.docusaurus` | 2026-10-17T02:45:02Z | `[SUCCESS] Generated static files in "build".` |
+| Lint | `uv run invoke lint` | 2026-10-17 | rumdl, ruff and Pylint (0 diagnostics) pass; yamllint fails only on paths under `./.worktrees/` |
+| Types | `uv run ty check .` | 2026-10-17 | `Found 17 diagnostics`, the pre-existing count |
+
+The compose image was rebuilt with `docker build -t infrahub-sync:compose-test .` before the compose runs.
