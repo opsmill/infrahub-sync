@@ -104,6 +104,15 @@ Validation rules:
 States: **absent** (no directory or no file; nothing changes) → **installed** (bundle written,
 variables set). The bundle is rebuilt at each process start.
 
+Log records (product decision of 2026-10-17):
+
+- installed: `custom CA bundle installed`, info, with `certificates` and `bundle`;
+- directory present with no certificate file: `custom CA directory holds no certificate file`,
+  info, with `directory`;
+- no directory: no record;
+- each trust variable already set: `trust variable already set; it overrides the custom CA
+  directory`, warning, with `variable` (the name, never the value).
+
 ## Prefect opt-in file
 
 - **Name**: `prefect-ui.yml`, written by an OpsMill engineer beside `docker-compose.yml`, not

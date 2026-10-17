@@ -233,10 +233,19 @@ See [contracts/object-store.md](contracts/object-store.md) and R6.
   `$TMPDIR/infrahub-sync-ca-bundle.pem`, and sets `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`,
   `AWS_CA_BUNDLE`, `INFRAHUB_TLS_CA_FILE` (R8, [data-model.md](data-model.md)).
 - `bootstrap.main()`, `serve.main()` and `worker.main()` call it first.
+- Logging (product decision of 2026-10-17): `custom CA bundle installed` with the count and the
+  bundle path at every start; `custom CA directory holds no certificate file` (info) when the
+  directory exists but holds no `.pem` or `.crt` file; `trust variable already set; it
+  overrides the custom CA directory` (warning, the variable name only) for each trust variable
+  that was already set.
 
 ### Release digest and SBOM (FR-027)
 
-New job `record_image` in `workflow-publish.yml` (R11).
+New job `record_image` in `workflow-publish.yml` (R11). It names the image by the pull address
+`registry.opsmill.io/${{ github.repository }}`, not `vars.HARBOR_HOST`, and its verification
+commands use the identity regexp
+`^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/`
+(product decisions of 2026-10-17).
 
 ### Lifecycle failure causes (FR-026)
 
@@ -297,7 +306,7 @@ Measured on 2026-10-15: amd64 10/10, arm64 10/10, run
 | FR-028 to FR-030, SC-012 | `test_external_object_store.py`: a MinIO instance from the same pinned image, outside the deployment's services, over HTTPS with a certificate from a test CA, with a bucket created beforehand and a credential that may not create buckets; bundled store left out; plan and apply with `path`, then with `virtual` (the test store sets `MINIO_DOMAIN`, and a network alias resolves `<bucket>.<host>`) | compose |
 | FR-024, SC-009 | `test_custom_ca.py`: a test HTTPS source with a private CA; run fails without the CA (failure type `tls_certificate_rejected` once spec 009 is merged) and succeeds with it | compose |
 | FR-035, SC-013 | `test_credential_leaks.py`: generated test values for every credential; search the raw output of each documented command, every container log, and the environment of every non-receiver service; report names found, never values | compose |
-| FR-026, SC-010 | nightly dispatch with `compose_repeat: 10` on amd64 and arm64 | CI |
+| FR-026, SC-010 | nightly dispatch with `compose_repeat: 10` on amd64 and arm64; the input is refused outside 1 to 10 (product decision of 2026-10-17) | CI |
 | FR-027, SC-011 | `record_image` job; manual check of the first pre-release after merge | CI |
 
 ## Documentation
@@ -378,7 +387,9 @@ replan-009 records the same agreement in spec 009's plan.
   ran on Compose 5.1.2; `test_compose_minimum.py` must cover 2.24.
 - An operator who sets an external endpoint but not `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0` gives
   the bundled MinIO the external store's credential before bootstrap stops the deployment
-  (R6, item 6). The guard limits how long that state lasts; it cannot prevent it.
+  (R6, item 6). The guard limits how long that state lasts; it cannot prevent it. The product
+  owner kept the DNS-based guard for the MVP (2026-10-17); the documentation tells the operator
+  to rotate or remove that credential if it matters.
 - `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE` accepts any integer. A value above 1 would start two MinIO
   containers on one volume. The documentation names 0 and 1 only; Compose cannot restrict it.
 - Moving from the bundled MinIO to an external store does not move earlier files (spec edge

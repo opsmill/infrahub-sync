@@ -162,3 +162,123 @@ review lead lowered it to medium after checking the code. The fixes are in `3247
    fragment and one `changes/*` label.
 4. After merge, run T070: 10 repeats on each architecture against the merged code.
 5. After the first pre-release, run T085: quickstart scenario 13.
+
+## Product decisions applied on 2026-10-17
+
+The product owner decided review findings 11, 12, 13, 15 and 16 and two documentation points.
+Spec artefacts that stated the earlier behaviour were updated in the commit that adds this
+section: `spec.md` (FR-024, FR-025, FR-027, FR-035), `plan.md`, `data-model.md` and
+`contracts/object-store.md`. The changelog fragment `+013-compose-images.changed.md` was
+extended rather than a new fragment added, because the CA directory and the release notes are
+both new in this unreleased change.
+
+### A. Registry name (finding 17 of the follow-up review)
+
+- Commit: `200dbf37`.
+- Finding: the repository variable `HARBOR_HOST` (read with `gh variable list`, a read-only call)
+  is an OVH managed registry host name, not `registry.opsmill.io`.
+  `docs/docs/development/knowledge/image-publishing.md` and ADR 0015 already state that pushes
+  must use the `HARBOR_HOST` name, because the login authenticates only that host, and that
+  both names reach the same Harbor project.
+- Change: the `record_image` job wrote the `HARBOR_HOST` name into the release notes, which
+  research R11 had decided would name `registry.opsmill.io/opsmill/infrahub-sync`. The job now
+  writes `registry.opsmill.io/${{ github.repository }}`. The push path is unchanged.
+- Contract tests in `tests/test_workflow_contracts.py`: every push in `ci-docker-image.yml` and
+  `workflow-publish.yml` names `${{ vars.HARBOR_HOST }}/${{ github.repository }}`; no push
+  names `registry.opsmill.io`; every `registry.opsmill.io` reference in the user pages,
+  `README.md` and `docker-compose.yml` names `opsmill/infrahub-sync` or the bare host; the
+  release notes use the pull name; the knowledge page states that both names reach one project.
+- Not provable offline, for the owner to check in the repository and registry settings: that
+  `HARBOR_HOST` and `registry.opsmill.io` front the same Harbor project, and that a tag pushed to
+  `HARBOR_HOST` can be pulled, and verified with cosign, through `registry.opsmill.io`. The first
+  pre-release (T085) is the first run that shows it.
+
+### B. Custom CA logging and restart (finding 18)
+
+- Commits: `ef4fcb61` (code, unit tests, compose test, `custom-certificates.mdx`) and `a28322d9`
+  (`compose-deployment.mdx`, troubleshooting rows).
+- `infrahub_sync/service/trust_store.py` still logs `custom CA bundle installed` with the count
+  and the bundle path at every start. It now also logs `custom CA directory holds no certificate
+  file` (info, with the directory) when the directory exists but holds no `.pem` or `.crt` file,
+  and `trust variable already set; it overrides the custom CA directory` (warning, with the
+  variable name only) for each of `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` and
+  `INFRAHUB_TLS_CA_FILE` that was already set. An absent directory logs nothing.
+- Tests first: three new tests in `tests/service/test_trust_store.py` failed before the change.
+  `tests/compose/test_custom_ca.py` now also checks that each of the three services logs the
+  empty-directory line when no CA is named; the placeholder volume makes that line appear on
+  every start of a deployment without a CA.
+- Docs: user ID 10001 must list the directory and read the files (already in
+  `custom-certificates.mdx`, now also in the `.env` table of `compose-deployment.mdx`); a change
+  to the files takes effect after `docker compose up -d --force-recreate sync-api sync-worker`
+  or `docker compose restart sync-api sync-worker`; a change to `INFRAHUB_SYNC_CA_CERTIFICATES`
+  itself changes the mount, so `up -d --wait` recreates the three services (the compose test
+  relies on that).
+
+### C. Bundled-store guard (finding 11)
+
+- Commit: `a28322d9`. No code change; the DNS-based guard stays for the MVP.
+- "Use your own S3-compatible store" now says that `sync-bootstrap` detects the bundled MinIO when
+  the name `object-store` resolves, so it stops only after `object-store` started with the
+  store's access key and secret key as its root credential on the same host, and tells the
+  operator to rotate that key pair or remove the container and its volume if that matters. The
+  troubleshooting row for `bundled-object-store-not-left-out` says the same.
+
+### D. Cosign identity (finding 16)
+
+- Commit: `200dbf37`.
+- Evidence: Fulcio's identity configuration for GitHub Actions
+  (`https://github.com/sigstore/fulcio/blob/main/config/identity/config.yaml`) sets
+  `subject-alternative-name-template: "{{ .url }}/{{ .job_workflow_ref }}"`, and
+  `docs/oid-info.md` of the same repository describes Build Signer URI as the reusable workflow
+  ref. `job_workflow_ref` names the workflow file that contains the job. The `sign` and `sbom`
+  jobs are in `ci-docker-image.yml`, called by `workflow-publish.yml`, called by
+  `trigger-release.yml` on the `release` event, whose ref is `refs/tags/<version>`; a local
+  `./` call runs at the caller's ref. The certificate identity of a release signature is
+  therefore `https://github.com/opsmill/infrahub-sync/.github/workflows/ci-docker-image.yml@refs/tags/<version>`.
+  This was read from the documentation and the workflow files; no signed release image was
+  inspected, because none exists yet.
+- Change: `docs/docs/container-image.mdx` and the `record_image` release-notes text use
+  `'^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/'`
+  with `--certificate-oidc-issuer https://token.actions.githubusercontent.com`. The maintainer
+  guide `publishing-an-image.md` uses the same file at `@refs/heads/`, because a manual dispatch
+  signs from a branch.
+- Contract tests: the identity accepts the release form and refuses a branch ref, the caller
+  workflow, another workflow, another repository and a prefixed URL; the page holds exactly
+  three identity flags, all equal to the constant; `record_image` uses it; the signing jobs are
+  in the called workflow reached from the `release` trigger.
+
+### E. `compose_repeat` cap (finding 15)
+
+- Commits: `034d2d7d` (workflow) and `50b5b240` (tests).
+- A new step, `compose_repeat_guard`, runs before the image build and refuses an empty,
+  non-numeric, zero or above-10 value with `::error::compose_repeat must be a whole number
+  between 1 and 10`. The check moved out of the suite step. Tests run the step's script with
+  bash for 7 refused and 3 accepted values.
+
+### F. Readiness wait
+
+- Commit: `a28322d9`.
+- Checked first: `tests/compose/lifecycle.py` passes 420 s as `--wait-timeout`; Compose 5.1.2
+  `up --help` lists `--wait-timeout int` with no default; the shipped health checks run every
+  5 s with 30 retries, and `prefect-server` and `sync-api` have a 20 s start period.
+- "How long the first start takes" in `compose-deployment.mdx` gives the measured times (about
+  20 s on a host that held the images, from the compose run below; 220.5 s for the slowest
+  nightly start with a cold test Infrahub, from `lifecycle.py`), says that without
+  `--wait-timeout` Compose sets no overall limit, shows `--wait-timeout 420`, and says how to
+  continue on a slow host. A troubleshooting row points to it. Judgement call: the page does not
+  tell operators to raise health check retries through an override file, because that path was
+  not tested.
+
+### Gates
+
+| Gate | Command | Finished (UTC) | Result |
+|---|---|---|---|
+| Format | `uv run invoke format` | 2026-10-17T02:28:56Z | `382 files left unchanged` |
+| Lint | `uv run invoke lint` | 2026-10-17T02:29:18Z | exit 0; `Pylint passed (0 diagnostics, score 10.0)`; ty `Found 17 diagnostics`; yamllint reported no path |
+| Pylint | `uv run invoke linter.lint-pylint` | 2026-10-17T02:29:30Z | `Pylint passed (0 diagnostics, score 10.0)` |
+| ty | `uv run invoke linter.lint-ty` | 2026-10-17T02:29:30Z | `Found 17 diagnostics` (unchanged) |
+| actionlint, yamllint | on `workflow-nightly-e2e.yml` and `workflow-publish.yml` | 2026-10-17T02:29:30Z | exit 0, no output |
+| rumdl | changed pages | 2026-10-17T02:29:30Z | `Success: No issues found in 6 files` |
+| Unit | `uv run invoke tests.tests-unit` | 2026-10-17T02:32:18Z | `5931 passed, 4 skipped, 217 deselected, 4 warnings in 159.85s` |
+| Docs | `uv run invoke docs.docusaurus` | 2026-10-17T02:32:38Z | `[SUCCESS] Generated static files in "build".` |
+| Compose CA | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test-013fix uv run pytest -m compose tests/compose/test_custom_ca.py -n 0 --compose-zero-skip`, image built from this worktree | 2026-10-17T02:21:59Z | `1 passed in 146.29s (0:02:26)` |

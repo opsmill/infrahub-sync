@@ -9,7 +9,9 @@
 
 Compose cannot tie the two settings together. An external endpoint set without
 `INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0` would start an unused MinIO with the external store's
-credential as its root credential. The documentation tells the operator to set both, and
+credential as its root credential. The documentation tells the operator to set both, and to
+rotate the key pair or remove the MinIO container and its volume when that happened and it
+matters (product decision of 2026-10-17, which keeps the DNS-based guard for the MVP), and
 `sync-bootstrap` stops with family `bundled-object-store-not-left-out` when the endpoint host is
 not `object-store` while the name `object-store` resolves on the Compose network, so the
 deployment does not start in that state and the operator corrects `.env`.

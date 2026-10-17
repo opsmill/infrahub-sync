@@ -449,14 +449,24 @@ that uses a certificate from that CA.
   to the image's default trust store, without an edit to the shipped `docker-compose.yml` and
   without turning off certificate checks. A Sync service MUST refuse to start when a file in that
   bundle holds a private key, naming the file and printing none of its content.
+  At every start, each Sync service MUST log the number of certificates loaded and the bundle
+  path; when the directory exists but holds no certificate file, one info line; and, for each
+  of `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` and `INFRAHUB_TLS_CA_FILE` that was
+  already set and so overrides the directory, a warning that names the variable and not its
+  value (product decision of 2026-10-17).
 - **FR-025**: `docs/docs/compose-deployment.mdx` MUST list the credential variables of each
   bundled adapter, which service receives each one, and how to add a CA certificate bundle.
+  It MUST also state that user ID 10001 must be able to list the CA directory and read its
+  files; that a change to the files takes effect only after `sync-api` and `sync-worker`
+  restart, because `docker compose up -d` starts only `sync-bootstrap` again; and how long the
+  first `docker compose up -d --wait` may take and how to bound or extend that wait (product
+  decisions of 2026-10-17).
 - **FR-035**: Credential values MUST be kept out of text by construction, not by replacing them
   afterwards. For this specification that means:
   - each credential value reaches only the services that read it (FR-002, FR-023, FR-029)
   - no code that this specification adds writes a credential value, or text that could contain
-    one, to a log, a message, a file or a Prefect record; the CA setup logs a certificate count
-    and a path only
+    one, to a log, a message, a file or a Prefect record; the CA setup logs a certificate count,
+    a path, and the names of trust variables that were already set, never their values
   - no credential value is passed through Prefect deployment or flow-run job variables or
     parameters, which the Prefect server stores
   - the documentation never tells an operator to run a command that prints interpolated
@@ -476,7 +486,11 @@ that uses a certificate from that CA.
   its multi-architecture digest and its SBOM, through the existing image workflow
   (`.github/workflows/ci-docker-image.yml`, which already merges, signs and attaches an SBOM),
   and the release notes MUST name the digest, so that an evaluator can pull the image by digest
-  and find the SBOM of that release.
+  and find the SBOM of that release. The release notes MUST name the image by the address users
+  pull, `registry.opsmill.io/opsmill/infrahub-sync`. The documented `cosign` verification and the
+  release notes MUST accept only the certificate identity of `ci-docker-image.yml` at a release
+  tag: `^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/`
+  (product decisions of 2026-10-17).
 
 ### Key Entities
 
