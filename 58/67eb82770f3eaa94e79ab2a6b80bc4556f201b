@@ -1,0 +1,23 @@
+dev/adr/0023-the-compose-deployment-takes-an-external-object-store-and-custom-ca-certificates-from-env.md
+  s_47078ea83e766d::t_fc4c4fe23cb8c3 3
+dev/specs/013-compose-images/opsmill-implement-report.md
+  s_47078ea83e766d::t_a7093d8d1d5db5 134-135,157,271-283
+dev/specs/013-compose-images/tasks.md
+  s_47078ea83e766d::t_621968a134eb64 267
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5867eb82770f3eaa94e79ab2a6b80bc4556f201b",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
