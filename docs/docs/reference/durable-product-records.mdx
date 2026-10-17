@@ -99,8 +99,8 @@ All six carry an `error` severity.
 A successful opt-in read also returns `destination_schema_fingerprint`: the full SHA-256
 digest of the schema semantics this configuration consumes — each mapped kind, its
 DiffSync identifiers, its ordered human-friendly ID and uniqueness-constraint component
-paths, every mapped field's type and required/default/unique properties, and every
-mandatory-without-default field on those kinds. Unmapped destination growth and
+paths, every mapped field's type and required/default/unique properties, the choices of
+every mapped Dropdown attribute, and every mandatory-without-default field on those kinds. Unmapped destination growth and
 differences in schema delivery order leave it unchanged. It is `null` whenever no
 snapshot was read — the default path, a non-declaring destination, or a failed read.
 

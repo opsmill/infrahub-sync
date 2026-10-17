@@ -1,0 +1,127 @@
+---
+title: Upgrade from the V3 alpha
+---
+
+This page is for teams that ran a V3 alpha release of Sync and now move to the release that
+lists problems in the source data and records the cause of a failed run. It lists what
+changes for saved plans, schema fingerprints, configuration validation, the API responses
+and the run records, and what to do for each. To move from V2, read
+[Move from V2 to V3](../v2-to-v3.mdx) instead.
+
+There is no in-place upgrade procedure. Replace the deployment as described in
+[Replace a deployment with a fresh one](./day-2-operations.mdx#replace-a-deployment-with-a-fresh-one),
+then work through the sections below.
+
+## Plan again before you apply a saved plan
+
+This release saves plans in format 4. A format 4 plan records the problems the plan found in
+the source data and the records it leaves out, and apply needs that list to ask for your
+confirmation. A plan saved by an alpha release is format 2 or 3. You can still read and review
+it with `runs plan`, but `apply` refuses it before any write:
+
+```text
+error: api
+status: 409
+code: plan-format-not-applicable
+```
+
+The Sync API returns the same refusal from `POST /runs/{run_id}/apply`, with the message
+"plan again before applying". A Python caller of the engine receives
+`PlanFormatApplyUnsupportedError`, whose message ends with "Plan again before applying.
+Nothing was written to the destination."
+
+Create a new plan with `diff`, review it with `runs plan`, then apply the new run. When the new
+plan leaves out records, review them with `runs left-out` and apply with `--confirm-left-out`.
+See [Review problems, left-out records and kept records](../running-a-sync.mdx#review-problems-left-out-records-and-kept-records).
+
+## Validate your packages again: the schema fingerprint changes
+
+The destination schema fingerprint now includes the choices of each mapped Dropdown attribute,
+because the plan checks source values against those choices. A plan made with this release
+records the new fingerprint. When a configuration maps a Dropdown attribute, the
+`destination_schema_fingerprint` that `configs validate --branch` returns differs from the one
+an alpha release returned for the same schema, although the schema did not change.
+
+If you record fingerprints to detect schema changes, run
+`configs validate <config-id> <version> --branch <branch>` again for each registered version
+and record the new value. A configuration that maps no Dropdown attribute keeps its
+fingerprint.
+
+## Name every human-friendly ID component in `identifiers`
+
+`configs validate --branch` now judges identifiers by the rule the plan applies. When every
+component of a kind's human-friendly ID can be written, the kind's `identifiers` must name all
+of them. A package that passed validation with an alpha release can now report a finding.
+
+For example, `LocationRack` in the schema library has the human-friendly ID
+`site__name__value`, `name__value`. A mapping entry with `identifiers: ["name"]` reports:
+
+```text
+finding: code=destination-schema-mismatch severity=error location=/configuration/schema_mapping/2/identifiers message=destination kind 'LocationRack': its identity (name) does not name every human-friendly-ID component of the kind; missing: site__name__value
+```
+
+Add the missing field to `identifiers`, as the NetBox example package does:
+
+```yaml
+- name: LocationRack
+  mapping: dcim.racks
+  identifiers: ["name", "site"]
+```
+
+Then register the changed package as a new version with `configs version` and validate it
+again. The rule and the other checks are listed in
+[Check against the destination schema and the worker credentials](../configuration-package.mdx#check-against-the-destination-schema-and-the-worker-credentials).
+
+## Read the package content from the version, not from the registration response
+
+The responses of `configs register` and `configs version` (`POST /configs` and
+`POST /configs/{config_id}/versions`) no longer include `declared_content`. They return the
+`config_id`, the `registry_version`, the `package_checksum` and `created_at`. To read the
+content of a registered version, run `configs show <config-id> --version <version>`, or call
+`GET /configs/{config_id}/versions/{registry_version}`. Scripts that read `declared_content`
+from the registration response must read it from one of these instead.
+
+## New fields in the run records
+
+- `GET /runs/{run_id}` returns `run.failure` when a run failed or stopped, and `null`
+  otherwise. It holds the stage, the failure type, the system, the Infrahub error code, node
+  kind and attribute when Infrahub returned them, the source record and field, how far a
+  stopped apply got, and the next step. `diff`, `sync`, `apply` and `runs show` print it
+  instead of `<stage> failed: <ErrorClass>`. The fields are described in
+  [Run failure cause](../reference/sync-http-api.mdx#run-failure-cause).
+- A failed verify does not change the run's phase, so `run.failure` stays `null`. Its cause is
+  the `failure` field of the `verify_failure` result, which `GET /runs/{run_id}/results`
+  returns.
+- `GET /runs/{run_id}/plan` returns the counts of the plan's report in its `summary`:
+  `left_out`, `left_out_with_problem`, `left_out_dependent`, `left_out_by_kind`, `problems`,
+  `problems_by_type`, `kept`, `deletes_withheld_by_kind` and `dropdown_values_checked`.
+- A completed apply or sync records `operations_written` and `left_out` in the run's
+  `summary`, and `runs show` prints them.
+- `GET /runs/{run_id}/results` keeps the `{stage}_failure` keys of the alpha releases, so
+  scripts that read them keep working.
+
+## New failure types
+
+The `failure_type` of `run.failure` is one of a fixed list of 14 types. Four of them describe
+situations that this release adds:
+
+- `left_out_review_required`: a `sync` run stopped after its plan because the plan leaves out
+  records. Review them and apply the run with the confirmation.
+- `destination_peer_missing`: a peer that an apply operation refers to is no longer in
+  Infrahub, because it was deleted or renamed after the plan. Create and review a new plan.
+- `destination_peer_ambiguous`: more than one Infrahub object matches the peer of an apply
+  operation. Remove the duplicates in Infrahub, then create and review a new plan.
+- `transform_failed`: a model that overrides `transform_records` without the `on_failure`
+  parameter failed a transform. The bundled adapters list a transform that fails for one record
+  as the plan problem `transform_failed` instead, and leave the record out.
+
+The full list and the action for each summary are in
+[A run failed: read its cause](./compose-troubleshooting.mdx#a-run-failed-read-its-cause).
+Scripts that compare `failure_type` against a list must accept names they do not know, because
+a later release can add a type.
+
+## Removed: `continue_on_error`
+
+The engine and the adapters no longer accept `continue_on_error`. A record with one of the nine
+named problems is left out of the plan and listed, and every other failure still fails the
+run. Remove the parameter from direct Python callers.

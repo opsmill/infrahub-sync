@@ -152,7 +152,9 @@ The Sync API reads the destination schema of that branch, unless the package dec
   (`destination-schema-mismatch`)
 - identifiers that cannot key a create, by the rule the plan applies: when every
   human-friendly-ID component of a kind can be written, the identifiers must name all of
-  them (`destination-schema-mismatch`)
+  them (`destination-schema-mismatch`). A package that passed validation with a V3 alpha
+  release can report this finding; see
+  [Upgrade from the V3 alpha](./operations/upgrading-from-the-v3-alpha.mdx#name-every-human-friendly-id-component-in-identifiers)
 - each literal `static` value of a Dropdown attribute that is not one of its choices
   (`destination-dropdown-value-not-in-choices`)
 - each credential variable that the worker does not hold (`credential-not-set-in-worker`).

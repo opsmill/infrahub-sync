@@ -43,6 +43,7 @@ const sidebars: SidebarsConfig = {
         'operations/day-2-operations',
         'operations/compose-troubleshooting',
         'operations/supported-platforms-and-limits',
+        'operations/upgrading-from-the-v3-alpha',
       ],
     },
     {
