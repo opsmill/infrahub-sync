@@ -1,0 +1,64 @@
+infrahub_sync/adapters/infrahub.py
+  s_47078ea83e766d::t_12845fe41d5f9c 841,843,846-851
+  s_47078ea83e766d::t_3858d896acfc2a 842
+infrahub_sync/adapters/netbox.py
+  s_47078ea83e766d::t_1c2cc3b8877087 86,93-94,96-97,99-100,104-117,120-121,133-153
+  s_47078ea83e766d::t_f49efd4f99d222 101-103
+  s_47078ea83e766d::t_db7705e1b7530e 246-248
+  s_47078ea83e766d::t_7ba4fbe7143c64 27
+tests/adapters/test_infrahub_loader_fields.py
+  s_47078ea83e766d::t_082f4f54bcf347 448-463,467-476,478-494
+  s_47078ea83e766d::t_3858d896acfc2a 464-466,477
+tests/adapters/test_peer_unique_id.py
+  s_47078ea83e766d::t_eb57f02b9d5c8f 32,175-258
+  s_47078ea83e766d::t_f33378bfc83797 97,103-104,142-155
+  s_47078ea83e766d::t_c0cbc664a7f052 156
+infrahub_sync/adapters/references.py
+  s_47078ea83e766d::t_5d7c624c546ad9 12-15,17-18,51-56,60-61,63-64,66-69,72-74,76
+  s_47078ea83e766d::t_8fc87a2c091d12 16,75,77-85
+infrahub_sync/plan/problems.py
+  s_47078ea83e766d::t_367d82f95050c2 347-348,392
+  s_47078ea83e766d::t_1ca83d14b81859 548-583,639
+infrahub_sync/cache/incremental.py
+  s_47078ea83e766d::t_96fbb4ff85af1c 217-220,222-224,227,230
+tests/adapters/test_peer_not_found_in_source.py
+  s_47078ea83e766d::t_acf89ce6dcd4e8 21,28-29,304-314,316-324,327,331-337
+  s_47078ea83e766d::t_5cf20c982a8f12 20,315,330
+  s_47078ea83e766d::t_f49efd4f99d222 328-329
+  s_47078ea83e766d::t_a56a2634484a8b 325-326
+infrahub_sync/adapters/nautobot.py
+  s_47078ea83e766d::t_d9abf48333cde4 27,135,142-143,145-146,148-149,153-166,169-170,196-216
+  s_47078ea83e766d::t_f49efd4f99d222 150-152
+tests/plan/test_dependency_walk.py
+  s_47078ea83e766d::t_c4891470797034 167,170,177-179,181-184,189-196
+dev/specs/009-plan-problem-reporting/research.md
+  s_47078ea83e766d::t_0adb362bf3baad 204-205
+tests/adapters/test_infrahub_incremental.py
+  s_47078ea83e766d::t_fd392c708d370f 156-157
+tests/adapters/test_netbox_filtered_references.py
+  s_47078ea83e766d::t_47b10db2474285 238,243,264-282
+  s_47078ea83e766d::t_476c053d2c2e5d 283-286
+infrahub_sync/__init__.py
+  s_47078ea83e766d::t_18d902883d80bc 629,683,694-696,771-773
+  s_47078ea83e766d::t_19ac803310f2ef 692-693
+  s_47078ea83e766d::t_a56a2634484a8b 797
+  s_47078ea83e766d::t_8fc87a2c091d12 807-808
+  s_47078ea83e766d::t_f0eceb77beb88c 840-849,852-855
+  s_47078ea83e766d::t_e422279e948a86 792-793,795,798,802,804-806,809,850-851
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2f495fac133f7f04d22d4e081d6cc72bed11b539",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

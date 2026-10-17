@@ -1,0 +1,78 @@
+tests/adapters/test_reference_conversion.py
+  s_47078ea83e766d::t_7215020ac91d80 5-8,19,24-25,44-45,161-167,253,255-256,259-262,264,266-269,272,274-276,279,281,286-287,291,297,356,358,362,364,377-379,382,384,394
+tests/adapters/test_netbox_benchmark_changes.py
+  s_47078ea83e766d::t_b3254981b9f138 62-63,77-78
+infrahub_sync/adapters/references.py
+  s_47078ea83e766d::t_7776dc55ffb9a4 1-61
+tests/adapters/test_infrahub_loader_fields.py
+  s_47078ea83e766d::t_0067f94d574f76 719-760
+tests/adapters/test_slurpit_model_loading.py
+  s_47078ea83e766d::t_06ac4856268f82 205,208
+tests/adapters/test_infrahub_incremental.py
+  s_47078ea83e766d::t_b3254981b9f138 148
+tests/adapters/test_netbox_incremental.py
+  s_47078ea83e766d::t_b3254981b9f138 167
+infrahub_sync/adapters/prometheus.py
+  s_47078ea83e766d::t_6b2437a86b7e31 466-467,469-489,491-495
+  s_47078ea83e766d::t_ab5b74f789b71d 496,499,511,516,527
+  s_47078ea83e766d::t_16498a0bcf9558 490
+infrahub_sync/adapters/slurpitsync.py
+  s_47078ea83e766d::t_bcafe8bb8e6e63 14,23,232-251,253-274,276,278,284,291,293,298-303,306-320
+docs/docs/development/knowledge/repository-tour.md
+  s_47078ea83e766d::t_df5b7c4dec6bf4 139-140
+tests/adapters/test_static_values.py
+  s_47078ea83e766d::t_c1ea7f21607e45 12,26,159,161-162
+tests/adapters/test_netbox_filtered_references.py
+  s_47078ea83e766d::t_af8e994978a039 19,217-240,242-247,250,252-265,271,274,277
+  s_47078ea83e766d::t_b48826c0271b22 241
+tests/adapters/test_netbox_namespace_identity.py
+  s_47078ea83e766d::t_255509d513eb96 232,234-236,239,241-246,255-257,280,282-284
+tests/adapters/test_aci_reference_conversion.py
+  s_47078ea83e766d::t_13f8ebebe0be8f 10,12,48,65,85-86,89-98,100-108
+infrahub_sync/adapters/genericrestapi.py
+  s_47078ea83e766d::t_b79f98a5467e7d 17,101-115,117-123,157-159,164-165,167,169,171,175-176,181,189,191-202,204-212
+  s_47078ea83e766d::t_2111adad4be7ab 150
+  s_47078ea83e766d::t_3a1b50ddc05dff 116
+tests/adapters/offline_holder.py
+  s_47078ea83e766d::t_7600f07a725c4a 1-18,22
+  s_47078ea83e766d::t_62e891078758d5 19-21
+dev/specs/009-plan-problem-reporting/tasks.md
+  s_47078ea83e766d::t_d10b73a43fd583 71,73,79-86
+infrahub_sync/adapters/nautobot.py
+  s_47078ea83e766d::t_6f9d211e4a614e 21,145,158,208-219,221,223,229,237,239-246,248-256
+tests/test_potenda_plan_artifact.py
+  s_47078ea83e766d::t_de1e010b7b5f3e 1372
+tests/adapters/test_reference_conversion_optional_sdk.py
+  s_47078ea83e766d::t_afac2134418c97 22-23,74-75,81,164-167,169,172,181-184,186,189,198-201,203,206,214-218,254-256,259,262,265-266,269,272,274-277,285-288,292,295,298-299,302,305,307-308
+  s_47078ea83e766d::t_22a9f1d816795e 131-159
+  s_47078ea83e766d::t_d04bba4a67e2d3 168
+  s_47078ea83e766d::t_952f69a3847032 185
+  s_47078ea83e766d::t_b66cf1ccff87a6 202
+infrahub_sync/adapters/infrahub.py
+  s_47078ea83e766d::t_b8c7f6c2688c1a 809-811,837-840,842-853,855-882,893-895,981
+  s_47078ea83e766d::t_3576d763c7d71a 20
+  s_47078ea83e766d::t_6fd9a5494c3418 854
+infrahub_sync/adapters/netbox.py
+  s_47078ea83e766d::t_3d97762f81153a 5,21,96,109,130,148-152,154-160,162-164,166-168,172,174-185,187,189,191,197,204,206-219,221-229,231,235-244
+  s_47078ea83e766d::t_e1576a39e9d4a1 245
+infrahub_sync/adapters/aci.py
+  s_47078ea83e766d::t_2deff81876e465 27,241-242,244,246-265,267-269,272,275,277,279,285,289,291,293,297-309,322-333,335-336,338
+infrahub_sync/adapters/ipfabricsync.py
+  s_47078ea83e766d::t_6afcb487e3bc74 76-77,79-81,83-88,90,92,98,107,129-130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ceb2c20f8e98f446485d3b46fbc10740695fd29a",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

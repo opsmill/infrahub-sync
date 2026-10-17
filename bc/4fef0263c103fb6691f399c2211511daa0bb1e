@@ -1,0 +1,45 @@
+infrahub_sync/adapters/references.py
+  s_47078ea83e766d::t_5207ca18ca5a5d 29-33,35-37
+infrahub_sync/plan/problems.py
+  s_47078ea83e766d::t_d33f934fa9b342 795-797
+  s_47078ea83e766d::t_153c9c43acd3bf 68-95,197,206-207,220-222,233-235,237,257,264,274-279,281-284,311-323,328,383-385,387-389,433-436,443-445,452-453,461-462,465,627,674,777,824-826,833
+  s_47078ea83e766d::t_29b96cca9fa19e 265,267-269,302-309,437-438,827,834-835,853-859
+  s_47078ea83e766d::t_a0097f03cd6f79 310
+dev/specs/009-plan-problem-reporting/research.md
+  s_47078ea83e766d::t_52f7f0ee39a413 211-214,284-285,294-296
+tests/plan/test_dependency_walk.py
+  s_47078ea83e766d::t_80f802388f5d38 199-200,202-208,215-218,222-238,240-263,266,268-271,273-277,314-316
+  s_47078ea83e766d::t_7ca0e6fde34438 30
+  s_47078ea83e766d::t_a6d946d6c6b490 15
+  s_47078ea83e766d::t_241f7949e54d7a 201
+  s_47078ea83e766d::t_49fe5401fc0e28 209-214,219-221,239,264-265,267
+  s_47078ea83e766d::t_87be9b649c1a3a 272,278-313
+tests/plan/problem_fixtures.py
+  s_47078ea83e766d::t_5207ca18ca5a5d 444
+  s_47078ea83e766d::t_4e2672198fa9a9 50
+tests/plan/test_records_without_source_id.py
+  s_47078ea83e766d::t_c3f3a953afb8b9 68
+  s_47078ea83e766d::t_d7f5b534e12172 1-67,69-78
+tests/plan/test_select_operations.py
+  s_47078ea83e766d::t_9cfac3931e3797 214-232
+tests/adapters/test_peer_unique_id.py
+  s_47078ea83e766d::t_a1e91bd6172c63 32,259-283
+docs/docs/running-a-sync.mdx
+  s_47078ea83e766d::t_eb6fc672c8c7dc 160,203-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc4fef0263c103fb6691f399c2211511daa0bb1e",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

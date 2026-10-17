@@ -1,0 +1,82 @@
+infrahub_sync/product_store/models.py
+  s_47078ea83e766d::t_38d2672ae7c317 269-271
+infrahub_sync/client/models.py
+  s_47078ea83e766d::t_2328c11a06ae8f 9-17
+  s_47078ea83e766d::t_fc33d9c6419420 579,581
+  s_47078ea83e766d::t_50e50b4ea90298 62-69,109,111-112,582
+  s_47078ea83e766d::t_4026e4f964db69 103-105,473-475,576-577
+  s_47078ea83e766d::t_bd0ce45401f99a 110
+  s_47078ea83e766d::t_470000aa23a805 113
+  s_47078ea83e766d::t_2acf2b3ec87d2c 578
+  s_47078ea83e766d::t_7eda5600771809 580
+infrahub_sync/client/client.py
+  s_47078ea83e766d::t_30efbef8f172d4 713-719
+infrahub_sync/client/errors.py
+  s_47078ea83e766d::t_30efbef8f172d4 61,67-68
+tests/service/test_apply_left_out_confirmation.py
+  s_47078ea83e766d::t_f6fe379ee86f75 1-267
+tests/cli/test_client_commands.py
+  s_47078ea83e766d::t_ceb3fb91417d92 1280-1358
+infrahub_sync/service/app.py
+  s_47078ea83e766d::t_fc33d9c6419420 113
+infrahub_sync/potenda/__init__.py
+  s_47078ea83e766d::t_cc359bbb946e24 23
+  s_47078ea83e766d::t_8c99b6b8376ea4 32,727,770-771,854,857
+infrahub_sync/service/flow.py
+  s_47078ea83e766d::t_17cbf582d317b3 177
+  s_47078ea83e766d::t_d91459a8252a58 65,515,625,637,666-668,707,868,908
+tests/service/test_apply_versus_verify_race.py
+  s_47078ea83e766d::t_17cbf582d317b3 150
+tests/service/test_http_api.py
+  s_47078ea83e766d::t_17cbf582d317b3 553
+infrahub_sync/service/service.py
+  s_47078ea83e766d::t_0802120be44ff0 22
+  s_47078ea83e766d::t_def8653f0cf8f3 114,120,296,339,351-385,1116,1125
+changelog/+009-left-out-confirmation.added.md
+  s_47078ea83e766d::t_8ec4c3a4f0647b 1
+infrahub_sync/execution.py
+  s_47078ea83e766d::t_5b6fa47da683a5 900,920,1023,1053,1143,1214
+docs/docs/reference/cli.mdx
+  s_47078ea83e766d::t_65c997167974de 93
+tests/plan/test_destination_binding.py
+  s_47078ea83e766d::t_ed34786bf6753f 251,253
+tests/service/test_registered_schema_guard.py
+  s_47078ea83e766d::t_ed34786bf6753f 592
+tests/plan/test_apply_left_out_count.py
+  s_47078ea83e766d::t_2d33e608669c82 1-133
+infrahub_sync/service/left_out_stop.py
+  s_47078ea83e766d::t_4facf9e37a7b22 1-90
+dev/specs/009-plan-problem-reporting/tasks.md
+  s_47078ea83e766d::t_3440ab281ff6bb 156-159,163-168
+infrahub_sync/utils.py
+  s_47078ea83e766d::t_5b6fa47da683a5 436,468
+infrahub_sync/cli.py
+  s_47078ea83e766d::t_073aa68ccb66f9 456-457,764-766,784,789-799
+infrahub_sync/plan/errors.py
+  s_47078ea83e766d::t_e20b33546ee470 121-140
+tests/service/test_flow_and_prefect.py
+  s_47078ea83e766d::t_ed34786bf6753f 255,934
+infrahub_sync/plan/apply_gate.py
+  s_47078ea83e766d::t_e20b33546ee470 1-60
+infrahub_sync/product_store/store.py
+  s_47078ea83e766d::t_38d2672ae7c317 1246-1255,2728
+tests/service/test_sync_left_out_stop.py
+  s_47078ea83e766d::t_0bd7275507663b 1-129,133-263
+  s_47078ea83e766d::t_41e61559d4ffbc 130-132
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "792815fbd04e870bcd75fa3a330a6b0804379711",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

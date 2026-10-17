@@ -1,0 +1,32 @@
+tests/service/test_failure_cause.py
+  s_47078ea83e766d::t_bc2e6a434b7b02 102-106,120-122,130-131,137-295,311-316,327-353,357-370
+  s_47078ea83e766d::t_78fa4bac416e9c 354-356
+tests/service/test_failure_cause_credentials.py
+  s_47078ea83e766d::t_bc2e6a434b7b02 117-131
+dev/adr/0021-a-run-failure-record-holds-a-structured-cause.md
+  s_47078ea83e766d::t_b08661e3cd1ff9 30-31
+infrahub_sync/failure_cause.py
+  s_47078ea83e766d::t_e47510f007c4fd 248-263,265-272,279-280,283-284
+  s_47078ea83e766d::t_2596e6b9d987c1 7-9
+  s_47078ea83e766d::t_543f58ed2ab6b2 5-6
+docs/docs/development/guidelines/secret-redaction.md
+  s_47078ea83e766d::t_b08661e3cd1ff9 32-37
+tests/service/test_run_failure_resource.py
+  s_47078ea83e766d::t_bc2e6a434b7b02 103-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8b6ace7be4af54d89ddbe739828af1b5eaff71d1",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

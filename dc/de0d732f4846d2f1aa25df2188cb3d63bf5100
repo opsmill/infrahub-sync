@@ -1,0 +1,43 @@
+infrahub_sync/product_store/models.py
+  s_47078ea83e766d::t_3649167a5c95c0 13,17
+  s_47078ea83e766d::t_b6417155493b09 5
+  s_47078ea83e766d::t_328eaaa6e656a6 421-450
+dev/specs/009-plan-problem-reporting/tasks.md
+  s_47078ea83e766d::t_c7a7362dfb1485 242,249-251
+infrahub_sync/product_store/__init__.py
+  s_47078ea83e766d::t_614b048407d7ae 17,63
+infrahub_sync/product_store/worker_environment.py
+  s_47078ea83e766d::t_3d1a8b2cb20ecb 1-62
+infrahub_sync/service/worker.py
+  s_47078ea83e766d::t_e41e905d3549fc 347
+  s_47078ea83e766d::t_8bf3d57ac183e8 29,33,231,247,344-346,480,482-483,485-486,489,491
+infrahub_sync/product_store/store.py
+  s_47078ea83e766d::t_ac5ae2525be5d0 46-54,542-545,589,2270-2297,2977-2983
+  s_47078ea83e766d::t_33a0e9a4774e6b 2984
+tests/product_store/test_contract.py
+  s_47078ea83e766d::t_0f302d8816852f 88
+tests/service/test_worker_environment.py
+  s_47078ea83e766d::t_9cdd1e7b4d42e9 1-12,14-84,86-207,209-216,218-250
+  s_47078ea83e766d::t_e41e905d3549fc 85,208,217
+  s_47078ea83e766d::t_24d8dddf3db56e 13
+infrahub_sync/service/worker_environment.py
+  s_47078ea83e766d::t_e41e905d3549fc 15,31-32,48
+  s_47078ea83e766d::t_0f302d8816852f 4-6
+  s_47078ea83e766d::t_e389c9e991c0ca 1-3,7-14,16-30,33-47,49-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dcde0d732f4846d2f1aa25df2188cb3d63bf5100",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
