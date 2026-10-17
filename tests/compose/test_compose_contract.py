@@ -974,7 +974,7 @@ def test_direct_compose_local_image_override_drops_the_digest(
     assert result.returncode == 0, result.stderr
     configured = services(json.loads(result.stdout))
     for name in ("task-manager", "infrahub-server", "task-worker"):
-        assert configured[name]["image"] == "local-infrahub:1.10.6"
+        assert configured[name]["image"] == "local-infrahub:1.11.7"
 
 
 def test_direct_compose_digest_override_replaces_the_shipped_digest(compose_version: str) -> None:
@@ -989,7 +989,7 @@ def test_direct_compose_digest_override_replaces_the_shipped_digest(compose_vers
     )
     assert result.returncode == 0, result.stderr
     configured = services(json.loads(result.stdout))
-    expected = f"registry.opsmill.io/opsmill/infrahub:1.10.6{digest}"
+    expected = f"registry.opsmill.io/opsmill/infrahub:1.11.7{digest}"
     for name in ("task-manager", "infrahub-server", "task-worker"):
         assert configured[name]["image"] == expected
         assert TAGGED_INDEX_REFERENCE.fullmatch(configured[name]["image"])

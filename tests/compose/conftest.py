@@ -547,7 +547,7 @@ def _infrahub_environment() -> dict[str, str]:
 
 @pytest.fixture(scope="session")
 def infrahub_fixture(sync_image: str) -> Iterator[dict[str, str]]:
-    """One pinned Infrahub 1.10.6, seeded with the smoke schema, device, and branch.
+    """One pinned Infrahub 1.11.7, seeded with the smoke schema, device, and branch.
 
     Test infrastructure, never a service of the operator deployment: it is started
     from the development stack's own pinned files, published on its own port, and

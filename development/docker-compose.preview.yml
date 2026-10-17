@@ -1,6 +1,6 @@
 ---
 # Preview overrides for the Infrahub compose file based on
-# https://infrahub.opsmill.io/1.10.6. The destination file includes local image
+# https://infrahub.opsmill.io/1.11.7. The destination file includes local image
 # digest pins; do not replace it from upstream without restoring those pins.
 #
 # This file remaps host ports so the preview never collides with another local
