@@ -1314,6 +1314,37 @@ def test_runs_problems_prints_the_infrahub_node_ids_of_an_ambiguous_identity(cli
     ]
 
 
+def test_runs_problems_prints_the_failed_transform_without_the_value(client: MagicMock) -> None:
+    client.plan_problems.return_value = (
+        PlanProblemResource(
+            problem_type="transform_failed",
+            record=PlanRecordReferenceResource(kind="InterfaceL2", source_id="77"),
+            field="l2_mode",
+            config_entry="transforms[0]",
+            reason="InterfaceL2 record source ID 77: the transform transforms[0] ... failed for this record.",
+        ),
+        PlanProblemResource(
+            problem_type="required_peer_excluded_by_filter",
+            record=PlanRecordReferenceResource(kind="InterfacePhysical", source_id="60"),
+            field="device",
+            peer=PlanRecordReferenceResource(kind="DcimDevice", source_id="35"),
+            config_entry="filters[0]",
+            reason="InterfacePhysical record source ID 60: ...",
+        ),
+    )
+
+    result = _invoke(client, "runs", "problems", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == [
+        "transform_failed  InterfaceL2  source_id=77  "
+        "the transform transforms[0] of l2_mode failed for this record; the record is not loaded",
+        "required_peer_excluded_by_filter  InterfacePhysical  source_id=60  "
+        "device refers to DcimDevice source ID 35, which the filter filters[0] of the DcimDevice mapping entry "
+        "removed",
+    ]
+
+
 def test_runs_left_out_prints_one_line_per_left_out_record(client: MagicMock) -> None:
     client.plan_left_out.return_value = (
         LeftOutRecordResource(

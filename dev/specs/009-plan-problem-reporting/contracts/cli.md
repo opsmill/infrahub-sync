@@ -27,6 +27,7 @@ dropdown_value_not_in_choices  DcimDevice  location=dc1 name=rtr1  status='plann
 depends_on_left_out  InterfacePhysical  device=rtr1 name=eth0  depends on DcimDevice location=dc1 name=rtr1 through device
 peer_not_found_in_source  IpamIPAddress  address=10.0.0.1/32  vrf refers to IpamVRF source ID 17, which is not in the source
 destination_identity_ambiguous  LocationSite  name=twin  2 Infrahub objects hold this identity: node-1, node-2; no operation targets it
+transform_failed  InterfaceL2  source_id=77  the transform transforms[0] of l2_mode failed for this record; the record is not loaded
 ```
 
 `diff` prints the first 20 problems and the command that lists the rest.

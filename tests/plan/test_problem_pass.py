@@ -1,10 +1,10 @@
 """The problem pass lists every problem of the fixture in one plan (spec 009 T031, FR-003).
 
-The T001 fixture holds one record of each of the eight problem types. `peer_not_found_in_source`
+The T001 fixture holds one record of each of the nine problem types. `peer_not_found_in_source`
 is found twice: once for the interface `eth9`, whose required `device` the source does not
 return, and once for the IP address `10.0.0.9/32`, whose optional `vrf` the source does not
-return. The second record is kept without that relationship (FR-005), so the fixture lists nine
-problem entries of eight types.
+return. The second record is kept without that relationship (FR-005), so the fixture lists ten
+problem entries of nine types.
 """
 
 from __future__ import annotations
@@ -18,10 +18,12 @@ import pytest
 from infrahub_sync.plan.models import PROBLEM_TYPES, REPORT_REASON_LIMIT, REPORT_VALUE_LIMIT
 from infrahub_sync.plan.writer import PLAN_DIR_NAME, REPORT_FILE_NAME
 from tests.plan.problem_fixtures import (
+    EXCLUDED_DEVICE_ROLE,
     MISSING_DEVICE_SOURCE_ID,
     MISSING_VRF_SOURCE_ID,
     PROBLEM_DEVICE_SOURCE_ID,
     SITE_STATUS_CHOICES,
+    UNMAPPED_VRF_SOURCE_ID,
     Variant,
     destination_records,
     source_records,
@@ -58,6 +60,8 @@ def test_every_problem_type_is_listed(planned: PlannedFixture) -> None:
         "peer_not_found_in_source": 2,
         # Infrahub holds two `LocationSite twin` nodes.
         "destination_identity_ambiguous": 1,
+        # The VRF name transform knows no `q-in-q`.
+        "transform_failed": 1,
     }
 
 
@@ -138,6 +142,15 @@ def test_the_peer_problems_name_the_peer(planned: PlannedFixture) -> None:
     assert (vrf.peer.kind, vrf.peer.identity, vrf.peer.source_id) == ("IpamVRF", None, MISSING_VRF_SOURCE_ID)
 
 
+def test_the_filter_problem_names_the_filter_by_its_position_without_its_value(planned: PlannedFixture) -> None:
+    """Review #13: the reason names the filter that removed the peer, never the filter's value."""
+    (excluded,) = _of_type(planned, "required_peer_excluded_by_filter")
+
+    assert excluded.config_entry == "filters[0]"
+    assert "the filter filters[0] of the DcimDevice mapping entry removed" in excluded.reason
+    assert EXCLUDED_DEVICE_ROLE not in excluded.reason
+
+
 _TEMPLATES = {
     "dropdown_value_not_in_choices": r"^\w+ record source ID \d+: the value .+ of \w+ is not one of the choices "
     r"of the Dropdown attribute: .+\.$",
@@ -147,13 +160,15 @@ _TEMPLATES = {
     r"human-friendly ID; the plan cannot tell which record is correct\.$",
     "wrong_value_type": r"^\w+ record source ID \d+: the value .+ of \w+ has the wrong type \(\w+\)\.$",
     "required_peer_excluded_by_filter": r"^\w+ record source ID \d+: the required relationship \w+ refers to "
-    r"\w+ record source ID \d+, which a configured filter removed\.$",
+    r"\w+ record source ID \d+, which the filter filters\[\d+\] of the \w+ mapping entry removed\.$",
     "identities_merge_in_destination": r"^\w+ record source ID \d+ and .+ have different source identities "
     r"that Infrahub would store as one node\.$",
     "peer_not_found_in_source": r"^\w+ record source ID \d+: the relationship \w+ refers to \w+ record source "
     r"ID \d+, which the source does not return\.$",
     "destination_identity_ambiguous": r"^Infrahub holds \d+ \w+ objects with the identity .+; the plan cannot tell "
     r"which one \w+ record (source ID \d+|with no source ID) maps to, so it plans no operation for that identity\.$",
+    "transform_failed": r"^\w+ record source ID \d+: the transform transforms\[\d+\] of the \w+ mapping entry, which "
+    r"writes \w+, failed for this record, so the record is not loaded\.$",
 }
 
 
@@ -228,6 +243,7 @@ def _fixed(records: dict[str, list[dict[str, Any]]]) -> dict[str, list[dict[str,
     by_id[61]["device"] = {"id": 31}
     by_id[22]["name"] = "comms-closet-2"
     by_id[82]["vrf"] = {"id": 10}
+    by_id[int(UNMAPPED_VRF_SOURCE_ID)]["name"] = "mgmt"
     return fixed
 
 
@@ -261,6 +277,7 @@ def test_after_the_data_is_fixed_the_left_out_records_are_planned(tmp_path: Path
         ("InterfacePhysical", "eth9"),
         ("LocationRack", "comms-closet"),
         ("LocationRack", "comms-closet-2"),
+        ("IpamVRF", "mgmt"),
     ]:
         assert expected in planned_payloads, expected
     interfaces = [

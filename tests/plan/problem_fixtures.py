@@ -1,7 +1,7 @@
 """Shared source fixture for plan problem reporting (spec 009 T001).
 
 The fixture is an in-memory source adapter and a destination schema record. Together they hold
-one record of each of the eight problem types of `data-model.md`, a set of valid records, a
+one record of each of the nine problem types of `data-model.md`, a set of valid records, a
 device with a problem that five physical interfaces require, an IP address that refers to that
 device through an optional relationship, and an IP address that refers to a VRF the source does
 not return.
@@ -22,6 +22,7 @@ Problem records of the full fixture (`Variant.ALL`):
 | `identities_merge_in_destination` | two `LocationRack` `comms-closet` | facility IDs differ; Infrahub holds one (`destination_records`) |
 | `peer_not_found_in_source` | `InterfacePhysical` `eth9` | its required `device` has source ID `999`, which the source does not return |
 | `destination_identity_ambiguous` | `LocationSite` `twin` | Infrahub holds two `LocationSite` nodes named `twin` (`destination_records`) |
+| `transform_failed` | `IpamVRF` `q-in-q` | the `name` transform maps known VRF names only, as the NetBox example maps `mode` |
 
 Dependents of `core-1`: five `InterfacePhysical` records (`eth0` to `eth4`) through the required
 relationship `device`. `IpamIPAddress` `10.0.0.5/32` refers to `core-1` only through the
@@ -45,6 +46,7 @@ from infrahub_sync import (
     SchemaMappingField,
     SchemaMappingFilter,
     SchemaMappingModel,
+    SchemaMappingTransform,
     SyncAdapter,
     SyncConfig,
 )
@@ -68,7 +70,7 @@ SPECIAL_CREDENTIAL = 'p"ss\\wo,rd-2026'
 SHORT_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_PROBLEM_FIXTURE_TOKEN"
 SPECIAL_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_PROBLEM_FIXTURE_PASSWORD"
 
-# The eight stable problem type names of data-model.md.
+# The nine stable problem type names of data-model.md.
 PROBLEM_TYPES: tuple[str, ...] = (
     "dropdown_value_not_in_choices",
     "duplicate_source_identity",
@@ -78,6 +80,7 @@ PROBLEM_TYPES: tuple[str, ...] = (
     "identities_merge_in_destination",
     "peer_not_found_in_source",
     "destination_identity_ambiguous",
+    "transform_failed",
 )
 
 # Load order: every kind loads after the kinds it refers to.
@@ -110,6 +113,10 @@ PROBLEM_DEVICE_SOURCE_ID = "30"
 PROBLEM_DEVICE_DEPENDENTS = 5
 TWIN_SITE_NAME = "twin"
 TWIN_SITE_SOURCE_ID = "6"
+# The VRF whose `name` transform fails: the transform maps known VRF names only.
+UNMAPPED_VRF_NAME = "q-in-q"
+UNMAPPED_VRF_SOURCE_ID = "11"
+VRF_NAME_TRANSFORM = "{{ {'default': 'default', 'mgmt': 'mgmt'}[name] }}"
 # The two Infrahub node IDs that hold the one identity `name: twin`.
 TWIN_SITE_NODE_IDS: tuple[str, ...] = (
     "18d52a8a-0000-0000-0000-000000000061",
@@ -233,6 +240,7 @@ def _entry(
     fields: Mapping[str, str | None],
     *,
     filters: list[SchemaMappingFilter] | None = None,
+    transforms: list[SchemaMappingTransform] | None = None,
 ) -> SchemaMappingModel:
     """One mapping entry; a field's value is its `reference`, or `None` for an attribute."""
     return SchemaMappingModel(
@@ -240,15 +248,21 @@ def _entry(
         mapping=RESOURCES[kind],
         identifiers=identifiers,
         filters=filters,
+        transforms=transforms,
         fields=[SchemaMappingField(name=name, mapping=name, reference=reference) for name, reference in fields.items()],
     )
 
 
 def schema_mapping() -> list[SchemaMappingModel]:
-    """The mapping of the seven kinds. `DcimDevice` filters out the `lab` role."""
+    """The mapping of the seven kinds. `DcimDevice` filters out the `lab` role; `IpamVRF` maps its name."""
     return [
         _entry("LocationSite", ["name"], {"name": None, "status": None}),
-        _entry("IpamVRF", ["name"], {"name": None}),
+        _entry(
+            "IpamVRF",
+            ["name"],
+            {"name": None},
+            transforms=[SchemaMappingTransform(field="name", expression=VRF_NAME_TRANSFORM)],
+        ),
         _entry("LocationRack", ["name", "facility_id"], {"name": None, "facility_id": None, "description": None}),
         _entry(
             "DcimDevice",
@@ -320,6 +334,7 @@ def _problem_records() -> dict[str, list[dict[str, Any]]]:
             {"id": 5, "name": "dup", "status": "planned"},
             {"id": int(TWIN_SITE_SOURCE_ID), "name": TWIN_SITE_NAME, "status": "active"},
         ],
+        "IpamVRF": [{"id": int(UNMAPPED_VRF_SOURCE_ID), "name": UNMAPPED_VRF_NAME}],
         "LocationRack": [
             {"id": 21, "name": "comms-closet", "facility_id": "F1", "description": "first floor"},
             {"id": 22, "name": "comms-closet", "facility_id": "F2", "description": "second floor"},
@@ -531,6 +546,9 @@ __all__ = [
     "TWIN_SITE_NAME",
     "TWIN_SITE_NODE_IDS",
     "TWIN_SITE_SOURCE_ID",
+    "UNMAPPED_VRF_NAME",
+    "UNMAPPED_VRF_SOURCE_ID",
+    "VRF_NAME_TRANSFORM",
     "ProblemFixtureAdapter",
     "ProblemFixtureModel",
     "Variant",

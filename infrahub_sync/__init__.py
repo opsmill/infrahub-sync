@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import dataclasses
 import logging
 import operator
 import re
 from collections.abc import Iterator, Mapping
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Union
+from typing import TYPE_CHECKING, Any, ClassVar, Union
 
 import pydantic
 from diffsync import DiffSyncModel
@@ -21,6 +20,19 @@ from infrahub_sync.adapters.utils import get_value
 from infrahub_sync.cache.cursors import CursorTier
 from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
 from infrahub_sync.load_errors import SideLoadError, TransformError, record_source_id  # noqa: F401 -- re-exported
+from infrahub_sync.load_report import (  # noqa: F401 -- re-exported
+    LOAD_REPORT_VALUE_LIMIT,
+    AdmissionState,
+    LoadReportEntry,
+    LoadReportReason,
+    SourceRecordReference,
+    filter_entry,
+    limited_value,
+    removed_by_filters,
+    transform_each,
+    transform_failure_entry,
+    transform_records,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -303,18 +315,6 @@ FILTERS_OPERATIONS: dict[str, Callable[..., Any]] = {
 }
 
 
-LoadReportReason = Literal[
-    "wrong_value_type",
-    "duplicate_source_identity",
-    "required_peer_excluded_by_filter",
-    "peer_not_found_in_source",
-    "peer_not_loaded",
-]
-"""Why the admission step recorded a source record in the load report (data-model.md)."""
-
-LOAD_REPORT_VALUE_LIMIT = 256
-"""The longest string a load report entry keeps of a refused value."""
-
 NOT_IN_SOURCE_PLACEHOLDER_PREFIX = "infrahub-sync:not-in-source:"
 """Prefix of the reference value that stands for an optional peer the source does not return."""
 
@@ -381,52 +381,12 @@ class RecordLoadError(Exception):
         super().__init__(f"{kind} record {source_id}{location} cannot be loaded")
 
 
-class SourceRecordReference(pydantic.BaseModel):
-    """Names a source record by kind, identity and source record ID (data-model.md)."""
-
-    model_config = pydantic.ConfigDict(frozen=True)
-
-    kind: str
-    identity: dict[str, Any] | None = None
-    source_id: str | None = None
-
-
-class LoadReportEntry(pydantic.BaseModel):
-    """One source record that the admission step recorded (data-model.md "Load report")."""
-
-    model_config = pydantic.ConfigDict(frozen=True)
-
-    kind: str
-    source_id: str | None = None
-    identity: dict[str, Any] | None = None
-    reason: LoadReportReason
-    field: str | None = None
-    error_type: str | None = None
-    value: Any = None
-    peer: SourceRecordReference | None = None
-    loaded: bool = False
-    existing: SourceRecordReference | None = None
-
-
 _TYPE_ERROR_SUFFIXES = ("_type", "_parsing", "_parsing_size", "_from_float")
 
 
 def _is_type_error(error_type: str) -> bool:
     """Tell whether a pydantic error type refuses a value because of its type."""
     return error_type.endswith(_TYPE_ERROR_SUFFIXES)
-
-
-def _limited_value(value: Any) -> Any:  # a refused value can be any JSON value
-    """Return `value` with every string limited to `LOAD_REPORT_VALUE_LIMIT` characters."""
-    if value is None or isinstance(value, (bool, int, float)):
-        return value
-    if isinstance(value, str):
-        return value[:LOAD_REPORT_VALUE_LIMIT]
-    if isinstance(value, Mapping):
-        return {str(key)[:LOAD_REPORT_VALUE_LIMIT]: _limited_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_limited_value(item) for item in value]
-    return str(value)[:LOAD_REPORT_VALUE_LIMIT]
 
 
 def _identity_of(model: type[DiffSyncModel], data: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -442,16 +402,6 @@ def _identity_of(model: type[DiffSyncModel], data: Mapping[str, Any] | None) -> 
 def _error_field(error: Mapping[str, Any]) -> str | None:
     location = error.get("loc") or ()
     return str(location[0]) if location else None
-
-
-@dataclasses.dataclass
-class _AdmissionState:
-    """Per-adapter bookkeeping of the shared loader step."""
-
-    load_report: list[LoadReportEntry] = dataclasses.field(default_factory=list)
-    peer_index: dict[tuple[str, str], str] = dataclasses.field(default_factory=dict)
-    not_loaded: dict[tuple[str, str], LoadReportEntry] = dataclasses.field(default_factory=dict)
-    filtered_ids: dict[str, set[str]] = dataclasses.field(default_factory=dict)
 
 
 def identity_record_data(
@@ -507,10 +457,10 @@ class DiffSyncMixin:
     # -- Shared loader step ---------------------------------------------------------------
 
     @property
-    def _admission(self) -> _AdmissionState:
+    def _admission(self) -> AdmissionState:
         state = self.__dict__.get("_admission_state")
         if state is None:
-            state = _AdmissionState()
+            state = AdmissionState()
             self.__dict__["_admission_state"] = state
         return state
 
@@ -525,11 +475,13 @@ class DiffSyncMixin:
     def model_loader(self, model_name: str, model: type[Any]) -> None:
         """Load every record of `model_name` through `load_record`.
 
-        On the source side, the IDs a configured filter removed are kept so that a reference
-        to one of them is told apart from a reference to a peer the source does not return.
+        On the source side, the IDs a configured filter removed are kept, each with the
+        position of the filter that removed it, so that a reference to one of them is told
+        apart from a reference to a peer the source does not return. A record whose transform
+        fails is recorded in `load_report` and is not loaded.
         """
         is_source = self._is_source()
-        raw_ids: set[str] = set()
+        removed: dict[str, int | None] = {}
         retained_ids: set[str] = set()
         filtered_entry = False
         for element in self.config.schema_mapping:
@@ -543,20 +495,34 @@ class DiffSyncMixin:
                 filtered = model.filter_records(records=records, schema_mapping=element)
                 if element.filters:
                     filtered_entry = True
-                    raw_ids.update(self._source_ids(records))
-                    retained_ids.update(self._source_ids(filtered))
-                records = model.transform_records(records=filtered, schema_mapping=element)
+                    kept = self._source_ids(filtered)
+                    retained_ids.update(kept)
+                    for source_id, position in removed_by_filters(
+                        model, records, element, kept_ids=kept, source_id=self.record_source_id
+                    ).items():
+                        removed.setdefault(source_id, position)
+                records = transform_records(model, filtered, element, self.record_transform_failure)
             for record in records:
                 self.load_record(model, element, record)
         if is_source and filtered_entry:
-            self._admission.filtered_ids.setdefault(model_name, set()).update(raw_ids - retained_ids)
+            excluded = {source_id: position for source_id, position in removed.items() if source_id not in retained_ids}
+            self._admission.filtered_ids.setdefault(model_name, {}).update(excluded)
 
     def _source_ids(self, records: Iterable[Any]) -> set[str]:
         return {source_id for record in records if (source_id := self.record_source_id(record)) is not None}
 
     def excluded_peer_ids(self, peer_kind: str) -> set[str]:
         """Return the source IDs of `peer_kind` that a configured filter removed."""
-        return self._admission.filtered_ids.get(peer_kind, set())
+        return set(self._admission.filtered_ids.get(peer_kind, {}))
+
+    def excluded_peer_filter(self, peer_kind: str, peer_source_id: str) -> str | None:
+        """Name the filter that removed a peer (`filters[0]`), or None when it is not known."""
+        self.excluded_peer_ids(peer_kind)  # an adapter may read the filtered IDs on first use
+        return filter_entry(self._admission.filtered_ids.get(peer_kind, {}).get(peer_source_id))
+
+    def record_transform_failure(self, error: TransformError) -> None:
+        """Record a source record whose transform failed; it is not loaded (spec 009 `transform_failed`)."""
+        self._report(transform_failure_entry(error))
 
     def load_record(  # pylint: disable=too-many-arguments  # the hooks are keyword-only
         self,
@@ -691,6 +657,10 @@ class DiffSyncMixin:
             raise RecordLoadError(kind=kind, source_id=exc.source_id, field=exc.field) from exc
         peer = SourceRecordReference(kind=exc.peer_kind, identity=None, source_id=exc.peer_source_id)
         entry = LoadReportEntry(kind=kind, source_id=exc.source_id, reason=reason, field=exc.field, peer=peer)
+        if reason == "required_peer_excluded_by_filter":
+            entry = entry.model_copy(
+                update={"config_entry": self.excluded_peer_filter(exc.peer_kind, exc.peer_source_id)}
+            )
         # A cardinality-many reference records each peer before it raises for the first one.
         if entry not in self._admission.load_report[since:]:
             self._report(entry)
@@ -720,7 +690,7 @@ class DiffSyncMixin:
                     reason="wrong_value_type",
                     field=_error_field(error),
                     error_type=error["type"],
-                    value=_limited_value(error.get("input")),
+                    value=limited_value(error.get("input")),
                 )
             )
 
@@ -976,16 +946,17 @@ class DiffSyncModelMixin:
         return [record for record in records if cls.apply_filters(item=record, filters=filters)]
 
     @classmethod
-    def transform_records(cls, records: list[dict], schema_mapping: SchemaMappingModel) -> list[dict]:
-        """Apply transformations to the records; a `TransformError` names the mapping entry's kind."""
-        transforms = schema_mapping.transforms or []
-        if not transforms:
-            return records
-        try:
-            return [cls.apply_transforms(item=record, transforms=transforms) for record in records]
-        except TransformError as exc:
-            exc.kind = schema_mapping.name
-            raise
+    def transform_records(
+        cls,
+        records: list[dict],
+        schema_mapping: SchemaMappingModel,
+        on_failure: Callable[[TransformError], None] | None = None,
+    ) -> list[dict]:
+        """Apply transformations to the records; a `TransformError` names the entry's kind and the transform.
+
+        With `on_failure`, a record whose transform fails is passed to it and left out (`transform_each`).
+        """
+        return transform_each(cls, records, schema_mapping, on_failure)
 
     @classmethod
     def is_list(cls, name):

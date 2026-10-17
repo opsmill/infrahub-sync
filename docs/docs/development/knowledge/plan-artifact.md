@@ -211,12 +211,15 @@ with an `entry` field set to `problem`, `left_out` or `kept`. The fields of each
 spec 009 data model; the models are `PlanProblem`, `LeftOutRecord` and `KeptRecord` in
 `infrahub_sync/plan/models.py`. An empty report is a zero-byte file.
 
-- A `problem` entry names one problem of one of eight types: `dropdown_value_not_in_choices`,
+- A `problem` entry names one problem of one of nine types: `dropdown_value_not_in_choices`,
   `duplicate_source_identity`, `destination_identity_collision`, `wrong_value_type`,
   `required_peer_excluded_by_filter`, `identities_merge_in_destination`,
-  `peer_not_found_in_source` and `destination_identity_ambiguous`. Only a
+  `peer_not_found_in_source`, `destination_identity_ambiguous` and `transform_failed`. Only a
   `destination_identity_ambiguous` entry holds `destination_ids`, the Infrahub node IDs that
-  share one identity; the other entries leave that key out. The names are stable: a later release may add a type, never rename
+  share one identity; the other entries leave that key out. A `transform_failed` entry holds
+  `config_entry`, the failed transform's position in the mapping entry (`transforms[0]`), and a
+  `required_peer_excluded_by_filter` entry holds it when the filter that removed the peer is
+  known (`filters[0]`); the other entries leave that key out. The names are stable: a later release may add a type, never rename
   or remove one.
 - A `left_out` entry names a record the plan leaves out, either because it has a problem
   (`has_problem`) or because it depends on a left-out record through a required relationship

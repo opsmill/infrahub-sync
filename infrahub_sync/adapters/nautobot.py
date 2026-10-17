@@ -17,6 +17,7 @@ from infrahub_sync import (
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.configuration.credentials import select_runtime_credential
+from infrahub_sync.load_report import transform_records
 
 from .references import owner_kind, reference_is_required, resolve_peer_list
 from .utils import get_value
@@ -139,17 +140,21 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         model: type[NautobotModel],
         raw_records: list[dict],
         already_filtered: bool = False,
+        record_failures: bool = False,
     ) -> list[dict]:
         """Filter and transform Nautobot records as the base class's `model_loader` does.
 
         Pass `already_filtered=True` when the caller has run `filter_records` itself (e.g. to
-        log a filtered count) so records aren't filtered twice.
+        log a filtered count) so records aren't filtered twice. With `record_failures=True`, a
+        record whose transform fails is recorded in the load report and left out, as in `model_loader`.
         """
         if self.target != "source":
             return raw_records
         filtered = (
             raw_records if already_filtered else model.filter_records(records=raw_records, schema_mapping=element)
         )
+        if record_failures:
+            return transform_records(model, filtered, element, self.record_transform_failure)
         return model.transform_records(records=filtered, schema_mapping=element)
 
     def _records_to_diffsync(
@@ -193,7 +198,7 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 element.mapping,
             )
             raw = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
-        return element, self._transformed_records(element=element, model=model, raw_records=raw)
+        return element, self._transformed_records(element=element, model=model, raw_records=raw, record_failures=True)
 
     def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterator[dict]:
         """Yield Nautobot records changed since `cursor`. Uses `last_updated__gte` filter."""

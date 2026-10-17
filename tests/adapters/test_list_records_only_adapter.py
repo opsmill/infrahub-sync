@@ -19,6 +19,7 @@ from tests.plan.problem_fixtures import (
     ORDER,
     PROBLEM_DEVICE_DEPENDENTS,
     PROBLEM_DEVICE_SOURCE_ID,
+    UNMAPPED_VRF_SOURCE_ID,
     ProblemFixtureAdapter,
     Variant,
     build_config,
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 # (kind, source ID, reason, field, peer source ID, loaded) of each load report entry.
 EXPECTED_LOAD_REPORT = [
     ("LocationSite", "5", "duplicate_source_identity", None, None, False),
+    ("IpamVRF", UNMAPPED_VRF_SOURCE_ID, "transform_failed", "name", None, False),
     ("DcimDevice", PROBLEM_DEVICE_SOURCE_ID, "wrong_value_type", "position", None, False),
     ("InterfacePhysical", "60", "required_peer_excluded_by_filter", "device", "35", False),
     ("InterfacePhysical", "61", "peer_not_found_in_source", "device", MISSING_DEVICE_SOURCE_ID, False),

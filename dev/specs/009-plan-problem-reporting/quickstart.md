@@ -16,17 +16,18 @@ The live scenarios need the development stack, a local NetBox with the pinned `d
 and the schema library, as described in
 [The `from-netbox` example check](../../../docs/docs/development/guidelines/testing-tiers.md#the-from-netbox-example-check).
 
-## Scenario 1: one plan lists eight problems (User Story 1, SC-002)
+## Scenario 1: one plan lists nine problems (User Story 1, SC-002)
 
-1. Load the fixture source that holds one record of each of the eight problem types, valid
+1. Load the fixture source that holds one record of each of the nine problem types, valid
    records, a device with a problem and five interfaces that belong to it, and an IP address
    that refers to that device only through an optional relationship. The
    `peer_not_found_in_source` record refers to its missing peer through a required
    relationship. Infrahub holds two `LocationSite` objects named `twin`, and the source holds
-   one site `twin` (`destination_identity_ambiguous`).
+   one site `twin` (`destination_identity_ambiguous`). The VRF name transform has no entry for
+   the VRF `q-in-q` (`transform_failed`).
 2. Register the fixture configuration and run `infrahub-sync diff`.
 3. Expected:
-   - the run finishes; the summary shows `left_out` equal to the eight problem records plus their
+   - the run finishes; the summary shows `left_out` equal to the nine problem records plus their
      dependents, with the split between "with a problem" and "depending on one";
    - `infrahub-sync runs problems <run_id>` prints a line for each problem, at least one per
      problem type, each with kind, identity, type and reason; the `destination_identity_ambiguous`

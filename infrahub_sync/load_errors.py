@@ -16,14 +16,18 @@ class TransformError(ValueError):
     """A configured transform failed for one source record.
 
     `field` is the field the transform writes, `source_id` the record's source record ID, and
-    `kind` the mapping entry's kind once `transform_records` knows it.
+    `kind` the mapping entry's kind and `position` the transform's position in the entry's
+    `transforms` list, once `transform_records` knows them.
     """
 
-    def __init__(self, message: str, *, field: str, source_id: str | None, kind: str | None = None) -> None:
+    def __init__(
+        self, message: str, *, field: str, source_id: str | None, kind: str | None = None, position: int | None = None
+    ) -> None:
         super().__init__(message)
         self.field = field
         self.source_id = source_id
         self.kind = kind
+        self.position = position
 
 
 class SideLoadError(ValueError):

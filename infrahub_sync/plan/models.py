@@ -389,6 +389,7 @@ ProblemType = Literal[
     "identities_merge_in_destination",
     "peer_not_found_in_source",
     "destination_identity_ambiguous",
+    "transform_failed",
 ]
 """The stable problem type names (spec 009 FR-024). A name is never renamed or removed."""
 
@@ -447,6 +448,10 @@ class PlanProblem(BaseModel):
     other_records: list[PlanRecordReference] = Field(default_factory=list)
     # The Infrahub node IDs that hold one identity (`destination_identity_ambiguous` only).
     destination_ids: list[str] | None = None
+    # The configuration entry the problem comes from: the failed transform (`transforms[1]`) of
+    # a `transform_failed` problem, or the filter that removed the peer (`filters[0]`) of a
+    # `required_peer_excluded_by_filter` problem.
+    config_entry: str | None = None
     reason: str = Field(min_length=1, max_length=REPORT_REASON_LIMIT)
 
     @field_validator("value", mode="before")
@@ -455,11 +460,13 @@ class PlanProblem(BaseModel):
         return limited_report_value(value)
 
     @model_serializer(mode="wrap")
-    def _omit_absent_destination_ids(self, handler: Any) -> Any:
-        # Every other problem keeps the line it had before this field existed.
+    def _omit_absent_optional_fields(self, handler: Any) -> Any:
+        # Every other problem keeps the line it had before these fields existed.
         data = handler(self)
-        if isinstance(data, dict) and data.get("destination_ids") is None:
-            data.pop("destination_ids", None)
+        if isinstance(data, dict):
+            for name in ("destination_ids", "config_entry"):
+                if data.get(name) is None:
+                    data.pop(name, None)
         return data
 
 

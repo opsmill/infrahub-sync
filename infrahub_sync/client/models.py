@@ -441,14 +441,19 @@ class PlanProblemResource(_ResourceModel):
     other_records: tuple[PlanRecordReferenceResource, ...] = ()
     # The Infrahub node IDs that hold one identity; set on `destination_identity_ambiguous` only.
     destination_ids: tuple[str, ...] | None = None
+    # The configuration entry the problem comes from: `transforms[1]` of a `transform_failed`
+    # problem, `filters[0]` of a `required_peer_excluded_by_filter` problem.
+    config_entry: str | None = None
     reason: str = Field(min_length=1)
 
     @model_serializer(mode="wrap")
-    def _omit_absent_destination_ids(self, handler: SerializerFunctionWrapHandler):
-        # Every other problem keeps the shape it had before this field existed.
+    def _omit_absent_optional_fields(self, handler: SerializerFunctionWrapHandler):
+        # Every other problem keeps the shape it had before these fields existed.
         data = handler(self)
-        if isinstance(data, dict) and data.get("destination_ids") is None:
-            data.pop("destination_ids", None)
+        if isinstance(data, dict):
+            for name in ("destination_ids", "config_entry"):
+                if data.get(name) is None:
+                    data.pop(name, None)
         return data
 
 

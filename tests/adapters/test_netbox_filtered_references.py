@@ -198,6 +198,8 @@ def test_required_relationship_with_only_excluded_peers_is_in_the_load_report(
             field="peer",
             peer=SourceRecordReference(kind="BuiltinTag", identity=None, source_id="20"),
             loaded=False,
+            # The first filter of the peer's mapping entry removed it; the filter's value is not named.
+            config_entry="filters[0]",
         )
     ]
 

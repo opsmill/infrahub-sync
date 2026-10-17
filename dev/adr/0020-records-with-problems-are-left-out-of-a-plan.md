@@ -18,10 +18,10 @@ fail validation, without counting them, when `continue_on_error` is set.
 
 ## Decision
 
-- At the plan stage, a record with one of eight named problems is left out, and so is every
+- At the plan stage, a record with one of nine named problems is left out, and so is every
   record that depends on it through a required relationship. A record that refers to it only
   through an optional relationship is kept, without that relationship. A reference to a peer
-  that is not in the source is one of the eight problems; through an optional relationship, the
+  that is not in the source is one of the nine problems; through an optional relationship, the
   referring record is kept without that relationship.
 - DiffSync compares the stores as loaded. A record that cannot be built is not loaded. Every
   other record is loaded as the source holds it, references included. The adapter base class
@@ -35,16 +35,21 @@ fail validation, without counting them, when `continue_on_error` is set.
 - Every other plan failure still fails the plan. During apply, an Infrahub rejection still stops
   the apply. The `continue_on_error` parameter is removed.
 
-The eight problem types are `dropdown_value_not_in_choices`, `duplicate_source_identity`,
+The nine problem types are `dropdown_value_not_in_choices`, `duplicate_source_identity`,
 `destination_identity_collision`, `wrong_value_type`, `required_peer_excluded_by_filter`,
-`identities_merge_in_destination`, `peer_not_found_in_source` and
-`destination_identity_ambiguous`. The last is found while the plan reads Infrahub: two or more
-Infrahub objects of one kind have the same configured identity. The source record with that
-identity is left out, and no operation targets that identity, a delete included.
+`identities_merge_in_destination`, `peer_not_found_in_source`,
+`destination_identity_ambiguous` and `transform_failed`. `destination_identity_ambiguous` is
+found while the plan reads Infrahub: two or more Infrahub objects of one kind have the same
+configured identity. The source record with that identity is left out, and no operation targets
+that identity, a delete included. `transform_failed` is a configured transform that fails for
+one source record, for example a mapping of interface modes that has no entry for `q-in-q`. The
+loader records the record and does not load it, and the problem names the field and the
+transform's position in the mapping entry, not the source value or the error text (ADR 0021).
 
 ## Consequences
 
-- The rule of AD047 changes for these eight problem types only.
+- The rule of AD047 changes for these nine problem types only. A transform that fails no longer
+  fails the plan; it leaves out each record it fails for.
 - A left-out record that exists in Infrahub is not updated and not deleted.
 - An adapter that overrides `model_loader` does not get the shared record admission step.
 - The policy for runs that nobody watches stays open for 3.0.

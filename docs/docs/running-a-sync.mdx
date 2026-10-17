@@ -238,6 +238,7 @@ record, and what is wrong:
 dropdown_value_not_in_choices  DcimDevice  location=dc1 name=rtr1  status='planned' is not one of: active, deprecated, maintenance, provisioning, reserved
 peer_not_found_in_source  IpamIPAddress  address=10.0.0.1/32  vrf refers to IpamVRF source ID 17, which is not in the source
 destination_identity_ambiguous  LocationSite  name=twin  2 Infrahub objects hold this identity: node-1, node-2; no operation targets it
+transform_failed  InterfaceL2  source_id=77  the transform transforms[0] of l2_mode failed for this record; the record is not loaded
 ```
 
 The problem types are:
@@ -250,7 +251,8 @@ The problem types are:
 - `wrong_value_type`: a value has the wrong type for its attribute, such as `2.5` for a
   Number.
 - `required_peer_excluded_by_filter`: a required relationship points to a record that a
-  filter of the package removes.
+  filter of the package removes. The problem names the filter by its position in the related
+  record's mapping entry, for example `filters[0]`.
 - `identities_merge_in_destination`: two or more source records with different identities
   would be stored as one Infrahub node.
 - `peer_not_found_in_source`: a relationship points to a record that is not in the source.
@@ -260,6 +262,12 @@ The problem types are:
   plans no create, update or delete for that identity. When the source has no record with that
   identity, the problem is still listed and neither object is deleted. To fix it, remove or
   rename the extra objects in Infrahub, then create a new plan.
+- `transform_failed`: a transform of the package fails for one source record, for example a
+  transform that maps interface modes and has no entry for the mode `q-in-q`. The problem names
+  the field and the transform by its position in the mapping entry, for example
+  `transforms[0]`. It does not show the source value or the error. The plan leaves out the
+  record and the records that depend on it. To fix it, change the transform or the record in
+  the source, then create a new plan.
 
 `runs left-out` prints each left-out record and its cause: `has_problem` with the problem
 types, or `depends_on_left_out` with the left-out record it depends on and the relationship:

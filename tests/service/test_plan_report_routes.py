@@ -143,15 +143,15 @@ def test_pages_hold_each_entry_once_in_the_stable_order(
     assert _all_pages(client, route, limit=3) == _report_lines(saved.report, entry)
 
 
-def test_the_fixture_plan_lists_nine_problems_of_eight_types(
+def test_the_fixture_plan_lists_ten_problems_of_nine_types(
     published: tuple[ProductProjection, TestClient, SavedPlan],
 ) -> None:
     _projection, client, _saved = published
 
     body = client.get(f"/runs/{RUN_ID}/plan/problems", headers=HEADERS).json()
 
-    assert body["total"] == 9
-    assert len({item["problem_type"] for item in body["entries"]}) == 8
+    assert body["total"] == 10
+    assert len({item["problem_type"] for item in body["entries"]}) == 9
 
 
 def test_a_page_reports_the_offset_of_the_next_page(
@@ -160,12 +160,12 @@ def test_a_page_reports_the_offset_of_the_next_page(
     _projection, client, _saved = published
 
     first = client.get(f"/runs/{RUN_ID}/plan/problems", headers=HEADERS, params={"limit": 3}).json()
-    last = client.get(f"/runs/{RUN_ID}/plan/problems", headers=HEADERS, params={"offset": 6, "limit": 3}).json()
+    last = client.get(f"/runs/{RUN_ID}/plan/problems", headers=HEADERS, params={"offset": 9, "limit": 3}).json()
 
-    assert (first["offset"], first["limit"], first["total"], first["next_offset"]) == (0, 3, 9, 3)
+    assert (first["offset"], first["limit"], first["total"], first["next_offset"]) == (0, 3, 10, 3)
     assert len(first["entries"]) == 3
-    assert (last["offset"], last["total"], last["next_offset"]) == (6, 9, None)
-    assert len(last["entries"]) == 3
+    assert (last["offset"], last["total"], last["next_offset"]) == (9, 10, None)
+    assert len(last["entries"]) == 1
 
 
 @pytest.mark.parametrize("route", ROUTES)
@@ -355,6 +355,6 @@ def test_the_plan_summary_carries_the_report_counts(
     assert summary["left_out_with_problem"] + summary["left_out_dependent"] == summary["left_out"]
     assert summary["left_out_by_kind"] == dict(Counter(item.record.kind for item in report.left_out))
     assert sum(summary["left_out_by_kind"].values()) == summary["left_out"]
-    assert summary["problems"] == 9
+    assert summary["problems"] == 10
     assert summary["problems_by_type"] == dict(Counter(item.problem_type for item in report.problems))
     assert summary["kept"] == len(report.kept) > 0

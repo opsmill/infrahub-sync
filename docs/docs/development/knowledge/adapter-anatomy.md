@@ -164,6 +164,12 @@ each destination record through `DestinationIdentityAmbiguities.store`
 model in the store, and their node IDs are recorded for the problem
 `destination_identity_ambiguous`.
 
+On the source side, `model_loader` passes `record_transform_failure` to the model's
+`transform_records`. A record whose transform fails is recorded in the load report as
+`transform_failed`, with the field and the transform's position (`transforms[0]`), and is not
+loaded; the other records are transformed and loaded. A model that overrides `transform_records`
+without the `on_failure` parameter keeps its own behaviour: a failed transform fails the load.
+
 `peer_unique_id` resolves a reference. It looks up the peer among the loaded records, then in
 the load report, then among the IDs that a configured filter removed. A reference on an
 optional relationship to a peer that the source does not return keeps the record and is

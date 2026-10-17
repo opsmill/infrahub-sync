@@ -52,13 +52,17 @@ Rules:
   `expected_checksum=<hex>` that differs from the stored plan is refused with 409
   `plan-changed`.
 - A plan saved in format 2 or 3 returns empty lists and zero counts.
-- `problem_type` is one of the eight stable names in data-model.md:
+- `problem_type` is one of the nine stable names in data-model.md:
   `dropdown_value_not_in_choices`, `duplicate_source_identity`,
   `destination_identity_collision`, `wrong_value_type`, `required_peer_excluded_by_filter`,
   `identities_merge_in_destination`, `peer_not_found_in_source`,
-  `destination_identity_ambiguous`.
+  `destination_identity_ambiguous`, `transform_failed`.
 - A `destination_identity_ambiguous` entry carries `destination_ids`, the Infrahub node IDs
   that hold the identity. No other entry carries that key.
+- A `transform_failed` entry carries `config_entry`, the failed transform's position in the
+  mapping entry (`transforms[0]`), and no `value`. A `required_peer_excluded_by_filter` entry
+  carries `config_entry` when the filter that removed the peer is known (`filters[0]`). No other
+  entry carries that key.
 - `reason` is rendered from a fixed template per problem type; `value` is the source value.
   No entry holds a connection setting or the text of an error.
 - Errors: 404 `run-not-found`; 410 `artifact-expired`; 503 `plan-unavailable`; 422 for an

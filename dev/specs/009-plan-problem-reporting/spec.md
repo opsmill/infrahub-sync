@@ -54,6 +54,13 @@ configured identity (the mapping's `identifiers`) are the eighth problem type,
 the others. Now the plan lists the identity and the Infrahub objects, leaves out the source
 record with that identity, and plans no operation for that identity (FR-002, FR-003).
 
+Decided by the product owner on 2026-10-17: a transform that fails for one source record, for
+example the `l2_mode` transform of the NetBox example on the interface mode `q-in-q`, is the
+ninth problem type, `transform_failed`. Until then it failed the whole plan. Now the plan leaves
+out the record and its dependents, and the problem names the kind, the record, the field and the
+transform's position in the mapping entry (`transforms[0]`), never the source value or the text
+of the error (FR-002, FR-003, FR-035).
+
 Decided by the product owner on 2026-10-15, second review: credential values are kept out of
 failure causes, problem reasons and plan files by how these are built, not by replacing values
 in text afterwards. A cause is built only from named fields, never from the text of an error
@@ -104,14 +111,14 @@ Finding every bad record in one plan, before anything is written, is the gain V3
 for that step (idea brief, "Users and value").
 
 **Independent Test**: run one plan against a source fixture that holds one record of each of the
-eight problem types and a set of valid records. The plan finishes, lists eight problems, leaves out
+nine problem types and a set of valid records. The plan finishes, lists nine problems, leaves out
 those records and their dependents, and writes nothing to Infrahub.
 
 **Acceptance Scenarios**:
 
-1. **Given** a source that holds one record of each of the eight problem types listed in FR-002,
+1. **Given** a source that holds one record of each of the nine problem types listed in FR-002,
    **When** the team starts a plan, **Then** the plan finishes and its problem list contains one
-   entry for each of the eight records, each with its kind, its source record identity, the problem
+   entry for each of the nine records, each with its kind, its source record identity, the problem
    type and the reason.
 2. **Given** a source where a device has a problem and five interfaces belong to that device,
    **When** the team starts a plan, **Then** the plan leaves out the device and its five
@@ -280,7 +287,7 @@ equals the original count minus the operations written.
 
 - **FR-001**: A plan MUST check every source record and MUST NOT stop at the first record that
   has a problem.
-- **FR-002**: A plan MUST detect and list these eight problem types:
+- **FR-002**: A plan MUST detect and list these nine problem types:
   - a value outside the choices of a Dropdown attribute in the destination schema the plan read
     (#371)
   - two or more source records with the same source identity (for example duplicate IP
@@ -300,6 +307,10 @@ equals the original count minus the operations written.
   - two or more Infrahub objects of one kind with the same configured identity (the mapping's
     `identifiers`), found while the plan reads Infrahub (until 2026-10-17 the last object read
     replaced the others without a warning)
+  - a configured transform that fails for one source record, for example a mapping of
+    interface modes that has no entry for `q-in-q` (until 2026-10-17 it failed the whole plan).
+    The problem names the field and the transform's position in the mapping entry, not the
+    source value or the error text
 - **FR-003**: Each listed problem MUST hold the kind, the source record identity, the problem
   type, and a reason that names the attribute or relationship and the value or peer involved.
   Problems of the identity types MUST also name the other records involved. A problem of a
@@ -515,8 +526,8 @@ that a credential missing from the worker is found only when the run fails in th
 
 - **SC-001** (brief SC-003): on the NetBox example data with planted bad records, one plan run
   lists every planted problem. On 2026-10-05 the same problems took five configuration versions.
-- **SC-002**: a fixture with one record of each of the eight problem types gives one plan that
-  lists all eight, and its apply writes only the valid records after the records left out are
+- **SC-002**: a fixture with one record of each of the nine problem types gives one plan that
+  lists all nine, and its apply writes only the valid records after the records left out are
   confirmed.
 - **SC-003** (brief SC-005): for 100% of failed or stopped runs in the test suite, the CLI and
   the Sync API show the cause without reading container logs or the orchestration server.
@@ -562,9 +573,10 @@ that a credential missing from the worker is found only when the run fails in th
 - The Dropdown check needs the attribute choices in the record of the destination schema that a
   plan is bound to. Adding them changes that record, so plans saved by an earlier release must be
   planned again before they are applied (#371). This is accepted for the testing release.
-- A plan failure that is not tied to one record, such as an unreachable system, a rejected token
-  or an invalid transform, still fails the whole plan. Only the eight problem types of FR-002 leave
-  records out.
+- A plan failure that is not tied to one record, such as an unreachable system or a rejected
+  token, still fails the whole plan. Only the nine problem types of FR-002 leave records out. A
+  transform that fails, even one that fails for every record, leaves out each record it fails for
+  (`transform_failed`).
 - The problem list, the left-out list and the kept list follow the paging rule for plan
   details that spec 011 defines (FR-013 to FR-016 there; idea brief FR-007).
 - The testing release supports only the adapters that Sync bundles, and up to about 10,000

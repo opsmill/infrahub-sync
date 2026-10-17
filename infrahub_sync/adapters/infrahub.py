@@ -28,6 +28,7 @@ from infrahub_sync.configuration.credentials import (
     select_runtime_credential,
 )
 from infrahub_sync.generator import has_field
+from infrahub_sync.load_report import transform_records
 from infrahub_sync.plan.canonical import canonical_json_bytes
 from infrahub_sync.plan.destination_ambiguity import DestinationIdentityAmbiguities, DestinationIdentityAmbiguity
 from infrahub_sync.plan.errors import (
@@ -830,7 +831,7 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 filtered_objs = model.filter_records(records=list_obj, schema_mapping=element)
                 logger.info("%s: Loading %d/%d %s", self.type, len(filtered_objs), total, model_name)
                 # Transform records
-                transformed_objs = model.transform_records(records=filtered_objs, schema_mapping=element)
+                transformed_objs = transform_records(model, filtered_objs, element, self.record_transform_failure)
             else:
                 logger.info("%s: Loading all %d %s", self.type, total, model_name)
                 transformed_objs = list_obj

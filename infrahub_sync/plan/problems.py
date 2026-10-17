@@ -1,7 +1,7 @@
 """The plan problem pass, the dependency walk and the selection step (spec 009 research R7).
 
 `find_problems` reads the load reports, the source store, the destination schema record and
-the derived operations, and returns the plan report: the problems of the eight types, the
+the derived operations, and returns the plan report: the problems of the nine types, the
 records the plan leaves out and the records it keeps without one optional relationship. It
 changes no store and no operation.
 
@@ -109,7 +109,7 @@ _REASON_TEMPLATES: Mapping[ProblemType, str] = {
     ),
     "wrong_value_type": "{record}: the value {value} of {field} has the wrong type ({error_type}).",
     "required_peer_excluded_by_filter": (
-        "{record}: the required relationship {field} refers to {peer}, which a configured filter removed."
+        "{record}: the required relationship {field} refers to {peer}, which {filter} removed."
     ),
     "identities_merge_in_destination": (
         "{record} and {others} have different source identities that Infrahub would store as one node."
@@ -118,6 +118,10 @@ _REASON_TEMPLATES: Mapping[ProblemType, str] = {
     "destination_identity_ambiguous": (
         "Infrahub holds {count} {kind} objects with the identity {identity}; the plan cannot tell which one {record} "
         "maps to, so it plans no operation for that identity."
+    ),
+    "transform_failed": (
+        "{record}: {transform} of the {kind} mapping entry, which writes {field}, failed for this "
+        "record, so the record is not loaded."
     ),
 }
 
@@ -144,6 +148,7 @@ def _problem(  # pylint: disable=too-many-arguments  # the fields of one problem
     error_type: str | None = None,
     destination_ids: Sequence[str] | None = None,
     identity: Mapping[str, Any] | None = None,
+    config_entry: str | None = None,
 ) -> PlanProblem:
     """Build one problem, its reason rendered from the fixed template of its type."""
     others = ", ".join(_named(other) for other in other_records[:3])
@@ -160,6 +165,8 @@ def _problem(  # pylint: disable=too-many-arguments  # the fields of one problem
         count=len(destination_ids or ()),
         kind=record.kind,
         identity=_shown(dict(identity or {})),
+        transform="a transform" if config_entry is None else f"the transform {config_entry}",
+        filter=_filter_phrase(peer, config_entry),
     )
     return PlanProblem(
         problem_type=problem_type,
@@ -170,8 +177,16 @@ def _problem(  # pylint: disable=too-many-arguments  # the fields of one problem
         peer=peer,
         other_records=list(other_records),
         destination_ids=list(destination_ids) if destination_ids is not None else None,
+        config_entry=config_entry,
         reason=reason[:REPORT_REASON_LIMIT],
     )
+
+
+def _filter_phrase(peer: PlanRecordReference | None, config_entry: str | None) -> str:
+    """Name the filter that removed a peer: its position in the peer's mapping entry, never its value."""
+    if config_entry is None or peer is None:
+        return "a configured filter"
+    return f"the filter {config_entry} of the {peer.kind} mapping entry"
 
 
 # --- Left-out peer placeholders --------------------------------------------------------
@@ -467,7 +482,13 @@ def _load_report_problems(  # pylint: disable=too-many-arguments  # the pass's i
             problem = _problem("duplicate_source_identity", reference, other_records=others)
             findings.add(problem, [record.key, *([existing.key] if existing is not None else [])])
         elif entry.reason == "required_peer_excluded_by_filter":
-            findings.add(_problem(entry.reason, reference, field_name=entry.field, peer=peer), [record.key])
+            problem = _problem(
+                entry.reason, reference, field_name=entry.field, peer=peer, config_entry=entry.config_entry
+            )
+            findings.add(problem, [record.key])
+        elif entry.reason == "transform_failed":
+            problem = _problem(entry.reason, reference, field_name=entry.field, config_entry=entry.config_entry)
+            findings.add(problem, [record.key])
         elif entry.reason == "peer_not_found_in_source":
             problem = _problem(entry.reason, reference, field_name=entry.field, peer=peer)
             findings.add(problem, [record.key], leaves_out=not optional)

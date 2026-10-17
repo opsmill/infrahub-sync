@@ -654,6 +654,15 @@ def _echo_problem(problem: PlanProblemResource) -> None:
     elif problem.problem_type == "destination_identity_ambiguous" and problem.destination_ids:
         ids = problem.destination_ids
         detail = f"{len(ids)} Infrahub objects hold this identity: {', '.join(ids)}; no operation targets it"
+    elif problem.problem_type == "transform_failed" and problem.config_entry is not None:
+        detail = (
+            f"the transform {problem.config_entry} of {problem.field} failed for this record; the record is not loaded"
+        )
+    elif problem.problem_type == "required_peer_excluded_by_filter" and problem.peer and problem.config_entry:
+        detail = (
+            f"{problem.field} refers to {problem.peer.kind} source ID {problem.peer.source_id}, which the filter "
+            f"{problem.config_entry} of the {problem.peer.kind} mapping entry removed"
+        )
     _report_line(problem.problem_type, problem.record, detail)
 
 

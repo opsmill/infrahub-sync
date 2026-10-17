@@ -17,6 +17,7 @@ from infrahub_sync import (
 )
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.configuration.credentials import select_runtime_credential
+from infrahub_sync.load_report import removed_by_filters, transform_records
 
 from .references import owner_kind, reference_is_required, resolve_peer_list
 from .utils import get_value
@@ -90,17 +91,21 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         model: type[NetboxModel],
         raw_records: list[dict],
         already_filtered: bool = False,
+        record_failures: bool = False,
     ) -> list[dict]:
         """Filter and transform NetBox records as the base class's `model_loader` does.
 
         Pass `already_filtered=True` when the caller has run `filter_records` itself (e.g. to
-        log a filtered count) so records aren't filtered twice.
+        log a filtered count) so records aren't filtered twice. With `record_failures=True`, a
+        record whose transform fails is recorded in the load report and left out, as in `model_loader`.
         """
         if self.target != "source":
             return raw_records
         filtered = (
             raw_records if already_filtered else model.filter_records(records=raw_records, schema_mapping=element)
         )
+        if record_failures:
+            return transform_records(model, filtered, element, self.record_transform_failure)
         return model.transform_records(records=filtered, schema_mapping=element)
 
     def _records_to_diffsync(
@@ -130,7 +135,7 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         model: type[NetboxModel] = getattr(self, model_name)
         endpoint = self._resolve_endpoint(element.mapping)
         raw = [dict(node) for node in endpoint.filter(last_updated__gte=cursor.value)]
-        return element, self._transformed_records(element=element, model=model, raw_records=raw)
+        return element, self._transformed_records(element=element, model=model, raw_records=raw, record_failures=True)
 
     def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterator[dict]:
         """Yield NetBox records changed since `cursor`. Uses `last_updated__gte` filter."""
@@ -194,18 +199,24 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         """
         known = self._admission.filtered_ids
         if peer_kind in known or self.target != "source":
-            return known.get(peer_kind, set())
-        raw_ids: set[str] = set()
+            return set(known.get(peer_kind, {}))
+        removed: dict[str, int | None] = {}
         retained_ids: set[str] = set()
         for element in self.config.schema_mapping:
             if element.name != peer_kind or not element.mapping or not element.filters:
                 continue
             model: type[NetboxModel] = getattr(self, peer_kind)
             raw = [dict(node) for node in self._resolve_endpoint(element.mapping).all()]
-            raw_ids.update(_record_ids(raw))
-            retained_ids.update(_record_ids(model.filter_records(records=raw, schema_mapping=element)))
-        known[peer_kind] = raw_ids - retained_ids
-        return known[peer_kind]
+            kept = _record_ids(model.filter_records(records=raw, schema_mapping=element))
+            retained_ids.update(kept)
+            for source_id, position in removed_by_filters(
+                model, raw, element, kept_ids=kept, source_id=self.record_source_id
+            ).items():
+                removed.setdefault(source_id, position)
+        known[peer_kind] = {
+            source_id: position for source_id, position in removed.items() if source_id not in retained_ids
+        }
+        return set(known[peer_kind])
 
     def record_to_data(
         self, record: dict[str, Any], element: SchemaMappingModel, model: type[DiffSyncModel]

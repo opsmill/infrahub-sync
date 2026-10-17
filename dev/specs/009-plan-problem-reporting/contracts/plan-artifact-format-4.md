@@ -44,7 +44,11 @@ Content rule: entries hold source values, schema names and reasons rendered from
 templates. No entry is built from a connection setting or from the text of an error, so the
 report needs no value replacement (research R13, R14). A `destination_identity_ambiguous`
 problem also holds `destination_ids`, the Infrahub node IDs that share one identity; every other
-problem line leaves that key out, so its bytes are the same as before the type was added.
+problem line leaves that key out, so its bytes are the same as before the type was added. A
+`transform_failed` problem holds `config_entry`, the failed transform's position in the mapping
+entry (`transforms[0]`), and a `required_peer_excluded_by_filter` problem holds it when the
+filter that removed the peer is known (`filters[0]`). Every other problem line leaves that key
+out. A `transform_failed` problem holds no source value and no error text.
 
 ## Operations file
 

@@ -30,8 +30,10 @@ Revision of 2026-10-17, after three product owner decisions (R18):
 - The apply confirms the records left out with a yes or no flag, not with their count.
 - A peer that cannot be found in Infrahub at apply time has its own failure type,
   `destination_peer_missing` (R10, R13).
+- A transform that fails for one source record is the ninth problem type, `transform_failed`
+  (R1, R3). It no longer fails the plan.
 
-## R1. Where each of the eight problem types is found today
+## R1. Where each of the nine problem types is found today
 
 | Problem type (stable name) | Where it stops a plan today | Where this plan finds it |
 | --- | --- | --- |
@@ -43,6 +45,7 @@ Revision of 2026-10-17, after three product owner decisions (R18):
 | `identities_merge_in_destination` | A warning only (`_warn_identity_finer_than_destination_key`, `plan/derive.py:791`; #166) and `refuse_source_identity_collisions` (`plan/keying.py:67`, called at `plan/derive.py:931`) | Problem pass, through the same checks changed to return the groups (R8) |
 | `peer_not_found_in_source` | NetBox, ACI and generic REST raise and fail the load (`netbox.py:276-277`, `aci.py:332-333`, `genericrestapi.py:217-218`). Nautobot logs "Unable to locate the node" and drops the reference (`nautobot.py:286`, `:300`) | Load: the peer resolution of the base class (R4), recorded by the record admission step (R3) |
 | `destination_identity_ambiguous` | Not found. The Infrahub adapter stores destination records with `update_or_add_model_instance`, so the last node loaded with one identity replaces the others and the plan compares the source record with that one node | Load of the destination: the Infrahub adapter's store hook records the node IDs that share one identity (`plan/destination_ambiguity.py`); the problem pass lists them (R3) |
+| `transform_failed` | `apply_transform` raises `TransformError` and the whole load fails, so the whole plan fails (the NetBox example's `l2_mode` transform on mode `q-in-q`) | Load: `transform_records` applies the transforms record by record; the loader records a record whose transform fails in the load report with the field and the transform's position (`transforms[0]`), and does not load it (R3) |
 
 Today every load failure ends the whole load: `_load_side` wraps it into one `ValueError`
 (`potenda/__init__.py:488-501`).
@@ -422,10 +425,10 @@ below for the product owner.
 >
 > **Decision.**
 >
-> - At the plan stage, a record with one of eight named problems, and every record that depends
+> - At the plan stage, a record with one of nine named problems, and every record that depends
 >   on it through a required relationship, is left out. A record that refers to it only through
 >   an optional relationship is kept without that relationship. A reference to a peer that is
->   not in the source is one of the eight problems; through an optional relationship, the
+>   not in the source is one of the nine problems; through an optional relationship, the
 >   referring record is kept without that relationship.
 > - DiffSync compares the stores as loaded. A record that cannot be built is not loaded; every
 >   other record is loaded as the source holds it, references included. The adapter base class
@@ -439,7 +442,7 @@ below for the product owner.
 > - Every other plan failure still fails the plan. During apply, an Infrahub rejection still
 >   stops the apply. `continue_on_error` is removed.
 >
-> **Consequences.** AD047's rule changes for these eight problem types only. A left-out record
+> **Consequences.** AD047's rule changes for these nine problem types only. A left-out record
 > that exists in Infrahub is not updated and not deleted. An adapter that overrides
 > `model_loader` opts out of the admission step. The policy for runs that nobody watches stays
 > open for 3.0.
@@ -508,7 +511,7 @@ Classification, by exception type in the cause chain, never by text:
 | `token_rejected` | HTTP 401 or 403 from `requests`, `httpx` or `pynetbox.RequestError`; Infrahub `AuthenticationError` | `system` |
 | `tls_certificate_rejected` | `ssl.SSLCertVerificationError` (agreed with spec 013) | `system` |
 | `record_load_failed` | `RecordLoadError` (R3) | `node_kind`, `record`, `field` |
-| `transform_failed` | a new `TransformError(ValueError)` that `apply_transform` raises instead of a bare `ValueError` (`infrahub_sync/__init__.py:436-441`), with the field and the record's `local_id` as attributes; its message text, which repeats the transform expression and the error, is not used | `node_kind`, `record`, `field` |
+| `transform_failed` | a new `TransformError(ValueError)` that `apply_transform` raises instead of a bare `ValueError` (`infrahub_sync/__init__.py:436-441`), with the field and the record's `local_id` as attributes; its message text, which repeats the transform expression and the error, is not used. Since 2026-10-17 the loader of the base class and of the bundled adapters records the failure as the problem `transform_failed` instead, so this failure type remains only for an adapter or a model that transforms its own way | `node_kind`, `record`, `field` |
 | `verification_failed`, `apply_refused`, `credential_missing`, `left_out_review_required` | the existing typed errors | fixed text |
 | `destination_peer_missing` (2026-10-17) | `plan.errors.PeerNotFoundError` with a `peer_kind`, raised by `PeerResolver` when the Infrahub query for a peer returns nothing during apply (verify resolves no peer) | `system` destination (`infrahub`), `node_kind` the peer kind; the summary names the operation ID |
 | `destination_peer_ambiguous` (2026-10-17) | `plan.errors.PeerAmbiguousError` with a `peer_kind`: the query returns more than one object | as `destination_peer_missing` |
