@@ -215,3 +215,47 @@ Benoit Kohler decided three points on 2026-10-17. They replace the decision "Inf
 | Types | `uv run ty check .` | 2026-10-17 | `Found 17 diagnostics`, the pre-existing count |
 
 The compose image was rebuilt with `docker build -t infrahub-sync:compose-test .` before the compose runs.
+
+### A transform that fails for one record is the problem `transform_failed` (commit `a34db3cd`)
+
+Decided later on 2026-10-17, with the review fixes below.
+
+- New module `infrahub_sync/load_report.py` holds the load report types, moved out of `infrahub_sync/__init__.py` (still re-exported from it), and `transform_each`, which applies a mapping entry's transforms record by record. A `TransformError` names the entry's kind and the transform's position. The loader of the base class and the source loaders of the NetBox, Nautobot and Infrahub adapters pass `record_transform_failure`, which records the record in the load report as `transform_failed` with the field and `config_entry` (`transforms[0]`), and does not load it. The other records are transformed and loaded.
+- The problem pass lists the ninth problem type, `transform_failed`. The problem names the kind, the record (source ID; the identity is not known), the field and `config_entry`. It holds no source value and no error text. The existing rules leave out the record and its dependents; a record that refers to it through an optional relationship is kept without that relationship. `infrahub-sync runs problems` prints the transform and the field.
+- The shared fixture maps VRF names through a transform without an entry for `q-in-q`, so the fixture plan lists ten problems of nine types. Updated: spec.md (decision, FR-002, user story 1, SC-002, assumptions), data-model.md, research.md (R1 table, revision note, R13), the contracts, quickstart.md, ADR 0020 (list and text), `running-a-sync.mdx`, `sync-http-api.mdx`, `plan-artifact.md`, `adapter-anatomy.md` and the changelog fragment.
+- Judgement call: every `TransformError` of a record becomes the problem, a refused sandbox access included. A transform that fails for every record leaves out every record of its kind. The failure type `transform_failed` of the run failure cause stays for a model that overrides `transform_records` without the `on_failure` parameter: such a model keeps its old behaviour, and a failed transform fails the load.
+- Review #13 is in this commit: the same `config_entry` field names the filter that removed the peer of a `required_peer_excluded_by_filter` problem (`filters[0]` of the peer's mapping entry), and the reason says "which the filter filters[0] of the DcimDevice mapping entry removed". The filter value is not named. The loader records the position of the first filter that removed each record; a model that filters its own way records no position, and the reason then says "a configured filter".
+- Process: the tests of this item were written with the code, not before it. The tests of items 2 and 3 were run and seen to fail before the code was written.
+
+### Plan format 4 reserves `cleared_relationships` (commit `b01f81e5`)
+
+- `PlannedOperation` gains the optional field `cleared_relationships` (a list of relationship names). It is accepted on an update and refused on a create or a delete. The model omits it when it is absent, so an operation without it keeps its bytes: operation IDs, checksums and the loader parity baselines are unchanged. This release never writes it.
+- `require_applyable_plan` refuses a plan whose update carries a non-empty list with `PlanFeatureNotSupportedError` (`wrote = False`, an `apply_refused` cause), after the format check and before the left-out confirmation, so before any write. The Sync API refuses it with 409 `plan-feature-not-supported`, audited `refused-plan-feature`, after the format check. An empty list applies.
+- Updated: contracts/plan-artifact-format-4.md, contracts/sync-api.md (check 6), data-model.md, ADR 0022 (decision and consequences), `plan-artifact.md`, `sync-http-api.mdx` and a new changelog fragment `+009-cleared-relationships.added.md`.
+- Not done: `dev/specs/010-second-sync-plan-speed/plan.md` exists only on the branch `v3-mvp`, not on `009-plan-problem-reporting`, and this work did not switch branches. The note to add to its "Coordination with spec 009" row "Plan format": "Format 4 reserves the optional `cleared_relationships` list on updates (spec 009, decided on 2026-10-17). Spec 009 never writes it and refuses to apply a plan that carries a non-empty list (409 `plan-feature-not-supported`). Spec 010 implements the clearing in format 4; no plan format 5 is needed."
+
+### Review fixes (commit `b24e497a`)
+
+- #4: `identities_merge_in_destination` groups records only when the closest destination key is a strict subset of the configured identity, and only groups that hold a create. Two updates of racks that Infrahub already holds now plan normally (`tests/plan/test_identity_merge_grouping.py`).
+- #3: `PlanReport.records_without_identity_by_kind` counts, per kind, the left-out records the load could not build without a known identity, and the `destination_identity_ambiguous` identities that cannot be formed. `select_operations` uses it to withhold deletes, and the plan summary carries it as `deletes_withheld_by_kind`. The CLI prints "deletes not computed for <kind>: N records without identity". In the fixture plan, `InterfacePhysical` (2) and `IpamVRF` (1).
+- #8: a run without a destination schema snapshot logs a warning, and the manifest records `dropdown_values_checked: false` (absent otherwise). The summary carries `dropdown_values_checked`, and the CLI prints "Dropdown values were not checked: no destination schema snapshot in this run". Judgement call: a manifest field rather than a report entry, because the check is a fact of the run, not of a record; the fixtures of `tests/test_potenda_plan_artifact.py`, which plan without a snapshot, now carry the field.
+- #6: for `internal_error`, `error_class` is the class of the innermost error of the cause chain that is not a `SideLoadError`. The summary names it too. ADR 0021 says so.
+- #9: `persist_cursors_for_run` saves no cursor for a kind that has an entry in the side's load report, so the next run reads that kind in full. Finding: no service or Prefect path calls `persist_cursors_for_run`; they extract in full (`incremental-and-cache.md`), so only direct Python callers are affected.
+- #10: the next action of a `sync` stopped after its plan names this run: "Review the plan with `infrahub-sync runs plan <run_id>` and the records it leaves out with `infrahub-sync runs left-out <run_id>`, then apply this run with `infrahub-sync apply <run_id> --expected-checksum <checksum> --confirm-left-out`."
+- Stable order: report entries that tie on the sort keys are ordered by their canonical bytes, and the two records of a `duplicate_source_identity` problem are named in reference order. Two load orders give identical report bytes and report digest (`tests/plan/test_report_order.py`). Which of two duplicates the store keeps still depends on the load order, and the report says so in `loaded`; the source snapshot files keep rows in load order, so the whole plan checksum can still differ between load orders.
+- #16: plan.md describes a record without identity as the code handles it: a referrer through an optional relationship is kept without it, and no delete of its kind is planned.
+
+### Evidence of the second set
+
+| Gate | Command | Time (UTC) | Result |
+| --- | --- | --- | --- |
+| Unit tests | `uv run invoke tests.tests-unit` | 2026-10-17T03:25:55Z | `6470 passed, 4 skipped, 222 deselected, 4 warnings in 153.97s` |
+| Loader parity | `uv run pytest -q -p no:randomly tests/plan/test_loader_plan_parity.py` | 2026-10-17, before commit `b24e497a` (time not recorded) | `7 passed in 0.18s`, baselines unchanged |
+| Lint | `uv run invoke lint` | 2026-10-17T03:26:12Z | rumdl, ruff and Pylint pass; yamllint fails only on paths under `./.worktrees/` |
+| Pylint | `uv run invoke linter.lint-pylint` | 2026-10-17T03:26:55Z | `Pylint passed (0 diagnostics, score 10.0)` |
+| Types | `uv run invoke linter.lint-ty` | 2026-10-17T03:26:56Z | `Found 17 diagnostics`, the pre-existing count |
+| Image | `docker build -t infrahub-sync:compose-test .` | 2026-10-17T03:27:50Z | built |
+| Compose lifecycle | `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose/test_lifecycle.py -n 0 --compose-zero-skip` | 2026-10-17T03:28:09Z | `12 passed in 332.92s` |
+| Compose managed run | same, `tests/compose/test_managed_run.py` | 2026-10-17T03:33:47Z | `4 passed in 113.36s` |
+| Compose credential leaks | same, `tests/compose/test_credential_leaks.py` | 2026-10-17T03:35:44Z | `1 passed in 233.75s` |
+| Docs build | `uv run invoke docs.docusaurus` | 2026-10-17T03:39:43Z | `[SUCCESS] Generated static files in "build".` |
