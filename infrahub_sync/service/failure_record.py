@@ -161,9 +161,12 @@ def record_failure(  # pylint: disable=too-many-arguments,too-many-positional-ar
         terminal_state, terminal_outcome = ("interrupted", "ambiguous") if ambiguous else ("failed", "failed")
         operations = planned_operations(projection, run_id) if described is not None and stage != "verify" else None
         evidence, cause = failure_evidence(stage, exc, outcome=terminal_outcome, record=record, operations=operations)
-        # The cause replaces any earlier one, such as the stop of a `sync` this apply follows.
-        results: dict[str, Any] = {f"{stage}_failure": evidence, "failure": cause}
+        results: dict[str, Any] = {f"{stage}_failure": evidence}
         if stage == "verify":
+            # A failed verify leaves the run's phase unchanged (`planned`), and the run-level
+            # `failure` stays null for a run that has not failed or stopped
+            # (contracts/sync-api.md): the cause is kept in `verify_failure` only.
+            evidence["failure"] = cause
             writeback: ExecutionWriteback = ExecutionMergeWriteback(results=results)
         else:
             partial = {
@@ -178,6 +181,8 @@ def record_failure(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 )
                 if key in evidence
             }
+            # The cause replaces any earlier one, such as the stop of a `sync` this apply follows.
+            results["failure"] = cause
             writeback = ExecutionFinishWriteback(
                 phase=f"{stage}-interrupted" if ambiguous else f"{stage}-failed",
                 outcome=terminal_outcome,

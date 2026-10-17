@@ -36,7 +36,7 @@ Treat it as a shape reference and a deterministic source fixture:
 
 | File | What it shows |
 | --- | --- |
-| `custom_adapter_src/custom_adapter.py` | `MockdbAdapter` and `MockdbModel` — the two classes, a client, `model_loader` and a full `obj_to_diffsync` |
+| `custom_adapter_src/custom_adapter.py` | `MockdbAdapter` and `MockdbModel` — the two classes, a client, `list_records` and a full `record_to_data` |
 | `custom_adapter_src/mock_db.json` | The five-device fixture the adapter reads |
 | `config.yml` | The declared configuration |
 | `examples/custom_adapter/package.yml` | The registry envelope that wraps `config.yml` |

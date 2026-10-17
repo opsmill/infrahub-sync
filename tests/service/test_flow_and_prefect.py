@@ -47,6 +47,7 @@ from infrahub_sync.product_store import PrefectExecutionLink, ProductRun, local_
 from infrahub_sync.service import flow as service_flow
 from infrahub_sync.service.deploy import CATALOGUE
 from infrahub_sync.service.flow import service_sync_run
+from infrahub_sync.service.models import public_run_resource
 from infrahub_sync.service.orchestration import (
     SERVICE_DEFINITION,
     CancellationResult,
@@ -619,6 +620,11 @@ def test_service_verify_failure_merges_evidence_and_terminalizes_exact_link(
     assert stored is not None
     assert (stored.phase, stored.outcome, stored.finished_at) == ("accepted", None, None)
     assert stored.results["verify_failure"]["error_type"] == "ValueError"
+    # The run did not fail or stop, so its run-level cause stays null (contracts/sync-api.md);
+    # the cause is kept with the verify evidence.
+    assert "failure" not in stored.results
+    assert public_run_resource(stored).failure is None
+    assert stored.results["verify_failure"]["failure"]["stage"] == "verify"
     assert stored.prefect_executions[0].terminal_state == "failed"
 
 

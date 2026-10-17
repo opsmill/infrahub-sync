@@ -259,3 +259,67 @@ def test_the_worker_publishes_on_each_poll() -> None:
     asyncio.run(poll_twice())
 
     assert published == [True, True]
+
+
+class _LockedStore:
+    """A projection whose database driver reports a locked database on every write."""
+
+    def record_worker_environment(self, record: WorkerEnvironment) -> None:  # noqa: PLR6301
+        del record
+        msg = f"database is locked: {SPECIAL_CREDENTIAL}"
+        raise sqlite3.OperationalError(msg)
+
+
+def test_a_driver_error_at_start_does_not_stop_the_worker(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    started: list[str] = []
+
+    class StoppedWorker:
+        def __init__(self, **settings: Any) -> None:  # noqa: ANN401 - the worker's own keywords.
+            del settings
+
+        async def start(self) -> None:  # noqa: PLR6301 - stands in for the instance method.
+            started.append("start")
+
+    def locked_publisher(worker_id: str) -> WorkerEnvironmentPublisher:
+        return WorkerEnvironmentPublisher(
+            worker_id, projection_factory=lambda: cast("ProductProjection", _LockedStore()), environ=WORKER_ENVIRONMENT
+        )
+
+    monkeypatch.setattr(service_worker, "install_custom_ca_bundle", lambda: None)
+    monkeypatch.setattr(service_worker, "service_worker_name", lambda: WORKER_A)
+    monkeypatch.setattr(service_worker, "WorkerEnvironmentPublisher", locked_publisher)
+    monkeypatch.setattr(service_worker, "ServiceProcessWorker", StoppedWorker)
+
+    with caplog.at_level("WARNING", logger="infrahub_sync.service.worker_environment"):
+        assert service_worker.main(["--pool", POOL_NAME]) == 0
+
+    assert started == ["start"]
+    assert "OperationalError" in caplog.text
+    assert "database is locked" not in caplog.text
+    assert SPECIAL_CREDENTIAL not in caplog.text
+
+
+def test_a_driver_error_on_a_poll_does_not_end_the_poll_loop(caplog: pytest.LogCaptureFixture) -> None:
+    publisher = WorkerEnvironmentPublisher(
+        WORKER_A, projection_factory=lambda: cast("ProductProjection", _LockedStore()), environ=WORKER_ENVIRONMENT
+    )
+    worker = ServiceProcessWorker(work_pool_name=POOL_NAME, name=WORKER_A, environment_publisher=publisher.publish)
+    worker._work_pool = cast(
+        "WorkPool",
+        SimpleNamespace(id=POOL_ID, name=POOL_NAME, base_job_template=worker.get_default_base_job_template()),
+    )
+
+    async def poll_twice() -> None:
+        assert await worker.get_and_submit_flow_runs() == []
+        assert await worker.get_and_submit_flow_runs() == []
+
+    with caplog.at_level("WARNING", logger="infrahub_sync.service.worker_environment"):
+        asyncio.run(poll_twice())
+
+    warnings = [record.getMessage() for record in caplog.records if record.name.endswith("worker_environment")]
+    assert len(warnings) == 2
+    assert all("OperationalError" in message for message in warnings)
+    assert "database is locked" not in caplog.text
+    assert SPECIAL_CREDENTIAL not in caplog.text

@@ -514,6 +514,10 @@ otherwise:
 | `apply_progress` | For a stopped apply: the operation counts, the operation it stopped at, and whether that operation may have written part of its change. |
 | `next_action` | A fixed sentence per failure type that gives the next step. |
 
+A failed verify does not change the run's phase, so `run.failure` stays `null`. The cause of
+the failed verify is the `failure` field of the `verify_failure` result, which
+`GET /runs/{run_id}/results` returns.
+
 The worker builds every field from named fields of the error only. No field holds the text of
 an adapter's or an HTTP library's error, an address, a header, or a traceback.
 `GET /runs/{run_id}/results` keeps the `{stage}_failure` keys of earlier releases (`stage`,

@@ -20,7 +20,7 @@ calling it.
 ### Prerequisites
 
 - A working dev environment (`uv sync`).
-- The adapter under test, with its `model_loader` and any incremental methods.
+- The adapter under test, with its `list_records`, `record_to_data` and any incremental methods.
 - Familiarity with `unittest.mock` and pytest fixtures.
 - The existing tests as templates: `tests/adapters/test_netbox_incremental.py` and
   `tests/test_diffsync_mixin_contract.py`.
@@ -64,7 +64,7 @@ construction for a real adapter — mirror it.
 
 #### Step 4: Test the conversion path
 
-Drive `model_loader` (or `obj_to_diffsync`) with the fake records and assert the resulting
+Drive the base class `model_loader` (or `record_to_data`) with the fake records and assert the resulting
 models. Check that fields map to the right names, that `local_id` and `identifiers` are set,
 and that `reference` fields resolve to peer `unique_id`s:
 

@@ -74,7 +74,7 @@ it is the shortest way to see the shape:
 
 | File | What it shows |
 |---|---|
-| `custom_adapter_src/custom_adapter.py` | `MockdbAdapter` and `MockdbModel` — the two classes, a client, `model_loader` and a full `obj_to_diffsync` |
+| `custom_adapter_src/custom_adapter.py` | `MockdbAdapter` and `MockdbModel` — the two classes, a client, `list_records` and a full `record_to_data` |
 | `custom_adapter_src/mock_db.json` | The five-device fixture the adapter reads |
 | `config.yml` | The declared configuration |
 | `package.yml` | The registry envelope that wraps it |
@@ -110,7 +110,8 @@ class MysystemAdapter(DiffSyncMixin, Adapter):
         self.settings = adapter.settings or {}
         self.client = self._create_client(self.settings)
 
-    def model_loader(self, model_name, model): ...
+    def list_records(self, model_name, element): ...
+    def record_to_data(self, record, element, model): ...
 
 class MysystemModel(DiffSyncModelMixin, DiffSyncModel):
     pass
@@ -120,26 +121,57 @@ Follow [Writing an adapter](../guidelines/writing-an-adapter.md): mixin first, `
 optional-dependency import with `# ty: ignore[unresolved-import]`, credentials from the
 environment and never from an inline setting value.
 
-#### Step 3: implement `model_loader`
+#### Step 3: Implement `list_records` and `record_to_data`
 
-For each model, find its schema-mapping entry, fetch the source records, filter and transform
-them through the model mixin, convert each to the DiffSync shape, and add it:
+Do not override `model_loader`. The base class `model_loader` calls `list_records` for each
+mapping entry, applies the mapping's filters and transforms on the source side, and passes
+each record to `load_record`. `load_record` builds the model and adds it to the store. A
+source record that cannot be built is listed in the plan's load report instead of failing the
+load. An adapter that overrides `model_loader` and calls `self.add(model(**data))` itself
+skips this admission step.
+
+`list_records` returns the raw records of one mapping entry, before any filter:
 
 ```python
-def model_loader(self, model_name, model):
-    element = next(e for e in self.config.schema_mapping if e.name == model_name)
-    records = self.client.get(element.mapping)
-    if self.config.source.name.title() == self.type.title():
-        records = model.filter_records(records=records, schema_mapping=element)
-        records = model.transform_records(records=records, schema_mapping=element)
-    for obj in records:
-        self.add(model(**self.obj_to_diffsync(obj=obj, mapping=element, model=model)))
+def list_records(self, model_name, element):
+    return self.client.get(element.mapping)
 ```
 
-Write the `obj_to_diffsync` helper to walk `element.fields` — `static`, plain `mapping`, and
-`reference` resolved to a peer `unique_id` — and always set `local_id`.
-`examples/custom_adapter/custom_adapter_src/custom_adapter.py` has a complete version,
-including the single and list reference cases.
+`record_to_data` converts one raw record to the model's field data. It walks
+`element.fields` — `static`, plain `mapping`, and `reference` — and sets `local_id` to the
+record's source ID. Resolve a single reference with `peer_unique_id`, and a list reference
+with `resolve_peer_list` from `infrahub_sync/adapters/references.py`:
+
+```python
+from infrahub_sync.adapters.references import owner_kind, reference_is_required, resolve_peer_list
+
+def record_to_data(self, record, element, model):
+    source_id = self.record_source_id(record)
+    data = {"local_id": source_id}
+    owner = (owner_kind(model, element.name), source_id)
+    for field in element.fields or []:
+        if field.static:
+            data[field.name] = field.static
+        elif field.mapping and not field.reference:
+            data[field.name] = record.get(field.mapping)
+        elif field.mapping and field.reference:
+            required = reference_is_required(model, field.name)
+            if model.is_list(field.name):
+                data[field.name], _ = resolve_peer_list(
+                    self, peer_kind=field.reference, peer_source_ids=record.get(field.mapping, []),
+                    owner=owner, field=field.name, required=required,
+                )
+            elif record.get(field.mapping) is not None:
+                data[field.name] = self.peer_unique_id(
+                    field.reference, str(record[field.mapping]), owner=owner, field=field.name, required=required
+                )
+    return data
+```
+
+`record_source_id` reads `id` from each record by default. Override it when the system keys
+its records by another field. `examples/custom_adapter/custom_adapter_src/custom_adapter.py`
+has a complete version. [Adapter anatomy](../knowledge/adapter-anatomy.md#the-load-loop-and-the-admission-step)
+describes what the admission step records.
 
 #### Step 4: Keep model writes inherited
 
@@ -551,7 +583,7 @@ For the development-time plugin loader and what it is and is not, see
 ### Quality checklist
 
 - [ ] Adapter inherits `DiffSyncMixin` / `DiffSyncModelMixin`, mixin first, with a `type`.
-- [ ] `model_loader` filters and transforms through the model mixin; `obj_to_diffsync` sets `local_id`.
+- [ ] The adapter implements `list_records` and `record_to_data` and does not override `model_loader`; `record_to_data` sets `local_id` and resolves references with `peer_unique_id`.
 - [ ] Decided whether the adapter implements the planned-write surface — **both** `new_peer_resolver` and `apply_planned_operation`. A destination without both cannot write through registered `sync` or through saved-plan `apply`; if that is the intended position, confirmed the write gate refuses cleanly and that `diff` and plan review still work.
 - [ ] An `AdapterConfigurationCapabilities` entry added to `BUILTIN_ADAPTER_CAPABILITIES`, with roles, allowed settings and credential paths that match the module.
 - [ ] `tests/configuration/test_contracts.py` expected set updated, and `tests/configuration/test_adapter_setting_conformance.py` satisfied.

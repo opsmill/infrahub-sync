@@ -30,7 +30,7 @@ are integration tests (see below).
 
 **Always test that records become correct DiffSync models:**
 
-- `model_loader` (or the `obj_to_diffsync` helper) maps fields to the right destination names.
+- `record_to_data`, called through the base class `model_loader`, maps fields to the right destination names.
 - Filters keep and drop the right records.
 - Transforms produce native-typed values.
 - `identifiers` and `local_id` are populated, and `reference` fields resolve to peer

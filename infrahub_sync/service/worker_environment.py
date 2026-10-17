@@ -13,8 +13,11 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
+
+import psycopg
 
 from infrahub_sync.configuration.credentials import ENV_CREDENTIAL_PREFIX
 from infrahub_sync.product_store import ProductStoreProviderError, WorkerEnvironment
@@ -36,7 +39,12 @@ _CREDENTIAL_NAME = re.compile(rf"{ENV_CREDENTIAL_PREFIX}[A-Za-z0-9_]+")
 # with its default heartbeat.
 LIVE_WORKER_MAX_AGE = timedelta(seconds=90)
 
-_PUBLICATION_FAILED = "The worker could not publish its credential variable names; it retries on the next poll."
+_PUBLICATION_FAILED = "The worker could not publish its credential variable names (%s); it retries on the next poll."
+
+# A driver error that reaches the publisher untranslated (SQLite, or a Psycopg error raised
+# outside the service connection wrapper) is a store failure like any other: it must not end
+# the poll loop or stop the worker at start.
+_STORE_FAILURES = (ServiceStorageStartupError, ProductStoreProviderError, ValueError, sqlite3.Error, psycopg.Error)
 
 
 def credential_names(environ: Mapping[str, str] | None = None) -> tuple[str, ...]:
@@ -84,10 +92,11 @@ class WorkerEnvironmentPublisher:
             if self._projection is None:
                 self._projection = self._projection_factory()
             self._projection.record_worker_environment(record)
-        except (ServiceStorageStartupError, ProductStoreProviderError, ValueError):
-            # The error is not logged: a storage setting or a driver message can hold a secret.
+        except _STORE_FAILURES as error:
+            # Only the error class is logged: a storage setting or a driver message can hold
+            # a secret (docs/docs/development/guidelines/secret-redaction.md).
             self._projection = None
-            logger.warning(_PUBLICATION_FAILED)
+            logger.warning(_PUBLICATION_FAILED, type(error).__name__)
             return False
         return True
 
