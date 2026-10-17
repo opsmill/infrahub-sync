@@ -290,3 +290,28 @@ Decided later on 2026-10-17, with the review fixes below.
 | Format | `uv run invoke format` | 2026-10-17T03:48:43Z | `All formatters have been executed!`, no file changed |
 | Pylint | `uv run invoke linter.lint-pylint` | 2026-10-17T03:48:44Z | `Pylint passed (0 diagnostics, score 10.0)` |
 | Unit tests | `uv run invoke tests.tests-unit` | 2026-10-17T03:48:56Z | `6472 passed, 4 skipped, 222 deselected, 4 warnings in 153.68s`; the two added tests are page checks on the new docs page |
+
+### Infrahub 1.11.7 in the development and preview stacks (commit `7ca2eb26`)
+
+- This answers the finding above. `.github/scripts/update_infrahub.py 1.11.7` moved the pin in its seven files from 1.10.6 (`sha256:03162de5140789ea1b12eb275d2af6eca379beec02d7d3d84069e4e46e8e657c`) to 1.11.7 (`sha256:411dbe42552e257da149e2a9411ca725c69abedcca903fc010ef13981063e0aa`). The script read the digest with `docker buildx imagetools inspect` and checked that the index includes `linux/amd64` and `linux/arm64`. 1.11.7 is the latest release on the registry and the latest GitHub release of `opsmill/infrahub`, published on 2026-10-14.
+- `development/docker-compose.infrahub.yml` takes the changes of the upstream `docker-compose.yml` from tag `infrahub-v1.10.6` to tag `infrahub-v1.11.7`: 35 new configuration variables, and Neo4j `2026.05.0-community` pinned by its index digest `sha256:6c162e2432f861f2c4e3da77a6ba478e7f10e2160b870541f85294532bc6ff5f`. The file still differs from upstream only by its digest pins and its loopback port bindings.
+- `supported-platforms-and-limits.mdx` states that the development and preview stacks run 1.11.7, and which checks passed against it. The measured versions in that page and in both tutorials stay at 1.10.6, because the tutorials were not worked through again on 1.11.7.
+- Not changed: the benchmark runner pins 1.11.3 (`tasks/bench.py`), which its recorded baselines were measured on. ADRs name the version their measurements used.
+
+### Known gap: the Nautobot examples are not checked against the stricter `configs validate` rule
+
+- The Nautobot v1 and v2 examples are not checked against the stricter `configs validate` rule, because the repository holds no Nautobot schema to check them against. Benoit Kohler deferred this check to after the MVP on 2026-10-17.
+
+### Evidence of the pin change
+
+| Gate | Command | Time (UTC) | Result |
+| --- | --- | --- | --- |
+| Unit tests | `uv run invoke tests.tests-unit` | 2026-10-17T06:11:48Z | `6472 passed, 4 skipped, 222 deselected, 4 warnings in 154.50s` |
+| Pin contract tests | `uv run pytest tests/compose/test_compose_contract.py tests/preview/test_preview_configuration.py tests/test_update_infrahub.py -q` | 2026-10-17T06:14:31Z | `214 passed in 5.38s` |
+| Preview smoke | `uv run invoke preview.smoke`, on a preview started with `uv run invoke preview.up` (Infrahub `/api/info` reports 1.11.7) | 2026-10-17T06:32:45Z | `23 passed, 69 deselected in 194.78s` |
+| `from-netbox` example check | The steps in `testing-tiers.md`, on a fresh preview and the local NetBox `demo` dataset | 2026-10-17T06:37:31Z | Plan `operations: 1688`, `by_action: create=1687, delete=1`, `problems: 0`; sync `outcome: applied`, `operations_written: 1687`; the object count of each of the 20 kinds on `netbox-import` equals its planned operations |
+| Format | `uv run invoke format` | 2026-10-17T06:40:58Z | `All formatters have been executed!`, no file changed |
+| Lint | `uv run invoke lint` | 2026-10-17T06:40:58Z | Ruff and Pylint pass (`Pylint passed (0 diagnostics, score 10.0)`); yamllint fails only on files under `./.worktrees/` |
+| ty | `uv run invoke linter.lint-ty` | 2026-10-17T06:41:39Z | `Found 17 diagnostics`, all `unused-ignore-comment` warnings; the same 17 at commit `7f1b99d8` |
+| Markdown | `uv run rumdl check docs/docs/operations/supported-platforms-and-limits.mdx` | 2026-10-17T06:41:29Z | `Success: No issues found in 1 file` |
+| Docs build | `uv run invoke docs.docusaurus` | 2026-10-17T06:42:04Z | `[SUCCESS] Generated static files in "build".` |
