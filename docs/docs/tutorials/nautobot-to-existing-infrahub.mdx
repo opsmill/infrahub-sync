@@ -52,6 +52,10 @@ tutorial's sites-and-devices mapping. Saved run records survived deployment
 restart. These measurements do not establish compatibility with other server
 versions.
 
+To read Infrahub's error code, node kind and attribute in the cause of a rejected write,
+use Infrahub 1.11 or later; see
+[Supported platforms and limits](../operations/supported-platforms-and-limits.mdx#infrahub-111-or-later-for-testing).
+
 `depth: 1` requests nested objects. Without it, Nautobot 2.4.41 returns a
 shallow `device_type` reference and the required `device_type.model` field is
 missing.

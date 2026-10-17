@@ -162,7 +162,10 @@ The Sync API reads the destination schema of that branch, unless the package dec
 
 Each worker publishes the names of its set credential variables when it starts and on each
 poll. When no worker has published them in the last 90 seconds, the check reports the
-warning `worker-environment-unknown` and does not compare the credentials.
+warning `worker-environment-unknown` and does not compare the credentials. The check
+compares with the most recent live worker only, so the testing release supports one worker
+per deployment; see
+[Supported platforms and limits](./operations/supported-platforms-and-limits.mdx#product-limits).
 
 Each finding has a `code`, a `severity` of `error` or `warning`, a `location` in the package
 as a JSON Pointer, and a message. The codes are listed in

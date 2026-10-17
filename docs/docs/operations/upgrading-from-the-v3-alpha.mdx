@@ -88,7 +88,9 @@ from the registration response must read it from one of these instead.
   kind and attribute when Infrahub returned them, the source record and field, how far a
   stopped apply got, and the next step. `diff`, `sync`, `apply` and `runs show` print it
   instead of `<stage> failed: <ErrorClass>`. The fields are described in
-  [Run failure cause](../reference/sync-http-api.mdx#run-failure-cause).
+  [Run failure cause](../reference/sync-http-api.mdx#run-failure-cause). The error code, node
+  kind and attribute need Infrahub 1.11 or later; see
+  [Supported platforms and limits](./supported-platforms-and-limits.mdx#infrahub-111-or-later-for-testing).
 - A failed verify does not change the run's phase, so `run.failure` stays `null`. Its cause is
   the `failure` field of the `verify_failure` result, which `GET /runs/{run_id}/results`
   returns.

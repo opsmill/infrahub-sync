@@ -344,7 +344,12 @@ the saved plan.
   MUST show each part of the structured cause that the Sync API returns (spec 009 FR-025): the
   stage (`plan`, `verify`, `apply` or `sync`), the failure type, the system involved, Infrahub's
   error code, the node kind and attribute, the message, the operations written and the operation
-  that failed. It MUST also show whether the run needs reconciliation.
+  that failed. It MUST also show whether the run needs reconciliation. The UI MUST read the
+  cause of a failed or stopped run from `run.failure` of `GET /runs/{run_id}`. A failed verify
+  does not change the run's phase, so `run.failure` stays `null` for it; the UI MUST read the
+  cause of a failed verify from `verify_failure.failure` of `GET /runs/{run_id}/results`. The UI
+  MUST show a `failure_type` that it does not know by its name, because a later Sync release can
+  add a type.
 
 #### Token handling and browser security
 

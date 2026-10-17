@@ -61,9 +61,22 @@ those source versions and this destination version. They are not an automated
 compatibility matrix. Other Infrahub, NetBox, or Nautobot versions are not
 measured, and they are not excluded.
 
+### Infrahub 1.11 or later for testing
+
+Test this release against Infrahub 1.11 or later. When Infrahub rejects a write, the
+cause that Sync records for the run takes Infrahub's error code from the error, and the
+node kind and attribute from the data of that code. An older Infrahub returns no error
+code, so the cause of a rejected write holds no error code, node kind, or attribute. The
+measured version above, 1.10.6, is older than 1.11.
+
 ## Product limits
 
 - The deployment runs on one host, with no clustering, no public ingress, and no TLS.
+- The testing release supports one worker per deployment. `configs validate --branch`
+  compares a package's credential variables with the names that the most recent live
+  worker published. A worker counts as live for 90 seconds after it last published
+  them, when it starts and on each poll. With two workers that hold different
+  credentials, the check reads only one of them.
 - Deletes are recorded in plans but are not executed.
 - A sync cannot remove an optional single-object relationship from a destination
   object, for example the rack of a device. When the source value is empty, apply
