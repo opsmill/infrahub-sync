@@ -124,7 +124,7 @@ in `INFRAHUB_SYNC_DATABASE_URL` or `INFRAHUB_SYNC_PREFECT_DATABASE_URL` instead.
 | `INFRAHUB_SYNC_WORK_POOL` | `infrahub-sync` | The Prefect work pool. |
 | `INFRAHUB_SYNC_RUN_ADMISSION_TTL_SECONDS` | `300` | How long a run admission stays valid. |
 | `PREFECT_WORKER_QUERY_SECONDS`, `PREFECT_WORKER_HEARTBEAT_SECONDS` | `10` | The worker's polling and heartbeat intervals. |
-| `INFRAHUB_SYNC_CA_CERTIFICATES` | unset | A host directory of PEM CA certificates (`*.pem`, `*.crt`) that `sync-bootstrap`, `sync-api` and `sync-worker` trust in addition to the public roots, for sources, Infrahub and the object store. Write it as an absolute path or a path that starts with `./`. Unset, the services start as before. A file in the directory that holds a private key stops the three services. See [Use custom CA certificates](custom-certificates). |
+| `INFRAHUB_SYNC_CA_CERTIFICATES` | unset | A host directory of PEM CA certificates (`*.pem`, `*.crt`) that `sync-bootstrap`, `sync-api` and `sync-worker` trust in addition to the public roots, for sources, Infrahub and the object store. Write it as an absolute path or a path that starts with `./`. Unset, the services start as before. The services run as user ID 10001, which must be able to list the directory and read each file, for example with mode `0755` on the directory and `0644` on the files. A file in the directory that holds a private key stops the three services. Each service reads the directory when it starts: after you add, replace or remove a file, run `docker compose up -d --force-recreate sync-api sync-worker`, because `docker compose up -d` starts only `sync-bootstrap` again. See [Use custom CA certificates](custom-certificates). |
 
 ### An example `.env`
 
@@ -327,6 +327,13 @@ with your store's credential as its root credential, and `sync-bootstrap` stops
 with `bundled-object-store-not-left-out` before it sends any request to your
 store.
 
+`sync-bootstrap` detects the bundled MinIO when the name `object-store` resolves on
+the Compose network, so it can stop only after `object-store` has started. By then, the access key and secret key of
+your store are the root credential of a MinIO container on the same host, and
+anyone who can run `docker inspect` on that host can read them. If that matters
+for your store, rotate the key pair at your store after you add
+`INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0`, or remove that container and its volume.
+
 ```dotenv
 INFRAHUB_SYNC_BUNDLED_OBJECT_STORE=0
 INFRAHUB_SYNC_S3_ENDPOINT_URL=https://<your store host>
@@ -429,6 +436,33 @@ names the first missing one otherwise. `up -d --wait` pulls the images, runs the
 bootstrap jobs, and returns once every service is running and every health check
 passes. Then confirm that a worker has registered, as described in
 [Status](#status).
+
+### How long the first start takes {#how-long-the-first-start-takes}
+
+The first `docker compose up -d --wait` pulls the images, so its duration depends
+on your network. After the pull, the services wait for each other's health checks.
+On a host that already held the images, the deployment was ready in about 20
+seconds. In the OpsMill test suite, which also starts a test Infrahub instance
+from cold on shared CI runners, the slowest measured start took 220.5 seconds.
+The suite allows 420 seconds.
+
+The wait is Compose's `--wait`. Without `--wait-timeout`, Compose sets no overall
+time limit. It returns when every health check passes, and reports a failure when a
+one-shot service exits with an error or a health check marks a service unhealthy.
+Each health check runs every 5 seconds and marks the service unhealthy after 30
+failed checks; `prefect-server` and `sync-api` get 20 seconds before the first
+check counts.
+
+To bound the wait in a script, pass a limit in seconds, for example the one the
+test suite uses:
+
+```bash
+docker compose up -d --wait --wait-timeout 420
+```
+
+On a slow host, raise that number. If `--wait` reports a service as unhealthy
+while the host is still starting it, run `docker compose up -d --wait` again: `up`
+is safe to repeat, and a service turns healthy again at its first passing check.
 
 `up` is safe to repeat. Bootstrap converges the two databases, their owner roles,
 the product schema, the artifact bucket, the Prefect work pool, and the installed
