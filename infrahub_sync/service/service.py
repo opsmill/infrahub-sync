@@ -364,7 +364,8 @@ class RunService:
         reserves the write, for a request that races this check. Then a plan saved before
         format 4, which records no report and so no left-out count (contracts/sync-api.md
         checks 3, 4 and 5). A review document of an earlier release has no `format_version`
-        and is refused with it.
+        and is refused with it. Then a plan whose update carries `cleared_relationships`, which
+        plan format 4 reserves for spec 010 and this release cannot apply (check 6).
         """
         left_out = plan.summary.left_out
         if left_out > 0 and not request.confirm_left_out:
@@ -400,6 +401,20 @@ class RunService:
                 outcome="refused-plan-format",
             )
             raise self._error(409, "plan-format-not-applicable", "plan again before applying", run_id=run_id)
+        if any(operation.cleared_relationships for operation in plan.operations):
+            self._audit(
+                run_id,
+                actor=principal.actor,
+                operation="apply",
+                reason=request.reason,
+                outcome="refused-plan-feature",
+            )
+            raise self._error(
+                409,
+                "plan-feature-not-supported",
+                "this release cannot apply an update with cleared_relationships; plan again with this release",
+                run_id=run_id,
+            )
 
     async def cancel_run(  # noqa: PLR0911  # pylint: disable=too-many-branches,too-many-return-statements,too-many-statements
         self, run_id: str, request: CancelRunRequest, principal: Principal, idempotency_key: str

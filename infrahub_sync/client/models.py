@@ -520,6 +520,17 @@ class PlanOperationResource(_ResourceModel):
     # create or a delete, and on every operation of a format-2 plan. A reviewer reads it to
     # see which destination object each update names before approving the apply.
     destination_id: str | None = None
+    # Reserved by plan format 4 for spec 010: the relationships an update clears. This release
+    # writes none and refuses to apply a plan that holds one (`plan-feature-not-supported`).
+    cleared_relationships: tuple[str, ...] | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_cleared_relationships(self, handler: SerializerFunctionWrapHandler):
+        # An operation without the field keeps the shape it had before plan format 4 reserved it.
+        data = handler(self)
+        if isinstance(data, dict) and data.get("cleared_relationships") is None:
+            data.pop("cleared_relationships", None)
+        return data
 
 
 class PlanResource(_ResourceModel):

@@ -39,6 +39,7 @@ from infrahub_sync.plan.errors import (
     LeftOutPeerInOperationError,
     PeerAmbiguousError,
     PeerNotFoundError,
+    PlanFeatureNotSupportedError,
     PlanFormatApplyUnsupportedError,
     PlanSchemaChangedError,
     PlanVerificationError,
@@ -149,6 +150,7 @@ _VERIFICATION = (PlanVerificationError, PlanSchemaChangedError)
 _REFUSED = (
     LeftOutConfirmationError,
     LeftOutPeerInOperationError,
+    PlanFeatureNotSupportedError,
     PlanFormatApplyUnsupportedError,
     ReviewedPayloadFieldMissingError,
     UnkeyedCreateRefusedError,

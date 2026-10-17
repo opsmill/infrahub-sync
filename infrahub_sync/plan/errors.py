@@ -138,6 +138,27 @@ class LeftOutConfirmationError(PlanArtifactError):
         self.expected_left_out_count = expected_left_out_count
 
 
+class PlanFeatureNotSupportedError(PlanArtifactError):
+    """The plan holds a field that this release reads but cannot apply.
+
+    Plan format 4 reserves `cleared_relationships` on an update for spec 010, which clears a
+    relationship that the source no longer sets. This release does not clear relationships, and
+    ignoring the field would leave the old peer in Infrahub without saying so. `feature` names
+    the field. Raised before the first operation is dispatched, so the destination was not
+    touched.
+    """
+
+    next_action = (
+        "Apply this plan with a release of infrahub-sync that supports the field, or create and review "
+        "a new plan with this release. The destination was not touched."
+    )
+    wrote = False
+
+    def __init__(self, message: str, *, feature: str) -> None:
+        super().__init__(message)
+        self.feature = feature
+
+
 class MissingDestinationIdError(PlanArtifactError):
     """An update was derived for an object whose destination id the plan cannot record.
 

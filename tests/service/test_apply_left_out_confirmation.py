@@ -20,6 +20,7 @@ pytest.importorskip("fastapi")
 
 from fastapi.testclient import TestClient
 
+from infrahub_sync.client.models import PlanOperationResource
 from infrahub_sync.plan.reader import load_plan_artifact
 from infrahub_sync.plan.review import SavedPlan
 from infrahub_sync.product_store import ProductProjection, local_product_projection
@@ -218,6 +219,31 @@ def test_a_plan_saved_before_format_4_is_refused(api: _Api, plan_format: int | N
     assert error["code"] == "plan-format-not-applicable"
     assert error["message"] == "plan again before applying"
     assert "expected_left_out_count" not in error
+    assert api.apply_submissions() == []
+
+
+def test_a_plan_that_clears_a_relationship_is_refused(api: _Api) -> None:
+    """Plan format 4 reserves `cleared_relationships` for spec 010; this release refuses to apply it."""
+    clearing = PlanOperationResource(
+        operation_id="op-002",
+        action="update",
+        kind="Device",
+        identity={"name": "edge-02"},
+        tier=0,
+        payload={"name": "edge-02"},
+        destination_id="18d52a8a-0000-0000-0000-000000000002",
+        cleared_relationships=("site",),
+    )
+    operations = (*_plan_document("x").operations, clearing)
+    run_id = api.planned_run(_publish_document(api, operations=operations))
+
+    response = api.apply(run_id, "apply-clearing", expected_checksum="a" * 64)
+
+    assert response.status_code == 409, response.text
+    error = response.json()["error"]
+    assert error["code"] == "plan-feature-not-supported"
+    assert "cleared_relationships" in error["message"]
+    assert api.outcomes(run_id) == ["refused-plan-feature"]
     assert api.apply_submissions() == []
 
 

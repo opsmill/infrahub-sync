@@ -855,7 +855,9 @@ class Potenda:
         # Format 4 only, then the confirmed left-out count. Refused after the artifact has been
         # read, before `ownership.before_operation` and therefore before the first dispatch,
         # so the destination is provably untouched.
-        require_applyable_plan(loaded.manifest, run_id=run_id, confirm_left_out=confirm_left_out)
+        require_applyable_plan(
+            loaded.manifest, run_id=run_id, confirm_left_out=confirm_left_out, operations=loaded.operations
+        )
 
         # The registered service has a schema fingerprint guard, but direct Python apply
         # callers need the same no-write guarantee for reviewed Infrahub payload fields.

@@ -469,6 +469,9 @@ fails with status `409`:
    create and review a new plan".
 5. The plan was saved before format 4 and records no left-out count:
    `plan-format-not-applicable`, with the message "plan again before applying".
+6. An update of the plan carries `cleared_relationships`, a field that plan format 4 reserves
+   for clearing a relationship. This release cannot clear a relationship:
+   `plan-feature-not-supported`. Create and review a new plan with this release.
 
 The worker verifies the saved plan again before its first destination write. Destination
 deletes remain disabled.
@@ -660,7 +663,7 @@ Every error uses the same envelope:
 | `401` | Missing or invalid authentication. |
 | `403` | The actor does not own the mutation and is not an administrator. |
 | `404` | The Sync run or run-owned artifact does not exist. |
-| `409` | Idempotency conflict, missing confirmation, stale checksum, records left out that the apply did not confirm (`left-out-confirmation-required`), a run that already admitted its write (`new-plan-required`), a plan saved before format 4 (`plan-format-not-applicable`), a report page of another plan (`plan-changed`), non-cancellable execution, a run that cannot admit another stage while another one is in flight (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
+| `409` | Idempotency conflict, missing confirmation, stale checksum, records left out that the apply did not confirm (`left-out-confirmation-required`), a run that already admitted its write (`new-plan-required`), a plan saved before format 4 (`plan-format-not-applicable`), a plan with an update that clears a relationship (`plan-feature-not-supported`), a report page of another plan (`plan-changed`), non-cancellable execution, a run that cannot admit another stage while another one is in flight (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
 | `410` | The retained plan or artifact has expired. |
 | `422` | Invalid request schema, missing idempotency key, or a secret-bearing flow parameter. |
 | `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved. |

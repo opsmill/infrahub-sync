@@ -21,7 +21,13 @@ The plan format becomes 4.
 - The manifest gains a `report` object: `digest`, `size`, `problems`, `left_out`,
   `left_out_with_problem`, `left_out_dependent` and `kept`. The checksum rule of ADR 0001 is
   unchanged and covers the report through the digest.
-- `PlannedOperation` is unchanged, so operation identifiers and their bytes are unchanged.
+- `PlannedOperation` keeps its fields, so operation identifiers and their bytes are unchanged.
+  Format 4 reserves one optional field on an update for clearing a relationship,
+  `cleared_relationships`, a list of relationship names (decided on 2026-10-17). This release
+  never writes it, and an operation without it keeps its bytes. Readers accept it. This release
+  refuses to apply a plan whose update carries a non-empty list, before any write, so a plan
+  that clears a relationship is never applied without the clearing. Spec 010 implements the
+  clearing in format 4, with no format 5.
 - The report holds source data, schema names and fixed reason templates. No entry is built from
   connection settings or from the text of an error (ADR 0021).
 - Reading and review accept formats 2, 3 and 4. Apply accepts format 4 only, and refuses
@@ -36,6 +42,8 @@ The plan format becomes 4.
 - Every plan saved before this release must be planned again before it is applied.
 - An older Sync release refuses a format 4 plan instead of applying it without the
   confirmation.
+- A plan that clears a relationship, written by the release of spec 010, is read by this
+  release and refused at apply with `plan-feature-not-supported`.
 
 ## Alternatives considered
 

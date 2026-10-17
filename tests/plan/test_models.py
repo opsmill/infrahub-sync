@@ -680,6 +680,8 @@ PLANNED_OPERATION_FIELDS = {
     "payload",
     "relationships",
     "destination_id",
+    # Reserved by plan format 4 for spec 010 (decided on 2026-10-17); never written by this release.
+    "cleared_relationships",
 }
 RELATIONSHIP_REFERENCE_FIELDS = {"field", "peer_kind", "cardinality", "peers"}
 PLAN_MANIFEST_FIELDS = {

@@ -124,6 +124,11 @@ class PlannedOperation(BaseModel):
     # by `_validate_destination_id_for_format` — from the reader's context when reading an
     # artifact, and from the current version when building one in process.
     destination_id: str | None = None
+    # Reserved by plan format 4 for spec 010: the relationships an update clears because the
+    # source no longer sets them. This release never writes it, reads it, and refuses to apply a
+    # plan that carries a non-empty list (`plan.apply_gate`). Absent when None, so a plan without
+    # it keeps its bytes.
+    cleared_relationships: list[str] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -208,6 +213,25 @@ class PlannedOperation(BaseModel):
                 f"'destination_id' (found {recorded_id!r}): it names no existing destination object."
             )
             raise ValueError(msg)
+        return data
+
+    @model_validator(mode="after")
+    def _require_update_for_cleared_relationships(self) -> PlannedOperation:
+        """Only an update clears a relationship: a create sets none and a delete removes the object."""
+        if self.cleared_relationships is not None and self.action != "update":
+            msg = (
+                f"Operation {self.operation_id!r} is a {self.action!r} and must carry no 'cleared_relationships': "
+                "only an update clears a relationship."
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_cleared_relationships(self, handler: Any) -> Any:
+        # An operation without the field keeps the encoding it had before format 4 reserved it.
+        data = handler(self)
+        if isinstance(data, dict) and data.get("cleared_relationships") is None:
+            data.pop("cleared_relationships", None)
         return data
 
     @model_validator(mode="after")

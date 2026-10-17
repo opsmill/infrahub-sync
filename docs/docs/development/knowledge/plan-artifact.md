@@ -83,6 +83,8 @@ make the applied value differ from the reviewed source value.
 | `tier` | `integer ≥ 0` | always |
 | `payload` | `object` | required on create/update, **omitted** on delete |
 | `relationships` | `array` | present **if and only if** the operation carries any |
+| `destination_id` | `string` | on an update only, from format 3 |
+| `cleared_relationships` | `array` of relationship names | reserved by format 4 for clearing a relationship; on an update only; never written by this release |
 
 Operations are stored ordered by `(tier, operation_id)` and are executed in exactly that order — no
 re-sorting and no recomputation at apply time. When the configuration supplies an explicit `order:`,
@@ -99,8 +101,12 @@ grouping operations into write units at either level.
 peer, and an absent reference means "this operation carries no value for that field", not "empty it" —
 so nothing in the format says *clear this*. Derivation cannot produce it either: a reference field
 whose mapped value is `None` is treated as absent and skipped. This is an intended v1 scope limit: a
-relationship a plan does not mention is one the apply leaves alone. Clearing a cardinality-one peer is done at the destination,
-and encoding it requires a future `format_version` extension.
+relationship a plan does not mention is one the apply leaves alone. Clearing a cardinality-one peer is done at the destination.
+Format 4 reserves `cleared_relationships` on an update for spec 010, which will encode that
+clear without a new format. This release writes none, reads the field, and refuses to apply a plan
+whose update carries a non-empty list (`PlanFeatureNotSupportedError`,
+`infrahub_sync/plan/apply_gate.py`), so a plan that clears a relationship is never applied
+without the clearing.
 
 #### The payload carries the identity
 

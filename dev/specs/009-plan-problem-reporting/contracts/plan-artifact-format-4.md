@@ -57,13 +57,25 @@ left-out record, no operation of an identity that two or more Infrahub objects h
 included), no delete of a record that the load could not build, and no relationship to a
 left-out peer. The writer refuses an operation that still holds a left-out placeholder.
 
+Format 4 reserves one optional field on an update for spec 010: `cleared_relationships`, a list
+of the relationship names the update clears because the source no longer sets them (decided on
+2026-10-17). Spec 010 adds no plan format 5 for it.
+
+- This release never writes the field. An operation without it is encoded with the bytes it had
+  before the field existed, so operation identifiers and plan checksums do not change.
+- Readers accept it on an update and refuse it on a create or a delete.
+- This release cannot clear a relationship. An apply refuses a plan whose update carries a
+  non-empty `cleared_relationships` before any write, instead of applying the update without the
+  clearing: `PlanFeatureNotSupportedError` in the engine and 409 `plan-feature-not-supported` in
+  the Sync API.
+
 ## Read and apply rules
 
 | Format | Read and review | Apply |
 | --- | --- | --- |
 | 2 | yes | refused (today) |
 | 3 | yes, with empty report | refused: `PlanFormatApplyUnsupportedError`, "plan again" |
-| 4 | yes | yes, after the left-out confirmation check |
+| 4 | yes | yes, after the left-out confirmation check; refused when an update carries a non-empty `cleared_relationships` |
 
 Verification refuses a format-4 plan whose `report.jsonl` is missing, whose digest or size does
 not match, or whose line counts differ from the manifest.

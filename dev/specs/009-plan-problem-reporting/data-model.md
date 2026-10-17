@@ -117,6 +117,12 @@ Manifest addition, `report` object: `digest` (SHA-256 hex), `size` (bytes), `pro
 Validation: `report.left_out` equals the number of `left_out` lines, and the digest matches the
 file. A mismatch is a `PlanVerificationError`; the plan is not applied.
 
+## Reserved operation field `cleared_relationships` (decided 2026-10-17)
+
+| Field | Type | Rule |
+| --- | --- | --- |
+| `cleared_relationships` | list of relationship names, absent by default | On an update only; a create or a delete that carries it is refused when the plan is read. Reserved for spec 010, which clears a relationship that holds one peer when the source no longer sets it. This release never writes it, so a plan of this release has the bytes it had before the field existed. Readers accept it. An apply refuses a plan whose update carries a non-empty list before any write: `PlanFeatureNotSupportedError` in the engine, 409 `plan-feature-not-supported` in the Sync API |
+
 ## Plan step invariants (research R2)
 
 | Step | Reads | Writes |

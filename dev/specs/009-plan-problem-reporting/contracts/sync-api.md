@@ -160,6 +160,11 @@ Checks, in order, all before any write:
    and review a new plan".
 5. New: the plan is format 2 or 3: 409 `plan-format-not-applicable`, message "plan again
    before applying".
+6. New (decided on 2026-10-17): an update of the plan carries a non-empty
+   `cleared_relationships`, which format 4 reserves for spec 010: 409
+   `plan-feature-not-supported`, message "this release cannot apply an update with
+   cleared_relationships; plan again with this release". Audited with outcome
+   `refused-plan-feature`.
 
 `confirm_left_out` is a JSON boolean, false when absent; any other value is a 422. When
 `left_out` is zero, it is accepted and ignored. The request carries no count: the plan checksum
