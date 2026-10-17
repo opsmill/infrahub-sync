@@ -13,7 +13,7 @@ on:
         required: true
         type: string
       compose_repeat:
-        description: "How many times each architecture runs the Compose deployment suite"
+        description: "How many times each architecture runs the Compose deployment suite, from 1 to 10"
         required: false
         type: number
         default: 1
@@ -254,6 +254,25 @@ jobs:
       # The suite runs the root docker-compose.yml against the image this commit
       # builds, named the way an operator names a tag: INFRAHUB_SYNC_DOCKER_IMAGE
       # and VERSION. It is never pulled: the engine already holds it.
+      # Each iteration takes several minutes on a shared runner, so the count is
+      # capped at 10, the number SC-010 asks for.
+      - name: "Check the compose_repeat input"
+        id: compose_repeat_guard
+        env:
+          COMPOSE_REPEAT: ${{ inputs.compose_repeat }}
+        run: |
+          set -euo pipefail
+          case $COMPOSE_REPEAT in
+            ''|*[!0-9]*|0)
+              echo "::error::compose_repeat must be a whole number between 1 and 10, not '$COMPOSE_REPEAT'"
+              exit 1
+              ;;
+          esac
+          if [ "$COMPOSE_REPEAT" -gt 10 ]; then
+            echo "::error::compose_repeat must be a whole number between 1 and 10, not '$COMPOSE_REPEAT'"
+            exit 1
+          fi
+
       - name: "Build the image under test"
         run: docker build -t infrahub-sync:compose-test .
 
@@ -270,12 +289,6 @@ jobs:
           COMPOSE_ARCH: ${{ matrix.arch }}
         run: |
           set -uo pipefail
-          case $COMPOSE_REPEAT in
-            ''|*[!0-9]*|0)
-              echo "compose_repeat must be a positive whole number, not $COMPOSE_REPEAT" >&2
-              exit 1
-              ;;
-          esac
           mkdir -p .compose-iterations
           failed=0
           for n in $(seq 1 "$COMPOSE_REPEAT"); do
