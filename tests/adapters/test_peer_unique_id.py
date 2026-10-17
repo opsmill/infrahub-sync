@@ -29,7 +29,7 @@ from infrahub_sync import (
     is_not_in_source_placeholder,
     not_in_source_placeholder,
 )
-from infrahub_sync.adapters.references import resolve_peer_list
+from infrahub_sync.adapters.references import reference_is_required, resolve_peer_list
 
 
 class Device(DiffSyncModelMixin, DiffSyncModel):
@@ -256,3 +256,28 @@ def test_a_cardinality_many_reference_is_admitted_as_research_r4_states(adapter:
     assert all(entry.kind == "Group" and entry.field == "devices" for entry in added)
     if case.name == "required-every-peer-removed-by-a-filter":
         assert [entry.reason for entry in added] == ["required_peer_excluded_by_filter"]
+
+
+class _Interface(DiffSyncModelMixin, DiffSyncModel):
+    _modelname = "Interface"
+    _identifiers = ("name", "device")
+    _attributes = ("lag", "parent")
+
+    name: str
+    device: str | None = None
+    lag: str | None = None
+    parent: str
+
+
+@pytest.mark.parametrize(
+    ("field_name", "required"),
+    [
+        pytest.param("device", True, id="optional-but-an-identifier"),
+        pytest.param("lag", False, id="optional"),
+        pytest.param("parent", True, id="required"),
+        pytest.param("unknown", False, id="not-a-field"),
+    ],
+)
+def test_a_reference_that_forms_the_identity_is_required(field_name: str, *, required: bool) -> None:
+    """Review H4: a record cannot form its identity without an identifier's peer, so the reference is required."""
+    assert reference_is_required(_Interface, field_name) is required

@@ -12,6 +12,7 @@ from infrahub_sync.runtime_schema.domain import normalize_destination_schema
 from infrahub_sync.runtime_schema.models import build_runtime_models
 from infrahub_sync.runtime_schema.worker import bind_runtime_models
 from tests.plan.problem_fixtures import (
+    MISSING_DEVICE_SOURCE_ID,
     MISSING_VRF_SOURCE_ID,
     PROBLEM_DEVICE_DEPENDENTS,
     PROBLEM_DEVICE_SOURCE_ID,
@@ -26,6 +27,7 @@ from tests.plan.problem_plan import FixtureDestination, fixture_config, plan_fix
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from infrahub_sync import SyncInstance
     from infrahub_sync.plan.models import LeftOutRecord, PlanReport
 
 CORE_1 = {"name": "core-1", "serial": "C1"}
@@ -194,3 +196,121 @@ def test_a_record_whose_peer_was_not_loaded_and_has_no_identity_is_kept_without_
     ]
     assert address.action == "create"
     assert all(reference.field != "interface" for reference in address.relationships or ())
+
+
+def _config_with_device_in_the_address_identifiers() -> SyncInstance:
+    """`device` stays optional in Infrahub and out of its human-friendly ID, but forms the mapping's identity."""
+    config = fixture_config()
+    entry = next(item for item in config.schema_mapping if item.name == "IpamIPAddress")
+    entry.identifiers = ["address", "device"]
+    return config
+
+
+def _addresses_with_a_device(records: dict[str, list[dict[str, Any]]]) -> dict[str, list[dict[str, Any]]]:
+    """Keep the addresses that name a device: an identifier has a value on every record."""
+    records["IpamIPAddress"] = [record for record in records["IpamIPAddress"] if record["device"] is not None]
+    return records
+
+
+def test_a_record_whose_identity_holds_an_optional_reference_to_a_left_out_record_is_left_out(
+    tmp_path: Path,
+) -> None:
+    """Review H4: `10.0.0.5/32` names the left-out `core-1` in its identity, so it cannot be kept without it."""
+    records = _addresses_with_a_device(source_records(Variant.ALL))
+
+    planned = plan_fixture(tmp_path / "run", records=records, config=_config_with_device_in_the_address_identifiers())
+    address = _left_out(planned.report, "IpamIPAddress", "81")
+
+    assert (address.cause, address.relationship, address.loaded) == ("depends_on_left_out", "device", True)
+    assert address.depends_on is not None
+    assert address.depends_on.identity == CORE_1
+    assert all(entry.record.source_id != "81" for entry in planned.report.kept)
+    assert all(
+        operation.identity.get("address") != "10.0.0.5/32"
+        for operation in planned.operations
+        if operation.kind == "IpamIPAddress"
+    )
+
+
+def test_a_record_whose_identity_holds_an_optional_reference_to_a_peer_not_in_the_source_is_left_out(
+    tmp_path: Path,
+) -> None:
+    """Review H4: the peer `999` is not in the source; the record is left out with its problem."""
+    records = _addresses_with_a_device(source_records(Variant.ALL))
+    records["IpamIPAddress"].append(
+        {"id": 84, "address": "10.0.0.8/32", "device": {"id": int(MISSING_DEVICE_SOURCE_ID)}, "vrf": None}
+    )
+
+    planned = plan_fixture(tmp_path / "run", records=records, config=_config_with_device_in_the_address_identifiers())
+    address = _left_out(planned.report, "IpamIPAddress", "84")
+
+    assert (address.cause, address.problem_types) == ("has_problem", ["peer_not_found_in_source"])
+    assert all(entry.record.source_id != "84" for entry in planned.report.kept)
+    assert all(
+        operation.identity.get("address") != "10.0.0.8/32"
+        for operation in planned.operations
+        if operation.kind == "IpamIPAddress"
+    )
+
+
+def test_a_record_whose_identity_holds_an_optional_reference_to_a_peer_with_no_identity_is_left_out(
+    tmp_path: Path,
+) -> None:
+    """Review H4: `eth9` was not built and has no identity; the address cannot form its identity without it."""
+    config, schema = _config_with_an_optional_interface_reference()
+    entry = next(item for item in config.schema_mapping if item.name == "IpamIPAddress")
+    entry.identifiers = ["address", "interface"]
+    records = source_records(Variant.ALL)
+    # An identifier has a value on every record, so only the address with an interface stays.
+    records["IpamIPAddress"] = [
+        {"id": 83, "address": "10.0.0.7/32", "device": None, "vrf": None, "interface": {"id": 61}}
+    ]
+
+    planned = plan_fixture(tmp_path / "run", records=records, config=config, schema=schema)
+    address = _left_out(planned.report, "IpamIPAddress", "83")
+
+    assert (address.cause, address.relationship, address.loaded) == ("depends_on_left_out", "interface", False)
+    assert address.depends_on is not None
+    assert (address.depends_on.kind, address.depends_on.source_id) == ("InterfacePhysical", "61")
+    assert all(entry.record.source_id != "83" for entry in planned.report.kept)
+    assert all(
+        operation.identity.get("address") != "10.0.0.7/32"
+        for operation in planned.operations
+        if operation.kind == "IpamIPAddress"
+    )
+
+
+class _OptionalReferencesSource(ProblemFixtureAdapter):
+    """An adapter that resolves every reference as optional, identifiers included."""
+
+    def _resolve_peer(
+        self, peer_kind: str, peer_source_id: str, *, owner: tuple[str, str], field: str, required: bool
+    ) -> str | None:
+        del required
+        return super()._resolve_peer(peer_kind, peer_source_id, owner=owner, field=field, required=False)
+
+
+def test_an_identifier_reference_resolved_as_optional_to_a_peer_not_in_the_source_still_leaves_the_record_out(
+    tmp_path: Path,
+) -> None:
+    """Review H4: the plan side does not rely on the adapter; the record loads but is left out with its problem."""
+    records = _addresses_with_a_device(source_records(Variant.ALL))
+    records["IpamIPAddress"].append(
+        {"id": 84, "address": "10.0.0.8/32", "device": {"id": int(MISSING_DEVICE_SOURCE_ID)}, "vrf": None}
+    )
+
+    planned = plan_fixture(
+        tmp_path / "run",
+        records=records,
+        config=_config_with_device_in_the_address_identifiers(),
+        source_class=_OptionalReferencesSource,
+    )
+    address = _left_out(planned.report, "IpamIPAddress", "84")
+
+    assert (address.cause, address.problem_types, address.loaded) == ("has_problem", ["peer_not_found_in_source"], True)
+    assert all(entry.record.source_id != "84" for entry in planned.report.kept)
+    assert all(
+        operation.identity.get("address") != "10.0.0.8/32"
+        for operation in planned.operations
+        if operation.kind == "IpamIPAddress"
+    )

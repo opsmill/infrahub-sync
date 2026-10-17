@@ -26,9 +26,15 @@ if TYPE_CHECKING:
 
 
 def reference_is_required(model: type[DiffSyncModel], field_name: str) -> bool:
-    """Tell whether a relationship field needs a peer: its annotation does not accept None."""
+    """Tell whether a relationship field needs a peer.
+
+    It does when its annotation does not accept None, or when it is one of the mapping's
+    identifiers: a record cannot form its identity without that peer.
+    """
     field = model.model_fields.get(field_name)
-    return field is not None and type(None) not in get_args(field.annotation)
+    if field is None:
+        return False
+    return field_name in getattr(model, "_identifiers", ()) or type(None) not in get_args(field.annotation)
 
 
 def owner_kind(model: type[DiffSyncModel], default: str) -> str:

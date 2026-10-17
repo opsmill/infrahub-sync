@@ -211,3 +211,22 @@ def test_no_placeholder_remains_and_the_inputs_are_not_changed() -> None:
     assert not any(holds_left_out_peer(operation) for operation in selected)
     assert [operation.model_dump() for operation in operations] == operations_before
     assert report.model_dump() == report_before
+
+
+def test_no_delete_of_a_kind_with_a_left_out_record_of_unknown_identity() -> None:
+    """Review M4 (FR-008): the plan cannot tell which Infrahub node such a record is, so it deletes none of its kind."""
+    unknown = LeftOutRecord(
+        record=PlanRecordReference(kind="DcimDevice", identity=None, source_id="36"),
+        cause="has_problem",
+        problem_types=["peer_not_found_in_source"],
+        loaded=False,
+    )
+    operations = [
+        _operation("delete", "DcimDevice", LEAF_1),
+        _operation("create", "DcimDevice", {"name": "leaf-3", "serial": "L3"}),
+        _operation("delete", "LocationSite", {"name": "paris"}),
+    ]
+
+    selected = select_operations(operations, PlanReport(left_out=[unknown]))
+
+    assert selected == operations[1:]

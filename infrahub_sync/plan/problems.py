@@ -65,8 +65,34 @@ logger = logging.getLogger(__name__)
 # The longest text a source value takes inside a reason, so the reason stays readable.
 _REASON_VALUE_LIMIT = 80
 
-# A record is named by its kind and its source ID, or by its unique ID when it has none.
-_RecordKey = tuple[str, str]
+# A record is named by its kind, how it is named, and that name: its source ID, its unique ID in
+# the source store, its identity, or the position of its load report entry. The middle element
+# keeps a source ID apart from the other names, whatever text the source ID holds.
+_RecordKey = tuple[str, str, str]
+
+
+def _source_key(kind: str, source_id: str) -> _RecordKey:
+    return kind, "source_id", source_id
+
+
+def _store_key(kind: str, item: Any) -> _RecordKey:
+    local_id = getattr(item, "local_id", None)
+    return _source_key(kind, str(local_id)) if local_id is not None else (kind, "unique_id", item.get_unique_id())
+
+
+def _report_key(index: int, entry: LoadReportEntry) -> _RecordKey:
+    """The key of a record the load could not build, from its load report entry.
+
+    Without a source ID, the record is named by its identity, so the several entries of one
+    record name it once. A refused duplicate has the identity of the record the store kept, and
+    a record without identity has nothing else to name it: each is named by its entry.
+    """
+    if entry.source_id is not None:
+        return _source_key(entry.kind, entry.source_id)
+    if entry.identity is not None and entry.reason != "duplicate_source_identity":
+        return entry.kind, "identity", canonical_json_bytes(entry.identity).decode("utf-8")
+    return entry.kind, "load_report_entry", str(index)
+
 
 _REASON_TEMPLATES: Mapping[ProblemType, str] = {
     "dropdown_value_not_in_choices": (
@@ -168,7 +194,7 @@ def resolve_left_out_placeholders(value: Any, lookup: Callable[[str, str], Any])
 class _Record:
     """One source record: in the store, or recorded in the load report without being built."""
 
-    kind: str
+    key: _RecordKey
     source_id: str | None
     unique_id: str | None
     loaded: bool
@@ -177,8 +203,8 @@ class _Record:
     identity: dict[str, Any] | None = None
 
     @property
-    def key(self) -> _RecordKey:
-        return (self.kind, self.source_id) if self.source_id is not None else (self.kind, f"uid:{self.unique_id}")
+    def kind(self) -> str:
+        return self.key[0]
 
     def reference(self) -> PlanRecordReference:
         return PlanRecordReference(kind=self.kind, identity=self.identity, source_id=self.source_id)
@@ -191,6 +217,9 @@ class _SourceView:
     records: dict[_RecordKey, _Record] = field(default_factory=dict)
     by_unique_id: dict[tuple[str, str], _RecordKey] = field(default_factory=dict)
     by_identity: dict[tuple[str, bytes], _RecordKey] = field(default_factory=dict)
+    # The record of each load report entry, and the record the store kept for a refused duplicate.
+    by_entry: dict[int, _RecordKey] = field(default_factory=dict)
+    kept_duplicate: dict[int, _RecordKey] = field(default_factory=dict)
 
     def add(self, record: _Record) -> _Record:
         existing = self.records.get(record.key)
@@ -201,8 +230,11 @@ class _SourceView:
             self.by_unique_id.setdefault((record.kind, record.unique_id), record.key)
         return record
 
+    def by_source_id(self, kind: str, source_id: str | None) -> _Record | None:
+        return None if source_id is None else self.records.get(_source_key(kind, source_id))
+
     def lookup_not_loaded(self, peer_kind: str, source_id: str) -> dict[str, Any] | None:
-        record = self.records.get((peer_kind, source_id))
+        record = self.by_source_id(peer_kind, source_id)
         return None if record is None else record.identity
 
     def of_operation(self, operation: PlannedOperation) -> _Record | None:
@@ -222,23 +254,34 @@ def _build_view(
             local_id = getattr(item, "local_id", None)
             view.add(
                 _Record(
-                    kind=kind,
+                    key=_store_key(kind, item),
                     source_id=None if local_id is None else str(local_id),
                     unique_id=item.get_unique_id(),
                     loaded=True,
                     keys=item.get_identifiers(),
                 )
             )
-    for entry in load_report:
-        if entry.loaded:
-            continue
+    for index, entry in enumerate(load_report):
         model = getattr(source, entry.kind, None)
+        if entry.loaded:
+            loaded_key = _loaded_entry_key(entry, model=model, view=view)
+            if loaded_key is not None:
+                view.by_entry[index] = loaded_key
+            continue
         unique_id = None
         if entry.identity is not None and model is not None and entry.reason != "duplicate_source_identity":
             unique_id = model.create_unique_id(**entry.identity)
-        view.add(
-            _Record(kind=entry.kind, source_id=entry.source_id, unique_id=unique_id, loaded=False, keys=entry.identity)
+        record = _Record(
+            key=_report_key(index, entry),
+            source_id=entry.source_id,
+            unique_id=unique_id,
+            loaded=False,
+            keys=entry.identity,
         )
+        view.by_entry[index] = view.add(record).key
+        kept = _kept_duplicate(entry, model=model, view=view)
+        if kept is not None:
+            view.kept_duplicate[index] = kept
     # Identities as the operations show them, then with each not-loaded peer resolved.
     left_out_peers = LeftOutPeers.from_adapter(source)
     peers = destination_only_peers(destination) if destination is not None else None
@@ -256,11 +299,33 @@ def _build_view(
     return view
 
 
+def _loaded_entry_key(entry: LoadReportEntry, *, model: Any, view: _SourceView) -> _RecordKey | None:
+    """The store record of an entry made for a record that loaded: by its source ID, else by its identity."""
+    if entry.source_id is not None:
+        return _source_key(entry.kind, entry.source_id)
+    if entry.identity is None or model is None:
+        return None
+    return view.by_unique_id.get((entry.kind, model.create_unique_id(**entry.identity)))
+
+
+def _kept_duplicate(entry: LoadReportEntry, *, model: Any, view: _SourceView) -> _RecordKey | None:
+    """The record the store kept for a refused duplicate: by its source ID, else by its identity."""
+    existing = entry.existing
+    if entry.reason != "duplicate_source_identity" or existing is None:
+        return None
+    if existing.source_id is not None:
+        record = view.by_source_id(entry.kind, existing.source_id)
+        return None if record is None else record.key
+    if existing.identity is None or model is None:
+        return None
+    return view.by_unique_id.get((entry.kind, model.create_unique_id(**existing.identity)))
+
+
 def _lookup_raw(view: _SourceView) -> Callable[[str, str], Any]:
     """Resolve a not-loaded peer's identity recursively, from the identities as derived."""
 
     def lookup(peer_kind: str, source_id: str) -> Any:
-        record = view.records.get((peer_kind, source_id))
+        record = view.by_source_id(peer_kind, source_id)
         if record is None or record.raw_identity is None:
             return None
         return resolve_left_out_placeholders(record.raw_identity, lookup)
@@ -315,16 +380,19 @@ class _Schema:
     def requires(self, kind: str, field_name: str, source: Any) -> bool:
         """Tell whether a reference leaves its record out when its peer is left out (research R7).
 
-        True for a relationship the destination marks `optional: false` and for a component of
-        the destination's human-friendly ID. Without a schema record, the source model decides.
+        True for one of the mapping's identifiers, since the record cannot form its identity
+        without that peer, for a relationship the destination marks `optional: false` and for a
+        component of the destination's human-friendly ID. Otherwise the source model decides.
         """
+        model = getattr(source, kind, None)
+        if field_name in (getattr(model, "_identifiers", None) or ()):
+            return True
         node = self.node(kind)
         if field_name in {_component_field(component) for component in getattr(node, "human_friendly_id", None) or ()}:
             return True
         for relationship in getattr(node, "relationships", None) or ():
             if getattr(relationship, "name", None) == field_name:
                 return not getattr(relationship, "optional", True)
-        model = getattr(source, kind, None)
         info = None if model is None else model.model_fields.get(field_name)
         return info is not None and info.is_required()
 
@@ -362,22 +430,27 @@ def _peer_reference(entry: LoadReportEntry, view: _SourceView) -> PlanRecordRefe
     return PlanRecordReference(kind=entry.peer.kind, identity=identity, source_id=entry.peer.source_id)
 
 
-def _load_report_problems(load_report: Sequence[LoadReportEntry], view: _SourceView, findings: _Findings) -> None:
-    for entry in load_report:
-        record = view.records.get((entry.kind, entry.source_id or "uid:None"))
+def _load_report_problems(  # pylint: disable=too-many-arguments  # the pass's inputs, keyword-only
+    load_report: Sequence[LoadReportEntry], *, view: _SourceView, schema: _Schema, source: Any, findings: _Findings
+) -> None:
+    for index, entry in enumerate(load_report):
+        record_key = view.by_entry.get(index)
+        record = None if record_key is None else view.records.get(record_key)
         if record is None:
             continue
         reference = record.reference()
         peer = _peer_reference(entry, view)
+        # A loaded record whose reference was resolved as optional, although the record needs
+        # that peer (an identifier, for example), is left out like a record that was not built.
+        optional = entry.loaded and not (entry.field is not None and schema.requires(entry.kind, entry.field, source))
         if entry.reason == "wrong_value_type":
             problem = _problem(
                 "wrong_value_type", reference, field_name=entry.field, value=entry.value, error_type=entry.error_type
             )
             findings.add(problem, [record.key])
         elif entry.reason == "duplicate_source_identity":
-            existing = None
-            if entry.existing is not None and entry.existing.source_id is not None:
-                existing = view.records.get((entry.kind, entry.existing.source_id))
+            kept_key = view.kept_duplicate.get(index)
+            existing = None if kept_key is None else view.records[kept_key]
             others = [existing.reference()] if existing is not None else []
             problem = _problem("duplicate_source_identity", reference, other_records=others)
             findings.add(problem, [record.key, *([existing.key] if existing is not None else [])])
@@ -385,11 +458,11 @@ def _load_report_problems(load_report: Sequence[LoadReportEntry], view: _SourceV
             findings.add(_problem(entry.reason, reference, field_name=entry.field, peer=peer), [record.key])
         elif entry.reason == "peer_not_found_in_source":
             problem = _problem(entry.reason, reference, field_name=entry.field, peer=peer)
-            findings.add(problem, [record.key], leaves_out=not entry.loaded)
-            if entry.loaded:
+            findings.add(problem, [record.key], leaves_out=not optional)
+            if optional:
                 findings.not_found_optional.append((record.key, entry))
         elif entry.reason == "peer_not_loaded":
-            (findings.not_loaded_optional if entry.loaded else findings.not_loaded_peer).append((record.key, entry))
+            (findings.not_loaded_optional if optional else findings.not_loaded_peer).append((record.key, entry))
 
 
 def _dropdown_problems(*, source: Any, view: _SourceView, schema: _Schema, findings: _Findings) -> None:
@@ -427,11 +500,6 @@ def _dropdown_problems(*, source: Any, view: _SourceView, schema: _Schema, findi
                     allowed=attribute.choices,
                 )
                 findings.add(problem, [record.key])
-
-
-def _store_key(kind: str, item: Any) -> _RecordKey:
-    local_id = getattr(item, "local_id", None)
-    return (kind, str(local_id)) if local_id is not None else (kind, f"uid:{item.get_unique_id()}")
 
 
 def _closest_key(keys: Sequence[tuple[str, ...]], supplied: set[str]) -> tuple[str, ...]:
@@ -556,7 +624,7 @@ def _keep_load_report_referrers(
         peer = _peer_reference(entry, view)
         if key in left or peer is None or entry.field is None:
             continue
-        target = view.records.get((peer.kind, peer.source_id or ""))
+        target = view.by_source_id(peer.kind, peer.source_id)
         kept.setdefault(
             (key, entry.field, target.key if target is not None else f"{peer.kind}:{peer.source_id}"),
             KeptRecord(
@@ -603,7 +671,7 @@ def _walk(  # pylint: disable=too-many-arguments  # the walk's inputs, all keywo
             cause="depends_on_left_out",
             depends_on=peer,
             relationship=entry.field,
-            loaded=False,
+            loaded=view.records[key].loaded,
         )
     referrers = _referrers(source=source, view=view, config=config)
     optional: list[tuple[_RecordKey, str, _RecordKey]] = []
@@ -706,7 +774,7 @@ def find_problems(  # pylint: disable=too-many-arguments  # the pass's inputs (r
     view = _build_view(source=source, load_report=source_load_report, config=config, destination=destination)
     schema = _Schema(snapshot=_snapshot(schema_record), destination_schema=getattr(destination, "schema", None))
     findings = _Findings()
-    _load_report_problems(source_load_report, view, findings)
+    _load_report_problems(source_load_report, view=view, schema=schema, source=source, findings=findings)
     _dropdown_problems(source=source, view=view, schema=schema, findings=findings)
     groups = _identity_groups(operations=operations, source=source, config=config, destination=destination)
     _identity_group_problems(groups, view, findings)
@@ -724,7 +792,9 @@ def select_operations(operations: Sequence[PlannedOperation], report: PlanReport
     """Apply the plan report to the derived operations (research R7 point 3).
 
     Removes every operation of a left-out record, including a delete, so a left-out record
-    that exists in Infrahub stays as it is. From every other operation it removes the peers
+    that exists in Infrahub stays as it is. When a record the load could not build has no
+    known identity, it removes every delete of its kind, since that record may be any node of
+    the kind (FR-008). From every other operation it removes the peers
     that are left out or not in the source: a create keeps the other peers of a cardinality-
     many relationship and loses a cardinality-one relationship; an update loses the whole
     relationship, so a replace-set write cannot remove the left-out peer from Infrahub. An
@@ -751,10 +821,17 @@ def select_operations(operations: Sequence[PlannedOperation], report: PlanReport
     def is_left_out(peer_kind: str, peer: Mapping[str, Any]) -> bool:
         return is_left_out_peer(peer) or key(peer_kind, peer) in left
 
+    # A record the load could not build and whose identity is not known may be any Infrahub
+    # node of its kind, so the plan deletes none of that kind (FR-008).
+    no_deletes = {item.record.kind for item in report.left_out if item.record.identity is None and not item.loaded}
+    withheld: dict[str, int] = {}
     selected: list[PlannedOperation] = []
     for operation in operations:
         operation_key = key(operation.kind, operation.identity)
         if operation_key in left:
+            continue
+        if operation.action == "delete" and operation.kind in no_deletes:
+            withheld[operation.kind] = withheld.get(operation.kind, 0) + 1
             continue
         kept_here = kept.get(operation_key, [])
         if operation.action == "update" and kept_here and all(item.relationship_only_update for item in kept_here):
@@ -773,4 +850,11 @@ def select_operations(operations: Sequence[PlannedOperation], report: PlanReport
         if changed:
             operation = operation.model_copy(update={"relationships": references or None})  # noqa: PLW2901
         selected.append(operation)
+    for kind, count in sorted(withheld.items()):
+        logger.warning(
+            "Plan: %d delete(s) of %s not planned, because a %s record left out of the plan has no known identity",
+            count,
+            kind,
+            kind,
+        )
     return selected

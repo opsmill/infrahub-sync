@@ -208,6 +208,10 @@ replaces its scan of `self.store.get_all(...)` by `local_id` with one call to
 | not in the source, relationship required | `PeerNotFoundError`. The admission step records `peer_not_found_in_source` with the kind, the record ID, the field and the peer ID. The record cannot be built, so it is left out with its dependents |
 | not in the source, relationship optional | No exception. `peer_unique_id` records `peer_not_found_in_source` in the load report for the referring record, with the same fields, and returns a placeholder marked "not in the source". The record loads with that reference, and the problem pass keeps it without that relationship (R7) |
 
+A reference field that is one of the mapping's identifiers counts as required, even when its
+relationship is optional: the record cannot form its identity without that peer
+(`reference_is_required` in `adapters/references.py`, review finding H4).
+
 Kinds load in dependency order (`SyncConfig.compute_order_and_tiers`,
 `infrahub_sync/__init__.py:187`), so a peer's load result is known before its referrers load.
 
@@ -277,8 +281,8 @@ Decision, in `infrahub_sync/plan/problems.py`:
    load could not build, the pass walks the source store's reference fields (the mapping's
    `field.reference` entries) to find the records that refer to them, and repeats until no new
    record is found. A reference through a relationship that the destination schema marks
-   `optional: false`, or that is a component of the destination's human-friendly ID, leaves the
-   referring record out, naming the record it depends on. A reference through an optional
+   `optional: false`, that is a component of the destination's human-friendly ID, or that is one
+   of the mapping's identifiers, leaves the referring record out, naming the record it depends on. A reference through an optional
    relationship keeps the record and lists it as kept, with the relationship and the left-out
    record. A record with a problem and a left-out peer is listed once, with its problem.
    A record whose only problem is `peer_not_found_in_source` through an optional relationship
@@ -287,7 +291,9 @@ Decision, in `infrahub_sync/plan/problems.py`:
 3. Selection (`select_operations`):
    - removes every create and update of a left-out record;
    - removes every delete whose identity is a record of the load report or a left-out record,
-     so a left-out record that exists in Infrahub stays as it is (FR-008);
+     so a left-out record that exists in Infrahub stays as it is (FR-008). When a record the load
+     could not build has no known identity, it removes every delete of that kind, because that
+     record may be any node of the kind;
    - for a kept record, removes the relationship to the left-out peer, or to the peer that is
      not in the source, from its operation. On a
      create, the relationship is absent (ADR 0001: an absent `relationships` entry carries no

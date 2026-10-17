@@ -157,7 +157,7 @@ kept_without_relationship: 0
 
 - `left_out` is the number of source records that the plan does not write. A record is left
   out when it has a problem, or when it depends on a left-out record through a required
-  relationship.
+  relationship or through a relationship that is one of the identifiers of its mapping.
 - `problems` is the number of problems found in the source data, such as a value that is not
   one of the choices of a Dropdown attribute.
 - `kept_without_relationship` is the number of records that the plan writes without one
@@ -200,6 +200,8 @@ The plan can contain delete operations for destination objects that the source d
 contain. Apply never executes a delete. The detailed output marks each delete as
 `(not executed)`, and the summary states how many deletes apply will skip. When the
 destination side was not read in full, the plan contains no deletes and the review says so.
+When the plan leaves out a source record whose identity it cannot form, the plan contains no
+delete of that record's kind, because that record can be any Infrahub node of the kind.
 See [Deletes in a plan](./reference/cache-layout#deletes-in-a-plan).
 
 ### Review problems, left-out records and kept records

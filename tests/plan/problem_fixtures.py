@@ -47,6 +47,7 @@ from infrahub_sync import (
     SyncAdapter,
     SyncConfig,
 )
+from infrahub_sync.adapters.references import reference_is_required
 from infrahub_sync.adapters.utils import get_value
 from infrahub_sync.runtime_schema.domain import normalize_destination_schema
 from infrahub_sync.runtime_schema.models import build_runtime_models
@@ -435,13 +436,12 @@ class ProblemFixtureAdapter(DiffSyncMixin, Adapter):
                 continue
             if not value:
                 continue
-            field_info = model.model_fields[field.name]
             data[field.name] = self._resolve_peer(
                 field.reference,
                 str(value["id"]),
                 owner=(element.name, source_id),
                 field=field.name,
-                required=field_info.is_required(),
+                required=reference_is_required(model, field.name),
             )
         return data
 
