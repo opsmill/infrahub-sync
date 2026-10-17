@@ -1,6 +1,6 @@
 # 23. The Compose deployment takes an external object store and custom CA certificates from `.env`
 
-**Status**: Proposed
+**Status**: Accepted
 
 ## Context
 

@@ -131,8 +131,8 @@ review lead lowered it to medium after checking the code. The fixes are in `3247
   for high findings. The findings are operator-facing failure messages and test reliability
   problems, the kind of edge case a customer meets first.
 - The test of the release workflow contract was rewritten for the repeated suite (`1d26870a`).
-  The nightly run no longer stops at the first failure (`-x` removed). The product owner has not
-  confirmed this for the single-iteration nightly run.
+  The nightly run no longer stops at the first failure (`-x` removed). The product owner
+  confirmed this on 2026-10-17, for the single-iteration nightly run too (decision G below).
 - T063 used port 8081 for the preview Infrahub, because port 8080 is taken on this machine.
 
 ## Follow-ups outside this specification
@@ -153,9 +153,8 @@ review lead lowered it to medium after checking the code. The fixes are in `3247
 ## Suggested next steps
 
 1. Review the branch and decide on the open product points:
-   - `-x` in the single-iteration nightly run;
-   - ADR 0023 status;
    - the deferred low findings.
+   (`-x` and the ADR 0023 status were decided on 2026-10-17; see decisions G and H.)
 2. Rebase on spec 009 when it merges. `worker.py` holds one `trust_store` call from this branch.
    `test_custom_ca.py` should then assert `tls_certificate_rejected`.
 3. Open the pull request into `feature/v3-develop`, with the `+013-compose-images` changelog
@@ -268,6 +267,19 @@ both new in this unreleased change.
   continue on a slow host. A troubleshooting row points to it. Judgement call: the page does not
   tell operators to raise health check retries through an override file, because that path was
   not tested.
+
+### G. `-x` in the nightly Compose run
+
+- No code change. The product owner decided that the nightly Compose run keeps running without
+  `-x`, in the single-iteration run as well as in a repeated dispatch, so that each run reports
+  every failing test instead of stopping at the first.
+
+### H. ADR 0023 accepted
+
+- The product owner accepted ADR 0023. `dev/adr/0023-the-compose-deployment-takes-an-external-object-store-and-custom-ca-certificates-from-env.md`
+  now has `**Status**: Accepted`, and the note of T079 in `tasks.md` records the acceptance.
+  `dev/adr/README.md` lists no status, so it is unchanged. Finding 26 stays deferred for its
+  other two points: the alternatives have no reasons, and the fragment wording.
 
 ### Gates
 
