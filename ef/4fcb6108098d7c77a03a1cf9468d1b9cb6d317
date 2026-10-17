@@ -1,0 +1,30 @@
+infrahub_sync/service/trust_store.py
+  s_47078ea83e766d::t_272bad4ceec19a 12-13
+  s_47078ea83e766d::t_332d9f214d27c0 169
+  s_47078ea83e766d::t_d740a96aaf840e 152-153
+  s_47078ea83e766d::t_9f49175bac3695 168,170-171
+docs/docs/custom-certificates.mdx
+  s_47078ea83e766d::t_883528d04b80d1 51-52,59-77
+tests/compose/test_custom_ca.py
+  s_47078ea83e766d::t_ea250e3cb7c9b1 377-379
+  s_47078ea83e766d::t_2ca3aa74c05098 64
+  s_47078ea83e766d::t_3ee032928b0aa7 380-381
+tests/service/test_trust_store.py
+  s_47078ea83e766d::t_0af4ea85908935 228-286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ef4fcb6108098d7c77a03a1cf9468d1b9cb6d317",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
