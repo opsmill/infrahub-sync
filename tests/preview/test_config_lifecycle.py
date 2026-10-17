@@ -231,7 +231,10 @@ def test_the_python_client_drives_the_registry_and_both_public_resources(  # noq
         versions = client.list_config_versions(config_id)
         assert [entry.registry_version for entry in versions] == [1, 2]
         fetched = client.get_config_version(config_id, 1)
-        assert fetched == registered.version
+        # Registration answers with the checksum only (spec 009 FR-035); the version route
+        # returns the content.
+        assert fetched.model_dump(exclude={"declared_content"}) == registered.version.model_dump()
+        assert fetched.declared_content
 
         report = client.validate_config(config_id, 1)
         assert report.findings == ()
@@ -303,7 +306,12 @@ def test_raw_http_drives_the_registry_and_records_the_transcript(
         assert client.get(f"/configs/{config_id}").json()["config_id"] == config_id
         versions = client.get(f"/configs/{config_id}/versions").json()
         assert [entry["registry_version"] for entry in versions] == [1, 2]
-        assert client.get(f"/configs/{config_id}/versions/1").json() == registered.json()["version"]
+        # Registration answers with the checksum only (spec 009 FR-035); the version route
+        # returns the content.
+        assert "declared_content" not in registered.json()["version"]
+        fetched = client.get(f"/configs/{config_id}/versions/1").json()
+        assert fetched.pop("declared_content")
+        assert fetched == registered.json()["version"]
 
         validated = client.post(f"/configs/{config_id}/versions/1/validate")
         assert validated.status_code == 200, validated.text

@@ -22,8 +22,15 @@ from infrahub_sdk.exceptions import (
 
 from infrahub_sync import RecordLoadError, SideLoadError, TransformError
 from infrahub_sync.configuration.credentials import CredentialConfigurationError
-from infrahub_sync.failure_cause import NEXT_ACTIONS, RunFailureCause, build_failure_cause
+from infrahub_sync.failure_cause import (
+    APPLY_STAGE_NEXT_ACTIONS,
+    NEXT_ACTIONS,
+    RunFailureCause,
+    build_failure_cause,
+    next_action,
+)
 from infrahub_sync.plan.errors import LeftOutConfirmationError, PlanReportDigestMismatchError
+from infrahub_sync.runtime_schema.errors import DestinationSchemaUnavailableError
 from infrahub_sync.service.flow import RegisteredPlanVerificationError
 from infrahub_sync.service.left_out_stop import left_out_stop
 
@@ -611,7 +618,7 @@ def _check(cause: RunFailureCause, stage: str, expected: dict[str, Any]) -> None
         "infrahub_message": None,
         "error_class": "SideLoadError",
         "apply_progress": None,
-        "next_action": NEXT_ACTIONS[expected["failure_type"]],
+        "next_action": next_action(expected["failure_type"], stage),
         **expected,
     }
     assert dumped == expected_fields
@@ -688,6 +695,46 @@ def test_every_failure_type_has_a_next_action() -> None:
         "internal_error",
     }
     assert all(NEXT_ACTIONS.values())
+
+
+def test_a_refused_apply_leads_to_a_new_plan_not_a_second_apply() -> None:
+    # A refusal in the worker comes after the apply was admitted, so a second apply of the
+    # same run gets `new-plan-required` (contracts/sync-api.md apply check 4).
+    action = NEXT_ACTIONS["apply_refused"]
+
+    assert "create and review a new plan" in action
+    assert "apply the plan again" not in action
+    assert "The destination was not changed." in action
+
+
+@pytest.mark.parametrize("failure_type", sorted(NEXT_ACTIONS))
+def test_no_next_action_of_the_apply_stage_retries_the_same_run(failure_type: str) -> None:
+    action = next_action(failure_type, "apply")  # ty: ignore[invalid-argument-type]
+
+    assert "run the stage again" not in action.lower()
+    assert "apply the plan again" not in action.lower()
+
+
+@pytest.mark.parametrize("failure_type", sorted(APPLY_STAGE_NEXT_ACTIONS))
+def test_a_retryable_failure_of_the_apply_stage_leads_to_a_new_plan(failure_type: str) -> None:
+    assert "new plan" in next_action(failure_type, "apply")  # ty: ignore[invalid-argument-type]
+    assert "run the stage again" in NEXT_ACTIONS[failure_type].lower()
+    assert next_action(failure_type, "plan") == NEXT_ACTIONS[failure_type]  # ty: ignore[invalid-argument-type]
+
+
+def test_a_destination_schema_read_names_the_destination_system() -> None:
+    # The worker reads the destination schema before any adapter loads, so no `SideLoadError`
+    # wraps a token the destination rejects there; the read's own error names the system.
+    read = DestinationSchemaUnavailableError(LEAK, reason="unauthorized", adapter="infrahub")
+    read.__context__ = AuthenticationError(LEAK)
+
+    cause = build_failure_cause("plan", read)
+
+    assert cause.failure_type == "token_rejected"
+    assert cause.system is not None
+    assert cause.system.model_dump() == {"role": "destination", "adapter": "infrahub"}
+    assert cause.summary == "The destination system (infrahub) rejected the token"
+    assert LEAK not in cause.model_dump_json()
 
 
 def test_the_stored_sync_stop_failure_is_a_valid_cause() -> None:

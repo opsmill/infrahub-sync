@@ -15,12 +15,14 @@ class DestinationSchemaUnavailableError(RuntimeSchemaError):
     """The declared accessor could not deliver a destination schema snapshot.
 
     ``reason`` is the accessor's own short failure class ("timeout", "unauthorized",
-    ...). Nothing else from the failed read crosses this boundary.
+    ...). ``adapter`` is the destination adapter's name, so a run's cause can name the
+    system (spec 009 FR-016). Nothing else from the failed read crosses this boundary.
     """
 
-    def __init__(self, message: str, *, reason: str) -> None:
+    def __init__(self, message: str, *, reason: str, adapter: str | None = None) -> None:
         super().__init__(message)
         self.reason = reason
+        self.adapter = adapter
 
 
 class UnsupportedSchemaSemanticsError(RuntimeSchemaError):

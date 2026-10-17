@@ -279,7 +279,10 @@ def test_validating_the_netbox_package_reads_no_source(
     transcript = evidence_dir / "netbox-package-zero-source-http.jsonl"
     with authenticated_client(preview_env, transcript=transcript) as api:
         version = _register_over_http(api, package)
-        assert version["declared_content"]["configuration"]["source"]["settings"]["url"] == source_sink
+        # Registration answers with the checksum only (spec 009 FR-035); read the content back.
+        stored = api.get(f"/configs/{version['config_id']}/versions/{version['registry_version']}")
+        assert stored.status_code == 200, stored.text
+        assert stored.json()["declared_content"]["configuration"]["source"]["settings"]["url"] == source_sink
         report = api.post(f"/configs/{version['config_id']}/versions/{version['registry_version']}/validate")
         assert report.status_code == 200, report.text
         assert report.json()["findings"] == [], report.text
@@ -291,6 +294,7 @@ def test_validating_the_netbox_package_reads_no_source(
     ]
     assert exchanges == [
         ("POST", "/configs", 201),
+        ("GET", f"/configs/{version['config_id']}/versions/{version['registry_version']}", 200),
         ("POST", f"/configs/{version['config_id']}/versions/{version['registry_version']}/validate", 200),
     ]
     assert (

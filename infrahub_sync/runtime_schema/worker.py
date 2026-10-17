@@ -158,7 +158,7 @@ def build_runtime_model_plan(
         raw = read_destination_schema_snapshot(package, branch)
     except DestinationSchemaReadError as exc:
         msg = f"destination schema for branch {branch!r} could not be read: {exc.reason}"
-        raise DestinationSchemaUnavailableError(msg, reason=exc.reason) from None
+        raise DestinationSchemaUnavailableError(msg, reason=exc.reason, adapter=instance.destination.name) from None
     snapshot = normalize_destination_schema(raw)
     schema_fingerprint = compute_consumed_schema_fingerprint(configuration=instance, snapshot=snapshot)
     if scope == "both":

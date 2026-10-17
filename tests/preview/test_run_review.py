@@ -337,8 +337,10 @@ def test_raw_http_verifies_a_plan_and_reads_its_artifact_and_results(
 
         listed = client.get(f"/runs/{run_id}/artifacts")
         assert listed.status_code == 200, listed.text
-        reference = listed.json()["artifacts"][0]
-        assert reference["artifact_id"] == PLAN_ARTIFACT_ID
+        # The plan report (spec 009) is published before the review document.
+        listed_ids = [entry["artifact_id"] for entry in listed.json()["artifacts"]]
+        assert listed_ids == [PLAN_REPORT_ARTIFACT_ID, PLAN_ARTIFACT_ID]
+        reference = listed.json()["artifacts"][1]
 
         artifact = client.get(f"/runs/{run_id}/artifacts/{PLAN_ARTIFACT_ID}")
         assert artifact.status_code == 200, artifact.text

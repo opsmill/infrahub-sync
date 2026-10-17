@@ -100,6 +100,17 @@ def store(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[tuple[Prod
         return [tuple(str(value) for value in row) for row in rows]
 
     yield ProductProjection(PostgreSQLRunStore(connect), artifacts), postgresql_rows
+    # The generated schema lives for the whole module, so each case removes the records it
+    # published; otherwise the next case would read them as a live worker's.
+    connection = connect()
+    try:
+        cursor = connection.cursor()
+        cursor.execute("DELETE FROM worker_environment")
+        connection.commit()
+    except psycopg.errors.UndefinedTable:
+        connection.rollback()
+    finally:
+        connection.close()
 
 
 def _publisher(projection: ProductProjection, worker_id: str, *, at: datetime) -> WorkerEnvironmentPublisher:

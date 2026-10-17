@@ -101,5 +101,9 @@ The cause holds no credential, address, or error text from a library. `GET /runs
 | `the plan leaves out ... records, so the sync stopped before writing` | Review the left-out records with `runs left-out RUN_ID`, then apply the run with `apply RUN_ID --expected-checksum CHECKSUM --confirm-left-out <count>`. |
 | `the ... stage failed with an internal error` | Run the stage again. If it fails again, read the worker log with `docker compose logs sync-worker` and report the error class to OpsMill. |
 
+When the stage is `apply`, create and review a new plan instead of running the stage again:
+a run accepts one apply, so a second `apply` of the same run is refused with
+`new-plan-required`. The `next:` line of a failed apply says so.
+
 See [Find why a run failed](../running-a-sync.mdx#find-why-a-run-failed) for the format of
 each line.

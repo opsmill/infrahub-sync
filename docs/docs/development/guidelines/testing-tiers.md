@@ -101,7 +101,7 @@ needs, the second names each setting and where to get it.
 | Durable store | `INFRAHUB_SYNC_STORAGE_INTEGRATION_DATABASE_URL`, `_S3_BUCKET` and `_S3_ENDPOINT_URL`, plus `boto3` and `psycopg` | service storage, isolated worker handoff |
 | Live stack | A running development stack, probed rather than configured | managed write-guard live |
 | Prefect idempotency | The `prefect` and `opsmill_prefect_extras` imports only | [`tests/integration/test_service_prefect_idempotency.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/integration/test_service_prefect_idempotency.py) |
-| Product store on PostgreSQL | A disposable PostgreSQL at `PRODUCT_STORE_TEST_POSTGRESQL_DSN`, plus `psycopg` | [`tests/product_store/test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_contract.py), [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_configuration_baseline.py), [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_write_admission.py), [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/service/test_apply_versus_verify_race.py) |
+| Product store on PostgreSQL | A disposable PostgreSQL at `PRODUCT_STORE_TEST_POSTGRESQL_DSN`, plus `psycopg` | [`tests/product_store/test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_contract.py), [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_configuration_baseline.py), [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_write_admission.py), [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/service/test_apply_versus_verify_race.py), `tests/service/test_worker_environment.py` |
 
 | Setting | Points to | How to get it from the local stacks |
 |---|---|---|
@@ -153,10 +153,11 @@ Three families need more detail than the tables give:
   `opsmill_prefect_extras` import, then starts Prefect's own isolated temporary API server with
   `PREFECT_HOME` and `PREFECT_LOCAL_STORAGE_PATH` redirected under `tmp_path`. It writes only
   that temporary state and tears it down.
-- **Product store on PostgreSQL** is two different things under one DSN. Three modules —
+- **Product store on PostgreSQL** is two different things under one DSN. Four modules —
   [`test_configuration_baseline.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_configuration_baseline.py),
-  [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_write_admission.py) and
+  [`test_write_admission.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_write_admission.py),
   [`tests/service/test_apply_versus_verify_race.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/service/test_apply_versus_verify_race.py)
+  and `tests/service/test_worker_environment.py`
   — parametrize their contracts over SQLite and PostgreSQL, and only the `postgresql`
   parameter carries the `integration` mark. Alongside them,
   [`test_contract.py`](https://github.com/opsmill/infrahub-sync/blob/d9ef147c569a42ec4471bba78ec270c343cdfa28/tests/product_store/test_contract.py) contributes two standalone
@@ -181,7 +182,8 @@ Three families need more detail than the tables give:
 
   Pull-request CI runs the `product-store-postgresql` job in `workflow-tests.yml`, which
   starts the same pinned `postgres:16-alpine` image the Compose bundle ships and runs only
-  `tests/product_store` and `tests/service/test_apply_versus_verify_race.py`.
+  `tests/product_store`, `tests/service/test_apply_versus_verify_race.py` and
+  `tests/service/test_worker_environment.py`.
   The job uses `invoke tests.tests-product-store-postgresql`, which fails when the DSN is
   unset, when any test skips (a missing `psycopg` or an unreachable server skips rather
   than fails under plain `pytest -m integration`), or when no test is selected. To run the

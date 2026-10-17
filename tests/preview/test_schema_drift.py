@@ -130,8 +130,9 @@ def test_an_apply_refuses_a_plan_whose_destination_schema_changed(  # noqa: PLR0
 
     assert refused.returncode == 1, refused.stdout
     rendered = ANSI.sub("", refused.stderr)
-    assert "apply failed: PlanSchemaChangedError" in rendered, rendered
-    assert "hint: create and review a new plan before applying again" in rendered, rendered
+    # The run's cause (spec 009, ADR 0021) names the failure from fixed text, not the class.
+    assert "apply failed: the saved plan did not pass verification" in rendered, rendered
+    assert "next: Create and review a new plan, then apply that plan." in rendered, rendered
 
     with SyncClient(preview_env["urls"]["sync_api"], preview_env["bearer_token"], timeout=30.0) as client:
         results = client.get_results(run_id)

@@ -42,6 +42,7 @@ from infrahub_sync.plan.errors import (
     ReviewedPayloadFieldMissingError,
     UnkeyedCreateRefusedError,
 )
+from infrahub_sync.runtime_schema.errors import DestinationSchemaUnavailableError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -93,13 +94,44 @@ NEXT_ACTIONS: dict[str, str] = {
     "transform_failed": "Fix the transform of the field or the record in the source, then create a new plan.",
     "credential_missing": "Set the credential that the configuration references in the worker, then run the stage again.",
     "verification_failed": "Create and review a new plan, then apply that plan.",
-    "apply_refused": "Fix the reason the apply was refused, then apply the plan again. The destination was not changed.",
+    "apply_refused": (
+        "The destination was not changed. Fix the reason the apply was refused, then create and review a new plan: "
+        "a run accepts one apply, so a second apply of the same run is refused with `new-plan-required`."
+    ),
     "left_out_review_required": (
         "Review the left-out records with `infrahub-sync runs left-out`, then apply the plan with "
         "`infrahub-sync apply --confirm-left-out` and the plan's left-out count."
     ),
     "internal_error": "Run the stage again. If it fails again, report the error class to OpsMill.",
 }
+
+# A run accepts one apply: once the worker admitted it, a second apply of the same run is
+# refused with `new-plan-required`, even when the first stopped before any write. So in the
+# apply stage, the failure types that `NEXT_ACTIONS` answers with "run the stage again" lead
+# to a new plan instead.
+_NEW_PLAN = "create and review a new plan, then apply that plan: a run accepts one apply"
+APPLY_STAGE_NEXT_ACTIONS: dict[str, str] = {
+    "system_unreachable": f"Check that the system is running and that the worker can reach it, then {_NEW_PLAN}.",
+    "system_timeout": f"Check the load on the system and its response time, then {_NEW_PLAN}.",
+    "token_rejected": f"Check the token that the worker uses for this system, then {_NEW_PLAN}.",
+    "tls_certificate_rejected": (
+        "Add the CA certificate that signed the system's certificate to the directory that "
+        f"`INFRAHUB_SYNC_CA_CERTIFICATES` names, restart the services, then {_NEW_PLAN}."
+    ),
+    "credential_missing": f"Set the credential that the configuration references in the worker, then {_NEW_PLAN}.",
+    "internal_error": (
+        "Create and review a new plan, then apply that plan: a run accepts one apply. "
+        "If it fails again, report the error class to OpsMill."
+    ),
+}
+
+
+def next_action(failure_type: FailureType, stage: str) -> str:
+    """The next step for a failure of `failure_type` in `stage`; an apply is never retried on the same run."""
+    if stage == "apply":
+        return APPLY_STAGE_NEXT_ACTIONS.get(failure_type, NEXT_ACTIONS[failure_type])
+    return NEXT_ACTIONS[failure_type]
+
 
 _UNREACHABLE = (requests.ConnectionError, httpx.ConnectError, ServerNotReachableError)
 _TIMEOUT = (requests.Timeout, httpx.TimeoutException, ServerNotResponsiveError)
@@ -238,6 +270,10 @@ def _system(chain: list[BaseException]) -> FailureSystem | None:
         if isinstance(link, SideLoadError) and link.side in {"source", "destination"}:
             adapter = _name(link.adapter)
             return None if adapter is None else FailureSystem(role=link.side, adapter=adapter)
+        # The destination schema is read before any adapter loads, so no SideLoadError wraps it.
+        if isinstance(link, DestinationSchemaUnavailableError):
+            adapter = _name(link.adapter)
+            return None if adapter is None else FailureSystem(role="destination", adapter=adapter)
     return None
 
 
@@ -415,6 +451,6 @@ def build_failure_cause(
         failure_type=failure_type,
         summary=_summary(failure_type, stage, fields),
         apply_progress=progress,
-        next_action=NEXT_ACTIONS[failure_type],
+        next_action=next_action(failure_type, stage),
         **fields,
     )
