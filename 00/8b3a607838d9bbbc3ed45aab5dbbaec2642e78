@@ -1,0 +1,34 @@
+docs/sidebars.ts
+  s_47078ea83e766d::t_797f8d2f8b1996 46
+docs/docs/configuration-package.mdx
+  s_47078ea83e766d::t_891d93a02b9ce4 155-157
+docs/docs/operations/upgrading-from-the-v3-alpha.mdx
+  s_47078ea83e766d::t_5f9fd7a8f04920 1-34,36-104,107-127
+  s_47078ea83e766d::t_679889abce8282 35,105-106
+changelog/+009-declared-content.removed.md
+  s_47078ea83e766d::t_12a9b2e5576560 1
+docs/docs/reference/durable-product-records.mdx
+  s_47078ea83e766d::t_891d93a02b9ce4 102-103
+changelog/+009-configs-validate-branch.added.md
+  s_47078ea83e766d::t_12a9b2e5576560 1
+changelog/+009-stricter-validation.changed.md
+  s_47078ea83e766d::t_797f8d2f8b1996 1
+docs/docs/v2-to-v3.mdx
+  s_47078ea83e766d::t_1ebb463aa8655a 18-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "008b3a607838d9bbbc3ed45aab5dbbaec2642e78",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
