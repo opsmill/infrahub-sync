@@ -153,8 +153,8 @@ def test_model_loader_requests_identifiers_and_mapped_attributes() -> None:
     fake_item = MagicMock()
     fake_item.get_unique_id.return_value = "leaf1"
     fake_model.return_value = fake_item
-    # The destination side stores through update_or_add, as before spec 009.
-    adapter.update_or_add_model_instance = MagicMock(return_value=(fake_item, True))  # ty: ignore[invalid-assignment]
+    # The destination side stores through its update-or-add hook, which records shared identities.
+    adapter._update_or_add_item = MagicMock(return_value=fake_item)  # ty: ignore[invalid-assignment]
 
     adapter.model_loader("InfraDevice", fake_model)
 

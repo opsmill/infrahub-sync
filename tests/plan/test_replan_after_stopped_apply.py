@@ -14,7 +14,7 @@ import pytest
 
 from infrahub_sync.plan.errors import OperationApplyFailedError
 from tests.adapters.test_infrahub_planned_write import engine_over
-from tests.plan.problem_fixtures import Variant, destination_records
+from tests.plan.problem_fixtures import Variant, destination_records, source_records
 from tests.plan.problem_plan import RUN_ID, plan_fixture
 from tests.plan.stopped_apply import RejectingDestination, destination_after
 from tests.plan.test_plan_format_3 import RecordingOwnership
@@ -53,7 +53,9 @@ def test_a_new_plan_holds_only_the_operations_the_stopped_apply_did_not_write(tm
     second = plan_fixture(
         tmp_path / "second",
         Variant.NO_PROBLEMS,
-        destination=destination_after(first.source, destination.written, destination_records()),
+        destination=destination_after(
+            first.source, destination.written, destination_records(source_records(Variant.NO_PROBLEMS))
+        ),
     )
 
     assert len(second.operations) == total - (reject_at - 1)

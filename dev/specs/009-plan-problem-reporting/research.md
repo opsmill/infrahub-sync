@@ -23,7 +23,15 @@ Revision of 2026-10-15, after two more product owner decisions:
 - SYNC-262 is follow-up work after the MVP, and the existing masking stays unchanged in the MVP
   (R14).
 
-## R1. Where each of the seven problem types is found today
+Revision of 2026-10-17, after three product owner decisions (R18):
+
+- Two or more Infrahub objects with one configured identity are the eighth problem type,
+  `destination_identity_ambiguous` (R1, R3, R4).
+- The apply confirms the records left out with a yes or no flag, not with their count.
+- A peer that cannot be found in Infrahub at apply time has its own failure type,
+  `destination_peer_missing` (R10, R13).
+
+## R1. Where each of the eight problem types is found today
 
 | Problem type (stable name) | Where it stops a plan today | Where this plan finds it |
 | --- | --- | --- |
@@ -34,6 +42,7 @@ Revision of 2026-10-15, after two more product owner decisions:
 | `required_peer_excluded_by_filter` | `ValueError("Configured filter excluded all peers for required relationship …")` (`adapters/netbox.py:270-275`, `306-312`) | Load: the record admission step, through a typed exception of the base class (R4) |
 | `identities_merge_in_destination` | A warning only (`_warn_identity_finer_than_destination_key`, `plan/derive.py:791`; #166) and `refuse_source_identity_collisions` (`plan/keying.py:67`, called at `plan/derive.py:931`) | Problem pass, through the same checks changed to return the groups (R8) |
 | `peer_not_found_in_source` | NetBox, ACI and generic REST raise and fail the load (`netbox.py:276-277`, `aci.py:332-333`, `genericrestapi.py:217-218`). Nautobot logs "Unable to locate the node" and drops the reference (`nautobot.py:286`, `:300`) | Load: the peer resolution of the base class (R4), recorded by the record admission step (R3) |
+| `destination_identity_ambiguous` | Not found. The Infrahub adapter stores destination records with `update_or_add_model_instance`, so the last node loaded with one identity replaces the others and the plan compares the source record with that one node | Load of the destination: the Infrahub adapter's store hook records the node IDs that share one identity (`plan/destination_ambiguity.py`); the problem pass lists them (R3) |
 
 Today every load failure ends the whole load: `_load_side` wraps it into one `ValueError`
 (`potenda/__init__.py:488-501`).
@@ -136,7 +145,16 @@ on the source side catches exactly these exceptions per record:
 Any other exception, including a `ValidationError` that holds a non-type error such as a
 missing required value, is raised again as `RecordLoadError` with the kind, the record ID and
 the field, and fails the plan (FR-018). On the destination side nothing is caught: a bad
-Infrahub record is not a source problem.
+Infrahub record is not a source problem. One destination case is recorded, without catching
+anything: two or more Infrahub nodes with one identity (`destination_identity_ambiguous`,
+decided on 2026-10-17). The Infrahub adapter stores each destination record through
+`DestinationIdentityAmbiguities.store`, which keeps the store as `update_or_add_model_instance`
+did and records the node IDs when a second node has an identity already stored. The problem
+pass lists each such identity with its kind and node IDs, leaves out the source record with
+that identity and its dependents, and the selection step removes every operation of that
+identity, a delete included. When no source record has that identity, the problem is still
+listed, nothing is left out, and no delete is planned for those nodes; when the identity cannot
+be formed from the destination store, no delete of that kind is planned.
 
 The load report holds, for each record not loaded: the kind, the source record ID
 (`local_id`), the identity when it can be computed (`model.create_unique_id(**identifiers)`
@@ -211,6 +229,10 @@ replaces its scan of `self.store.get_all(...)` by `local_id` with one call to
 A reference field that is one of the mapping's identifiers counts as required, even when its
 relationship is optional: the record cannot form its identity without that peer
 (`reference_is_required` in `adapters/references.py`, review finding H4).
+
+A reference from a source record to a source record left out because Infrahub holds two nodes
+with its identity follows the same rule as a reference to any left-out record: required, the
+referring record is left out too; optional, it is kept without that relationship.
 
 Kinds load in dependency order (`SyncConfig.compute_order_and_tiers`,
 `infrahub_sync/__init__.py:187`), so a peer's load result is known before its referrers load.
@@ -400,10 +422,10 @@ below for the product owner.
 >
 > **Decision.**
 >
-> - At the plan stage, a record with one of seven named problems, and every record that depends
+> - At the plan stage, a record with one of eight named problems, and every record that depends
 >   on it through a required relationship, is left out. A record that refers to it only through
 >   an optional relationship is kept without that relationship. A reference to a peer that is
->   not in the source is one of the seven problems; through an optional relationship, the
+>   not in the source is one of the eight problems; through an optional relationship, the
 >   referring record is kept without that relationship.
 > - DiffSync compares the stores as loaded. A record that cannot be built is not loaded; every
 >   other record is loaded as the source holds it, references included. The adapter base class
@@ -417,7 +439,7 @@ below for the product owner.
 > - Every other plan failure still fails the plan. During apply, an Infrahub rejection still
 >   stops the apply. `continue_on_error` is removed.
 >
-> **Consequences.** AD047's rule changes for these seven problem types only. A left-out record
+> **Consequences.** AD047's rule changes for these eight problem types only. A left-out record
 > that exists in Infrahub is not updated and not deleted. An adapter that overrides
 > `model_loader` opts out of the admission step. The policy for runs that nobody watches stays
 > open for 3.0.
@@ -594,3 +616,24 @@ return the checksum without `declared_content`.
 - Rules passed to spec 010, which owns incremental reads: a plan that follows a stopped apply of
   the same configuration reads the destination in full, and a plan that follows one that left
   out records reads the source in full, so that left-out records are checked again (FR-009).
+
+## R18. Product decisions of 2026-10-17
+
+Decided by the product owner on 2026-10-17:
+
+1. `--confirm-left-out` is a flag without a value, and the apply request carries
+   `confirm_left_out: true` instead of `confirmed_left_out_count`. A plan that leaves out records
+   is applied only with that confirmation; the refusal states the count and is audited as
+   `refused-left-out-not-confirmed`. The refusal of a count that differs from the plan's is
+   removed, because `expected_checksum` already binds the apply to the reviewed plan. A plan
+   that leaves out no records accepts and ignores the confirmation. `sync` still stops after a
+   plan that leaves out records, with no option that skips the stop.
+2. Two or more Infrahub objects that map to one configured identity are the problem type
+   `destination_identity_ambiguous` (R1, R3). The problem holds the kind, the identity and the
+   Infrahub node IDs, which are not secrets, and no other attribute value. The report line
+   carries the node IDs in `destination_ids`; the field is left out of every other problem line,
+   so their bytes, and the checksums of plans without this problem, are unchanged.
+3. `PeerNotFoundError` raised while an apply or a verify resolves a peer in Infrahub is the
+   failure type `destination_peer_missing`, with the system `destination`, the peer kind and the
+   operation, and never the error text (R13).
+

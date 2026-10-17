@@ -48,6 +48,12 @@ or no flag (`--confirm-left-out` in the CLI, `confirm_left_out: true` in the Syn
 repeating their count. The plan checksum already binds the apply to the reviewed plan, so a
 count adds no check. The refusal still states the count (FR-010, FR-026).
 
+Decided by the product owner on 2026-10-17: two or more Infrahub objects that have the same
+configured identity (the mapping's `identifiers`) are the eighth problem type,
+`destination_identity_ambiguous`. Until then the plan kept the last object it loaded and ignored
+the others. Now the plan lists the identity and the Infrahub objects, leaves out the source
+record with that identity, and plans no operation for that identity (FR-002, FR-003).
+
 Decided by the product owner on 2026-10-15, second review: credential values are kept out of
 failure causes, problem reasons and plan files by how these are built, not by replacing values
 in text afterwards. A cause is built only from named fields, never from the text of an error
@@ -98,14 +104,14 @@ Finding every bad record in one plan, before anything is written, is the gain V3
 for that step (idea brief, "Users and value").
 
 **Independent Test**: run one plan against a source fixture that holds one record of each of the
-seven problem types and a set of valid records. The plan finishes, lists seven problems, leaves out
+eight problem types and a set of valid records. The plan finishes, lists eight problems, leaves out
 those records and their dependents, and writes nothing to Infrahub.
 
 **Acceptance Scenarios**:
 
-1. **Given** a source that holds one record of each of the seven problem types listed in FR-002,
+1. **Given** a source that holds one record of each of the eight problem types listed in FR-002,
    **When** the team starts a plan, **Then** the plan finishes and its problem list contains one
-   entry for each of the seven records, each with its kind, its source record identity, the problem
+   entry for each of the eight records, each with its kind, its source record identity, the problem
    type and the reason.
 2. **Given** a source where a device has a problem and five interfaces belong to that device,
    **When** the team starts a plan, **Then** the plan leaves out the device and its five
@@ -242,6 +248,10 @@ equals the original count minus the operations written.
   the left-out count.
 - Both records of a duplicate pair, and both source objects that share one Infrahub identity, are
   listed and left out, because the plan cannot tell which one is correct.
+- Infrahub holds two objects with the identity of one source record: the source record is left
+  out, and no operation targets either object. Infrahub holds two objects with an identity that
+  no source record has: the problem is listed, nothing is left out, and neither object is
+  deleted.
 - A record depends on another left-out record that itself depends on a record with a problem:
   every record in the chain is left out, and each names the record it depends on.
 - A left-out record already exists in Infrahub from an earlier run: the plan proposes no update
@@ -270,7 +280,7 @@ equals the original count minus the operations written.
 
 - **FR-001**: A plan MUST check every source record and MUST NOT stop at the first record that
   has a problem.
-- **FR-002**: A plan MUST detect and list these seven problem types:
+- **FR-002**: A plan MUST detect and list these eight problem types:
   - a value outside the choices of a Dropdown attribute in the destination schema the plan read
     (#371)
   - two or more source records with the same source identity (for example duplicate IP
@@ -287,10 +297,18 @@ equals the original count minus the operations written.
   - a reference to a peer that is not in the source at all, for example a device that refers
     to a site the source does not return (today a NetBox, ACI or generic REST source fails the
     whole plan, and a Nautobot source drops the reference with a warning)
+  - two or more Infrahub objects of one kind with the same configured identity (the mapping's
+    `identifiers`), found while the plan reads Infrahub (until 2026-10-17 the last object read
+    replaced the others without a warning)
 - **FR-003**: Each listed problem MUST hold the kind, the source record identity, the problem
   type, and a reason that names the attribute or relationship and the value or peer involved.
   Problems of the identity types MUST also name the other records involved. A problem of a
-  peer that is not in the source MUST also name the relationship and the peer's source ID.
+  peer that is not in the source MUST also name the relationship and the peer's source ID. A
+  problem of Infrahub objects with the same identity MUST name the kind, the identity and the
+  Infrahub IDs of those objects, and no other attribute value. The plan MUST leave out the
+  source record with that identity and plan no create, update or delete for that identity. When
+  no source record has that identity, the problem MUST still be listed, nothing is left out, and
+  no delete MUST be planned for those objects.
 - **FR-004**: A plan MUST NOT write to Infrahub, whether or not it finds problems.
 
 #### Records left out of a plan (brief FR-002, AD-12 plan stage)
@@ -469,7 +487,8 @@ that a credential missing from the worker is found only when the run fails in th
 
 - **Plan problem**: one problem found in one source record. It holds the kind, the source
   record identity, the problem type, the reason, for identity problems the other records
-  involved, and for a peer that is not in the source the relationship and the peer's source ID.
+  involved, for a peer that is not in the source the relationship and the peer's source ID, and
+  for Infrahub objects with the same identity the Infrahub IDs of those objects.
 - **Left-out record**: a source record that the plan leaves out. It holds the kind, the source
   record identity, and either its own problems or the record it depends on.
 - **Kept record**: a source record that the plan keeps without an optional relationship,
@@ -489,8 +508,8 @@ that a credential missing from the worker is found only when the run fails in th
 
 - **SC-001** (brief SC-003): on the NetBox example data with planted bad records, one plan run
   lists every planted problem. On 2026-10-05 the same problems took five configuration versions.
-- **SC-002**: a fixture with one record of each of the seven problem types gives one plan that
-  lists all seven, and its apply writes only the valid records after the records left out are
+- **SC-002**: a fixture with one record of each of the eight problem types gives one plan that
+  lists all eight, and its apply writes only the valid records after the records left out are
   confirmed.
 - **SC-003** (brief SC-005): for 100% of failed or stopped runs in the test suite, the CLI and
   the Sync API show the cause without reading container logs or the orchestration server.
@@ -537,13 +556,15 @@ that a credential missing from the worker is found only when the run fails in th
   plan is bound to. Adding them changes that record, so plans saved by an earlier release must be
   planned again before they are applied (#371). This is accepted for the testing release.
 - A plan failure that is not tied to one record, such as an unreachable system, a rejected token
-  or an invalid transform, still fails the whole plan. Only the seven problem types of FR-002 leave
+  or an invalid transform, still fails the whole plan. Only the eight problem types of FR-002 leave
   records out.
 - The problem list, the left-out list and the kept list follow the paging rule for plan
   details that spec 011 defines (FR-013 to FR-016 there; idea brief FR-007).
 - The testing release supports only the adapters that Sync bundles, and up to about 10,000
-  mapped objects (idea brief, "Assumptions"). The seven problem types are checked for every bundled
-  source adapter, not only NetBox.
+  mapped objects (idea brief, "Assumptions"). The first seven problem types are checked for
+  every bundled source adapter, not only NetBox. Infrahub objects with the same identity are
+  checked when the plan reads every object of a kind from Infrahub; an incremental read of
+  Infrahub through the cache does not check them.
 - The UI that shows this information is out of scope here (spec 011). This specification
   defines what the CLI shows and what the Sync API returns.
 - Resume of a stopped apply, deletes executed, and the AD-12 policy for runs nobody watches

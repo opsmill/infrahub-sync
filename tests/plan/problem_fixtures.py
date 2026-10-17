@@ -1,7 +1,7 @@
 """Shared source fixture for plan problem reporting (spec 009 T001).
 
 The fixture is an in-memory source adapter and a destination schema record. Together they hold
-one record of each of the seven problem types of `data-model.md`, a set of valid records, a
+one record of each of the eight problem types of `data-model.md`, a set of valid records, a
 device with a problem that five physical interfaces require, an IP address that refers to that
 device through an optional relationship, and an IP address that refers to a VRF the source does
 not return.
@@ -21,6 +21,7 @@ Problem records of the full fixture (`Variant.ALL`):
 | `required_peer_excluded_by_filter` | `InterfacePhysical` `mgmt0` | its required `device` is `lab-1`, removed by the `role != lab` filter |
 | `identities_merge_in_destination` | two `LocationRack` `comms-closet` | facility IDs differ; Infrahub holds one (`destination_records`) |
 | `peer_not_found_in_source` | `InterfacePhysical` `eth9` | its required `device` has source ID `999`, which the source does not return |
+| `destination_identity_ambiguous` | `LocationSite` `twin` | Infrahub holds two `LocationSite` nodes named `twin` (`destination_records`) |
 
 Dependents of `core-1`: five `InterfacePhysical` records (`eth0` to `eth4`) through the required
 relationship `device`. `IpamIPAddress` `10.0.0.5/32` refers to `core-1` only through the
@@ -67,7 +68,7 @@ SPECIAL_CREDENTIAL = 'p"ss\\wo,rd-2026'
 SHORT_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_PROBLEM_FIXTURE_TOKEN"
 SPECIAL_CREDENTIAL_NAME = "INFRAHUB_SYNC_CREDENTIAL_PROBLEM_FIXTURE_PASSWORD"
 
-# The seven stable problem type names of data-model.md.
+# The eight stable problem type names of data-model.md.
 PROBLEM_TYPES: tuple[str, ...] = (
     "dropdown_value_not_in_choices",
     "duplicate_source_identity",
@@ -76,6 +77,7 @@ PROBLEM_TYPES: tuple[str, ...] = (
     "required_peer_excluded_by_filter",
     "identities_merge_in_destination",
     "peer_not_found_in_source",
+    "destination_identity_ambiguous",
 )
 
 # Load order: every kind loads after the kinds it refers to.
@@ -106,6 +108,13 @@ MISSING_DEVICE_SOURCE_ID = "999"
 MISSING_VRF_SOURCE_ID = "998"
 PROBLEM_DEVICE_SOURCE_ID = "30"
 PROBLEM_DEVICE_DEPENDENTS = 5
+TWIN_SITE_NAME = "twin"
+TWIN_SITE_SOURCE_ID = "6"
+# The two Infrahub node IDs that hold the one identity `name: twin`.
+TWIN_SITE_NODE_IDS: tuple[str, ...] = (
+    "18d52a8a-0000-0000-0000-000000000061",
+    "18d52a8a-0000-0000-0000-000000000062",
+)
 
 
 class Variant(enum.Enum):
@@ -309,6 +318,7 @@ def _problem_records() -> dict[str, list[dict[str, Any]]]:
             {"id": 3, "name": "berlin", "status": "decommissioning"},
             {"id": 4, "name": "dup", "status": "active"},
             {"id": 5, "name": "dup", "status": "planned"},
+            {"id": int(TWIN_SITE_SOURCE_ID), "name": TWIN_SITE_NAME, "status": "active"},
         ],
         "LocationRack": [
             {"id": 21, "name": "comms-closet", "facility_id": "F1", "description": "first floor"},
@@ -366,14 +376,26 @@ def source_records(variant: Variant = Variant.ALL) -> dict[str, list[dict[str, A
     return _merge(_valid_records(), _problem_records(), _dependents_of_problem_device())
 
 
-def destination_records() -> dict[str, list[dict[str, Any]]]:
-    """Nodes Infrahub already holds, as model data by kind.
+def twin_site_nodes() -> list[dict[str, Any]]:
+    """Two Infrahub `LocationSite` nodes with the one identity `name: twin` (`destination_identity_ambiguous`)."""
+    return [
+        {"local_id": node_id, "name": TWIN_SITE_NAME, "status": status}
+        for node_id, status in zip(TWIN_SITE_NODE_IDS, ("active", "planned"), strict=True)
+    ]
+
+
+def destination_records(records: Mapping[str, list[dict[str, Any]]] | None = None) -> dict[str, list[dict[str, Any]]]:
+    """Nodes Infrahub already holds, as model data by kind, for the source `records` (the full fixture by default).
 
     `LocationRack comms-closet` at facility `F1` exists with another description, so the
     source's `F1` rack is an update and its `F2` rack a create: two source identities that
-    Infrahub stores as one node (`identities_merge_in_destination`).
+    Infrahub stores as one node (`identities_merge_in_destination`). When the source returns
+    the site `twin`, Infrahub holds two nodes with that identity (`destination_identity_ambiguous`).
     """
+    sites = (records if records is not None else source_records()).get("LocationSite", [])
+    twin = [] if all(site.get("name") != TWIN_SITE_NAME for site in sites) else twin_site_nodes()
     return {
+        **({"LocationSite": twin} if twin else {}),
         "LocationRack": [
             {
                 "local_id": "18d52a8a-0000-0000-0000-000000000021",
@@ -381,7 +403,7 @@ def destination_records() -> dict[str, list[dict[str, Any]]]:
                 "facility_id": "F1",
                 "description": "old description",
             }
-        ]
+        ],
     }
 
 
@@ -506,6 +528,9 @@ __all__ = [
     "SITE_STATUS_CHOICES",
     "SPECIAL_CREDENTIAL",
     "SPECIAL_CREDENTIAL_NAME",
+    "TWIN_SITE_NAME",
+    "TWIN_SITE_NODE_IDS",
+    "TWIN_SITE_SOURCE_ID",
     "ProblemFixtureAdapter",
     "ProblemFixtureModel",
     "Variant",
@@ -516,4 +541,5 @@ __all__ = [
     "schema_mapping",
     "schema_record",
     "source_records",
+    "twin_site_nodes",
 ]

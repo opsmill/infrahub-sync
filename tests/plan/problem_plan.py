@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from infrahub_sync import SyncInstance
+from infrahub_sync.plan.destination_ambiguity import DestinationIdentityAmbiguities
 from infrahub_sync.plan.reader import load_plan_artifact
 from infrahub_sync.potenda import Potenda
 from infrahub_sync.runtime_schema.domain import normalize_destination_schema
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from diffsync import DiffSyncModel
 
     from infrahub_sync import SchemaMappingModel
+    from infrahub_sync.plan.destination_ambiguity import DestinationIdentityAmbiguity
     from infrahub_sync.plan.models import PlanManifest, PlannedOperation, PlanReport
 
 RUN_ID = "20261015T120000-problem"
@@ -59,6 +61,18 @@ class FixtureDestination(ProblemFixtureAdapter):
         self.writes: list[str] = []
         # The identity checks read the destination's schema, as they read Infrahub's.
         self.schema = dict(normalize_destination_schema(schema).kinds)
+        # Stored as the Infrahub adapter stores: two nodes with one identity are recorded.
+        self._ambiguities = DestinationIdentityAmbiguities()
+
+    def load_record(self, model: Any, element: Any, record: Any, **hooks: Any) -> Any:  # noqa: ANN401
+        """Store through the recorder of nodes that share one identity, as the Infrahub adapter does."""
+        hooks.setdefault("store_item", lambda item: self._ambiguities.store(self, item))
+        return super().load_record(model, element, record, **hooks)
+
+    @property
+    def destination_identity_ambiguities(self) -> list[DestinationIdentityAmbiguity]:
+        """The identities that two or more destination records hold."""
+        return self._ambiguities.ambiguities()
 
     def record_to_data(  # noqa: PLR6301 - overrides the fixture adapter's method
         self,
@@ -110,7 +124,7 @@ def plan_fixture(  # noqa: PLR0913 - one keyword per part of the fixture a test 
     config: SyncInstance | None = None,
     schema: Mapping[str, Any] | None = None,
 ) -> PlannedFixture:
-    """Plan `variant` (or `records`) against `destination` (the fixture's by default).
+    """Plan `variant` (or `records`) against `destination` (by default, the fixture's for those records).
 
     `config` and `schema` replace the fixture configuration and destination schema record.
     """
@@ -121,15 +135,11 @@ def plan_fixture(  # noqa: PLR0913 - one keyword per part of the fixture a test 
     def models() -> dict[str, type[DiffSyncModel]]:
         return build_runtime_models(snapshot=snapshot, configuration=configuration, model_base=ProblemFixtureModel)
 
-    source = source_class(
-        target="source",
-        adapter=configuration.source,
-        config=configuration,
-        records=copy.deepcopy(dict(records)) if records is not None else source_records(variant),
-    )
+    raw_records = copy.deepcopy(dict(records)) if records is not None else source_records(variant)
+    source = source_class(target="source", adapter=configuration.source, config=configuration, records=raw_records)
     bind_runtime_models(source, models())
     target = FixtureDestination(
-        configuration, destination if destination is not None else destination_records(), raw_schema
+        configuration, destination if destination is not None else destination_records(raw_records), raw_schema
     )
     bind_runtime_models(target, models())
     potenda = Potenda(

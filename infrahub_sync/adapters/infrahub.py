@@ -29,6 +29,7 @@ from infrahub_sync.configuration.credentials import (
 )
 from infrahub_sync.generator import has_field
 from infrahub_sync.plan.canonical import canonical_json_bytes
+from infrahub_sync.plan.destination_ambiguity import DestinationIdentityAmbiguities, DestinationIdentityAmbiguity
 from infrahub_sync.plan.errors import (
     NullRelationshipValueError,
     PeerAmbiguousError,
@@ -838,17 +839,25 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 original_node: InfrahubNodeSync = next(node for node, obj in node_dict_pairs if obj == record)
                 self.client.store.set(key=item.get_unique_id(), node=original_node)
 
-            # The destination side updates or adds, as before spec 009: two Infrahub nodes with
-            # one mapped identity are not a source problem (research R3), so the plan continues.
+            # The destination side updates or adds, as before spec 009, so the load continues; two
+            # Infrahub nodes with one mapped identity are recorded as `destination_identity_ambiguous`.
             store_item = None if self.target == "source" else self._update_or_add_item
             for transformed_obj in transformed_objs:
                 self._release_hydrated_peer(model, transformed_obj)
                 self.load_record(model, element, transformed_obj, after_add=fill_sdk_store, store_item=store_item)
 
     def _update_or_add_item(self, item: DiffSyncModel) -> DiffSyncModel:
-        """Store `item`, replacing the model already stored under the same unique ID."""
-        stored, _ = self.update_or_add_model_instance(item)
-        return stored
+        """Store `item`, replacing the model already stored under the same unique ID, and record that node."""
+        return self._identity_ambiguities.store(self, item)
+
+    @property
+    def _identity_ambiguities(self) -> DestinationIdentityAmbiguities:
+        return self.__dict__.setdefault("_destination_identity_ambiguities", DestinationIdentityAmbiguities())
+
+    @property
+    def destination_identity_ambiguities(self) -> list[DestinationIdentityAmbiguity]:
+        """The identities that two or more Infrahub nodes hold, found while loading the destination."""
+        return self._identity_ambiguities.ambiguities()
 
     def record_to_data(
         self,

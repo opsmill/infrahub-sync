@@ -158,7 +158,11 @@ store. On the source side, it records a record that cannot be built in the adapt
   loaded, or that the source does not return.
 
 Any other failure while building a source record is raised as `RecordLoadError` and fails
-the load. On the destination side, `load_record` catches nothing.
+the load. On the destination side, `load_record` catches nothing. The Infrahub adapter stores
+each destination record through `DestinationIdentityAmbiguities.store`
+(`infrahub_sync/plan/destination_ambiguity.py`): two Infrahub nodes with one identity keep one
+model in the store, and their node IDs are recorded for the problem
+`destination_identity_ambiguous`.
 
 `peer_unique_id` resolves a reference. It looks up the peer among the loaded records, then in
 the load report, then among the IDs that a configured filter removed. A reference on an

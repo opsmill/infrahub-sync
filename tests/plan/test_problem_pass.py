@@ -1,10 +1,10 @@
 """The problem pass lists every problem of the fixture in one plan (spec 009 T031, FR-003).
 
-The T001 fixture holds one record of each of the seven problem types. `peer_not_found_in_source`
+The T001 fixture holds one record of each of the eight problem types. `peer_not_found_in_source`
 is found twice: once for the interface `eth9`, whose required `device` the source does not
 return, and once for the IP address `10.0.0.9/32`, whose optional `vrf` the source does not
-return. The second record is kept without that relationship (FR-005), so the fixture lists eight
-problem entries of seven types.
+return. The second record is kept without that relationship (FR-005), so the fixture lists nine
+problem entries of eight types.
 """
 
 from __future__ import annotations
@@ -23,7 +23,9 @@ from tests.plan.problem_fixtures import (
     PROBLEM_DEVICE_SOURCE_ID,
     SITE_STATUS_CHOICES,
     Variant,
+    destination_records,
     source_records,
+    twin_site_nodes,
 )
 from tests.plan.problem_plan import PlannedFixture, plan_fixture
 
@@ -54,6 +56,8 @@ def test_every_problem_type_is_listed(planned: PlannedFixture) -> None:
         "identities_merge_in_destination": 1,
         # `eth9` (required, left out) and `10.0.0.9/32` (optional, kept).
         "peer_not_found_in_source": 2,
+        # Infrahub holds two `LocationSite twin` nodes.
+        "destination_identity_ambiguous": 1,
     }
 
 
@@ -148,6 +152,8 @@ _TEMPLATES = {
     r"that Infrahub would store as one node\.$",
     "peer_not_found_in_source": r"^\w+ record source ID \d+: the relationship \w+ refers to \w+ record source "
     r"ID \d+, which the source does not return\.$",
+    "destination_identity_ambiguous": r"^Infrahub holds \d+ \w+ objects with the identity .+; the plan cannot tell "
+    r"which one \w+ record (source ID \d+|with no source ID) maps to, so it plans no operation for that identity\.$",
 }
 
 
@@ -230,7 +236,11 @@ def test_after_the_data_is_fixed_the_left_out_records_are_planned(tmp_path: Path
     first = plan_fixture(tmp_path / "first")
     left_out_ids = {(item.record.kind, item.record.source_id) for item in first.report.left_out}
 
-    second = plan_fixture(tmp_path / "second", records=_fixed(source_records(Variant.ALL)))
+    records = _fixed(source_records(Variant.ALL))
+    destination = destination_records(records)
+    # The team removed the second Infrahub node of the site `twin`.
+    destination["LocationSite"] = twin_site_nodes()[:1]
+    second = plan_fixture(tmp_path / "second", records=records, destination=destination)
     planned_payloads = {
         (operation.kind, operation.payload.get("name") or operation.payload.get("address"))
         for operation in second.operations

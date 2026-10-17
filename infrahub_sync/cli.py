@@ -651,6 +651,9 @@ def _echo_problem(problem: PlanProblemResource) -> None:
             f"{problem.field} refers to {problem.peer.kind} source ID {problem.peer.source_id}, "
             "which is not in the source"
         )
+    elif problem.problem_type == "destination_identity_ambiguous" and problem.destination_ids:
+        ids = problem.destination_ids
+        detail = f"{len(ids)} Infrahub objects hold this identity: {', '.join(ids)}; no operation targets it"
     _report_line(problem.problem_type, problem.record, detail)
 
 

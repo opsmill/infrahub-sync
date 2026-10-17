@@ -42,12 +42,15 @@ still present in the manifest with zero counts.
 
 Content rule: entries hold source values, schema names and reasons rendered from fixed
 templates. No entry is built from a connection setting or from the text of an error, so the
-report needs no value replacement (research R13, R14).
+report needs no value replacement (research R13, R14). A `destination_identity_ambiguous`
+problem also holds `destination_ids`, the Infrahub node IDs that share one identity; every other
+problem line leaves that key out, so its bytes are the same as before the type was added.
 
 ## Operations file
 
 `operations.jsonl` holds only selected operations (research R2, step 5): no operation of a
-left-out record, no delete of a record that the load could not build, and no relationship to a
+left-out record, no operation of an identity that two or more Infrahub objects hold (a delete
+included), no delete of a record that the load could not build, and no relationship to a
 left-out peer. The writer refuses an operation that still holds a left-out placeholder.
 
 ## Read and apply rules
@@ -56,7 +59,7 @@ left-out peer. The writer refuses an operation that still holds a left-out place
 | --- | --- | --- |
 | 2 | yes | refused (today) |
 | 3 | yes, with empty report | refused: `PlanFormatApplyUnsupportedError`, "plan again" |
-| 4 | yes | yes, after the left-out count check |
+| 4 | yes | yes, after the left-out confirmation check |
 
 Verification refuses a format-4 plan whose `report.jsonl` is missing, whose digest or size does
 not match, or whose line counts differ from the manifest.

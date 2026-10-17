@@ -1,12 +1,13 @@
 """The plan problem pass, the dependency walk and the selection step (spec 009 research R7).
 
 `find_problems` reads the load reports, the source store, the destination schema record and
-the derived operations, and returns the plan report: the problems of the seven types, the
+the derived operations, and returns the plan report: the problems of the eight types, the
 records the plan leaves out and the records it keeps without one optional relationship. It
 changes no store and no operation.
 
 `select_operations` is the one place the report is applied. It is pure: it removes the
-operations of left-out records and the deletes of records the load could not build, removes
+operations of left-out records, of identities that two destination nodes hold, and the deletes
+of records the load could not build, removes
 from a kept record's operation the relationship to a left-out peer, and returns new
 operations without any left-out peer placeholder.
 
@@ -30,6 +31,7 @@ from infrahub_sync.plan.derive import (
     _resolve_references,
     _source_identities,
 )
+from infrahub_sync.plan.destination_ambiguity import destination_identity_ambiguities
 from infrahub_sync.plan.destination_only_peer import destination_only_peers
 from infrahub_sync.plan.errors import SourcePeerUnresolvedError, UnformableDestinationIdentityError
 from infrahub_sync.plan.keying import (
@@ -113,6 +115,10 @@ _REASON_TEMPLATES: Mapping[ProblemType, str] = {
         "{record} and {others} have different source identities that Infrahub would store as one node."
     ),
     "peer_not_found_in_source": "{record}: the relationship {field} refers to {peer}, which the source does not return.",
+    "destination_identity_ambiguous": (
+        "Infrahub holds {count} {kind} objects with the identity {identity}; the plan cannot tell which one {record} "
+        "maps to, so it plans no operation for that identity."
+    ),
 }
 
 
@@ -136,6 +142,8 @@ def _problem(  # pylint: disable=too-many-arguments  # the fields of one problem
     peer: PlanRecordReference | None = None,
     other_records: Sequence[PlanRecordReference] = (),
     error_type: str | None = None,
+    destination_ids: Sequence[str] | None = None,
+    identity: Mapping[str, Any] | None = None,
 ) -> PlanProblem:
     """Build one problem, its reason rendered from the fixed template of its type."""
     others = ", ".join(_named(other) for other in other_records[:3])
@@ -149,6 +157,9 @@ def _problem(  # pylint: disable=too-many-arguments  # the fields of one problem
         peer=_named(peer) if peer is not None else "",
         others=others,
         error_type=error_type or "",
+        count=len(destination_ids or ()),
+        kind=record.kind,
+        identity=_shown(dict(identity or {})),
     )
     return PlanProblem(
         problem_type=problem_type,
@@ -158,6 +169,7 @@ def _problem(  # pylint: disable=too-many-arguments  # the fields of one problem
         allowed=list(allowed) if allowed is not None else None,
         peer=peer,
         other_records=list(other_records),
+        destination_ids=list(destination_ids) if destination_ids is not None else None,
         reason=reason[:REPORT_REASON_LIMIT],
     )
 
@@ -574,6 +586,47 @@ def _identity_group_problems(
         findings.add(problem, members)
 
 
+def _destination_ambiguity_problems(
+    *, destination: Any, view: _SourceView, config: SyncConfig | None, findings: _Findings
+) -> None:
+    """List each identity that two or more destination nodes hold (`destination_identity_ambiguous`).
+
+    The source record with that identity is left out. Without one, the problem names the
+    identity as the destination forms it, so the selection step plans no delete for it either.
+    """
+    for ambiguity in destination_identity_ambiguities(destination):
+        key = view.by_unique_id.get((ambiguity.kind, ambiguity.unique_id))
+        if key is not None:
+            reference, keys = view.records[key].reference(), [key]
+        else:
+            identity = _destination_identity(destination, ambiguity.kind, ambiguity.identifiers, config)
+            reference, keys = PlanRecordReference(kind=ambiguity.kind, identity=identity), []
+        problem = _problem(
+            "destination_identity_ambiguous",
+            reference,
+            destination_ids=ambiguity.node_ids,
+            identity=ambiguity.identifiers,
+        )
+        findings.add(problem, keys)
+
+
+def _destination_identity(
+    destination: Any, kind: str, identifiers: Mapping[str, Any], config: SyncConfig | None
+) -> dict[str, Any] | None:
+    """Form an identity from the destination store, as `derive_deletes` forms a delete's."""
+    try:
+        resolved = _resolve_references(
+            values=identifiers,
+            candidates=reference_candidates(config, kind),
+            store=destination.store,
+            config=config,
+            owning_kind=kind,
+        )
+        return _identity_from_keys(keys=identifiers, kind=kind, resolved=resolved)
+    except (SourcePeerUnresolvedError, UnformableDestinationIdentityError):
+        return None
+
+
 def _reference_order(reference: PlanRecordReference) -> tuple[str, bytes, str]:
     identity = b"" if reference.identity is None else canonical_json_bytes(reference.identity)
     return reference.kind, identity, reference.source_id or ""
@@ -778,6 +831,7 @@ def find_problems(  # pylint: disable=too-many-arguments  # the pass's inputs (r
     _dropdown_problems(source=source, view=view, schema=schema, findings=findings)
     groups = _identity_groups(operations=operations, source=source, config=config, destination=destination)
     _identity_group_problems(groups, view, findings)
+    _destination_ambiguity_problems(destination=destination, view=view, config=config, findings=findings)
     left, kept = _walk(source=source, view=view, schema=schema, config=config, findings=findings)
     kept = _mark_relationship_only_updates(
         kept, operations=operations, view=view, source=source, destination=destination
@@ -792,7 +846,8 @@ def select_operations(operations: Sequence[PlannedOperation], report: PlanReport
     """Apply the plan report to the derived operations (research R7 point 3).
 
     Removes every operation of a left-out record, including a delete, so a left-out record
-    that exists in Infrahub stays as it is. When a record the load could not build has no
+    that exists in Infrahub stays as it is, and every operation of an identity that two or more
+    Infrahub nodes hold (`destination_identity_ambiguous`), whether or not the source has it. When a record the load could not build has no
     known identity, it removes every delete of its kind, since that record may be any node of
     the kind (FR-008). From every other operation it removes the peers
     that are left out or not in the source: a create keeps the other peers of a cardinality-
@@ -813,6 +868,10 @@ def select_operations(operations: Sequence[PlannedOperation], report: PlanReport
         return kind, canonical_json_bytes(resolve_left_out_placeholders(identity, lookup))
 
     left = {key(item.record.kind, item.record.identity) for item in report.left_out if item.record.identity is not None}
+    ambiguous = [
+        problem.record for problem in report.problems if problem.problem_type == "destination_identity_ambiguous"
+    ]
+    left |= {key(record.kind, record.identity) for record in ambiguous if record.identity is not None}
     kept: dict[tuple[str, bytes], list[KeptRecord]] = {}
     for item in report.kept:
         if item.record.identity is not None:
@@ -824,6 +883,7 @@ def select_operations(operations: Sequence[PlannedOperation], report: PlanReport
     # A record the load could not build and whose identity is not known may be any Infrahub
     # node of its kind, so the plan deletes none of that kind (FR-008).
     no_deletes = {item.record.kind for item in report.left_out if item.record.identity is None and not item.loaded}
+    no_deletes |= {record.kind for record in ambiguous if record.identity is None}
     withheld: dict[str, int] = {}
     selected: list[PlannedOperation] = []
     for operation in operations:

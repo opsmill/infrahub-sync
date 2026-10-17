@@ -380,16 +380,19 @@ The three routes return pages of the same shape:
 - `limit` is 1 to 500, and 500 by default. Entries are in the stable order of the plan
   report. `next_offset` is `null` on the last page.
 - `kind` limits the entries to one destination kind. `problem_type` limits the problems to one
-  of the seven problem types: `dropdown_value_not_in_choices`, `duplicate_source_identity`,
+  of the eight problem types: `dropdown_value_not_in_choices`, `duplicate_source_identity`,
   `destination_identity_collision`, `wrong_value_type`, `required_peer_excluded_by_filter`,
-  `identities_merge_in_destination`, and `peer_not_found_in_source`. Another value is refused
-  with `422`.
+  `identities_merge_in_destination`, `peer_not_found_in_source`, and
+  `destination_identity_ambiguous`. Another value is refused with `422`.
 - `plan_checksum` names the plan that the page comes from. Pass
   `expected_checksum=<hex>` to require that plan: a request that names another plan is refused
   with `409 plan-changed`.
 - A problem entry holds the source `record`, the `field`, the source `value`, the `allowed`
   choices of a Dropdown attribute, the `peer` that a relationship names, the `other_records`
-  of a group of records with the same identity, and a `reason` built from a fixed template.
+  of a group of records with the same identity, and a `reason` built from a fixed template. A
+  `destination_identity_ambiguous` entry also holds `destination_ids`, the IDs of the Infrahub
+  objects that have the same identity; its `record` has `source_id` `null` when the source has
+  no record with that identity.
   No entry holds a connection setting or the text of an error.
 - A left-out entry holds the `record`, its `cause` (`has_problem` or
   `depends_on_left_out`), its `problem_types`, the `depends_on` record and the

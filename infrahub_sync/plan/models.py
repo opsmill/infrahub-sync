@@ -388,6 +388,7 @@ ProblemType = Literal[
     "required_peer_excluded_by_filter",
     "identities_merge_in_destination",
     "peer_not_found_in_source",
+    "destination_identity_ambiguous",
 ]
 """The stable problem type names (spec 009 FR-024). A name is never renamed or removed."""
 
@@ -444,12 +445,22 @@ class PlanProblem(BaseModel):
     allowed: list[str] | None = None
     peer: PlanRecordReference | None = None
     other_records: list[PlanRecordReference] = Field(default_factory=list)
+    # The Infrahub node IDs that hold one identity (`destination_identity_ambiguous` only).
+    destination_ids: list[str] | None = None
     reason: str = Field(min_length=1, max_length=REPORT_REASON_LIMIT)
 
     @field_validator("value", mode="before")
     @classmethod
     def _limit_value(cls, value: Any) -> Any:
         return limited_report_value(value)
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_destination_ids(self, handler: Any) -> Any:
+        # Every other problem keeps the line it had before this field existed.
+        data = handler(self)
+        if isinstance(data, dict) and data.get("destination_ids") is None:
+            data.pop("destination_ids", None)
+        return data
 
 
 class LeftOutRecord(BaseModel):

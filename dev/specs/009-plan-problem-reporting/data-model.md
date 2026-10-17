@@ -15,6 +15,7 @@ source data, schema names, Infrahub's own error message, or fixed templates.
 | `required_peer_excluded_by_filter` | A required relationship's peer was removed by a configured filter | none; `peer` names the excluded peer |
 | `identities_merge_in_destination` | Two or more source objects with different mapping identities would be stored as one Infrahub node | every other record in the group |
 | `peer_not_found_in_source` | A source record refers to a peer that is not in the source at all: not loaded, not in the load report, not removed by a filter (research R4) | none; `peer` names the missing peer by kind and source ID |
+| `destination_identity_ambiguous` | Two or more Infrahub objects of one kind have the same configured identity (the mapping's `identifiers`) while the plan reads Infrahub (research R3, decided 2026-10-17) | none; `destination_ids` lists the Infrahub node IDs. `record` is the source record with that identity, or, when the source has none, a reference with `source_id` null and the identity as Infrahub forms it |
 
 The names are part of the public contract. A later release may add a type; an existing name is
 never renamed or removed.
@@ -56,6 +57,7 @@ the problem pass reads it.
 | `allowed` | list of strings or null | For `dropdown_value_not_in_choices`, the attribute's choices |
 | `peer` | Source record reference or null | For `required_peer_excluded_by_filter`, the excluded peer. For `peer_not_found_in_source`, the missing peer, with `identity` null |
 | `other_records` | list of Source record reference | For the identity types, at least one entry |
+| `destination_ids` | list of strings, absent otherwise | For `destination_identity_ambiguous` only: the Infrahub node IDs that hold the identity, in load order. The key is absent from every other problem line |
 | `reason` | string | Rendered from a fixed template per problem type over the fields above; at most 512 characters |
 
 A record with several problems has one entry per problem and counts once as left out.

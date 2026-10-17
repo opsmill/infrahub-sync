@@ -196,7 +196,7 @@ def test_the_report_lines_follow_the_stable_order(tmp_path: Path) -> None:
         return (rank, "", record["kind"], identity, line["relationship"])
 
     assert lines == sorted(lines, key=order)
-    assert [line["entry"] for line in lines].count("problem") == 8
+    assert [line["entry"] for line in lines].count("problem") == 9
     assert all(
         raw == canonical_json_bytes(json.loads(raw))
         for raw in (planned.run_dir / PLAN_DIR_NAME / REPORT_FILE_NAME).read_bytes().splitlines()
@@ -322,7 +322,7 @@ def test_report_pages_filter_by_entry_kind_and_problem_type(tmp_path: Path) -> N
     first = report_page(report, entry="left_out", offset=0, limit=4)
     rest = report_page(report, entry="left_out", offset=4, limit=500)
 
-    assert problems.total == 8
+    assert problems.total == 9
     assert problems.next_offset is None
     assert by_type.total == 2
     assert {line["problem_type"] for line in by_type.entries} == {"peer_not_found_in_source"}

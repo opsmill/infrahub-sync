@@ -1295,6 +1295,25 @@ def test_runs_problems_prints_the_reason_for_the_other_problem_types(client: Mag
     ]
 
 
+def test_runs_problems_prints_the_infrahub_node_ids_of_an_ambiguous_identity(client: MagicMock) -> None:
+    client.plan_problems.return_value = (
+        PlanProblemResource(
+            problem_type="destination_identity_ambiguous",
+            record=PlanRecordReferenceResource(kind="LocationSite", identity={"name": "twin"}),
+            destination_ids=("node-1", "node-2"),
+            reason='Infrahub holds 2 LocationSite objects with the identity {"name":"twin"}; ...',
+        ),
+    )
+
+    result = _invoke(client, "runs", "problems", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines() == [
+        "destination_identity_ambiguous  LocationSite  name=twin  "
+        "2 Infrahub objects hold this identity: node-1, node-2; no operation targets it"
+    ]
+
+
 def test_runs_left_out_prints_one_line_per_left_out_record(client: MagicMock) -> None:
     client.plan_left_out.return_value = (
         LeftOutRecordResource(

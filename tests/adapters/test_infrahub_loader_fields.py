@@ -48,6 +48,7 @@ from infrahub_sync import (
     utils,
 )
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, InfrahubModel
+from infrahub_sync.plan.destination_ambiguity import DestinationIdentityAmbiguity
 
 # ---------------------------------------------------------------------------
 # DiffSync models. Identifiers are deliberately absent from the attribute lists,
@@ -458,12 +459,12 @@ def _two_nodes_with_one_identity_client() -> StrictClient:
     )
 
 
-def test_model_loader_merges_destination_nodes_with_the_same_mapped_identity() -> None:
-    """The destination side updates or adds, as before spec 009: the plan does not fail.
+def test_model_loader_records_destination_nodes_with_the_same_mapped_identity() -> None:
+    """The destination side keeps one model and records the nodes (`destination_identity_ambiguous`).
 
-    Two Infrahub nodes with one mapped identity are not a source problem (research R3). As
-    with `update_or_add_model_instance` before, the first model stays in the store and takes
-    the attributes of the next one.
+    The load does not fail: as with `update_or_add_model_instance` before, the first model
+    stays in the store and takes the attributes of the next one. The node IDs are recorded, so
+    the plan lists the identity as a problem and plans no operation for it (decided 2026-10-17).
     """
 
     adapter = _Harness(
@@ -476,6 +477,11 @@ def test_model_loader_merges_destination_nodes_with_the_same_mapped_identity() -
     assert _loaded_names(adapter, LocationSite) == ["dc-east"]
     assert _loaded(adapter, LocationSite, "dc-east").local_id == "id-1"
     assert adapter.load_report == []
+    assert adapter.destination_identity_ambiguities == [
+        DestinationIdentityAmbiguity(
+            kind="LocationSite", unique_id="dc-east", identifiers={"name": "dc-east"}, node_ids=("id-1", "id-2")
+        )
+    ]
 
 
 def test_model_loader_records_source_nodes_with_the_same_mapped_identity_as_a_duplicate() -> None:

@@ -237,6 +237,7 @@ record, and what is wrong:
 ```text
 dropdown_value_not_in_choices  DcimDevice  location=dc1 name=rtr1  status='planned' is not one of: active, deprecated, maintenance, provisioning, reserved
 peer_not_found_in_source  IpamIPAddress  address=10.0.0.1/32  vrf refers to IpamVRF source ID 17, which is not in the source
+destination_identity_ambiguous  LocationSite  name=twin  2 Infrahub objects hold this identity: node-1, node-2; no operation targets it
 ```
 
 The problem types are:
@@ -253,6 +254,12 @@ The problem types are:
 - `identities_merge_in_destination`: two or more source records with different identities
   would be stored as one Infrahub node.
 - `peer_not_found_in_source`: a relationship points to a record that is not in the source.
+- `destination_identity_ambiguous`: two or more Infrahub objects of one kind have the identity
+  that the package's `identifiers` define. The problem names the kind, the identity, and the
+  Infrahub IDs of those objects. The plan leaves out the source record with that identity, and
+  plans no create, update or delete for that identity. When the source has no record with that
+  identity, the problem is still listed and neither object is deleted. To fix it, remove or
+  rename the extra objects in Infrahub, then create a new plan.
 
 `runs left-out` prints each left-out record and its cause: `has_problem` with the problem
 types, or `depends_on_left_out` with the left-out record it depends on and the relationship:
@@ -264,7 +271,8 @@ depends_on_left_out  InterfacePhysical  device=rtr1 name=eth0  depends on DcimDe
 `runs kept` prints each record that the plan writes without one optional relationship, and
 names the related record that is left out or not in the source.
 
-Fix a problem in the source data or in the package, then create a new plan. To write the
+Fix a problem in the source data, in the package or, for `destination_identity_ambiguous`, in
+Infrahub, then create a new plan. To write the
 other records now, apply the plan and confirm the records left out.
 
 ## Apply the reviewed plan
