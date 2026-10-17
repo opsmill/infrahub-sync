@@ -1,0 +1,29 @@
+changelog/+013-compose-images.changed.md
+  s_47078ea83e766d::t_b11b73c785eee1 1
+dev/specs/013-compose-images/contracts/object-store.md
+  s_47078ea83e766d::t_2a786f5aabd0c8 12-14
+dev/specs/013-compose-images/data-model.md
+  s_47078ea83e766d::t_4651a2d124dba3 107-115
+dev/specs/013-compose-images/opsmill-implement-report.md
+  s_47078ea83e766d::t_aeba51685db101 165-284
+dev/specs/013-compose-images/plan.md
+  s_47078ea83e766d::t_cfe032428b2c74 236-240,244-248,309,390-392
+dev/specs/013-compose-images/spec.md
+  s_47078ea83e766d::t_e1b136c6c5f5f7 452-456,459-463,468-469,489-493
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "46c24a0efd2e7706c894e6d34c768dcf5284aa64",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
