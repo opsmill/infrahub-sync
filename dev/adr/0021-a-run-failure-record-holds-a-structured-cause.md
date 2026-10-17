@@ -1,19 +1,19 @@
 # 21. A run's failure record holds a structured cause
 
-**Status**: Proposed, needs product sign-off (spec 009 FR-030)
+**Status**: Accepted (2026-10-17)
 **Date**: 2026-10-15
 **Source**: `dev/specs/009-plan-problem-reporting` (research R12)
 
-This record replaces the rule in the comment at `infrahub_sync/service/flow.py:723-725` ("A
-class name, never a message"). It keeps ADR 0005: the cause is built at the remote boundary
-only.
+This record replaces the rule "A class name, never a message", which a comment in
+`infrahub_sync/service/flow.py` stated before this decision. It keeps ADR 0005: the cause is
+built at the remote boundary only.
 
 ## Context
 
 A failed run records only the name of an error class, because a destination's text "can carry
-anything" (`infrahub_sync/service/flow.py:723-725`). A team cannot tell why a run failed
+anything" (`infrahub_sync/service/flow.py`). A team cannot tell why a run failed
 without the worker log (#369). An Infrahub rejection is reported as "a destination GraphQL
-rejection", without Infrahub's error code (`infrahub_sync/potenda/__init__.py:231-232`, #370).
+rejection", without Infrahub's error code (`infrahub_sync/potenda/__init__.py`, #370).
 Masking credential values in free text was considered and rejected for two reasons:
 
 - A short credential value also matches unrelated text, so masking it changes text that holds
@@ -45,7 +45,7 @@ an exception, an address, a header or a traceback. Each field has a length limit
   which is source data.
 - A failure of an unknown type records the class name of the innermost error that is not a
   wrapper, and a fixed message.
-- The secret-redaction guideline and the comment at `infrahub_sync/service/flow.py:723-725` are
+- The secret-redaction guideline and that comment in `infrahub_sync/service/flow.py` are
   rewritten to match this record.
 - The existing value replacement is unchanged. It no longer protects the run record, because the
   run record holds no free text.

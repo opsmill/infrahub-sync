@@ -20,7 +20,7 @@ reserved for the pre-existing `plan.parquet` row format, which is still written 
 never read by this path.
 
 For *why* the format is shaped this way, see [ADR 0001](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0001-saved-plan-artifact-format.md).
-For why format 4 records left-out records, see [ADR 0022](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0022-saved-plan-format-4-records-left-out-records.md) (status: Proposed).
+For why format 4 records left-out records, see [ADR 0022](https://github.com/opsmill/infrahub-sync/blob/feature/v3-develop/dev/adr/0022-saved-plan-format-4-records-left-out-records.md) (status: Accepted).
 
 ### What is on disk
 

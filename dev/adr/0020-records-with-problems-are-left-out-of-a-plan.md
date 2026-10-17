@@ -1,6 +1,6 @@
 # 20. Records with problems are left out of a plan
 
-**Status**: Proposed, needs product sign-off (spec 009 FR-029)
+**Status**: Accepted (2026-10-17)
 **Date**: 2026-10-15
 **Source**: `dev/specs/009-plan-problem-reporting` (research R11)
 

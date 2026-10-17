@@ -292,8 +292,11 @@ written or listed as problems (research.md R16).
   - Scenario 4 ran live: deleting a planned peer in Infrahub before the apply made operation 3 of 4 fail; `runs show` reported 2 of 4 written, the failed operation with its kind and identity, and that it did not write. A second apply of an applied run got 409 `new-plan-required`. The new plan had 3 operations: the 2 that were not written plus the deleted peer. The stopped apply was classified `internal_error` (`OperationApplyFailedError`), because the missing peer fails in the client before Infrahub answers.
   - Scenario 5 ran as its unit tests (`tests/plan/test_report_credentials_absent.py`, `tests/service/test_failure_cause_credentials.py`), as the scenario specifies. On the live tier, neither token appeared in the CLI output or in the run and results responses of the failed runs.
   - Scenario 5b ran as its unit tests (`tests/plan/test_stores_unchanged.py`, `tests/adapters/test_list_records_only_adapter.py`). On the live tier, the planned create of `qs-sw2` held no `primary_address` relationship.
-- [ ] T110 SIGN-OFF gate: before merge, confirm in the pull request that the product owner signed off ADR 0020 with the AD-12 amendment (T003, T007) and ADR 0021 (T004); then set the Status of `dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md`, `dev/adr/0021-a-run-failure-record-holds-a-structured-cause.md` and `dev/adr/0022-saved-plan-format-4-records-left-out-records.md` to "Accepted" with the date, and fill the sign-off line of `dev/specs/009-plan-problem-reporting/ad-12-amendment.md`. Without sign-off, Phases 3 and 5 do not merge.
-  - Waiting for product sign-off: ADR 0020, ADR 0021, ADR 0022 and the AD-12 amendment have the status "Proposed".
+- [x] T110 SIGN-OFF gate: before merge, confirm in the pull request that the product owner signed off ADR 0020 with the AD-12 amendment (T003, T007) and ADR 0021 (T004); then set the Status of `dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md`, `dev/adr/0021-a-run-failure-record-holds-a-structured-cause.md` and `dev/adr/0022-saved-plan-format-4-records-left-out-records.md` to "Accepted" with the date, and fill the sign-off line of `dev/specs/009-plan-problem-reporting/ad-12-amendment.md`. Without sign-off, Phases 3 and 5 do not merge.
+  - Signed off by Benoit Kohler on 2026-10-17: ADR 0020, ADR 0021, ADR 0022 and the AD-12
+    amendment have the status "Accepted (2026-10-17)". The AD-12 row was written to
+    `product/decisions.md` in `infrahub-sync-process` on the branch
+    `product/ad-12-plan-stage-policy` (commit `f0486ff`), which waits for a pull request there.
 
 ---
 

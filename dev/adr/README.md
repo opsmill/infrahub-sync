@@ -54,13 +54,13 @@ sequence and a lowercase kebab-case title, no `adr-` prefix, for example `0001-u
   Infrahub's task manager and `task-manager-db`, and what that costs. The amendment runs the
   Prefect server from the Sync image.
 - [0020 — Records with problems are left out of a plan](0020-records-with-problems-are-left-out-of-a-plan.md)
-  — proposed — a record with one of seven named problems, and every record that requires it,
-  is left out of the plan and counted, instead of failing the plan.
+  — accepted 2026-10-17 — a record with one of nine named problems, and every record that
+  requires it, is left out of the plan and counted, instead of failing the plan.
 - [0021 — A run's failure record holds a structured cause](0021-a-run-failure-record-holds-a-structured-cause.md)
-  — proposed — a failed run records its cause from named fields only, never from the text of an
+  — accepted 2026-10-17 — a failed run records its cause from named fields only, never from the text of an
   exception.
 - [0022 — Saved plan format 4 records left-out records](0022-saved-plan-format-4-records-left-out-records.md)
-  — proposed — the plan directory gains a report file covered by the checksum, and apply
+  — accepted 2026-10-17 — the plan directory gains a report file covered by the checksum, and apply
   accepts format 4 only.
 - [0023 — The Compose deployment takes an external object store and custom CA certificates from `.env`](0023-the-compose-deployment-takes-an-external-object-store-and-custom-ca-certificates-from-env.md)
   — how an operator replaces the bundled MinIO with an S3-compatible store, adds certificate

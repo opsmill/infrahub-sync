@@ -1,6 +1,6 @@
 # 22. Saved plan format 4 records left-out records
 
-**Status**: Proposed
+**Status**: Accepted (2026-10-17)
 **Date**: 2026-10-15
 **Source**: `dev/specs/009-plan-problem-reporting` (research R10)
 
@@ -33,8 +33,8 @@ The plan format becomes 4.
 - The report holds source data, schema names and fixed reason templates. No entry is built from
   connection settings or from the text of an error (ADR 0021).
 - Reading and review accept formats 2, 3 and 4. Apply accepts format 4 only, and refuses
-  format 3 with `PlanFormatApplyUnsupportedError` and the instruction to plan again
-  (`infrahub_sync/potenda/__init__.py:148-163`).
+  formats 2 and 3 with `PlanFormatApplyUnsupportedError` and the instruction to plan again
+  (`infrahub_sync/plan/apply_gate.py`).
 - When `report.left_out` is greater than zero, apply requires the person's confirmation (a yes
   or no flag; the plan checksum binds it to the reviewed plan) before the first ownership proof,
   so a refusal writes nothing.
