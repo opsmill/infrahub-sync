@@ -1,0 +1,30 @@
+dev/specs/011-operator-ui/spec.md
+  s_47078ea83e766d::t_32bdbff7126a94 347-352
+docs/docs/tutorials/netbox-to-existing-infrahub.mdx
+  s_47078ea83e766d::t_7fce4258d689f1 48-51
+docs/docs/operations/upgrading-from-the-v3-alpha.mdx
+  s_47078ea83e766d::t_988312b6bdc506 91-93
+docs/docs/operations/supported-platforms-and-limits.mdx
+  s_47078ea83e766d::t_7fce4258d689f1 64-68,71,75-79
+  s_47078ea83e766d::t_503e277144c95c 69-70
+docs/docs/configuration-package.mdx
+  s_47078ea83e766d::t_7fce4258d689f1 165-168
+docs/docs/tutorials/nautobot-to-existing-infrahub.mdx
+  s_47078ea83e766d::t_7fce4258d689f1 55-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b5b1a811badc9924b33ffc45302b223afd1f107",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
