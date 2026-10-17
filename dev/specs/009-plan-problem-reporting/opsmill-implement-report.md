@@ -259,3 +259,34 @@ Decided later on 2026-10-17, with the review fixes below.
 | Compose managed run | same, `tests/compose/test_managed_run.py` | 2026-10-17T03:33:47Z | `4 passed in 113.36s` |
 | Compose credential leaks | same, `tests/compose/test_credential_leaks.py` | 2026-10-17T03:35:44Z | `1 passed in 233.75s` |
 | Docs build | `uv run invoke docs.docusaurus` | 2026-10-17T03:39:43Z | `[SUCCESS] Generated static files in "build".` |
+
+### Sign-off of ADRs 0020, 0021 and 0022 (commit `94119cda`)
+
+- Benoit Kohler signed off on 2026-10-17. ADRs 0020, 0021 and 0022 and the AD-12 amendment have the status "Accepted (2026-10-17)", and `dev/adr/README.md` and `plan-artifact.md` say so. The sign-off line of `ad-12-amendment.md` names Benoit Kohler and the date, and notes that the AD-12 row was written to `product/decisions.md` in `infrahub-sync-process` on the branch `product/ad-12-plan-stage-policy` (commit `f0486ff`), which waits for a pull request there. T110 is ticked.
+- Wording fixed to match the code, with no new decision: the README entry of ADR 0020 said "seven named problems" and now says nine; ADR 0022 said apply refuses format 3 and pointed to `potenda/__init__.py:148-163`, and now says formats 2 and 3 and points to `infrahub_sync/plan/apply_gate.py`; ADR 0021 no longer cites line numbers of `service/flow.py` and `potenda/__init__.py` that have moved. The nine problem types, the yes or no confirmation, the failure types `destination_peer_missing` and `destination_peer_ambiguous`, and the refusal of `cleared_relationships` already matched the code.
+
+### Upgrade from the V3 alpha (commit `008b3a60`)
+
+- New page `docs/docs/operations/upgrading-from-the-v3-alpha.mdx`, in the Operations sidebar and linked from `v2-to-v3.mdx`. It covers: plans of format 2 or 3 must be planned again (`plan-format-not-applicable`, "plan again before applying"); the schema fingerprint now includes Dropdown choices, so validated packages that map a Dropdown get a new fingerprint; the stricter identifier rule of `configs validate --branch`, with a real finding and fix (`LocationRack`, `identifiers: ["name"]`, missing `site__name__value`); `declared_content` is read with `configs show --version` or `GET /configs/{config_id}/versions/{registry_version}`; `run.failure`, `verify_failure.failure`, the report counts and the new failure types.
+- `changelog/+009-declared-content.removed.md` holds the `declared_content` removal, taken out of `+009-configs-validate-branch.added.md`. `changelog/+009-stricter-validation.changed.md` records the stricter identifier rule and the fingerprint change. `durable-product-records.mdx` lists the Dropdown choices in the fingerprint.
+- Offline check of the examples: the destination-schema checks of `configs validate` (`collect_destination_schema_findings`) ran on `examples/netbox_to_infrahub/package.yml` with a schema built from `tests/data/nightly_schema` (generic inheritance applied, minimal Infrahub core kinds added). Result: 0 findings. With `LocationRack` set to `identifiers: ["name"]`, the check reported the finding quoted in the page, so the rule ran. The Nautobot examples (`nautobot-v1_to_infrahub`, `nautobot-v2_to_infrahub`) parse as package configurations, but their destination kinds (`RoleGeneric`, `StatusGeneric`, `ChoiceLocationType`, `InfraRack` and others) have no schema in this repository or in the schema library, so their identifiers could not be checked offline. It is not known whether they pass. The script is not committed.
+
+### NetBox example status mapping (commit `f4848eaa`)
+
+- Both `device_status` transforms of `examples/netbox_to_infrahub/package.yml` explain each pair and say that teams adjust the pairs to their own status meanings. The example README says the same in one sentence.
+
+### Limits and spec 011 (commit `6b5b1a81`)
+
+- `supported-platforms-and-limits.mdx` states that the testing release supports one worker per deployment (`configs validate --branch` compares with the most recent live worker, live for 90 seconds, `LIVE_WORKER_MAX_AGE`), and that tests need Infrahub 1.11 or later, because an older Infrahub returns no error code and the cause loses the node kind and attribute. `configuration-package.mdx` and both tutorials link these limits.
+- Finding: the measured versions in the docs and the development stack pin (`development/docker-compose.infrahub.yml`) are Infrahub 1.10.6, below the 1.11 floor. The benchmark runner uses 1.11.3. The pin was not changed.
+- Spec 011 FR-029 now says the UI reads a failed or stopped run's cause from `run.failure` and a failed verify's cause from `verify_failure.failure` of `GET /runs/{run_id}/results`, and shows a failure type it does not know by its name. Spec 011 does not list the problem types or the failure types, so no list was added.
+
+### Evidence of the final set
+
+| Gate | Command | Time (UTC) | Result |
+| --- | --- | --- | --- |
+| Markdown | `uv run rumdl check <changed docs and ADRs>` | 2026-10-17 | `Success: No issues found` |
+| Docs build | `uv run invoke docs.docusaurus` | 2026-10-17T03:48:34Z | `[SUCCESS] Generated static files in "build".`, no broken link or anchor |
+| Format | `uv run invoke format` | 2026-10-17T03:48:43Z | `All formatters have been executed!`, no file changed |
+| Pylint | `uv run invoke linter.lint-pylint` | 2026-10-17T03:48:44Z | `Pylint passed (0 diagnostics, score 10.0)` |
+| Unit tests | `uv run invoke tests.tests-unit` | 2026-10-17T03:48:56Z | `6472 passed, 4 skipped, 222 deselected, 4 warnings in 153.68s`; the two added tests are page checks on the new docs page |
