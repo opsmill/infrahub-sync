@@ -1,0 +1,55 @@
+infrahub_sync/failure_cause.py
+  s_47078ea83e766d::t_7918850e87cdce 6-8,40-41,75-76,110-114,267-271,275-293,482-483,485,489
+dev/specs/009-plan-problem-reporting/spec.md
+  s_47078ea83e766d::t_54a42452dc7871 364-367,409-413
+infrahub_sync/adapters/infrahub.py
+  s_47078ea83e766d::t_7918850e87cdce 567,573
+dev/specs/009-plan-problem-reporting/contracts/sync-api.md
+  s_47078ea83e766d::t_54a42452dc7871 95-101
+tests/service/test_stopped_apply.py
+  s_47078ea83e766d::t_4eba6ef205bd54 45
+  s_47078ea83e766d::t_78c8650ee144eb 4,16,30,44,58-62,142-177
+dev/adr/0021-a-run-failure-record-holds-a-structured-cause.md
+  s_47078ea83e766d::t_54a42452dc7871 28-30
+tests/adapters/test_infrahub_planned_write.py
+  s_47078ea83e766d::t_55a64715a8a707 1274-1275,1293
+docs/docs/operations/compose-troubleshooting.mdx
+  s_47078ea83e766d::t_54a42452dc7871 96-97
+docs/docs/reference/sync-http-api.mdx
+  s_47078ea83e766d::t_54a42452dc7871 512
+tests/service/test_failure_cause_credentials.py
+  s_47078ea83e766d::t_6f9466738cdac8 31-36
+  s_47078ea83e766d::t_e00b9d5fff811e 183-194
+dev/specs/009-plan-problem-reporting/research.md
+  s_47078ea83e766d::t_54a42452dc7871 513-514
+tests/service/test_failure_cause.py
+  s_47078ea83e766d::t_3827052453a3ea 39,598
+  s_47078ea83e766d::t_185bd565b1bea5 32-38,66,595-597,599-632,741-742
+infrahub_sync/plan/errors.py
+  s_47078ea83e766d::t_7918850e87cdce 271-272,274-276,283-303,307
+dev/specs/009-plan-problem-reporting/data-model.md
+  s_47078ea83e766d::t_54a42452dc7871 157-165
+changelog/+009-failure-cause.added.md
+  s_47078ea83e766d::t_dbabce36753bac 1
+docs/docs/running-a-sync.mdx
+  s_47078ea83e766d::t_dbabce36753bac 363,366
+  s_47078ea83e766d::t_54a42452dc7871 357-362,364-365,367-373
+tests/plan/stopped_apply.py
+  s_47078ea83e766d::t_526b5277f3acd7 19,47,49-53,55,67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e4f13fceda13ba5ded9207f5807ca57fa0204b4b",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
