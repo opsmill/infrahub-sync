@@ -564,13 +564,13 @@ class PeerResolver:
                 f"{readable}, referenced by operation {referring_operation_id!r}. Queried with: "
                 f"{sorted(filter_kwargs)}."
             )
-            raise PeerNotFoundError(msg)
+            raise PeerNotFoundError(msg, peer_kind=peer_kind, referring_operation_id=referring_operation_id)
         msg = (
             f"{len(results)} objects of kind {peer_kind!r} at the destination match the peer identity "
             f"{readable}, referenced by operation {referring_operation_id!r}, so the peer is ambiguous. "
             f"Queried with: {sorted(filter_kwargs)}."
         )
-        raise PeerAmbiguousError(msg)
+        raise PeerAmbiguousError(msg, peer_kind=peer_kind, referring_operation_id=referring_operation_id)
 
 
 class PeerIdentifierError(ValueError):

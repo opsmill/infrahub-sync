@@ -3,8 +3,9 @@
 `build_failure_cause` is the one place where a run failure becomes text that leaves the worker.
 It classifies the failure by the exception types in the cause chain and reads only named,
 typed attributes: the error code, message, and the kind and attribute in `extensions.data` of
-a `GraphQLError` from Infrahub, the kind, record ID and field of a typed Sync error, and the
-side and adapter name of a `SideLoadError`. It never formats an exception (`str(exc)`,
+a `GraphQLError` from Infrahub, the kind, record ID and field of a typed Sync error, the peer kind
+and operation ID of a peer that Infrahub did not resolve at apply time, and the side and
+adapter name of a `SideLoadError`. It never formats an exception (`str(exc)`,
 `repr(exc)`, `exc.args`), an address, a header or a traceback, so no credential can reach a
 cause, whatever its length or characters. Each field is limited in length; `summary` and `next_action` come from fixed
 templates.
@@ -36,6 +37,8 @@ from infrahub_sync.load_errors import SideLoadError, TransformError
 from infrahub_sync.plan.errors import (
     LeftOutConfirmationError,
     LeftOutPeerInOperationError,
+    PeerAmbiguousError,
+    PeerNotFoundError,
     PlanFormatApplyUnsupportedError,
     PlanSchemaChangedError,
     PlanVerificationError,
@@ -69,6 +72,8 @@ FailureType = Literal[
     "verification_failed",
     "apply_refused",
     "left_out_review_required",
+    "destination_peer_missing",
+    "destination_peer_ambiguous",
     "internal_error",
 ]
 
@@ -101,6 +106,11 @@ NEXT_ACTIONS: dict[str, str] = {
     "left_out_review_required": (
         "Review the left-out records with `infrahub-sync runs left-out`, then apply the plan with "
         "`infrahub-sync apply --confirm-left-out`."
+    ),
+    "destination_peer_missing": "Create and review a new plan, then apply that plan: a run accepts one apply.",
+    "destination_peer_ambiguous": (
+        "Remove the duplicate objects of the peer's kind in Infrahub, or add an attribute to that kind's "
+        "`identifiers` that tells them apart, then create and review a new plan."
     ),
     "internal_error": "Run the stage again. If it fails again, report the error class to OpsMill.",
 }
@@ -254,7 +264,31 @@ def _rules(stage: str) -> list[tuple[FailureType, Callable[[BaseException], bool
         ),
         ("verification_failed", lambda link: isinstance(link, _VERIFICATION) or _declares(link, "verification_failed")),
         ("apply_refused", lambda link: isinstance(link, _REFUSED) or _declares(link, "apply_refused")),
+        ("destination_peer_missing", lambda link: isinstance(link, PeerNotFoundError) and _peer_kind(link) is not None),
+        (
+            "destination_peer_ambiguous",
+            lambda link: isinstance(link, PeerAmbiguousError) and _peer_kind(link) is not None,
+        ),
     ]
+
+
+def _peer_kind(link: BaseException) -> str | None:
+    """The peer kind a destination peer error names; None when the query for the peer never ran."""
+    return _name(getattr(link, "peer_kind", None))
+
+
+_PEER_TYPES = frozenset({"destination_peer_missing", "destination_peer_ambiguous"})
+# The peer resolver belongs to the Infrahub adapter, the one destination with a write surface.
+_PEER_SYSTEM = FailureSystem(role="destination", adapter="infrahub")
+
+
+def _peer_summary(failure_type: str, link: BaseException) -> str:
+    kind = _peer_kind(link)
+    operation_id = _name(getattr(link, "referring_operation_id", None))
+    operation = f"operation {operation_id}" if operation_id else "an operation"
+    if failure_type == "destination_peer_missing":
+        return f"The {kind} peer of {operation} is missing in Infrahub: it was deleted or renamed after the plan"
+    return f"More than one {kind} object in Infrahub matches the peer of {operation}"
 
 
 def _classify(stage: str, chain: list[BaseException]) -> tuple[FailureType, BaseException | None]:
@@ -445,11 +479,14 @@ def build_failure_cause(
     elif isinstance(link, (RecordLoadError, TransformError)):
         fields.update(_record_fields(link))
         fields["record"] = fields["record"] or record
+    elif failure_type in _PEER_TYPES and link is not None:
+        fields.update(system=_PEER_SYSTEM, node_kind=_peer_kind(link))
     progress = _apply_progress(apply_record, operations) if stage in _WRITE_STAGES else None
+    summary = _peer_summary(failure_type, link) if failure_type in _PEER_TYPES and link else None
     return RunFailureCause(
         stage=stage,
         failure_type=failure_type,
-        summary=_summary(failure_type, stage, fields),
+        summary=summary or _summary(failure_type, stage, fields),
         apply_progress=progress,
         next_action=next_action(failure_type, stage),
         **fields,

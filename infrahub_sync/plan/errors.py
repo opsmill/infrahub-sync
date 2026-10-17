@@ -268,7 +268,32 @@ class UnserializablePayloadValueError(PlanArtifactError):
     )
 
 
-class PeerNotFoundError(PlanArtifactError):
+class _DestinationPeerError(PlanArtifactError):
+    """A peer identity that the destination query did not resolve to exactly one object.
+
+    `peer_kind` and `referring_operation_id` are typed names the failure cause reads (spec 009
+    `destination_peer_missing`); neither is built from record data or from error text. Both are
+    `None` when the query never ran.
+    """
+
+    # Raised before the SDK write on the planned-write surface, so no mutation was
+    # attempted for the operation it refuses (S6).
+    wrote = False
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        next_action: str | None = None,
+        peer_kind: str | None = None,
+        referring_operation_id: str | None = None,
+    ) -> None:
+        super().__init__(message, next_action=next_action)
+        self.peer_kind = peer_kind
+        self.referring_operation_id = referring_operation_id
+
+
+class PeerNotFoundError(_DestinationPeerError):
     """A peer identity matches no object at the destination.
 
     A **destination** miss, resolved at apply time. A peer missing from the loaded
@@ -276,19 +301,11 @@ class PeerNotFoundError(PlanArtifactError):
     different one (AD071).
     """
 
-    # Raised before the SDK write on the planned-write surface, so no mutation was
-    # attempted for the operation it refuses (S6).
-    wrote = False
-
     next_action = "Create the peer at the destination, or re-plan so the same plan creates it."
 
 
-class PeerAmbiguousError(PlanArtifactError):
+class PeerAmbiguousError(_DestinationPeerError):
     """A peer identity matches more than one object at the destination."""
-
-    # Raised before the SDK write on the planned-write surface, so no mutation was
-    # attempted for the operation it refuses (S6).
-    wrote = False
 
     next_action = (
         "The destination kind's identity is not unique for these values: de-duplicate at the "

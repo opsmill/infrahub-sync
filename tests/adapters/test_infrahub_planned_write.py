@@ -1271,6 +1271,8 @@ def test_a_zero_match_peer_refuses_the_operation_and_dispatches_nothing() -> Non
     assert "site-a" in message, "The refusal must name the peer identity."
     assert operation.operation_id in message, "The refusal must name the referring operation."
     assert not client.mutations, "The operation must not be dispatched."
+    # Typed names for the run's failure cause (`destination_peer_missing`), never the message.
+    assert (excinfo.value.peer_kind, excinfo.value.referring_operation_id) == (SITE_KIND, operation.operation_id)
 
 
 def test_a_multi_match_peer_refuses_naming_the_match_count() -> None:
@@ -1288,6 +1290,7 @@ def test_a_multi_match_peer_refuses_naming_the_match_count() -> None:
     assert "site-a" in message, "The refusal must name the peer identity."
     assert "2 objects" in message, "The refusal must name the match count."
     assert not client.mutations, "The operation must not be dispatched."
+    assert (excinfo.value.peer_kind, excinfo.value.referring_operation_id) == (SITE_KIND, operation.operation_id)
 
 
 # ---------------------------------------------------------------------------------------

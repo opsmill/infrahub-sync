@@ -361,7 +361,10 @@ equals the original count minus the operations written.
   of failure.
 - **FR-018**: Every other failure of a `plan`, `verify`, `apply` or `sync` run MUST record the
   failure type, and the kind, the source record identity and the field when the failure names
-  them.
+  them. A peer that an apply operation refers to and that Infrahub no longer holds (deleted or
+  renamed after the plan) MUST have its own failure type, `destination_peer_missing`, naming
+  the destination, the peer kind and the operation; a peer that matches more than one Infrahub
+  object MUST have the type `destination_peer_ambiguous` (decided on 2026-10-17).
 - **FR-019**: A cause MUST be built only from these fields:
   - the stage and the failure type
   - the system involved: source or destination, and the adapter name
@@ -403,7 +406,11 @@ equals the original count minus the operations written.
   form, with separate fields for:
   - the stage that failed, with the values the Sync API already uses for a run's operation:
     `plan`, `verify`, `apply` or `sync` (`infrahub_sync/client/models.py:11`)
-  - the failure type
+  - the failure type, one of `destination_rejected_write`, `system_unreachable`,
+    `system_timeout`, `token_rejected`, `tls_certificate_rejected`, `record_load_failed`,
+    `transform_failed`, `credential_missing`, `verification_failed`, `apply_refused`,
+    `left_out_review_required`, `destination_peer_missing`, `destination_peer_ambiguous` or
+    `internal_error`
   - the system involved
   - Infrahub's error code
   - the node kind and attribute

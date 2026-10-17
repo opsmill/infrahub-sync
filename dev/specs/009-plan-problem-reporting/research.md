@@ -510,6 +510,8 @@ Classification, by exception type in the cause chain, never by text:
 | `record_load_failed` | `RecordLoadError` (R3) | `node_kind`, `record`, `field` |
 | `transform_failed` | a new `TransformError(ValueError)` that `apply_transform` raises instead of a bare `ValueError` (`infrahub_sync/__init__.py:436-441`), with the field and the record's `local_id` as attributes; its message text, which repeats the transform expression and the error, is not used | `node_kind`, `record`, `field` |
 | `verification_failed`, `apply_refused`, `credential_missing`, `left_out_review_required` | the existing typed errors | fixed text |
+| `destination_peer_missing` (2026-10-17) | `plan.errors.PeerNotFoundError` with a `peer_kind`, raised by `PeerResolver` when the Infrahub query for a peer returns nothing during apply (verify resolves no peer) | `system` destination (`infrahub`), `node_kind` the peer kind; the summary names the operation ID |
+| `destination_peer_ambiguous` (2026-10-17) | `plan.errors.PeerAmbiguousError` with a `peer_kind`: the query returns more than one object | as `destination_peer_missing` |
 | `internal_error` | anything else | class name, fixed text |
 
 The system role and adapter name come from a new `SideLoadError(ValueError)` that `_load_side`

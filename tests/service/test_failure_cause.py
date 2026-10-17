@@ -29,7 +29,14 @@ from infrahub_sync.failure_cause import (
     build_failure_cause,
     next_action,
 )
-from infrahub_sync.plan.errors import LeftOutConfirmationError, PlanReportDigestMismatchError
+from infrahub_sync.plan.errors import (
+    LeftOutConfirmationError,
+    OperationApplyFailedError,
+    PeerAmbiguousError,
+    PeerNotFoundError,
+    PlanReportDigestMismatchError,
+)
+from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.runtime_schema.errors import DestinationSchemaUnavailableError
 from infrahub_sync.service.flow import RegisteredPlanVerificationError
 from infrahub_sync.service.left_out_stop import left_out_stop
@@ -56,6 +63,7 @@ CAUSE_FIELDS = {
     "next_action",
 }
 
+PEER_OPERATION = "op_3531c0d83d698fd1"
 NETBOX = {"role": "source", "adapter": "netbox"}
 INFRAHUB = {"role": "destination", "adapter": "infrahub"}
 
@@ -585,6 +593,44 @@ CASES: list[Any] = [
         id="apply_refused",
     ),
     pytest.param(
+        "apply",
+        lambda: _chain(
+            OperationApplyFailedError(LEAK, apply_record=ApplyRecord(applied_operations=())),
+            PeerNotFoundError(LEAK, peer_kind="LocationSite", referring_operation_id=PEER_OPERATION),
+        ),
+        _expected(
+            "destination_peer_missing",
+            f"The LocationSite peer of operation {PEER_OPERATION} is missing in Infrahub: it was deleted or "
+            "renamed after the plan",
+            system=INFRAHUB,
+            node_kind="LocationSite",
+            error_class="OperationApplyFailedError",
+        ),
+        id="destination_peer_missing",
+    ),
+    pytest.param(
+        "apply",
+        lambda: PeerAmbiguousError(LEAK, peer_kind="LocationSite", referring_operation_id=PEER_OPERATION),
+        _expected(
+            "destination_peer_ambiguous",
+            f"More than one LocationSite object in Infrahub matches the peer of operation {PEER_OPERATION}",
+            system=INFRAHUB,
+            node_kind="LocationSite",
+            error_class="PeerAmbiguousError",
+        ),
+        id="destination_peer_ambiguous",
+    ),
+    pytest.param(
+        "apply",
+        lambda: PeerNotFoundError(LEAK, next_action="Re-plan with a direct attribute in the identity."),
+        _expected(
+            "internal_error",
+            "The apply stage failed with an internal error (PeerNotFoundError)",
+            error_class="PeerNotFoundError",
+        ),
+        id="peer-with-no-filter-is-internal_error",
+    ),
+    pytest.param(
         "plan",
         lambda: KeyError(LEAK),
         _expected("internal_error", "The plan stage failed with an internal error (KeyError)", error_class="KeyError"),
@@ -692,6 +738,8 @@ def test_every_failure_type_has_a_next_action() -> None:
         "verification_failed",
         "apply_refused",
         "left_out_review_required",
+        "destination_peer_missing",
+        "destination_peer_ambiguous",
         "internal_error",
     }
     assert all(NEXT_ACTIONS.values())

@@ -28,7 +28,12 @@ from typer.testing import CliRunner
 from infrahub_sync import RecordLoadError, SideLoadError, TransformError
 from infrahub_sync.configuration.credentials import CredentialConfigurationError
 from infrahub_sync.failure_cause import build_failure_cause
-from infrahub_sync.plan.errors import LeftOutConfirmationError, PlanReportDigestMismatchError
+from infrahub_sync.plan.errors import (
+    LeftOutConfirmationError,
+    PeerAmbiguousError,
+    PeerNotFoundError,
+    PlanReportDigestMismatchError,
+)
 from tests.plan.problem_fixtures import SHORT_CREDENTIAL, SPECIAL_CREDENTIAL
 
 if TYPE_CHECKING:
@@ -174,6 +179,18 @@ CASES: list[Any] = [
     pytest.param("apply", lambda: PlanReportDigestMismatchError(TEXT), "verification_failed", id="verification_failed"),
     pytest.param(
         "apply", lambda: LeftOutConfirmationError(TEXT, expected_left_out_count=1), "apply_refused", id="apply_refused"
+    ),
+    pytest.param(
+        "apply",
+        lambda: PeerNotFoundError(TEXT, peer_kind="LocationSite", referring_operation_id="op_3531c0d83d698fd1"),
+        "destination_peer_missing",
+        id="destination_peer_missing",
+    ),
+    pytest.param(
+        "apply",
+        lambda: PeerAmbiguousError(TEXT, peer_kind="LocationSite", referring_operation_id="op_3531c0d83d698fd1"),
+        "destination_peer_ambiguous",
+        id="destination_peer_ambiguous",
     ),
     pytest.param("plan", lambda: _side(RuntimeError(TEXT)), "internal_error", id="internal_error"),
 ]

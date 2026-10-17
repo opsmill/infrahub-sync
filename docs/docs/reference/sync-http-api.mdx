@@ -509,7 +509,7 @@ otherwise:
 | Field | Meaning |
 | --- | --- |
 | `stage` | `plan`, `verify`, `apply`, or `sync`. |
-| `failure_type` | One of `destination_rejected_write`, `system_unreachable`, `system_timeout`, `token_rejected`, `tls_certificate_rejected`, `record_load_failed`, `transform_failed`, `credential_missing`, `verification_failed`, `apply_refused`, `left_out_review_required`, and `internal_error`. |
+| `failure_type` | One of `destination_rejected_write`, `system_unreachable`, `system_timeout`, `token_rejected`, `tls_certificate_rejected`, `record_load_failed`, `transform_failed`, `credential_missing`, `verification_failed`, `apply_refused`, `left_out_review_required`, `destination_peer_missing`, `destination_peer_ambiguous`, and `internal_error`. `destination_peer_missing` means a peer that an apply operation refers to is not in Infrahub (deleted or renamed after the plan); `destination_peer_ambiguous` means more than one Infrahub object matches it. Both name the peer's kind in `node_kind` and the destination in `system`. |
 | `system` | The `role` (`source` or `destination`) and `adapter` of the system the failure came from, or `null`. |
 | `error_code`, `node_kind`, `attribute` | For an error that Infrahub returned: `extensions.code`, `extensions.data.node_kind`, and `extensions.data.field_name`. For `UNIQUENESS_VIOLATION`, `attribute` is the names in `extensions.data.fields`, joined with `, `. |
 | `record`, `field` | The source record and field that could not be loaded or transformed. |

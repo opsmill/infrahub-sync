@@ -92,6 +92,13 @@ otherwise:
 }
 ```
 
+A peer that an apply operation refers to and that Infrahub no longer holds gives
+`failure_type: "destination_peer_missing"`, `system` `{"role": "destination", "adapter":
+"infrahub"}`, the peer kind in `node_kind`, and a summary that names the operation, for example
+"The LocationSite peer of operation op_3531c0d83d698fd1 is missing in Infrahub: it was deleted
+or renamed after the plan". A peer that matches more than one Infrahub object gives
+`destination_peer_ambiguous` with the same fields.
+
 The example Infrahub message is illustrative. The written operation IDs are returned by
 `GET /runs/{run_id}/results` under `apply_failure`, as the applied IDs are today.
 

@@ -154,7 +154,15 @@ No field holds the text of an exception, an address, a header or a traceback.
 Failure types (stable names): `destination_rejected_write`, `system_unreachable`,
 `system_timeout`, `token_rejected`, `tls_certificate_rejected`, `record_load_failed`,
 `transform_failed`, `credential_missing`, `verification_failed`, `apply_refused`,
-`left_out_review_required`, `internal_error`.
+`left_out_review_required`, `destination_peer_missing`, `destination_peer_ambiguous`,
+`internal_error`.
+
+`destination_peer_missing` (decided on 2026-10-17): during an apply, a peer that an operation
+refers to matches no Infrahub object, because it was deleted or renamed after the plan. The
+cause holds `system` `destination` (`infrahub`), the peer kind in `node_kind`, and the operation
+in the summary and in `apply_progress.failed_operation`. `destination_peer_ambiguous`: the peer
+matches more than one Infrahub object. A peer whose query could not be formed (no direct
+attribute in its identity) stays `internal_error`.
 
 ## Apply progress (FR-020)
 

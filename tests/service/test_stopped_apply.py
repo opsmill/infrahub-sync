@@ -1,7 +1,7 @@
 """A stopped apply shows what it wrote and which operation failed (spec 009 T080, User Story 4).
 
 A `sync` run whose plan leaves out records stops after its plan; the team applies it with the
-confirmed count. The destination rejects operation K of the apply. The run's
+left-out confirmation. The destination rejects operation K of the apply. The run's
 `failure.apply_progress` gives the plan's operation count, the K - 1 operations written, the
 failed operation read from the plan by its ID, and whether it may have written part of its
 change. `GET /runs/{run_id}/results` lists the written IDs under `apply_failure`. A second apply
@@ -13,6 +13,7 @@ boundary; the apply runs the real engine over the saved plan against a destinati
 
 from __future__ import annotations
 
+import json
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,7 @@ from typer.testing import CliRunner
 
 from infrahub_sync.cli import app
 from infrahub_sync.failure_cause import build_failure_cause
+from infrahub_sync.plan.errors import PeerNotFoundError
 from infrahub_sync.plan.models import ApplyRecord
 from infrahub_sync.plan.reader import load_plan_artifact
 from infrahub_sync.service import flow as service_flow
@@ -39,6 +41,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 REJECT_AT = 4
+# Text of the exception, which no cause field may hold.
+SECRET_LIKE_TEXT = "https://admin:s3cret@infrahub.invalid"  # noqa: S105 - a fake credential the cause must not hold
 NEW_PLAN_MESSAGE = "This plan was already applied or its apply stopped; create and review a new plan"
 
 
@@ -51,7 +55,11 @@ def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> SyncStageHarness
 def destination(harness: SyncStageHarness, monkeypatch: pytest.MonkeyPatch) -> RejectingDestination:
     """Apply with the real engine over the saved plan; the destination rejects operation K."""
     del harness  # Installs the doubles this one wraps.
-    rejecting = RejectingDestination(REJECT_AT)
+    return _install(monkeypatch, RejectingDestination(REJECT_AT))
+
+
+def _install(monkeypatch: pytest.MonkeyPatch, rejecting: RejectingDestination) -> RejectingDestination:
+    """Apply with the real engine over the saved plan, against `rejecting`."""
     double = service_flow.execute_run
 
     def execute_run(instance: Any, **kwargs: Any) -> Any:  # noqa: ANN401
@@ -129,6 +137,42 @@ def test_a_stopped_apply_shows_the_operations_written_and_the_failed_operation(
     results = harness.get(f"/runs/{run_id}/results").json()["results"]
     assert results["apply_failure"]["applied_operations"] == [item.operation_id for item in destination.written]
     assert results["apply_failure"]["failed_operation"] == failed_id
+
+
+def test_a_peer_missing_in_infrahub_at_apply_is_a_destination_peer_missing_failure(
+    harness: SyncStageHarness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A peer deleted or renamed in Infrahub after the plan stops the apply with its own type."""
+    rejecting = _install(
+        monkeypatch,
+        RejectingDestination(
+            REJECT_AT,
+            error=lambda operation: PeerNotFoundError(
+                f"no LocationSite matches {SECRET_LIKE_TEXT}",
+                peer_kind="LocationSite",
+                referring_operation_id=operation.operation_id,
+            ),
+        ),
+    )
+
+    run_id, plan = _stopped_apply(harness)
+
+    failure = harness.get(f"/runs/{run_id}").json()["run"]["failure"]
+    failed_id = rejecting.attempted[-1]
+    assert failure["stage"] == "apply"
+    assert failure["failure_type"] == "destination_peer_missing"
+    assert failure["system"] == {"role": "destination", "adapter": "infrahub"}
+    assert failure["node_kind"] == "LocationSite"
+    assert failure["summary"] == (
+        f"The LocationSite peer of operation {failed_id} is missing in Infrahub: it was deleted or renamed after the plan"
+    )
+    assert failure["next_action"] == "Create and review a new plan, then apply that plan: a run accepts one apply."
+    assert failure["apply_progress"]["operations_written"] == REJECT_AT - 1
+    assert failure["apply_progress"]["failed_operation"]["operation_id"] == failed_id
+    # Raised before the write, so the operation did not write.
+    assert failure["apply_progress"]["failed_operation_may_have_written"] is False
+    assert SECRET_LIKE_TEXT not in json.dumps(failure)
+    assert len(plan["operations"]) > REJECT_AT
 
 
 def test_applying_the_stopped_plan_again_needs_a_new_plan(

@@ -354,6 +354,23 @@ plan failed: the destination system (infrahub) rejected the token
   next: Check the token that the worker uses for this system, then run the stage again.
 ```
 
+When a peer that an operation refers to is no longer in Infrahub at apply time, because it was
+deleted or renamed after the plan, the apply stops with the failure type
+`destination_peer_missing`. The cause names the peer's kind and the operation, and the
+operation wrote nothing:
+
+```text
+apply stopped: the LocationSite peer of operation op_3531c0d83d698fd1 is missing in Infrahub: it was deleted or renamed after the plan
+  node kind: LocationSite
+  written: 3 of 12 operations
+  failed operation: op_3531c0d83d698fd1 create DcimDevice name=rtr1
+  next: Create and review a new plan, then apply that plan: a run accepts one apply.
+```
+
+When more than one Infrahub object matches that peer, the failure type is
+`destination_peer_ambiguous`: remove the duplicate objects in Infrahub, or add an attribute to
+the kind's `identifiers` that tells them apart, then create and review a new plan.
+
 The detail lines are:
 
 - `node kind` and `attribute`: the destination kind and attribute that Infrahub named in its

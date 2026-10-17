@@ -25,7 +25,9 @@ Masking credential values in free text was considered and rejected for two reaso
 A run's failure record holds a structured cause built only from these fields:
 
 - the stage;
-- the failure type, from a fixed list;
+- the failure type, from a fixed list (since 2026-10-17 it includes `destination_peer_missing`
+  and `destination_peer_ambiguous` for a peer that Infrahub does not resolve to one object at
+  apply time);
 - the system role and the adapter name;
 - Infrahub's error code (`extensions.code`), and the node kind and attribute from
   `extensions.data` (`node_kind`, and `field_name` or the `fields` of a uniqueness violation);

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 from infrahub_sdk.exceptions import GraphQLError
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from diffsync import Adapter
 
@@ -44,10 +44,15 @@ def rejection() -> GraphQLError:
 
 
 class RejectingDestination:
-    """A write surface that keeps every operation before `reject_at` and rejects that one."""
+    """A write surface that keeps every operation before `reject_at` and rejects that one.
 
-    def __init__(self, reject_at: int) -> None:
+    `error` builds the exception raised for operation `reject_at`; Infrahub's rejection of an
+    attribute value by default.
+    """
+
+    def __init__(self, reject_at: int, error: Callable[[PlannedOperation], BaseException] | None = None) -> None:
         self.reject_at = reject_at
+        self.error = error or (lambda _operation: rejection())
         self.attempted: list[str] = []
         self.written: list[PlannedOperation] = []
 
@@ -59,7 +64,7 @@ class RejectingDestination:
         _ = peers
         self.attempted.append(operation.operation_id)
         if len(self.attempted) == self.reject_at:
-            raise rejection()
+            raise self.error(operation)
         self.written.append(operation)
         return f"written-node-{len(self.written)}"
 
