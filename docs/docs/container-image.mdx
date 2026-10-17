@@ -125,15 +125,20 @@ docker image inspect --format '{{json .Config.Labels}}' \
 ## Verify the signature and the bills of materials
 
 The release workflow signs each image with [cosign](https://docs.sigstore.dev/). The
-signature uses no long-lived key: it is bound to this repository's GitHub Actions
-identity. The workflow also attaches an
+signature uses no long-lived key. Its certificate names the workflow that signed it,
+`.github/workflows/ci-docker-image.yml` of `opsmill/infrahub-sync`, and the release tag the
+run was started from. The workflow also attaches an
 SPDX JSON and a CycloneDX JSON bill of materials as signed attestations.
+
+The `--certificate-identity-regexp` value below accepts only that workflow file at a tag
+(`@refs/tags/`). A signature made by another workflow of the repository, or by a run from a
+branch, does not verify.
 
 Check the signature:
 
 ```bash
 cosign verify registry.opsmill.io/opsmill/infrahub-sync:<version> \
-  --certificate-identity-regexp 'https://github.com/opsmill/infrahub-sync/' \
+  --certificate-identity-regexp '^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
@@ -141,18 +146,18 @@ Check both bills of materials, with the same identity flags:
 
 ```bash
 cosign verify-attestation --type spdxjson \
-  --certificate-identity-regexp 'https://github.com/opsmill/infrahub-sync/' \
+  --certificate-identity-regexp '^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   registry.opsmill.io/opsmill/infrahub-sync:<version>
 
 cosign verify-attestation --type cyclonedx \
-  --certificate-identity-regexp 'https://github.com/opsmill/infrahub-sync/' \
+  --certificate-identity-regexp '^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   registry.opsmill.io/opsmill/infrahub-sync:<version>
 ```
 
 Each command exits non-zero when the signature or attestation is missing or was not
-issued to this repository's workflows. Until 3.0.0, run `docker login
+issued to the image workflow of a release tag. Until 3.0.0, run `docker login
 registry.opsmill.io` first, because cosign reads the same private registry.
 
 ## Build the image locally

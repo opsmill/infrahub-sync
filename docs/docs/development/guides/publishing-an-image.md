@@ -98,19 +98,22 @@ docker login registry.opsmill.io
 docker pull registry.opsmill.io/opsmill/infrahub-sync:dispatch-test
 docker buildx imagetools inspect registry.opsmill.io/opsmill/infrahub-sync:dispatch-test
 cosign verify registry.opsmill.io/opsmill/infrahub-sync:dispatch-test \
-  --certificate-identity-regexp 'https://github.com/opsmill/infrahub-sync/' \
+  --certificate-identity-regexp '^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/heads/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 cosign verify-attestation --type spdxjson \
-  --certificate-identity-regexp 'https://github.com/opsmill/infrahub-sync/' \
+  --certificate-identity-regexp '^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/heads/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   registry.opsmill.io/opsmill/infrahub-sync:dispatch-test
 cosign verify-attestation --type cyclonedx \
-  --certificate-identity-regexp 'https://github.com/opsmill/infrahub-sync/' \
+  --certificate-identity-regexp '^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/heads/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   registry.opsmill.io/opsmill/infrahub-sync:dispatch-test
 ```
 
 The `docker login` step is needed until 3.0.0.
+A dispatch signs from a branch, so these commands accept `ci-docker-image.yml` at
+`refs/heads/`. A release signs at `refs/tags/`, which is what the user-facing
+[container image page](../../container-image.mdx) checks.
 Expect these results:
 
 - the manifest list holds `linux/amd64` and `linux/arm64`, or only the

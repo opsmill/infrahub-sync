@@ -24,6 +24,12 @@ Both addresses reach the same Harbor project. Pushes must use the `HARBOR_HOST` 
 `registry.opsmill.io` gets `401 Unauthorized`. The credentials are the repository secrets
 `HARBOR_USERNAME` and `HARBOR_PASSWORD`. The project is private until 3.0.0.
 
+The release notes that the `record_image` job of `workflow-publish.yml` writes are for users,
+so they name the pull address. `tests/test_workflow_contracts.py` checks that every push uses
+`${{ vars.HARBOR_HOST }}/${{ github.repository }}` and that every image reference in the user
+pages names the pull address. It cannot check that both hosts reach one project: that is a
+registry setting.
+
 ### The reusable workflow
 
 `.github/workflows/ci-docker-image.yml` takes six inputs: `publish`, `version`, `ref`, `tags`,
@@ -40,7 +46,11 @@ Both addresses reach the same Harbor project. Pushes must use the `HARBOR_HOST` 
    `imagetools create` with every tag over every platform digest, and validates the resulting
    `sha256:` digest.
 3. **`sign`** and **`sbom`**: `cosign sign --recursive` with a GitHub OIDC identity (no stored key) and `cosign attest` for SPDX
-   and CycloneDX, with bounded retries.
+   and CycloneDX, with bounded retries. Fulcio writes the `job_workflow_ref` claim into the
+   certificate, which names the called file: `ci-docker-image.yml` at the ref of the run. A
+   release run starts from the `release` event of `trigger-release.yml`, so its ref is
+   `refs/tags/<version>`; a dispatch from a branch signs at `refs/heads/<branch>`. The
+   documented verification accepts only `ci-docker-image.yml` at `refs/tags/`.
 
 A publishing run fails before building if `tags` is empty or `HARBOR_HOST` is unset. An
 unset `HARBOR_HOST` would otherwise send the login to Docker Hub. Newer runs on the same

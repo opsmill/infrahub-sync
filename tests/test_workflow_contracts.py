@@ -1928,6 +1928,117 @@ def test_the_release_trigger_lets_the_publish_workflow_edit_the_release() -> Non
     assert job_permissions(TRIGGER_RELEASE_WORKFLOW, "publish") == {"contents": "write", "id-token": "write"}
 
 
+# Spec 013 decision A. CI pushes to `${{ vars.HARBOR_HOST }}/${{ github.repository }}`, because
+# the login authenticates only that host; users pull `registry.opsmill.io/opsmill/infrahub-sync`
+# (docs/docs/development/knowledge/image-publishing.md). What the repository can prove offline:
+# every push uses that one name, every reference written for users uses the pull name, and the
+# two share the repository path. That both hosts reach the same Harbor project is a setting of
+# the registry, which only the owner can check.
+PUSH_IMAGE = "${{ vars.HARBOR_HOST }}/${{ github.repository }}"
+PULL_HOST = "registry.opsmill.io"
+GITHUB_REPOSITORY = "opsmill/infrahub-sync"
+PULL_IMAGE = f"{PULL_HOST}/{GITHUB_REPOSITORY}"
+IMAGE_PUBLISHING_KNOWLEDGE = REPO_ROOT / "docs" / "docs" / "development" / "knowledge" / "image-publishing.md"
+USER_IMAGE_REFERENCES = (
+    *sorted((REPO_ROOT / "docs" / "docs").glob("*.mdx")),
+    *sorted((REPO_ROOT / "docs" / "docs" / "operations").glob("*.mdx")),
+    REPO_ROOT / "README.md",
+    REPO_ROOT / "docker-compose.yml",
+)
+PULL_REFERENCE = re.compile(r"registry\.opsmill\.io(/[^\s:@`'\"<>()\[\]{}]*)?")
+
+
+def test_every_push_names_the_image_by_the_harbor_host_and_this_repository() -> None:
+    texts = {path.name: path.read_text(encoding="utf-8") for path in (DOCKER_IMAGE_WORKFLOW, PUBLISH_WORKFLOW)}
+    pushed = re.compile(re.escape("${{ vars.HARBOR_HOST }}/"))
+
+    for name, text in texts.items():
+        starts = [match.start() for match in pushed.finditer(text)]
+        assert starts, f"{name} names no pushed image"
+        for start in starts:
+            named = text[start : start + len(PUSH_IMAGE)]
+            assert named == PUSH_IMAGE, f"{name} names the pushed image {named!r}"
+    assert PULL_HOST not in texts[DOCKER_IMAGE_WORKFLOW.name], "a push to the pull name fails with 401"
+
+
+@pytest.mark.parametrize("path", USER_IMAGE_REFERENCES, ids=lambda path: path.relative_to(REPO_ROOT).as_posix())
+def test_every_image_reference_written_for_users_is_the_pull_name_of_this_repository(path: Path) -> None:
+    for match in PULL_REFERENCE.finditer(path.read_text(encoding="utf-8")):
+        repository = (match.group(1) or "").lstrip("/")
+        assert repository in {"", GITHUB_REPOSITORY}, f"{path.name} names {match.group(0)!r}, not {PULL_IMAGE}"
+
+
+def test_the_release_notes_name_the_image_users_pull_not_the_push_host() -> None:
+    """The digest recorded on the release is what an evaluator pulls, so it carries the pull name."""
+    steps = job_of(PUBLISH_WORKFLOW, RECORD_IMAGE_JOB)["steps"]
+    environment = {key: value for step in steps for key, value in (step.get("env") or {}).items()}
+
+    assert environment["REPOSITORY"] == f"{PULL_HOST}/${{{{ github.repository }}}}"
+    assert "vars.HARBOR_HOST" not in str(job_of(PUBLISH_WORKFLOW, RECORD_IMAGE_JOB))
+
+
+def test_the_knowledge_page_states_that_both_names_reach_one_project() -> None:
+    text = IMAGE_PUBLISHING_KNOWLEDGE.read_text(encoding="utf-8")
+
+    assert f"`${{HARBOR_HOST}}/{GITHUB_REPOSITORY}`" in text
+    assert f"`{PULL_IMAGE}`" in text
+    assert "Both addresses reach the same Harbor project." in text
+
+
+# Spec 013 decision D. Fulcio writes `https://github.com/` + the OIDC claim `job_workflow_ref`
+# into the certificate's subject alternative name. For a job in a called workflow, that claim
+# names the called file, at the ref of the run: a release event runs at `refs/tags/<version>`,
+# and `trigger-release.yml` reaches the signing jobs of `ci-docker-image.yml` through
+# `workflow-publish.yml`.
+SIGNING_IDENTITY = r"^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/"
+CONTAINER_IMAGE_PAGE = REPO_ROOT / "docs" / "docs" / "container-image.mdx"
+IDENTITY_FLAG = re.compile(r"--certificate-identity-regexp '([^']*)'")
+
+
+def test_the_signing_jobs_run_in_the_workflow_the_identity_names_reached_from_a_release() -> None:
+    for job in SIGNING_JOBS:
+        assert job_permissions(DOCKER_IMAGE_WORKFLOW, job) == {"contents": "read", "id-token": "write"}
+    assert called_workflow(job_of(PUBLISH_WORKFLOW, "publish_docker_image")) == DOCKER_IMAGE_WORKFLOW
+    assert called_workflow(job_of(TRIGGER_RELEASE_WORKFLOW, "publish")) == PUBLISH_WORKFLOW
+    assert "release" in triggers(TRIGGER_RELEASE_WORKFLOW)
+
+
+def test_the_identity_trusts_the_image_workflow_at_a_release_tag() -> None:
+    signed = "https://github.com/opsmill/infrahub-sync/.github/workflows/ci-docker-image.yml@refs/tags/3.0.0"
+
+    assert re.search(SIGNING_IDENTITY, signed)
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "https://github.com/opsmill/infrahub-sync/.github/workflows/ci-docker-image.yml@refs/heads/main",
+        "https://github.com/opsmill/infrahub-sync/.github/workflows/workflow-publish.yml@refs/tags/3.0.0",
+        "https://github.com/opsmill/infrahub-sync/.github/workflows/other.yml@refs/tags/3.0.0",
+        "https://github.com/opsmill/infrahub-sync-fork/.github/workflows/ci-docker-image.yml@refs/tags/3",
+        "https://evil.example/https://github.com/opsmill/infrahub-sync/.github/workflows/ci-docker-image.yml@refs/tags/3",
+    ],
+    ids=["branch", "caller", "other-workflow", "other-repository", "prefixed"],
+)
+def test_the_identity_refuses_any_other_signer(identity: str) -> None:
+    assert not re.search(SIGNING_IDENTITY, identity)
+
+
+def test_the_documented_verification_names_the_release_signing_identity() -> None:
+    flags = IDENTITY_FLAG.findall(CONTAINER_IMAGE_PAGE.read_text(encoding="utf-8"))
+
+    assert len(flags) == 3, flags
+    assert set(flags) == {SIGNING_IDENTITY}
+
+
+def test_the_release_notes_verification_names_the_release_signing_identity() -> None:
+    steps = job_of(PUBLISH_WORKFLOW, RECORD_IMAGE_JOB)["steps"]
+    environment = {key: value for step in steps for key, value in (step.get("env") or {}).items()}
+
+    assert environment["IDENTITY"] == SIGNING_IDENTITY
+    assert "--certificate-oidc-issuer https://token.actions.githubusercontent.com" in _record_image_runs()
+
+
 # The root `docker-compose.yml` names the release's image by version. The release
 # pull request pins it (trigger-push-stable.yml), and the tag is refused for a file
 # pinned to any other version (release-publish.yml).

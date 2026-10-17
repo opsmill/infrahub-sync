@@ -215,8 +215,13 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ inputs.version }}
           DIGEST: ${{ needs.publish_docker_image.outputs.digest }}
-          REPOSITORY: ${{ vars.HARBOR_HOST }}/${{ github.repository }}
-          IDENTITY: ${{ github.server_url }}/${{ github.repository }}/
+          # The name users pull, not HARBOR_HOST: CI pushes to HARBOR_HOST because its
+          # login authenticates only that host, and both names reach one Harbor project
+          # (docs/docs/development/knowledge/image-publishing.md).
+          REPOSITORY: registry.opsmill.io/${{ github.repository }}
+          # Fulcio puts the job_workflow_ref claim in the certificate: the called
+          # ci-docker-image.yml, at the release tag this run was triggered by.
+          IDENTITY: '^https://github\.com/opsmill/infrahub-sync/\.github/workflows/ci-docker-image\.yml@refs/tags/'
         run: |
           set -euo pipefail
           if ! [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
