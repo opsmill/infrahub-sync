@@ -445,6 +445,53 @@ def test_model_loader_skips_filter_and_transform_for_a_heterogeneous_destination
     assert _loaded(adapter, LocationSite, "dc-east").description == "east"
 
 
+def _two_nodes_with_one_identity_client() -> StrictClient:
+    """Two ``LocationSite`` nodes whose mapped identity (``name``) is the same."""
+
+    return StrictClient(
+        rows={
+            "LocationSite": [
+                _Row("id-1", {"name": "dc-east", "description": "east"}),
+                _Row("id-2", {"name": "dc-east", "description": "east"}),
+            ]
+        }
+    )
+
+
+def test_model_loader_merges_destination_nodes_with_the_same_mapped_identity() -> None:
+    """The destination side updates or adds, as before spec 009: the plan does not fail.
+
+    Two Infrahub nodes with one mapped identity are not a source problem (research R3). As
+    with `update_or_add_model_instance` before, the first model stays in the store and takes
+    the attributes of the next one.
+    """
+
+    adapter = _Harness(
+        config=_config_with_filter_and_transform(source_name="netbox"), client=_two_nodes_with_one_identity_client()
+    )
+    adapter.target = "destination"
+
+    adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    assert _loaded_names(adapter, LocationSite) == ["dc-east"]
+    assert _loaded(adapter, LocationSite, "dc-east").local_id == "id-1"
+    assert adapter.load_report == []
+
+
+def test_model_loader_records_source_nodes_with_the_same_mapped_identity_as_a_duplicate() -> None:
+    """On the source side the second node is a `duplicate_source_identity` record."""
+
+    adapter = _Harness(
+        config=_config_with_filter_and_transform(source_name="infrahub"), client=_two_nodes_with_one_identity_client()
+    )
+    adapter.target = "source"
+
+    adapter.model_loader(model_name="LocationSite", model=LocationSite)
+
+    assert _loaded(adapter, LocationSite, "dc-east").local_id == "id-1"
+    assert [(entry.reason, entry.source_id) for entry in adapter.load_report] == [("duplicate_source_identity", "id-2")]
+
+
 def _loaded(adapter: _Harness, model: type[_ModelT], unique_id: str) -> _ModelT:
     """Fetch a loaded object from the adapter store, narrowed to its own model."""
 

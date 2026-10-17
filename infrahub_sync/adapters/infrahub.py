@@ -838,9 +838,17 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                 original_node: InfrahubNodeSync = next(node for node, obj in node_dict_pairs if obj == record)
                 self.client.store.set(key=item.get_unique_id(), node=original_node)
 
+            # The destination side updates or adds, as before spec 009: two Infrahub nodes with
+            # one mapped identity are not a source problem (research R3), so the plan continues.
+            store_item = None if self.target == "source" else self._update_or_add_item
             for transformed_obj in transformed_objs:
                 self._release_hydrated_peer(model, transformed_obj)
-                self.load_record(model, element, transformed_obj, after_add=fill_sdk_store)
+                self.load_record(model, element, transformed_obj, after_add=fill_sdk_store, store_item=store_item)
+
+    def _update_or_add_item(self, item: DiffSyncModel) -> DiffSyncModel:
+        """Store `item`, replacing the model already stored under the same unique ID."""
+        stored, _ = self.update_or_add_model_instance(item)
+        return stored
 
     def record_to_data(
         self,

@@ -164,26 +164,33 @@ def _config_with_an_optional_interface_reference() -> tuple[Any, dict[str, Any]]
     return config, schema
 
 
-def test_a_record_whose_peer_was_not_loaded_and_has_no_identity_is_left_out_through_an_optional_relationship(
+def test_a_record_whose_peer_was_not_loaded_and_has_no_identity_is_kept_without_the_optional_relationship(
     tmp_path: Path,
 ) -> None:
-    """`eth9` was not built and has no identity, so a reference to it cannot be stated."""
+    """`eth9` was not built and has no identity; the address is kept without `interface` (FR-005)."""
     config, schema = _config_with_an_optional_interface_reference()
     records = source_records(Variant.ALL)
     records["IpamIPAddress"].append(
         {"id": 83, "address": "10.0.0.7/32", "device": None, "vrf": None, "interface": {"id": 61}}
     )
 
-    report = plan_fixture(tmp_path / "run", records=records, config=config, schema=schema).report
-    address = _left_out(report, "IpamIPAddress", "83")
+    planned = plan_fixture(tmp_path / "run", records=records, config=config, schema=schema)
+    report = planned.report
+    (kept,) = [entry for entry in report.kept if entry.record.source_id == "83"]
 
-    assert address.cause == "depends_on_left_out"
-    assert address.relationship == "interface"
-    assert address.loaded is False
-    assert address.depends_on is not None
-    assert (address.depends_on.kind, address.depends_on.identity, address.depends_on.source_id) == (
+    assert all(entry.record.source_id != "83" for entry in report.left_out)
+    assert (kept.record.kind, kept.record.identity) == ("IpamIPAddress", {"address": "10.0.0.7/32"})
+    assert (kept.cause, kept.relationship) == ("peer_left_out", "interface")
+    assert (kept.left_out_peer.kind, kept.left_out_peer.identity, kept.left_out_peer.source_id) == (
         "InterfacePhysical",
         None,
         "61",
     )
-    assert all(entry.record.source_id != "83" for entry in report.kept)
+    assert all(problem.record.source_id != "83" for problem in report.problems)
+    (address,) = [
+        operation
+        for operation in planned.operations
+        if operation.kind == "IpamIPAddress" and operation.identity == {"address": "10.0.0.7/32"}
+    ]
+    assert address.action == "create"
+    assert all(reference.field != "interface" for reference in address.relationships or ())

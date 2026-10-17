@@ -9,7 +9,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, get_args
 
-from infrahub_sync import ExcludedRequiredPeerError
+from infrahub_sync import (
+    ExcludedRequiredPeerError,
+    PeerNotFoundError,
+    PeerNotLoadedError,
+    PeerReferenceError,
+    is_not_in_source_placeholder,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -42,20 +48,39 @@ def resolve_peer_list(
     """Resolve the peers of a cardinality-many reference.
 
     Returns the sorted unique IDs of the peers and the source IDs of the peers a configured
-    filter removed. A peer that is not in the source resolves to a placeholder, as for an
-    optional cardinality-one reference. When every peer of a required relationship was removed
-    by a filter, the record cannot be built, so `ExcludedRequiredPeerError` is raised.
+    filter removed. A peer that is not in the source resolves to a placeholder, and a peer in
+    the load report without a known identity gives no value, as for an optional
+    cardinality-one reference. A required relationship needs at least one peer that resolves
+    to a record: when none does, the record cannot be built, so this raises
+    `PeerNotFoundError` when a peer is not in the source, `PeerNotLoadedError` when a peer was
+    not loaded, and `ExcludedRequiredPeerError` when a configured filter removed every peer.
     """
     resolved: list[str] = []
     excluded: list[str] = []
+    not_in_source: list[str] = []
+    not_loaded: list[str] = []
     for peer_source_id in peer_source_ids:
-        unique_id = adapter.peer_unique_id(peer_kind, str(peer_source_id), owner=owner, field=field, required=False)
+        source_id = str(peer_source_id)
+        unique_id = adapter.peer_unique_id(peer_kind, source_id, owner=owner, field=field, required=False)
         if unique_id is None:
-            excluded.append(str(peer_source_id))
+            if source_id in adapter.excluded_peer_ids(peer_kind):
+                excluded.append(source_id)
+            else:
+                not_loaded.append(source_id)
         else:
             resolved.append(unique_id)
-    if required and excluded and not resolved:
-        raise ExcludedRequiredPeerError(
-            kind=owner[0], source_id=owner[1], field=field, peer_kind=peer_kind, peer_source_id=excluded[0]
-        )
+            if is_not_in_source_placeholder(unique_id):
+                not_in_source.append(source_id)
+    if required and len(resolved) == len(not_in_source):
+        error: type[PeerReferenceError] | None = None
+        if not_in_source:
+            error, peer_source_id = PeerNotFoundError, not_in_source[0]
+        elif not_loaded:
+            error, peer_source_id = PeerNotLoadedError, not_loaded[0]
+        elif excluded:
+            error, peer_source_id = ExcludedRequiredPeerError, excluded[0]
+        if error is not None:
+            raise error(
+                kind=owner[0], source_id=owner[1], field=field, peer_kind=peer_kind, peer_source_id=peer_source_id
+            )
     return sorted(resolved), excluded

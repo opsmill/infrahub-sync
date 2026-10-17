@@ -626,7 +626,7 @@ class DiffSyncMixin:
             item = self._store(model(**data), store_item)
         except PeerReferenceError as exc:
             self._settle_pending(report_start, kind, exc.source_id, identity=None)
-            self._record_peer_error(kind, exc)
+            self._record_peer_error(kind, exc, since=report_start)
             return None
         except pydantic.ValidationError as exc:
             self._settle_pending(report_start, kind, self._data_source_id(record, data), identity=None)
@@ -680,7 +680,7 @@ class DiffSyncMixin:
                 if source_id is not None:
                     state.not_loaded.setdefault((kind, source_id), report[index])
 
-    def _record_peer_error(self, kind: str, exc: PeerReferenceError) -> None:
+    def _record_peer_error(self, kind: str, exc: PeerReferenceError, *, since: int) -> None:
         reasons: dict[type[PeerReferenceError], LoadReportReason] = {
             ExcludedRequiredPeerError: "required_peer_excluded_by_filter",
             PeerNotLoadedError: "peer_not_loaded",
@@ -689,15 +689,11 @@ class DiffSyncMixin:
         reason = reasons.get(type(exc))
         if reason is None:
             raise RecordLoadError(kind=kind, source_id=exc.source_id, field=exc.field) from exc
-        self._report(
-            LoadReportEntry(
-                kind=kind,
-                source_id=exc.source_id,
-                reason=reason,
-                field=exc.field,
-                peer=SourceRecordReference(kind=exc.peer_kind, identity=None, source_id=exc.peer_source_id),
-            )
-        )
+        peer = SourceRecordReference(kind=exc.peer_kind, identity=None, source_id=exc.peer_source_id)
+        entry = LoadReportEntry(kind=kind, source_id=exc.source_id, reason=reason, field=exc.field, peer=peer)
+        # A cardinality-many reference records each peer before it raises for the first one.
+        if entry not in self._admission.load_report[since:]:
+            self._report(entry)
 
     def _record_validation_error(
         self,
@@ -772,7 +768,9 @@ class DiffSyncMixin:
 
         `owner` is the referring record's kind and source record ID. The peer is looked up in
         the store, then in the load report, then in the IDs a configured filter removed. A
-        peer found nowhere is not in the source.
+        peer found nowhere is not in the source. A peer in the load report without a known
+        identity gives no value through an optional relationship: the record is kept without
+        that relationship (FR-005).
         """
         peer_source_id = str(peer_source_id)
         state = self._admission
@@ -791,30 +789,24 @@ class DiffSyncMixin:
             "peer_source_id": peer_source_id,
         }
         peer_entry = state.not_loaded.get((peer_kind, peer_source_id))
+        if peer_entry is not None and peer_entry.identity is not None:
+            return getattr(self, peer_kind).create_unique_id(**peer_entry.identity)
         if peer_entry is not None:
-            if peer_entry.identity is None:
+            if required:
                 raise PeerNotLoadedError(**details)
-            peer_model = getattr(self, peer_kind)
-            return peer_model.create_unique_id(**peer_entry.identity)
-
-        if peer_source_id in self.excluded_peer_ids(peer_kind):
+            reason, value = "peer_not_loaded", None  # FR-005: kept without the link
+        elif peer_source_id in self.excluded_peer_ids(peer_kind):
             if required:
                 raise ExcludedRequiredPeerError(**details)
             return None
-
-        if required:
+        elif required:
             raise PeerNotFoundError(**details)
-        self._report(
-            LoadReportEntry(
-                kind=owner_kind,
-                source_id=owner_source_id,
-                reason="peer_not_found_in_source",
-                field=field,
-                peer=SourceRecordReference(kind=peer_kind, identity=None, source_id=peer_source_id),
-                loaded=True,
-            )
-        )
-        return not_in_source_placeholder(peer_kind, peer_source_id)
+        else:
+            reason, value = "peer_not_found_in_source", not_in_source_placeholder(peer_kind, peer_source_id)
+        peer = SourceRecordReference(kind=peer_kind, identity=None, source_id=peer_source_id)
+        entry = LoadReportEntry(kind=owner_kind, source_id=owner_source_id, field=field, reason=reason, peer=peer)
+        self._report(entry.model_copy(update={"loaded": True}))
+        return value
 
     def _scan_store(self, peer_kind: str, peer_source_id: str) -> str | None:
         """Find a peer added outside `load_record`, by its `local_id`."""
@@ -844,6 +836,22 @@ class DiffSyncMixin:
             "Override it or keep cursor_tier_for returning NONE."
         )
         raise NotImplementedError(msg)
+
+    def load_changed_since(
+        self,
+        model_name: str,
+        model: type[DiffSyncModel],
+        cursor: CursorState,
+        *,
+        store_item: Callable[[DiffSyncModel], DiffSyncModel],
+    ) -> None:
+        """Admit each record changed since `cursor` through `load_record` (research R3).
+
+        The default reads `list_changed_since`, whose rows hold model data. An adapter that
+        converts with `record_to_data` overrides it to admit the raw records, as a full load does.
+        """
+        for row in self.list_changed_since(model_name, cursor):
+            self.load_record(model, None, row, to_data=identity_record_data, store_item=store_item)
 
     def list_existing_ids(self, model_name: str) -> Iterable[str]:  # pylint: disable=unused-argument  # abstract hook
         """Yield current `unique_id` strings for `model_name` in the source

@@ -24,7 +24,7 @@ from .utils import get_value
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 
 def _is_unknown_filter_error(exc: pynautobot.core.query.RequestError, field: str) -> bool:
@@ -132,6 +132,26 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 raise ValueError(msg) from exc
         return endpoint
 
+    def _transformed_records(
+        self,
+        *,
+        element: SchemaMappingModel,
+        model: type[NautobotModel],
+        raw_records: list[dict],
+        already_filtered: bool = False,
+    ) -> list[dict]:
+        """Filter and transform Nautobot records as the base class's `model_loader` does.
+
+        Pass `already_filtered=True` when the caller has run `filter_records` itself (e.g. to
+        log a filtered count) so records aren't filtered twice.
+        """
+        if self.target != "source":
+            return raw_records
+        filtered = (
+            raw_records if already_filtered else model.filter_records(records=raw_records, schema_mapping=element)
+        )
+        return model.transform_records(records=filtered, schema_mapping=element)
+
     def _records_to_diffsync(
         self,
         *,
@@ -140,25 +160,14 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
         raw_records: list[dict],
         already_filtered: bool = False,
     ) -> Iterator[dict]:
-        """Filter+transform Nautobot records and yield diffsync-ready dicts.
-
-        Same transformation flow as the base class's model_loader, for reuse by
-        list_changed_since. Pass `already_filtered=True` when the caller has
-        run `filter_records` itself (e.g. to log a filtered count) so records
-        aren't filtered twice.
-        """
-        if self.target == "source":
-            filtered = (
-                raw_records if already_filtered else model.filter_records(records=raw_records, schema_mapping=element)
-            )
-            transformed = model.transform_records(records=filtered, schema_mapping=element)
-        else:
-            transformed = raw_records
-        for obj in transformed:
+        """Filter+transform Nautobot records and yield diffsync-ready dicts."""
+        for obj in self._transformed_records(
+            element=element, model=model, raw_records=raw_records, already_filtered=already_filtered
+        ):
             yield self.record_to_data(obj, element, model)
 
-    def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterator[dict]:
-        """Yield Nautobot records changed since `cursor`. Uses `last_updated__gte` filter."""
+    def _changed_records(self, model_name: str, cursor: CursorState) -> tuple[SchemaMappingModel, list[dict]]:
+        """Return the mapping entry and the transformed Nautobot records changed since `cursor`."""
         element = next(
             (e for e in self.config.schema_mapping if e.name == model_name),
             None,
@@ -184,7 +193,27 @@ class NautobotAdapter(DiffSyncMixin, Adapter):
                 element.mapping,
             )
             raw = [dict(node) for node in endpoint.all(**self._depth_kwargs)]
-        yield from self._records_to_diffsync(element=element, model=model, raw_records=raw)
+        return element, self._transformed_records(element=element, model=model, raw_records=raw)
+
+    def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterator[dict]:
+        """Yield Nautobot records changed since `cursor`. Uses `last_updated__gte` filter."""
+        element, records = self._changed_records(model_name, cursor)
+        model: type[NautobotModel] = getattr(self, model_name)
+        for obj in records:
+            yield self.record_to_data(obj, element, model)
+
+    def load_changed_since(
+        self,
+        model_name: str,
+        model: type[DiffSyncModel],
+        cursor: CursorState,
+        *,
+        store_item: Callable[[DiffSyncModel], DiffSyncModel],
+    ) -> None:
+        """Admit each Nautobot record changed since `cursor` through `load_record`, as a full load does."""
+        element, records = self._changed_records(model_name, cursor)
+        for obj in records:
+            self.load_record(model, element, obj, store_item=store_item)
 
     def list_existing_ids(self, model_name: str) -> Iterator[str]:
         """Yield current unique IDs for `model_name` from Nautobot.

@@ -29,6 +29,7 @@ from infrahub_sync import (
     is_not_in_source_placeholder,
     not_in_source_placeholder,
 )
+from infrahub_sync.adapters.references import resolve_peer_list
 
 
 class Device(DiffSyncModelMixin, DiffSyncModel):
@@ -93,12 +94,14 @@ class Case(NamedTuple):
 
 OWNER = ("Interface", "500")
 PLACEHOLDER = "placeholder"
+KEPT_WITHOUT_LINK = "kept-without-link"
 
 CASES = (
     Case("in-the-store", "1", required=True, expected="leaf-1"),
     Case("in-the-load-report-with-identity", "30", required=True, expected="core-1"),
     Case("in-the-load-report-without-identity-required", "40", required=True, expected=PeerNotLoadedError),
-    Case("in-the-load-report-without-identity-optional", "40", required=False, expected=PeerNotLoadedError),
+    # FR-005: an optional relationship to a left-out record keeps the record without the link.
+    Case("in-the-load-report-without-identity-optional", "40", required=False, expected=KEPT_WITHOUT_LINK),
     Case("removed-by-a-filter-required", "35", required=True, expected=ExcludedRequiredPeerError),
     Case("removed-by-a-filter-optional", "35", required=False, expected=None),
     Case("not-in-the-source-required", "999", required=True, expected=PeerNotFoundError),
@@ -136,6 +139,21 @@ def test_peer_unique_id_follows_the_research_r4_table(adapter: _Adapter, case: C
 
     result = resolve()
 
+    if case.expected == KEPT_WITHOUT_LINK:
+        assert result is None
+        assert adapter.load_report == [
+            *report_before,
+            LoadReportEntry(
+                kind="Interface",
+                source_id="500",
+                reason="peer_not_loaded",
+                field="device",
+                peer=SourceRecordReference(kind="Device", identity=None, source_id="40"),
+                loaded=True,
+            ),
+        ]
+        return
+
     if case.expected != PLACEHOLDER:
         assert result == case.expected
         assert adapter.load_report == report_before
@@ -154,3 +172,87 @@ def test_peer_unique_id_follows_the_research_r4_table(adapter: _Adapter, case: C
             loaded=True,
         ),
     ]
+
+
+class Group(DiffSyncModelMixin, DiffSyncModel):
+    """A record with a cardinality-many relationship to `Device`."""
+
+    _modelname = "Group"
+    _identifiers = ("name",)
+    _attributes = ("devices",)
+
+    name: str
+    devices: list[str]
+
+
+class ManyCase(NamedTuple):
+    name: str
+    peers: tuple[str, ...]
+    required: bool
+    loaded: bool
+    entries: tuple[tuple[str, str, bool], ...]  # (reason, peer source ID, loaded)
+
+
+MANY_CASES = (
+    # H5: every peer of a required relationship is missing from the source: left out.
+    ManyCase(
+        "required-every-peer-not-in-the-source",
+        ("998", "999"),
+        required=True,
+        loaded=False,
+        entries=(("peer_not_found_in_source", "998", False), ("peer_not_found_in_source", "999", False)),
+    ),
+    ManyCase(
+        "required-one-peer-resolved",
+        ("1", "999"),
+        required=True,
+        loaded=True,
+        entries=(("peer_not_found_in_source", "999", True),),
+    ),
+    ManyCase(
+        "required-every-peer-not-loaded-without-identity",
+        ("40",),
+        required=True,
+        loaded=False,
+        entries=(("peer_not_loaded", "40", False),),
+    ),
+    ManyCase(
+        "optional-every-peer-not-loaded-without-identity",
+        ("40",),
+        required=False,
+        loaded=True,
+        entries=(("peer_not_loaded", "40", True),),
+    ),
+    ManyCase("required-every-peer-removed-by-a-filter", ("35",), required=True, loaded=False, entries=()),
+)
+
+
+@pytest.mark.parametrize("case", MANY_CASES, ids=[case.name for case in MANY_CASES])
+def test_a_cardinality_many_reference_is_admitted_as_research_r4_states(adapter: _Adapter, case: ManyCase) -> None:
+    """A required relationship needs one resolved peer; each missing peer is recorded once."""
+    report_before = list(adapter.load_report)
+
+    def to_data(record: Any, element: Any, model: Any) -> dict[str, Any]:  # noqa: ANN401, ARG001
+        devices, _ = resolve_peer_list(
+            adapter,
+            peer_kind="Device",
+            peer_source_ids=case.peers,
+            owner=("Group", "600"),
+            field="devices",
+            required=case.required,
+        )
+        return {"local_id": "600", "name": "group-1", "devices": devices}
+
+    item = adapter.load_record(Group, None, {"id": 600}, to_data=to_data)
+
+    assert (item is not None) is case.loaded
+    added = adapter.load_report[len(report_before) :]
+    peer_entries = [
+        (entry.reason, entry.peer.source_id, entry.loaded)
+        for entry in added
+        if entry.reason in {"peer_not_found_in_source", "peer_not_loaded"} and entry.peer is not None
+    ]
+    assert tuple(peer_entries) == case.entries
+    assert all(entry.kind == "Group" and entry.field == "devices" for entry in added)
+    if case.name == "required-every-peer-removed-by-a-filter":
+        assert [entry.reason for entry in added] == ["required_peer_excluded_by_filter"]

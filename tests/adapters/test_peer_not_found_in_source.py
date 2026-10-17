@@ -17,13 +17,16 @@ import importlib
 import sys
 import types
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 from diffsync import Adapter
 from diffsync.store.local import LocalStore
 
 from infrahub_sync import DiffSyncMixin, SchemaMappingField, SchemaMappingModel, SyncAdapter, SyncInstance
+from infrahub_sync.cache.cursors import CursorState, CursorTier
+from infrahub_sync.cache.incremental import apply_changed_rows
 from infrahub_sync.plan.derive import operations_from_diff
 from infrahub_sync.plan.problems import find_problems, select_operations
 from infrahub_sync.runtime_schema.domain import normalize_destination_schema
@@ -298,3 +301,37 @@ def test_a_peer_the_source_does_not_return_is_listed_and_the_plan_finishes(
     (operation,) = [op for op in selected if op.kind == "IpamIPAddress" and op.identity == {"address": "10.0.0.9/32"}]
     assert all(reference.field != "vrf" for reference in operation.relationships or ())
     assert [op.identity for op in selected if op.kind == "DcimDevice"] == [{"name": "r2"}]
+
+
+@pytest.mark.parametrize("name", ["netbox", "nautobot"])
+def test_a_changed_row_that_cannot_be_built_is_recorded_in_the_load_report(name: str) -> None:
+    """An incremental load admits each changed row through `load_record`, as the full load does.
+
+    The changed device `r3` refers to a site the source does not return through the required
+    relationship `site`: it is recorded in the load report and left out, and the other changed
+    row still loads. The plan does not fail.
+    """
+    recorded = SOURCES[name]
+    source = cast("Any", _recorded_adapter(recorded, _config(name)))  # NetBox or Nautobot, built without a client
+    DiffSyncMixin.load(source)
+    report_before = list(source.load_report)
+    site = recorded.responses["LocationSite"][0]["id"]
+    ids = (33, 34) if name == "netbox" else (_uuid(33), _uuid(34))
+    endpoint = MagicMock()
+    endpoint.filter.return_value = [
+        {"id": ids[0], "name": "r3", "site": _nested(recorded.missing_site)},
+        {"id": ids[1], "name": "r4", "site": _nested(site)},
+    ]
+    source._resolve_endpoint = lambda _mapping: endpoint
+    source._depth_kwargs = {}  # Nautobot reads it; the adapter is built without __init__
+
+    apply_changed_rows(
+        source, "DcimDevice", source.DcimDevice, CursorState(CursorTier.TIMESTAMP, "2026-10-01", safe=True)
+    )
+
+    added = source.load_report[len(report_before) :]
+    assert [(entry.reason, entry.kind, entry.source_id, entry.field, entry.loaded) for entry in added] == [
+        ("peer_not_found_in_source", "DcimDevice", str(ids[0]), "site", False)
+    ]
+    names = sorted(item.name for item in source.get_all("DcimDevice"))
+    assert names == ["r2", "r4"]

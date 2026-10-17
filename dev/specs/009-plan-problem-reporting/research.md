@@ -201,7 +201,8 @@ replaces its scan of `self.store.get_all(...)` by `local_id` with one call to
 | --- | --- |
 | in the store | its unique ID, from an index by kind and `local_id` |
 | in the load report with a known identity | that identity. The referring record loads with the real reference, and the problem pass decides whether it is left out or kept (R7) |
-| in the load report without a known identity | `PeerNotLoadedError`: the referring record is left out as a dependent, whether the relationship is required or optional, because its reference cannot be stated |
+| in the load report without a known identity, relationship required | `PeerNotLoadedError`: the referring record is left out as a dependent, because its reference cannot be stated |
+| in the load report without a known identity, relationship optional | No value. `peer_unique_id` records `peer_not_loaded` with `loaded: true` for the referring record. The record loads without that reference, and the problem pass keeps it without that relationship, naming the left-out record (FR-005) |
 | removed by a configured filter, relationship required | `ExcludedRequiredPeerError` (the required field is `str` with no default, `runtime_schema/models.py:77-81`, so the record cannot be built) |
 | removed by a configured filter, relationship optional | no value, as today (`adapters/netbox.py:258-271`): a filter decides what the source holds, so this is not a left-out record |
 | not in the source, relationship required | `PeerNotFoundError`. The admission step records `peer_not_found_in_source` with the kind, the record ID, the field and the peer ID. The record cannot be built, so it is left out with its dependents |

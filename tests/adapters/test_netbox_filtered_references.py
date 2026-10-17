@@ -235,16 +235,12 @@ def test_required_peer_not_in_the_source_is_in_the_load_report(monkeypatch: pyte
 
 @pytest.mark.parametrize(
     ("model", "value"),
-    [(OptionalOne, {"id": 99}), (OptionalMany, [{"id": 99}]), (RequiredMany, [{"id": 99}])],
+    [(OptionalOne, {"id": 99}), (OptionalMany, [{"id": 99}])],
 )
 def test_optional_peer_not_in_the_source_loads_with_a_placeholder(
     monkeypatch: pytest.MonkeyPatch, model: type[NetboxModel], value: dict[str, int] | list[dict[str, int]]
 ) -> None:
-    """The record loads with a "not in the source" reference, and the load report lists it.
-
-    A cardinality-many reference resolves each peer as optional; only peers a filter removed
-    can leave a required list empty.
-    """
+    """The record loads with a "not in the source" reference, and the load report lists it."""
     adapter = _adapter(monkeypatch, model, [{"id": 1, "name": "owner", "peer": value}])
 
     adapter.model_loader("Example", model)
@@ -261,6 +257,29 @@ def test_optional_peer_not_in_the_source_loads_with_a_placeholder(
             field="peer",
             peer=SourceRecordReference(kind="BuiltinTag", identity=None, source_id="99"),
             loaded=True,
+        )
+    ]
+
+
+def test_required_many_peers_all_not_in_the_source_leave_the_record_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A required cardinality-many reference needs one peer the source returns (spec 009 review H5).
+
+    Without one, Infrahub would refuse the empty relationship at apply, so the record is left out
+    with a `peer_not_found_in_source` problem.
+    """
+    adapter = _adapter(monkeypatch, RequiredMany, [{"id": 1, "name": "owner", "peer": [{"id": 99}]}])
+
+    adapter.model_loader("Example", RequiredMany)
+
+    assert adapter.get_all("Example") == []
+    assert adapter.load_report == [
+        LoadReportEntry(
+            kind="Example",
+            source_id="1",
+            reason="peer_not_found_in_source",
+            field="peer",
+            peer=SourceRecordReference(kind="BuiltinTag", identity=None, source_id="99"),
+            loaded=False,
         )
     ]
 

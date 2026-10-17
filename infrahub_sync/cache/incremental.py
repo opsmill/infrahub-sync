@@ -12,7 +12,6 @@ from collections.abc import Callable  # noqa: TC003
 from datetime import datetime  # noqa: TC003
 from typing import TYPE_CHECKING
 
-from infrahub_sync import identity_record_data
 from infrahub_sync.cache.cursors import CursorState, CursorTier
 from infrahub_sync.cache.parquet_io import SNAPSHOT_INTERNAL_COLUMNS, read_schema, read_table
 from infrahub_sync.cache.sidecars import CursorsFile
@@ -215,23 +214,20 @@ def hydrate_from_parquet(
 def apply_changed_rows(adapter: Adapter, resource: str, model_cls: type[DiffSyncModel], cursor: CursorState) -> None:
     """Apply changed rows to the hydrated store without writing to the system.
 
-    Overlap can return cached identifiers repeatedly. The stored object is persisted
-    after each change because a store may hand back a detached copy.
+    Each changed record goes through the adapter's admission step (`load_changed_since`),
+    so a record that cannot be built is recorded in the load report. Overlap can return
+    cached identifiers repeatedly. The stored object is persisted after each change because
+    a store may hand back a detached copy.
     """
-    for row in adapter.list_changed_since(resource, cursor):  # ty: ignore[unresolved-attribute]
-        adapter.load_record(  # ty: ignore[unresolved-attribute]  # DiffSyncMixin method
-            model_cls,
-            None,
-            row,
-            to_data=identity_record_data,
-            store_item=functools.partial(_upsert_changed_row, adapter, carries_local_id="local_id" in row),
-        )
+    adapter.load_changed_since(  # ty: ignore[unresolved-attribute]  # DiffSyncMixin method
+        resource, model_cls, cursor, store_item=functools.partial(_upsert_changed_row, adapter)
+    )
 
 
-def _upsert_changed_row(adapter: Adapter, item: DiffSyncModel, *, carries_local_id: bool) -> DiffSyncModel:
+def _upsert_changed_row(adapter: Adapter, item: DiffSyncModel) -> DiffSyncModel:
     """Add a changed row, or update the model already loaded under the same identity."""
     stored, _ = adapter.update_or_add_model_instance(item)
-    if carries_local_id and hasattr(stored, "local_id"):
+    if "local_id" in item.model_fields_set and hasattr(stored, "local_id"):
         # TODO: type mapped models with their declared local_id field.
         setattr(stored, "local_id", item.local_id)  # noqa: B010  # ty: ignore[unresolved-attribute]
     adapter.update(stored)

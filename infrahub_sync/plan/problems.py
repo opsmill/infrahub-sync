@@ -344,6 +344,8 @@ class _Findings:
     not_found_optional: list[tuple[_RecordKey, LoadReportEntry]] = field(default_factory=list)
     # Records not loaded because a peer was not loaded: left out as dependents.
     not_loaded_peer: list[tuple[_RecordKey, LoadReportEntry]] = field(default_factory=list)
+    # Optional references to a peer that was not loaded and has no identity: the record is kept.
+    not_loaded_optional: list[tuple[_RecordKey, LoadReportEntry]] = field(default_factory=list)
 
     def add(self, problem: PlanProblem, keys: Iterable[_RecordKey], *, leaves_out: bool = True) -> None:
         self.problems.append(problem)
@@ -387,7 +389,7 @@ def _load_report_problems(load_report: Sequence[LoadReportEntry], view: _SourceV
             if entry.loaded:
                 findings.not_found_optional.append((record.key, entry))
         elif entry.reason == "peer_not_loaded":
-            findings.not_loaded_peer.append((record.key, entry))
+            (findings.not_loaded_optional if entry.loaded else findings.not_loaded_peer).append((record.key, entry))
 
 
 def _dropdown_problems(*, source: Any, view: _SourceView, schema: _Schema, findings: _Findings) -> None:
@@ -543,6 +545,42 @@ def _reference_target(view: _SourceView, peer_kinds: Sequence[str], unique_id: o
     return None
 
 
+def _keep_load_report_referrers(
+    findings: _Findings,
+    view: _SourceView,
+    left: Mapping[_RecordKey, LeftOutRecord],
+    kept: dict[tuple[_RecordKey, str, _RecordKey | str], KeptRecord],
+) -> None:
+    """Keep the records the load built without an optional link to a missing or left-out peer (FR-005)."""
+    for key, entry in findings.not_loaded_optional:
+        peer = _peer_reference(entry, view)
+        if key in left or peer is None or entry.field is None:
+            continue
+        target = view.records.get((peer.kind, peer.source_id or ""))
+        kept.setdefault(
+            (key, entry.field, target.key if target is not None else f"{peer.kind}:{peer.source_id}"),
+            KeptRecord(
+                record=view.records[key].reference(),
+                cause="peer_left_out",
+                relationship=entry.field,
+                left_out_peer=target.reference() if target is not None else peer,
+            ),
+        )
+    for key, entry in findings.not_found_optional:
+        peer = _peer_reference(entry, view)
+        if key in left or peer is None or entry.field is None:
+            continue
+        kept.setdefault(
+            (key, entry.field, f"{peer.kind}:{peer.source_id}"),
+            KeptRecord(
+                record=view.records[key].reference(),
+                cause="peer_not_found_in_source",
+                relationship=entry.field,
+                left_out_peer=peer,
+            ),
+        )
+
+
 def _walk(  # pylint: disable=too-many-arguments  # the walk's inputs, all keyword-only
     *, source: Any, view: _SourceView, schema: _Schema, config: SyncConfig | None, findings: _Findings
 ) -> tuple[dict[_RecordKey, LeftOutRecord], list[KeptRecord]]:
@@ -598,19 +636,7 @@ def _walk(  # pylint: disable=too-many-arguments  # the walk's inputs, all keywo
                     left_out_peer=view.records[target].reference(),
                 ),
             )
-    for key, entry in findings.not_found_optional:
-        peer = _peer_reference(entry, view)
-        if key in left or peer is None or entry.field is None:
-            continue
-        kept.setdefault(
-            (key, entry.field, f"{peer.kind}:{peer.source_id}"),
-            KeptRecord(
-                record=view.records[key].reference(),
-                cause="peer_not_found_in_source",
-                relationship=entry.field,
-                left_out_peer=peer,
-            ),
-        )
+    _keep_load_report_referrers(findings, view, left, kept)
     return left, list(kept.values())
 
 

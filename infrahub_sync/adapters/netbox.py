@@ -24,7 +24,7 @@ from .utils import get_value
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 
 def _record_ids(records: list[dict]) -> set[str]:
@@ -83,6 +83,26 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                 raise ValueError(msg) from exc
         return endpoint
 
+    def _transformed_records(
+        self,
+        *,
+        element: SchemaMappingModel,
+        model: type[NetboxModel],
+        raw_records: list[dict],
+        already_filtered: bool = False,
+    ) -> list[dict]:
+        """Filter and transform NetBox records as the base class's `model_loader` does.
+
+        Pass `already_filtered=True` when the caller has run `filter_records` itself (e.g. to
+        log a filtered count) so records aren't filtered twice.
+        """
+        if self.target != "source":
+            return raw_records
+        filtered = (
+            raw_records if already_filtered else model.filter_records(records=raw_records, schema_mapping=element)
+        )
+        return model.transform_records(records=filtered, schema_mapping=element)
+
     def _records_to_diffsync(
         self,
         *,
@@ -91,25 +111,14 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         raw_records: list[dict],
         already_filtered: bool = False,
     ) -> Iterator[dict]:
-        """Filter+transform NetBox records and yield diffsync-ready dicts.
-
-        Same transformation flow as the base class's model_loader, for reuse by
-        list_changed_since. Pass `already_filtered=True` when the caller has
-        run `filter_records` itself (e.g. to log a filtered count) so records
-        aren't filtered twice.
-        """
-        if self.target == "source":
-            filtered = (
-                raw_records if already_filtered else model.filter_records(records=raw_records, schema_mapping=element)
-            )
-            transformed = model.transform_records(records=filtered, schema_mapping=element)
-        else:
-            transformed = raw_records
-        for obj in transformed:
+        """Filter+transform NetBox records and yield diffsync-ready dicts."""
+        for obj in self._transformed_records(
+            element=element, model=model, raw_records=raw_records, already_filtered=already_filtered
+        ):
             yield self.record_to_data(obj, element, model)
 
-    def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterator[dict]:
-        """Yield NetBox records changed since `cursor`. Uses `last_updated__gte` filter."""
+    def _changed_records(self, model_name: str, cursor: CursorState) -> tuple[SchemaMappingModel, list[dict]]:
+        """Return the mapping entry and the transformed NetBox records changed since `cursor`."""
         element = next(
             (e for e in self.config.schema_mapping if e.name == model_name),
             None,
@@ -121,7 +130,27 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
         model: type[NetboxModel] = getattr(self, model_name)
         endpoint = self._resolve_endpoint(element.mapping)
         raw = [dict(node) for node in endpoint.filter(last_updated__gte=cursor.value)]
-        yield from self._records_to_diffsync(element=element, model=model, raw_records=raw)
+        return element, self._transformed_records(element=element, model=model, raw_records=raw)
+
+    def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterator[dict]:
+        """Yield NetBox records changed since `cursor`. Uses `last_updated__gte` filter."""
+        element, records = self._changed_records(model_name, cursor)
+        model: type[NetboxModel] = getattr(self, model_name)
+        for obj in records:
+            yield self.record_to_data(obj, element, model)
+
+    def load_changed_since(
+        self,
+        model_name: str,
+        model: type[DiffSyncModel],
+        cursor: CursorState,
+        *,
+        store_item: Callable[[DiffSyncModel], DiffSyncModel],
+    ) -> None:
+        """Admit each NetBox record changed since `cursor` through `load_record`, as a full load does."""
+        element, records = self._changed_records(model_name, cursor)
+        for obj in records:
+            self.load_record(model, element, obj, store_item=store_item)
 
     def list_existing_ids(self, model_name: str) -> Iterator[str]:
         """Yield current unique IDs for `model_name` from NetBox.
@@ -214,7 +243,9 @@ class NetboxAdapter(DiffSyncMixin, Adapter):
                         field.reference, node_id, owner=owner, field=field.name, required=required
                     )
                     if unique_id is None:
-                        self._log_excluded(element.name, obj_id, field.name, field.reference, [node_id])
+                        # No value also means a peer that was not loaded (kept without the link).
+                        if node_id in self.excluded_peer_ids(field.reference):
+                            self._log_excluded(element.name, obj_id, field.name, field.reference, [node_id])
                         continue
                     data[field.name] = unique_id
                 else:
