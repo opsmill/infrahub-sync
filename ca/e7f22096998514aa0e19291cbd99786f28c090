@@ -1,0 +1,99 @@
+dev/adr/0020-records-with-problems-are-left-out-of-a-plan.md
+  s_47078ea83e766d::t_60f988a4211968 33-34
+infrahub_sync/execution.py
+  s_47078ea83e766d::t_9ec54856cf5d80 900,920,1023,1053,1143,1214
+dev/adr/0022-saved-plan-format-4-records-left-out-records.md
+  s_47078ea83e766d::t_60f988a4211968 10,30-31
+infrahub_sync/utils.py
+  s_47078ea83e766d::t_9ec54856cf5d80 436,468
+infrahub_sync/potenda/__init__.py
+  s_47078ea83e766d::t_9ec54856cf5d80 728,858
+  s_47078ea83e766d::t_1743206940d437 771
+docs/docs/running-a-sync.mdx
+  s_47078ea83e766d::t_1f0287ef97cd6b 268,273,280,289,301-303,306,309-311,457,461
+tests/service/test_registered_schema_guard.py
+  s_47078ea83e766d::t_09c279fdfe7517 592
+infrahub_sync/cli.py
+  s_47078ea83e766d::t_1743206940d437 806,821-824,843
+tests/service/test_flow_and_prefect.py
+  s_47078ea83e766d::t_09c279fdfe7517 256,940
+dev/specs/009-plan-problem-reporting/data-model.md
+  s_47078ea83e766d::t_e771f7cc165631 171-176
+docs/docs/reference/sync-http-api.mdx
+  s_47078ea83e766d::t_461a497f1cb5fc 155,429,434-437,444-445,452
+  s_47078ea83e766d::t_879cb737bfaf77 476,657
+dev/specs/009-plan-problem-reporting/contracts/sync-api.md
+  s_47078ea83e766d::t_e771f7cc165631 130,140-143,150-152,159
+dev/specs/009-plan-problem-reporting/quickstart.md
+  s_47078ea83e766d::t_e771f7cc165631 51,54-55,57,61
+dev/specs/009-plan-problem-reporting/spec.md
+  s_47078ea83e766d::t_e771f7cc165631 425
+  s_47078ea83e766d::t_cf81379647cff9 37,46-50,137,140,153-159,161-162,167,315-320,322,325,396-398,424,493,502-503
+infrahub_sync/service/flow.py
+  s_47078ea83e766d::t_9ec54856cf5d80 503,613,720,760
+tests/cli/test_client_commands.py
+  s_47078ea83e766d::t_732ff97ab84dd3 1377,1379,1386,1391,1397,1400-1401,1408,1418,1421-1422
+tests/plan/test_replan_after_stopped_apply.py
+  s_47078ea83e766d::t_09c279fdfe7517 45
+examples/netbox_to_infrahub/README.md
+  s_47078ea83e766d::t_1f0287ef97cd6b 67-68
+infrahub_sync/failure_cause.py
+  s_47078ea83e766d::t_1743206940d437 103
+tests/service/test_stopped_apply.py
+  s_47078ea83e766d::t_09c279fdfe7517 65,82,102
+tests/service/test_apply_left_out_confirmation.py
+  s_47078ea83e766d::t_7fd125b50cd447 174
+  s_47078ea83e766d::t_d853c298328795 154,266
+  s_47078ea83e766d::t_6a4a2f5c48cd3f 132,182-184
+  s_47078ea83e766d::t_f513642049812c 1,4,130-131,137-138,140,145,147,151,159,161,167-168,181,187-188,196-201,204,225,244-245,247,257,263,269,272-273,282,306-307,309-311,313
+docs/docs/operations/compose-troubleshooting.mdx
+  s_47078ea83e766d::t_1f0287ef97cd6b 98
+infrahub_sync/service/service.py
+  s_47078ea83e766d::t_1743206940d437 302,360,370,376,381
+changelog/+009-left-out-confirmation.added.md
+  s_47078ea83e766d::t_1f0287ef97cd6b 1
+tests/service/test_sync_left_out_stop.py
+  s_47078ea83e766d::t_09c279fdfe7517 58,65-66,78,81,96-97
+dev/specs/009-plan-problem-reporting/research.md
+  s_47078ea83e766d::t_60f988a4211968 356,374-376,415-416,433
+dev/specs/011-operator-ui/spec.md
+  s_47078ea83e766d::t_e65e63b819b3c8 100,104-105,111,121-122,329-334,423,470-471
+dev/specs/009-plan-problem-reporting/contracts/cli.md
+  s_47078ea83e766d::t_e771f7cc165631 33,36,39-44
+infrahub_sync/plan/apply_gate.py
+  s_47078ea83e766d::t_1743206940d437 9-12,29-30,34,38,41
+tests/plan/test_apply_gate.py
+  s_47078ea83e766d::t_e4c089d9ba1bd7 1-117
+tests/plan/test_destination_binding.py
+  s_47078ea83e766d::t_09c279fdfe7517 251,253
+infrahub_sync/client/models.py
+  s_47078ea83e766d::t_1743206940d437 62-67,104-106,111-113,651
+infrahub_sync/plan/errors.py
+  s_47078ea83e766d::t_1743206940d437 122,124-127,132
+docs/docs/reference/cli.mdx
+  s_2632d98b2ad5dd::t_e6ce33cf9b2021 98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cae7f22096998514aa0e19291cbd99786f28c090",
+  "prompts": {},
+  "sessions": {
+    "s_2632d98b2ad5dd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-afix-009-decisions-9139653a547e9984",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
