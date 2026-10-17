@@ -102,17 +102,24 @@ Added to `PlanSummaryResource` (`client/models.py:315`):
 | `problems` | integer ≥ 0 | Problem entries |
 | `problems_by_type` | object problem type → integer | |
 | `kept` | integer ≥ 0 | Kept-record entries |
+| `deletes_withheld_by_kind` | object kind → integer | Review #3 (2026-10-17): per kind, the left-out records the load could not build and whose identity is not known, plus the `destination_identity_ambiguous` identities that cannot be formed. The plan computes no delete of these kinds (FR-008). Derived on read from the report; empty when there is none |
+| `dropdown_values_checked` | boolean | Review #8 (2026-10-17): false when the manifest records `dropdown_values_checked: false`, because the run had no destination schema snapshot (a direct run); true otherwise |
 
 ## Plan report (saved plan format 4)
 
 `plan/report.jsonl`: one JSON object per line, canonical encoding (ADR 0001), each with an
 `entry` field `problem`, `left_out` or `kept` and the fields above. Order: problems by
 `problem_type`, `kind`, canonical identity, `source_id`; then left-out records by `kind`,
-identity, `source_id`; then kept records by `kind`, identity, `relationship`. The order is
-stable, so pages hold each entry once (spec 011 FR-016).
+identity, `source_id`; then kept records by `kind`, identity, `relationship`. Entries that tie
+on those keys are ordered by the canonical bytes of the whole entry, and the records of a
+`duplicate_source_identity` problem are named in reference order, not load order. The order is
+stable, so pages hold each entry once (spec 011 FR-016), and the report bytes do not depend on
+the order the records were loaded in.
 
 Manifest addition, `report` object: `digest` (SHA-256 hex), `size` (bytes), `problems`,
 `left_out`, `left_out_with_problem`, `left_out_dependent`, `kept`. `format_version` is 4.
+Manifest addition `dropdown_values_checked: false` when the run had no destination schema
+snapshot, so the Dropdown check was not made (review #8); absent otherwise.
 
 Validation: `report.left_out` equals the number of `left_out` lines, and the digest matches the
 file. A mismatch is a `PlanVerificationError`; the plan is not applied.
@@ -154,9 +161,9 @@ returned as `PublicRunResource.failure`.
 | `field` | string or null | From a typed Sync exception |
 | `infrahub_message` | string or null | Only for `destination_rejected_write`: Infrahub's error `message`, control characters removed, at most 1,024 characters |
 | `summary` | string | One sentence from a fixed template per failure type over the fields above |
-| `error_class` | string | The class name recorded today (`error_type`), kept for scripts |
+| `error_class` | string | The class name recorded today (`error_type`), kept for scripts. For `internal_error`, the class of the innermost error of the cause chain that is not a wrapper such as `SideLoadError` (review #6) |
 | `apply_progress` | Apply progress or null | For a stopped apply |
-| `next_action` | string | Fixed text per failure type, for example "Fix the cause, then create and review a new plan" |
+| `next_action` | string | Fixed text per failure type, for example "Fix the cause, then create and review a new plan". For `left_out_review_required`, the text names the run ID and the plan checksum: review the plan, then apply this run with `--confirm-left-out` (review #10) |
 
 No field holds the text of an exception, an address, a header or a traceback.
 

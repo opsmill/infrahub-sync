@@ -214,6 +214,7 @@ def write_plan_artifact(
     configuration_binding: tuple[str, int, str] | None = None,
     schema_fingerprint: str | None = None,
     report: PlanReport | None = None,
+    dropdown_values_checked: bool = True,
 ) -> PlanManifest:
     """Write `<run_dir>/plan/` and return the manifest that was written.
 
@@ -222,7 +223,9 @@ def write_plan_artifact(
     atomically. The returned `PlanManifest` is the one on disk, `plan_checksum` included.
 
     `report` is the plan report (plan format 4); `None` writes an empty report. The manifest
-    records its digest, size and counts, so the checksum covers it.
+    records its digest, size and counts, so the checksum covers it. `dropdown_values_checked`
+    false records that the run had no destination schema snapshot to check Dropdown values
+    against; true writes no field.
 
     `destination_binding` is the resolved destination identity the plan is bound to —
     endpoint URL and branch, never the token. It is additive: `None`
@@ -281,6 +284,8 @@ def write_plan_artifact(
     if schema_fingerprint is not None:
         # Before the checksum below, so the recorded schema identity is covered by it.
         body["schema_fingerprint"] = schema_fingerprint
+    if not dropdown_values_checked:
+        body["dropdown_values_checked"] = False
     body["plan_checksum"] = compute_plan_checksum(body, operations_bytes)
     manifest = PlanManifest.model_validate(body)
 

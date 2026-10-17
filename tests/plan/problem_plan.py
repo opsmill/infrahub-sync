@@ -123,10 +123,13 @@ def plan_fixture(  # noqa: PLR0913 - one keyword per part of the fixture a test 
     source_class: type[ProblemFixtureAdapter] = ProblemFixtureAdapter,
     config: SyncInstance | None = None,
     schema: Mapping[str, Any] | None = None,
+    schema_snapshot: bool = True,
 ) -> PlannedFixture:
     """Plan `variant` (or `records`) against `destination` (by default, the fixture's for those records).
 
     `config` and `schema` replace the fixture configuration and destination schema record.
+    `schema_snapshot=False` plans without the run's destination schema snapshot, as a direct
+    run does: the Dropdown check is not made.
     """
     configuration = config or fixture_config()
     raw_schema = schema if schema is not None else schema_record()
@@ -152,7 +155,7 @@ def plan_fixture(  # noqa: PLR0913 - one keyword per part of the fixture a test 
         show_progress=False,
         concurrent_load=False,
     )
-    potenda.schema_record = snapshot
+    potenda.schema_record = snapshot if schema_snapshot else None
     potenda.load()
     potenda.write_plan(potenda.diff())
     assert potenda.last_plan_report is not None

@@ -127,7 +127,10 @@ bound for each resource, including empty snapshots. The `safe-v1:` prefix in `cu
 marks bounds established under this contract; older cursors require full extraction.
 Parquet `_extract_ts` values remain diagnostic host timestamps and never become query
 bounds. Capture failure, load failure or an interrupted snapshot write clears the candidate
-cursor, so explicit persistence after an unsuccessful load cannot advance it.
+cursor, so explicit persistence after an unsuccessful load cannot advance it. A resource with
+an entry in the side's load report saves no cursor either: the load left out some of its
+records, which are not in the snapshot, so the next run reads that resource in full and reads
+them again.
 
 Safe bounds can re-read records already in the cached snapshot. Potenda uses DiffSync's
 in-memory `update_or_add_model_instance` for these rows: later yielded attributes replace

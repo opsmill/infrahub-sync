@@ -629,6 +629,11 @@ def _echo_report_summary(plan: PlanResource) -> None:
     )
     typer.echo(f"problems: {summary.problems}")
     typer.echo(f"kept_without_relationship: {summary.kept}")
+    # A left-out record without a known identity may be any Infrahub object of its kind.
+    for kind, count in summary.deletes_withheld_by_kind.items():
+        typer.echo(_display(f"deletes not computed for {kind}: {count} records without identity"))
+    if not summary.dropdown_values_checked:
+        typer.echo("Dropdown values were not checked: no destination schema snapshot in this run")
 
 
 def _reference_text(reference: PlanRecordReferenceResource) -> str:

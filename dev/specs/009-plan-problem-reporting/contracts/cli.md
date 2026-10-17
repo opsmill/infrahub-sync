@@ -12,6 +12,18 @@ problems: 1
 kept_without_relationship: 0
 ```
 
+Then, only when they apply (review #3 and #8, 2026-10-17), one line per kind whose deletes the
+plan withholds, and one line when the run had no destination schema snapshot:
+
+```text
+deletes not computed for IpamVRF: 1 records without identity
+Dropdown values were not checked: no destination schema snapshot in this run
+```
+
+A `sync` that stops after its plan prints the next action with this run's ID and plan checksum:
+review the plan with `runs plan` and `runs left-out`, then `apply <run_id> --expected-checksum
+<hex> --confirm-left-out`. It never says to run the stage again.
+
 ## Problem, left-out and kept lists
 
 ```text

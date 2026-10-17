@@ -358,3 +358,6 @@ def test_the_plan_summary_carries_the_report_counts(
     assert summary["problems"] == 10
     assert summary["problems_by_type"] == dict(Counter(item.problem_type for item in report.problems))
     assert summary["kept"] == len(report.kept) > 0
+    # Review #3 and #8: the kinds whose deletes are withheld, and whether Dropdown values were checked.
+    assert summary["deletes_withheld_by_kind"] == report.records_without_identity_by_kind() != {}
+    assert summary["dropdown_values_checked"] is True

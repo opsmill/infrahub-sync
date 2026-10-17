@@ -163,6 +163,20 @@ kept_without_relationship: 0
 - `kept_without_relationship` is the number of records that the plan writes without one
   optional relationship, because the related record is left out or is not in the source.
 
+Two more lines appear only when they apply:
+
+```text
+deletes not computed for IpamVRF: 1 records without identity
+Dropdown values were not checked: no destination schema snapshot in this run
+```
+
+- `deletes not computed for <kind>` means that the plan left out records of that kind before
+  their identity was known, for example because a transform failed. Such a record may be any
+  Infrahub object of that kind, so the plan deletes no object of that kind.
+- `Dropdown values were not checked` means that the run had no copy of the destination schema,
+  so the plan could not compare values with the choices of Dropdown attributes. A run of the
+  Sync service always has one.
+
 When the plan has problems, `diff` also prints the first 20 of them and the `runs problems`
 command that lists the rest.
 
@@ -487,8 +501,10 @@ exits with code 1:
 
 ```text
 sync stopped: the plan leaves out 12 records, so the sync stopped before writing
-  next: Review the left-out records with `infrahub-sync runs left-out`, then apply the plan with `infrahub-sync apply --confirm-left-out`.
+  next: Review the plan with `infrahub-sync runs plan RUN_ID` and the records it leaves out with `infrahub-sync runs left-out RUN_ID`, then apply this run with `infrahub-sync apply RUN_ID --expected-checksum CHECKSUM --confirm-left-out`.
 ```
+
+The `next` line names the run ID and the plan checksum of this run.
 
 Review the plan with `runs plan`, `runs problems`, and `runs left-out`. Then apply the same
 run with `apply RUN_ID --expected-checksum CHECKSUM --confirm-left-out`. No option of

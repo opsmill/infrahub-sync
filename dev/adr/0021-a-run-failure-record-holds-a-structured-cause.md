@@ -43,7 +43,8 @@ an exception, an address, a header or a traceback. Each field has a length limit
 
 - Infrahub's message reaches the run record. It describes the write that Infrahub received,
   which is source data.
-- A failure of an unknown type records its class name and a fixed message.
+- A failure of an unknown type records the class name of the innermost error that is not a
+  wrapper, and a fixed message.
 - The secret-redaction guideline and the comment at `infrahub_sync/service/flow.py:723-725` are
   rewritten to match this record.
 - The existing value replacement is unchanged. It no longer protects the run record, because the

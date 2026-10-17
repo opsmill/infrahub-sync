@@ -763,6 +763,33 @@ def test_runs_plan_discloses_when_delete_operations_were_not_computed(client: Ma
     assert "Delete operations were NOT computed" in result.output
 
 
+def test_runs_plan_says_which_kinds_have_no_deletes_and_that_dropdown_values_were_not_checked(
+    client: MagicMock,
+) -> None:
+    plan = _plan()
+    summary = plan.summary.model_copy(
+        update={"deletes_withheld_by_kind": {"IpamVRF": 1, "InterfacePhysical": 2}, "dropdown_values_checked": False}
+    )
+    client.get_plan.return_value = plan.model_copy(update={"summary": summary})
+
+    result = _invoke(client, "runs", "plan", "service-run-1")
+
+    assert result.exit_code == 0, result.output
+    lines = result.output.splitlines()
+    assert "deletes not computed for IpamVRF: 1 records without identity" in lines
+    assert "deletes not computed for InterfacePhysical: 2 records without identity" in lines
+    assert "Dropdown values were not checked: no destination schema snapshot in this run" in lines
+
+
+def test_runs_plan_prints_no_note_when_every_check_was_made(client: MagicMock) -> None:
+    client.get_plan.return_value = _plan()
+
+    result = _invoke(client, "runs", "plan", "service-run-1")
+
+    assert "deletes not computed for" not in result.output
+    assert "Dropdown values were not checked" not in result.output
+
+
 def test_runs_plan_discloses_zero_recorded_deletes(client: MagicMock) -> None:
     plan = _plan()
     summary = plan.summary.model_copy(

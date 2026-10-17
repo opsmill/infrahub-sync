@@ -478,9 +478,15 @@ def _load_report_problems(  # pylint: disable=too-many-arguments  # the pass's i
         elif entry.reason == "duplicate_source_identity":
             kept_key = view.kept_duplicate.get(index)
             existing = None if kept_key is None else view.records[kept_key]
-            others = [existing.reference()] if existing is not None else []
-            problem = _problem("duplicate_source_identity", reference, other_records=others)
-            findings.add(problem, [record.key, *([existing.key] if existing is not None else [])])
+            # The records are named in a fixed order, not in load order, so the entry is the same
+            # whichever of them the store kept.
+            members = sorted([record, *([existing] if existing is not None else [])], key=_record_order)
+            problem = _problem(
+                "duplicate_source_identity",
+                members[0].reference(),
+                other_records=[member.reference() for member in members[1:]],
+            )
+            findings.add(problem, [member.key for member in members])
         elif entry.reason == "required_peer_excluded_by_filter":
             problem = _problem(
                 entry.reason, reference, field_name=entry.field, peer=peer, config_entry=entry.config_entry
@@ -501,7 +507,7 @@ def _load_report_problems(  # pylint: disable=too-many-arguments  # the pass's i
 def _dropdown_problems(*, source: Any, view: _SourceView, schema: _Schema, findings: _Findings) -> None:
     """Check every mapped Dropdown value of the source store against its choices (research R6)."""
     if schema.snapshot is None:
-        logger.debug("Plan: no destination schema record, so the Dropdown check is skipped")
+        logger.warning("Plan: Dropdown values were not checked: no destination schema snapshot in this run")
         return
     for kind in getattr(source, "top_level", ()) or ():
         node = schema.snapshot.kinds.get(kind)
@@ -570,10 +576,15 @@ def _identity_groups(
         keys = destination_keys(node)
         supplied = by_kind[kind]
         if keys and not any(supplied <= set(key) for key in keys):
-            found.extend(
-                ("identities_merge_in_destination", group)
-                for group in merged_identity_groups(of_kind, kind=kind, key=_closest_key(keys, supplied))
-            )
+            # Only a key made of identity fields groups records Infrahub stores as one node, and
+            # only a group with a create merges anything: updates already have their own node.
+            closest = _closest_key(keys, supplied)
+            if set(closest) < supplied:
+                found.extend(
+                    ("identities_merge_in_destination", group)
+                    for group in merged_identity_groups(of_kind, kind=kind, key=closest)
+                    if any(operation.action == "create" for operation in group.operations)
+                )
     unique: list[tuple[ProblemType, IdentityGroup]] = []
     seen: set[frozenset[tuple[str, bytes]]] = set()
     for problem_type, group in found:
@@ -646,6 +657,11 @@ def _destination_identity(
         return _identity_from_keys(keys=identifiers, kind=kind, resolved=resolved)
     except (SourcePeerUnresolvedError, UnformableDestinationIdentityError):
         return None
+
+
+def _record_order(record: _Record) -> tuple[tuple[str, bytes, str], bool]:
+    """Order the records of a group: by reference, then a record the store kept before one it refused."""
+    return _reference_order(record.reference()), not record.loaded
 
 
 def _reference_order(reference: PlanRecordReference) -> tuple[str, bytes, str]:
@@ -903,8 +919,7 @@ def select_operations(operations: Sequence[PlannedOperation], report: PlanReport
 
     # A record the load could not build and whose identity is not known may be any Infrahub
     # node of its kind, so the plan deletes none of that kind (FR-008).
-    no_deletes = {item.record.kind for item in report.left_out if item.record.identity is None and not item.loaded}
-    no_deletes |= {record.kind for record in ambiguous if record.identity is None}
+    no_deletes = set(report.records_without_identity_by_kind())
     withheld: dict[str, int] = {}
     selected: list[PlannedOperation] = []
     for operation in operations:

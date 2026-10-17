@@ -7,8 +7,9 @@ gives back its write admission, so the team applies the plan with
 `POST /runs/{run_id}/apply` and the confirmed left-out count (spec 009 FR-012,
 contracts/sync-api.md). No request field skips the stop.
 
-The failure is built from fixed text and the plan's count only. It holds no text of an
-exception (ADR 0021). It is stored under `results["failure"]`, the one place
+The failure is built from fixed text, the plan's count, the run ID and the plan checksum only.
+It holds no text of an exception (ADR 0021). Its next action names the commands that review
+this run's plan and apply this run with the confirmation: the stop is not a failure to retry. It is stored under `results["failure"]`, the one place
 `GET /runs/{run_id}` reads a run's cause from, as a failed stage's cause is.
 """
 
@@ -18,7 +19,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from infrahub_sync.execution import ACTION_KEYS
-from infrahub_sync.failure_cause import NEXT_ACTIONS, RunFailureCause
+from infrahub_sync.failure_cause import RunFailureCause
 from infrahub_sync.product_store import ExecutionFinishWriteback
 
 if TYPE_CHECKING:
@@ -47,6 +48,15 @@ def applied_summary(
     }
 
 
+def left_out_next_action(run_id: str, checksum: str) -> str:
+    """The next action of a stopped `sync`: review this run's plan, then apply this run (review #10)."""
+    return (
+        f"Review the plan with `infrahub-sync runs plan {run_id}` and the records it leaves out with "
+        f"`infrahub-sync runs left-out {run_id}`, then apply this run with "
+        f"`infrahub-sync apply {run_id} --expected-checksum {checksum} --confirm-left-out`."
+    )
+
+
 def left_out_stop(
     run_id: str, saved: SavedPlan, sync_name: str
 ) -> tuple[dict[str, Any], ExecutionFinishWriteback] | None:
@@ -59,7 +69,7 @@ def left_out_stop(
         stage="sync",
         failure_type="left_out_review_required",
         summary=f"The plan leaves out {left_out} records, so the sync stopped before writing",
-        next_action=NEXT_ACTIONS[LEFT_OUT_REVIEW_FAILURE_TYPE],
+        next_action=left_out_next_action(run_id, saved.manifest.plan_checksum),
     ).model_dump(mode="json")
     result = {
         "run_id": run_id,

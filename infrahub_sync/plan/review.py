@@ -134,6 +134,8 @@ class SavedPlan:
             problems=len(self.report.problems),
             problems_by_type=dict(sorted(problems_by_type.items())),
             kept=len(self.report.kept),
+            deletes_withheld_by_kind=self.report.records_without_identity_by_kind(),
+            dropdown_values_checked=self.manifest.dropdown_values_checked is not False,
         )
 
     def operations(self, *, kind: str | None = None) -> list[PlannedOperation]:

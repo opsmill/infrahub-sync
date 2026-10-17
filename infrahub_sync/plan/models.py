@@ -557,12 +557,19 @@ def _identity_sort_key(reference: PlanRecordReference) -> tuple[str, bytes, str]
     return reference.kind, identity, reference.source_id or ""
 
 
+def _entry_bytes(item: BaseModel) -> bytes:
+    """The last sort key of a report entry: its canonical bytes, which tell apart any two entries."""
+    return canonical_json_bytes(item.model_dump())
+
+
 class PlanReport(BaseModel):
     """The problems, left-out records and kept records of one plan (`report.jsonl`).
 
     `entries()` returns the lines in the stable order of data-model.md: problems by problem
     type, kind, canonical identity and source ID; then left-out records by kind, identity and
-    source ID; then kept records by kind, identity and relationship.
+    source ID; then kept records by kind, identity and relationship. Entries that tie on those
+    keys are ordered by the canonical bytes of the whole entry, so the order, the report bytes
+    and the plan checksum do not depend on the order the records were loaded in.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -574,11 +581,19 @@ class PlanReport(BaseModel):
     def ordered(self) -> PlanReport:
         """Return the report with each list in the stable order."""
         return PlanReport(
-            problems=sorted(self.problems, key=lambda item: (item.problem_type, *_identity_sort_key(item.record))),
-            left_out=sorted(self.left_out, key=lambda item: _identity_sort_key(item.record)),
+            problems=sorted(
+                self.problems,
+                key=lambda item: (item.problem_type, *_identity_sort_key(item.record), _entry_bytes(item)),
+            ),
+            left_out=sorted(self.left_out, key=lambda item: (*_identity_sort_key(item.record), _entry_bytes(item))),
             kept=sorted(
                 self.kept,
-                key=lambda item: (item.record.kind, _identity_sort_key(item.record)[1], item.relationship),
+                key=lambda item: (
+                    item.record.kind,
+                    _identity_sort_key(item.record)[1],
+                    item.relationship,
+                    _entry_bytes(item),
+                ),
             ),
         )
 
@@ -590,6 +605,24 @@ class PlanReport(BaseModel):
             *({"entry": "left_out", **item.model_dump()} for item in ordered.left_out),
             *({"entry": "kept", **item.model_dump()} for item in ordered.kept),
         ]
+
+    def records_without_identity_by_kind(self) -> dict[str, int]:
+        """Count, per kind, the records that withhold every delete of their kind (FR-008).
+
+        A record the load could not build and whose identity is not known may be any Infrahub
+        node of its kind, and so may an identity that two Infrahub nodes hold but that cannot be
+        formed: the plan computes no delete of that kind.
+        """
+        counts: dict[str, int] = {}
+        kinds = [item.record.kind for item in self.left_out if item.record.identity is None and not item.loaded]
+        kinds += [
+            problem.record.kind
+            for problem in self.problems
+            if problem.problem_type == "destination_identity_ambiguous" and problem.record.identity is None
+        ]
+        for kind in kinds:
+            counts[kind] = counts.get(kind, 0) + 1
+        return dict(sorted(counts.items()))
 
     def counts(self, *, digest: str, size: int) -> PlanReportCounts:
         """Return the manifest `report` object for this report's file `digest` and `size`."""
@@ -657,6 +690,10 @@ class PlanManifest(BaseModel):
     # The plan report's digest, size and counts (plan format 4, ADR 0022). Required from
     # format 4 on and absent before it, so the checksum covers the report through its digest.
     report: PlanReportCounts | None = None
+    # False when the run had no destination schema snapshot, such as a direct run, so the plan
+    # did not check Dropdown values. Absent otherwise, so the manifest of a run that checked
+    # them keeps its bytes.
+    dropdown_values_checked: bool | None = None
 
     @model_validator(mode="after")
     def _require_report_from_format_4(self) -> PlanManifest:
@@ -730,6 +767,8 @@ class PlanManifest(BaseModel):
             data.pop("schema_fingerprint", None)
         if self.report is None:
             data.pop("report", None)
+        if self.dropdown_values_checked is None:
+            data.pop("dropdown_values_checked", None)
         if self.configuration_binding is None:
             data.pop("config_id", None)
             data.pop("registry_version", None)
@@ -762,6 +801,11 @@ class PlanSummary(BaseModel):
     problems: int = Field(default=0, ge=0)
     problems_by_type: dict[str, int] = Field(default_factory=dict)
     kept: int = Field(default=0, ge=0)
+    # Review #3: per kind, the left-out records without a known identity, for which the plan
+    # computes no delete of that kind. Review #8: false when the run had no destination schema
+    # snapshot, so Dropdown values were not checked.
+    deletes_withheld_by_kind: dict[str, int] = Field(default_factory=dict)
+    dropdown_values_checked: bool = True
 
     @model_validator(mode="after")
     def _require_consistent_report_counts(self) -> PlanSummary:

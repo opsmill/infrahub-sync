@@ -28,6 +28,8 @@ The plan format becomes 4.
   refuses to apply a plan whose update carries a non-empty list, before any write, so a plan
   that clears a relationship is never applied without the clearing. Spec 010 implements the
   clearing in format 4, with no format 5.
+- The manifest records `dropdown_values_checked: false` when the run had no destination schema
+  snapshot, so the plan did not check Dropdown values; the field is absent otherwise.
 - The report holds source data, schema names and fixed reason templates. No entry is built from
   connection settings or from the text of an error (ADR 0021).
 - Reading and review accept formats 2, 3 and 4. Apply accepts format 4 only, and refuses

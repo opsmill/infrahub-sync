@@ -293,6 +293,29 @@ def _peer_summary(failure_type: str, link: BaseException) -> str:
     return f"More than one {kind} object in Infrahub matches the peer of {operation}"
 
 
+# The engine's wrappers: each one is raised from the error that decided the failure.
+_WRAPPERS: tuple[type[BaseException], ...] = (SideLoadError,)
+
+
+def _innermost_class(exc: BaseException) -> str | None:
+    """The class of the innermost error of `exc`'s cause chain that is not a wrapper (review #6).
+
+    The chain is followed through `__cause__`, else an unsuppressed `__context__`. A wrapper
+    is skipped only when it wraps another error; only the class is read.
+    """
+    path: list[BaseException] = []
+    link: BaseException | None = exc
+    while link is not None and len(path) < _CHAIN_LIMIT and all(link is not item for item in path):
+        path.append(link)
+        link = link.__cause__ or (None if link.__suppress_context__ else link.__context__)
+    innermost = path[-1]
+    for candidate in reversed(path):
+        if not isinstance(candidate, _WRAPPERS) or candidate is exc:
+            innermost = candidate
+            break
+    return _name(type(innermost).__name__)
+
+
 def _classify(stage: str, chain: list[BaseException]) -> tuple[FailureType, BaseException | None]:
     for failure_type, matches in _rules(stage):
         for link in chain:
@@ -475,7 +498,9 @@ def build_failure_cause(
     """
     chain = list(_chain(exc))
     failure_type, link = _classify(stage, chain)
-    fields: dict[str, Any] = {"system": _system(chain), "error_class": _name(type(exc).__name__), "record": record}
+    # An internal error names the class that failed, not the engine's wrappers around it.
+    error_class = _innermost_class(exc) if failure_type == "internal_error" else _name(type(exc).__name__)
+    fields: dict[str, Any] = {"system": _system(chain), "error_class": error_class, "record": record}
     if failure_type == "destination_rejected_write" and link is not None:
         fields.update(_rejection_fields(link))
     elif isinstance(link, (RecordLoadError, TransformError)):

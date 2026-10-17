@@ -416,6 +416,10 @@ class PlanSummaryResource(_ResourceModel):
     problems: int = Field(default=0, ge=0)
     problems_by_type: dict[str, int] = Field(default_factory=dict)
     kept: int = Field(default=0, ge=0)
+    # Per kind, the left-out records without a known identity: the plan computes no delete of
+    # that kind. And whether the run checked Dropdown values against a destination schema snapshot.
+    deletes_withheld_by_kind: dict[str, int] = Field(default_factory=dict)
+    dropdown_values_checked: bool = True
 
     @model_validator(mode="after")
     def _require_consistent_report_counts(self) -> PlanSummaryResource:

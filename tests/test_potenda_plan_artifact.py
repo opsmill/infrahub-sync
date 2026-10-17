@@ -84,6 +84,9 @@ MANIFEST_KEYS = frozenset(
         "plan_checksum",
         # Plan format 4 (spec 009 ADR 0022): the plan report's digest, size and counts.
         "report",
+        # Spec 009 review #8: these engines plan without a destination schema snapshot, so the
+        # manifest records that the Dropdown check was not made.
+        "dropdown_values_checked",
     }
 )
 

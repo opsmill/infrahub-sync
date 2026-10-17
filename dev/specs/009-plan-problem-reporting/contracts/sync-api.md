@@ -175,7 +175,10 @@ of check 2 already binds the apply to the reviewed plan (decided on 2026-10-17).
 `POST /runs` with `operation: "sync"` stops after the plan when `left_out` is greater than zero.
 The run ends with phase `planned` and outcome `left-out-review-required`, `failure` set with
 `failure_type: "left_out_review_required"` and `stage: "sync"`. The team applies it with
-`POST /runs/{run_id}/apply` and `confirm_left_out: true`. No request field skips this stop.
+`POST /runs/{run_id}/apply` and `confirm_left_out: true`. No request field skips this stop. The
+failure's `next_action` names the run ID and the plan checksum: review the plan with
+`infrahub-sync runs plan <run_id>` and `runs left-out <run_id>`, then apply this run with
+`infrahub-sync apply <run_id> --expected-checksum <hex> --confirm-left-out`.
 
 ## Configuration validation
 

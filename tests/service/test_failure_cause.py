@@ -478,7 +478,13 @@ CASES: list[Any] = [
     pytest.param(
         "plan",
         lambda: _side(_requests_status(500)),
-        _expected("internal_error", "The plan stage failed with an internal error (SideLoadError)", system=NETBOX),
+        # Review #6: the summary names the innermost class, not the `SideLoadError` around it.
+        _expected(
+            "internal_error",
+            "The plan stage failed with an internal error (HTTPError)",
+            system=NETBOX,
+            error_class="HTTPError",
+        ),
         id="http-500-is-internal_error",
     ),
     pytest.param(
@@ -714,7 +720,27 @@ def test_the_builder_never_reads_the_exception_text_or_arguments() -> None:
     cause = build_failure_cause("plan", exc)
 
     assert cause.failure_type == "internal_error"
-    assert cause.error_class == "SideLoadError"
+    # Review #6: the innermost class, not the `SideLoadError` that wraps it.
+    assert cause.error_class == "_UnreadableError"
+
+
+def test_an_internal_error_names_the_innermost_class_not_its_wrappers() -> None:
+    """Review #6: the engine wraps a load failure twice; the class that failed is the innermost one."""
+    side = SideLoadError(LEAK, side="source", adapter="netbox")
+    side.__cause__ = KeyError(LEAK)
+    outer = ValueError(f"An error occurred while loading the sync: {LEAK}")
+    outer.__cause__ = side
+
+    cause = build_failure_cause("plan", outer)
+
+    assert cause.failure_type == "internal_error"
+    assert cause.error_class == "KeyError"
+    assert cause.summary == "The plan stage failed with an internal error (KeyError)"
+    assert LEAK not in cause.model_dump_json()
+
+
+def test_an_internal_error_raised_alone_names_its_own_class() -> None:
+    assert build_failure_cause("plan", ZeroDivisionError(LEAK)).error_class == "ZeroDivisionError"
 
 
 def test_the_error_class_is_limited_in_length() -> None:
@@ -791,6 +817,7 @@ def test_the_stored_sync_stop_failure_is_a_valid_cause() -> None:
 
     class _Manifest:
         report = _Report()
+        plan_checksum = "c" * 64
 
     class _Saved:
         manifest = _Manifest()
@@ -812,3 +839,8 @@ def test_the_stored_sync_stop_failure_is_a_valid_cause() -> None:
 
     assert cause.failure_type == "left_out_review_required"
     assert cause.error_class is None
+    # Review #10: review the plan, then apply this run with the confirmation; never "run the stage again".
+    assert "infrahub-sync runs plan run-1" in cause.next_action
+    assert "infrahub-sync runs left-out run-1" in cause.next_action
+    assert f"infrahub-sync apply run-1 --expected-checksum {'c' * 64} --confirm-left-out" in cause.next_action
+    assert "stage again" not in cause.next_action

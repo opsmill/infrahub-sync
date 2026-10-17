@@ -690,6 +690,7 @@ class Potenda:
             configuration_binding=self.configuration_binding,
             schema_fingerprint=self.schema_fingerprint,
             report=report,
+            dropdown_values_checked=self.schema_record is not None,
         )
         logger.info(
             "Plan artifact: wrote %d operation(s) to %s (deletes computed: %s)",
@@ -973,16 +974,20 @@ class Potenda:
         """Persist source-guaranteed bounds captured before a successful side load.
 
         Snapshot timestamps, including those of empty resources, do not establish
-        a safe changed-since bound. Callers still own the successful-run lifecycle.
+        a safe changed-since bound. Callers still own the successful-run lifecycle. A kind with
+        an entry in the side's load report keeps no cursor, so the next run reads its left-out
+        records again (spec 009 review #9).
         """
         if not self.run_dir:
             return
         from infrahub_sync.cache.incremental import persist_cursors
 
+        report = self.source_load_report if side == "A" else self.destination_load_report
+        left_out_kinds = {entry.kind for entry in report}
         cursors = {
             resource: cursor
             for resource, cursor in self._side_cursors.get(side, {}).items()
-            if (self.run_dir / side / f"{resource}.parquet").exists()
+            if resource not in left_out_kinds and (self.run_dir / side / f"{resource}.parquet").exists()
         }
         if cursors:
             persist_cursors(self.run_dir / "cursors.json", side=side, cursors=cursors)

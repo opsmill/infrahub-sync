@@ -704,6 +704,8 @@ PLAN_MANIFEST_FIELDS = {
     "schema_fingerprint",
     # Plan format 4: the plan report's digest, size and counts (spec 009 ADR 0022).
     "report",
+    # Spec 009 review #8: false when the run had no schema snapshot to check Dropdown values; else absent.
+    "dropdown_values_checked",
 }
 
 # Vocabulary a grouping field would plausibly be named with. Belt and braces beside the
@@ -803,7 +805,14 @@ def test_planned_operation_rejects_unknown_fields() -> None:
 
 def test_plan_manifest_still_requires_its_declared_fields() -> None:
     """`extra="allow"` does not make the declared fields optional."""
-    optional = {"destination_binding", "config_id", "registry_version", "package_checksum", "schema_fingerprint"}
+    optional = {
+        "destination_binding",
+        "config_id",
+        "registry_version",
+        "package_checksum",
+        "schema_fingerprint",
+        "dropdown_values_checked",
+    }
     for missing in PLAN_MANIFEST_FIELDS - optional:
         record = _manifest()
         del record[missing]

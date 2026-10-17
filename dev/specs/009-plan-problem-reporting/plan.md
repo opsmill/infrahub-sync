@@ -254,9 +254,12 @@ Agreed with `replan-013` on 2026-10-15, second round. One owner per shared item:
 - An adapter that overrides `model_loader` opts out of the admission step. The Infrahub adapter
   does so and calls `load_record` itself; duplicates from an Infrahub source are found only
   within one kind's records (research R3).
-- A record whose identifier fields cannot be converted has no identity. Its referrers are left
-  out even through an optional relationship, and its Infrahub node, if any, cannot be matched to
-  it and is listed as a delete not executed (research R4, R7).
+- A record whose identifier fields cannot be converted has no identity. A record that refers to
+  it through an optional relationship is kept without that relationship (a `kept` entry with the
+  cause `peer_left_out`); a record that refers to it through a required relationship is left out
+  as a dependent. Its Infrahub object, if any, cannot be matched to it, so the plan computes no
+  delete of its kind, and the plan summary counts such records per kind
+  (`deletes_withheld_by_kind`; research R4, R7).
 - The time added to the plan step at tier M is not known; spec 010's timings will show it.
 
 ## Complexity Tracking
