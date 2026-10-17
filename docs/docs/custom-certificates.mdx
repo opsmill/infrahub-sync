@@ -48,13 +48,33 @@ On the Compose deployment you do not set these variables yourself. You name a di
    docker compose up -d --wait
    ```
 
+   A change to `INFRAHUB_SYNC_CA_CERTIFICATES` changes the services' mount, so this command recreates `sync-bootstrap`, `sync-api` and `sync-worker`.
+
 4. Read the line that reports how many certificates each service loaded:
 
    ```bash
    docker compose logs sync-bootstrap sync-api sync-worker | grep "custom CA bundle installed"
    ```
 
-   The line holds the number of certificates and the path of the bundle the service built. It does not hold certificate content.
+   Each service writes this line every time it starts. The line holds the number of certificates and the path of the bundle the service built. It does not hold certificate content.
+
+### Add, replace or remove a CA certificate
+
+Each service reads the directory and builds its bundle once, when it starts. When you add, replace or remove a file in a directory that `INFRAHUB_SYNC_CA_CERTIFICATES` already names, the configuration does not change, so `docker compose up -d` starts `sync-bootstrap` again but leaves `sync-api` and `sync-worker` running with the bundle they built before. Restart those two services after the change:
+
+```bash
+docker compose up -d --force-recreate sync-api sync-worker
+```
+
+`docker compose restart sync-api sync-worker` also works. Then read the `custom CA bundle installed` lines again and check the number of certificates.
+
+### Log lines about the CA directory
+
+| Log line | Level | When | What it holds |
+|---|---|---|---|
+| `custom CA bundle installed` | info | The directory holds at least one `.pem` or `.crt` file | The number of certificates and the bundle path |
+| `custom CA directory holds no certificate file` | info | The directory exists but holds no `.pem` or `.crt` file. Without `INFRAHUB_SYNC_CA_CERTIFICATES`, Compose mounts an empty placeholder volume, so every start writes this line | The directory path |
+| `trust variable already set; it overrides the custom CA directory` | warning | One of `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE` or `INFRAHUB_TLS_CA_FILE` was already set in the service's environment, for example by a Compose override file. The service keeps that value, so the connections that read that variable do not use the bundle | The variable name, never its value. One line for each variable |
 
 Certificate checks stay on: the CA is added to the trusted roots, and no setting turns verification off. Without `INFRAHUB_SYNC_CA_CERTIFICATES`, the services start as before and trust only the public roots.
 

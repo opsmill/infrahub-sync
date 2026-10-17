@@ -9,7 +9,8 @@ variables through the environment.
 
 A CA certificate is public, but a file in that directory could hold a private key by
 mistake. Neither the key nor any other file content reaches an error or a log record:
-errors name the file, and the log record holds only a count and the bundle path.
+errors name the file, and the log records hold only a count, a path, or the name of a
+trust variable that was already set, never its value.
 """
 
 from __future__ import annotations
@@ -148,6 +149,8 @@ def install_custom_ca_bundle(
 
     files = _certificate_files(directory)
     if not files:
+        if directory.is_dir():
+            logger.info("custom CA directory holds no certificate file", directory=str(directory))
         return None
 
     contents: list[bytes] = []
@@ -162,7 +165,10 @@ def install_custom_ca_bundle(
     _write_bundle(bundle, [Path(certifi.where()).read_bytes(), *contents])
 
     for name in TRUST_VARIABLES:
-        if name not in environment:
+        if name in environment:
+            # The name only, never the value.
+            logger.warning("trust variable already set; it overrides the custom CA directory", variable=name)
+        else:
             environment[name] = str(bundle)
 
     logger.info("custom CA bundle installed", certificates=certificates, bundle=str(bundle))

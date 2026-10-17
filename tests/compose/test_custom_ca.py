@@ -61,6 +61,7 @@ CA_SERVICES = ("sync-bootstrap", "sync-api", "sync-worker")
 CA_SETTING = "INFRAHUB_SYNC_CA_CERTIFICATES"
 SOURCE_TOKEN_SETTING = "INFRAHUB_SYNC_CREDENTIAL_GENERICRESTAPI_TOKEN"  # noqa: S105 -- a variable name, not a value
 INSTALLED = "custom CA bundle installed"
+NO_CERTIFICATE = "custom CA directory holds no certificate file"
 KEY_FILE = "leaked-server-key.pem"
 
 # The source: one endpoint, `/api/v0/devices`, answering one device in the
@@ -373,6 +374,11 @@ def test_a_custom_ca_is_trusted_only_when_named_and_a_private_key_stops_the_serv
         await_live_worker(deployment)
         before = deployment.logs(*CA_SERVICES, tail=1000)
         assert INSTALLED not in before.stdout, "a service installed a CA bundle with no CA setting"
+        for service in CA_SERVICES:
+            log = deployment.logs(service, tail=1000)
+            assert NO_CERTIFICATE in log.stdout, (
+                f"{service} did not report the empty CA directory: {log.output[-2000:]}"
+            )
 
         with api_client(deployment, canaries["principal"]) as client:
             config_id, registry_version = register(

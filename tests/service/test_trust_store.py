@@ -225,6 +225,65 @@ def test_the_log_record_holds_only_the_count_and_the_bundle_path(tmp_path: Path)
     ]
 
 
+def test_an_empty_directory_logs_one_info_line_naming_the_directory(tmp_path: Path) -> None:
+    """The Compose placeholder volume always exists, so this line shows that no CA was added."""
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "README.txt").write_text("not a certificate", encoding="utf-8")
+    environ = _environment(tmp_path)
+
+    with capture_logs() as records:
+        assert install_custom_ca_bundle(directory, environ) is None
+
+    assert records == [
+        {
+            "event": "custom CA directory holds no certificate file",
+            "log_level": "info",
+            "directory": str(directory),
+        }
+    ]
+
+
+def test_an_absent_directory_logs_nothing(tmp_path: Path) -> None:
+    with capture_logs() as records:
+        assert install_custom_ca_bundle(tmp_path / "missing", _environment(tmp_path)) is None
+
+    assert records == []
+
+
+def test_each_trust_variable_already_set_is_named_in_a_warning_without_its_value(tmp_path: Path) -> None:
+    directory = tmp_path / "ca"
+    directory.mkdir()
+    (directory / "ca.pem").write_bytes(_ca_certificate("ca"))
+    environ = _environment(tmp_path)
+    canary = "/operator/trust-value-canary.pem"
+    environ["AWS_CA_BUNDLE"] = canary
+    environ["SSL_CERT_FILE"] = canary
+
+    with capture_logs() as records:
+        bundle = install_custom_ca_bundle(directory, environ)
+
+    assert records == [
+        {
+            "event": "trust variable already set; it overrides the custom CA directory",
+            "log_level": "warning",
+            "variable": "SSL_CERT_FILE",
+        },
+        {
+            "event": "trust variable already set; it overrides the custom CA directory",
+            "log_level": "warning",
+            "variable": "AWS_CA_BUNDLE",
+        },
+        {
+            "event": "custom CA bundle installed",
+            "log_level": "info",
+            "certificates": 1,
+            "bundle": str(bundle),
+        },
+    ]
+    assert canary not in repr(records)
+
+
 def test_a_file_with_an_indented_private_key_header_stops(tmp_path: Path) -> None:
     directory = tmp_path / "ca"
     directory.mkdir()
