@@ -791,6 +791,57 @@ def test_nightly_runs_the_compose_suite_against_an_image_it_builds() -> None:
     assert not unpinned, f"these actions are not pinned to a commit: {unpinned}"
 
 
+COMPOSE_REPEAT_GUARD = "compose_repeat_guard"
+COMPOSE_REPEAT_MAX = 10
+
+
+def _compose_repeat_guard_exit(value: str) -> tuple[int, str]:
+    """Run the nightly Compose job's input check the way the runner would."""
+    step = next(
+        step for step in job_of(NIGHTLY_WORKFLOW, COMPOSE_JOB)["steps"] if step.get("id") == COMPOSE_REPEAT_GUARD
+    )
+    bash = shutil.which("bash")
+    assert bash, "a POSIX shell is needed to run the check the way the runner does"
+    with tempfile.TemporaryDirectory() as scratch:
+        result = subprocess.run(  # noqa: S603
+            [bash, "-c", str(step["run"])],
+            env={"COMPOSE_REPEAT": value},
+            cwd=scratch,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GUARD_TIMEOUT_SECONDS,
+        )
+    return result.returncode, result.stdout + result.stderr
+
+
+def test_the_compose_repeat_check_runs_before_the_image_build_and_reads_the_input() -> None:
+    steps = job_of(NIGHTLY_WORKFLOW, COMPOSE_JOB)["steps"]
+    guard = next(index for index, step in enumerate(steps) if step.get("id") == COMPOSE_REPEAT_GUARD)
+    build = next(index for index, step in enumerate(steps) if "docker build" in str(step.get("run", "")))
+
+    assert guard < build, "a refused compose_repeat must stop the job before it builds an image"
+    assert steps[guard]["env"] == {"COMPOSE_REPEAT": f"${{{{ inputs.{COMPOSE_REPEAT_INPUT} }}}}"}
+    assert "if" not in steps[guard]
+
+
+@pytest.mark.parametrize("value", ["", "0", "-1", "abc", "1.5", "11", "100"])
+def test_a_compose_repeat_that_is_not_between_one_and_the_maximum_stops_the_job(value: str) -> None:
+    """Each iteration takes minutes on a shared runner, so a large count is refused, not run."""
+    code, output = _compose_repeat_guard_exit(value)
+
+    assert code != 0, output
+    assert "::error::" in output
+    assert f"between 1 and {COMPOSE_REPEAT_MAX}" in output
+
+
+@pytest.mark.parametrize("value", ["1", "2", str(COMPOSE_REPEAT_MAX)])
+def test_a_compose_repeat_between_one_and_the_maximum_runs(value: str) -> None:
+    code, output = _compose_repeat_guard_exit(value)
+
+    assert code == 0, output
+
+
 def develop_jobs() -> dict[str, dict]:
     """Return the job graph of the caller the two tiers exist for."""
     return jobs(DEVELOP_CALLER)
