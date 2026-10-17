@@ -168,9 +168,12 @@ as today.
 
 ## Apply request addition (FR-010, FR-026)
 
-`ApplyRunRequest` (`client/models.py:77`) gains `confirmed_left_out_count: int | None`, `ge=0`.
-When the plan's `report.left_out` is greater than zero, the value must equal it. When it is
-zero, the field may be absent or zero.
+`ApplyRunRequest` (`client/models.py:77`) gains `confirm_left_out: bool`, default false, strict
+(a JSON `true` or `false` only). When the plan's `report.left_out` is greater than zero, it must
+be true. When it is zero, it is accepted and ignored. The client leaves the field out of the body
+when it is false, so a body without it keeps its earlier shape. Decided on 2026-10-17: a yes or
+no flag replaces the confirmed count, because the plan checksum already binds the apply to the
+reviewed plan.
 
 ## Run states for a `sync` run that stops after its plan (FR-012)
 

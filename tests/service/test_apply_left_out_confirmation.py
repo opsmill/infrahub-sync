@@ -1,7 +1,7 @@
-"""`POST /runs/{run_id}/apply` needs the confirmed left-out count (spec 009 T057).
+"""`POST /runs/{run_id}/apply` needs `confirm_left_out` when the plan leaves out records (spec 009 T057).
 
 The checks of `contracts/sync-api.md` run in order, all before any write: confirmation,
-checksum, the left-out count, a run that already admitted a write, and the plan format. A
+checksum, the left-out confirmation, a run that already admitted a write, and the plan format. A
 refusal submits nothing to the orchestrator, so no worker starts and the destination receives
 no write. The fixture plan of `tests/plan/problem_plan.py` is published as the plan stage's
 worker publishes it.
@@ -127,62 +127,65 @@ def _left_out(fixture: PlannedFixture) -> int:
     return fixture.manifest.report.left_out
 
 
-@pytest.mark.parametrize("delta", [None, -1], ids=["absent", "wrong"])
-def test_a_missing_or_wrong_count_is_refused_with_the_expected_count(
-    api: _Api, fixture_plan: PlannedFixture, delta: int | None
+@pytest.mark.parametrize("confirm", [None, False], ids=["absent", "false"])
+def test_an_unconfirmed_apply_is_refused_with_the_left_out_count(
+    api: _Api, fixture_plan: PlannedFixture, *, confirm: bool | None
 ) -> None:
     left_out = _left_out(fixture_plan)
     run_id = api.planned_run(_publish_fixture(api, fixture_plan))
     body: dict[str, Any] = {"expected_checksum": fixture_plan.manifest.plan_checksum}
-    if delta is not None:
-        body["confirmed_left_out_count"] = left_out + delta
+    if confirm is not None:
+        body["confirm_left_out"] = confirm
 
-    response = api.apply(run_id, "apply-without-count", **body)
+    response = api.apply(run_id, "apply-unconfirmed", **body)
 
     assert response.status_code == 409, response.text
     error = response.json()["error"]
     assert error["code"] == "left-out-confirmation-required"
+    assert error["message"] == f"this plan leaves out {left_out} records; confirm with confirm_left_out=true"
     assert error["expected_left_out_count"] == left_out
-    assert api.outcomes(run_id) == ["refused-left-out-count"]
+    assert api.outcomes(run_id) == ["refused-left-out-not-confirmed"]
     assert api.apply_submissions() == [], "Nothing reached a worker, so nothing was written."
 
 
-def test_the_right_count_is_accepted_and_the_apply_writes_only_the_plan_operations(
+def test_a_confirmed_apply_is_accepted_and_writes_only_the_plan_operations(
     api: _Api, fixture_plan: PlannedFixture
 ) -> None:
-    left_out = _left_out(fixture_plan)
+    _left_out(fixture_plan)
     run_id = api.planned_run(_publish_fixture(api, fixture_plan))
 
     response = api.apply(
         run_id,
-        "apply-with-count",
+        "apply-confirmed",
         expected_checksum=fixture_plan.manifest.plan_checksum,
-        confirmed_left_out_count=left_out,
+        confirm_left_out=True,
     )
 
     assert response.status_code == 202, response.text
     assert api.outcomes(run_id)[-1] == "accepted"
     (parameters,) = api.apply_submissions()
-    assert parameters["confirmed_left_out_count"] == left_out
-    # The worker hands the submitted count to the engine; the engine writes the plan's
+    assert parameters["confirm_left_out"] is True
+    # The worker hands the confirmation to the engine; the engine writes the plan's
     # operations and none for a left-out record.
     destination = CountingDestination()
     engine_over(fixture_plan.run_dir, destination, run_id=FIXTURE_RUN_ID).apply_plan(
         ownership=RecordingOwnership(),
         config_version=fixture_plan.manifest.config_version,
-        confirmed_left_out_count=parameters["confirmed_left_out_count"],  # ty: ignore[invalid-argument-type]
+        confirm_left_out=parameters["confirm_left_out"],
     )
     assert destination.applied == [
         operation.operation_id for operation in fixture_plan.operations if operation.action != "delete"
     ]
 
 
-@pytest.mark.parametrize("count", [None, 0], ids=["absent", "zero"])
-def test_a_plan_that_leaves_out_nothing_needs_no_count(api: _Api, count: int | None) -> None:
+@pytest.mark.parametrize("confirm", [None, False, True], ids=["absent", "false", "true"])
+def test_a_plan_that_leaves_out_nothing_accepts_and_ignores_the_confirmation(
+    api: _Api, *, confirm: bool | None
+) -> None:
     run_id = api.planned_run(_publish_document(api))
     body: dict[str, Any] = {"expected_checksum": "a" * 64}
-    if count is not None:
-        body["confirmed_left_out_count"] = count
+    if confirm is not None:
+        body["confirm_left_out"] = confirm
 
     response = api.apply(run_id, "apply-nothing-left-out", **body)
 
@@ -190,10 +193,15 @@ def test_a_plan_that_leaves_out_nothing_needs_no_count(api: _Api, count: int | N
     assert len(api.apply_submissions()) == 1
 
 
-def test_a_negative_count_is_rejected_as_a_malformed_request(api: _Api) -> None:
+@pytest.mark.parametrize(
+    "body", [{"confirmed_left_out_count": 2}, {"confirm_left_out": "maybe"}], ids=["count", "text"]
+)
+def test_a_count_or_a_non_boolean_confirmation_is_rejected_as_a_malformed_request(
+    api: _Api, body: dict[str, Any]
+) -> None:
     run_id = api.planned_run(_publish_document(api))
 
-    response = api.apply(run_id, "apply-negative", expected_checksum="a" * 64, confirmed_left_out_count=-1)
+    response = api.apply(run_id, "apply-malformed", expected_checksum="a" * 64, **body)
 
     assert response.status_code == 422
     assert api.apply_submissions() == []
@@ -214,7 +222,7 @@ def test_a_plan_saved_before_format_4_is_refused(api: _Api, plan_format: int | N
 
 
 def test_the_checks_run_in_the_contract_order(api: _Api) -> None:
-    """Confirmation, then checksum, then the count, then the plan format.
+    """Confirmation, then checksum, then the left-out confirmation, then the plan format.
 
     Check 4, a run that already admitted a write, is tested on its own below.
     """
@@ -233,10 +241,10 @@ def test_the_checks_run_in_the_contract_order(api: _Api) -> None:
 
     unconfirmed = api.apply(run_id, "order-1", expected_checksum="b" * 64, confirm_writes=False)
     wrong_checksum = api.apply(run_id, "order-2", expected_checksum="b" * 64)
-    no_count = api.apply(run_id, "order-3", expected_checksum="a" * 64)
-    old_format = api.apply(run_id, "order-4", expected_checksum="a" * 64, confirmed_left_out_count=2)
+    not_confirmed = api.apply(run_id, "order-3", expected_checksum="a" * 64)
+    old_format = api.apply(run_id, "order-4", expected_checksum="a" * 64, confirm_left_out=True)
 
-    codes = [response.json()["error"]["code"] for response in (unconfirmed, wrong_checksum, no_count, old_format)]
+    codes = [response.json()["error"]["code"] for response in (unconfirmed, wrong_checksum, not_confirmed, old_format)]
     assert codes == [
         "confirmation-required",
         "checksum-conflict",
@@ -246,23 +254,23 @@ def test_the_checks_run_in_the_contract_order(api: _Api) -> None:
     assert api.outcomes(run_id) == [
         "refused-confirmation",
         "refused-checksum",
-        "refused-left-out-count",
+        "refused-left-out-not-confirmed",
         "refused-plan-format",
     ]
     assert api.apply_submissions() == []
 
 
-def test_the_count_is_checked_before_a_run_that_already_admitted_a_write(
+def test_the_confirmation_is_checked_before_a_run_that_already_admitted_a_write(
     api: _Api, fixture_plan: PlannedFixture
 ) -> None:
-    left_out = _left_out(fixture_plan)
+    _left_out(fixture_plan)
     run_id = api.planned_run(_publish_fixture(api, fixture_plan))
     checksum = fixture_plan.manifest.plan_checksum
-    first = api.apply(run_id, "first-apply", expected_checksum=checksum, confirmed_left_out_count=left_out)
+    first = api.apply(run_id, "first-apply", expected_checksum=checksum, confirm_left_out=True)
     assert first.status_code == 202, first.text
 
-    wrong = api.apply(run_id, "second-apply-wrong", expected_checksum=checksum)
-    right = api.apply(run_id, "second-apply-right", expected_checksum=checksum, confirmed_left_out_count=left_out)
+    wrong = api.apply(run_id, "second-apply-unconfirmed", expected_checksum=checksum)
+    right = api.apply(run_id, "second-apply-confirmed", expected_checksum=checksum, confirm_left_out=True)
 
     assert wrong.json()["error"]["code"] == "left-out-confirmation-required"
     assert right.status_code == 409
@@ -271,7 +279,7 @@ def test_the_count_is_checked_before_a_run_that_already_admitted_a_write(
 
 
 def test_a_run_that_admitted_a_write_is_refused_before_the_plan_format(api: _Api) -> None:
-    """Check 4 (`new-plan-required`) comes after the count and before the plan format."""
+    """Check 4 (`new-plan-required`) comes after the left-out confirmation and before the plan format."""
     version = api.client.app.state.run_binding
     admitted = api.client.post(
         "/runs",
@@ -295,12 +303,12 @@ def test_a_run_that_admitted_a_write_is_refused_before_the_plan_format(api: _Api
     )(run_id)
     _settle_open_executions(api.projection, run_id)
 
-    no_count = api.apply(run_id, "after-sync-1", expected_checksum="a" * 64)
-    counted = api.apply(run_id, "after-sync-2", expected_checksum="a" * 64, confirmed_left_out_count=2)
+    not_confirmed = api.apply(run_id, "after-sync-1", expected_checksum="a" * 64)
+    confirmed = api.apply(run_id, "after-sync-2", expected_checksum="a" * 64, confirm_left_out=True)
 
-    assert no_count.json()["error"]["code"] == "left-out-confirmation-required"
-    error = counted.json()["error"]
-    assert (counted.status_code, error["code"]) == (409, "new-plan-required")
+    assert not_confirmed.json()["error"]["code"] == "left-out-confirmation-required"
+    error = confirmed.json()["error"]
+    assert (confirmed.status_code, error["code"]) == (409, "new-plan-required")
     assert error["message"] == "This plan was already applied or its apply stopped; create and review a new plan"
-    assert api.outcomes(run_id)[-2:] == ["refused-left-out-count", "refused-new-plan-required"]
+    assert api.outcomes(run_id)[-2:] == ["refused-left-out-not-confirmed", "refused-new-plan-required"]
     assert api.apply_submissions() == []

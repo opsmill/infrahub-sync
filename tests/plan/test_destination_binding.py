@@ -248,9 +248,9 @@ class _RecordingEngine:
         config_version: str | None = None,
         artifact: object = None,
         expected_checksum: str | None = None,
-        confirmed_left_out_count: int | None = None,
+        confirm_left_out: bool = False,
     ) -> ApplyRecord:
-        _ = config_version, expected_checksum, ownership, confirmed_left_out_count
+        _ = config_version, expected_checksum, ownership, confirm_left_out
         self.apply_calls += 1
         # Recorded, not ignored: the seam's read is what the engine must apply, so a delegation
         # that arrived without it would mean the engine reads the artifact a second time.

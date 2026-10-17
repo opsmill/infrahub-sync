@@ -6,9 +6,10 @@ Two rules of spec 009 (research R11, ADR 0022):
   updates, so its updates cannot be keyed; a format 3 plan records no report, so it does
   not say which records it leaves out. Both are read and reviewed, and refused here with
   the instruction to plan again.
-- A plan that leaves out records is applied only with the confirmed left-out count, which
-  must equal `manifest.report.left_out`. When the plan leaves out nothing, the count may be
-  absent or 0.
+- A plan that leaves out records (`manifest.report.left_out` greater than zero) is applied
+  only when the apply confirms it. The confirmation is yes or no: the plan checksum already
+  binds the apply to the reviewed plan. When the plan leaves out nothing, the confirmation is
+  accepted and ignored.
 
 `Potenda.apply_plan` calls `require_applyable_plan` before the first ownership proof, so a
 refusal writes nothing.
@@ -25,20 +26,19 @@ if TYPE_CHECKING:
     from infrahub_sync.plan.models import PlanManifest
 
 
-def require_applyable_plan(manifest: PlanManifest, *, run_id: str, confirmed_left_out_count: int | None) -> None:
-    """Refuse a plan saved before format 4, then an unconfirmed or wrong left-out count.
+def require_applyable_plan(manifest: PlanManifest, *, run_id: str, confirm_left_out: bool) -> None:
+    """Refuse a plan saved before format 4, then an unconfirmed plan that leaves out records.
 
     Raises:
         PlanFormatApplyUnsupportedError: the plan is format 2 or 3.
-        LeftOutConfirmationError: the confirmed count is absent or differs from the plan's.
+        LeftOutConfirmationError: the plan leaves out records and the apply did not confirm them.
     """
     _require_report_format(manifest, run_id=run_id)
     left_out = 0 if manifest.report is None else manifest.report.left_out
-    if (confirmed_left_out_count or 0) == left_out:
+    if left_out == 0 or confirm_left_out:
         return
-    confirmed = "no count" if confirmed_left_out_count is None else f"a count of {confirmed_left_out_count}"
     msg = (
-        f"The plan of run {run_id!r} leaves out {left_out} records, and the apply confirmed {confirmed}. "
+        f"The plan of run {run_id!r} leaves out {left_out} records, and the apply did not confirm them. "
         f"Nothing was written to the destination."
     )
     raise LeftOutConfirmationError(msg, expected_left_out_count=left_out)

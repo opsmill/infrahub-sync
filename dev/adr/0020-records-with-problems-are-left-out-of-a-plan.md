@@ -30,8 +30,8 @@ fail validation, without counting them, when `continue_on_error` is set.
   selection step applies the left-out and kept decisions to the plan's operations. No step
   applies them to the stores or to the diff.
 - The plan lists each problem, left-out record and kept record and counts them, and its checksum
-  covers the list (ADR 0022). Apply needs the person to confirm the left-out count. A `sync`
-  run whose plan leaves out records stops after the plan.
+  covers the list (ADR 0022). Apply needs the person to confirm the records left out. A
+  `sync` run whose plan leaves out records stops after the plan.
 - Every other plan failure still fails the plan. During apply, an Infrahub rejection still stops
   the apply. The `continue_on_error` parameter is removed.
 

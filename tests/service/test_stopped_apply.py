@@ -62,7 +62,7 @@ def destination(harness: SyncStageHarness, monkeypatch: pytest.MonkeyPatch) -> R
         return engine_over(run_dir, rejecting, run_id=manifest.run_id).apply_plan(
             ownership=kwargs["ownership"],
             config_version=manifest.config_version,
-            confirmed_left_out_count=kwargs["confirmed_left_out_count"],
+            confirm_left_out=kwargs["confirm_left_out"],
         )
 
     monkeypatch.setattr(service_flow, "execute_run", execute_run)
@@ -79,7 +79,7 @@ def _apply_body(plan: dict[str, Any]) -> dict[str, Any]:
     return {
         "expected_checksum": plan["checksum"],
         "confirm_writes": True,
-        "confirmed_left_out_count": plan["summary"]["left_out"],
+        "confirm_left_out": plan["summary"]["left_out"] > 0,
         "reason": "apply after review",
     }
 
@@ -99,7 +99,7 @@ def _stopped_apply(harness: SyncStageHarness) -> tuple[str, dict[str, Any]]:
             *harness.binding,
             expected_checksum=plan["checksum"],
             confirm_writes=True,
-            confirmed_left_out_count=plan["summary"]["left_out"],
+            confirm_left_out=plan["summary"]["left_out"] > 0,
         )
     return run_id, plan
 
@@ -154,7 +154,6 @@ def test_applying_the_stopped_plan_again_needs_a_new_plan(
                 "--reason",
                 "apply again",
                 "--confirm-left-out",
-                str(plan["summary"]["left_out"]),
             ],
             obj={"client": client},
         )

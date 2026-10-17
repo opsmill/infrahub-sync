@@ -589,7 +589,7 @@ def test_no_worker_parameter_offers_a_schema_override() -> None:
         "expected_checksum",
         "confirm_writes",
         "configuration_name",
-        "confirmed_left_out_count",
+        "confirm_left_out",
     )
 
 

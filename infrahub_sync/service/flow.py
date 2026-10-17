@@ -500,7 +500,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
     projection: ProductProjection,
     tracker: WriteDispatchTracker,
     scratch: StageScratch,
-    confirmed_left_out_count: int | None = None,
+    confirm_left_out: bool = False,
 ) -> tuple[dict[str, Any], ExecutionWriteback]:
     """Resolve and execute one service stage within the sanitized worker boundary."""
     parameter_binding = _worker_binding(config_id, registry_version, package_checksum)
@@ -610,7 +610,7 @@ def _execute_stage(  # pylint: disable=too-many-arguments,too-many-positional-ar
                 ownership=ownership,
                 record_applied=tracker.record_applied,
                 base_directory=scratch.root,
-                confirmed_left_out_count=confirmed_left_out_count,
+                confirm_left_out=confirm_left_out,
                 _lock_already_held=True,
             )
         # Outside the guard, so the release this stage reports is already confirmed, and
@@ -717,7 +717,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
     expected_checksum: str | None = None,
     confirm_writes: bool = False,
     configuration_name: str | None = None,
-    confirmed_left_out_count: int | None = None,
+    confirm_left_out: bool = False,
 ) -> dict[str, Any]:
     """Execute one API-reserved stage and publish its durable product data.
 
@@ -757,7 +757,7 @@ def service_sync_run(  # pylint: disable=too-many-positional-arguments
                 projection=projection,
                 tracker=tracker,
                 scratch=scratch,
-                confirmed_left_out_count=confirmed_left_out_count,
+                confirm_left_out=confirm_left_out,
             )
     except Exception as exc:  # noqa: BLE001  # pylint: disable=broad-exception-caught
         failure = exc

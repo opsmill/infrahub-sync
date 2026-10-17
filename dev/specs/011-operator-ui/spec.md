@@ -97,18 +97,18 @@ left-out record that the Sync API returns for that plan.
 
 ---
 
-### User Story 2 - Approve and apply the reviewed plan, confirming the left-out count (Priority: P1)
+### User Story 2 - Approve and apply the reviewed plan, confirming the records left out (Priority: P1)
 
 After reviewing the plan, the team approves it in the UI. The UI shows the checksum of the plan
 they reviewed, the target branch, the count of operations to write and, when the plan leaves out
-records, that count. The team enters a reason, types or confirms the left-out count, and
-applies. The UI follows the apply until it finishes and then shows what was written.
+records, that count. The team enters a reason, ticks the checkbox "I have reviewed the N records
+left out" when the plan leaves out records, and applies. The UI follows the apply until it finishes and then shows what was written.
 
 **Why this priority**: journey P1 ends with an apply. Without it, the team must switch to the CLI
 to finish the journey, and SC-006 of the idea brief fails.
 
 **Independent Test**: apply a plan that leaves out records from the UI, and check that the apply
-is refused until the team confirms the left-out count, and that only the valid records are
+is refused until the team ticks the left-out checkbox, and that only the valid records are
 written.
 
 **Acceptance Scenarios**:
@@ -118,7 +118,8 @@ written.
    until the apply finishes.
 2. **Given** a reviewed plan that leaves out 12 records, **When** the team approves it, **Then**
    the UI states that 12 records are left out and will not be written, and requires the team to
-   confirm that count before the apply request is sent.
+   tick the checkbox "I have reviewed the 12 records left out" before the apply request is sent.
+   The request carries `confirm_left_out: true`.
 3. **Given** a plan whose stored checksum no longer matches the plan the team reviewed, **When**
    the team applies, **Then** the Sync API refuses the apply and the UI shows the reason and
    that a new plan is needed.
@@ -325,9 +326,12 @@ the saved plan.
   `POST /runs/{run_id}/apply`. The request MUST carry the checksum of the plan the UI showed,
   the confirmation of writes, the target branch and a reason the team enters.
 - **FR-026**: When the plan leaves out records, the UI MUST show the left-out count before the
-  apply, and MUST require the team to confirm that count. The apply request MUST carry the
-  confirmed count (spec 009 FR-026). When the plan leaves out no records, the UI MUST NOT ask
-  for that confirmation (spec 009 FR-011).
+  apply, and MUST require the team to tick a checkbox "I have reviewed the N records left out",
+  where N is that count. The apply request MUST carry `confirm_left_out: true` only when the
+  checkbox is ticked (spec 009 FR-026). When the plan leaves out no records, the UI MUST NOT
+  show the checkbox (spec 009 FR-011). Decided on 2026-10-17: the confirmation is a yes or no
+  flag, not a typed count, because the plan checksum the request carries already binds the
+  apply to the reviewed plan.
 - **FR-027**: Every request from the UI that changes state MUST carry an idempotency key that
   the UI generates once per action and reuses when it retries that action.
 - **FR-028**: The UI MUST NOT offer an apply for a plan that cannot be applied: a plan with zero
@@ -416,7 +420,7 @@ the saved plan.
 
 - **SC-001** (brief SC-006): during at least one customer test, a customer team completes
   journey P1 in the UI, from a registered configuration to a completed apply, including the
-  review of problems and the confirmation of the left-out count, without OpsMill running a
+  review of problems and the confirmation of the records left out, without OpsMill running a
   command for them.
 - **SC-002** (brief SC-002, UI part): at tier M (10,207 mapped objects), a first-sync plan opens
   in the UI, and every operation of the plan can be read in the UI page by page, with no limit
@@ -463,7 +467,8 @@ the saved plan.
   laptop screen. Phone layouts are not required.
 - The UI shows times in the browser's time zone and durations in hours, minutes and seconds.
 - The structured failure cause, the problem list, the left-out list, the kept list, the plan
-  counts and the confirmed left-out count in the apply request come from spec 009. This
+  counts and the left-out confirmation (`confirm_left_out`) in the apply request come from spec
+  009. This
   specification adds only the paging of those lists. If spec 009 is not delivered, User Story 3
   and FR-021, FR-026 and FR-029 cannot be met. The plan step timings come from spec 010
   (FR-038).

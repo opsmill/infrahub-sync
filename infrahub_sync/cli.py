@@ -803,7 +803,7 @@ def _apply_refusal(error: APIError) -> str | None:
     """The sentence `apply` prints for a refusal the team acts on, or None for any other error."""
     expected = error.expected_left_out_count
     if error.code == "left-out-confirmation-required" and expected is not None:
-        return f"this plan leaves out {expected} records; confirm with --confirm-left-out {expected}"
+        return f"this plan leaves out {expected} records; confirm with --confirm-left-out"
     if error.code == "new-plan-required":
         return _NEW_PLAN_REQUIRED
     return None
@@ -818,8 +818,10 @@ def apply_cmd(
     reason: str = typer.Option(..., "--reason", help="Audit reason for the apply."),
     branch: str | None = typer.Option(None, "--branch", help="Destination branch admitted by the Sync API."),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key", help="Retry key."),
-    confirm_left_out: int | None = typer.Option(
-        None, "--confirm-left-out", help="The number of records the reviewed plan leaves out."
+    confirm_left_out: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--confirm-left-out",
+        help="Confirm that you reviewed the records the plan leaves out. Required when it leaves out records.",
     ),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for this run's apply execution."),  # noqa: FBT003
     wait_timeout: float = typer.Option(DEFAULT_WAIT_TIMEOUT, "--wait-timeout", help="Bounded wait in seconds."),
@@ -838,7 +840,7 @@ def apply_cmd(
                 ApplyRunRequest,
                 expected_checksum=expected_checksum,
                 confirm_writes=True,
-                confirmed_left_out_count=confirm_left_out,
+                confirm_left_out=confirm_left_out,
                 branch=branch,
                 reason=reason,
             ),

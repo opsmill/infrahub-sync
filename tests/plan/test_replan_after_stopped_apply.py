@@ -42,7 +42,7 @@ def test_a_new_plan_holds_only_the_operations_the_stopped_apply_did_not_write(tm
         engine_over(first.run_dir, destination, run_id=RUN_ID).apply_plan(
             ownership=RecordingOwnership(),
             config_version=first.manifest.config_version,
-            confirmed_left_out_count=0,
+            confirm_left_out=False,
         )
 
     record = stopped.value.apply_record

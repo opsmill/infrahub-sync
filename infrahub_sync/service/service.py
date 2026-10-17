@@ -299,7 +299,7 @@ class RunService:
             expected_checksum=request.expected_checksum,
             confirm_writes=True,
         )
-        parameters["confirmed_left_out_count"] = request.confirmed_left_out_count
+        parameters["confirm_left_out"] = request.confirm_left_out
         existing = self._lookup_existing_receipt(
             run,
             principal,
@@ -357,7 +357,7 @@ class RunService:
     def _require_applyable_plan(
         self, plan: PlanResource, request: ApplyRunRequest, principal: Principal, *, run_id: str
     ) -> None:
-        """Refuse, before any write, an apply that does not confirm the plan's left-out count.
+        """Refuse, before any write, an apply that does not confirm the records the plan leaves out.
 
         Then a run that already admitted its one write: its plan was applied or its apply
         stopped, so only a new plan can write. The store refuses the same case again when it
@@ -367,18 +367,18 @@ class RunService:
         and is refused with it.
         """
         left_out = plan.summary.left_out
-        if (request.confirmed_left_out_count or 0) != left_out:
+        if left_out > 0 and not request.confirm_left_out:
             self._audit(
                 run_id,
                 actor=principal.actor,
                 operation="apply",
                 reason=request.reason,
-                outcome="refused-left-out-count",
+                outcome="refused-left-out-not-confirmed",
             )
             raise self._error(
                 409,
                 "left-out-confirmation-required",
-                f"this plan leaves out {left_out} records; confirm the count with confirmed_left_out_count",
+                f"this plan leaves out {left_out} records; confirm with confirm_left_out=true",
                 run_id=run_id,
                 expected_left_out_count=left_out,
             )

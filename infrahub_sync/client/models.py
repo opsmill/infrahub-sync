@@ -59,11 +59,12 @@ class _RequestModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
 
 
-def _without_absent_left_out_count(data: dict[str, Any]) -> dict[str, Any]:
-    """Drop an absent left-out count, so a body without one keeps its earlier shape (spec 009)."""
-    for name in ("confirmed_left_out_count", "expected_left_out_count"):
-        if name in data and data[name] is None:
-            del data[name]
+def _without_absent_left_out_fields(data: dict[str, Any]) -> dict[str, Any]:
+    """Drop an unset left-out field, so a body without one keeps its earlier shape (spec 009)."""
+    if data.get("confirm_left_out") is False:
+        del data["confirm_left_out"]
+    if "expected_left_out_count" in data and data["expected_left_out_count"] is None:
+        del data["expected_left_out_count"]
     return data
 
 
@@ -100,16 +101,16 @@ class ApplyRunRequest(_RequestModel):
 
     expected_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     confirm_writes: bool = False
-    # The plan's left-out count, as the reviewer confirmed it (spec 009). Required, and equal
-    # to the plan's count, when the plan leaves out records; absent or 0 otherwise.
-    confirmed_left_out_count: int | None = Field(default=None, ge=0)
+    # The reviewer confirmed the records the plan leaves out (spec 009). Required when the plan
+    # leaves out records; accepted and ignored otherwise.
+    confirm_left_out: bool = Field(default=False, strict=True)
     branch: str | None = None
     reason: str = Field(min_length=1)
 
     @model_serializer(mode="wrap")
-    def _omit_absent_left_out_count(self, handler: SerializerFunctionWrapHandler):
-        # Without a count the body is the one an earlier server accepts.
-        return _without_absent_left_out_count(handler(self))
+    def _omit_unset_left_out_confirmation(self, handler: SerializerFunctionWrapHandler):
+        # Without the confirmation the body is the one an earlier server accepts.
+        return _without_absent_left_out_fields(handler(self))
 
 
 class CancelRunRequest(_RequestModel):
@@ -647,7 +648,7 @@ class ErrorDetail(_ResourceModel):
     @model_serializer(mode="wrap")
     def _omit_absent_left_out_count(self, handler: SerializerFunctionWrapHandler):
         # Every other refusal keeps the body it had before this field existed.
-        return _without_absent_left_out_count(handler(self))
+        return _without_absent_left_out_fields(handler(self))
 
 
 class ErrorEnvelope(_ResourceModel):

@@ -64,8 +64,8 @@ of two problem types:
 - Two devices with the same name at two sites are listed as
   `destination_identity_collision`. Infrahub identifies a device by its name alone.
 
-To apply a plan that leaves out records, pass the number of left-out records to
-`apply --confirm-left-out`. `sync` stops after such a plan and does not apply it.
+To apply a plan that leaves out records, review them, then pass `--confirm-left-out` to
+`apply`. `sync` stops after such a plan and does not apply it.
 
 ## Current limitations
 

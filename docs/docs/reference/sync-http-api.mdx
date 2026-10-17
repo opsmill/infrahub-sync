@@ -152,7 +152,7 @@ The service flow accepts exactly ten bounded parameters:
 | `expected_checksum` | SHA-256 string or `null` | Reviewed checksum required by `apply`. |
 | `confirm_writes` | `bool` | Required for `apply` and composed `sync`. |
 | `configuration_name` | `str` or `null` | Readable name of the registered configuration, used only for the run's title. |
-| `confirmed_left_out_count` | `int` or `null` | Left-out count that the `apply` request confirmed. |
+| `confirm_left_out` | `bool` | Whether the `apply` request confirmed the records the plan leaves out. |
 
 `config_id`, `registry_version`, and `package_checksum` must be all present for a
 registered execution or all `null` for a legacy execution.
@@ -426,28 +426,30 @@ curl --request POST \
   --data '{
     "expected_checksum": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     "confirm_writes": true,
-    "confirmed_left_out_count": 12,
+    "confirm_left_out": true,
     "reason": "change approved, 12 left-out records reviewed"
   }'
 ```
 
-`confirmed_left_out_count` is the plan's `left_out` count, as the reviewer confirmed it. When
-the plan leaves out no records, omit it or send `0`.
+`confirm_left_out` confirms that the reviewer reviewed the records the plan leaves out. It is a
+JSON boolean and is `false` when absent; any other value is refused with `422`. It carries no
+count, because `expected_checksum` already ties the apply to the reviewed plan. When the plan
+leaves out no records, omit it; the API accepts and ignores it.
 
 The API checks the request in this order, before any write, and refuses the first check that
 fails with status `409`:
 
 1. `confirm_writes` is not `true`: `confirmation-required`.
 2. `expected_checksum` does not match the saved plan: `checksum-conflict`.
-3. `confirmed_left_out_count` is absent or differs from the plan's `left_out` count:
-   `left-out-confirmation-required`. The error body holds the count to confirm in
+3. The plan leaves out records and `confirm_left_out` is not `true`:
+   `left-out-confirmation-required`. The error body holds the plan's `left_out` count in
    `expected_left_out_count`:
 
    ```json
    {
      "error": {
        "code": "left-out-confirmation-required",
-       "message": "this plan leaves out 12 records; confirm the count with confirmed_left_out_count",
+       "message": "this plan leaves out 12 records; confirm with confirm_left_out=true",
        "status": 409,
        "run_id": "20261015T1200-1a2b3c4d",
        "mutation_id": null,
@@ -471,7 +473,7 @@ deletes remain disabled.
 is greater than zero, and writes nothing. The run ends with phase `planned` and outcome
 `left-out-review-required`, and its `failure` has `failure_type: "left_out_review_required"`
 and `stage: "sync"`. The stop gives back the run's write admission: review the plan, then send
-`POST /runs/{run_id}/apply` with the confirmed count. No request field skips this stop.
+`POST /runs/{run_id}/apply` and `confirm_left_out: true`. No request field skips this stop.
 
 ### Run failure cause
 
@@ -652,7 +654,7 @@ Every error uses the same envelope:
 | `401` | Missing or invalid authentication. |
 | `403` | The actor does not own the mutation and is not an administrator. |
 | `404` | The Sync run or run-owned artifact does not exist. |
-| `409` | Idempotency conflict, missing confirmation, stale checksum, a left-out count that is not confirmed (`left-out-confirmation-required`), a run that already admitted its write (`new-plan-required`), a plan saved before format 4 (`plan-format-not-applicable`), a report page of another plan (`plan-changed`), non-cancellable execution, a run that cannot admit another stage while another one is in flight (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
+| `409` | Idempotency conflict, missing confirmation, stale checksum, records left out that the apply did not confirm (`left-out-confirmation-required`), a run that already admitted its write (`new-plan-required`), a plan saved before format 4 (`plan-format-not-applicable`), a report page of another plan (`plan-changed`), non-cancellable execution, a run that cannot admit another stage while another one is in flight (`run-execution-conflict`), or a cancelled write whose outcome is uncertain (`cancellation-ambiguous`). |
 | `410` | The retained plan or artifact has expired. |
 | `422` | Invalid request schema, missing idempotency key, or a secret-bearing flow parameter. |
 | `503` | Submission, live orchestration detail, or retained data cannot be confirmed or retrieved. |

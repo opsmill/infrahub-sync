@@ -100,7 +100,7 @@ NEXT_ACTIONS: dict[str, str] = {
     ),
     "left_out_review_required": (
         "Review the left-out records with `infrahub-sync runs left-out`, then apply the plan with "
-        "`infrahub-sync apply --confirm-left-out` and the plan's left-out count."
+        "`infrahub-sync apply --confirm-left-out`."
     ),
     "internal_error": "Run the stage again. If it fails again, report the error class to OpsMill.",
 }

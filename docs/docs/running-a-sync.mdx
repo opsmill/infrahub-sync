@@ -265,20 +265,19 @@ depends_on_left_out  InterfacePhysical  device=rtr1 name=eth0  depends on DcimDe
 names the related record that is left out or not in the source.
 
 Fix a problem in the source data or in the package, then create a new plan. To write the
-other records now, apply the plan and confirm the left-out count.
+other records now, apply the plan and confirm the records left out.
 
 ## Apply the reviewed plan
 
 Pass the checksum that the review printed, and the same `--branch` that you gave `diff`. When
-the plan leaves out records, also pass `--confirm-left-out` with the `left_out` count of the
-summary:
+the plan leaves out records, also pass `--confirm-left-out` to confirm that you reviewed them:
 
 <Tabs groupId="sync-client">
   <TabItem value="compose" label="Run the container image" default>
 
   ```bash
   docker compose run --rm --no-deps -T cli apply RUN_ID --expected-checksum CHECKSUM \
-    --confirm-left-out LEFT_OUT --branch BRANCH --reason "apply reviewed inventory import"
+    --confirm-left-out --branch BRANCH --reason "apply reviewed inventory import"
   docker compose run --rm --no-deps -T cli runs show RUN_ID
   ```
 
@@ -287,7 +286,7 @@ summary:
 
   ```bash
   uv run infrahub-sync apply RUN_ID --expected-checksum CHECKSUM \
-    --confirm-left-out LEFT_OUT --branch BRANCH --reason "apply reviewed inventory import"
+    --confirm-left-out --branch BRANCH --reason "apply reviewed inventory import"
   uv run infrahub-sync runs show RUN_ID
   ```
 
@@ -299,15 +298,17 @@ writes. The CLI never reads or builds a local plan. When `runs show` reports
 `phase: applied` and `execution_state: completed`, the apply is finished. `runs show` then
 also prints `operations_written` and `left_out`.
 
-When the plan leaves out records and `--confirm-left-out` is missing or differs from the
-plan's count, the service refuses the apply before any write. The command exits with code 1
-and prints the count to confirm:
+When the plan leaves out records and `--confirm-left-out` is missing, the service refuses the
+apply before any write. The command exits with code 1 and prints how many records the plan
+leaves out:
 
 ```text
-apply refused: this plan leaves out 12 records; confirm with --confirm-left-out 12
+apply refused: this plan leaves out 12 records; confirm with --confirm-left-out
 ```
 
-When the plan leaves out no records, omit `--confirm-left-out` or pass `0`. A plan saved by an
+`--confirm-left-out` takes no count: the checksum already ties the apply to the plan you
+reviewed. When the plan leaves out no records, you can omit `--confirm-left-out`; the service
+ignores it. A plan saved by an
 earlier release records no left-out count; the service refuses to apply it, and you create a
 new plan.
 
@@ -453,11 +454,11 @@ exits with code 1:
 
 ```text
 sync stopped: the plan leaves out 12 records, so the sync stopped before writing
-  next: Review the left-out records with `infrahub-sync runs left-out`, then apply the plan with `infrahub-sync apply --confirm-left-out` and the plan's left-out count.
+  next: Review the left-out records with `infrahub-sync runs left-out`, then apply the plan with `infrahub-sync apply --confirm-left-out`.
 ```
 
 Review the plan with `runs plan`, `runs problems`, and `runs left-out`. Then apply the same
-run with `apply RUN_ID --expected-checksum CHECKSUM --confirm-left-out 12`. No option of
+run with `apply RUN_ID --expected-checksum CHECKSUM --confirm-left-out`. No option of
 `sync` skips this stop.
 
 ## Reference

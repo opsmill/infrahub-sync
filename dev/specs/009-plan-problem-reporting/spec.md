@@ -34,7 +34,7 @@ cannot review its bad source data in one pass. Today:
 
 What is needed: one plan lists every problem with the record, the kind and the reason. The plan
 leaves out the records with problems and every record that depends on them, and counts them.
-The person confirms that count when they approve the apply. Every failed or stopped run shows
+The person confirms that they reviewed the records left out when they approve the apply. Every failed or stopped run shows
 its cause in the CLI and in the Sync API. A stopped apply shows what it wrote and which operation
 failed, and a new plan contains only the operations that remain.
 
@@ -42,6 +42,11 @@ Decided by the product owner on 2026-10-15: a record that refers to a left-out r
 through an optional relationship is kept and written without that relationship (FR-005). A
 `sync` run (plan and apply in one request) whose plan leaves out records stops after the plan,
 and the MVP has no option that skips that stop (FR-012).
+
+Decided by the product owner on 2026-10-17: the apply confirms the records left out with a yes
+or no flag (`--confirm-left-out` in the CLI, `confirm_left_out: true` in the Sync API), not by
+repeating their count. The plan checksum already binds the apply to the reviewed plan, so a
+count adds no check. The refusal still states the count (FR-010, FR-026).
 
 Decided by the product owner on 2026-10-15, second review: credential values are kept out of
 failure causes, problem reasons and plan files by how these are built, not by replacing values
@@ -129,10 +134,10 @@ those records and their dependents, and writes nothing to Infrahub.
 
 ---
 
-### User Story 2 - Confirm the left-out count and apply the rest (Priority: P1)
+### User Story 2 - Confirm the records left out and apply the rest (Priority: P1)
 
 The team reviewed a plan that leaves out records. They approve it with its checksum and confirm
-the count of records left out. Apply writes the remaining operations to the Infrahub branch, and
+that they reviewed the records left out. Apply writes the remaining operations to the Infrahub branch, and
 the run shows what was written.
 
 **Why this priority**: without this step the team can review problems but cannot import the
@@ -145,20 +150,21 @@ the plan.
 **Acceptance Scenarios**:
 
 1. **Given** a plan that leaves out 12 records, **When** the team approves the apply in the CLI
-   without confirming the count, **Then** the apply is refused before any write and the CLI
-   states the count that must be confirmed.
-2. **Given** the same plan, **When** an API caller requests the apply without the count or with
-   a different count, **Then** the Sync API refuses the request before any write and its response
-   states the expected count.
-3. **Given** the same plan, **When** the team confirms 12, **Then** apply writes the operations
-   of the plan, and none for the records left out.
+   without confirming the records left out, **Then** the apply is refused before any write and
+   the CLI states that the plan leaves out 12 records and names the option that confirms them.
+2. **Given** the same plan, **When** an API caller requests the apply without
+   `confirm_left_out: true`, **Then** the Sync API refuses the request before any write and its
+   response states the count of records left out.
+3. **Given** the same plan, **When** the team confirms the records left out, **Then** apply
+   writes the operations of the plan, and none for the records left out.
 4. **Given** a plan that leaves out no records, **When** the team approves the apply, **Then**
-   no confirmation of a left-out count is asked for.
+   no confirmation of records left out is asked for, and a confirmation that is sent anyway is
+   accepted and ignored.
 5. **Given** a completed apply, **When** the team views the run, **Then** the run shows the
    count of operations written and the count of records the plan left out.
 6. **Given** a `sync` run whose plan leaves out records, **When** the plan finishes, **Then** the
    run stops before any write with the plan saved, and the team applies it only by approving it
-   with the confirmed count.
+   and confirming the records left out.
 
 ---
 
@@ -306,14 +312,17 @@ equals the original count minus the operations written.
 - **FR-008**: A left-out record MUST produce no create, update or delete in the plan.
 - **FR-009**: Records left out MUST be checked again by the next plan, with no action from the
   team, and appear in it when they no longer have a problem.
-- **FR-010**: An apply of a plan that leaves out records MUST require the person to confirm the
-  left-out count, in the CLI and in the Sync API. An apply request without the count, or with a
-  count different from the plan's, MUST be refused before any write, and the refusal MUST state
-  the expected count.
+- **FR-010**: An apply of a plan that leaves out records MUST require the person to confirm that
+  they reviewed the records left out, in the CLI (`--confirm-left-out`, a flag without a value)
+  and in the Sync API (`confirm_left_out: true`). An apply request without that confirmation MUST
+  be refused before any write, and the refusal MUST state the count of records the plan leaves
+  out. The confirmation does not repeat the count: the plan checksum binds the apply to the
+  reviewed plan.
 - **FR-011**: An apply of a plan that leaves out no records MUST NOT ask for that confirmation.
+  A confirmation sent with such an apply MUST be accepted and ignored.
 - **FR-012**: A `sync` run (plan and apply in one request) whose plan leaves out records MUST
   stop after the plan, with the plan saved, and wait for the team to review it and apply it with
-  the confirmed count of FR-010. The MVP offers no option that skips that stop. A policy for runs
+  the confirmation of FR-010. The MVP offers no option that skips that stop. A policy for runs
   that nobody watches, including any such option, belongs to 3.0
   ([V3 release scope](../v3-release-scope.md), "Recovery").
 - **FR-013**: Infrahub rejecting a write during apply MUST still stop the apply. The plan's
@@ -384,8 +393,9 @@ equals the original count minus the operations written.
   - the operations written and the operation that failed
 
   The UI can then show each part without parsing text.
-- **FR-026**: The apply request in the Sync API MUST carry the confirmed left-out count of
-  FR-010, next to the reviewed checksum it already carries.
+- **FR-026**: The apply request in the Sync API MUST carry the confirmation of FR-010
+  (`confirm_left_out`, true or false, false when absent), next to the reviewed checksum it already
+  carries.
 
 #### Credential values in causes, problem lists and plan files (SYNC-82)
 
@@ -411,8 +421,8 @@ same day, the product owner moved SYNC-262 out of the MVP.
 
 - **FR-029**: Product decision AD-12 in `infrahub-sync-process/product/decisions.md` MUST be
   amended before this work ships: at the plan stage, records with problems and the records that
-  depend on them are left out and counted, and apply needs the confirmed count. The policy for
-  runs that nobody watches stays open for 3.0.
+  depend on them are left out and counted, and apply needs the person to confirm the records left
+  out. The policy for runs that nobody watches stays open for 3.0.
 - **FR-030**: A decision record in `dev/adr/` MUST replace the rule that a run's failure record
   holds an error class name and never a message
   ([#369](https://github.com/opsmill/infrahub-sync/issues/369); the rule is stated in
@@ -480,7 +490,7 @@ that a credential missing from the worker is found only when the run fails in th
 - **SC-001** (brief SC-003): on the NetBox example data with planted bad records, one plan run
   lists every planted problem. On 2026-10-05 the same problems took five configuration versions.
 - **SC-002**: a fixture with one record of each of the seven problem types gives one plan that
-  lists all seven, and its apply writes only the valid records after the left-out count is
+  lists all seven, and its apply writes only the valid records after the records left out are
   confirmed.
 - **SC-003** (brief SC-005): for 100% of failed or stopped runs in the test suite, the CLI and
   the Sync API show the cause without reading container logs or the orchestration server.
@@ -489,8 +499,8 @@ that a credential missing from the worker is found only when the run fails in th
   source between the two plans.
 - **SC-005**: no cause, problem reason or left-out entry in the test suite contains a
   credential value or the text of an error raised by an adapter or an HTTP library.
-- **SC-006**: 100% of apply attempts on a plan with records left out are refused when the
-  left-out count is missing or wrong.
+- **SC-006**: 100% of apply attempts on a plan with records left out are refused when they do
+  not confirm the records left out.
 - **SC-007**: in tests with a referenced credential of five characters and a referenced
   credential that holds `"`, `\` and `,`, where each failure type is raised with error text
   that holds both values (for example an address with a user name and password), neither

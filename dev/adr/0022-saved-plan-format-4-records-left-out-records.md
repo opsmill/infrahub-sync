@@ -7,7 +7,7 @@
 ## Context
 
 A plan can now leave out records (ADR 0020). Apply must then require the person to confirm the
-left-out count. ADR 0001 lets a later change add a manifest key without a format change,
+records left out. ADR 0001 lets a later change add a manifest key without a format change,
 because a reader accepts keys it does not know. For this key that is not safe: a reader that
 does not know the key would apply the plan without the confirmation.
 
@@ -27,7 +27,8 @@ The plan format becomes 4.
 - Reading and review accept formats 2, 3 and 4. Apply accepts format 4 only, and refuses
   format 3 with `PlanFormatApplyUnsupportedError` and the instruction to plan again
   (`infrahub_sync/potenda/__init__.py:148-163`).
-- Apply compares the confirmed count with `report.left_out` before the first ownership proof,
+- When `report.left_out` is greater than zero, apply requires the person's confirmation (a yes
+  or no flag; the plan checksum binds it to the reviewed plan) before the first ownership proof,
   so a refusal writes nothing.
 
 ## Consequences

@@ -127,7 +127,7 @@ stay, so existing scripts keep working.
 {
   "expected_checksum": "<64 hex>",
   "confirm_writes": true,
-  "confirmed_left_out_count": 12,
+  "confirm_left_out": true,
   "branch": "netbox-import",
   "reason": "first import, 12 records left out reviewed"
 }
@@ -137,24 +137,26 @@ Checks, in order, all before any write:
 
 1. `confirm_writes` (today, `service/service.py:315`): 409 `confirmation-required`.
 2. Checksum (today, `service/service.py:317-330`): 409 `checksum-conflict`.
-3. New: the plan's `left_out` is greater than zero and `confirmed_left_out_count` is absent or
-   different: 409 `left-out-confirmation-required`, with
-   `{"expected_left_out_count": 12}` in the error body. Audited with outcome
-   `refused-left-out-count`.
+3. New: the plan's `left_out` is greater than zero and `confirm_left_out` is absent or false:
+   409 `left-out-confirmation-required`, message "this plan leaves out 12 records; confirm with
+   confirm_left_out=true", with `{"expected_left_out_count": 12}` in the error body. Audited
+   with outcome `refused-left-out-not-confirmed`.
 4. New: the run already admitted a write (`product_store/store.py:1827`): 409
    `new-plan-required`, message "This plan was already applied or its apply stopped; create
    and review a new plan".
 5. New: the plan is format 2 or 3: 409 `plan-format-not-applicable`, message "plan again
    before applying".
 
-When `left_out` is zero, `confirmed_left_out_count` may be absent or 0.
+`confirm_left_out` is a JSON boolean, false when absent; any other value is a 422. When
+`left_out` is zero, it is accepted and ignored. The request carries no count: the plan checksum
+of check 2 already binds the apply to the reviewed plan (decided on 2026-10-17).
 
 ## A `sync` run whose plan leaves out records
 
 `POST /runs` with `operation: "sync"` stops after the plan when `left_out` is greater than zero.
 The run ends with phase `planned` and outcome `left-out-review-required`, `failure` set with
 `failure_type: "left_out_review_required"` and `stage: "sync"`. The team applies it with
-`POST /runs/{run_id}/apply` and the confirmed count. No request field skips this stop.
+`POST /runs/{run_id}/apply` and `confirm_left_out: true`. No request field skips this stop.
 
 ## Configuration validation
 

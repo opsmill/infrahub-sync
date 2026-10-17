@@ -30,16 +30,18 @@ peer_not_found_in_source  IpamIPAddress  address=10.0.0.1/32  vrf refers to Ipam
 
 `diff` prints the first 20 problems and the command that lists the rest.
 
-## Apply with a left-out count
+## Apply a plan that leaves out records
 
 ```text
-infrahub-sync apply <run_id> --expected-checksum <hex> --confirm-left-out <count>
+infrahub-sync apply <run_id> --expected-checksum <hex> --confirm-left-out
 ```
 
-- When the plan leaves out records and `--confirm-left-out` is missing or wrong, the command
-  exits with code 1 before any write and prints
-  `apply refused: this plan leaves out 12 records; confirm with --confirm-left-out 12`.
-- When the plan leaves out no records, the option is not needed.
+- `--confirm-left-out` is a flag without a value. It sends `confirm_left_out: true`.
+- When the plan leaves out records and `--confirm-left-out` is missing, the command exits with
+  code 1 before any write and prints
+  `apply refused: this plan leaves out 12 records; confirm with --confirm-left-out`.
+- When the plan leaves out no records, the option is not needed, and it is accepted and ignored
+  when it is given.
 - A run that stopped after its plan (a `sync` with records left out) is applied the same way.
 
 ## Cause of a failed or stopped run

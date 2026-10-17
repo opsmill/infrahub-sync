@@ -725,7 +725,7 @@ class Potenda:
         config_version: str | None = None,
         artifact: RawPlanArtifact | None = None,
         expected_checksum: str | None = None,
-        confirmed_left_out_count: int | None = None,
+        confirm_left_out: bool = False,
     ) -> ApplyRecord:
         """Apply this run's saved plan artifact to the destination, and return what it did.
 
@@ -768,7 +768,7 @@ class Potenda:
                 **authoritative** answer to `--expected-checksum`, because it is given about
                 the bytes this call applies; a caller's earlier check is a fast path, not a
                 substitute. `None` asks for no approval comparison at all.
-            confirmed_left_out_count: The plan's left-out count as the reviewer confirmed it;
+            confirm_left_out: The reviewer confirmed the records the plan leaves out;
                 required when the plan leaves out records (`infrahub_sync.plan.apply_gate`).
 
         Returns:
@@ -855,7 +855,7 @@ class Potenda:
         # Format 4 only, then the confirmed left-out count. Refused after the artifact has been
         # read, before `ownership.before_operation` and therefore before the first dispatch,
         # so the destination is provably untouched.
-        require_applyable_plan(loaded.manifest, run_id=run_id, confirmed_left_out_count=confirmed_left_out_count)
+        require_applyable_plan(loaded.manifest, run_id=run_id, confirm_left_out=confirm_left_out)
 
         # The registered service has a schema fingerprint guard, but direct Python apply
         # callers need the same no-write guarantee for reviewed Infrahub payload fields.

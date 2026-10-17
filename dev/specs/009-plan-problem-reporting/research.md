@@ -353,7 +353,7 @@ Name: `dev/adr/0022-saved-plan-format-4-records-left-out-records.md`.
 > **Status**: Proposed. **Date**: 2026-10-15. **Source**: `dev/specs/009-plan-problem-reporting`.
 >
 > **Context.** A plan can now leave out records (ADR 0020). Apply must then require the person
-> to confirm the left-out count. ADR 0001 lets a later outcome add a manifest key without a
+> to confirm the records left out. ADR 0001 lets a later outcome add a manifest key without a
 > format bump, because unknown keys are tolerated on read. For this key that is the wrong
 > posture: a reader that does not know the key would apply the plan without the confirmation.
 >
@@ -371,8 +371,9 @@ Name: `dev/adr/0022-saved-plan-format-4-records-left-out-records.md`.
 > - Reading and review accept 2, 3 and 4. Apply accepts 4 alone, and refuses 3 with
 >   `PlanFormatApplyUnsupportedError` and the instruction to plan again
 >   (`potenda/__init__.py:148-163`).
-> - Apply compares the confirmed count with `report.left_out` before the first ownership proof,
->   so a refusal writes nothing.
+> - When `report.left_out` is greater than zero, apply requires the person's confirmation (a yes
+>   or no flag; the plan checksum binds it to the reviewed plan) before the first ownership
+>   proof, so a refusal writes nothing.
 >
 > **Consequences.** Every plan saved before this release must be planned again before it is
 > applied. An older Sync release refuses a format-4 plan instead of applying it without the
@@ -411,8 +412,8 @@ below for the product owner.
 >   The left-out and kept decisions are applied by one selection step to the plan's operations,
 >   never to the stores or to the diff.
 > - The plan lists each problem, left-out record and kept record, counts them, and its checksum
->   covers the list (ADR 0022). Apply needs the confirmed left-out count. A `sync` run whose plan
->   leaves out records stops after the plan.
+>   covers the list (ADR 0022). Apply needs the person to confirm the records left out. A `sync`
+>   run whose plan leaves out records stops after the plan.
 > - Every other plan failure still fails the plan. During apply, an Infrahub rejection still
 >   stops the apply. `continue_on_error` is removed.
 >
@@ -429,7 +430,7 @@ Draft text for the AD-12 row in `decisions.md`:
 
 > AD-12: Failed dependencies are visible and block dependent work. At the plan stage, records
 > with problems and the records that depend on them through a required relationship are left
-> out and counted; apply needs the person to confirm the left-out count, and a `sync` run whose
+> out and counted; apply needs the person to confirm the records left out, and a `sync` run whose
 > plan leaves out records stops after the plan. The policy for runs that nobody watches is open
 > for 3.0.
 

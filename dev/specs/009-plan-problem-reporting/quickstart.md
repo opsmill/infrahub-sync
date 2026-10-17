@@ -48,17 +48,17 @@ and the schema library, as described in
    - `infrahub-sync runs kept <run_id>` names the IP address, the relationship `vrf` and the
      missing peer, and the plan holds no change to that relationship.
 
-## Scenario 2: apply needs the confirmed count (User Story 2, SC-006)
+## Scenario 2: apply needs the left-out confirmation (User Story 2, SC-006)
 
 1. `infrahub-sync apply <run_id> --expected-checksum <hex>`: refused before any write, and the
-   message states the count.
-2. The same request through the API with `confirmed_left_out_count` absent, then wrong: 409
+   message states the count of records left out.
+2. The same request through the API with `confirm_left_out` absent, then false: 409
    `left-out-confirmation-required` with `expected_left_out_count`.
-3. `--confirm-left-out <count>`: the apply writes only the plan's operations. `runs show`
+3. `--confirm-left-out` (no value): the apply writes only the plan's operations. `runs show`
    prints the operations written and the left-out count.
 4. A plan with no records left out applies without the option.
 5. `POST /runs` with `operation: "sync"` on the fixture: the run stops with outcome
-   `left-out-review-required`; applying it with the count writes the operations.
+   `left-out-review-required`; applying it with `--confirm-left-out` writes the operations.
 
 ## Scenario 3: the cause of a failed run (User Story 3, SC-003)
 

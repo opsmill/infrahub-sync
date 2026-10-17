@@ -253,7 +253,7 @@ def test_service_and_direct_prefect_flow_schemas_are_separate_and_exact() -> Non
         "expected_checksum",
         "confirm_writes",
         "configuration_name",
-        "confirmed_left_out_count",
+        "confirm_left_out",
     )
     assert tuple(inspect.signature(infrahub_sync_run.fn).parameters) == (
         "sync_name",
@@ -937,7 +937,7 @@ async def test_prefect_extras_executor_receives_opaque_key_unchanged() -> None:
         "expected_checksum": None,
         "confirm_writes": False,
         "configuration_name": "netbox-to-infrahub",
-        "confirmed_left_out_count": None,
+        "confirm_left_out": False,
     }
 
     submission = await gateway.submit(parameters, idempotency_key="opaque-prefect-key")

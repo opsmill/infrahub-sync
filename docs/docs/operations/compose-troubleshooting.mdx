@@ -98,7 +98,7 @@ The cause holds no credential, address, or error text from a library. `GET /runs
 | `the destination rejected a write` | Read the Infrahub message and the node kind and attribute. Fix the cause, then create and review a new plan. Operations written before the failure stay written. |
 | `the saved plan did not pass verification` | Create and review a new plan, then apply that plan. |
 | `the apply was refused before any write` | The destination was not changed. Fix the reason the apply was refused, then create and review a new plan: a run accepts one apply, so a second `apply` of the same run is refused with `new-plan-required`. |
-| `the plan leaves out ... records, so the sync stopped before writing` | Review the left-out records with `runs left-out RUN_ID`, then apply the run with `apply RUN_ID --expected-checksum CHECKSUM --confirm-left-out <count>`. |
+| `the plan leaves out ... records, so the sync stopped before writing` | Review the left-out records with `runs left-out RUN_ID`, then apply the run with `apply RUN_ID --expected-checksum CHECKSUM --confirm-left-out`. |
 | `the ... stage failed with an internal error` | Run the stage again. If it fails again, read the worker log with `docker compose logs sync-worker` and report the error class to OpsMill. |
 
 When the stage is `apply`, create and review a new plan instead of running the stage again:

@@ -55,17 +55,15 @@ def test_a_sync_whose_plan_leaves_out_records_stops_after_the_plan(harness: _Har
     assert _left_out(harness, run_id) > 0
 
 
-def test_the_stopped_run_is_applied_with_the_right_count(harness: _Harness) -> None:
+def test_the_stopped_run_is_applied_with_the_left_out_confirmation(harness: _Harness) -> None:
     run_id = harness.run_sync()
     left_out = _left_out(harness, run_id)
     checksum = harness.client.get(f"/runs/{run_id}/plan", headers={"Authorization": f"Bearer {OWNER_TOKEN}"}).json()[
         "checksum"
     ]
 
-    refused = harness.post(f"/runs/{run_id}/apply", "apply-no-count", _apply_body(checksum))
-    accepted = harness.post(
-        f"/runs/{run_id}/apply", "apply-count", _apply_body(checksum, confirmed_left_out_count=left_out)
-    )
+    refused = harness.post(f"/runs/{run_id}/apply", "apply-unconfirmed", _apply_body(checksum))
+    accepted = harness.post(f"/runs/{run_id}/apply", "apply-confirmed", _apply_body(checksum, confirm_left_out=True))
 
     assert refused.status_code == 409
     assert refused.json()["error"]["code"] == "left-out-confirmation-required"
@@ -77,10 +75,10 @@ def test_the_stopped_run_is_applied_with_the_right_count(harness: _Harness) -> N
         *harness.binding,
         expected_checksum=checksum,
         confirm_writes=True,
-        confirmed_left_out_count=left_out,
+        confirm_left_out=True,
     )
     (call,) = harness.apply_calls()
-    assert call["confirmed_left_out_count"] == left_out
+    assert call["confirm_left_out"] is True
     run = harness.projection.lookup_run(run_id).value
     assert run is not None
     assert (run.phase, run.outcome) == ("applied", "applied")
@@ -95,8 +93,8 @@ def _apply_body(checksum: str, **extra: Any) -> dict[str, Any]:  # noqa: ANN401
 
 @pytest.mark.parametrize(
     "extra",
-    [{"confirmed_left_out_count": 12}, {"skip_left_out_review": True}, {"allow_left_out": True}],
-    ids=["count", "skip", "allow"],
+    [{"confirm_left_out": True}, {"skip_left_out_review": True}, {"allow_left_out": True}],
+    ids=["confirm", "skip", "allow"],
 )
 def test_no_request_field_skips_the_stop(harness: _Harness, extra: dict[str, Any]) -> None:
     refused = harness.admit_sync(key=f"sync-{next(iter(extra))}", **extra)

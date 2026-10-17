@@ -119,17 +119,17 @@ class PlanFormatApplyUnsupportedError(PlanArtifactError):
 
 
 class LeftOutConfirmationError(PlanArtifactError):
-    """The apply did not confirm the plan's left-out count, or confirmed a different one.
+    """The apply did not confirm that the plan leaves out records.
 
-    A plan that leaves out records is applied only when the reviewer confirms how many it
-    leaves out (spec 009 FR-010). `expected_left_out_count` is the plan's
-    `manifest.report.left_out`. Raised before the first operation is dispatched, so the
-    destination was not touched.
+    A plan that leaves out records is applied only when the reviewer confirms that it leaves
+    them out (spec 009 FR-010). `expected_left_out_count` is the plan's
+    `manifest.report.left_out`, which the refusal states. Raised before the first operation is
+    dispatched, so the destination was not touched.
     """
 
     next_action = (
         "Review the records the plan leaves out with `infrahub-sync runs left-out`, then apply again "
-        "with `--confirm-left-out` set to the plan's left-out count. The destination was not touched."
+        "with `--confirm-left-out`. The destination was not touched."
     )
     wrote = False
 
