@@ -264,8 +264,19 @@ configuration:
           mapping: primary_ip
           reference: IpamIPAddress
       transforms:
-        # Infrahub's device status has five choices. NetBox statuses outside them are
-        # translated; any other status is kept and a plan lists it as a problem.
+        # Infrahub's device status has five choices: active, reserved, provisioning,
+        # maintenance and deprecated. This transform translates the NetBox statuses
+        # outside them, one pair per entry of the dictionary below:
+        #   planned -> provisioning: the device is ordered or being set up, not in service yet.
+        #   staged -> provisioning: the device is installed and configured, not in service yet.
+        #   offline -> maintenance: the device is out of service for now and expected back.
+        #   failed -> maintenance: the device is out of service until it is repaired.
+        #   inventory -> reserved: the device is in stock and held for later use.
+        #   decommissioning -> deprecated: the device is being retired.
+        # Any other status, active included, is kept as it is; a status that is not one of
+        # the five choices makes the plan list the device as a problem.
+        # These pairs are one reading of the statuses. Adjust them to what each status
+        # means in your own NetBox and Infrahub before you import devices.
         - field: device_status
           expression: >-
             {{ {'planned': 'provisioning', 'staged': 'provisioning',
@@ -316,8 +327,19 @@ configuration:
           mapping: primary_ip
           reference: IpamIPAddress
       transforms:
-        # Infrahub's device status has five choices. NetBox statuses outside them are
-        # translated; any other status is kept and a plan lists it as a problem.
+        # Infrahub's device status has five choices: active, reserved, provisioning,
+        # maintenance and deprecated. This transform translates the NetBox statuses
+        # outside them, one pair per entry of the dictionary below:
+        #   planned -> provisioning: the device is ordered or being set up, not in service yet.
+        #   staged -> provisioning: the device is installed and configured, not in service yet.
+        #   offline -> maintenance: the device is out of service for now and expected back.
+        #   failed -> maintenance: the device is out of service until it is repaired.
+        #   inventory -> reserved: the device is in stock and held for later use.
+        #   decommissioning -> deprecated: the device is being retired.
+        # Any other status, active included, is kept as it is; a status that is not one of
+        # the five choices makes the plan list the device as a problem.
+        # These pairs are one reading of the statuses. Adjust them to what each status
+        # means in your own NetBox and Infrahub before you import devices.
         - field: device_status
           expression: >-
             {{ {'planned': 'provisioning', 'staged': 'provisioning',

@@ -52,6 +52,9 @@ transform in both `DcimDevice` entries translates them:
 
 Any other status is kept as it is, and the plan lists the device as a problem.
 
+These pairs are one reading of the statuses. Adjust them in both `device_status` transforms of
+`package.yml` to what each status means for your team before you import devices.
+
 ## Source records that a plan lists as problems
 
 A plan leaves out a source record it cannot write and lists it as a problem. Review the
