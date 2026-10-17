@@ -1,0 +1,33 @@
+development/docker-compose.infrahub.yml
+  s_42a148a45e3b41::t_5ebbcad9ec0a11 15,30-49,81-82,85-86,115-116,161,179,188-189,191,196,202-203,269,289,322,368
+development/docker-compose.preview.yml
+  s_42a148a45e3b41::t_f86a716510ca26 3
+development/preview.env
+  s_42a148a45e3b41::t_f9ca577462b84c 28-29
+docs/docs/operations/supported-platforms-and-limits.mdx
+  s_42a148a45e3b41::t_a8f802fde7d664 72-76
+tests/compose/conftest.py
+  s_42a148a45e3b41::t_1d81cbac83ed5d 550
+tests/compose/fixture-override.yaml
+  s_42a148a45e3b41::t_d7614e215f7228 5
+tests/compose/test_compose_contract.py
+  s_42a148a45e3b41::t_576b02808356cf 977,992
+tests/preview/test_preview_configuration.py
+  s_42a148a45e3b41::t_0c081f419a8769 119
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ca2eb267aa7d63ff42bf0eacd50abdbc0596211",
+  "prompts": {},
+  "sessions": {
+    "s_42a148a45e3b41": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-abump-infrahub-pin-541fb9fb6e52bed0",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
