@@ -315,3 +315,27 @@ Decided later on 2026-10-17, with the review fixes below.
 | ty | `uv run invoke linter.lint-ty` | 2026-10-17T06:41:39Z | `Found 17 diagnostics`, all `unused-ignore-comment` warnings; the same 17 at commit `7f1b99d8` |
 | Markdown | `uv run rumdl check docs/docs/operations/supported-platforms-and-limits.mdx` | 2026-10-17T06:41:29Z | `Success: No issues found in 1 file` |
 | Docs build | `uv run invoke docs.docusaurus` | 2026-10-17T06:42:04Z | `[SUCCESS] Generated static files in "build".` |
+
+### Compose tests on the Infrahub 1.11.7 fixture
+
+Each file ran with `INFRAHUB_SYNC_DOCKER_IMAGE=infrahub-sync VERSION=compose-test uv run pytest -m compose tests/compose/<file> -n 0 --compose-zero-skip`, after `docker build -t infrahub-sync:compose-test .` at 2026-10-17T06:43:10Z. The fixture runs Infrahub 1.11.7 and Neo4j 2026.05.0-community.
+
+| File | Start (UTC) | Result |
+| --- | --- | --- |
+| `test_managed_run.py` | 2026-10-17T06:43:19Z | `4 passed in 111.87s` |
+| `test_lifecycle.py` | 2026-10-17T06:45:18Z | `12 passed in 328.96s` |
+| `test_custom_ca.py` | 2026-10-17T06:50:53Z | `1 passed in 140.41s` |
+| `test_credential_leaks.py` | 2026-10-17T06:53:20Z | `1 passed in 223.96s` |
+| `test_bootstrap_idempotence.py` | 2026-10-17T06:57:10Z | `6 passed in 126.76s` |
+| `test_configuration_free_startup.py` | 2026-10-17T06:59:23Z | `6 passed in 124.26s` |
+| `test_container_cli.py` | 2026-10-18T09:17:39Z | `2 passed, 2 deselected in 110.83s` |
+| `test_external_object_store.py` | 2026-10-18T09:21:01Z | `3 passed in 223.19s` |
+| `test_object_store_upgrade.py` | 2026-10-18T09:24:51Z | `1 passed in 142.55s` |
+| `test_prefect_server_upgrade.py` | 2026-10-18T09:27:20Z | `1 passed in 161.48s` |
+| `test_source_credentials.py` | 2026-10-18T09:30:08Z | `1 passed, 19 deselected in 1.42s` |
+| `test_compose_minimum.py` | 2026-10-18T09:30:16Z | `10 passed in 23.55s` |
+
+Two earlier runs failed for reasons outside Infrahub, and each passed when run again:
+
+- `test_container_cli.py`, started 2026-10-17T07:01:28Z: both tests errored in setup because the schema load got HTTP 500 from Infrahub. The readiness log said the fixture start took 94382.9 s. The Mac entered low-power sleep at 2026-10-17T07:02:09Z with the battery at 1% and woke at 2026-10-18T09:14:00Z (`pmset -g log`), which is about 26.2 hours. The Docker VM was paused with it. Compose's `--wait-timeout 420` did not advance during sleep, but the readiness log computes times from Docker's wall-clock events. The schema load ran right after the wake. Its server traceback is not known, because the test's teardown removed the containers. A fresh fixture started by hand at 2026-10-18T09:16:06Z was healthy in 57.5 s and loaded the same schema with exit code 0 in 5.8 s, with no error in the `infrahub-server` log.
+- `test_external_object_store.py`, started 2026-10-18T09:19:35Z: the fixture did not start, with `Error response from daemon: handle request: read response: unexpected EOF`. The Docker engine (OrbStack) restarted at that time: the unrelated `hivemind` container restarted at 2026-10-18T09:20:11Z, the same second as the fixture containers. The leftover fixture containers were removed before the run again.
