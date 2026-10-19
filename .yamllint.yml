@@ -5,10 +5,20 @@ ignore: |
   /.venv
   /examples
   /docs/node_modules
+  /docs/pnpm-lock.yaml
+  # Vendored/agentic tooling trees (spec-kit engine + agent source-of-truth +
+  # adapters). Managed by spec-kit / the agentic structure, not hand-authored
+  # here, so they follow their own formatting conventions.
+  /.specify
+  /.agents
+  /.claude
+  /.codex
 
 rules:
   new-lines: disable
   comments-indentation: disable
+  truthy:
+    check-keys: false
   line-length:
     max: 120
     allow-non-breakable-words: true

@@ -1,5 +1,7 @@
 # `infrahub-sync`
 
+Infrahub-sync: synchronize data between infrastructure sources and destinations.
+
 **Usage**:
 
 ```console
@@ -8,16 +10,35 @@ $ infrahub-sync [OPTIONS] COMMAND [ARGS]...
 
 **Options**:
 
+* `--verbosity [quiet|default|verbose]`: Log verbosity level  [default: default]
+* `-v, --verbose`: Shorthand for --verbosity verbose
+* `-q, --quiet`: Shorthand for --verbosity quiet
 * `--install-completion`: Install completion for the current shell.
 * `--show-completion`: Show completion for the current shell, to copy it or customize the installation.
 * `--help`: Show this message and exit.
 
 **Commands**:
 
-* `diff`: Calculate and print the differences...
-* `generate`: Generate all the Python files for a given...
 * `list`: List all available SYNC projects.
+* `diff`: Calculate and print the differences...
 * `sync`: Synchronize the data between source and...
+* `apply`: Apply a previously cached plan against the...
+* `generate`: Generate all the Python files for a given...
+
+## `infrahub-sync list`
+
+List all available SYNC projects.
+
+**Usage**:
+
+```console
+$ infrahub-sync list [OPTIONS]
+```
+
+**Options**:
+
+* `--directory TEXT`: Base directory to search for sync configurations
+* `--help`: Show this message and exit.
 
 ## `infrahub-sync diff`
 
@@ -35,42 +56,11 @@ $ infrahub-sync diff [OPTIONS]
 * `--config-file TEXT`: File path to the sync configuration YAML file
 * `--directory TEXT`: Base directory to search for sync configurations
 * `--branch TEXT`: Branch to use for the diff.
-* `--show-progress / --no-show-progress`: Show a progress bar during diff  [default: show-progress]
+* `--show-progress / --no-show-progress`: Show a progress bar (default: auto-detect terminal)
 * `--adapter-path TEXT`: Paths to look for adapters. Can be specified multiple times.
-* `--help`: Show this message and exit.
-
-## `infrahub-sync generate`
-
-Generate all the Python files for a given sync based on the configuration.
-
-**Usage**:
-
-```console
-$ infrahub-sync generate [OPTIONS]
-```
-
-**Options**:
-
-* `--name TEXT`: Name of the sync to use
-* `--config-file TEXT`: File path to the sync configuration YAML file
-* `--directory TEXT`: Base directory to search for sync configurations
-* `--branch TEXT`: Branch to use for the sync.
-* `--adapter-path TEXT`: Paths to look for adapters. Can be specified multiple times.
-* `--help`: Show this message and exit.
-
-## `infrahub-sync list`
-
-List all available SYNC projects.
-
-**Usage**:
-
-```console
-$ infrahub-sync list [OPTIONS]
-```
-
-**Options**:
-
-* `--directory TEXT`: Base directory to search for sync configurations
+* `--run-id TEXT`: Re-use a specific cache run id.
+* `--concurrent-load / --no-concurrent-load`: Load source and destination concurrently. Disable when a custom adapter isn&#x27;t thread-safe.  [default: concurrent-load]
+* `--full-extract / --no-full-extract`: Re-extract every resource from scratch (default). Pass --no-full-extract to enable the cursor-driven incremental path on warm runs — see docs/reference/incremental-extraction.  [default: full-extract]
 * `--help`: Show this message and exit.
 
 ## `infrahub-sync sync`
@@ -90,6 +80,49 @@ $ infrahub-sync sync [OPTIONS]
 * `--directory TEXT`: Base directory to search for sync configurations
 * `--branch TEXT`: Branch to use for the sync.
 * `--diff / --no-diff`: Print the differences between the source and the destination before syncing  [default: diff]
-* `--show-progress / --no-show-progress`: Show a progress bar during syncing  [default: show-progress]
+* `--show-progress / --no-show-progress`: Show a progress bar (default: auto-detect terminal)
+* `--adapter-path TEXT`: Paths to look for adapters. Can be specified multiple times.
+* `--parallel / --no-parallel`: Sync tier-by-tier using the auto-computed dep graph. Requires order: to be omitted from config.yml.  [default: parallel]
+* `--allow-rowcount-drop / --no-allow-rowcount-drop`: Skip the rowcount drop guardrail. Use only when you know the source intentionally shrank.  [default: no-allow-rowcount-drop]
+* `--continue-on-error / --no-continue-on-error`: Log and skip peer relationships whose identifier values are missing instead of aborting. Useful when source data is partial; review the warnings before relying on the result.  [default: no-continue-on-error]
+* `--concurrent-load / --no-concurrent-load`: Load source and destination concurrently. Disable when a custom adapter isn&#x27;t thread-safe.  [default: concurrent-load]
+* `--full-extract / --no-full-extract`: Re-extract every resource from scratch (default). Pass --no-full-extract to enable the cursor-driven incremental path on warm runs — see docs/reference/incremental-extraction.  [default: full-extract]
+* `--help`: Show this message and exit.
+
+## `infrahub-sync apply`
+
+Apply a previously cached plan against the destination — no source extraction.
+
+**Usage**:
+
+```console
+$ infrahub-sync apply [OPTIONS]
+```
+
+**Options**:
+
+* `--name TEXT`: Name of the sync to use
+* `--config-file TEXT`: File path to the sync configuration YAML file
+* `--directory TEXT`: Base directory to search for sync configurations
+* `--run-id TEXT`: Cache run id produced by a previous `diff`.  [required]
+* `--branch TEXT`: Branch to use for the apply.
+* `--help`: Show this message and exit.
+
+## `infrahub-sync generate`
+
+Generate all the Python files for a given sync based on the configuration.
+
+**Usage**:
+
+```console
+$ infrahub-sync generate [OPTIONS]
+```
+
+**Options**:
+
+* `--name TEXT`: Name of the sync to use
+* `--config-file TEXT`: File path to the sync configuration YAML file
+* `--directory TEXT`: Base directory to search for sync configurations
+* `--branch TEXT`: Branch to use for the sync.
 * `--adapter-path TEXT`: Paths to look for adapters. Can be specified multiple times.
 * `--help`: Show this message and exit.

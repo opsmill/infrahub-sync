@@ -1,6 +1,7 @@
 ---
-# Labels names are important as they are used by Release Drafter to decide
-# regarding where to record them in changelog or if to skip them.
+# Label names are important: .github/version-drafter.yml reads them to decide
+# the version bump, and changelog-check.yml reads ci/skip-changelog to decide
+# whether a pull request may go without a news fragment.
 #
 # The repository labels will be automatically configured using this file and
 # the GitHub Action https://github.com/marketplace/actions/github-labeler.
@@ -146,6 +147,21 @@
 - name: "state/wont-fix"
   description: "Issue has been closed and won't be fix/implemented."
   color: "eeeeee"
+
+# ----------------------------------
+# CHANGES (version bump triggers)
+# ----------------------------------
+- name: "changes/major"
+  description: "Bump major version (breaking change)"
+  color: "b60205"
+
+- name: "changes/minor"
+  description: "Bump minor version (new feature)"
+  color: "ff9f1c"
+
+- name: "changes/patch"
+  description: "Bump patch version (bug fix)"
+  color: "cfda2c"
 
 # ----------------------------------
 # CI

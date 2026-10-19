@@ -2,7 +2,7 @@
 
 from invoke import Collection, Context, task
 
-from . import docs, linter, tests
+from . import bench, docs, linter, tests
 
 ns = Collection("infrahub_sync")
 ns.configure(
@@ -17,6 +17,7 @@ ns.configure(
 ns.add_collection(Collection.from_module(linter))
 ns.add_collection(Collection.from_module(docs))
 ns.add_collection(Collection.from_module(tests))
+ns.add_collection(Collection.from_module(bench))
 
 
 @task(name="lint")

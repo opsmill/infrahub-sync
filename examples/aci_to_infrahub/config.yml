@@ -16,13 +16,15 @@ destination:
   settings:
     url: "http://localhost:8000"
 
-order: [
-  "OrganizationCustomer",
-  "LocationMetro",
-  "LocationBuilding",
-  "DcimPhysicalDevice",
-  "DcimPhysicalInterface",
-]
+# order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
+# Uncomment and edit only if you need to override the computed order:
+# order: [
+#   "OrganizationCustomer",
+#   "LocationMetro",
+#   "LocationBuilding",
+#   "DcimPhysicalDevice",
+#   "DcimPhysicalInterface",
+# ]
 
 schema_mapping:
   # ACI Tenants -> Organizations

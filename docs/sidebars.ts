@@ -5,18 +5,37 @@ const sidebars: SidebarsConfig = {
     'readme',
     {
       type: 'category',
+      label: 'Get started',
+      items: [
+        'installation',
+        'creating-a-sync-project',
+        'running-a-sync',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Tutorials',
+      items: [
+        'tutorials/netbox-demo-to-infrahub',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Guides',
       items: [
-        'guides/installation',
-        'guides/creation',
-        'guides/run',
+        'using-netbox-or-nautobot-with-infrahub',
+        'migrating-from-netbox-or-nautobot',
+        'orchestration',
+        'custom-certificates',
       ],
     },
     {
       type: 'category',
       label: 'Adapters',
       items: [
+        'adapters/choosing-an-adapter',
         'adapters/aci',
+        'adapters/device42',
         'adapters/file',
         'adapters/genericrestapi',
         'adapters/infrahub',
@@ -27,6 +46,7 @@ const sidebars: SidebarsConfig = {
         'adapters/netbox',
         'adapters/observium',
         'adapters/peering-manager',
+        'adapters/peeringdb',
         'adapters/prometheus',
         'adapters/slurpit',
       ],
@@ -36,10 +56,38 @@ const sidebars: SidebarsConfig = {
       label: 'Reference',
       items: [
         'reference/config',
+        'reference/schema-mapping',
         'reference/cli',
+        'reference/incremental-extraction',
       ],
     },
-    'development',
+    {
+      type: 'category',
+      label: 'Release Notes',
+      collapsible: true,
+      collapsed: true,
+      link: {
+        type: 'generated-index',
+        slug: 'release-notes',
+      },
+      items: [
+        {
+          type: 'category',
+          label: 'Infrahub Sync',
+          link: {
+            type: 'generated-index',
+            slug: 'release-notes/infrahub-sync',
+          },
+          items: [
+            'release-notes/infrahub-sync/release-2_0_1',
+            'release-notes/infrahub-sync/release-2_0_0',
+            'release-notes/infrahub-sync/release-1_6_0',
+            'release-notes/infrahub-sync/release-1_5_6',
+          ],
+        },
+      ],
+    },
+    'contributing',
   ]
 };
 

@@ -2,7 +2,7 @@
 title: Infrahub Sync
 ---
 
-Infrahub Sync is a Python package that synchronizes data between Infrahub and external infrastructure systems. It connects to NetBox, Nautobot, IP Fabric, Slurp’it, Cisco ACI, ServiceNow-style systems, and other tools through a library of pre-built adapters, and handles both the communication with each system and the translation of data between different schemas. Sync projects are defined declaratively in YAML; the CLI generates the adapter code, calculates the diff, and applies changes.
+Infrahub Sync synchronizes infrastructure data between Infrahub and external systems — NetBox, Nautobot, IP Fabric, Slurp’it, Cisco ACI, Peering Manager, ServiceNow-style CMDBs, and any system with a REST/JSON API. Use it to migrate from a legacy system of record, run two systems side-by-side, or keep Infrahub in sync with another source of truth. Define a sync project declaratively in YAML, and the CLI generates the adapter code, calculates the diff, and applies only the deltas on each run.
 
 Infrahub Sync is open source under Apache 2.0, distributed on [PyPI](https://pypi.org/project/infrahub-sync/), and maintained on [GitHub](https://github.com/opsmill/infrahub-sync).
 
@@ -29,7 +29,7 @@ Three CLI commands operate on a sync project: `generate`, `diff`, and `sync`.
 
 Each sync project consists of a directory and a `config.yml` describing the sync. The configuration specifies the source adapter and destination adapter with their connection details, the order in which models should be synchronized, and how each source field maps to a destination field. Credentials reference environment variables rather than being embedded in the file.
 
-→ [Creating a new sync instance](./guides/creation.mdx) · [Sync instance configuration](./reference/config.mdx)
+→ [Create a sync project](./creating-a-sync-project.mdx) · [Sync instance configuration](./reference/config.mdx)
 
 ### Generate the adapter code
 
@@ -45,7 +45,7 @@ Each sync project consists of a directory and a `config.yml` describing the sync
 
 Three `diffsync_flags` (`SKIP_UNMATCHED_DST` by default, `SKIP_UNMATCHED_SRC`, `SKIP_MODIFIED`) and per-mapping filters control what each run is allowed to change.
 
-→ [Run a sync instance](./guides/run.mdx) · [Sync CLI](./reference/cli.mdx)
+→ [Run a sync](./running-a-sync.mdx) · [Sync CLI](./reference/cli.mdx)
 
 ## Who it's for
 
@@ -53,13 +53,13 @@ Three `diffsync_flags` (`SKIP_UNMATCHED_DST` by default, `SKIP_UNMATCHED_SRC`, `
 
 Data lives in NetBox, Nautobot, IP Fabric, or another tool, and the team is adopting Infrahub. Infrahub Sync provides a path that does not require all teams to move at the same time, and that does not require writing integration code.
 
-→ [Installing Infrahub Sync](./guides/installation.mdx) · [Creating a new sync instance](./guides/creation.mdx)
+→ [Install Infrahub Sync](./installation.mdx) · [Create a sync project](./creating-a-sync-project.mdx)
 
 ### Operating Infrahub at steady state
 
 Infrahub is deployed and needs to stay current with the other systems the team uses — IPAM, ITSM, monitoring, network discovery, or in-house databases. One sync project per source, run on the cadence the environment requires.
 
-→ [Creating a new sync instance](./guides/creation.mdx) · [Run a sync instance](./guides/run.mdx)
+→ [Create a sync project](./creating-a-sync-project.mdx) · [Run a sync](./running-a-sync.mdx)
 
 ### Building inventory from network discovery
 
@@ -98,10 +98,10 @@ Infrahub is populated from what is actually deployed in the network rather than 
     - A running [Infrahub](https://github.com/opsmill/infrahub) instance
     - Python 3.10–3.13
     - Credentials and network access for the source and destination systems
-2. **Install Infrahub Sync.** See [Installing Infrahub Sync](./guides/installation.mdx) for the full setup steps. The short version: `pip install infrahub-sync` into a virtual environment.
+2. **Install Infrahub Sync.** See [Install Infrahub Sync](./installation.mdx) for the full setup steps. The short version: `pip install infrahub-sync` into a virtual environment.
 3. **Choose your starting point.**
-    - Setting up a sync project for the first time? → [Creating a new sync instance](./guides/creation.mdx)
-    - Running an existing project? → [Run a sync instance](./guides/run.mdx)
+    - Setting up a sync project for the first time? → [Create a sync project](./creating-a-sync-project.mdx)
+    - Running an existing project? → [Run a sync](./running-a-sync.mdx)
 
 ## Common questions
 
@@ -127,12 +127,12 @@ Yes. Each sync project is independent — a separate directory, configuration, a
 
 | What you want to do | Where to go |
 |---|---|
-| Set up your environment | [Installing Infrahub Sync](./guides/installation.mdx) |
-| Configure a sync project | [Creating a new sync instance](./guides/creation.mdx) · [Sync instance configuration](./reference/config.mdx) |
-| Run a sync | [Run a sync instance](./guides/run.mdx) |
+| Set up your environment | [Install Infrahub Sync](./installation.mdx) |
+| Configure a sync project | [Create a sync project](./creating-a-sync-project.mdx) · [Sync instance configuration](./reference/config.mdx) |
+| Run a sync | [Run a sync](./running-a-sync.mdx) |
 | CLI reference | [Sync CLI](./reference/cli.mdx) |
 | All adapters | See the **Adapters** section in the sidebar |
-| Custom CA certificates | [Support adapters with custom CA certificates](./guides/custom-certificates.mdx) |
+| Custom CA certificates | [Use custom CA certificates](./custom-certificates.mdx) |
 | Build a custom adapter | [Local Adapters](./adapters/local-adapters.mdx) |
-| Contribute | [Development guide](./development.mdx) |
+| Contribute | [Contributing guide](./contributing.mdx) |
 | Source code | [github.com/opsmill/infrahub-sync](https://github.com/opsmill/infrahub-sync) |

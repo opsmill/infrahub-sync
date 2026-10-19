@@ -1,0 +1,68 @@
+---
+title: Incremental Extraction
+---
+
+`infrahub-sync` can skip re-extracting unchanged data on warm runs by
+asking each backend "what changed since the last successful run?".
+
+## Default behavior
+
+`infrahub-sync` defaults to `--full-extract`: every run re-extracts every
+resource from scratch. The cursor-driven warm path is **opt-in** because
+timestamp filters miss deletes and because a fresh extract is the safer
+posture for a tool that writes to a downstream system.
+
+The cache machinery still runs under `--full-extract` — snapshots and
+cursor sidecars are written under the run dir so that the opt-in warm
+path is immediately usable when you switch to `--no-full-extract`. See
+[Cache layout](./cache-layout) for the on-disk shape.
+
+## Enabling the incremental warm path
+
+```bash
+uv run infrahub-sync sync --name from-netbox --directory examples/ --no-full-extract
+```
+
+When `--no-full-extract` is set, the engine takes the cursor path **if
+all** of these hold:
+
+1. A prior run exists under `.infrahub-sync-cache/<sync_name>/` with
+   `run.json` status `applied` (or `dry-run`).
+2. `schema-sub-hash.txt` from that run matches the current schema
+   mapping + destination schema. Any mapping change forces a full
+   extract.
+3. The adapter declares a non-NONE cursor tier for the resource
+   (`cursor_tier_for(<resource>)` — see adapter docs).
+4. The run counter has not hit the configured cadence (default: every
+   10 runs, configurable via `incremental.full_resync_every` in
+   `config.yml`).
+
+If any condition fails the engine falls back to the full extract path
+for that side / resource.
+
+## When to keep `--full-extract`
+
+- Investigating a discrepancy and you suspect cached state.
+- A backend has had data deleted and you want the delete reflected
+  immediately (timestamp filters do not catch deletes — the cadence
+  knob handles this routinely).
+
+## Supported backends
+
+| Adapter                | Tier              | Notes |
+| ---------------------- | ----------------- | ----- |
+| NetBox source          | TIMESTAMP         | `last_updated__gte` |
+| Nautobot source        | TIMESTAMP         | `last_updated__gte` |
+| Infrahub destination   | TIMESTAMP         | `node_metadata__updated_at__after` |
+| Others                 | NONE              | Always full extract today |
+
+## Soft deletes
+
+Timestamp-based incremental misses DELETEs (the deleted row has no
+`last_updated` to match). The engine forces a full extract every N
+runs (default 10) to reconcile deletes. Set
+`incremental.full_resync_every: 1` to disable incremental entirely.
+
+A future optimization will add an ID-only sweep
+(`adapter.list_existing_ids`) so deletes are caught on every warm
+run — the contract is in place but not yet wired into the engine.

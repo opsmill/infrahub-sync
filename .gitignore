@@ -14,3 +14,18 @@ node_modules/*
 .direnv/
 .envrc
 dist/
+.infrahub-sync-cache/
+# invoke bench.run artifacts (default to repo root)
+bench-results.csv
+.bench-filtered-config.yml
+# spec-kit transient download cache (extensions/presets)
+.specify/**/.cache/
+# spec-kit per-feature working state
+.specify/feature.json
+# Virtual environments
+.venv/
+venv/
+# Secrets (never commit)
+*.pem
+*.key
+credentials.json

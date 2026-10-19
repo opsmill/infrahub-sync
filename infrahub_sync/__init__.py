@@ -5,6 +5,13 @@ import operator
 import re
 from typing import TYPE_CHECKING, Any, ClassVar, Union
 
+from infrahub_sync.cache.cursors import CursorTier
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from infrahub_sync.cache.cursors import CursorState
+
 import pydantic
 
 if TYPE_CHECKING:
@@ -70,6 +77,12 @@ class SyncStore(pydantic.BaseModel):
     settings: dict[str, Any] | None = {}
 
 
+class IncrementalConfig(pydantic.BaseModel):
+    """Optional configuration block for incremental-extraction behaviour."""
+
+    full_resync_every: int = 10
+
+
 class SyncConfig(pydantic.BaseModel):
     name: str
     store: SyncStore | None = None  # Fix default value that was incorrectly set as list
@@ -79,6 +92,7 @@ class SyncConfig(pydantic.BaseModel):
     order: list[str] = pydantic.Field(default_factory=list)
     schema_mapping: list[SchemaMappingModel] = []
     diffsync_flags: list[Union[str, DiffSyncFlags]] | None = []
+    incremental: IncrementalConfig | None = None
 
     @validator_decorator("diffsync_flags", **validator_kwargs)  # ty: ignore[no-matching-overload]
     def convert_str_to_enum(cls, v):
@@ -96,6 +110,39 @@ class SyncConfig(pydantic.BaseModel):
             else:
                 new_flags.append(item)
         return new_flags
+
+    def compute_order(self) -> list[str]:
+        """Return the operator-provided `order` if set, else flattened tiers
+        auto-computed from `schema_mapping`.
+
+        Logs the tier layout and any dropped optional edges at INFO level.
+        """
+        order, _tiers = self.compute_order_and_tiers()
+        return order
+
+    def compute_order_and_tiers(self) -> tuple[list[str], list[set[str]] | None]:
+        """Return `(flat_order, tiers)` from a single topological pass.
+
+        `tiers` is `None` when an explicit `order` is configured. Callers that
+        need both the flat order and the tier layout should use this rather
+        than calling `compute_order()` and `compute_tiers()` separately, which
+        would sort the graph twice. Logs the tier layout and any dropped
+        optional edges at INFO level.
+        """
+        if self.order:
+            return list(self.order), None
+        # Imported here to avoid a circular import at module load.
+        from infrahub_sync.dependency_graph import compute_tiers, flatten_tiers
+
+        tiers, dropped = compute_tiers(self.schema_mapping)
+        for idx, tier in enumerate(tiers):
+            logger.info("tier %d (%d): %s", idx, len(tier), sorted(tier))
+        if dropped:
+            logger.warning(
+                "dropped optional edges to break cycles: %s",
+                dropped,
+            )
+        return flatten_tiers(tiers), tiers
 
 
 class SyncInstance(SyncConfig):
@@ -151,6 +198,33 @@ class DiffSyncMixin:
 
     def model_loader(self, model_name: str, model):
         raise NotImplementedError
+
+    def cursor_tier_for(self, model_name: str) -> CursorTier:  # noqa: ARG002
+        """Strongest cursor tier the adapter supports for this model.
+
+        Default = NONE (always full extract). Override per adapter.
+        """
+        return CursorTier.NONE
+
+    def list_changed_since(self, model_name: str, cursor: CursorState) -> Iterable[dict]:
+        """Yield raw upstream records changed since `cursor`.
+
+        Adapters that override `cursor_tier_for` to a non-NONE tier MUST
+        implement this. Records are dicts in the same shape `model_loader`
+        feeds to `add(...)` (DiffSync model fields).
+        """
+        msg = (
+            f"{type(self).__name__}.list_changed_since is not implemented. "
+            "Override it or keep cursor_tier_for returning NONE."
+        )
+        raise NotImplementedError(msg)
+
+    def list_existing_ids(self, model_name: str) -> Iterable[str]:
+        """Yield current `unique_id` strings for `model_name` in the source
+        of truth. Used for delete detection between incremental runs.
+        """
+        msg = f"{type(self).__name__}.list_existing_ids is not implemented. Override it for soft-delete detection."
+        raise NotImplementedError(msg)
 
 
 class DiffSyncModelMixin:

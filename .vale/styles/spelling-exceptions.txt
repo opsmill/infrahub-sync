@@ -11,6 +11,7 @@ boolean
 check_definitions
 class_name
 CloudFormation
+CMDBs
 codespace
 codespaces
 combobox
@@ -46,6 +47,7 @@ eslint
 excalidraw
 fanout
 file_path
+filelock
 generator_definition
 generator_definitions
 github
@@ -88,6 +90,7 @@ modularization
 namespace
 namespaces
 Nautobot
+Nautobot's
 Netbox
 Newsfragment
 Nornir
@@ -103,12 +106,16 @@ Prefetch
 profile_name
 PyPI
 query_peers
+queryable
 rebase
 rebased
 Redoc
 repo
 ressources
 REST
+RIRs
+rowcount
+Rowcount
 schema_mapping
 sdk
 Slurp'it
@@ -131,9 +138,20 @@ uv
 validator
 validators
 Version Control
+VRFs
+walkthrough
+runbook
+runbooks
+Splunk
+Datadog
+Infoblox
+PeeringDB
+Device42
 Vitest
 VLANs
 vscode
 VSCode
 Yaml
 yamllint
+ty
+formatters

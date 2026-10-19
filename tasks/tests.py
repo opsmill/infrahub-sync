@@ -13,9 +13,17 @@ MAIN_DIRECTORY = CURRENT_DIRECTORY.parent
 
 @task
 def tests_unit(context: Context) -> None:
-    pass
+    """Run unit tests — everything under tests/ except integration-marked tests."""
+    with context.cd(MAIN_DIRECTORY):
+        context.run('pytest -m "not integration"', pty=True)
 
 
 @task
 def tests_integration(context: Context) -> None:
-    pass
+    """Run integration tests against a live Infrahub.
+
+    Requires INFRAHUB_ADDRESS and INFRAHUB_API_TOKEN in the environment;
+    tests skip themselves when those aren't set.
+    """
+    with context.cd(MAIN_DIRECTORY):
+        context.run("pytest -m integration", pty=True)

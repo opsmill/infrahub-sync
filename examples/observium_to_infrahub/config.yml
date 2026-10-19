@@ -15,11 +15,13 @@ destination:
   settings:
     url: "http://localhost:8000"
 
-order: [
-  "CoreStandardGroup",
-  "IpamIPAddress",
-  "InfraDevice",
-]
+# order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
+# Uncomment and edit only if you need to override the computed order:
+# order: [
+#   "CoreStandardGroup",
+#   "IpamIPAddress",
+#   "InfraDevice",
+# ]
 
 schema_mapping:
   - name: CoreStandardGroup

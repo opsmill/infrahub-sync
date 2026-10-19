@@ -17,31 +17,33 @@ destination:
 #     host: localhost
 #     port: 6379
 
-order: [
-  "BuiltinTag",
-  "RoleGeneric",
-  "StatusGeneric",
-  "CoreStandardGroup",
-  "OrganizationGeneric",
-  "ChoiceLocationType",
-  "LocationGeneric",
-  "InfraRack",
-  "ChoiceDeviceType",
-  "InfraPlatform",
-  "InfraProviderNetwork",
-  "ChoiceCircuitType",
-  "InfraCircuit",
-  "NautobotNamespace",
-  "InfraRouteTarget",
-  "InfraVLAN",
-  "InfraVRF",
-  # "InfraDevice",
-  "InfraPrefix",
-  # "InfraInterfaceL2L3",
-  "InfraRearPort",
-  "InfraFrontPort",
-  # "InfraIPAddress",
-]
+# order: omitted — infrahub-sync auto-computes tiers from schema_mapping.
+# Uncomment and edit only if you need to override the computed order:
+# order: [
+#   "BuiltinTag",
+#   "RoleGeneric",
+#   "StatusGeneric",
+#   "CoreStandardGroup",
+#   "OrganizationGeneric",
+#   "ChoiceLocationType",
+#   "LocationGeneric",
+#   "InfraRack",
+#   "ChoiceDeviceType",
+#   "InfraPlatform",
+#   "InfraProviderNetwork",
+#   "ChoiceCircuitType",
+#   "InfraCircuit",
+#   "NautobotNamespace",
+#   "InfraRouteTarget",
+#   "InfraVLAN",
+#   "InfraVRF",
+#   # "InfraDevice",
+#   "InfraPrefix",
+#   # "InfraInterfaceL2L3",
+#   "InfraRearPort",
+#   "InfraFrontPort",
+#   # "InfraIPAddress",
+# ]
 
 schema_mapping:
   # Tags
@@ -312,7 +314,7 @@ schema_mapping:
 
   # BGP Plugin (Autonomous System, BGP Session, BGP Peer Group)
   - name: InfraAutonomousSystem
-    mapping: plugin.bgp.autonomous-systems
+    mapping: plugins.bgp.autonomous-systems
     identifiers: ["name"]
     fields:
       - name: name

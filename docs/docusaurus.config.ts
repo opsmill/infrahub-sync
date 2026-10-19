@@ -27,6 +27,36 @@ const config: Config = {
     locales: ['en'],
   },
 
+  plugins: [
+    [
+      '@docusaurus/plugin-client-redirects',
+      {
+        redirects: [
+          {
+            from: '/guides/installation',
+            to: '/installation',
+          },
+          {
+            from: '/guides/creation',
+            to: '/creating-a-sync-project',
+          },
+          {
+            from: '/guides/run',
+            to: '/running-a-sync',
+          },
+          {
+            from: '/guides/custom-certificates',
+            to: '/custom-certificates',
+          },
+          {
+            from: '/development',
+            to: '/contributing',
+          },
+        ],
+      },
+    ],
+  ],
+
   presets: [
     [
       "classic",

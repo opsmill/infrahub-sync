@@ -1,0 +1,4 @@
+# Code ownership for infrahub-sync.
+# The Solutions Architecture team owns the repository by default; PRs request
+# their review automatically. See https://docs.github.com/articles/about-code-owners
+* @opsmill/sa

@@ -1,0 +1,88 @@
+---
+title: Use NetBox or Nautobot with Infrahub
+---
+
+If you're adopting Infrahub but already have an established system of record in NetBox or Nautobot — with accumulated data, custom fields, and automation built around it — run Infrahub side-by-side with the existing tool and use Infrahub Sync to keep both systems holding the same data.
+
+This is the most common adoption pattern, whether you plan to eventually consolidate on Infrahub or keep both systems running long-term.
+
+## The side-by-side pattern
+
+Both tools continue to operate. The existing system (NetBox or Nautobot) remains the system of record for some data; Infrahub becomes the system of record for the rest. A sync project moves data between them on a defined cadence, so each system holds the data it owns plus a current view of what the other system owns.
+
+The side-by-side pattern fits when:
+
+- One team is ready to move to Infrahub, but other teams still depend on the existing system.
+- Existing automation pipelines, dashboards, or scripts read from NetBox or Nautobot and need time to migrate.
+- The existing system has features with no direct Infrahub equivalent (rack elevation, native cable tracing), and you want to keep using it for those workflows.
+- You want to evaluate Infrahub on production data.
+
+This pattern is also the typical starting point for a gradual migration. See [Migrate from NetBox or Nautobot](./migrating-from-netbox-or-nautobot.mdx) for the migration-specific walkthrough.
+
+## Choosing which tool owns which data
+
+Decide which system is authoritative for each type of data before configuring a sync project. Sync behavior on each model is controlled by which side is the source and which is the destination, plus the `diffsync_flags` that govern what each run is allowed to change.
+
+Common patterns:
+
+- **The existing system is authoritative for everything during initial evaluation.** Sync runs NetBox → Infrahub or Nautobot → Infrahub. Infrahub mirrors the existing system; edits in Infrahub are not propagated back. This is the safest starting configuration.
+- **Infrahub is authoritative for newly modeled data; the existing system stays authoritative for existing data.** The sync project covers only the models that overlap. New data types (intent, design objects, custom schemas) live in Infrahub and are not synced.
+- **Each system owns specific models.** For example, the existing system owns rack and cable data; Infrahub owns device intent, IP allocations, and configuration data. Sync moves only the models each system needs to consume.
+
+Document the ownership decision in the sync project's configuration comments — anyone reading the YAML later needs to understand the boundary.
+
+## Mapping data between the existing system and Infrahub
+
+NetBox and Nautobot each have a fixed schema. Infrahub has a custom schema that you define. There is no universal mapping — the YAML configuration depends on the specific Infrahub schema in use.
+
+For a typical mapping:
+
+- Start from the example configuration in the [Infrahub Sync repository](https://github.com/opsmill/infrahub-sync) under `examples/netbox_to_infrahub/` or `examples/nautobot_to_infrahub/`. The example references the Infrahub demo schema; replace its model and field names with the equivalents in your Infrahub schema.
+- For each source model you want to sync (sites, racks, devices, interfaces, IP addresses, VLANs, etc.), find the equivalent Infrahub model and map fields directly.
+- For field name differences (NetBox's `device_role` versus an Infrahub `role` attribute, or Nautobot's `status.name` versus NetBox's `status.value`), the schema mapping section of the YAML handles the translation.
+- For relationship differences, use `references` in the YAML to resolve them. See [Sync instance configuration](./reference/config.mdx) for the full syntax.
+
+For a step-by-step guide on building the schema mapping itself, see [Schema mapping reference](./reference/schema-mapping.mdx).
+
+## Schema differences to be aware of
+
+Some NetBox and Nautobot features have no direct Infrahub equivalent today. For each: keep using the existing system for that workflow, or model the capability in Infrahub with available workarounds.
+
+### Rack elevation views
+
+NetBox and Nautobot both include a built-in rack elevation visualization. Infrahub does not have a native rack elevation view, and rack capacity calculation (free U positions, weight, power draw) is not automatic.
+
+If rack elevation is important to your workflow, the most direct path is to keep managing racks in the existing system and exclude rack data from the sync. Alternatively, model rack data in Infrahub with a custom schema and handle capacity calculation through a generator or GraphQL queries.
+
+### Cable tracing
+
+NetBox and Nautobot both include a cable tracing feature that follows connections through patch panels and intermediate devices. Infrahub does not have a single-click cable trace view, but the same data is queryable via Infrahub's graph traversal capabilities. For visualization, build a custom artifact or query with GraphQL from external tools.
+
+### Other differences
+
+For any feature where the existing system has a direct capability and Infrahub does not, document the decision in the sync project configuration and update internal runbooks. Keeping a NetBox or Nautobot workflow alongside Infrahub is a valid long-term choice.
+
+## Operational considerations
+
+- **Run direction matters for conflict handling.** When syncing NetBox → Infrahub or Nautobot → Infrahub, edits made in Infrahub to synced models will be overwritten on the next sync run unless flags are configured otherwise. Make sure everyone on the team understands which side is the source of truth for each model.
+- **Use `diff` regularly.** Before applying any sync — and especially during initial setup — run `infrahub-sync diff` to verify what would change. The diff is read-only.
+- **Schedule syncs on a cadence that matches data change rates.** If the source data changes hourly, sync hourly. If it changes daily, sync daily. Infrahub Sync has no built-in scheduler — use cron, CI, or a workflow tool. See [Schedule sync runs](./orchestration.mdx).
+- **Set explicit ownership boundaries.** If both tools allow edits to the same model, conflicts will eventually occur. Decide upfront which tool is authoritative; avoid bi-directional syncing of the same model unless conflict resolution is well-defined.
+
+## When to move toward full migration
+
+The side-by-side pattern is fine as a long-term steady state, but most teams eventually consolidate on Infrahub once it has proven itself and the gaps that kept the existing system in place have been addressed. Signals that you're ready to migrate fully:
+
+- All workflows that depended on NetBox-only or Nautobot-only features have been replaced or moved into Infrahub.
+- Existing automation pipelines have been updated to read from Infrahub.
+- Data ownership in Infrahub has been stable for a meaningful period — no surprises in what's there.
+
+At that point, see [Migrate from NetBox or Nautobot](./migrating-from-netbox-or-nautobot.mdx) for the full migration walkthrough.
+
+## Related
+
+- [Migrate from NetBox or Nautobot](./migrating-from-netbox-or-nautobot.mdx)
+- [Create a sync project](./creating-a-sync-project.mdx)
+- [Schema mapping reference](./reference/schema-mapping.mdx)
+- [NetBox adapter](./adapters/netbox.mdx)
+- [Nautobot adapter](./adapters/nautobot.mdx)
