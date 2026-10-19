@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from diffsync.store.local import LocalStore
@@ -32,10 +32,60 @@ class InfraDevice(FileModel):
     tags: list[str] = []  # noqa: RUF012
 
 
+class LocationSite(FileModel):
+    _modelname = "LocationSite"
+    _identifiers = ("name", "region")
+    _attributes = ()
+    name: str
+    region: str
+
+
+class InfraRack(FileModel):
+    """Mirrors the generator output: list attributes are ``list[Any] | None = None``."""
+
+    _modelname = "InfraRack"
+    _identifiers = ("name",)
+    _attributes = ("site", "aliases", "height")
+    name: str
+    site: str | None = None
+    aliases: list[Any] | None = None
+    height: int | None = None
+
+
 class _FileSync(FileAdapter):
-    top_level = ["OrganizationGeneric", "InfraDevice"]  # noqa: RUF012
+    top_level = ["OrganizationGeneric", "InfraDevice", "LocationSite", "InfraRack"]  # noqa: RUF012
     OrganizationGeneric = OrganizationGeneric
     InfraDevice = InfraDevice
+    LocationSite = LocationSite
+    InfraRack = InfraRack
+
+
+def _instance(
+    directory: Path, schema_mapping: list[dict[str, Any]], settings: dict[str, Any] | None = None
+) -> SyncInstance:
+    """Build a SyncInstance for the file adapter from a raw schema mapping."""
+    return SyncInstance.model_validate(
+        {
+            "name": "from-file-test",
+            "directory": str(directory),
+            "source": {"name": "file", "settings": {"directory": str(directory), **(settings or {})}},
+            "destination": {"name": "infrahub", "settings": {}},
+            "order": [element["name"] for element in schema_mapping],
+            "schema_mapping": schema_mapping,
+        }
+    )
+
+
+def _adapter(instance: SyncInstance) -> _FileSync:
+    return _FileSync(target="source", adapter=instance.source, config=instance, internal_storage_engine=LocalStore())
+
+
+SITES_MAPPING = {
+    "name": "LocationSite",
+    "mapping": "sites.csv",
+    "identifiers": ["name", "region"],
+    "fields": [{"name": "name", "mapping": "name"}, {"name": "region", "mapping": "region"}],
+}
 
 
 def _build_instance(directory: Path) -> SyncInstance:
@@ -112,7 +162,7 @@ def test_read_csv_empty_returns_no_records(tmp_path: Path, content: str, case: s
 
 
 def test_model_loader_loads_records_and_resolves_reference(data_dir: Path) -> None:
-    """Records load, identifiers seed local_id, and a scalar reference is kept as the target identifier."""
+    """Records load, local_id falls back to the unique id, and a scalar reference resolves to the peer."""
     instance = _build_instance(directory=data_dir)
     adapter = _FileSync(target="source", adapter=instance.source, config=instance, internal_storage_engine=LocalStore())
     adapter.load()
@@ -197,3 +247,200 @@ def test_missing_file_raises(tmp_path: Path) -> None:
     adapter = _FileSync(target="source", adapter=instance.source, config=instance, internal_storage_engine=LocalStore())
     with pytest.raises(ValueError, match="Error reading data"):
         adapter.model_loader(model_name="InfraDevice", model=InfraDevice)
+
+
+def test_read_csv_strips_utf8_bom(tmp_path: Path) -> None:
+    """A UTF-8 BOM (as written by Excel) does not leak into the first column name."""
+    path = tmp_path / "orgs.csv"
+    path.write_text("name,description\nAcme,HQ\n", encoding="utf-8-sig")
+    assert read_csv(path, settings={}) == [{"name": "Acme", "description": "HQ"}]
+
+
+def test_read_csv_ignores_trailing_empty_cells(tmp_path: Path) -> None:
+    """Empty cells beyond the header (trailing delimiters) are dropped."""
+    path = tmp_path / "orgs.csv"
+    path.write_text("name,description\nAcme,HQ,,\n", encoding="utf-8")
+    assert read_csv(path, settings={}) == [{"name": "Acme", "description": "HQ"}]
+
+
+def test_read_csv_rejects_extra_cells(tmp_path: Path) -> None:
+    """Data beyond the header columns is an error naming the line, not a crash."""
+    path = tmp_path / "orgs.csv"
+    path.write_text("name,description\nrouter,core,EXTRA1,EXTRA2\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"Line 2 .* more cells than the header"):
+        read_csv(path, settings={})
+
+
+def test_read_csv_rejects_duplicate_header(tmp_path: Path) -> None:
+    """Repeated column names are rejected instead of silently overwriting each other."""
+    path = tmp_path / "orgs.csv"
+    path.write_text("name,name,description\na,b,c\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Duplicate column"):
+        read_csv(path, settings={})
+
+
+def test_list_attribute_with_generated_annotation_is_split(tmp_path: Path) -> None:
+    """A ``list[Any] | None = None`` attribute is split on the list separator."""
+    (tmp_path / "racks.csv").write_text("name,aliases\nr1,a;b;c\n", encoding="utf-8")
+    instance = _instance(
+        tmp_path,
+        [
+            {
+                "name": "InfraRack",
+                "mapping": "racks.csv",
+                "identifiers": ["name"],
+                "fields": [{"name": "name", "mapping": "name"}, {"name": "aliases", "mapping": "aliases"}],
+            }
+        ],
+    )
+    adapter = _adapter(instance)
+    adapter.load()
+    rack = cast("InfraRack", adapter.get_all("InfraRack")[0])
+    assert rack.aliases == ["a", "b", "c"]
+
+
+@pytest.mark.parametrize(
+    ("site_column", "header"),
+    [("dc1__emea", "name,site"), ("s-1", "name,site")],
+    ids=["composite-identifier", "id-column"],
+)
+def test_reference_resolves_to_peer_unique_id(tmp_path: Path, site_column: str, header: str) -> None:
+    """A reference cell matches the peer by its (composite) identifier or by its ``id`` column."""
+    (tmp_path / "sites.csv").write_text("id,name,region\ns-1,dc1,emea\n", encoding="utf-8")
+    (tmp_path / "racks.csv").write_text(f"{header}\nr1,{site_column}\n", encoding="utf-8")
+    instance = _instance(
+        tmp_path,
+        [
+            SITES_MAPPING,
+            {
+                "name": "InfraRack",
+                "mapping": "racks.csv",
+                "identifiers": ["name"],
+                "fields": [
+                    {"name": "name", "mapping": "name"},
+                    {"name": "site", "mapping": "site", "reference": "LocationSite"},
+                ],
+            },
+        ],
+    )
+    adapter = _adapter(instance)
+    adapter.load()
+    rack = cast("InfraRack", adapter.get_all("InfraRack")[0])
+    assert rack.site == "dc1__emea"
+
+
+def test_unresolved_reference_raises(tmp_path: Path) -> None:
+    """A reference to an object that was not loaded fails with the offending value."""
+    (tmp_path / "sites.csv").write_text("name,region\ndc1,emea\n", encoding="utf-8")
+    (tmp_path / "racks.csv").write_text("name,site\nr1,dc9\n", encoding="utf-8")
+    instance = _instance(
+        tmp_path,
+        [
+            SITES_MAPPING,
+            {
+                "name": "InfraRack",
+                "mapping": "racks.csv",
+                "fields": [
+                    {"name": "name", "mapping": "name"},
+                    {"name": "site", "mapping": "site", "reference": "LocationSite"},
+                ],
+            },
+        ],
+    )
+    with pytest.raises(ValueError, match="Unable to resolve 'dc9'"):
+        _adapter(instance).load()
+
+
+def test_unknown_reference_model_raises(tmp_path: Path) -> None:
+    """A ``reference`` that names no schema_mapping entry is rejected (catches typos)."""
+    (tmp_path / "racks.csv").write_text("name,site\nr1,dc1\n", encoding="utf-8")
+    instance = _instance(
+        tmp_path,
+        [
+            {
+                "name": "InfraRack",
+                "mapping": "racks.csv",
+                "fields": [
+                    {"name": "name", "mapping": "name"},
+                    {"name": "site", "mapping": "site", "reference": "LocationSiteTypo"},
+                ],
+            }
+        ],
+    )
+    with pytest.raises(ValueError, match="'LocationSiteTypo', which is not defined in schema_mapping"):
+        _adapter(instance).load()
+
+
+def test_empty_fields_raises(tmp_path: Path) -> None:
+    """A mapping without fields fails fast instead of loading attribute-less objects."""
+    (tmp_path / "racks.csv").write_text("name\nr1\n", encoding="utf-8")
+    instance = _instance(tmp_path, [{"name": "InfraRack", "mapping": "racks.csv", "fields": []}])
+    with pytest.raises(ValueError, match="No fields defined"):
+        _adapter(instance).load()
+
+
+def test_empty_list_separator_raises(tmp_path: Path) -> None:
+    """An empty ``list_separator`` is rejected with a message naming the setting."""
+    instance = _instance(tmp_path, [SITES_MAPPING], settings={"list_separator": ""})
+    with pytest.raises(ValueError, match="list_separator"):
+        _adapter(instance)
+
+
+def test_falsy_static_value_is_kept(tmp_path: Path) -> None:
+    """A ``static: 0`` is applied rather than treated as unset."""
+    (tmp_path / "racks.csv").write_text("name\nr1\n", encoding="utf-8")
+    instance = _instance(
+        tmp_path,
+        [
+            {
+                "name": "InfraRack",
+                "mapping": "racks.csv",
+                "fields": [{"name": "name", "mapping": "name"}, {"name": "height", "static": 0}],
+            }
+        ],
+    )
+    adapter = _adapter(instance)
+    adapter.load()
+    assert cast("InfraRack", adapter.get_all("InfraRack")[0]).height == 0
+
+
+def test_conflicting_duplicate_is_reported(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Rows sharing an identifier but carrying different data are logged at WARNING by id."""
+    (tmp_path / "devices.csv").write_text("name,description\nsw1,A\nsw1,B\n", encoding="utf-8")
+    instance = _instance(
+        tmp_path,
+        [
+            {
+                "name": "InfraDevice",
+                "mapping": "devices.csv",
+                "fields": [{"name": "name", "mapping": "name"}, {"name": "description", "mapping": "description"}],
+            }
+        ],
+    )
+    adapter = _adapter(instance)
+    with caplog.at_level("WARNING", logger="infrahub_sync.adapters.file"):
+        adapter.load()
+
+    device = cast("InfraDevice", adapter.get_all("InfraDevice")[0])
+    assert device.description == "A"
+    assert "InfraDevice 'sw1' appears more than once" in caplog.text
+
+
+def test_model_write_is_not_supported() -> None:
+    """Using the file adapter as a destination fails loudly instead of reporting success."""
+    with pytest.raises(NotImplementedError, match="source-only"):
+        OrganizationGeneric.create(adapter=cast("Any", None), ids={"name": "Acme"}, attrs={})
+
+
+def test_relative_directory_resolves_against_config_directory(tmp_path: Path) -> None:
+    """A relative ``directory`` setting is anchored to the config directory, not the CWD."""
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "racks.csv").write_text("name\nr1\n", encoding="utf-8")
+    instance = _instance(
+        tmp_path,
+        [{"name": "InfraRack", "mapping": "racks.csv", "fields": [{"name": "name", "mapping": "name"}]}],
+    )
+    instance.source.settings = {"directory": "data"}
+    adapter = _adapter(instance)
+    adapter.load()
+    assert [rack.get_unique_id() for rack in adapter.get_all("InfraRack")] == ["r1"]
