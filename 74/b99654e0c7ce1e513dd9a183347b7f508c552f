@@ -1,0 +1,39 @@
+.github/scripts/nightly_e2e.py
+  s_756605d570e551::t_3c4679b47153c0 223,240,257
+changelog/+preview-down-deletes-data.housekeeping.md
+  s_756605d570e551::t_a5383bc373265a 1
+tests/test_nightly_e2e.py
+  s_756605d570e551::t_3c4679b47153c0 92
+development/README.md
+  s_756605d570e551::t_4e751d482f4893 36-37,41
+tasks/preview.py
+  s_756605d570e551::t_3c4679b47153c0 87,641-642,646-648
+docs/docs/contributing.mdx
+  s_756605d570e551::t_c14360e1a0dfb0 176
+docs/docs/development/guidelines/testing-tiers.md
+  s_756605d570e551::t_c14360e1a0dfb0 145,277,286,291,341,402
+tests/integration/test_saved_plan_apply_integration.py
+  s_756605d570e551::t_c14360e1a0dfb0 78
+.github/workflows/workflow-nightly-e2e.yml
+  s_756605d570e551::t_3c4679b47153c0 163
+docs/docs/development/guides/preview-stack.md
+  s_756605d570e551::t_4e751d482f4893 31,107,109,111-113,137,212,215-216
+tests/preview/test_preview_legacy_state.py
+  s_756605d570e551::t_c796cc75fcbdbe 180,197,204-206,208,211,213
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "74b99654e0c7ce1e513dd9a183347b7f508c552f",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
