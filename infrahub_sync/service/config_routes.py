@@ -304,7 +304,7 @@ class ConfigurationRoutes:
 
 def configuration_router(routes: ConfigurationRoutes, authenticate: Any, idempotency_key: Any) -> APIRouter:
     """Create the seven authenticated configuration resources."""
-    router = APIRouter()
+    router = APIRouter(tags=["Configurations"])
     config_id_parameter = APIPath(pattern=_CONFIG_ID_PATTERN)
     registry_version_parameter = APIPath()
     page_offset = Query()

@@ -30,7 +30,7 @@ def plan_report_router(
     service: "RunService", authenticate: Any, responses: dict[int | str, dict[str, Any]]
 ) -> APIRouter:
     """Create the three authenticated plan report routes."""
-    router = APIRouter()
+    router = APIRouter(tags=["Plan reports"])
 
     @router.get("/runs/{run_id}/plan/problems", responses=responses)
     def get_plan_problems(

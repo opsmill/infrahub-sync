@@ -192,8 +192,11 @@ The server listens on port `8000`. Its host defaults to `127.0.0.1`. Put TLS and
 network access controls at your ingress boundary. The bearer-token provider is the MVP
 application authentication boundary, not a replacement for transport security.
 
-Open `http://127.0.0.1:8000/docs`, select **Authorize**, and enter the configured token
-without the `Bearer` prefix; Swagger UI adds the complete `Authorization` header.
+Open `http://127.0.0.1:8000/` in a browser: the server root redirects to the Swagger UI at
+`/docs`, which groups the endpoints as Service, Runs, Plan reports and Configurations. Select
+**Authorize** and enter the configured token without the `Bearer` prefix; Swagger UI adds the
+complete `Authorization` header and keeps the token after a page reload. The same contract is
+available as ReDoc at `/redoc` and as an OpenAPI document at `/openapi.json`.
 
 ## Discovery and liveness
 

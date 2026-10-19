@@ -9,7 +9,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from infrahub_sync.configuration.storage import UNSUPPORTED_STORE_MESSAGE, UNSUPPORTED_STORE_REASON
@@ -38,6 +38,20 @@ from .plan_report_routes import plan_report_router
 from .service import RunService, ServiceAPIError
 
 logger = logging.getLogger(__name__)
+
+API_DESCRIPTION = """\
+Submit, review and apply Infrahub Sync runs, and register configuration packages.
+
+`GET /version` and `GET /status` need no credentials. Every other endpoint needs a bearer
+token: select **Authorize** and enter the token without the `Bearer ` prefix.
+"""
+
+OPENAPI_TAGS: list[dict[str, Any]] = [
+    {"name": "Service", "description": "Server version and lifecycle state. No credentials needed."},
+    {"name": "Runs", "description": "Create a run, then follow it through plan, verify, apply and cancel."},
+    {"name": "Plan reports", "description": "The problems, left-out records and kept records of a run's plan."},
+    {"name": "Configurations", "description": "Register configuration packages and their versions."},
+]
 
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     status: {"model": ErrorEnvelope} for status in (401, 403, 404, 409, 410, 422, 503)
@@ -76,7 +90,14 @@ def create_app(
                 with suppress(CancelledError):
                     await task
 
-    application = FastAPI(title="Infrahub Sync API", version=installed_server_version(), lifespan=lifespan)
+    application = FastAPI(
+        title="Infrahub Sync API",
+        version=installed_server_version(),
+        description=API_DESCRIPTION,
+        openapi_tags=OPENAPI_TAGS,
+        swagger_ui_parameters={"persistAuthorization": True},
+        lifespan=lifespan,
+    )
     bearer_auth = HTTPBearer(auto_error=False, scheme_name="BearerAuth")
 
     def authenticate(
@@ -141,14 +162,19 @@ def create_app(
         )
         return JSONResponse(status_code=422, content=envelope.model_dump(mode="json"))
 
-    @application.get("/version")
+    @application.get("/", include_in_schema=False)
+    def redirect_to_docs() -> RedirectResponse:
+        """Send a browser that opens the server root to the interactive API docs."""
+        return RedirectResponse(url=application.docs_url or "/redoc")
+
+    @application.get("/version", tags=["Service"])
     def get_version() -> VersionResource:
         """Return the installed server and supported unstable API versions."""
         return VersionResource(
             server_version=installed_server_version(), api_versions=API_VERSIONS, stability=API_STABILITY
         )
 
-    @application.get("/status")
+    @application.get("/status", tags=["Service"])
     async def get_status() -> ServiceStatusResource:
         """Return unauthenticated lifecycle state without provider identifiers."""
         return await service.status(os.environ.get("INFRAHUB_SYNC_SERVICE_WORK_POOL", "default"))
@@ -173,7 +199,7 @@ def create_app(
         )
         return JSONResponse(status_code=503, content=envelope.model_dump(mode="json"))
 
-    @application.post("/runs", status_code=202, response_model=RunResource, responses=ERROR_RESPONSES)
+    @application.post("/runs", tags=["Runs"], status_code=202, response_model=RunResource, responses=ERROR_RESPONSES)
     async def create_run(
         body: CreateRunRequest,
         principal: Annotated[Principal, Depends(authenticate)],
@@ -182,36 +208,39 @@ def create_app(
         status, content = await service.create_run(body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
-    @application.get("/runs/{run_id}", responses=ERROR_RESPONSES)
+    @application.get("/runs/{run_id}", tags=["Runs"], responses=ERROR_RESPONSES)
     async def get_run(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> RunResource:
         observations = await reconciler.reconcile_run(run_id) if reconciler is not None else {}
         return await service.get_run(run_id, observations)
 
-    @application.get("/runs/{run_id}/plan", responses=ERROR_RESPONSES)
+    @application.get("/runs/{run_id}/plan", tags=["Runs"], responses=ERROR_RESPONSES)
     def get_plan(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> PlanResource:
         return service.get_plan(run_id)
 
     application.include_router(plan_report_router(service, authenticate, ERROR_RESPONSES))
 
-    @application.get("/runs/{run_id}/results", responses=ERROR_RESPONSES)
+    @application.get("/runs/{run_id}/results", tags=["Runs"], responses=ERROR_RESPONSES)
     def get_results(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> ResultsResource:
         return service.get_results(run_id)
 
     @application.get(
         "/runs/{run_id}/artifacts",
+        tags=["Runs"],
         responses=ERROR_RESPONSES,
     )
     def list_artifacts(run_id: str, _principal: Annotated[Principal, Depends(authenticate)]) -> ArtifactListResource:
         return service.list_artifacts(run_id)
 
-    @application.get("/runs/{run_id}/artifacts/{artifact_id}", responses=ERROR_RESPONSES)
+    @application.get("/runs/{run_id}/artifacts/{artifact_id}", tags=["Runs"], responses=ERROR_RESPONSES)
     def get_artifact(
         run_id: str, artifact_id: str, _principal: Annotated[Principal, Depends(authenticate)]
     ) -> Response:
         data, media_type, digest = service.get_artifact(run_id, artifact_id)
         return Response(content=data, media_type=media_type, headers={"Digest": f"sha-256={digest}"})
 
-    @application.post("/runs/{run_id}/verify", status_code=202, response_model=RunResource, responses=ERROR_RESPONSES)
+    @application.post(
+        "/runs/{run_id}/verify", tags=["Runs"], status_code=202, response_model=RunResource, responses=ERROR_RESPONSES
+    )
     async def verify_run(
         run_id: str,
         body: VerifyRunRequest,
@@ -221,7 +250,9 @@ def create_app(
         status, content = await service.verify_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
-    @application.post("/runs/{run_id}/apply", status_code=202, response_model=RunResource, responses=ERROR_RESPONSES)
+    @application.post(
+        "/runs/{run_id}/apply", tags=["Runs"], status_code=202, response_model=RunResource, responses=ERROR_RESPONSES
+    )
     async def apply_run(
         run_id: str,
         body: ApplyRunRequest,
@@ -231,7 +262,9 @@ def create_app(
         status, content = await service.apply_run(run_id, body, principal, key)
         return JSONResponse(status_code=status, content=content)
 
-    @application.post("/runs/{run_id}/cancel", status_code=202, response_model=RunResource, responses=ERROR_RESPONSES)
+    @application.post(
+        "/runs/{run_id}/cancel", tags=["Runs"], status_code=202, response_model=RunResource, responses=ERROR_RESPONSES
+    )
     async def cancel_run(
         run_id: str,
         body: CancelRunRequest,

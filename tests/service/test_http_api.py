@@ -2019,3 +2019,21 @@ def test_the_client_still_reads_a_run_resource_from_a_newer_server() -> None:
 
     assert parsed.run_id == "run-forward-compatible"
     assert parsed.model_extra == {"field_from_a_newer_server": "readable"}
+
+
+def test_server_root_redirects_to_interactive_docs_outside_the_contract(
+    service_api: tuple[TestClient, ProductProjection, _FakeOrchestration],
+) -> None:
+    client, _projection, _orchestration = service_api
+
+    response = client.get("/", follow_redirects=False)
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "/docs"
+    assert client.get("/docs").status_code == 200
+    openapi = client.get("/openapi.json").json()
+    assert "/" not in openapi["paths"]
+    assert [tag["name"] for tag in openapi["tags"]] == ["Service", "Runs", "Plan reports", "Configurations"]
+    for route in openapi["paths"].values():
+        for operation in route.values():
+            assert len(operation["tags"]) == 1
