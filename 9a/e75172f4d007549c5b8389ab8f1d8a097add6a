@@ -1,0 +1,30 @@
+tests/service/test_http_api.py
+  s_911969ab008393::t_203e96f4036a01 2022-2039
+docs/docs/reference/sync-http-api.mdx
+  s_911969ab008393::t_67759791ce4a91 195-199
+infrahub_sync/service/config_routes.py
+  s_911969ab008393::t_a4968d25c5f6e7 307
+infrahub_sync/service/app.py
+  s_911969ab008393::t_203e96f4036a01 228,241-243,253-255,265-267
+  s_911969ab008393::t_a4968d25c5f6e7 12,42-55,93-100,165-170,177,202,211,216,222,234
+infrahub_sync/service/plan_report_routes.py
+  s_911969ab008393::t_a4968d25c5f6e7 33
+changelog/+sync-api-docs-entry.added.md
+  s_911969ab008393::t_67759791ce4a91 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9ae75172f4d007549c5b8389ab8f1d8a097add6a",
+  "prompts": {},
+  "sessions": {
+    "s_911969ab008393": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6417d0b3-fa2e-42d3-aa5b-0588d2ec62d8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
