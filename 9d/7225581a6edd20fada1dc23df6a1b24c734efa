@@ -1,0 +1,132 @@
+tests/cli/test_client_commands.py
+  s_756605d570e551::t_8930084c341843 38,1606-1729
+changelog/+010-benchmark-infrahub-1-11-7.housekeeping.md
+  s_756605d570e551::t_8930084c341843 1
+changelog/+010-relationship-clear.fixed.md
+  s_756605d570e551::t_8930084c341843 1
+infrahub_sync/service/models.py
+  s_756605d570e551::t_8930084c341843 198-200
+tests/plan/test_destination_id_capture.py
+  s_756605d570e551::t_8930084c341843 142,146,149,160,168-171,174,177,186,194-195
+dev/specs/010-second-sync-plan-speed/plan.md
+  s_756605d570e551::t_8930084c341843 190-191,235-236
+infrahub_sync/service/plan_step.py
+  s_756605d570e551::t_8930084c341843 1-150
+docs/docs/running-a-sync.mdx
+  s_756605d570e551::t_8930084c341843 559-560,564-622
+infrahub_sync/adapters/infrahub.py
+  s_756605d570e551::t_8930084c341843 6-9,79,88-117,139-155,164,180-182,198-199,204-205,856-862,878-883,885-890,893,895,912,915-917,925-1023,1120,1239,1279,1294,1305,1345-1347,1351,1448-1453,1458-1459,1466,1524-1526,1597-1598,1650-1724
+  s_756605d570e551::t_fbbfc6aa357734 1725-1726
+docs/docs/reference/sync-http-api.mdx
+  s_756605d570e551::t_8930084c341843 488-490,562-660,782
+  s_756605d570e551::t_ac7786b4d13c0e 487
+changelog/+010-second-plan-tests.housekeeping.md
+  s_756605d570e551::t_8930084c341843 1
+dev/adr/0025-built-in-infrahub-nodes-are-not-planned-as-deletes.md
+  s_756605d570e551::t_8930084c341843 1-47
+infrahub_sync/client/models.py
+  s_756605d570e551::t_8930084c341843 14-15,260-282,305-307,557-559,564
+infrahub_sync/potenda/__init__.py
+  s_756605d570e551::t_8930084c341843 1-2,37,88,286-288,485,487-498,506-519,570-571,622-623,682-691,695-710,715-730,898
+infrahub_sync/service/service.py
+  s_756605d570e551::t_8930084c341843 371-372
+infrahub_sync/plan_step_timer.py
+  s_756605d570e551::t_8930084c341843 1-277
+tests/adapters/test_infrahub_read_counters.py
+  s_756605d570e551::t_8930084c341843 1-408
+tests/plan/second_plan_sources.py
+  s_756605d570e551::t_8930084c341843 1-603
+dev/adr/README.md
+  s_756605d570e551::t_8930084c341843 69-74
+tests/plan/test_cleared_relationships.py
+  s_756605d570e551::t_8930084c341843 1-7,18,61-97,107-108,110-111,114-116,118-119
+tests/adapters/test_infrahub_planned_write.py
+  s_756605d570e551::t_8930084c341843 82,247-279,289,425,432,449,1333-1461,1490,1505,2085-2140
+tasks/bench.py
+  s_756605d570e551::t_8930084c341843 31,64,418-420,422,433-441
+dev/specs/010-second-sync-plan-speed/tasks.md
+  s_756605d570e551::t_8930084c341843 45,53,56,72,79,84,87,110,120,125,129,135,147,151,156,162,164,168,170,173,178,185,187,191,227,238,244,248,256,260,262,265-266,270,272,280,282,301,309,316,326,334-337,341-344,347,353-357,360,367-371,376-377,395,403,462,465-467,481,484-487,489-490,523-538,543-547
+  s_756605d570e551::t_3de6108444660c 548
+tests/integration/test_second_plan_integration.py
+  s_756605d570e551::t_8930084c341843 1-425
+tests/service/test_apply_left_out_confirmation.py
+  s_756605d570e551::t_8930084c341843 225-226,242-244
+development/bench/records.py
+  s_756605d570e551::t_8930084c341843 6,12,17,20,24-25,108-110,224-258,297-302,319-337,339-343,346-347,359,377-379
+tests/service/test_plan_reads_in_full.py
+  s_756605d570e551::t_8930084c341843 1-313
+tests/test_plan_step_timer.py
+  s_756605d570e551::t_8930084c341843 1-372
+infrahub_sync/cli_plan_step.py
+  s_756605d570e551::t_8930084c341843 1-41
+tests/test_benchmark_runner.py
+  s_756605d570e551::t_8930084c341843 31,39-40,143-151,303-393,419,539,597-598,601,603-613,632,638,663,676-678,681-685,877,884,893,1544-1615
+infrahub_sync/plan/derive.py
+  s_756605d570e551::t_8930084c341843 577,582-590,592-598,600,673-677,705,749-751,755,757
+infrahub_sync/client/__init__.py
+  s_756605d570e551::t_8930084c341843 39-40,86-87
+docs/docs/development/knowledge/plan-artifact.md
+  s_756605d570e551::t_8930084c341843 87,99-117,319-321
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_756605d570e551::t_8930084c341843 10,63,119,131-145,153-156,164-165,167,169-170
+changelog/+010-builtin-namespace-delete.fixed.md
+  s_756605d570e551::t_8930084c341843 1
+infrahub_sync/service/flow.py
+  s_756605d570e551::t_8930084c341843 52,69,76-77,195-198,210,237,239-245,256,262-287,567,569-573,600-608,611,614,618-624,699-700,723-730,733-734,738-739,773,855,857-858,881,913
+tests/adapters/test_infrahub_builtin_nodes.py
+  s_756605d570e551::t_8930084c341843 1-139
+tests/service/test_plan_step_timings.py
+  s_756605d570e551::t_8930084c341843 1-356
+tests/plan/test_second_plan.py
+  s_756605d570e551::t_8930084c341843 1-1230
+tests/test_execution_surface.py
+  s_756605d570e551::t_8930084c341843 18,43,161-164,1514-1592
+  s_756605d570e551::t_98a33dcc2d0238 1593-1594
+changelog/+010-plan-step-timings.added.md
+  s_756605d570e551::t_8930084c341843 1
+dev/adr/0024-the-run-record-holds-the-plan-step-timings.md
+  s_756605d570e551::t_8930084c341843 1-55
+infrahub_sync/cli.py
+  s_756605d570e551::t_8930084c341843 21,492-495
+infrahub_sync/execution.py
+  s_756605d570e551::t_8930084c341843 70,78,1153,1243-1247,1263-1270
+infrahub_sync/plan/models.py
+  s_756605d570e551::t_8930084c341843 127-131,232
+infrahub_sync/service/failure_record.py
+  s_756605d570e551::t_8930084c341843 33,144,165-167,182-183
+tests/test_potenda_plan_step_timer.py
+  s_756605d570e551::t_8930084c341843 1-182
+tests/data/loader_parity/netbox_source_against_stale_infrahub.jsonl
+  s_756605d570e551::t_8930084c341843 7
+tests/plan/test_models.py
+  s_756605d570e551::t_8930084c341843 683
+tests/data/loader_parity/infrahub_source_against_stale_infrahub.jsonl
+  s_756605d570e551::t_8930084c341843 7
+dev/specs/010-second-sync-plan-speed/opsmill-implement-report.md
+  s_756605d570e551::t_8930084c341843 1-179
+docs/docs/development/knowledge/execution-surface.md
+  s_756605d570e551::t_8930084c341843 162-186,210
+tests/service/test_http_api.py
+  s_756605d570e551::t_8930084c341843 1289-1292,1296-1297,1301,1308
+infrahub_sync/plan/apply_gate.py
+  s_756605d570e551::t_8930084c341843 14-17,34,43
+  s_756605d570e551::t_ba6887e852a052 13
+docs/docs/development/guidelines/testing-tiers.md
+  s_756605d570e551::t_8930084c341843 400-413
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9d7225581a6edd20fada1dc23df6a1b24c734efa",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
