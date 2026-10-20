@@ -1,0 +1,43 @@
+infrahub_sync/failure_cause.py
+  s_a2f1b17812bc2b::t_1372e5039dd5dc 15-18,39-44,79,89-90,99-102,111-114,136-142,155-158,246-251,298-303,306,308-309,335,439-458,506-514,593-599
+  s_a2f1b17812bc2b::t_77c294930ad517 164-170
+tests/service/test_run_failure_resource.py
+  s_a2f1b17812bc2b::t_6890e37a1304a5 40-43,89-92
+tests/service/test_failure_cause.py
+  s_a2f1b17812bc2b::t_6890e37a1304a5 66-69,758-761
+  s_a2f1b17812bc2b::t_9d5108a9a549e7 81-89,464-471,482-539,550-557
+  s_a2f1b17812bc2b::t_77c294930ad517 851,861-862
+  s_a2f1b17812bc2b::t_3023341df84313 24-29
+tests/service/test_failure_cause_credentials.py
+  s_a2f1b17812bc2b::t_84b9392b15fd06 162-163
+dev/specs/014-sync-data-lineage/contracts/lineage.md
+  s_a2f1b17812bc2b::t_ce42569084db9f 51
+dev/specs/014-sync-data-lineage/data-model.md
+  s_a2f1b17812bc2b::t_ce42569084db9f 61-63
+infrahub_sync/client/models.py
+  s_a2f1b17812bc2b::t_c64b57d43605da 254-259
+docs/docs/reference/sync-http-api.mdx
+  s_a2f1b17812bc2b::t_7dca5347debbd9 536,541-542
+infrahub_sync/cli_cause.py
+  s_a2f1b17812bc2b::t_611a70a43a15ce 64-69
+tests/cli/test_client_commands.py
+  s_a2f1b17812bc2b::t_174a0f2d6dc89a 590-634
+dev/specs/014-sync-data-lineage/tasks.md
+  s_a2f1b17812bc2b::t_1ab58f43a5ecb4 43-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "41132fea6e4dac2cb69c19a14616e5e38deceeca",
+  "prompts": {},
+  "sessions": {
+    "s_a2f1b17812bc2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "800e1b10-7585-4fd4-bff7-57b8118ec85e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
