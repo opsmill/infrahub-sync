@@ -1,0 +1,42 @@
+dev/specs/010-second-sync-plan-speed/tasks.md
+  s_756605d570e551::t_38924f1f267bfb 333
+  s_756605d570e551::t_1539acec461af4 338
+tests/adapters/test_infrahub_planned_write.py
+  s_756605d570e551::t_012daac64d6b15 83
+  s_756605d570e551::t_ba5c605f7e03c4 47
+  s_756605d570e551::t_5587ec0cd1fa97 248-280
+  s_756605d570e551::t_0582d71af8847e 290
+  s_756605d570e551::t_7c0cfd59f9cad1 1506
+  s_756605d570e551::t_8f5a1741a4f9c2 1334,2086-2154
+  s_756605d570e551::t_12f0797394b138 433,450
+  s_756605d570e551::t_16444d70a9ae8e 426
+  s_756605d570e551::t_23c0164c6d8515 1491
+  s_756605d570e551::t_60fd78d69df0db 1335-1462
+infrahub_sync/adapters/infrahub.py
+  s_756605d570e551::t_f91decf1063fd5 1665
+  s_756605d570e551::t_f2bde5bf5780a5 1345-1347,1351
+  s_756605d570e551::t_15aa32b76b3f5d 1597
+  s_756605d570e551::t_fb1294e1480691 1650-1664,1666-1706,1710-1726
+  s_756605d570e551::t_6445b4367063f6 1458-1459
+  s_756605d570e551::t_13a62236d1cda2 1466
+  s_756605d570e551::t_9bbccd988df56d 1707-1709
+  s_756605d570e551::t_08045b687d83ed 1448-1453
+  s_756605d570e551::t_78655d392f46b6 1598
+  s_756605d570e551::t_1cfcdf0709ad33 1524-1526
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "26bbd7acf0b488a2b11674eb28f8010d209c1d03",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
