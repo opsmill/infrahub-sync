@@ -1,0 +1,27 @@
+dev/specs/010-second-sync-plan-speed/tasks.md
+  s_756605d570e551::t_6a762fec1207c8 377-379
+  s_756605d570e551::t_798213b16d34c3 300-302
+  s_756605d570e551::t_59ffdb8e8a8373 394-396
+  s_756605d570e551::t_9872a92ea68155 486-488
+  s_756605d570e551::t_7b36dff1023e6c 386-390
+  s_756605d570e551::t_07412e0c2b0fde 474-476
+  s_756605d570e551::t_4e8863f1e331be 513
+  s_756605d570e551::t_da337768621c4c 443-444
+  s_756605d570e551::t_7fde452c0dc7ff 1-299,303-376,380-385,391-393,397-442,445-473,477-485,489-512,514-567
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f48963b01cd802250404e5aa039a5a6563cef45c",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
