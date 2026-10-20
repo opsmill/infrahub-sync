@@ -1,0 +1,30 @@
+docs/docs/orchestration.mdx
+  s_756605d570e551::t_39d26a45134c4a 70-76
+tests/service/test_worker_claim.py
+  s_756605d570e551::t_0b31f9ad765c70 6
+  s_756605d570e551::t_18e424bbbdeefc 227-255
+changelog/+prefect-retry-refusal.changed.md
+  s_756605d570e551::t_e0b42686942108 1
+infrahub_sync/service/flow.py
+  s_756605d570e551::t_58e52c2ba4ae3c 784
+  s_756605d570e551::t_0f1f82d3ac6fe9 780-783,785
+  s_756605d570e551::t_0030fb61ce1be3 87-103
+  s_756605d570e551::t_ee98456c285a03 423
+  s_756605d570e551::t_bf8c4ab4d71432 104-105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ea60d7e270ce764fe9b55717fde41c0bd0b0871c",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

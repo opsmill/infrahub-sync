@@ -1,0 +1,51 @@
+tests/service/test_run_log_next_step.py
+  s_756605d570e551::t_4115db00dc3b95 1-92
+  s_756605d570e551::t_e9edd0f5ffbd7d 93-95
+  s_fb66a75b3b3aad::t_153ce46f45b960 96-97
+infrahub_sync/potenda/__init__.py
+  s_756605d570e551::t_dac7340f28d4ed 699
+  s_756605d570e551::t_c9348cedfcaec0 701-702,705,707
+infrahub_sync/service/failure_record.py
+  s_756605d570e551::t_c733d9ab7dd8ab 143,146-147
+  s_756605d570e551::t_ec564ed9753104 167
+  s_756605d570e551::t_041d5e32da2583 49-56
+  s_756605d570e551::t_464b096b06aa5f 14
+  s_756605d570e551::t_60ea855c3e9a44 221-225
+  s_756605d570e551::t_31f5421b39f1ea 148
+infrahub_sync/service/flow.py
+  s_756605d570e551::t_757e612e467928 822
+  s_756605d570e551::t_8818726ffb0c47 809
+  s_756605d570e551::t_da1687a7d64f0b 708-715,721-722
+  s_756605d570e551::t_9e2a4b94c1da42 703-707,716-720,723-729
+  s_756605d570e551::t_425da07e2fbc36 821
+  s_756605d570e551::t_50679036fae414 828
+  s_756605d570e551::t_c17670eeb26428 730-731
+changelog/+run-log-next-step.changed.md
+  s_756605d570e551::t_68bfb6831ff50c 1
+docs/docs/orchestration.mdx
+  s_756605d570e551::t_a3d02fb02d2ca8 98-101
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dcbf391a3b4b2348250f7de1cf76d55efc947b39",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_fb66a75b3b3aad": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a03ad8468961807d5",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
