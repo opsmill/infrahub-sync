@@ -1,0 +1,63 @@
+tasks/bench.py
+  s_756605d570e551::t_1e80ec075b9207 442-446
+  s_756605d570e551::t_adbfd6445756e8 31
+  s_756605d570e551::t_940e7f1d2e863e 447-450
+  s_64a7a9af967ad5::t_e11081e6b2e8b2 64
+tests/test_benchmark_runner.py
+  s_756605d570e551::t_1a98d19df9b06d 589-590,595-600
+  s_756605d570e551::t_caa5663ef74093 593
+  s_756605d570e551::t_2a2f4dfd7c229c 655
+  s_756605d570e551::t_b39d0647394a3a 675-676
+  s_756605d570e551::t_bd33b42b447ad6 678
+  s_756605d570e551::t_8300824a180f3f 601-605
+  s_756605d570e551::t_f35cb36d7f345e 294-384
+  s_756605d570e551::t_0c630e6c3524ba 624
+  s_756605d570e551::t_4ce07702e11923 630
+  s_756605d570e551::t_8a0f384630437b 410,870,877,886
+  s_756605d570e551::t_7b94cc88aa2570 674,677
+changelog/+010-benchmark-infrahub-1-11-7.housekeeping.md
+  s_756605d570e551::t_ed1af3437f7af0 1
+dev/specs/010-second-sync-plan-speed/tasks.md
+  s_756605d570e551::t_06980c6fc3327d 128,169,172,190
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_756605d570e551::t_2f11e395ab4d8d 131-138
+  s_a2f1b17812bc2b::t_0457b4827124d3 10,63,119
+development/bench/records.py
+  s_756605d570e551::t_dcfa3c0f309a0e 374-375
+  s_756605d570e551::t_a3b0c91e282c25 316-334,336-340,343-344
+  s_756605d570e551::t_ea007098088cab 294-299
+  s_756605d570e551::t_d845795e304079 376
+  s_64a7a9af967ad5::t_fc20a8ff5194e4 356
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c73e655b1ee61d455c9dbde40db59338d3ec1549",
+  "prompts": {},
+  "sessions": {
+    "s_64a7a9af967ad5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-ab281825c007ed99e",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    },
+    "s_a2f1b17812bc2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "800e1b10-7585-4fd4-bff7-57b8118ec85e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
