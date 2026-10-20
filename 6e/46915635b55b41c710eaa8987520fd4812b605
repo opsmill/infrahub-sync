@@ -1,0 +1,21 @@
+tests/integration/test_second_plan_integration.py
+  s_756605d570e551::t_53889209021639 13-15
+  s_756605d570e551::t_c07cb696c7a6bb 52
+  s_756605d570e551::t_90eaf100f5a959 346-425
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6e46915635b55b41c710eaa8987520fd4812b605",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
