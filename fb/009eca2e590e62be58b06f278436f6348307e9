@@ -1,0 +1,21 @@
+changelog/+run-log-next-step.changed.md
+  s_756605d570e551::t_5e724e29107360 1
+infrahub_sync/execution.py
+  s_756605d570e551::t_afdb4e28cbee3a 1271-1273
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fb009eca2e590e62be58b06f278436f6348307e9",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
