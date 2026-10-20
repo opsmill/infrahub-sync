@@ -1,0 +1,31 @@
+tests/integration/test_second_plan_integration.py
+  s_756605d570e551::t_fe9b8f3c7deb36 51,53-54,56,60
+  s_756605d570e551::t_96380f5a025938 14-16
+  s_756605d570e551::t_bb9110f9f93197 11-12
+  s_756605d570e551::t_cd70d3f9d64f2c 13
+  s_756605d570e551::t_f00969a25ac141 232-342
+dev/specs/010-second-sync-plan-speed/tasks.md
+  s_756605d570e551::t_827521259cd027 300
+  s_756605d570e551::t_317d972f23beab 315
+tests/plan/test_second_plan.py
+  s_756605d570e551::t_16fb46399265ce 41-47
+  s_756605d570e551::t_ea44e617c119fa 880-882
+  s_756605d570e551::t_20fba55f753b70 809-879,883-897,899-1031
+  s_756605d570e551::t_16e3408d216af6 898
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "86ccb49cd908191a451382d65cc12bcfb4cdaaed",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
