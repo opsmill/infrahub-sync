@@ -1,0 +1,19 @@
+changelog/+docs-section-folders.changed.md
+  s_8e74a8b7a10adf::t_267d5eceacd7c6 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ace8a1fc2af0d3686a74c05ffd316b359a17960b",
+  "prompts": {},
+  "sessions": {
+    "s_8e74a8b7a10adf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "236df2af-932d-4f15-8a40-da7c43f2dc9e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}

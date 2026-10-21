@@ -1,0 +1,83 @@
+docs/docs/development/knowledge/sync-architecture.md
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 79
+docs/docs/adapters/index.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 132
+docs/docs/reference/problem-and-failure-types.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 19
+dev/specs/012-v2-configuration-conversion/spec.md
+  s_8e74a8b7a10adf::t_63ddd22109d7eb 18,33,35-36,254,321,323,375,377
+docs/docs/adapters/netbox.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 159,167
+docs/docs/operate/troubleshooting.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 254,294
+docs/docs/overview/concepts.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 20,62,73
+docs/docs/get-started/quickstart.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 293
+docs/docs/development/guides/development-stack.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 239
+docs/docs/operate/v2-to-v3.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 1-118
+docs/docs/readme.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 90
+tests/compose/test_credential_leaks.py
+  s_8e74a8b7a10adf::t_63ddd22109d7eb 287
+docs/docs/adapters/nautobot.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 178,186
+docs/docs/reference/configuration-package.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 10
+docs/docusaurus.config.ts
+  s_8e74a8b7a10adf::t_18217d85ae5297 81-85
+  s_8e74a8b7a10adf::t_0d9fd5cc8e17a4 41-42,48-50,55-57
+docs/docs/concepts/plan-review-apply.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 98-99,188
+docs/docs/operate/upgrade.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 76,133
+changelog/+docs-section-folders.changed.md
+  s_8e74a8b7a10adf::t_fa1fd67318ec12 1
+docs/docs/get-started/first-sync-netbox-nautobot.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 21,369,389,408,410
+tests/adapters/test_netbox_namespace_identity.py
+  s_8e74a8b7a10adf::t_32691ec2a86657 42
+  s_8e74a8b7a10adf::t_63ddd22109d7eb 15
+docs/docs/adapters/infrahub.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 248
+docs/docs/development/knowledge/sync-http-api.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 695,807
+docs/docs/concepts/mapping.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 197
+docs/docs/development/guides/adding-an-adapter.md
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 383,493
+docs/docs/concepts/runs.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 173,185,187
+docs/docs/deploy/docker-compose.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 165,317-318
+dev/specs/012-v2-configuration-conversion/checklists/requirements.md
+  s_8e74a8b7a10adf::t_63ddd22109d7eb 56-58
+README.md
+  s_8e74a8b7a10adf::t_63ddd22109d7eb 162,236
+docs/docs/reference/http-api.mdx
+  s_8e74a8b7a10adf::t_ff4adbdbd613f1 361
+docs/sidebars.ts
+  s_8e74a8b7a10adf::t_3614837fa35786 78
+  s_8e74a8b7a10adf::t_4b658115b32321 96
+  s_8e74a8b7a10adf::t_05caefb2136092 39-42
+  s_8e74a8b7a10adf::t_b99879631a2a9d 5,8-9,12-23
+  s_8e74a8b7a10adf::t_e925876bdb8d24 128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7206a5012d0c5e0f10409f781c3002d3f571a156",
+  "prompts": {},
+  "sessions": {
+    "s_8e74a8b7a10adf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "236df2af-932d-4f15-8a40-da7c43f2dc9e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
