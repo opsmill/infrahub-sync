@@ -1,0 +1,61 @@
+infrahub_sync/__init__.py
+  s_756605d570e551::t_d34eef0c87ccc1 617,619-620
+  s_756605d570e551::t_bbaeb2ec2eeed0 610
+  s_756605d570e551::t_b82375d29b9a08 631-632,636,638-639
+  s_756605d570e551::t_a3e74afbca363e 634-635,641
+  s_756605d570e551::t_8a8ca6a10dc0fd 616,622-625
+  s_756605d570e551::t_d53565ddb94341 618,621,626-627,629-630,633,637,640,642-643
+  s_756605d570e551::t_c72bcd80bca35f 628
+infrahub_sync/load_report.py
+  s_756605d570e551::t_7d4a903da29f5e 109
+  s_756605d570e551::t_e281328eecdff3 95-98,108
+  s_756605d570e551::t_048d818d40948d 99-101
+tests/plan/test_cleared_relationships.py
+  s_756605d570e551::t_71e1a7065fe1cf 13-14
+  s_756605d570e551::t_6e0f3f9dc03adf 94-100,106-136
+  s_756605d570e551::t_effaa597049b63 137-138
+infrahub_sync/adapters/netbox.py
+  s_756605d570e551::t_50d964727f4885 248
+tests/adapters/test_netbox_filtered_references.py
+  s_756605d570e551::t_60324790174199 177-193
+tests/plan/test_second_plan.py
+  s_756605d570e551::t_0a65bab2ae910d 372-373,382,385
+  s_756605d570e551::t_ad563f8ca29171 369
+  s_756605d570e551::t_dbbdd03e0a2fba 375-379,383-384
+docs/docs/development/knowledge/plan-artifact.md
+  s_756605d570e551::t_83fd8dd8993c04 110-121
+infrahub_sync/adapters/infrahub.py
+  s_756605d570e551::t_b3a6c5405a6041 1270
+tests/plan/test_destination_id_capture.py
+  s_756605d570e551::t_c624481c8a4098 158-159,165,172,182-205
+  s_756605d570e551::t_caa399e52ba0fa 147
+  s_756605d570e551::t_1e9fde2efdd566 160-164
+  s_756605d570e551::t_8e68c7b99a986f 206-207
+infrahub_sync/plan/derive.py
+  s_756605d570e551::t_24f4355f74ad5a 1
+  s_756605d570e551::t_5faf8a8da6c49d 578,595-600,605,610-631
+  s_756605d570e551::t_56d72074e1f6b6 725-727
+  s_756605d570e551::t_b3c84062b69a60 635-649
+  s_756605d570e551::t_67268c1f7e3206 584-586
+  s_756605d570e551::t_c88515b0247031 86
+infrahub_sync/adapters/nautobot.py
+  s_756605d570e551::t_f4b408756a0765 274-277
+infrahub_sync/adapters/genericrestapi.py
+  s_756605d570e551::t_52145c471cdda9 193
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c4ee9befe9ce4e470617de1585cbb07868f738b2",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
