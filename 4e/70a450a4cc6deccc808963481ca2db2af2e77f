@@ -1,0 +1,29 @@
+dev/specs/010-second-sync-plan-speed/spec.md
+  s_756605d570e551::t_c9f8890d7312d6 51-58,165-166,316-318,388-389,400-402
+dev/specs/010-second-sync-plan-speed/quickstart.md
+  s_756605d570e551::t_c9f8890d7312d6 110
+dev/specs/010-second-sync-plan-speed/plan.md
+  s_756605d570e551::t_c9f8890d7312d6 73-75,215-218,296-297
+dev/specs/010-second-sync-plan-speed/tasks.md
+  s_756605d570e551::t_c9f8890d7312d6 414-415,420,480,482-486
+  s_756605d570e551::t_7fde452c0dc7ff 201-202
+dev/specs/010-second-sync-plan-speed/research.md
+  s_756605d570e551::t_c9f8890d7312d6 375,378
+  s_756605d570e551::t_034ad4ac3956f5 380-381
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e70a450a4cc6deccc808963481ca2db2af2e77f",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
