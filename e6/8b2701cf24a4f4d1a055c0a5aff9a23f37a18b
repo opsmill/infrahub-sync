@@ -1,0 +1,34 @@
+tests/adapters/test_infrahub_lineage.py
+  s_a2f1b17812bc2b::t_89127e187d6a7f 30-32,95
+  s_a2f1b17812bc2b::t_85815a95335c56 113
+  s_a2f1b17812bc2b::t_17e26b4c959c26 1-29,33-94,96-112,114-140
+tests/configuration/test_infrahub_lineage_settings.py
+  s_a2f1b17812bc2b::t_86a8b35b85a16a 1-32,36-39
+  s_a2f1b17812bc2b::t_89127e187d6a7f 33-35
+dev/specs/014-sync-data-lineage/tasks.md
+  s_a2f1b17812bc2b::t_8412d81c408244 71
+  s_a2f1b17812bc2b::t_3bc2125d40ecf7 24,28-32
+infrahub_sync/adapters/infrahub_lineage.py
+  s_a2f1b17812bc2b::t_65624a5a567702 110,112
+  s_a2f1b17812bc2b::t_0fcf2aa403b290 31,42-43,168,172-175
+  s_a2f1b17812bc2b::t_b532037d99a027 1-30,32-41,44-60,64-109,111,113-167,169-171,176-191
+  s_a2f1b17812bc2b::t_89127e187d6a7f 61-63
+infrahub_sync/configuration/capabilities.py
+  s_a2f1b17812bc2b::t_d8856fbd19a991 181-216,583
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e68b2701cf24a4f4d1a055c0a5aff9a23f37a18b",
+  "prompts": {},
+  "sessions": {
+    "s_a2f1b17812bc2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "800e1b10-7585-4fd4-bff7-57b8118ec85e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
