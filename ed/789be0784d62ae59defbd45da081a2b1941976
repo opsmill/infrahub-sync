@@ -1,0 +1,65 @@
+tests/service/test_plan_step_timings.py
+  s_756605d570e551::t_bad12dfc7f48af 153
+  s_756605d570e551::t_657cea6b565ab6 183
+  s_756605d570e551::t_44a0dae695acba 336-356
+  s_756605d570e551::t_946ea9c651f3ca 1-14,17-129,133-141,146-152,154-182,184-205,207-209,211-219,227-279,281-335
+  s_756605d570e551::t_7eb4a1347f70c2 15,142-145,206,210,220-226,280
+  s_756605d570e551::t_b4786b8b9c9553 16
+  s_756605d570e551::t_e881129432dbf3 130-132
+infrahub_sync/cli.py
+  s_756605d570e551::t_42116e613b8ddb 21
+  s_756605d570e551::t_d3df9d2b1098fc 492-495
+infrahub_sync/plan_step_timer.py
+  s_756605d570e551::t_9786cc9a6b9ed4 152,202-207,209-213,219,250-251,270
+  s_756605d570e551::t_af1160bddb5954 201,208,214-218,269
+  s_756605d570e551::t_55a86f0bdc6ea6 271
+infrahub_sync/service/models.py
+  s_756605d570e551::t_abc89dc47e45ce 198-200
+infrahub_sync/service/flow.py
+  s_756605d570e551::t_f3f5904bd3b144 51,68,75-76,194-197,209,236,238-244,255,261-286,566,568-572,599-607,610,613,617-623,698-699,722-729,732-733,737-738,772,852,854-855,878,910
+infrahub_sync/cli_plan_step.py
+  s_756605d570e551::t_c9a57d43a39dec 35-40
+  s_756605d570e551::t_d16d15ed5bc800 1-34,41
+dev/specs/010-second-sync-plan-speed/tasks.md
+  s_756605d570e551::t_7ff26338681626 109,124,155,161,163,167
+tests/test_plan_step_timer.py
+  s_756605d570e551::t_a8eb2131f9ebb4 300-317,319,321-359
+  s_756605d570e551::t_af1160bddb5954 360-370,372
+  s_756605d570e551::t_b9a18669be5ab2 371
+  s_756605d570e551::t_4d31eba4744d8f 318,320
+infrahub_sync/service/failure_record.py
+  s_756605d570e551::t_50f8b045ec0248 144,165-167,182-183
+  s_756605d570e551::t_e826a62187158f 33
+tests/cli/test_client_commands.py
+  s_756605d570e551::t_38b92b61085f1a 38
+  s_756605d570e551::t_54d6edc83b891a 1606-1729
+tests/service/test_http_api.py
+  s_756605d570e551::t_cf5e3fad33e1de 1308
+  s_756605d570e551::t_4a9510c41fbafe 1289-1292,1296-1297,1301
+infrahub_sync/service/plan_step.py
+  s_756605d570e551::t_89c1ab060a0279 89-99
+  s_756605d570e551::t_c5dda96f634eb9 1-64,66-88,100-150
+  s_756605d570e551::t_f3f5904bd3b144 65
+infrahub_sync/client/models.py
+  s_756605d570e551::t_a6a0bf95d5d6a3 305-307
+  s_756605d570e551::t_2b91ab3db43afe 14-15
+  s_756605d570e551::t_943254eb9417c4 260-282
+infrahub_sync/client/__init__.py
+  s_756605d570e551::t_abc89dc47e45ce 39-40,86-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ed789be0784d62ae59defbd45da081a2b1941976",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
