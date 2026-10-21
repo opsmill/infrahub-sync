@@ -1,0 +1,1 @@
+Loading the Infrahub side of a sync no longer fails with `RecursionError` when the mapped relationships form a loop, such as a device, its primary IP address and the interface of that address. To build the identifier of a peer, the adapter now converts only the identifier fields of the peer.
