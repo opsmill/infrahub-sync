@@ -512,6 +512,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         peer_data = self.infrahub_node_to_diffsync(peer_node, fields=identifiers)
         missing = tuple(k for k in identifiers if k not in peer_data)
         if missing:
+            # A peer that the SDK prefetched through a relationship to a generic holds only the
+            # fields of the generic, for example a rack reached through LocationHosting has no
+            # site. Fetch it again by its own kind before reporting the missing identifiers.
+            refetched = self._refetch_peer(peer_node)
+            if refetched is not None:
+                peer_node = refetched
+                peer_data = self.infrahub_node_to_diffsync(peer_node, fields=identifiers)
+                missing = tuple(k for k in identifiers if k not in peer_data)
+        if missing:
             err = PeerIdentifierError(
                 parent_kind=parent_node.get_kind(),
                 parent_id=str(getattr(parent_node, "id", None)),
@@ -530,6 +539,18 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # Conversion runs before model_loader filters and transforms records. Only the
         # loader may add models to the DiffSync store, so excluded peers stay excluded.
         return peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
+
+    def _refetch_peer(self, peer_node: InfrahubNodeSync) -> InfrahubNodeSync | None:
+        """Fetch a peer again by its own kind, and replace the partial copy in the SDK store.
+
+        Returns None when the peer has no ID or no longer exists.
+        """
+        if not peer_node.id:
+            return None
+        try:
+            return self.client.get(id=peer_node.id, kind=peer_node.get_kind(), populate_store=True)
+        except NodeNotFoundError:
+            return None
 
     def infrahub_node_to_diffsync(self, node: InfrahubNodeSync, fields: Iterable[str] | None = None) -> dict[str, Any]:
         """

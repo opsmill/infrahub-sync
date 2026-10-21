@@ -10,6 +10,9 @@ stand-in adapter that reuses the real helper. We only care about five things:
      and a peer that is already there is left untouched.
   5. Only the identifier fields of a peer are converted: converting all of its
      relationships can loop, for example device > primary IP > interface > device.
+  6. A peer that misses identifier keys is fetched again by its own kind first:
+     the SDK store can hold a partial copy, prefetched through a relationship
+     to a generic.
 
 The stand-in adapter keeps DiffSync's real LocalStore, which raises
 ObjectNotFound for a missing object. The fake store previously returned None
@@ -27,6 +30,7 @@ import pytest
 from diffsync import DiffSyncModel
 from diffsync.exceptions import ObjectNotFound
 from diffsync.store.local import LocalStore
+from infrahub_sdk.exceptions import NodeNotFoundError
 
 from infrahub_sync import DiffSyncModelMixin, SchemaMappingFilter, SchemaMappingModel, SyncAdapter, SyncConfig
 from infrahub_sync.adapters.infrahub import InfrahubAdapter, PeerIdentifierError
@@ -53,12 +57,21 @@ class _FakeClient:
     def __init__(self) -> None:
         self.store = _FakeStore()
         self.nodes: list[SimpleNamespace] = []
+        # Nodes that client.get() returns, by ID, and the IDs it was called with.
+        self.nodes_by_id: dict[str, object] = {}
+        self.fetched: list[tuple[str, str]] = []
 
     def all(self, *, kind: str, include: list[str], populate_store: bool) -> list[SimpleNamespace]:
         assert kind == "LocationGeneric"
         assert isinstance(include, list)
         assert populate_store
         return self.nodes
+
+    def get(self, *, id: str, kind: str, populate_store: bool = True) -> object:  # noqa: A002, ARG002
+        self.fetched.append((kind, id))
+        if id not in self.nodes_by_id:
+            raise NodeNotFoundError(identifier={"id": [id]}, message=f"{id} not found")
+        return self.nodes_by_id[id]
 
 
 class _FakePeerModel(DiffSyncModelMixin, DiffSyncModel):
@@ -233,6 +246,36 @@ def test_model_loader_adds_parent_in_unfiltered_tree() -> None:
     assert isinstance(stored_parent, _FakePeerModel)
     assert stored_child.parent == "parent|acme"
     assert stored_parent.name == "parent"
+
+
+def test_partial_peer_is_fetched_again_by_its_kind() -> None:
+    """A rack prefetched through LocationHosting has no site, which identifies it.
+
+    The adapter fetches the rack again by its own kind and builds the unique_id from it.
+    """
+    harness = _Harness()
+    parent = _make_node("InfraDevice", "parent-id", {})
+    partial = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
+    complete = _make_node("LocationGeneric", "peer-id", {"name": "dc-east", "organization": "acme"})
+    harness.fake_client.nodes_by_id["peer-id"] = complete
+
+    result = harness._resolve_peer_unique_id(parent_node=parent, rel_name="location", peer_node=partial)  # ty: ignore[invalid-argument-type]
+
+    assert result == "dc-east|acme"
+    assert harness.fake_client.fetched == [("LocationGeneric", "peer-id")]
+
+
+def test_peer_still_missing_identifier_after_fetch_raises() -> None:
+    harness = _Harness()
+    parent = _make_node("InfraDevice", "parent-id", {})
+    peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
+    harness.fake_client.nodes_by_id["peer-id"] = _make_node("LocationGeneric", "peer-id", {"name": "dc-east"})
+
+    with pytest.raises(PeerIdentifierError) as excinfo:
+        harness._resolve_peer_unique_id(parent_node=parent, rel_name="location", peer_node=peer)  # ty: ignore[invalid-argument-type]
+
+    assert excinfo.value.missing_keys == ("organization",)
+    assert harness.fake_client.fetched == [("LocationGeneric", "peer-id")]
 
 
 def test_peer_identifiers_only_are_converted() -> None:
