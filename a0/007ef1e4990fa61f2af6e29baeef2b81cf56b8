@@ -1,0 +1,19 @@
+tests/integration/test_infrahub_lineage_integration.py
+  s_51feb3c15a5f42::t_dd3678b4be82b4 8,14,121,228,294,297,300
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a0007ef1e4990fa61f2af6e29baeef2b81cf56b8",
+  "prompts": {},
+  "sessions": {
+    "s_51feb3c15a5f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9eeb2e45-e1c5-44b9-8b8d-41680a41fdd6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
