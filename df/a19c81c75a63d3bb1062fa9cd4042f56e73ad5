@@ -1,0 +1,48 @@
+dev/specs/010-second-sync-plan-speed/spec.md
+  s_51feb3c15a5f42::t_08b174d6720916 347-369
+  s_51feb3c15a5f42::t_ae5667a4785a13 13
+  s_51feb3c15a5f42::t_68642a4c7a97ca 61-62,320,454-455
+dev/specs/v3-release-scope.md
+  s_51feb3c15a5f42::t_dfc67782421a9c 44
+  s_51feb3c15a5f42::t_00c96fe7cd93d5 208-210
+  s_51feb3c15a5f42::t_f082684ecab114 15,21,34,48,148-149,225
+  s_51feb3c15a5f42::t_08b174d6720916 69-71
+dev/specs/009-plan-problem-reporting/checklists/requirements.md
+  s_51feb3c15a5f42::t_f6e40b35ffed44 63
+dev/specs/009-plan-problem-reporting/contracts/sync-api.md
+  s_51feb3c15a5f42::t_aa02437d140b29 3,5,10,48
+dev/specs/009-plan-problem-reporting/data-model.md
+  s_51feb3c15a5f42::t_5ca849fbd7fab6 116
+dev/specs/009-plan-problem-reporting/opsmill-implement-report.md
+  s_51feb3c15a5f42::t_5764a79d017a85 190,278
+dev/specs/009-plan-problem-reporting/spec.md
+  s_51feb3c15a5f42::t_9a0b3ac3cee4d5 274,401,410,412,577-578,585
+dev/specs/010-second-sync-plan-speed/checklists/requirements.md
+  s_51feb3c15a5f42::t_8118ede0d56e4d 36
+dev/specs/010-second-sync-plan-speed/contracts/sync-api.md
+  s_51feb3c15a5f42::t_834ad517b19889 7
+dev/specs/013-compose-images/checklists/requirements.md
+  s_51feb3c15a5f42::t_a4e3cfec540b2c 48
+dev/specs/013-compose-images/contracts/ports.md
+  s_51feb3c15a5f42::t_47976effde1b14 45
+dev/specs/013-compose-images/spec.md
+  s_51feb3c15a5f42::t_812cef4dbee4d7 17,36,135,137,142,621,657
+dev/specs/013-compose-images/tasks.md
+  s_51feb3c15a5f42::t_5c69fb5ae89160 129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dfa19c81c75a63d3bb1062fa9cd4042f56e73ad5",
+  "prompts": {},
+  "sessions": {
+    "s_51feb3c15a5f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9eeb2e45-e1c5-44b9-8b8d-41680a41fdd6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
