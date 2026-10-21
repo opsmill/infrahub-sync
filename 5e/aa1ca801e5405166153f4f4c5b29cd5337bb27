@@ -1,0 +1,29 @@
+docs/docs/development/knowledge/plan-artifact.md
+  s_756605d570e551::t_971f4ebaec4aa8 319-321
+  s_756605d570e551::t_a16f76e4e0aab1 87
+  s_756605d570e551::t_6dc3ea0609c8e8 99-117
+dev/specs/010-second-sync-plan-speed/tasks.md
+  s_756605d570e551::t_9f4d4a438b1665 326,334-337,341-343,347,353-357,360,367-371,376-377
+changelog/+010-relationship-clear.fixed.md
+  s_756605d570e551::t_d0034e04e35d23 1
+docs/docs/reference/sync-http-api.mdx
+  s_756605d570e551::t_89f9fd62cc8119 488-490
+  s_756605d570e551::t_09677402de3b81 782
+  s_756605d570e551::t_b22f44c7008375 487
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5eaa1ca801e5405166153f4f4c5b29cd5337bb27",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
