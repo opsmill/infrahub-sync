@@ -1,0 +1,55 @@
+CLAUDE.md
+  s_756605d570e551::t_45bed6e8f41e04 10
+dev/specs/011-operator-ui/quickstart.md
+  s_756605d570e551::t_b60451f60ab0ba 110
+  s_756605d570e551::t_53b172f64b5023 113
+  s_756605d570e551::t_f88b97110c2dd7 1-109,111-112,114-117
+dev/specs/011-operator-ui/data-model.md
+  s_756605d570e551::t_29a3a1d6a5ed07 20
+  s_756605d570e551::t_854ecb295e5a32 29-45
+  s_756605d570e551::t_b0482390766ac1 1-19,21-28,46-188,190-191,193-204
+  s_756605d570e551::t_1b4b238b737574 189
+  s_756605d570e551::t_2888cf32bf32b9 192
+dev/specs/011-operator-ui/plan.md
+  s_756605d570e551::t_53b172f64b5023 55,150
+  s_756605d570e551::t_e025e7d58489d2 244
+  s_756605d570e551::t_26cc8bb72af9aa 223-226
+  s_756605d570e551::t_1b7fa340552640 1-54,56-149,151-218,220-222,227-243,245-255
+  s_756605d570e551::t_36fd150fc970e7 219
+dev/specs/011-operator-ui/tasks.md
+  s_756605d570e551::t_36fd150fc970e7 124,453
+  s_756605d570e551::t_2888cf32bf32b9 118-119,159,186-187
+  s_756605d570e551::t_9b3bc19e426e79 147-149
+  s_756605d570e551::t_81b4c77fdf57b9 458
+  s_756605d570e551::t_a017792ab88847 1-117,120-123,125-146,150-158,160-185,188-440,442-452,454-457,459-487
+  s_756605d570e551::t_36ed44aa249e1b 441
+dev/specs/011-operator-ui/research.md
+  s_756605d570e551::t_53b172f64b5023 375,530
+  s_756605d570e551::t_bc384b5425c3af 1-301,311-350,358-374,376-517,519-529,531-540
+  s_756605d570e551::t_a18b4b3b46d12a 518
+  s_756605d570e551::t_d2ad3f193dbc5b 351-357
+  s_756605d570e551::t_e4ee46c7d1f5ba 302-310
+dev/specs/011-operator-ui/contracts/cli.md
+  s_756605d570e551::t_59c1c02be6e1f3 1-85
+dev/specs/011-operator-ui/contracts/ui.md
+  s_756605d570e551::t_03a04771cc0dd7 1-38
+dev/specs/011-operator-ui/contracts/sync-api.md
+  s_756605d570e551::t_96b97b493bfd33 1-87,89-214
+  s_756605d570e551::t_18646c0935a4b8 88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5da1b2b242bb75a1de0a275c6f9bcb4657f918f7",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
