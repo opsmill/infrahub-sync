@@ -1,13 +1,15 @@
 """Unit tests for InfrahubAdapter._resolve_peer_unique_id error and skip paths.
 
 The full adapter touches an Infrahub server, so these tests build a minimal
-stand-in adapter that reuses the real helper. We only care about four things:
+stand-in adapter that reuses the real helper. We only care about five things:
 
   1. Missing peer identifier keys raise PeerIdentifierError with rich context.
   2. continue_on_error=True logs a warning and returns None instead of raising.
   3. Successful path returns the peer's unique_id.
   4. A peer that is not in the DiffSync store yet resolves without loading it,
      and a peer that is already there is left untouched.
+  5. Only the identifier fields of a peer are converted: converting all of its
+     relationships can loop, for example device > primary IP > interface > device.
 
 The stand-in adapter keeps DiffSync's real LocalStore, which raises
 ObjectNotFound for a missing object. The fake store previously returned None
@@ -17,6 +19,7 @@ and hid the original load failure.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from types import SimpleNamespace
 from typing import Any, Protocol
 
@@ -83,13 +86,16 @@ class _Harness(InfrahubAdapter):
         # Register the fake peer model under its kind so getattr(self, kind) works.
         self.LocationGeneric = _FakePeerModel
 
-    def infrahub_node_to_diffsync(self, node: object) -> dict[str, Any]:
-        # Return whatever fake data the test attached to the node.
+    def infrahub_node_to_diffsync(self, node: object, fields: Iterable[str] | None = None) -> dict[str, Any]:
+        # Return whatever fake data the test attached to the node, limited to `fields`.
+        wanted = set(fields) if fields is not None else None
         data = dict(node._fake_diffsync_data)  # ty: ignore[unresolved-attribute]
         peer = getattr(node, "_peer", None)
-        if peer is not None:
+        if peer is not None and (wanted is None or "parent" in wanted):
             data["parent"] = self._resolve_peer_unique_id(parent_node=node, rel_name="parent", peer_node=peer)  # ty: ignore[invalid-argument-type]
-        return data
+        if wanted is None:
+            return data
+        return {key: value for key, value in data.items() if key in wanted}
 
 
 def _make_node(kind: str, node_id: str, diffsync_data: dict[str, object]) -> SimpleNamespace:
@@ -227,3 +233,23 @@ def test_model_loader_adds_parent_in_unfiltered_tree() -> None:
     assert isinstance(stored_parent, _FakePeerModel)
     assert stored_child.parent == "parent|acme"
     assert stored_parent.name == "parent"
+
+
+def test_peer_identifiers_only_are_converted() -> None:
+    """Converting every relationship of a peer can loop: device > primary IP > interface > device."""
+    harness = _Harness()
+    calls: list[tuple[str, tuple[str, ...] | None]] = []
+    original = harness.infrahub_node_to_diffsync
+
+    def recording(node: object, fields: Iterable[str] | None = None) -> dict[str, Any]:
+        calls.append((node.id, tuple(fields) if fields is not None else None))  # ty: ignore[unresolved-attribute]
+        return original(node, fields)
+
+    harness.infrahub_node_to_diffsync = recording  # ty: ignore[invalid-assignment]
+    parent = _make_node("InfraDevice", "parent-id", {})
+    peer = _make_node("LocationGeneric", "peer-id", {"name": "dc-east", "organization": "acme", "devices": ["x"]})
+
+    result = harness._resolve_peer_unique_id(parent_node=parent, rel_name="location", peer_node=peer)  # ty: ignore[invalid-argument-type]
+
+    assert result == "dc-east|acme"
+    assert calls == [("peer-id", ("name", "organization"))]

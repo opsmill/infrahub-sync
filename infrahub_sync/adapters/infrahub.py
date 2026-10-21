@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 _TIMESTAMP_FILTER_KW = "node_metadata__updated_at__after"
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, MutableMapping
+    from collections.abc import Iterable, Iterator, Mapping, MutableMapping
 
     from infrahub_sdk.node import InfrahubNodeSync, RelatedNodeSync, RelationshipManagerSync
     from infrahub_sdk.schema import MainSchemaTypesAPI
@@ -506,8 +506,10 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
             logger.warning("Unable to map '%s' with kind '%s' - Ignored", peer_node, peer_kind)
             return None
 
-        peer_data = self.infrahub_node_to_diffsync(peer_node)
         identifiers = tuple(peer_model._identifiers)
+        # Only the identifiers are converted: converting every relationship of the peer would
+        # follow loops such as device > primary IP address > interface > device without end.
+        peer_data = self.infrahub_node_to_diffsync(peer_node, fields=identifiers)
         missing = tuple(k for k in identifiers if k not in peer_data)
         if missing:
             err = PeerIdentifierError(
@@ -529,12 +531,15 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         # loader may add models to the DiffSync store, so excluded peers stay excluded.
         return peer_model.create_unique_id(**{k: peer_data[k] for k in identifiers})
 
-    def infrahub_node_to_diffsync(self, node: InfrahubNodeSync) -> dict[str, Any]:
+    def infrahub_node_to_diffsync(self, node: InfrahubNodeSync, fields: Iterable[str] | None = None) -> dict[str, Any]:
         """
         Convert an Infrahub node into a dictionary suitable for creating a DiffSyncModel.
 
-        Handles attribute conversion and relationship resolution.
+        Handles attribute conversion and relationship resolution. When `fields` is set, only
+        the attributes and relationships it names are converted, for example the identifiers
+        of a peer.
         """
+        wanted = set(fields) if fields is not None else None
         data: dict[str, Any] = {"local_id": str(node.id)}
         node_kind = node.get_kind()
         # Schema comes from the adapter's loaded mapping; the SDK schema manager is not
@@ -543,6 +548,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
         node_schema = self.schema[node_kind]
 
         for attr_name in node_schema.attribute_names:
+            if wanted is not None and attr_name not in wanted:
+                continue
             if has_field(config=self.config, name=node_kind, field=attr_name):
                 attr = getattr(node, attr_name)
                 val = attr.value
@@ -562,6 +569,8 @@ class InfrahubAdapter(DiffSyncMixin, Adapter):
                     data[attr_name] = val
 
         for rel_schema in node_schema.relationships:
+            if wanted is not None and rel_schema.name not in wanted:
+                continue
             if not has_field(config=self.config, name=node_kind, field=rel_schema.name):
                 continue
             peer_schema = self.schema.get(rel_schema.peer)
