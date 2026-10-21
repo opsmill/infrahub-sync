@@ -1,0 +1,32 @@
+dev/specs/010-second-sync-plan-speed/tasks.md
+  s_756605d570e551::t_861da92d34b08f 308
+tests/plan/second_plan_sources.py
+  s_756605d570e551::t_f23033ce8a9637 1-550,552-563,565-575,577-598,600-603
+  s_756605d570e551::t_71e4188a831c8c 551
+  s_756605d570e551::t_a5d9c104f64cb5 564
+  s_756605d570e551::t_f61e3bbe299ad8 576
+  s_756605d570e551::t_ca3cb3e6358f59 599
+tests/plan/test_second_plan.py
+  s_756605d570e551::t_25caef6b3d435e 409
+  s_756605d570e551::t_0604d25ee36baa 637,646-650,661
+  s_756605d570e551::t_cb63e7b417f85d 61-68
+  s_756605d570e551::t_78815ea3008831 19-23
+  s_756605d570e551::t_cc22feb019893f 1126,1130-1135
+  s_756605d570e551::t_268902e3cf51ee 1046-1125,1127-1129,1136-1163
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4b03ed3a7ea470d1ee35ab18541452495d6ba895",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
