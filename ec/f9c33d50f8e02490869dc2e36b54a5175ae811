@@ -1,0 +1,21 @@
+tests/service/test_run_artifact.py
+  s_756605d570e551::t_f56893621c069e 237-259
+infrahub_sync/service/flow.py
+  s_756605d570e551::t_49bc446e712026 917-925
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ecf9c33d50f8e02490869dc2e36b54a5175ae811",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
