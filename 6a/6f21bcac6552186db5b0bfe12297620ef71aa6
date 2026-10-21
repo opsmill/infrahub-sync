@@ -1,0 +1,26 @@
+tests/service/test_worker_claim.py
+  s_756605d570e551::t_fc0a9e416a9bd6 197-199,225-227
+  s_756605d570e551::t_4e21e032ca90ec 22
+  s_756605d570e551::t_ba61d191945c41 248-249,251-253,260
+  s_756605d570e551::t_052f440aa56543 196,228
+changelog/+prefect-retry-refusal.changed.md
+  s_756605d570e551::t_53c0ef7653c9fa 1
+infrahub_sync/service/flow.py
+  s_756605d570e551::t_ba61d191945c41 24,832,846-848,850
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6a6f21bcac6552186db5b0bfe12297620ef71aa6",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
