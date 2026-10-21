@@ -1,0 +1,27 @@
+development/preview.env
+  s_756605d570e551::t_2f361030db790d 73
+docs/docs/compose-deployment.mdx
+  s_756605d570e551::t_b54e1adeb09b7e 116,560-561
+docs/docs/reference/sync-http-api.mdx
+  s_756605d570e551::t_8b8fc2ec1c0105 201-202
+infrahub_sync/service/prefect_ui.py
+  s_756605d570e551::t_3064df8be12804 9-12,29-32,38-39,43,58-60
+tests/service/test_prefect_ui_url.py
+  s_756605d570e551::t_e66020bdb125b0 43,46,50-61,135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "19dea594af0001fa4a06fd03c6651088661d0243",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
