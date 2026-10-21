@@ -1,0 +1,31 @@
+tests/test_netbox_example_vlan_group_scope.py
+  s_756605d570e551::t_2d96c403239665 1-23,26-67,69-125
+  s_756605d570e551::t_175f5ceaea9f2d 68
+  s_756605d570e551::t_bf399fab9eb1f3 24-25
+examples/netbox_to_infrahub/netbox/sync_models.py
+  s_756605d570e551::t_c43f5cd5b913d9 207,210
+examples/netbox_to_infrahub/config.yml
+  s_756605d570e551::t_5c9f5fb20ad4c7 572-582
+examples/netbox_to_infrahub/infrahub/sync_models.py
+  s_756605d570e551::t_c43f5cd5b913d9 207,210
+examples/netbox_to_infrahub/package.yml
+  s_756605d570e551::t_4f7f7eebdf4b0d 594-604
+changelog/+netbox-vlan-group-scope.added.md
+  s_756605d570e551::t_fc126ce3fbc12a 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "13c0e4d938cd64e668203d24d3a9c1debcd12a80",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
