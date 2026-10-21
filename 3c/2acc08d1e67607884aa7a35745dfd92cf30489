@@ -1,0 +1,37 @@
+docs/docs/reference/sync-http-api.mdx
+  s_756605d570e551::t_d4fb568020fbde 562-659
+  s_756605d570e551::t_bf0ecc5e7328c8 561
+docs/docs/running-a-sync.mdx
+  s_756605d570e551::t_9e1664783ab9b0 559-560,564-622
+dev/adr/0024-the-run-record-holds-the-plan-step-timings.md
+  s_756605d570e551::t_ad72e9b68bdfaf 38-39
+  s_756605d570e551::t_d2dd2c38cc150b 1-37,40-55
+docs/docs/development/knowledge/execution-surface.md
+  s_756605d570e551::t_d746d3ee458f74 162-186
+  s_756605d570e551::t_bf6aa51b53541a 210
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_756605d570e551::t_9cfbce0ded4806 137-139
+  s_756605d570e551::t_69d5840ca7d06b 140-145
+changelog/+010-plan-step-timings.added.md
+  s_756605d570e551::t_59b592ed4601ce 1
+dev/adr/README.md
+  s_756605d570e551::t_77d767a8105e46 69-71
+dev/specs/010-second-sync-plan-speed/tasks.md
+  s_756605d570e551::t_8c19b7b1fde025 177,184,186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3c2acc08d1e67607884aa7a35745dfd92cf30489",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
