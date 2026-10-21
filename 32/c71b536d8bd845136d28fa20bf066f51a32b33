@@ -1,0 +1,37 @@
+infrahub_sync/configuration/capabilities.py
+  s_a2f1b17812bc2b::t_7b19a7ed753dff 360-361
+  s_a2f1b17812bc2b::t_e8f025e3e09897 373
+tests/configuration/test_infrahub_lineage_settings.py
+  s_a2f1b17812bc2b::t_fe4f3e8861bdb9 11,55-60
+tests/configuration/test_registered_adapter_authority.py
+  s_a2f1b17812bc2b::t_251832e11330eb 226
+infrahub_sync/lineage.py
+  s_a2f1b17812bc2b::t_c97c1e36add7ee 83-95
+  s_a2f1b17812bc2b::t_4ba7f654bf199b 82
+infrahub_sync/adapters/infrahub.py
+  s_a2f1b17812bc2b::t_52dcda832302dc 41
+  s_a2f1b17812bc2b::t_b8e53e9021584f 859-862
+docs/docs/adapters/infrahub.mdx
+  s_a2f1b17812bc2b::t_c8c9806553791f 228-232
+tests/adapters/test_infrahub_lineage_resolution.py
+  s_a2f1b17812bc2b::t_fe4f3e8861bdb9 28-40,42,46,51-53,129-138
+  s_a2f1b17812bc2b::t_251832e11330eb 43-45
+tests/runtime_schema/test_registered_execution.py
+  s_a2f1b17812bc2b::t_251832e11330eb 140-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "32c71b536d8bd845136d28fa20bf066f51a32b33",
+  "prompts": {},
+  "sessions": {
+    "s_a2f1b17812bc2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "800e1b10-7585-4fd4-bff7-57b8118ec85e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
