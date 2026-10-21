@@ -1,0 +1,81 @@
+changelog/+013-preview-containers.changed.md
+  s_a2f1b17812bc2b::t_b63edb870c8718 1
+.github/scripts/nightly_e2e.py
+  s_a2f1b17812bc2b::t_8e37ea2f01e38d 22-34,67-69,72-73,87-92,96-98,126,129,237,254,271,294,298
+README.md
+  s_a2f1b17812bc2b::t_a6d031d75342a0 120
+development/README.md
+  s_a2f1b17812bc2b::t_fc855e9704cab2 3-10,23-24,30,33-34,37-43,45-46,66-67,72,78-79
+docs/docs/contributing.mdx
+  s_a2f1b17812bc2b::t_8f5064a36056d9 165,168,174-176
+docs/docs/development-stack.mdx
+  s_a2f1b17812bc2b::t_a4e021e022a59d 155
+docs/docs/development/guidelines/testing-tiers.md
+  s_a2f1b17812bc2b::t_e0a219040ca6bc 76,114,116,145,238,240,250,256-257,278,280,287,292,338-339,343-344,375-378,405,478
+tasks/netbox.py
+  s_a2f1b17812bc2b::t_2330792c3aa996 44,250,453,455-456,460,503,507-510,512-513
+tests/compose/test_compose_contract.py
+  s_a2f1b17812bc2b::t_93c391a7cc2138 80-81,86-87,97,678,878,885-893,912,915,937,959,1015,1017,1023-1025
+tests/dev_stack/test_loopback_publication.py
+  s_a2f1b17812bc2b::t_c6bc2cd5eaa0a9 103,122-123
+tests/dev_stack/test_netbox_network.py
+  s_a2f1b17812bc2b::t_4f81c4d31c2c41 191-195,199-202,284,287,290,294
+tests/integration/test_managed_write_guard_live.py
+  s_a2f1b17812bc2b::t_d9d8304d4b9407 32,109-110,125,127-130,139,146-147,152,189,197
+tests/integration/test_saved_plan_apply_integration.py
+  s_a2f1b17812bc2b::t_bd0acac804f589 78
+tests/preview/conftest.py
+  s_a2f1b17812bc2b::t_3f7175bdf98439 3,24,76,78,84,103
+tests/preview/test_cli_client.py
+  s_a2f1b17812bc2b::t_c8c17cf9d9e87f 130
+tests/preview/test_config_lifecycle.py
+  s_a2f1b17812bc2b::t_8c37434c7509cc 55,192-193,273-274,300
+tests/preview/test_prefect_surface.py
+  s_a2f1b17812bc2b::t_747bdd78757be0 17,27,56
+tests/preview/test_preview_configuration.py
+  s_a2f1b17812bc2b::t_d7e70408008961 30-51,140-197,199-200,203-218,221,230-231,237-239,245-246,249-250,252-255,257,264,266,271,273-274,278-306,315,526
+tests/preview/test_python_client.py
+  s_a2f1b17812bc2b::t_c522f14e6e995d 52
+tests/preview/test_run_completion.py
+  s_a2f1b17812bc2b::t_f48bfddd886151 86-90,155,200,232,305
+tests/preview/test_run_review.py
+  s_a2f1b17812bc2b::t_091c5403c62d7a 236,313
+tests/preview/test_service_api.py
+  s_a2f1b17812bc2b::t_2d892b3331b4a8 188,235
+tests/preview/test_smoke_request_shapes.py
+  s_a2f1b17812bc2b::t_c31375cca847dc 4
+tests/test_benchmark_runner.py
+  s_a2f1b17812bc2b::t_73ba247d3a89d3 605-607
+tests/test_netbox_tasks.py
+  s_a2f1b17812bc2b::t_68b64b200f8223 40,481-482
+tests/test_nightly_e2e.py
+  s_a2f1b17812bc2b::t_0d292bbad00517 92
+.github/workflows/workflow-nightly-e2e.yml
+  s_a2f1b17812bc2b::t_a37231a4ae2908 163,165
+development/docker-compose.preview.yml
+  s_a2f1b17812bc2b::t_bd0496da74fff4 2-5,7-39,41,45-46,48-50,55-72,75-77
+development/preview.env
+  s_a2f1b17812bc2b::t_628ea545e439c5 3,14-17,26-27,31-33,35-39,41-43,46-47,49,53-71,74,79-80
+docker-compose.yml
+  s_a2f1b17812bc2b::t_e04195116edc87 261-264
+docs/docs/development/guides/preview-stack.md
+  s_a2f1b17812bc2b::t_890753a41fe129 7-24,28-29,32,35-40,42-43,47-51,60,62,64,70,73-79,81-82,84-91,96-98,101-104,108-109,112,115-116,134,136,139-140,143-144,148,150-160,163,165-166,173-175,199-201,225-228
+tasks/preview.py
+  s_a2f1b17812bc2b::t_cce13128ad8ff6 1,3-7,10-12,14-20,41-53,79-104,137,157,159-163,169-171,175-179,181-189,201,203-204,206,210-213,219-220,222,226-228,232,291,306-307,309-311,313,315-317,320-331,334-338,342-343,351-352,356-365,400,402-403,408-420,424-425,427
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c18a7a0449518b3a2f0f9367566e037241a52f9f",
+  "prompts": {},
+  "sessions": {
+    "s_a2f1b17812bc2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "800e1b10-7585-4fd4-bff7-57b8118ec85e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
