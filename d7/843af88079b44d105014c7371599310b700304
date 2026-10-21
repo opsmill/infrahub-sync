@@ -1,0 +1,37 @@
+dev/specs/012-v2-configuration-conversion/checklists/requirements.md
+  s_51feb3c15a5f42::t_e095c457622fe3 46-71
+dev/specs/012-v2-configuration-conversion/spec.md
+  s_51feb3c15a5f42::t_b56593bccc7346 33-38
+  s_51feb3c15a5f42::t_b0f7b185f293e8 321-325
+  s_51feb3c15a5f42::t_5cf4a1e6e234ab 52-54
+  s_51feb3c15a5f42::t_6fd1e145a2d0c9 203-205
+  s_51feb3c15a5f42::t_156c371bf98153 59-62,65-72
+  s_51feb3c15a5f42::t_ac59b105dc63c7 306-307
+  s_51feb3c15a5f42::t_7bfd6dd4869e5f 253-255
+  s_51feb3c15a5f42::t_bb9175d010b4ce 391-398
+  s_51feb3c15a5f42::t_ff602786e63013 221-222
+  s_51feb3c15a5f42::t_5f5454d0c70b82 409-415
+  s_51feb3c15a5f42::t_b169015faa05c4 63-64
+  s_51feb3c15a5f42::t_c5912df4ef9b72 375-377
+  s_51feb3c15a5f42::t_1eaca86f0f311d 279-282
+  s_51feb3c15a5f42::t_b6fb821087bd2b 3-7
+  s_51feb3c15a5f42::t_4bfc3a29c76706 226-252
+  s_51feb3c15a5f42::t_625dc94318c0c3 314-315
+  s_51feb3c15a5f42::t_9d3fa309a0cad5 73
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d7843af88079b44d105014c7371599310b700304",
+  "prompts": {},
+  "sessions": {
+    "s_51feb3c15a5f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9eeb2e45-e1c5-44b9-8b8d-41680a41fdd6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
