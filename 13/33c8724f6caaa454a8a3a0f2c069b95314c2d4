@@ -1,0 +1,48 @@
+docs/docs/development/guidelines/testing-tiers.md
+  s_756605d570e551::t_37bbe99066da38 396-409
+docs/docs/development/guides/netbox-benchmark-runner.md
+  s_756605d570e551::t_4f2de48bc7c9c6 153-156
+  s_756605d570e551::t_6697d6cc9fcfeb 164-165,167,169-170
+changelog/+010-builtin-namespace-delete.fixed.md
+  s_756605d570e551::t_fbff083ab07aa6 1
+development/bench/records.py
+  s_756605d570e551::t_9f724b25f9220a 108-110
+dev/adr/0025-built-in-infrahub-nodes-are-not-planned-as-deletes.md
+  s_756605d570e551::t_8703da753675e6 1-47
+tests/test_benchmark_runner.py
+  s_756605d570e551::t_ace893697490eb 676-678
+  s_756605d570e551::t_b6a074f419233e 143-151
+  s_756605d570e551::t_14dcc1feede24c 539
+tasks/bench.py
+  s_756605d570e551::t_dedcd66eb16dde 418-420,422
+tests/adapters/test_infrahub_builtin_nodes.py
+  s_756605d570e551::t_fb5b529a0b1f32 52
+dev/adr/README.md
+  s_756605d570e551::t_6104098c616ea3 72-74
+infrahub_sync/adapters/infrahub.py
+  s_756605d570e551::t_1e64462d7f13f9 879-886,889
+  s_756605d570e551::t_5a978e6fa98d5b 915-916
+  s_756605d570e551::t_c94677af89774e 930,933-940
+  s_756605d570e551::t_13532b093ff62d 139-155
+  s_756605d570e551::t_c7a8f7c4654739 941
+infrahub_sync/plan/derive.py
+  s_756605d570e551::t_ade3006e0e35c6 751-753,757,759
+dev/specs/010-second-sync-plan-speed/tasks.md
+  s_756605d570e551::t_cc7283d2d1d53b 255,259,261,264-265,269,271,279,281
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1333c8724f6caaa454a8a3a0f2c069b95314c2d4",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
