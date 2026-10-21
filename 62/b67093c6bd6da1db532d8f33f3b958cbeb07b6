@@ -1,0 +1,19 @@
+dev/specs/014-sync-data-lineage/tasks.md
+  s_a2f1b17812bc2b::t_e5c5e6b0450261 81,108-149
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62b67093c6bd6da1db532d8f33f3b958cbeb07b6",
+  "prompts": {},
+  "sessions": {
+    "s_a2f1b17812bc2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "800e1b10-7585-4fd4-bff7-57b8118ec85e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
