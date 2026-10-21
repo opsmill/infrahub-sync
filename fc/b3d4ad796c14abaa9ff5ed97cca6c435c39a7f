@@ -1,0 +1,70 @@
+tests/conftest.py
+  s_a2f1b17812bc2b::t_e21b3426a90186 1-15,17-43
+  s_a2f1b17812bc2b::t_100c5ca87f0a60 16
+.github/workflows/workflow-integration-tests.yml
+  s_a2f1b17812bc2b::t_57cd597b7dee23 91-92
+  s_a2f1b17812bc2b::t_20d7ea39a1d610 41
+  s_a2f1b17812bc2b::t_d68248d9779fff 1-40,42-64,67-85,89-90,94
+  s_a2f1b17812bc2b::t_9b53cf68d2dcb2 65-66
+  s_a2f1b17812bc2b::t_19168062e718a9 86-88,93
+tests/integration/test_session_infrahub_version.py
+  s_a2f1b17812bc2b::t_100c5ca87f0a60 1-25
+tests/integration/test_destination_schema_live_read.py
+  s_a2f1b17812bc2b::t_5335a197c119ef 82-87
+.github/workflows/trigger-pr-develop.yml
+  s_a2f1b17812bc2b::t_9a3c3d399fdef7 36,75-87,119,129,149
+  s_a2f1b17812bc2b::t_977edfbcbe7441 115
+.github/workflows/update-infrahub.yml
+  s_a2f1b17812bc2b::t_bb852b2e8005be 54-63,86-87
+tests/integration/test_infrahub_lineage_integration.py
+  s_a2f1b17812bc2b::t_577109fb71e025 1-66,70-71,77-96,98-119,121-124,133-179,181-263,265-271,273-275,294-304
+  s_a2f1b17812bc2b::t_160a5db3500715 97,125-132,180,264,272
+  s_a2f1b17812bc2b::t_43440f9cb118a8 276-284
+  s_a2f1b17812bc2b::t_53f2856027d101 67-69
+  s_a2f1b17812bc2b::t_4cf86f160fc9e3 285-293
+  s_a2f1b17812bc2b::t_04712ef9fe6755 72-76
+  s_a2f1b17812bc2b::t_50364c9f6b2e8e 120
+.github/scripts/update_infrahub.py
+  s_a2f1b17812bc2b::t_bb852b2e8005be 41-43
+dev/specs/015-infrahub-integration-tests/plan.md
+  s_a2f1b17812bc2b::t_f0ae00b5f7268a 3,63-65,176-177,205-208,219,221-222,246-247,251-253
+  s_a2f1b17812bc2b::t_aa487212ffb358 166-170,287-288
+  s_a2f1b17812bc2b::t_bbf35485adb1b8 69
+  s_a2f1b17812bc2b::t_b93858ce88ab1c 260-286,289-297
+.github/workflows/trigger-pr-stable.yml
+  s_a2f1b17812bc2b::t_9a3c3d399fdef7 21-29
+tests/compose/test_fixture_prerequisites.py
+  s_a2f1b17812bc2b::t_b19bfc26bc2f3a 104-106
+changelog/+015-integration-testcontainers.housekeeping.md
+  s_a2f1b17812bc2b::t_c25fcd28cbfa2d 1
+AGENTS.md
+  s_a2f1b17812bc2b::t_c25fcd28cbfa2d 155-163
+tests/integration/infrahub_container.py
+  s_a2f1b17812bc2b::t_3d8d9c7dd620ec 18-19,58,79
+  s_a2f1b17812bc2b::t_081a3b81f80bc0 1-17,20-57,59-78,80-121
+tasks/tests.py
+  s_a2f1b17812bc2b::t_2ec9fbf8f40836 40-45,47-79,83-87
+  s_a2f1b17812bc2b::t_53f2856027d101 46
+  s_a2f1b17812bc2b::t_7a87ce057365a3 80-82
+pyproject.toml
+  s_a2f1b17812bc2b::t_43b647a70c2724 155-164
+  s_a2f1b17812bc2b::t_dbab602c491114 260-262
+uv.lock
+  s_a2f1b17812bc2b::t_1c9eadcd6be1f0 106,1074-1077,1086,1123,1159,1222-1226,1282-1301,2116,2158-2210,2248-2269,3412,3415,3419,3421,3531-3545,4078-4130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fcb3d4ad796c14abaa9ff5ed97cca6c435c39a7f",
+  "prompts": {},
+  "sessions": {
+    "s_a2f1b17812bc2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "800e1b10-7585-4fd4-bff7-57b8118ec85e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
