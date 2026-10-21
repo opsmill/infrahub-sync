@@ -1,0 +1,19 @@
+dev/specs/v3-release-scope.md
+  s_47078ea83e766d::t_df28b1b08ce0ad 139-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bb79f2a512e9465aaca8d7dfc40dca404240fd16",
+  "prompts": {},
+  "sessions": {
+    "s_47078ea83e766d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "544f662e-5cc6-4b60-8af0-aba1998bc1fa",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
