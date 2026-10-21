@@ -1,0 +1,28 @@
+.yamllint.yml
+  s_a2f1b17812bc2b::t_2075e80d5fec2b 19-20
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_a2f1b17812bc2b::t_c866d54bfb82e5 238-244,247-265
+  s_a2f1b17812bc2b::t_8a95ea6f7a96cf 245-246
+dev/specs/014-sync-data-lineage/retrospective.md
+  s_a2f1b17812bc2b::t_19615200ec5952 1-30
+dev/specs/v3-release-scope.md
+  s_a2f1b17812bc2b::t_4a3c7403d49845 49-52
+docs/docs/development/guides/preview-stack.md
+  s_a2f1b17812bc2b::t_721a9026b3fb20 151-168
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "74a9f02d8743f293e6db8f0052a54af37a964385",
+  "prompts": {},
+  "sessions": {
+    "s_a2f1b17812bc2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "800e1b10-7585-4fd4-bff7-57b8118ec85e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
