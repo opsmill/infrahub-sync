@@ -1,0 +1,40 @@
+dev/specs/011-operator-ui/data-model.md
+  s_756605d570e551::t_91791d5a6e5ae7 181-183
+dev/specs/011-operator-ui/quickstart.md
+  s_756605d570e551::t_0fd169f320bd6c 79
+  s_756605d570e551::t_63d6c4d0fbbb09 58-60
+dev/specs/011-operator-ui/contracts/ui.md
+  s_756605d570e551::t_c3c5f18907c526 59-61
+dev/specs/011-operator-ui/plan.md
+  s_756605d570e551::t_683a493ea879ad 34-37,49-51,156-163,271
+  s_756605d570e551::t_b85cf887fc3959 96
+  s_756605d570e551::t_4f147114debb07 115
+dev/specs/011-operator-ui/research.md
+  s_756605d570e551::t_91574a2b64eb0a 657-715,717-740
+  s_756605d570e551::t_c0e7161e433579 60-62
+  s_756605d570e551::t_b5e5c95f6660db 716
+  s_756605d570e551::t_c03f1238b44b71 33
+  s_756605d570e551::t_d75ee02f6b2b0d 101,103,106-109
+  s_756605d570e551::t_fb4bfd741fe5db 294-307,312-314
+  s_756605d570e551::t_d67773738c7698 44-45
+  s_756605d570e551::t_7e1d39f17c1ec8 187-194,196,201
+  s_756605d570e551::t_9dd9c5d17e51f5 195,197-200,202-205
+dev/specs/011-operator-ui/tasks.md
+  s_756605d570e551::t_155c445776e75d 10-11,55-57,68-74,128-132,178-182,401-413,423-425,434-436,559-572
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d880e638b1ee57f878560b857deacc4da82b6334",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "unknown"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
