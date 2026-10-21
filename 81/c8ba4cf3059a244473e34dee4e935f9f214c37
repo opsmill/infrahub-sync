@@ -1,0 +1,41 @@
+dev/specs/014-sync-data-lineage/checklists/requirements.md
+  s_51feb3c15a5f42::t_b7c7831c1eb324 40-41
+dev/specs/014-sync-data-lineage/retrospective.md
+  s_51feb3c15a5f42::t_f3415a432e5e7e 46
+  s_51feb3c15a5f42::t_3425103163d286 31-45,47-50
+dev/specs/014-sync-data-lineage/tasks.md
+  s_51feb3c15a5f42::t_0a9fb2657069b8 70
+  s_51feb3c15a5f42::t_2310c9ddb43848 150-153
+dev/specs/014-sync-data-lineage/spec.md
+  s_51feb3c15a5f42::t_b29ce85751ce84 47
+  s_51feb3c15a5f42::t_222aa6495a89d9 179-181
+  s_51feb3c15a5f42::t_2804da02b78df7 8
+dev/specs/014-sync-data-lineage/plan.md
+  s_51feb3c15a5f42::t_97683d00b22bb7 17
+  s_51feb3c15a5f42::t_469a2282a6b619 49
+  s_51feb3c15a5f42::t_4c5cc01417c3bf 80
+docs/docs/development/knowledge/planned-write-and-apply.md
+  s_51feb3c15a5f42::t_caf11554832322 245-248
+dev/specs/v3-release-scope.md
+  s_51feb3c15a5f42::t_f9187b4af2ec8b 47
+  s_51feb3c15a5f42::t_26f4f2a13fbaa3 229-233
+  s_51feb3c15a5f42::t_b5f13f24fa8812 33-34
+dev/specs/014-sync-data-lineage/research.md
+  s_51feb3c15a5f42::t_a606441c80c578 78-79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "81c8ba4cf3059a244473e34dee4e935f9f214c37",
+  "prompts": {},
+  "sessions": {
+    "s_51feb3c15a5f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9eeb2e45-e1c5-44b9-8b8d-41680a41fdd6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
