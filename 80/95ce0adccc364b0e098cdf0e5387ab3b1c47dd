@@ -1,0 +1,43 @@
+tests/configuration/test_infrahub_lineage_settings.py
+  s_a2f1b17812bc2b::t_003f337eb1169a 40-73,75-111
+  s_a2f1b17812bc2b::t_0e6ebdc080e857 74
+infrahub_sync/configuration/schema_validation.py
+  s_a2f1b17812bc2b::t_42852e0a081b51 25-27,56,74-77,229-284,373
+infrahub_sync/configuration/capabilities.py
+  s_a2f1b17812bc2b::t_42852e0a081b51 27,55-70,82-84,292-295,297-301,320,322,325,330,339,346-355,357-366,368-407,678
+  s_a2f1b17812bc2b::t_0e6ebdc080e857 296,367
+tests/configuration/test_schema_validation.py
+  s_a2f1b17812bc2b::t_cd8ae3d80c38a3 669-672
+  s_a2f1b17812bc2b::t_32147f3a385466 683-684
+  s_a2f1b17812bc2b::t_863e15c98c594d 32,120-122,578-581,610-668,673-682,685-697,719-722
+tests/product_store/test_validate_destination_schema.py
+  s_a2f1b17812bc2b::t_42852e0a081b51 64-66,208-210,242-244
+docs/docs/reference/durable-product-records.mdx
+  s_a2f1b17812bc2b::t_5c44538d28c387 77-85,95,99-101
+tests/test_writable_convergence_identity.py
+  s_a2f1b17812bc2b::t_42852e0a081b51 247-251
+docs/docs/reference/sync-http-api.mdx
+  s_a2f1b17812bc2b::t_5c44538d28c387 686-689
+tests/service/test_config_routes.py
+  s_a2f1b17812bc2b::t_42852e0a081b51 1294-1296
+dev/specs/014-sync-data-lineage/tasks.md
+  s_a2f1b17812bc2b::t_9796822516a711 46-48
+infrahub_sync/lineage.py
+  s_a2f1b17812bc2b::t_88c97d1bbc63f9 32,201-218
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8095ce0adccc364b0e098cdf0e5387ab3b1c47dd",
+  "prompts": {},
+  "sessions": {
+    "s_a2f1b17812bc2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "800e1b10-7585-4fd4-bff7-57b8118ec85e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
