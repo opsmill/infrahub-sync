@@ -1,0 +1,21 @@
+docs/docs/reference/python-client.mdx
+  s_4475617983ea10::t_7de2c16ea94f7c 13-18
+docs/docs/overview/architecture.mdx
+  s_4475617983ea10::t_a30d37a57a7b23 74-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d316e96de4d3609b48f14db02224a5d8c7eab1cc",
+  "prompts": {},
+  "sessions": {
+    "s_4475617983ea10": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "7919e80f-8829-4f3e-ae67-e690c834bb56",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
