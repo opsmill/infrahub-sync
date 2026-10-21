@@ -1,0 +1,35 @@
+tests/service/test_flow_and_prefect.py
+  s_756605d570e551::t_906279d1815b6c 699,743,781
+tests/service/test_apply_checkpoint_order.py
+  s_756605d570e551::t_906279d1815b6c 253,260-261
+tests/service/test_registered_plan_apply.py
+  s_756605d570e551::t_906279d1815b6c 364
+tests/service/test_managed_write_guard.py
+  s_756605d570e551::t_906279d1815b6c 306-308,312,315-316
+tests/service/test_plan_checkpoint.py
+  s_756605d570e551::t_906279d1815b6c 429
+tests/integration/isolated_worker_program.py
+  s_756605d570e551::t_42ae8f33b95ed0 243-250
+tests/service/test_worker_claim.py
+  s_756605d570e551::t_906279d1815b6c 225-228,249,251-253
+tests/service/test_registered_schema_guard.py
+  s_756605d570e551::t_906279d1815b6c 266,273-274
+tests/service/test_sync_checkpoint_order.py
+  s_756605d570e551::t_906279d1815b6c 243-245
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2e5a5118e27127db28065c999f5de8981b330f1",
+  "prompts": {},
+  "sessions": {
+    "s_756605d570e551": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "aa5f797e-cef4-4e76-a45c-47dfa58fbec5",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
