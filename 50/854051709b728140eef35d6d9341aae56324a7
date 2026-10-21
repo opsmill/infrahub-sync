@@ -1,0 +1,23 @@
+infrahub_sync/potenda/__init__.py
+  s_a2f1b17812bc2b::t_10e4bc07e92bf5 246
+changelog/+009-tier-log-once.housekeeping.md
+  s_a2f1b17812bc2b::t_18791ae3d47ee9 1
+tests/test_potenda_tiers.py
+  s_a2f1b17812bc2b::t_248e0a90a8d598 1,12,33-35,43-61
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "50854051709b728140eef35d6d9341aae56324a7",
+  "prompts": {},
+  "sessions": {
+    "s_a2f1b17812bc2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "800e1b10-7585-4fd4-bff7-57b8118ec85e",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
