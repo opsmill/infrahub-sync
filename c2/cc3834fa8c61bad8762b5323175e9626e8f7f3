@@ -1,0 +1,40 @@
+infrahub_sync/adapters/infrahub.py
+  s_51feb3c15a5f42::t_8bb3bff14bb5e7 785-787,846
+dev/specs/014-sync-data-lineage/data-model.md
+  s_51feb3c15a5f42::t_bd49fb6d379653 9
+infrahub_sync/lineage.py
+  s_51feb3c15a5f42::t_8bb3bff14bb5e7 10-12
+dev/specs/014-sync-data-lineage/quickstart.md
+  s_51feb3c15a5f42::t_bd49fb6d379653 29,56,58,60
+dev/specs/014-sync-data-lineage/contracts/lineage.md
+  s_51feb3c15a5f42::t_bd49fb6d379653 17,27
+dev/specs/014-sync-data-lineage/spec.md
+  s_51feb3c15a5f42::t_02c3976fd5fd2c 193-198,245-275
+  s_51feb3c15a5f42::t_bd49fb6d379653 25-30,177-178,207-211,316-318,338-339
+  s_51feb3c15a5f42::t_89e0c7a2a62d56 276
+changelog/+014-lineage-from-token.changed.md
+  s_51feb3c15a5f42::t_8bb3bff14bb5e7 1
+tests/adapters/test_infrahub_planned_write.py
+  s_51feb3c15a5f42::t_463be00eed383f 1123-1124
+  s_51feb3c15a5f42::t_8bb3bff14bb5e7 999,1020
+dev/specs/v3-release-scope.md
+  s_51feb3c15a5f42::t_d7563dd4ceb5a6 177,179-181,222-226
+tests/integration/test_infrahub_replace_set_shrink_integration.py
+  s_51feb3c15a5f42::t_8bb3bff14bb5e7 282-283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c2cc3834fa8c61bad8762b5323175e9626e8f7f3",
+  "prompts": {},
+  "sessions": {
+    "s_51feb3c15a5f42": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9eeb2e45-e1c5-44b9-8b8d-41680a41fdd6",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Benoit Kohler <benoit+claude@opsmill.com>"
+    }
+  }
+}
